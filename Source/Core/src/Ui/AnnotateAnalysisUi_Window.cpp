@@ -105,7 +105,16 @@ void DrawAnnotateBannerAndStatus(AnnotateDrawCtx& ctx) {
     }
 
     if (!State().lastUiStatus.empty()) {
+        // P2-M17: failures must not read like informational notes. Setters prefix
+        // errors with "Error: "; the line inherits the same red as the banner above.
+        const bool isError = State().lastUiStatus.compare(0, 7, "Error: ") == 0;
+        if (isError) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+        }
         ImGui::TextWrapped("%s", State().lastUiStatus.c_str());
+        if (isError) {
+            ImGui::PopStyleColor();
+        }
         ImGui::Separator();
     }
 }
@@ -225,7 +234,7 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
                                       return std::make_pair(cl, err);
                                   }).share();
         } else {
-            State().lastUiStatus = "Invalid date from picker.";
+            State().lastUiStatus = "Error: that date couldn't be parsed - pick the date again.";
         }
     }
 
@@ -240,7 +249,9 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
             std::snprintf(State().atClBuf, sizeof(State().atClBuf), "%s", cl.c_str());
             State().lastUiStatus = "Before changelist set to first submitted CL on that day: " + cl;
         } else {
-            State().lastUiStatus = err.empty() ? "Could not resolve changelist for that date." : err;
+            State().lastUiStatus =
+                "Error: " +
+                (err.empty() ? std::string("no submitted changelist found for that date - pick another day.") : err);
         }
     }
 
@@ -804,10 +815,12 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
         const TrackerField* f = app.FindFieldById("assignee");
         if (!hasJiraAccount) {
             LOG_ERROR("Annotate UI: assign skipped — no Jira account match for this Perforce user.");
-            State().lastUiStatus = "No Jira user match for assign.";
+            State().lastUiStatus =
+                "Error: couldn't match this Perforce user to a Jira account - assign the issue manually in the grid.";
         } else if (!f) {
             LOG_ERROR("Annotate UI: assignee field not in catalog.");
-            State().lastUiStatus = "assignee field not in catalog.";
+            State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
+                                   "(Preferences > Tracker > Save & Sync) and retry.";
         } else {
             // Pillar 2 — finding #7: dispatch SubmitFieldEdit (cpr::Post) off the UI thread.
             State().assignCommitInFlight = true;
@@ -828,7 +841,7 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
                         State().lastUiStatus = "Assignee updated.";
                     } else {
                         LOG_ERROR("Annotate UI: assign failed: %s", err.c_str());
-                        State().lastUiStatus = err;
+                        State().lastUiStatus = "Error: " + err;
                     }
                 });
             });
@@ -865,7 +878,7 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
                     State().lastUiStatus = "Annotate context comment posted.";
                 } else {
                     LOG_ERROR("Annotate UI: comment failed: %s", err.c_str());
-                    State().lastUiStatus = err;
+                    State().lastUiStatus = "Error: " + err;
                 }
             });
         });
@@ -909,7 +922,8 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                         if (ok) {
                             State().lastUiStatus = "Posted '" + capturedTitle + "' comment.";
                         } else {
-                            State().lastUiStatus = err.empty() ? "Failed to post Jira comment." : err;
+                            State().lastUiStatus =
+                                "Error: " + (err.empty() ? std::string("failed to post the Jira comment.") : err);
                         }
                     });
                 });
@@ -937,7 +951,8 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
     if (ImGui::Selectable("Assign and add Annotate context", false)) {
         const TrackerField* f = app.FindFieldById("assignee");
         if (!f) {
-            State().lastUiStatus = "assignee field not in catalog.";
+            State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
+                                   "(Preferences > Tracker > Save & Sync) and retry.";
         } else {
             // Pillar 2 — finding #7: chain SubmitFieldEdit + AddIssueCommentAnnotateContext
             // on a single worker so the user clicks once and both HTTP calls run off-UI.
@@ -969,7 +984,7 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                         State().lastUiStatus = "Assigned and commented.";
                     } else {
                         LOG_ERROR("Annotate UI: assign/comment failed: %s", err.c_str());
-                        State().lastUiStatus = err;
+                        State().lastUiStatus = "Error: " + err;
                     }
                 });
             });
@@ -1103,7 +1118,9 @@ void DrawAnnotateProfileModal(AnnotateDrawCtx& ctx) {
 
 void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::string& selectedJiraIssueKey) {
     if (!pOpen || !*pOpen) {
-        if (pOpen)
+        // An Esc-hide with work in flight keeps the pasted callstack / results alive for
+        // reopen (P2-H5); every other closed state still runs the full teardown.
+        if (pOpen && !State().annotateHidePreservesState)
             CloseAnnotateModal(pOpen);
         return;
     }
@@ -1124,8 +1141,24 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
         ImGui::End();
         return;
     }
+    // Visible again: a subsequent explicit close (title-bar X / Close button) must wipe.
+    State().annotateHidePreservesState = false;
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-        CloseAnnotateModal(pOpen);
+        // Esc is a reflexive "get this out of my way" — it must not destroy a pasted
+        // callstack or computed annotation rows (P2-H5). With work present the window
+        // just hides; the destructive reset stays on the explicit close paths.
+        bool hasRows = false;
+        {
+            std::lock_guard<std::mutex> lk(State().displayMutex);
+            hasRows = !State().displayRows.empty();
+        }
+        const bool hasWork = State().callstackBuf[0] != '\0' || hasRows;
+        if (hasWork) {
+            State().annotateHidePreservesState = true;
+            *pOpen = false;
+        } else {
+            CloseAnnotateModal(pOpen);
+        }
         ImGui::End();
         return;
     }

@@ -97,7 +97,7 @@ const TranslationEntry kEntries[] = {
     {"menu.sync_audit", "Sync Audit...", u8"Audit de synchronisation..."},
     {"menu.runtime_log", "Runtime Log", u8"Journal d'exécution"},
     {"menu.performance_monitor", "Performance Monitor...", u8"Moniteur de performances..."},
-    {"menu.read_only_mode", "Read-only Mode", u8"Mode lecture seule"},
+    {"menu.read_only_mode", "Read-Only Mode", u8"Mode lecture seule"},
     {"menu.preferences", "Preferences...", u8"Préférences..."},
     {"menu.performance", "Performance...", u8"Performances..."},
     {"menu.windows", "Windows", u8"Fenêtres"},
@@ -115,7 +115,7 @@ const TranslationEntry kEntries[] = {
     {"window.views", "Views", u8"Vues"},
     {"window.views_backend", "Views - %s", u8"Vues - %s"},
     {"window.active_project", "Smatchet - Active Project", u8"Smatchet - Projet actif"},
-    {"window.bulk_import", "Bulk import tickets", u8"Importer des tickets en lot"},
+    {"window.bulk_import", "Bulk Import Issues", u8"Importer des tickets en lot"},
     {"window.bulk_export", "Bulk export tickets", u8"Exporter des tickets en lot"},
     {"window.backend_audit", "Backend Audit", u8"Audit du backend"},
     {"window.attachment_preview", "Attachment Preview", u8"Aperçu des pièces jointes"},
@@ -961,7 +961,7 @@ const TranslationEntry kEntries[] = {
     // (raw ImGui calls, toast titles/messages, combo item arrays).
 
     // Grid field-edit pipeline toasts.
-    {"toast.tickets", "Tickets", u8"Tickets"},
+    {"toast.tickets", "Issues", u8"Tickets"},
     {"toast.offline_error", "Offline Error", u8"Erreur hors ligne"},
     {"toast.offline_queue_failed", "Failed to queue offline field edit.",
      u8"Impossible de mettre en file la modification de champ hors ligne."},

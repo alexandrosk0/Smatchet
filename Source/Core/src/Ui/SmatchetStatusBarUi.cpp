@@ -2,6 +2,9 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "SmatchetLocalization.h"
+#include "SmatchetTheme.h"
+#include "Ui/SmatchetBackendDisplay.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetThemeIds.h"
@@ -63,42 +66,24 @@ static const char* ConnectivityTooltip(AppController& app) {
     using State = AppController::TrackerConnectivityState;
     switch (app.GetLastTrackerConnectivityState()) {
     case State::AuthenticatedReachable:
-        return "Connected and authenticated to the tracker backend.";
+        return SmatchetLocalization::T("statusbar.conn.online.tip",
+                                       "Connected and authenticated to the tracker backend.");
     case State::ReachableAuthOrConfigError:
-        return "The backend is reachable but rejected the credentials or configuration.\n"
-               "Check the API token and connection settings in Preferences > Tracker.";
+        return SmatchetLocalization::T("statusbar.conn.auth_error.tip",
+                                       "The backend is reachable but rejected the credentials or configuration.\n"
+                                       "Check the API token and connection settings in Preferences > Tracker.");
     case State::TransportDown:
-        return "No network route to the backend. Edits are queued locally and sync\n"
-               "automatically when the connection returns.";
+        return SmatchetLocalization::T("statusbar.conn.offline.tip",
+                                       "No network route to the backend. Edits are queued locally and sync\n"
+                                       "automatically when the connection returns.");
     case State::ServiceUnavailable:
-        return "The backend service is temporarily unavailable. Smatchet keeps retrying\n"
-               "automatically; queued edits sync once it recovers.";
+        return SmatchetLocalization::T("statusbar.conn.unavailable.tip",
+                                       "The backend service is temporarily unavailable. Smatchet keeps retrying\n"
+                                       "automatically; queued edits sync once it recovers.");
     case State::Unknown:
     default:
-        return "Connectivity has not been probed yet.";
+        return SmatchetLocalization::T("statusbar.conn.unknown.tip", "Connectivity has not been probed yet.");
     }
-}
-
-// Friendly display name for the persistent backend chip: the raw config value is a
-// lowercase type string ("jira") — map it to the product name shown elsewhere in the UI.
-static std::string BackendDisplayName(const std::string& rawType) {
-    std::string t = rawType.size() > 64u ? rawType.substr(0u, 64u) : rawType;
-    std::string lower = t;
-    for (std::size_t i = 0; i < lower.size(); ++i) {
-        lower[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(lower[i])));
-    }
-    if (lower == "jira")
-        return "Jira";
-    if (lower == "plane")
-        return "Plane";
-    if (lower == "github")
-        return "GitHub";
-    if (lower == "linear")
-        return "Linear";
-    if (!t.empty()) {
-        t[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(t[0])));
-    }
-    return t;
 }
 
 } // namespace
@@ -157,7 +142,7 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
         ImGui::SameLine();
         ImGui::TextUnformatted("|");
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.85f, 0.3f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().WarningText);
         ImGui::TextUnformatted("Saving...");
         ImGui::PopStyleColor();
         if (::ImGui::IsItemHovered()) {
@@ -173,12 +158,17 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
             ImGui::SameLine();
             ImGui::TextUnformatted("|");
             ImGui::SameLine();
-            char errBuf[48];
-            std::snprintf(errBuf, sizeof(errBuf), unreadErrors == 1 ? "%d error" : "%d errors", unreadErrors);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.35f, 0.35f, 1.0f));
-            ImGui::TextUnformatted(errBuf);
+            // Separate singular/plural catalog keys (the notifCenter.count_* pattern) so
+            // translations aren't forced into English append-"s" grammar.
+            const char* errLabel =
+                unreadErrors == 1 ? SmatchetLocalization::Format("statusbar.errors_one", "%d error", unreadErrors)
+                                  : SmatchetLocalization::Format("statusbar.errors_many", "%d errors", unreadErrors);
+            ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+            ImGui::TextUnformatted(errLabel);
             ImGui::PopStyleColor();
             if (::ImGui::IsItemHovered()) {
+                // Clickable text: give it the pointer affordance the tooltip promises.
+                ::ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
                 ImGui::SetTooltip("Recent errors — click to open Notifications.");
                 if (::ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
                     SmatchetToastManager::Instance().RequestOpenCenter();

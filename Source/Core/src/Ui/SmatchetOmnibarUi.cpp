@@ -50,7 +50,7 @@ const char* OmnibarModeGlyph(omni::OmnibarInputKind kind) {
 const char* OmnibarModeTooltip(omni::OmnibarInputKind kind) {
     switch (kind) {
     case omni::OmnibarInputKind::TicketKey:
-        return SmatchetLocalization::T("omnibar.mode.ticket_key", "Ticket key — Enter opens this issue.");
+        return SmatchetLocalization::T("omnibar.mode.ticket_key", "Issue key — Enter opens this issue.");
     case omni::OmnibarInputKind::Jql:
         return SmatchetLocalization::T("omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.");
     case omni::OmnibarInputKind::TitleSearch:
@@ -187,11 +187,17 @@ void SmatchetUI::applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPan
     }
 }
 
-// Replaces the view owned by `target` with `query` and re-runs it. Adopts that view's
-// identity first (without a network re-fetch — the UpdateActive + SyncWithCurrentView below
-// kicks the sync) when it isn't already the active view. Mirrors the applied query into
+// Applies `query` to the view owned by `target` AS AN UNSAVED EDIT and re-runs it. Adopts
+// that view's identity first (without a network re-fetch — SyncWithCurrentView below kicks
+// the sync) when it isn't already the active view. Mirrors the applied query into
 // d.cfg.JqlQuery and the dashboard JQL editor buffer so every surface stays in lock-step.
 // Shared core of userInfoAddToQuery (User-Info "add to query") and drawOmnibar.
+//
+// UX critique P2-H1: this used to call ViewState.UpdateActive (which Save()s to disk
+// immediately) — a throwaway omnibar search durably rewrote the saved view's query of
+// record with no dirty flag and no undo. It now routes through the SAME unsaved-edit
+// mechanism as column/sort edits: snapshot the pre-edit view, mutate in memory, raise the
+// "Unsaved layout changes" strip (Save / Save as new... / Discard decides durability).
 SmatchetUI::ApplyQueryResult SmatchetUI::applyQueryToPaneView(AppController& app, UiDrawSession& d, GridPane& target,
                                                               const std::string& query) {
     const ViewDefinition* active = ViewState.GetActiveView();
@@ -204,11 +210,15 @@ SmatchetUI::ApplyQueryResult SmatchetUI::applyQueryToPaneView(AppController& app
         // view's query.
         return ApplyQueryResult::ViewUnavailable;
     }
-    ViewDefinition updated = *active;
-    updated.Jql = query;
-    if (!ViewState.UpdateActive(updated)) {
-        return ApplyQueryResult::UpdateFailed;
+    ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
+    if (mutableActive == nullptr || mutableActive->Id != target.viewId) {
+        return ApplyQueryResult::ViewUnavailable;
     }
+    // Snapshot BEFORE the mutation so the strip's Discard can restore the saved query.
+    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+    mutableActive->Jql = query;
+    ViewState.BumpRevision();
+    d.viewsDirty = true;
     d.cfg.JqlQuery = query;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, query);
     SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);

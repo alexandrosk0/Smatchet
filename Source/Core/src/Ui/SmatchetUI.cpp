@@ -581,7 +581,11 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
             smatchet::cmd::ConsumePaletteOpenLatch(g_ui.requestCommandPaletteOpen, g_ui.requestCommandPaletteFilter);
         if (paletteOpen.Open) {
             commandPalette_.Open();
-            if (!paletteOpen.Filter.empty()) {
+            // P2-M7: ui.open_view's id-prefix request becomes a category SCOPE (human
+            // "Views" chip, empty search box) instead of a literal "view.toggle." query.
+            if (paletteOpen.Filter == "view.toggle.") {
+                commandPalette_.SetCategoryPrefix("view.toggle.", "Views");
+            } else if (!paletteOpen.Filter.empty()) {
                 commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
@@ -863,9 +867,22 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
         rebuildKeybindingCache(d);
     }
     const ImGuiIO& io = ::ImGui::GetIO();
+    // P2-M4: while a rebind control is capturing, the combo being pressed is INPUT to
+    // the capture, not a command — without this, pressing a combo during capture also
+    // executes its old binding on the same frame.
+    if (smatchet::ui::HotkeyCaptureArmedRecently()) {
+        return;
+    }
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
+            continue;
+        }
+        // P2-M4: combos that plain typing can produce (no Ctrl/Alt/Win, non-F-key —
+        // e.g. a legacy bare "K" binding) must not fire while a text field is active.
+        const bool typingSafe =
+            pk.hk.ctrl || pk.hk.alt || pk.hk.super || (pk.hk.key >= ImGuiKey_F1 && pk.hk.key <= ImGuiKey_F12);
+        if (!typingSafe && io.WantTextInput) {
             continue;
         }
         // Pseudo-binding: the command palette is a UI widget, not a registry command.

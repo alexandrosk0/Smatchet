@@ -1,7 +1,9 @@
 #include "SmatchetToast.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
+#include "imgui_internal.h" // BringWindowToDisplayFront — toast hit-window stays above all windows
 #include <algorithm>
+#include <cstdio>
 
 SmatchetToastManager& SmatchetToastManager::Instance() {
     static SmatchetToastManager instance;
@@ -101,19 +103,49 @@ void SmatchetToastManager::Render() {
         // Click semantics (near-universal convention): clicking a toast DISMISSES it. An
         // error toast additionally opens the Notification Center, which keeps the failure
         // trail one click away without teleporting the user for routine info/success
-        // toasts. clip=false: toasts draw on the foreground, outside any window clip rect.
+        // toasts.
+        //
+        // Input CAPTURE (P2-H6): the visuals paint on the foreground draw list (below),
+        // but hit-testing goes through a real (invisible) ImGui window pinned over the
+        // toast rect and brought to the display front — so a dismissal click is consumed
+        // by the toast instead of ALSO landing on whatever grid row / button / scrollbar
+        // sits underneath, and hover no longer highlights widgets through the toast.
         ImVec2 rectMax(pos.x + toastWidth, pos.y + toastHeight);
-        const bool hovered = ImGui::IsMouseHoveringRect(pos, rectMax, false);
-        // Hover-revealed close cross in the top-right corner.
         const float closeSize = 16.0f;
         ImVec2 closeMin(rectMax.x - closeSize - 6.0f, pos.y + 6.0f);
         ImVec2 closeMax(closeMin.x + closeSize, closeMin.y + closeSize);
-        const bool closeHovered = hovered && ImGui::IsMouseHoveringRect(closeMin, closeMax, false);
-        if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            if (t.Type == ToastType::Error && !closeHovered) {
-                m_openCenterRequested = true;
+        bool hovered = false;
+        bool closeHovered = false;
+        {
+            char hitId[40];
+            std::snprintf(hitId, sizeof(hitId), "##toast_hit_%d", i);
+            ImGui::SetNextWindowPos(pos);
+            ImGui::SetNextWindowSize(ImVec2(toastWidth, toastHeight));
+            const ImGuiWindowFlags hitFlags =
+                ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoMove |
+                ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+                ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoDocking;
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            if (ImGui::Begin(hitId, nullptr, hitFlags)) {
+                // Keep the hit window above every other window so clicks over the toast
+                // always route here (the painted toast is on the foreground list anyway).
+                ImGui::BringWindowToDisplayFront(ImGui::GetCurrentWindow());
+                const bool bodyClicked = ImGui::InvisibleButton("body", ImVec2(toastWidth, toastHeight));
+                hovered = ImGui::IsItemHovered();
+                closeHovered = hovered && ImGui::IsMouseHoveringRect(closeMin, closeMax, false);
+                if (hovered) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
+                if (bodyClicked) {
+                    if (t.Type == ToastType::Error && !closeHovered) {
+                        m_openCenterRequested = true;
+                    }
+                    dismissIndex = i;
+                }
             }
-            dismissIndex = i;
+            ImGui::End();
+            ImGui::PopStyleVar(2);
         }
 
         float alpha = t.FadeIn;

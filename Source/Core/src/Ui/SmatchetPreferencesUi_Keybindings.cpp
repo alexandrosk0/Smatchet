@@ -279,10 +279,30 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
     }
 
     ImGui::Spacing();
+    // P2-M5: this tab autosaves (debounced ~100 ms), so an unconfirmed reset makes the
+    // loss of every custom shortcut permanent almost immediately. Route through a confirm.
     if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetDefaults", "Reset all to defaults"))) {
-        d.cfg.Keybindings = KeybindingsConfig::Defaults();
-        capturingKey.clear();
-        mutated = true;
+        ImGui::OpenPopup("Reset keyboard shortcuts?###KbResetConfirm");
+    }
+    if (ImGui::BeginPopupModal("Reset keyboard shortcuts?###KbResetConfirm", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped(
+            "%s", SmatchetLocalization::Format("keybindings.editor.resetConfirm",
+                                               "Replace all %d shortcuts with the defaults? Custom bindings are "
+                                               "lost immediately (this tab saves automatically).",
+                                               static_cast<int>(d.cfg.Keybindings.Bindings.size())));
+        ImGui::Spacing();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"))) {
+            d.cfg.Keybindings = KeybindingsConfig::Defaults();
+            capturingKey.clear();
+            mutated = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.addCommand", "Add shortcut for a command..."))) {

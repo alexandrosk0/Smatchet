@@ -98,7 +98,9 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
             colName = colIt->Label;
         }
 
-        if (ImGui::Button("X")) {
+        const bool removeSortClicked = ImGui::Button("X");
+        ImGui::SetItemTooltip("%s", SmatchetLocalization::T("grid.sort.remove_key", "Remove this sort key"));
+        if (removeSortClicked) {
             SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
             activeViewForGrid->SortSpecs.erase(activeViewForGrid->SortSpecs.begin() + i);
             sortChanged = true;
@@ -495,7 +497,7 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
         if (c.showTrackerChip) {
             ImGui::SameLine(0.0f, c.between);
         }
-        ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.22f, 1.0f), "%s", c.readOnlyLabel);
+        ImGui::TextColored(SmatchetTheme::GetActiveSemanticColors().WarningText, "%s", c.readOnlyLabel);
         if (ImGui::IsItemHovered()) {
             ImGui::SetTooltip("Read-only mode is enabled in Preferences. Tracker-changing actions are disabled.");
         }

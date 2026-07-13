@@ -195,6 +195,12 @@ struct Command {
     std::string BuildHelpText() const;
 };
 
+/// Human display label for `cmdId` when no registered Title exists: strips a
+/// "view.toggle." prefix and title-cases the remaining dotted/dashed slug
+/// ("view.toggle.log" -> "Log", "tickets.search_active" -> "Tickets Search Active").
+/// UI surfaces must never render a raw dotted command id (Command::Title contract).
+std::string TitleCasedSlugFromCommandId(const std::string& cmdId);
+
 } // namespace cmd
 } // namespace smatchet
 

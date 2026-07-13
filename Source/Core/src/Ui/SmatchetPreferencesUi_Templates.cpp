@@ -307,8 +307,25 @@ void DrawCommentTemplateList(UiDrawSession& d, const char* childId, std::vector<
         }
 
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+        // P2-L9: two-step delete — this tab autosaves, so an instant ✖ permanently
+        // destroys a hand-authored template on one stray click. First click arms; the
+        // second (now "✔?") confirms. A click anywhere else disarms.
+        ImGuiStorage* storage = ::ImGui::GetStateStorage();
+        const ImGuiID armId = ::ImGui::GetID("##tmpl_del_armed");
+        const bool armed = storage->GetBool(armId, false);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-        if (ImGui::Button("✖")) {
+        const bool delClicked = ImGui::Button(armed ? "✔?" : "✖");
+        const bool delHovered = ImGui::IsItemHovered();
+        if (armed && delHovered) {
+            ImGui::SetTooltip("Click again to delete this template");
+        }
+        if (delClicked && !armed) {
+            storage->SetBool(armId, true);
+        } else if (armed && !delClicked && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !delHovered) {
+            storage->SetBool(armId, false);
+        }
+        if (delClicked && armed) {
+            storage->SetBool(armId, false);
             st.workingList.erase(st.workingList.begin() + i);
             if (st.selectedIdx == static_cast<int>(i)) {
                 st.selectedIdx = -1;

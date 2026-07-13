@@ -840,7 +840,7 @@ void DrawErrorStrip(UiDrawSession& d) {
     if (d.assistantLastError.empty()) {
         return;
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.45f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
     ImGui::TextWrapped("%s", d.assistantLastError.c_str());
     ImGui::PopStyleColor();
 }
@@ -1422,7 +1422,9 @@ void DrawCopyToastStrip(UiDrawSession& d, float toastRowH) {
         constexpr std::int64_t kFadeOutMs = 250;
         const float alpha =
             smatchet::ai::AiToastAlpha(static_cast<long long>(remainingMs), static_cast<long long>(kFadeOutMs));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.65f, 0.75f, 0.65f, alpha));
+        ImVec4 copyToastCol = SmatchetTheme::GetActiveSemanticColors().SuccessText;
+        copyToastCol.w = alpha;
+        ImGui::PushStyleColor(ImGuiCol_Text, copyToastCol);
         ImGui::TextUnformatted(d.assistantCopyToastLabel.c_str());
         ImGui::PopStyleColor();
     } else {

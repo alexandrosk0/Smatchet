@@ -202,6 +202,22 @@ const char* ToolbarEditorPopupTitle() {
     return SmatchetLocalization::WindowTitle("toolbar.editor.title", "Customize Toolbar", "SmatchetToolbarEditor");
 }
 
+// Visible label for a toolbar button: the FA glyph when the icon font is loaded,
+// otherwise the first whole WORD of the tooltip (or command id) - a 2-byte prefix
+// produced unreadable "Ne"/"vi" stubs and could bisect a UTF-8 code point (P2-L4).
+std::string ToolbarButtonVisibleLabel(bool iconFontLoaded, const std::string& glyph, const ToolbarButton& b) {
+    if (iconFontLoaded && !glyph.empty()) {
+        return glyph;
+    }
+    const std::string& src = !b.Tooltip.empty() ? b.Tooltip : b.CommandId;
+    const std::size_t wordEnd = src.find_first_of(" .");
+    std::string label = wordEnd == std::string::npos ? src : src.substr(0, wordEnd);
+    if (label.empty()) {
+        label = "?";
+    }
+    return label;
+}
+
 } // namespace
 
 void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
@@ -241,15 +257,7 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             const int src = (realSeen < static_cast<int>(realButtonSrc.size())) ? realButtonSrc[realSeen] : -1;
             ++realSeen;
 
-            std::string glyph = GlyphFor(b);
-            std::string label;
-            if (fa && !glyph.empty()) {
-                label = glyph;
-            } else if (!b.Tooltip.empty()) {
-                label = b.Tooltip.substr(0, 2);
-            } else {
-                label = b.CommandId.substr(0, 2);
-            }
+            std::string label = ToolbarButtonVisibleLabel(fa, GlyphFor(b), b);
             label += "##tb";
             label += std::to_string(i);
 

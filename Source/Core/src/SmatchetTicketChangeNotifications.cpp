@@ -56,6 +56,6 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
     if (body.empty()) {
         return;
     }
-    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tickets", "Tickets"), body, ToastType::Info,
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tickets", "Issues"), body, ToastType::Info,
                                           5000);
 }

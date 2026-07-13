@@ -224,5 +224,24 @@ std::string Command::BuildHelpText() const {
     return os.str();
 }
 
+std::string TitleCasedSlugFromCommandId(const std::string& cmdId) {
+    static const char kPrefix[] = "view.toggle.";
+    const std::string slug =
+        (cmdId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) == 0) ? cmdId.substr(sizeof(kPrefix) - 1U) : cmdId;
+    std::string out;
+    out.reserve(slug.size());
+    bool wordStart = true;
+    for (std::size_t i = 0; i < slug.size(); ++i) {
+        const char sc = slug[i];
+        if (sc == '-' || sc == '_' || sc == '.') {
+            out.push_back(' ');
+            wordStart = true;
+            continue;
+        }
+        out.push_back(wordStart ? static_cast<char>(std::toupper(static_cast<unsigned char>(sc))) : sc);
+        wordStart = false;
+    }
+    return out;
+}
 } // namespace cmd
 } // namespace smatchet

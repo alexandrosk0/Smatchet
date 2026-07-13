@@ -37,6 +37,8 @@
 #include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
+#include "SmatchetTheme.h"
+#include "Ui/SmatchetSecretInput.h"
 #include "Ui/SmatchetIconButtons.h"
 
 #include "IconsFontAwesome6.h"
@@ -316,7 +318,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
         ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
-        ImGui::InputText("API Token", d.tokenBuf, sizeof(d.tokenBuf), ImGuiInputTextFlags_Password);
+        SmatchetSecretInputText("API Token", d.tokenBuf, sizeof(d.tokenBuf));
         // No "Project Key" preference row. Project is per-operation — picked
         // via the new-issue draft picker, derived from the active view's JQL, or supplied
         // on ticket.create. The "Recently used projects" section below surfaces cached
@@ -337,7 +339,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
                          ImGuiInputTextFlags_CharsNoBlank);
         // No "Project ID (UUID)" preference row. See Jira note above.
-        ImGui::InputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf), ImGuiInputTextFlags_Password);
+        SmatchetSecretInputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf));
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
                          sizeof(d.newIssueInheritFieldsPlaneBuf));
@@ -351,7 +353,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
         ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
-        ImGui::InputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf), ImGuiInputTextFlags_Password);
+        SmatchetSecretInputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf));
         ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
         ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
@@ -374,7 +376,7 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
         // Linear-as-tracker — Slice 1 of docs/plans/linear-tracker-backend.md. Draft scope is
         // the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
         ImGui::TextUnformatted("Linear Configuration (linear.app)");
-        ImGui::InputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf), ImGuiInputTextFlags_Password);
+        SmatchetSecretInputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf));
         ImGui::SetItemTooltip("Personal API Key from Linear Settings -> API.");
         ImGui::InputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf), ImGuiInputTextFlags_CharsNoBlank);
         ImGui::SetItemTooltip("Team key, e.g. \"ENG\" (the TEAM-123 issue prefix).");
@@ -512,10 +514,130 @@ void DrawUserInfoFeedSettings(UiDrawSession& d) {
     ImGui::Spacing();
 }
 
+// Buffer -> config copy for every credential/identity field the Tracker tab edits.
+// Shared by Save & Sync (writes d.cfg) and the "Test connection" probe (writes a
+// throwaway copy - P2-M12). Canonicalizes TrackerType (issue #820), trims whitespace
+// BEFORE the base-URL empty-defaults (issue #979: a trailing space in the Jira email
+// made Atlassian 401 every request; a whitespace-only base URL still gets the default).
+void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
+    cfg.Domain = d.domainBuf;
+    cfg.Email = d.emailBuf;
+    cfg.ApiToken = d.tokenBuf;
+    // No ProjectKey / PlaneProjectId writebacks — project is per-operation.
+    cfg.TrackerType = ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf));
+    cfg.PlaneUrl = d.planeUrlBuf;
+    cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
+    cfg.PlaneApiKey = d.planeApiKeyBuf;
+    cfg.GitHubBaseUrl = d.githubBaseUrlBuf;
+    cfg.GitHubPat = d.githubPatBuf;
+    cfg.GitHubOwner = d.githubOwnerBuf;
+    cfg.GitHubRepo = d.githubRepoBuf;
+    cfg.LinearApiKey = d.linearApiKeyBuf;
+    cfg.LinearBaseUrl = d.linearBaseUrlBuf;
+    cfg.LinearTeamKey = d.linearTeamKeyBuf;
+    cfg.LinearTeamId = d.linearTeamIdBuf;
+    cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
+    SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(cfg);
+    if (cfg.GitHubBaseUrl.empty()) {
+        cfg.GitHubBaseUrl = "https://api.github.com";
+    }
+    if (cfg.LinearBaseUrl.empty()) {
+        cfg.LinearBaseUrl = "https://api.linear.app/graphql";
+    }
+}
+
+// "Test connection" probe row for the Tracker tab (P2-M12): probes the CURRENT BUFFER
+// credentials (not the saved cfg) with a throwaway backend on a worker, then renders a
+// verdict line - the same pattern the Assistant and Whisper tabs already use. First-run
+// users can now verify a token before committing it with Save & Sync.
+void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
+    if (d.trackerPrefsTestInFlight) {
+        ImGui::BeginDisabled();
+    }
+    if (ImGui::Button("Test connection")) {
+        TrackerConfig probeCfg = d.cfg;
+        CopyTrackerBuffersToConfig(d, probeCfg);
+        d.trackerPrefsTestInFlight = true;
+        d.trackerPrefsTestResult.clear();
+        d.trackerPrefsTestResultKind = 0;
+        AppController* appPtr = &app;
+        app.LaunchBackgroundTask([appPtr, probeCfg]() {
+            const TrackerReachabilityProbeResult probe = appPtr->ProbeTrackerCredentials(probeCfg);
+            appPtr->PostToMainThread([probe]() {
+                g_ui.trackerPrefsTestInFlight = false;
+                switch (probe.Kind) {
+                case TrackerReachabilityProbeKind::AuthenticatedReachable:
+                    g_ui.trackerPrefsTestResultKind = 1;
+                    g_ui.trackerPrefsTestResult =
+                        SmatchetLocalization::T("prefs.tracker.test.ok", "Connected - credentials verified.");
+                    break;
+                case TrackerReachabilityProbeKind::ReachableAuthOrConfigError:
+                    g_ui.trackerPrefsTestResultKind = 3;
+                    g_ui.trackerPrefsTestResult =
+                        std::string(SmatchetLocalization::T("prefs.tracker.test.auth",
+                                                            "Reached the server, but sign-in failed: ")) +
+                        probe.Diagnostic;
+                    break;
+                case TrackerReachabilityProbeKind::ServiceUnavailable:
+                    g_ui.trackerPrefsTestResultKind = 3;
+                    g_ui.trackerPrefsTestResult =
+                        probe.Diagnostic.empty() ? std::string(SmatchetLocalization::T("prefs.tracker.test.unavailable",
+                                                                                       "Service unavailable."))
+                                                 : probe.Diagnostic;
+                    break;
+                case TrackerReachabilityProbeKind::TransportDown:
+                default:
+                    g_ui.trackerPrefsTestResultKind = 2;
+                    g_ui.trackerPrefsTestResult = std::string(SmatchetLocalization::T("prefs.tracker.test.transport",
+                                                                                      "Couldn't reach the server: ")) +
+                                                  probe.Diagnostic;
+                    break;
+                }
+            });
+        });
+    }
+    if (d.trackerPrefsTestInFlight) {
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.tracker.test.testing", "Testing..."));
+    }
+    if (!d.trackerPrefsTestResult.empty()) {
+        const SmatchetThemeSemanticColors& sem = SmatchetTheme::GetActiveSemanticColors();
+        const ImVec4 col = d.trackerPrefsTestResultKind == 1
+                               ? sem.SuccessText
+                               : (d.trackerPrefsTestResultKind == 2 ? sem.WarningText : sem.ErrorText);
+        ImGui::PushStyleColor(ImGuiCol_Text, col);
+        ImGui::TextWrapped("%s", d.trackerPrefsTestResult.c_str());
+        ImGui::PopStyleColor();
+    }
+}
+
+// True when any field the Tracker tab edits differs between its stack buffer and the
+// saved cfg value (P2-H3 — the Assistant tab's AssistantAiFieldsDiffer pattern). Drives
+// the `Tracker *` dirty-tab marker and the close guard in drawPreferencesWindow. The
+// base-URL compares mirror loadPreferencesBuffers' seeded defaults and the backend key
+// compares normalized, so an untouched window always reads clean.
+bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
+    const std::string githubBaseSaved =
+        d.cfg.GitHubBaseUrl.empty() ? std::string("https://api.github.com") : d.cfg.GitHubBaseUrl;
+    const std::string linearBaseSaved =
+        d.cfg.LinearBaseUrl.empty() ? std::string("https://api.linear.app/graphql") : d.cfg.LinearBaseUrl;
+    return d.cfg.Domain != d.domainBuf || d.cfg.Email != d.emailBuf || d.cfg.ApiToken != d.tokenBuf ||
+           ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf)) != d.cfg.TrackerType ||
+           d.cfg.PlaneUrl != d.planeUrlBuf || d.cfg.PlaneWorkspaceSlug != d.planeWorkspaceBuf ||
+           d.cfg.PlaneApiKey != d.planeApiKeyBuf || githubBaseSaved != d.githubBaseUrlBuf ||
+           d.cfg.GitHubPat != d.githubPatBuf || d.cfg.GitHubOwner != d.githubOwnerBuf ||
+           d.cfg.GitHubRepo != d.githubRepoBuf || d.cfg.LinearApiKey != d.linearApiKeyBuf ||
+           linearBaseSaved != d.linearBaseUrlBuf || d.cfg.LinearTeamKey != d.linearTeamKeyBuf ||
+           d.cfg.LinearTeamId != d.linearTeamIdBuf || d.cfg.LinearWorkspaceUrl != d.linearWorkspaceUrlBuf;
+}
+
 } // namespace
 
-void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("Tracker", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Tracker"))) {
+void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d) {
+    const char* trackerTabLabel =
+        TrackerPrefsFieldsDiffer(d) ? "Tracker *###TrackerPrefsTab" : "Tracker###TrackerPrefsTab";
+    if (!ImGui::BeginTabItem(trackerTabLabel, nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Tracker"))) {
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Tracker;
@@ -524,6 +646,7 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
     RefreshCachedProjectsSnapshotOnOpen(d, /*isOpenNow=*/true, d.prefsTrackerTabWasOpen);
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
+    DrawTrackerTestConnection(app, d);
     DrawTrackerRecentProjects(d, currentItem);
     if (ImGui::Button("Open Views Dashboard")) {
         d.showViewsDashboard = true;
@@ -568,9 +691,7 @@ void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSessio
                                "When off, MCP listens on localhost only (127.0.0.1). When on, it binds "
                                "0.0.0.0 — reachable on your network. Set an auth token below if you enable "
                                "this.");
-    ImGui::InputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf),
-                     ImGuiInputTextFlags_Password);
-    ImGui::SetItemTooltip("Clients must send the X-Smatchet-Token header.");
+    SmatchetSecretInputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf));
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.integrations.mcp_token.help",
                                "If set, clients must send header X-Smatchet-Token with this value. If empty "
@@ -646,37 +767,7 @@ template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<
 } // namespace
 
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
-    d.cfg.Domain = d.domainBuf;
-    d.cfg.Email = d.emailBuf;
-    d.cfg.ApiToken = d.tokenBuf;
-    // No ProjectKey / PlaneProjectId writebacks — project is per-operation.
-    // Canonicalize so a hand-edited lowercase "plane"/"github" buffer value
-    // persists as the canonical PascalCase form the rest of the code (and the
-    // exact-match TrackerType == "Plane"/"GitHub" branches below) expect. The
-    // same normalizer is applied to TrackerType a few lines down. Issue #820.
-    d.cfg.TrackerType = ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf));
-    d.cfg.PlaneUrl = d.planeUrlBuf;
-    d.cfg.PlaneWorkspaceSlug = d.planeWorkspaceBuf;
-    d.cfg.PlaneApiKey = d.planeApiKeyBuf;
-    d.cfg.GitHubBaseUrl = d.githubBaseUrlBuf;
-    d.cfg.GitHubPat = d.githubPatBuf;
-    d.cfg.GitHubOwner = d.githubOwnerBuf;
-    d.cfg.GitHubRepo = d.githubRepoBuf;
-    d.cfg.LinearApiKey = d.linearApiKeyBuf;
-    d.cfg.LinearBaseUrl = d.linearBaseUrlBuf;
-    d.cfg.LinearTeamKey = d.linearTeamKeyBuf;
-    d.cfg.LinearTeamId = d.linearTeamIdBuf;
-    d.cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
-    // Issue #979 — trim leading/trailing whitespace on every credential/identity field
-    // BEFORE the base-URL empty-default below, so a whitespace-only buffer still gets the
-    // default. A trailing space in the Jira email made Atlassian 401 every request.
-    SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(d.cfg);
-    if (d.cfg.GitHubBaseUrl.empty()) {
-        d.cfg.GitHubBaseUrl = "https://api.github.com";
-    }
-    if (d.cfg.LinearBaseUrl.empty()) {
-        d.cfg.LinearBaseUrl = "https://api.linear.app/graphql";
-    }
+    CopyTrackerBuffersToConfig(d, d.cfg);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsGitHubBuf, d.cfg.NewIssueInheritFieldIdsGitHub);
@@ -752,8 +843,11 @@ namespace {
 // the tab bodies are static label strings, so drift is caught on sight when a tab gains
 // a new concept.
 struct PrefsSearchEntry {
-    const char* tab;      // canonical tab name (BeginTabItem literal)
-    const char* keywords; // lowercase, space-separated
+    const char* tab;            // canonical tab name (BeginTabItem literal) / display label
+    const char* keywords;       // lowercase, space-separated
+    const char* note = nullptr; // non-null: the setting lives OUTSIDE Preferences — the
+                                // match renders this pointer text instead of a jump chip
+                                // (P2-M10: "theme" used to send users to the wrong tab).
 };
 
 const PrefsSearchEntry kPrefsSearchIndex[] = {
@@ -770,10 +864,14 @@ const PrefsSearchEntry kPrefsSearchIndex[] = {
 #if defined(SMATCHET_WITH_WHISPER)
     {"Whisper", "dictation speech voice microphone audio transcribe push to talk hotkey whisper model recording"},
 #endif
-    {"Local data", "cache database offline local data sqlite log level verbose clear catalog projects"},
-    {"Appearance", "theme font size density compact zoom color dark light ui mode mobile date format"},
+    // P2-M10: bags pruned to labels that actually render on the tab; concepts that
+    // live outside Preferences resolve to a pointer note instead of a wrong-tab chip.
+    {"Local data", "cache database offline local data sqlite clear catalog projects"},
+    {"Appearance", "font size density compact zoom ui mode mobile date format tooltip overflow vsync wheel update"},
     {"Keyboard Shortcuts", "keyboard shortcut hotkey binding chord rebind keys keybindings"},
-    {"Grid", "grid rows tooltip hover estimate chip write badge editing markdown"},
+    {"Grid", "grid rows estimate chip write badge editing markdown"},
+    {"Themes", "theme color dark light contrast norton", "Themes: View > Appearance menu"},
+    {"Logging", "log level verbose logging", "Log level and verbose logging: Inspect > Runtime Log"},
     // Time Estimates / Work Log Templates / Quick Comments live as sub-tabs INSIDE the
     // Fields Inputs tab — their keywords jump to that top-level parent.
     {"Fields Inputs",
@@ -803,6 +901,13 @@ void DrawPrefsSearchBox(UiDrawSession& d) {
     for (std::size_t i = 0; i < needle.size(); ++i) {
         needle[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
     }
+    // P2-M10: one- and two-character substrings light up half the tab set, so wait
+    // for at least three characters of signal before matching.
+    if (needle.size() < 3) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.too_short", "type at least 3 characters"));
+        return;
+    }
     ImGui::SameLine();
     ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.found_in", "Found in:"));
     int matches = 0;
@@ -815,13 +920,17 @@ void DrawPrefsSearchBox(UiDrawSession& d) {
         // the PREVIOUS item's right edge (the standard ImGui wrapping idiom): checking
         // GetContentRegionAvail before SameLine would read a fresh-line cursor and never
         // trigger.
-        const float chipW = ImGui::CalcTextSize(entry.tab).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const char* chipText = entry.note != nullptr ? entry.note : entry.tab;
+        const float chipW = ImGui::CalcTextSize(chipText).x + ImGui::GetStyle().FramePadding.x * 2.0f;
         const float windowRightX = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
         const float nextChipEndX = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + chipW;
         if (nextChipEndX < windowRightX) {
             ImGui::SameLine();
         }
-        if (ImGui::SmallButton(entry.tab)) {
+        if (entry.note != nullptr) {
+            // Lives outside Preferences — point there instead of jumping to a wrong tab.
+            ImGui::TextDisabled("%s", entry.note);
+        } else if (ImGui::SmallButton(entry.tab)) {
             d.prefsSelectTabRequest = entry.tab;
         }
         ++matches;
@@ -840,8 +949,16 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // byte-identical to the pre-slice-4 flow.
     if (!embedded) {
         if (!d.showPreferences) {
-            resetPreferencesWindowState(d);
-            return;
+            // P2-H3: the Tracker tab is buffer-staged (unlike the mostly-autosaving
+            // sibling tabs), so closing with unsaved credential edits would silently
+            // discard them. Reopen and route the decision through the guard modal.
+            if (d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d)) {
+                d.showPreferences = true;
+                d.prefsTrackerCloseGuardOpen = true;
+            } else {
+                resetPreferencesWindowState(d);
+                return;
+            }
         }
 
         if (!beginPreferencesWindow(d)) {
@@ -854,7 +971,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     DrawPrefsSearchBox(d);
 
     if (ImGui::BeginTabBar("PreferencesTabs")) {
-        drawPreferencesTrackerTab(d);
+        drawPreferencesTrackerTab(app, d);
         drawPreferencesUserInfoTab(d);
 #if defined(SMATCHET_WITH_MCP)
         drawPreferencesIntegrationsTab(app, d);
@@ -917,6 +1034,39 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     ImGui::Spacing();
     if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
         onPreferencesSaveAndSync(app, d);
+    }
+
+    // P2-H3 close guard: entered via the close gate above when the window was dismissed
+    // with unsaved Tracker edits. Save and Discard both hand the close back to the gate
+    // with the dirty state resolved (resetPreferencesWindowState drops the buffers, so
+    // the gate's re-check short-circuits instead of reopening the modal forever).
+    if (d.prefsTrackerCloseGuardOpen) {
+        ImGui::OpenPopup("Unsaved tracker changes###PrefsTrackerCloseGuard");
+        d.prefsTrackerCloseGuardOpen = false;
+    }
+    if (ImGui::BeginPopupModal("Unsaved tracker changes###PrefsTrackerCloseGuard", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.tracker.close_guard.body",
+                                                         "The Tracker tab has unsaved edits. Save & Sync applies them; "
+                                                         "closing without saving discards them."));
+        ImGui::Spacing();
+        if (ImGui::Button("Save & Sync")) {
+            onPreferencesSaveAndSync(app, d);
+            resetPreferencesWindowState(d);
+            d.showPreferences = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Discard")) {
+            resetPreferencesWindowState(d);
+            d.showPreferences = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Keep editing")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     if (!embedded) {

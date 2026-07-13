@@ -259,4 +259,53 @@ Three patterns recur across the findings and are worth fixing at the root rather
 - **The Assistant tab's staged-edit model** — dirty `*` in the tab label, explicit Save/Discard, sticky validation banner, real 1-token handshake test (`_Assistant.cpp:243-268,750-781`) — the template P2-H3 asks the Tracker tab to copy.
 - **The pass-1 grid states landed well** — cause-aware zero-results strips with matching actions, ghost-state pruning, actionable first-run welcome with working token deep-links (`SmatchetActiveProjectGridTable.cpp:353-366,437-456,476-487`).
 
+### 8.7 Implementation status — 2026-07-13 (same day, all 39 findings)
+
+All pass-2 findings were implemented in one sweep on `claude/ux-design-critique-4vcftn`
+(verified per-cluster with the Linux `posix-core-check` compile of all UI TUs).
+
+| Finding | Status | Notes |
+|---|---|---|
+| P2-H1 | Done | Omnibar JQL now routes through the unsaved-edit snapshot/strip mechanism (`applyQueryToPaneView`); strip **Discard** also restores `cfg.JqlQuery` + re-syncs. |
+| P2-H2 | Done | "Run import" preserves ok/skipped rows and requeues only the rest; tooltips explain the semantics. |
+| P2-H3 | Done | Buffer-vs-cfg dirty check (`TrackerPrefsFieldsDiffer`), `Tracker *` tab marker, close guard modal (Save & Sync / Discard / Keep editing) that reopens the window. |
+| P2-H4 | Done | Cancel confirms when the draft has a summary/description/attachments (`NewIssueDraftHasUserContent`); grid-path auto-discard now raises a warning toast. |
+| P2-H5 | Done | Esc hides the Annotate window without wiping when a callstack or result rows exist (`annotateHidePreservesState`); explicit Close keeps the destructive reset. |
+| P2-H6 | Done | Per-toast invisible hit-test windows (display-front) consume clicks/hover; visuals stay on the foreground draw list. |
+| P2-H7 | Done | Preview download failures post back through `attachmentPreviewUpdateQueue` (new `Error` field) → card shows the error, request latch released for retry. |
+| P2-H8 | Done | "Open selected" runs on a worker with a "Downloading..." cue + disabled buttons; browser fallback and launch failure surface as toasts (`OpenAttachmentInSystemViewer` now reports outcome). |
+| P2-H9 | Done | Per-theme `SmatchetThemeSemanticColors` (ErrorText/WarningText/SuccessText) set in `ApplyStyle`; hardcoded literals swept in status bar, draft, assistant, bulk import, grid header. |
+| P2-M1 | Done | Discards containing still-queued rows route through a "Discard queued work?" confirm; dead-row discards stay one-click. |
+| P2-M2 | Done | Quick comment templates open the comments modal pre-filled (`OpenCommentsModal` prefill param) instead of posting directly. |
+| P2-M3 | Done | Esc defocuses first (`WantTextInput` gate); Close/Esc/title-X confirm "Discard comment?" when the post box is non-empty. |
+| P2-M4 | Done | Capture rejects modifier-less non-F-key combos with an inline warning; `dispatchKeybindings` stands down while capture is armed; bare-key bindings skip when `io.WantTextInput`. |
+| P2-M5 | Done | "Reset all to defaults" now confirms with the binding count. |
+| P2-M6 | Done | "Don't ask again" is staged and committed only on confirm; Reset Layout routes through the same modal (`ResetLayoutOnly`); Appearance tab gained "Ask before layout-resetting changes". |
+| P2-M7 | Done | Palette rows lead with `Title` (shared `TitleCasedSlugFromCommandId` fallback) with the id dimmed; fuzzy match includes Title; args drop `--`; destructive hint names both input paths; "Open View..." uses a category scope ("Showing Views commands only") instead of a raw id prefill. |
+| P2-M8 | Done | Opening the Notification Center calls `DismissAllLive()` (open-edge only). |
+| P2-M9 | Done | `syncLoading` includes a per-pane first-fetch signal (`snapshotRevision == 0 && IsPaneSyncLive`). |
+| P2-M10 | Mostly done | Keyword bags pruned to rendered labels; "theme"/"log level" resolve to lives-elsewhere notes; ≥3-char match. Sub-tab jump (Fields Inputs) deferred — chips still land on the parent tab. |
+| P2-M11 | Done | Picker renders the stored fetch error with a Retry (clears `fetchDone`); "  -" replaced with real empty-state strings. |
+| P2-M12 | Done | Per-backend "Test connection" probes buffer credentials via a throwaway backend on a worker (`AppController::ProbeTrackerCredentials`); verdict line in semantic colors; buffer→cfg copy factored (`CopyTrackerBuffersToConfig`). |
+| P2-M13 | Done | Stale-preview warning beside Submit when the preview seeded but the description changed since it was built. |
+| P2-M14 | Done | Stop button marks unsubmitted rows "stopped" (duplicate-safe: in-flight futures reap naturally). |
+| P2-M15 | Done | "Bulk Import Issues" window title (+ default-ini/catalog follow-ups); omnibar "Issue key"; "Issue grid"; mobile "Issues" page; "tracked issues" checkbox; toast title. |
+| P2-M16 | Done | DB-recreate confirm is action-first with destructive-red styling. |
+| P2-M17 | Done | Failures prefix "Error: " and render red in the Annotate status line; cause-and-fix copy for assign/catalog/date failures. |
+| P2-M18 | Done | Shared `Ui/SmatchetBackendDisplay.h`; status bar reuses it; pane menu "New Jira pane"; header meta popup made backend-neutral. |
+| P2-L1 | Done | Audit table empty-state row (no-events vs no-filter-match) + exact "1000 events" footer. |
+| P2-L2 | Done | Chevron prefix on actionable rows; two-step "Clear all" (Confirm/Keep). |
+| P2-L3 | Done | "Failed create/edit — won't retry automatically", "Retry failed ...", plain-language header, user-verbed statuses. |
+| P2-L4 | Done | Toolbar fallback uses the first whole word of the tooltip/command id (UTF-8-safe, no 2-byte stubs). |
+| P2-L5 | Done | "+ New Issue" unified; Sort "X" tooltip; welcome links show "Opens in your browser: <url>"; "Get a Plane API token" matches siblings. |
+| P2-L6 | Done | "Plan Docs" (menu/window/ini/test refs), "Read-Only Mode", "Bulk Import Issues". |
+| P2-L7 | Done | Layout-modal sentences are whole `T()` keys; status-bar connectivity tooltips + error-badge plurals localized (done during H9/status-bar work). |
+| P2-L8 | Done | Hand cursor on the status-bar error badge. |
+| P2-L9 | Done | Template body buffer 512 → 4096 with a live character counter + over-cap note; per-row ✖ is arm-to-confirm. |
+| P2-L10 | Done | `EnterReturnsTrue` commits from the input fields themselves. |
+| P2-L11 | Done | Shared `SmatchetSecretInputText` (Show/Hide toggle, char count, leading/trailing-whitespace warning) on all 9 masked credential fields. |
+| P2-L12 | Done | Empty state names the scanned dirs (`docs/design` + `docs/adr`); unreadable files render an explicit error body. |
+
+*Run-the-app visual verification on Windows remains the outstanding validation gap (this environment compiles but cannot launch the GUI).*
+
 *Pass 2 was produced by static reading (four parallel area reviews, findings re-verified against the tree at `develop`/`87d1b6e`); the run-the-app visual verification recommended in pass 1 still has not been performed and remains the top validation gap before acting on the High findings.*

@@ -123,23 +123,7 @@ static std::string RecentViewDisplayLabel(MainMenuDrawCtx& ctx, const std::strin
     if (c != nullptr && !c->Title.empty()) {
         return c->Title;
     }
-    static const char kPrefix[] = "view.toggle.";
-    const std::string slug =
-        (cmdId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) == 0) ? cmdId.substr(sizeof(kPrefix) - 1U) : cmdId;
-    std::string out;
-    out.reserve(slug.size());
-    bool wordStart = true;
-    for (std::size_t i = 0; i < slug.size(); ++i) {
-        const char sc = slug[i];
-        if (sc == '-' || sc == '_' || sc == '.') {
-            out.push_back(' ');
-            wordStart = true;
-            continue;
-        }
-        out.push_back(wordStart ? static_cast<char>(std::toupper(static_cast<unsigned char>(sc))) : sc);
-        wordStart = false;
-    }
-    return out;
+    return smatchet::cmd::TitleCasedSlugFromCommandId(cmdId);
 }
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
@@ -318,7 +302,7 @@ void SmatchetUI::drawMenuBarFileMenu(MainMenuDrawCtx& ctx) {
             d.showBulkExport = true;
         }
         ImGui::Separator();
-        if (ImGui::MenuItem("Read-only Mode", nullptr, d.cfg.ReadOnlyMode, true)) {
+        if (ImGui::MenuItem("Read-Only Mode", nullptr, d.cfg.ReadOnlyMode, true)) {
             d.cfg.ReadOnlyMode = !d.cfg.ReadOnlyMode;
             ConfigManager::Save(d.cfg);
         }
@@ -462,6 +446,7 @@ void SmatchetUI::requestLayoutResetAction(UiDrawSession& d, PendingLayoutResetAc
         applyPendingLayoutResetAction(d);
     } else {
         d.openLayoutResetConfirm = true;
+        d.layoutResetDontAskStaged = false; // fresh modal, fresh checkbox
     }
 }
 
@@ -478,6 +463,8 @@ void SmatchetUI::applyPendingLayoutResetAction(UiDrawSession& d) {
     case PendingLayoutResetAction::SwapPrimarySideBar:
         d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
         break;
+    case PendingLayoutResetAction::ResetLayoutOnly:
+        break; // no config change - the shared tail below resets the layout (P2-M6)
     case PendingLayoutResetAction::None:
     default:
         return;
@@ -496,36 +483,50 @@ void SmatchetUI::drawLayoutResetConfirmModal(UiDrawSession& d) {
         d.openLayoutResetConfirm = false;
     }
     if (ImGui::BeginPopupModal("Reset window layout?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-        const char* change = "This appearance change";
+        // Whole sentences per action (not a "%s resets..." fragment) so translations
+        // are never forced into English sentence order (pass-1 L7 follow-up).
+        const char* sentence =
+            SmatchetLocalization::T("layoutReset.confirm.generic", "This appearance change resets the window layout.");
         switch (d.pendingLayoutResetAction) {
         case PendingLayoutResetAction::PanelBottom:
-            change = "Moving the panel to the bottom";
+            sentence = SmatchetLocalization::T("layoutReset.confirm.panelBottom",
+                                               "Moving the panel to the bottom resets the window layout.");
             break;
         case PendingLayoutResetAction::PanelRight:
-            change = "Moving the panel to the right";
+            sentence = SmatchetLocalization::T("layoutReset.confirm.panelRight",
+                                               "Moving the panel to the right resets the window layout.");
             break;
         case PendingLayoutResetAction::SwapPrimarySideBar:
-            change = "Moving the primary side bar";
+            sentence = SmatchetLocalization::T("layoutReset.confirm.sideBar",
+                                               "Moving the primary side bar resets the window layout.");
+            break;
+        case PendingLayoutResetAction::ResetLayoutOnly:
+            sentence = SmatchetLocalization::T("layoutReset.confirm.resetOnly",
+                                               "This resets the window layout to the default arrangement.");
             break;
         case PendingLayoutResetAction::None:
         default:
             break;
         }
-        ImGui::Text("%s resets the window layout.", change);
+        ImGui::TextUnformatted(sentence);
         ImGui::TextWrapped("Your current window arrangement (docked panes, sizes, floating windows) will be replaced "
                            "with the default layout. This cannot be undone.");
         ImGui::Spacing();
-        if (ImGui::Checkbox("Don't ask again", &d.cfg.SkipLayoutResetConfirm)) {
-            ConfigManager::Save(d.cfg);
-        }
+        // Staged: committed only on confirm (P2-M6) - ticking the box then cancelling
+        // must not silently disable every future confirmation.
+        ImGui::Checkbox("Don't ask again", &d.layoutResetDontAskStaged);
         ImGui::Spacing();
         if (ImGui::Button("Reset layout and continue")) {
+            if (d.layoutResetDontAskStaged && !d.cfg.SkipLayoutResetConfirm) {
+                d.cfg.SkipLayoutResetConfirm = true; // persisted by the Save in apply below
+            }
             applyPendingLayoutResetAction(d);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
             d.pendingLayoutResetAction = PendingLayoutResetAction::None;
+            d.layoutResetDontAskStaged = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -616,7 +617,7 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
     }
     if (ImGui::MenuItem("Open View...", MenuShortcut(ctx, "ui.open_view", "Ctrl+Shift+V").c_str())) {
         commandPalette_.Open();
-        commandPalette_.SetFilterText("view.toggle.");
+        commandPalette_.SetCategoryPrefix("view.toggle.", "Views"); // P2-M7: no raw id in the box
     }
     if (ImGui::MenuItem("Show Toolbar", nullptr, d.cfg.Toolbar.Visible)) {
         d.cfg.Toolbar.Visible = !d.cfg.Toolbar.Visible;
@@ -673,7 +674,9 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
         ImGui::EndMenu();
     }
     if (ImGui::MenuItem("Reset Layout")) {
-        resetWindowLayoutToDefault(d);
+        // P2-M6: the most destructive layout action now shares the same confirm modal
+        // as the lesser panel moves (honoring the same "Don't ask again" opt-out).
+        requestLayoutResetAction(d, PendingLayoutResetAction::ResetLayoutOnly);
     }
     ImGui::EndMenu();
 }
@@ -723,7 +726,7 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.requestPerformanceFocus = true;
         recentViews_.Touch("view.toggle.performance");
     }
-    if (ImGui::MenuItem("Plan docs", MenuShortcut(ctx, "view.toggle.plan_doc_viewer", "Ctrl+Shift+D").c_str(),
+    if (ImGui::MenuItem("Plan Docs", MenuShortcut(ctx, "view.toggle.plan_doc_viewer", "Ctrl+Shift+D").c_str(),
                         d.showPlanDocViewer)) {
         d.showPlanDocViewer = true;
         d.requestPlanDocViewerFocus = true;

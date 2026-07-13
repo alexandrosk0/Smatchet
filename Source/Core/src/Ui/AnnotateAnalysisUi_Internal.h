@@ -145,6 +145,8 @@ struct AnnotateAnalysisUi::AnnotateState {
     /** Opened via grid "Annotate…" with callstack; auto-process + compact UI until raw view. */
     bool annotateStreamlinedFromGrid = false;
     bool annotatePendingAutoProcess = false;
+    /** Esc pressed while a callstack / results exist: window hides but state survives (P2-H5). */
+    bool annotateHidePreservesState = false;
 
     std::string lastCallstackIssueKey;
     bool annotateCfgDiskHydrated = false;

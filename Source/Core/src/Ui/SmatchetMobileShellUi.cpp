@@ -364,7 +364,7 @@ void SmatchetUI::drawMobileGridDockWindows(AppController& app, UiDrawSession& d,
     // The aliased wrapper Begin translates the visible "Tickets"/"Details" title while the
     // "###" suffix keeps the dock ID stable, so seedMobileGridDock's raw DockBuilder strings
     // keep matching in every language.
-    if (ImGui::Begin("Tickets###MobileGridList", nullptr, kDockWinFlags)) {
+    if (ImGui::Begin("Issues###MobileGridList", nullptr, kDockWinFlags)) {
         if (focused != nullptr) {
             drawEmbeddedFocusedGrid(app, d, *focused);
         } else {
@@ -390,7 +390,7 @@ void SmatchetUI::seedMobileGridDock(unsigned int gridDockId) {
     ImGuiID bottomNode = 0;
     ImGuiID topNode = 0;
     ::ImGui::DockBuilderSplitNode(gridDockId, ImGuiDir_Down, 0.40f, &bottomNode, &topNode);
-    ::ImGui::DockBuilderDockWindow("Tickets###MobileGridList", topNode);
+    ::ImGui::DockBuilderDockWindow("Issues###MobileGridList", topNode);
     ::ImGui::DockBuilderDockWindow("Details###MobileGridDetail", bottomNode);
     ::ImGui::DockBuilderFinish(gridDockId);
 }

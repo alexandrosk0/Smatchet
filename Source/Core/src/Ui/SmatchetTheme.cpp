@@ -51,6 +51,15 @@ SmatchetThemeAiColors gAiColors = {
 void SetSyntaxColors(const SmatchetThemeSyntaxColors& s) { gSyntaxColors = s; }
 void SetAiColors(const SmatchetThemeAiColors& a) { gAiColors = a; }
 
+// Active semantic status-text palette (P2-H9). Seeded with the dark-family values so a
+// read before the first ApplyStyle still yields usable colors.
+SmatchetThemeSemanticColors gSemanticColors = {
+    ImVec4(0.95f, 0.35f, 0.35f, 1.0f), // ErrorText
+    ImVec4(1.00f, 0.85f, 0.30f, 1.0f), // WarningText
+    ImVec4(0.45f, 0.95f, 0.55f, 1.0f), // SuccessText
+};
+void SetSemanticColors(const SmatchetThemeSemanticColors& c) { gSemanticColors = c; }
+
 // Re-apply the host-injected UI density scale on top of a freshly rebuilt style.
 // ApplyStyle resets `style = ImGuiStyle{}` every call, so this re-asserts the boot
 // density the host set via ApplyUiDensityScale. Desktop leaves the scale at 1.0 → no-op.
@@ -769,6 +778,10 @@ void SmatchetTheme::ApplyStyle(ThemeId theme) {
         ImGui::StyleColorsDark(&style);
     }
 
+    // Semantic status-text palette (P2-H9) — set for EVERY theme, including the
+    // ImGuiDefaultDark early-return path below.
+    SetSemanticColors(SmatchetTheme::BuildSemanticColorsForTheme(theme));
+
     // ImGuiDefaultDark short-circuits the Smatchet brand polish: this theme exists to surface
     // ImGui's pristine defaults (rounding, padding, HeaderHovered #4296FA, WindowBg #0F0F0F),
     // so we skip ApplyCommonStyle entirely. The freshly-constructed style above already holds
@@ -871,5 +884,33 @@ void SmatchetTheme::ApplyTouchScale(float scale) {
 const SmatchetThemeSyntaxColors& SmatchetTheme::GetSyntaxColors() { return gSyntaxColors; }
 
 const SmatchetThemeAiColors& SmatchetTheme::GetActiveAiColors() { return gAiColors; }
+
+SmatchetThemeSemanticColors SmatchetTheme::BuildSemanticColorsForTheme(ThemeId theme) {
+    switch (theme) {
+    case ThemeId::Vs2022Light:
+        // Darker, saturated variants — the dark-family pastels drop below 2:1 contrast
+        // on the light theme's near-white surfaces (the P2-H9 failure).
+        return {ImVec4(0.72f, 0.05f, 0.09f, 1.0f), ImVec4(0.58f, 0.38f, 0.00f, 1.0f),
+                ImVec4(0.05f, 0.45f, 0.15f, 1.0f)};
+    case ThemeId::HighContrast:
+        // Saturated primaries on pure black — matches the syntax-palette philosophy.
+        return {ImVec4(1.00f, 0.25f, 0.25f, 1.0f), ImVec4(1.00f, 0.80f, 0.00f, 1.0f),
+                ImVec4(0.00f, 1.00f, 0.20f, 1.0f)};
+    case ThemeId::NortonCommander:
+        // NC panel tones: light red / bright yellow / bright green read on the blue panel.
+        return {ImVec4(1.00f, 0.50f, 0.50f, 1.0f), ImVec4(1.00f, 1.00f, 0.33f, 1.0f),
+                ImVec4(0.33f, 1.00f, 0.33f, 1.0f)};
+    case ThemeId::SmatchetDark:
+    case ThemeId::ModernDark:
+    case ThemeId::Vs2022Dark:
+    case ThemeId::ImGuiDefaultDark:
+    default:
+        // Dark family — the pre-P2-H9 literals, now routed through the seam.
+        return {ImVec4(0.95f, 0.35f, 0.35f, 1.0f), ImVec4(1.00f, 0.85f, 0.30f, 1.0f),
+                ImVec4(0.45f, 0.95f, 0.55f, 1.0f)};
+    }
+}
+
+const SmatchetThemeSemanticColors& SmatchetTheme::GetActiveSemanticColors() { return gSemanticColors; }
 
 std::uint64_t SmatchetTheme::GetThemeRevision() { return g_themeRevision.load(std::memory_order_acquire); }

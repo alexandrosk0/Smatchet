@@ -1,4 +1,6 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetCommentsModalUi.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 
@@ -234,40 +236,14 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
             } else {
                 for (const auto& t : ui->cfg.QuickCommentTemplates) {
                     if (ImGui::MenuItem(t.Title.c_str())) {
-                        // Dispatch the Jira comment POST to a worker thread so the right-click
-                        // menu doesn't block the UI for the POST latency (Pillar 2 — finding #4).
-                        // Capture the issueKey + body by value; AppController& lives for the
-                        // lifetime of the app. The acknowledgement + completion toasts are
-                        // posted back to the UI thread via MainThreadDispatcher.
-                        const std::string capturedIssueKey = issueKey;
-                        const std::string commentBody =
-                            BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates);
-                        AppController* appPtr = app;
-                        SmatchetToastManager::Instance().Push(
-                            SmatchetLocalization::T("comments.queued_title", "Comment Queued"),
-                            SmatchetLocalization::Format("comments.posting_to", "Posting to %s",
-                                                         capturedIssueKey.c_str()),
-                            ToastType::Info);
-                        app->LaunchBackgroundTask([appPtr, capturedIssueKey, commentBody]() {
-                            std::string err;
-                            const bool ok = appPtr->AddIssueCommentPlain(capturedIssueKey, commentBody, err);
-                            appPtr->PostToMainThread([ok, err, capturedIssueKey]() {
-                                if (ok) {
-                                    SmatchetToastManager::Instance().Push(
-                                        SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
-                                        SmatchetLocalization::Format("comments.added_to", "Added to %s",
-                                                                     capturedIssueKey.c_str()),
-                                        ToastType::Success);
-                                } else {
-                                    SmatchetToastManager::Instance().Push(
-                                        SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
-                                        err.empty() ? SmatchetLocalization::T("toast.failed_jira_comment",
-                                                                              "Failed to post Jira comment.")
-                                                    : err.c_str(),
-                                        ToastType::Error);
-                                }
-                            });
-                        });
+                        // P2-M2: templates are fill-in-the-blanks skeletons ("- Current
+                        // owner: ", ...) — posting one to the tracker straight from the
+                        // click published the blanks verbatim, team-visible, with no
+                        // preview or undo. Open the comments modal seeded with the
+                        // resolved template instead; the user fills it in and posts from
+                        // there (or discards).
+                        OpenCommentsModal(*app, issueKey,
+                                          BuildTemplateCommentBody(issueKey, t.Id, ui->cfg.QuickCommentTemplates));
                     }
                 }
             }
@@ -289,7 +265,7 @@ void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerF
     }
 
     if (col.ColumnKind == TicketGridColumn::Kind::Id) {
-        ImGui::TextUnformatted("Issue key column (not a Jira field)");
+        ImGui::TextUnformatted("Issue key column (not a tracker field)");
         ImGui::Separator();
         ImGui::Text("Key: %s", col.Key.c_str());
         ImGui::Text("Label: %s", col.Label.c_str());
@@ -300,7 +276,7 @@ void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerF
         return;
     }
 
-    ImGui::TextUnformatted("Jira field (catalog)");
+    ImGui::TextUnformatted("Tracker field (catalog)");
     ImGui::Separator();
 
     const std::string& fieldIdForCopy = meta ? meta->Id : col.FieldId;
@@ -504,9 +480,39 @@ std::string BuildGridContextSignature(const ViewDefinition* view, const std::str
     return s;
 }
 
+bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
+    if (!d.newIssueDraft.StagedAttachments.empty()) {
+        return true;
+    }
+    static const char* const kContentFields[] = {"summary", "description"};
+    for (const char* fieldId : kContentFields) {
+        const auto it = d.newIssueDraft.FieldValues.find(fieldId);
+        if (it == d.newIssueDraft.FieldValues.end()) {
+            continue;
+        }
+        for (std::size_t i = 0; i < it->second.size(); ++i) {
+            const unsigned char c = static_cast<unsigned char>(it->second[i]);
+            if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d) {
     if (!d.newIssueDraftActive && !d.newIssueCreateInFlight) {
         return;
+    }
+    // The grid path has no confirmation seam (the view/query is already switching), so a
+    // draft with real content at least announces its own destruction instead of vanishing
+    // silently (P2-H4).
+    if (d.newIssueDraftActive && NewIssueDraftHasUserContent(d)) {
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.new_issue", "New issue"),
+            SmatchetLocalization::T("draft.discarded_on_view_change",
+                                    "The in-progress new-issue draft was discarded by the view change."),
+            ToastType::Warning);
     }
     d.newIssueDraftActive = false;
     d.newIssueScrollDraftRowIntoViewPending = false;

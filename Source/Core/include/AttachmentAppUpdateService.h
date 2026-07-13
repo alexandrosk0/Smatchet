@@ -45,9 +45,11 @@ class AttachmentAppUpdateService {
     void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType);
 
     /// Download to a temp file then open it in the OS default app (matches the Unreal attachment
-    /// viewer). Download failure falls back to OpenUrl.
-    void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
-                                      const std::string& mimeType);
+    /// viewer). Download failure falls back to OpenUrl (reported via *outFellBackToUrl so the UI
+    /// can say so — P2-H8). Returns true only when the local viewer launch succeeded; failure
+    /// detail lands in *outError when provided.
+    bool OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType,
+                                      std::string* outError = nullptr, bool* outFellBackToUrl = nullptr);
 
     /// Download a supported image attachment to a temp file and hand it to the in-app preview handler.
     /// Returns false (with an optional reason via outError) when no preview handler is set, the mime

@@ -137,6 +137,24 @@ void AppController::SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> fa
     backendFactory_ = std::move(factory);
 }
 
+TrackerReachabilityProbeResult AppController::ProbeTrackerCredentials(const TrackerConfig& probeCfg) {
+    TrackerReachabilityProbeResult result;
+    if (!backendFactory_) {
+        result.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
+        result.Diagnostic = "Backend factory not initialized.";
+        return result;
+    }
+    // Throwaway instance built from the caller's cfg (the factory contract already
+    // forbids disk re-reads), so unsaved buffer credentials can be probed safely.
+    const std::unique_ptr<ITrackerBackend> probeBackend = backendFactory_->Create(probeCfg.TrackerType, probeCfg);
+    if (!probeBackend) {
+        result.Kind = TrackerReachabilityProbeKind::ServiceUnavailable;
+        result.Diagnostic = "No backend available for tracker type '" + probeCfg.TrackerType + "'.";
+        return result;
+    }
+    return probeBackend->Connectivity().ProbeReachability(probeCfg);
+}
+
 // Out-of-line definition (ODR-use in map lookups; C++14).
 const std::string AppController::kDefaultPaneId = "main";
 

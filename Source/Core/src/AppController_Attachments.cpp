@@ -15,9 +15,10 @@ void AppController::OpenAttachment(const std::string& url, const std::string& fi
     attachmentAppUpdate_->OpenAttachment(url, filename, mimeType);
 }
 
-void AppController::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
-                                                const std::string& mimeType) {
-    attachmentAppUpdate_->OpenAttachmentInSystemViewer(url, filename, mimeType);
+bool AppController::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
+                                                 const std::string& mimeType, std::string* outError,
+                                                 bool* outFellBackToUrl) {
+    return attachmentAppUpdate_->OpenAttachmentInSystemViewer(url, filename, mimeType, outError, outFellBackToUrl);
 }
 
 bool AppController::DownloadAttachmentForPreview(const std::string& url, const std::string& filename,

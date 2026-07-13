@@ -10,6 +10,7 @@
 #if defined(SMATCHET_WITH_WHISPER)
 
 #include "SmatchetPreferencesUi_detail.h"
+#include "Ui/SmatchetSecretInput.h"
 #include "Commands/IAppThreading.h"
 #include "HotkeyParse.h"
 #include "Logger.h"
@@ -338,7 +339,7 @@ void DrawWhisperApiKey(UiDrawSession& d, WhisperPrefsTabState& state) {
         std::snprintf(state.keyBuf, sizeof(state.keyBuf), "%s", d.cfg.WhisperApiKey.c_str());
         state.keyBufSeeded = true;
     }
-    if (ImGui::InputText("##WhisperApiKey", state.keyBuf, sizeof(state.keyBuf), ImGuiInputTextFlags_Password)) {
+    if (SmatchetSecretInputText("##WhisperApiKey", state.keyBuf, sizeof(state.keyBuf))) {
         d.cfg.WhisperApiKey = state.keyBuf;
         MarkPrefsDirty(d);
     }

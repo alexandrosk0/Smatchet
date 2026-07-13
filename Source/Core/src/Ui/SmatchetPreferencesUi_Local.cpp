@@ -28,6 +28,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetHelpMarker.h"
+#include "Ui/SmatchetDestructiveButton.h"
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
@@ -135,11 +136,16 @@ void DrawLocalDataRecreateDbSection(SmatchetUI& ui, AppController& app, UiDrawSe
             "This removes cached issues and any queued offline writes stored on this machine. It does not "
             "delete anything on the tracker. Continue?");
         ImGui::Separator();
+        // P2-M16: action-first order + the shared destructive styling (this modal was
+        // the one Cancel-first outlier).
+        SmatchetPushDestructiveButtonColors();
+        const bool deleteClicked = ImGui::Button("Delete and recreate");
+        SmatchetPopDestructiveButtonColors();
+        ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
             ImGui::CloseCurrentPopup();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Delete and recreate")) {
+        if (deleteClicked) {
             std::string err;
             if (app.RecreateLocalCacheDatabase(err)) {
                 SmatchetToastManager::Instance().Push(
@@ -398,6 +404,13 @@ void DrawAppearanceDisplaySection(UiDrawSession& d) {
     SmatchetHelpMarker::Render("prefs.appearance.vsync.help",
                                "Synchronize rendering with the monitor refresh rate. Disabling uncaps the "
                                "frame rate (higher CPU/GPU usage).");
+    // P2-M6: the confirm modal's "Don't ask again" needs a discoverable way back on.
+    bool askBeforeLayoutReset = !d.cfg.SkipLayoutResetConfirm;
+    if (ImGui::Checkbox("Ask before layout-resetting changes", &askBeforeLayoutReset)) {
+        d.cfg.SkipLayoutResetConfirm = !askBeforeLayoutReset;
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("Confirm before panel moves and Reset Layout replace your window arrangement.");
 }
 
 // Updates section of the Appearance tab: auto-check + prerelease toggles, manual check, skip-version.
@@ -442,7 +455,7 @@ void DrawAppearanceNotificationsSection(UiDrawSession& d) {
     ImGui::Spacing();
     ImGui::TextUnformatted("Ticket change monitor");
     ImGui::Separator();
-    if (ImGui::Checkbox("Notify me when tracked tickets change", &d.cfg.TicketChangeMonitorEnabled)) {
+    if (ImGui::Checkbox("Notify me when tracked issues change", &d.cfg.TicketChangeMonitorEnabled)) {
         MarkPrefsDirty(d);
     }
     ImGui::SetItemTooltip("Periodically poll the backend for changes to the open panes' tickets "

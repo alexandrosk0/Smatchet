@@ -384,18 +384,32 @@ void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const st
     deps_.OpenUrl(url);
 }
 
-void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
-                                                              const std::string& mimeType) {
+bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename,
+                                                              const std::string& mimeType, std::string* outError,
+                                                              bool* outFellBackToUrl) {
+    const auto setError = [outError](const std::string& message) {
+        if (outError != nullptr) {
+            *outError = message;
+        }
+    };
+    if (outFellBackToUrl != nullptr) {
+        *outFellBackToUrl = false;
+    }
     if (url.empty()) {
-        return;
+        setError("Attachment has no URL.");
+        return false;
     }
     std::string outFilePath;
     std::string outMime;
-    std::string outError;
-    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, outError)) {
-        LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", outError.c_str());
+    std::string downloadError;
+    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, downloadError)) {
+        LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", downloadError.c_str());
+        setError(downloadError);
+        if (outFellBackToUrl != nullptr) {
+            *outFellBackToUrl = true;
+        }
         deps_.OpenUrl(url);
-        return;
+        return false;
     }
     bool launchOk = false;
 #if defined(_WIN32)
@@ -416,6 +430,10 @@ void AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
         LOG_ERROR("OpenAttachmentInSystemViewer: xdg-open failed path=%s", TruncateForLog(outFilePath, 300).c_str());
     }
 #endif
+    if (!launchOk) {
+        setError("The file downloaded but the system viewer failed to launch.");
+    }
+    return launchOk;
 }
 
 bool AttachmentAppUpdateService::DownloadAttachmentForPreview(const std::string& url, const std::string& filename,

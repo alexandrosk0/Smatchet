@@ -360,7 +360,7 @@ void DrawGridWelcomeState(ActiveProjectDrawCtx& ctx) {
          "https://id.atlassian.com/manage-profile/security/api-tokens"},
         {"GitHub — a personal access token with repo scope", "Get a GitHub token",
          "https://github.com/settings/tokens"},
-        {"Plane — workspace URL and a personal API token", "Plane API docs",
+        {"Plane — workspace URL and a personal API token", "Get a Plane API token",
          "https://docs.plane.so/api-reference/introduction"},
         {"Linear — a personal API key", "Get a Linear API key", "https://linear.app/settings/api"},
     };
@@ -373,6 +373,8 @@ void DrawGridWelcomeState(ActiveProjectDrawCtx& ctx) {
         if (ImGui::SmallButton(SmatchetLocalization::TranslateSource(kHints[i].linkLabel))) {
             ctx.app.OpenUrl(kHints[i].url);
         }
+        // P2-L5: external-link cue — say where the browser is about to go.
+        ImGui::SetItemTooltip("Opens in your browser: %s", kHints[i].url);
         ImGui::PopID();
     }
     ImGui::Spacing();
@@ -486,8 +488,13 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         return;
     }
     if (ctx.tickets.empty()) {
+        // P2-M9: the session-scoped flags below only track the INITIAL sync; every pane
+        // runs its own live sync, so a pane mid-first-fetch (sync live, no snapshot rows
+        // published yet) must read as loading too — not "No issues match this view."
+        const bool paneFirstFetchLoading = ctx.pane.snapshotRevision == 0 && ctx.app.IsPaneSyncLive(ctx.pane.id);
         const bool syncLoading = d.initialTicketSyncLoading || d.fieldCatalogLoading ||
-                                 d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted;
+                                 d.connectivityRecoveryTicketFetchLoading || !d.initialTicketSyncStarted ||
+                                 paneFirstFetchLoading;
         if (syncLoading || ctx.trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error) {
             ctx.pane.filteredIndices.clear();
             ctx.pane.gridState.RectSel.ClearAll();

@@ -10,6 +10,7 @@
 #if defined(SMATCHET_WITH_AI)
 
 #include "SmatchetPreferencesUi_detail.h"
+#include "Ui/SmatchetSecretInput.h"
 // clang-format off
 // SMATCHET_DEVIATION(rule=duplication; reason=the WIN32 lean-and-mean preamble + AI-cluster include run is grandfathered boilerplate shared with SmatchetPreferencesUi_Whisper.cpp and SmatchetAiAssistantUi.cpp; adding the Commands/IMainThreadPoster.h include (fan-in Phase 6 T4 dispatcher de-publicizing) re-hashed the clone windows vs both siblings — not a real copy-paste; owner=orchestrator; revisit=when the AI-surface include prologue is factored into a shared header)
 // clang-format on
@@ -558,7 +559,7 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
     if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
         const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
         const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
-        if (ImGui::InputText(keyLabel, b.openAiKeyBuf, sizeof(b.openAiKeyBuf), ImGuiInputTextFlags_Password)) {
+        if (SmatchetSecretInputText(keyLabel, b.openAiKeyBuf, sizeof(b.openAiKeyBuf))) {
             work.AiApiKey = b.openAiKeyBuf;
             ClearStaleTestResult(d);
         }
@@ -581,8 +582,7 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
                                         "api.openai.com", consentModalProvider);
         }
     } else if (selectedKind == AiProvider::Anthropic) {
-        if (ImGui::InputText("Anthropic API key", b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf),
-                             ImGuiInputTextFlags_Password)) {
+        if (SmatchetSecretInputText("Anthropic API key", b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf))) {
             work.AiAnthropicApiKey = b.anthropicKeyBuf;
             ClearStaleTestResult(d);
         }
@@ -605,8 +605,7 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
             ClearStaleTestResult(d);
         }
     } else if (selectedKind == AiProvider::DeepSeek) {
-        if (ImGui::InputText("DeepSeek API key", b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf),
-                             ImGuiInputTextFlags_Password)) {
+        if (SmatchetSecretInputText("DeepSeek API key", b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf))) {
             work.AiDeepSeekApiKey = b.deepseekKeyBuf;
             ClearStaleTestResult(d);
         }

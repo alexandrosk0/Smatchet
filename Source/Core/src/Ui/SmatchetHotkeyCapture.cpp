@@ -42,7 +42,23 @@ ImGuiKey FirstBindableKeyPressedThisFrame() {
     return ImGuiKey_None;
 }
 
+// Frame stamp of the most recent frame any rebind control spent in capture mode.
+int g_hotkeyCaptureArmedFrame = -10;
+
+// A combo with no Ctrl/Alt/Shift/Win and a non-F-key main key would fire on plain
+// typing (bind "K" and every k in a comment triggers the command). Same rule the
+// Whisper hotkey capture enforces (P2-M4); F1-F12 are allowed bare because they
+// never collide with text entry.
+bool HotkeyNeedsModifier(const ImGuiBugHotkey& hk) {
+    if (hk.ctrl || hk.shift || hk.alt || hk.super) {
+        return false;
+    }
+    return !(hk.key >= ImGuiKey_F1 && hk.key <= ImGuiKey_F12);
+}
+
 } // namespace
+
+bool HotkeyCaptureArmedRecently() { return ImGui::GetFrameCount() - g_hotkeyCaptureArmedFrame <= 1; }
 
 bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
     const ImGuiKey pressed = FirstBindableKeyPressedThisFrame();
@@ -76,16 +92,31 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
             capturing = true;
         }
     } else {
+        g_hotkeyCaptureArmedFrame = ImGui::GetFrameCount();
         ImGui::TextColored(
             ImVec4(0.95f, 0.85f, 0.30f, 1.0f), "%s",
             SmatchetLocalization::T("keybindings.editor.capturing", "Press a key combo... (Esc to cancel)"));
+        // One rebind control captures at a time, so a single shared flag is enough to
+        // keep the modifier warning up across frames until this capture ends.
+        static bool s_showNeedsModifierWarning = false;
+        if (s_showNeedsModifierWarning) {
+            ImGui::TextColored(
+                ImVec4(1.0f, 0.45f, 0.45f, 1.0f), "%s",
+                SmatchetLocalization::T("keybindings.editor.needs_modifier",
+                                        "Include a modifier (Ctrl, Alt, Shift, or Win) - or an F-key alone."));
+        }
         // Esc cancels without clobbering the existing combo; otherwise commit on the
         // first bindable key press.
         if (ImGui::IsKeyPressed(ImGuiKey_Escape, /*repeat*/ false)) {
             capturing = false;
+            s_showNeedsModifierWarning = false;
         } else {
             ImGuiBugHotkey hk;
-            if (CaptureImGuiHotkeyThisFrame(hk)) {
+            const bool captured = CaptureImGuiHotkeyThisFrame(hk);
+            if (captured && HotkeyNeedsModifier(hk)) {
+                s_showNeedsModifierWarning = true; // reject; stay capturing (P2-M4)
+            } else if (captured) {
+                s_showNeedsModifierWarning = false;
                 out = StringifyImGuiHotkey(hk);
                 capturing = false;
                 committed = true;

@@ -200,7 +200,7 @@ void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
 void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const TrackerConfig& cfg,
                               const CachedTicket* lastVisibleTicket) {
     ImGui::TableSetColumnIndex(0);
-    if (ImGui::SmallButton("+ New issue")) {
+    if (ImGui::SmallButton("+ New Issue")) { // P2-L5: match the header button label
         if (lastVisibleTicket) {
             const std::vector<std::string>& inheritIds =
                 (cfg.TrackerType == "Plane")
@@ -362,7 +362,11 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
             d.gridEditError = "Create failed (" + d.newIssueQueueFallbackError + ") and queue offline failed.";
         }
     }
-    if (ImGui::Button("Cancel", draftActionBtn)) {
+    // P2-H4: Cancel is instant only while the draft is still empty seed data. Once the
+    // user has typed a summary/description or staged attachments, the click routes
+    // through a Discard/Keep confirm — up to 64 KB of writing should not die to one
+    // stray click next to Create.
+    const auto discardDraft = [&d]() {
         d.newIssueDraftActive = false;
         d.newIssueFocusSummaryPending = false;
         d.newIssueDraft = IssueDraft{};
@@ -372,6 +376,27 @@ void DrawDraftIdColumnCell(AppController& app, UiDrawSession& d) {
         d.newIssueQueueFallbackError.clear();
         d.gridEditError.clear();
         d.gridEditSuccess.clear();
+    };
+    if (ImGui::Button("Cancel", draftActionBtn)) {
+        if (NewIssueDraftHasUserContent(d)) {
+            ImGui::OpenPopup("Discard draft?##newissue_cancel_confirm");
+        } else {
+            discardDraft();
+        }
+    }
+    if (ImGui::BeginPopup("Discard draft?##newissue_cancel_confirm")) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("draft.cancel_confirm",
+                                                       "Discard this draft? Typed fields and staged "
+                                                       "attachments will be lost."));
+        if (ImGui::Button("Discard draft")) {
+            discardDraft();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Keep editing")) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
     if (ImGui::Button("Add attachment...", draftActionBtn)) {
         runAttachmentPicker();
@@ -616,7 +641,7 @@ void DrawDraftFieldColumnCell(AppController& app, UiDrawSession& d, const std::v
     // "(required)" line right under its input. The red FrameBg already flags the cell; this
     // adds a textual cue so the cause is obvious without having to read the banner.
     if (isRequired && isMissing) {
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.55f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
         ImGui::TextUnformatted(SmatchetLocalization::T("field.required_inline_hint", "(required)"));
         ImGui::PopStyleColor();
     }

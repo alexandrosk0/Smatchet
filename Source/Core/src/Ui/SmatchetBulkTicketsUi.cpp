@@ -1,3 +1,4 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetUI.h"
 
 #include "AppController.h"
@@ -10,6 +11,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
 
@@ -401,7 +403,7 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
     }
 
     if (!d.bulkImportError.empty()) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", d.bulkImportError.c_str());
+        ImGui::TextColored(SmatchetTheme::GetActiveSemanticColors().ErrorText, "%s", d.bulkImportError.c_str());
     }
 }
 
@@ -427,22 +429,62 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
         d.gridEditSuccess.clear();
         d.bulkImportRunning = true;
         d.bulkImportCompleted = 0;
-        d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), "queued");
+        // P2-H2: NEVER requeue rows that already succeeded — re-running after a partial
+        // failure used to reset every "ok KEY" row to "queued" and CREATE IT AGAIN in the
+        // tracker (silent duplicates). Terminal-success rows keep their status and count
+        // as completed; only failed / parse-error / never-run rows are requeued, so the
+        // same button IS the "retry failed rows" action.
+        const std::size_t nRows = d.bulkImportPreview.Rows.size();
+        if (d.bulkImportStatus.size() != nRows) {
+            d.bulkImportStatus.assign(nRows, "queued");
+        }
+        for (std::size_t i = 0; i < nRows; ++i) {
+            std::string& rowStatus = d.bulkImportStatus[i];
+            const bool succeeded = rowStatus.rfind("ok", 0) == 0 || rowStatus.rfind("skipped", 0) == 0;
+            if (succeeded) {
+                ++d.bulkImportCompleted;
+            } else {
+                rowStatus = "queued";
+            }
+        }
         BulkImportAbandonFutures(d);
-        d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
+        d.bulkImportFutures.resize(nRows);
     }
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 42.0f);
         ImGui::TextUnformatted(
             "Creates new issues and updates existing keys. Rows with no field changes vs the cached "
-            "ticket are skipped (no Jira call). Update rows still fetching into cache wait until the "
-            "load finishes so skips can apply; keys that never appear in cache are still sent to Jira.");
+            "ticket are skipped (no tracker call). Re-running only retries rows that failed — rows "
+            "already created or skipped are never resubmitted. Update rows still fetching into cache "
+            "wait until the load finishes so skips can apply.");
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
     if (!canRun)
         ImGui::EndDisabled();
+    // P2-M14: a running import can be stopped without destroying the per-row results —
+    // previously the only way out was closing the window, which erased the Status column.
+    if (d.bulkImportRunning) {
+        ImGui::SameLine();
+        if (ImGui::Button("Stop")) {
+            // Mark only NOT-YET-SUBMITTED rows as stopped (terminal, so the picker skips
+            // them and Run can requeue them later). In-flight rows keep their futures and
+            // reap normally — abandoning them would lose the result of a create that still
+            // lands server-side, and re-running such a row would duplicate it.
+            for (std::size_t i = 0; i < d.bulkImportStatus.size(); ++i) {
+                const std::string& rowStatus = d.bulkImportStatus[i];
+                if (rowStatus == "queued" || rowStatus == "waiting for cache…") {
+                    d.bulkImportStatus[i] = "stopped";
+                    ++d.bulkImportCompleted;
+                }
+            }
+        }
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
+            ImGui::SetTooltip("Stop submitting further rows. Rows already sent finish and keep their "
+                              "result; stopped rows can be re-run.");
+        }
+    }
 }
 
 /** Render the per-row changes cell for an update row (field-count + diff tooltip). */
@@ -557,7 +599,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestBulkImportFocus;
     // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
     prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
-    if (!ImGui::Begin("Bulk import tickets", &d.showBulkImport)) {
+    if (!ImGui::Begin("Bulk Import Issues", &d.showBulkImport)) { // P2-M15: one name everywhere
         if (wantFocus) {
             d.requestBulkImportFocus = false;
         }

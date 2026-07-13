@@ -44,6 +44,10 @@ void GridSelectAllRows(GridPane& pane, const std::vector<CachedTicket>& tickets)
 
 std::string BuildGridContextSignature(const ViewDefinition* view, const std::string& jqlQuery);
 void CancelUnfinishedNewIssueForGridChange(UiDrawSession& d);
+/// True when the new-issue draft row holds user-entered work worth guarding: a
+/// non-whitespace summary or description, or staged attachments (P2-H4). Inherited
+/// seed fields (assignee, priority, ...) alone do not count as content.
+bool NewIssueDraftHasUserContent(const UiDrawSession& d);
 
 // Consolidated Shared Utilities
 bool ImGuiEffectiveKeyCtrl();

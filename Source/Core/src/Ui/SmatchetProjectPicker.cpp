@@ -5,6 +5,7 @@
 #include "ITrackerBackend.h"
 #include "Logger.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetTheme.h"
 #include "SmatchetProjectPicker_detail.h"
 
 #include "imgui.h"
@@ -47,7 +48,7 @@ bool DrawRecentSection(const std::string& backendKind, const std::string& endpoi
         ++recentShown;
     }
     if (recentShown == 0) {
-        ImGui::TextDisabled("  -");
+        ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.recent.none", "No recent projects"));
     }
     return changed;
 }
@@ -99,9 +100,24 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
             ImGui::TextDisabled("  %s", SmatchetLocalization::T("draft.project.loading", "Loading..."));
         } else {
             std::vector<RemoteProject> snapshot;
+            std::string fetchError;
             {
                 std::lock_guard<std::mutex> lk(state.fetchMutex);
                 snapshot = state.fetchedAll;
+                fetchError = state.fetchError;
+            }
+            // P2-M11: the worker stored the failure but nothing rendered it — a bad or
+            // expired token made the picker permanently, inexplicably empty for the
+            // session (fetchDone latches). Show the error and let Retry re-kick.
+            if (!fetchError.empty()) {
+                ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().ErrorText);
+                ImGui::TextWrapped("%s",
+                                   SmatchetLocalization::Format("draft.project.fetch_failed",
+                                                                "Couldn't load projects: %s", fetchError.c_str()));
+                ImGui::PopStyleColor();
+                if (ImGui::SmallButton(SmatchetLocalization::T("draft.project.retry", "Retry"))) {
+                    state.fetchDone.store(false); // next frame re-kicks the fetch
+                }
             }
             int allShown = 0;
             for (const auto& p : snapshot) {
@@ -120,8 +136,11 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
                 ImGui::PopID();
                 ++allShown;
             }
-            if (allShown == 0) {
-                ImGui::TextDisabled("  -");
+            if (allShown == 0 && fetchError.empty()) {
+                ImGui::TextDisabled("  %s", filter.empty()
+                                                ? SmatchetLocalization::T("draft.project.none", "No projects found.")
+                                                : SmatchetLocalization::T("draft.project.none_filtered",
+                                                                          "No projects match the filter."));
             }
         }
         ImGui::TreePop();

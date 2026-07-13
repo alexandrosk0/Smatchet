@@ -8,6 +8,7 @@
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetToast.h"
 
 // SMATCHET_DEVIATION(rule=duplication; reason=idiomatic per-TU ImGui-localization preamble (imgui
 // includes + `#define ImGui SmatchetLocalizedImGui` wrapper + the Win32 lean-and-mean guard) shared
@@ -509,6 +510,14 @@ static bool QueueAttachmentPreviewRequest(AppController& app, AttachmentWindowEn
             LOG_WARN("SmatchetUI: preview request failed reason=%s file=%s err=%s", capturedReason.c_str(),
                      capturedFilename.c_str(),
                      previewError.empty() ? "Failed to start preview download." : previewError.c_str());
+            // P2-H7: surface the failure to the card instead of leaving it on
+            // "Loading..." forever. Same mutex-protected queue as the success path.
+            std::lock_guard<std::mutex> lock(g_ui.attachmentPreviewMutex);
+            AttachmentPreviewUpdate failedUpdate;
+            failedUpdate.Filename = capturedFilename;
+            failedUpdate.Url = capturedUrl;
+            failedUpdate.Error = previewError.empty() ? std::string("Preview download failed.") : previewError;
+            g_ui.attachmentPreviewUpdateQueue.push_back(std::move(failedUpdate));
             return;
         }
         LOG_DEBUG("SmatchetUI: preview request completed reason=%s file=%s", capturedReason.c_str(),
@@ -703,6 +712,14 @@ static void ApplyAttachmentPreviewUpdates(UiDrawSession& d, const std::deque<Att
         if (targetIndex < 0 && d.attachmentWindowSelectedIndex >= 0 &&
             d.attachmentWindowSelectedIndex < static_cast<int>(d.attachmentWindowEntries.size())) {
             targetIndex = d.attachmentWindowSelectedIndex;
+        }
+        if (targetIndex >= 0 && !nextPreviewUpdate.Error.empty()) {
+            // Failed download (P2-H7): show the error on the card and release the request
+            // latch so selecting the attachment again retries the download.
+            AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(targetIndex)];
+            entry.PreviewError = nextPreviewUpdate.Error;
+            entry.PreviewRequestIssued = false;
+            continue;
         }
         if (targetIndex >= 0) {
             AttachmentWindowEntry& entry = d.attachmentWindowEntries[static_cast<size_t>(targetIndex)];
@@ -980,12 +997,57 @@ void SmatchetUI::drawAttachmentDetailsPane(AttachmentPreviewDrawCtx& ctx) {
         ImGui::Image(selectedEntry.ThumbnailTextureData->GetTexRef(), ImVec2(drawSize.Width, drawSize.Height));
     }
 #endif
+    // P2-H8: the download behind "Open selected" can take up to ~120 s — run it on a
+    // worker instead of freezing the UI thread, disable the button while in flight, and
+    // toast when the result silently changed shape (browser fallback / launch failure).
+    const bool openInFlight = !d.attachmentOpenInFlightUrl.empty();
+    if (openInFlight) {
+        ImGui::BeginDisabled();
+    }
     if (ImGui::Button("Open selected")) {
-        app.OpenAttachmentInSystemViewer(selectedEntry.Url, selectedEntry.Filename, selectedEntry.MimeType);
+        d.attachmentOpenInFlightUrl = selectedEntry.Url;
+        const std::string openUrl = selectedEntry.Url;
+        const std::string openFilename = selectedEntry.Filename;
+        const std::string openMime = selectedEntry.MimeType;
+        app.LaunchBackgroundTask([&app, openUrl, openFilename, openMime]() {
+            std::string openError;
+            bool fellBackToUrl = false;
+            const bool openedLocally =
+                app.OpenAttachmentInSystemViewer(openUrl, openFilename, openMime, &openError, &fellBackToUrl);
+            app.PostToMainThread([openUrl, openFilename, openError, openedLocally, fellBackToUrl]() {
+                if (g_ui.attachmentOpenInFlightUrl == openUrl) {
+                    g_ui.attachmentOpenInFlightUrl.clear();
+                }
+                if (openedLocally) {
+                    return;
+                }
+                if (fellBackToUrl) {
+                    SmatchetToastManager::Instance().Push(
+                        SmatchetLocalization::T("toast.attachment.open", "Open attachment"),
+                        SmatchetLocalization::Format("attachment.open.url_fallback",
+                                                     "Download failed (%s) - opened \"%s\" in your browser instead.",
+                                                     openError.c_str(), openFilename.c_str()),
+                        ToastType::Warning);
+                } else {
+                    SmatchetToastManager::Instance().Push(
+                        SmatchetLocalization::T("toast.attachment.open", "Open attachment"),
+                        SmatchetLocalization::Format("attachment.open.launch_failed",
+                                                     "Downloaded \"%s\" but couldn't open it: %s", openFilename.c_str(),
+                                                     openError.c_str()),
+                        ToastType::Error);
+                }
+            });
+        });
     }
     ImGui::SameLine();
     if (ImGui::Button("Open URL externally")) {
         app.OpenUrl(selectedEntry.Url);
+    }
+    if (openInFlight) {
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::Format("attachment.open.downloading", "Downloading \"%s\"...",
+                                                               selectedEntry.Filename.c_str()));
     }
     ImGui::SameLine();
     if (ImGui::Button("Close")) {

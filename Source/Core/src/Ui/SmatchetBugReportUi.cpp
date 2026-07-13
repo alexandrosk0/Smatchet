@@ -10,6 +10,7 @@
 #include "Diagnostics/BugReportService.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetToast.h"
+#include "SmatchetTheme.h"
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
@@ -258,6 +259,19 @@ void DrawActions(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
     const bool ctrlEnter = ImGui::IsKeyDown(ImGuiKey_LeftCtrl) || ImGui::IsKeyDown(ImGuiKey_RightCtrl);
     const bool submitKey = ctrlEnter && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
 
+    // P2-M13: once the egress preview has seeded, IT is what Submit sends
+    // (BodyOverride). If the description changed since the preview was built
+    // (bugReportPreviewDirty) and the preview didn't silently refresh (user-edited, or
+    // the header is collapsed so the regen never ran), say so — otherwise typed
+    // description text is silently excluded from the app's own feedback channel.
+    if (d.bugReportPreviewSeeded && d.bugReportPreviewDirty && !d.bugReportPreviewBuf.empty()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().WarningText);
+        ImGui::TextWrapped(
+            "%s", SmatchetLocalization::T("bugreport.preview_stale",
+                                          "The preview is out of date - description changes since it was built "
+                                          "won't be sent. Edit the preview (or reopen it) to include them."));
+        ImGui::PopStyleColor();
+    }
     if (!canSubmit) {
         ImGui::BeginDisabled();
     }
