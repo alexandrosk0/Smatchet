@@ -71,7 +71,7 @@ std::string ExtractUrlHost(const std::string& url) {
     // Strip userinfo (everything through the last '@') BEFORE the port handling below —
     // otherwise "https://jira.example.com:443@evil.com/p.png" is truncated at the
     // userinfo's ':' to the tracker's own host and the fetch escapes to evil.com
-    // (SSRF bypass of the audit-#14 confinement; found in PR #1813 review).
+    // (SSRF bypass of the audit-#14 same-origin confinement).
     const std::size_t atSign = hostPort.rfind('@');
     if (atSign != std::string::npos) {
         hostPort = hostPort.substr(atSign + 1);
