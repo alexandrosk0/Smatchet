@@ -9,10 +9,16 @@ entry per the configured interval, writes per-PR state to
 `%LOCALAPPDATA%/Smatchet/merge-watch/state/<pr>.json`, emits structured
 stdout per poll cycle.
 
-Phase-1 scope: poll + observe only. No auto-merge (Phase 2), no triage
-(Phase 3), no notify (Phase 4). The daemon parses `merge-gates.sh`
-status output but does NOT act on PASS / FAIL — that's the orchestrator's
-job until Phase 2 lands the auto-merge branch.
+Scope has grown past the original poll-only Phase 1: the daemon now acts
+on the parsed `merge-gates.sh` state. A GATES_PASSED PR drives squash
+auto-merge + cascade to stacked children (Phase 2 — `handle_pass` →
+`squash_merge_pr`), BLOCKED on CodeRabbit findings drives the triage
+classifier (Phase 3 — `invoke_triage`), and terminal states fire
+human-facing notification (Phase 4a — `smatchet-notify.sh`). The
+auto-merge path is live, not observe-only: once gates pass the daemon
+squash-merges without further prompting. Env knobs below tune the
+surrounding behaviour (sanitizer auto-act, CR grace cycles), not whether
+a clean PASS merges.
 
 Usage:
   merge-watcher daemon                # foreground (default)
