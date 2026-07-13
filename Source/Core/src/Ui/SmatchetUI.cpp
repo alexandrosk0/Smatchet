@@ -797,6 +797,22 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
     }
 }
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Test seam: the live SmatchetUI whose dispatchKeybindings last ran this frame. No other accessor
+// reaches the live instance (UiTestScenario surfaces only the AppController + the engine), so a
+// bucket-E test that programmatically rebinds a hotkey needs this to trigger MarkKeybindingsDirty()
+// and force the dispatch-cache rebuild — the exact rebind→dirty→rebuild→fire seam that was the
+// keybindings-editor residue. Compiled out entirely in ship builds (zero cost).
+namespace {
+SmatchetUI* g_uiTestActiveInstance = nullptr;
+} // namespace
+extern "C" void SmatchetUiTestMarkKeybindingsDirty() {
+    if (g_uiTestActiveInstance != nullptr) {
+        g_uiTestActiveInstance->MarkKeybindingsDirty();
+    }
+}
+#endif
+
 // Rebuilds keybindingCache_ from cfg.Keybindings: parses each enabled binding's hotkey
 // string once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
 // lazily at dispatch — only when a hotkey actually fires). Cleared + rebuilt whenever
@@ -834,6 +850,9 @@ void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
 // BackendHasBeenReachable and drive the palette open/close directly (the palette is a UI
 // widget, not a registry command). Runs on the UI thread, before any sub-window draws.
 void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
+#if defined(SMATCHET_BUILD_UI_TESTS)
+    g_uiTestActiveInstance = this; // expose the live instance to the keybindings rebind test seam
+#endif
     if (keybindingCacheDirty_) {
         rebuildKeybindingCache(d);
     }
