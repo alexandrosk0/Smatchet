@@ -57,6 +57,7 @@ using ::smatchet::mcp::pure::IsLoopbackAddress;
 using ::smatchet::mcp::pure::IsMcpHostOriginAllowed;
 using ::smatchet::mcp::pure::LooksLikeHttpUrl;
 using ::smatchet::mcp::pure::NormalizeDomain;
+using ::smatchet::mcp::pure::ResolveSseCorsOrigin;
 using ::smatchet::mcp::pure::TruncateOneLine;
 using ::smatchet::mcp::pure::UrlHasUserinfo;
 
@@ -784,7 +785,15 @@ void McpPlugin::RegisterSseRoute() {
         res.set_header("Content-Type", "text/event-stream");
         res.set_header("Cache-Control", "no-cache");
         res.set_header("Connection", "keep-alive");
-        res.set_header("Access-Control-Allow-Origin", "*");
+        // CORS: never wildcard — see ResolveSseCorsOrigin. Echo the Authorize-vetted Origin on
+        // the loopback bind; emit no CORS header on the 0.0.0.0 bind (where the Host/Origin
+        // gate is intentionally skipped and a grant would expose the token-authenticated
+        // stream to arbitrary web origins).
+        const std::string corsOrigin = ResolveSseCorsOrigin(req.get_header_value("Origin"),
+                                                            impl->bind_host == SmatchetDefaults::Mcp::kBindLocalhost);
+        if (!corsOrigin.empty()) {
+            res.set_header("Access-Control-Allow-Origin", corsOrigin);
+        }
 
         std::string endpoint = "/mcp/messages";
         std::string event = "event: endpoint\ndata: " + endpoint + "\n\n";

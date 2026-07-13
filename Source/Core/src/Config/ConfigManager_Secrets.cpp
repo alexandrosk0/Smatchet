@@ -209,6 +209,13 @@ void ApplySecretPersist(nlohmann::json& j, const char* plainKey, const char* enc
         j.erase(plainKey);
         break;
     case SecretPersistAction::StorePlaintext:
+        // DPAPI failed on a real secret — persist the current plaintext rather than drop the only
+        // copy (#1770), but never silently: this downgrades the at-rest posture to cleartext, so
+        // the operator gets a loud, per-key signal (key name only — never the value).
+        LOG_WARN("Config: secret '%s' could not be encrypted (DPAPI failure) — storing it in PLAINTEXT in "
+                 "smatchet_config.json. Check the Windows Data Protection service, then re-save preferences to "
+                 "re-encrypt.",
+                 plainKey);
         j[plainKey] = value; // DPAPI failed — persist the current plaintext, not an empty ciphertext
         j.erase(encKey);
         break;
