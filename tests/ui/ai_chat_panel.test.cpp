@@ -312,6 +312,7 @@ void RegisterKeyboardEnterSubmits(ImGuiTestEngine* engine) {
         const bool origOpen = g_ui.assistantPanelOpen;
         const bool origWhisperSetup = g_ui.cfg.WhisperSetupCompleted;
         const bool origConsentShown = g_ui.cfg.AssistantOutboundConsentShown;
+        const bool origInFlight = g_ui.assistantInFlight;
 
         // Force the first-send consent gate so the Enter dispatch is intercepted offline (no POST).
         g_ui.cfg.AssistantOutboundConsentShown = false;
@@ -353,6 +354,7 @@ void RegisterKeyboardEnterSubmits(ImGuiTestEngine* engine) {
         g_ui.assistantPanelOpen = origOpen;
         g_ui.cfg.WhisperSetupCompleted = origWhisperSetup;
         g_ui.cfg.AssistantOutboundConsentShown = origConsentShown;
+        g_ui.assistantInFlight = origInFlight;
         ctx->Yield();
     };
 }
