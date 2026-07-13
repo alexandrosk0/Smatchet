@@ -239,7 +239,18 @@ poll_merge_gates() {
     esac
     local self_stale=false
     if [ "$fresh_mode" != "off" ]; then
-        local _self_relpath="agents/scripts/core/merge-gates.sh"
+        # Gate logic now spans the entry point PLUS its sourced modules
+        # (merge-gates.d/00-common.sh holds the block allow-list; 10-gate-filter.sh
+        # holds the GATE_FILTER). A stale/tampered MODULE would enforce out-of-date
+        # gate logic while the entry file still matches origin/develop — so freshness
+        # must fingerprint all three, not just BASH_SOURCE[0] (#1428 CR follow-up:
+        # the merge-gates.d/ split moved load-bearing logic out of the entry file).
+        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules)"
+        local _fresh_relpaths=(
+            "agents/scripts/core/merge-gates.sh"
+            "agents/scripts/core/merge-gates.d/00-common.sh"
+            "agents/scripts/core/merge-gates.d/10-gate-filter.sh"
+        )
         local _run_blob _dev_blob
         if [ -n "${MERGE_GATES_FRESH_RUN_BLOB:-}" ]; then
             # Test-only override — bypass git, use injected blobs so the bats suite
@@ -255,9 +266,21 @@ poll_merge_gates() {
                 # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
                 local _fetch_ok=true
                 git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
-                _run_blob="$(git -C "$_root" hash-object "${BASH_SOURCE[0]}" 2>/dev/null)"
-                _dev_blob="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_self_relpath" 2>/dev/null)"
-                if [ "$_fetch_ok" != true ]; then
+                # Combined fingerprint over the whole gate-file set. Any missing local
+                # file or missing develop blob leaves an empty component and blanks the
+                # side → the unverifiable branch below fails closed (#1428).
+                local _rp _rh _dh _incomplete=false
+                _run_blob=""
+                _dev_blob=""
+                for _rp in "${_fresh_relpaths[@]}"; do
+                    _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)"
+                    _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)"
+                    if [ -z "$_rh" ] || [ -z "$_dh" ]; then _incomplete=true; fi
+                    _run_blob="$_run_blob $_rh"
+                    _dev_blob="$_dev_blob $_dh"
+                done
+                if [ "$_incomplete" = true ] || [ "$_fetch_ok" != true ]; then
+                    _run_blob=""
                     _dev_blob=""
                 fi
             else
@@ -274,10 +297,10 @@ poll_merge_gates() {
             fi
         elif [ "$_run_blob" != "$_dev_blob" ]; then
             if [ "$fresh_mode" = "block" ]; then
-                echo "BLOCK: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}) — this merger would enforce out-of-date gate logic. Refresh the checkout to origin/develop and restart. Refusing GATES_PASSED (fail-closed). See postmortems.md #1428." >&2
+                echo "BLOCK: merge-gates.sh or a merge-gates.d/ gate module differs from origin/develop (combined fingerprint '$_run_blob' != develop '$_dev_blob') — this merger would enforce out-of-date gate logic. Refresh the checkout to origin/develop and restart. Refusing GATES_PASSED (fail-closed). See postmortems.md #1428." >&2
                 self_stale=true
             else
-                echo "WARN: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}); gate logic may be out of date (MERGE_GATES_FRESHNESS=warn — not blocking)." >&2
+                echo "WARN: merge-gates.sh or a merge-gates.d/ gate module differs from origin/develop (combined fingerprint '$_run_blob' != develop '$_dev_blob'); gate logic may be out of date (MERGE_GATES_FRESHNESS=warn — not blocking)." >&2
             fi
         fi
     fi
