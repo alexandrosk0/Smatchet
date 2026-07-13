@@ -1,5 +1,5 @@
-// EngineContextFormat — see EngineContextFormat.h. Pure (no I/O, no globals);
-// every helper tolerates missing/mistyped snapshot keys by skipping the field.
+// EngineContextFormat — see EngineContextFormat.h. Pure formatter with no I/O and
+// no globals. Every helper tolerates missing/mistyped snapshot keys by skipping the field.
 
 #include "Diagnostics/EngineContextFormat.h"
 
@@ -148,7 +148,10 @@ void AppendLogTail(std::string& out, const nlohmann::json& snapshot, int maxLine
 
 EngineContextToggles TogglesFromConfig(const TrackerConfig& cfg) {
     EngineContextToggles t;
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=member-copy assignment run token-matches an unrelated OfflineQueueUi block, and the seven toggle copies are this function's whole purpose; owner=quick-create-issue-unreal-context; revisit=2026-12-31)
     t.EngineVersion = cfg.QuickCreateCtxEngineVersion;
+    // clang-format on
     t.Project = cfg.QuickCreateCtxProject;
     t.Platform = cfg.QuickCreateCtxPlatform;
     t.Level = cfg.QuickCreateCtxLevel;

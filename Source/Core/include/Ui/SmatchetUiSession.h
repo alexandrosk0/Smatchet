@@ -150,6 +150,11 @@ struct AuditDisplayCachePayload {
 
 enum class CellWriteState { Saving, Success, Error };
 
+/// Appearance change that requires a full window-layout reset (Panel Position / Move
+/// Primary Side Bar). Namespace-scope (not nested in UiDrawSession) so SmatchetUI.h can
+/// name it in member signatures against the forward-declared session.
+enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimarySideBar };
+
 /// Which top-level Preferences tab is selected this frame. Recorded by each
 /// tab's BeginTabItem-true branch so the shared footer under the tab bar can
 /// show only the save-semantics line relevant to the active tab. Nested
@@ -263,10 +268,25 @@ struct UiDrawSession {
     /// Mirrors VS Code Quick Input — typing pre-fills the existing palette modal.
     char paletteInlineBuf[256] = {};
 
+    /// Pending appearance change that requires a full window-layout reset (Panel Position /
+    /// Move Primary Side Bar — the targeted DockBuilder re-dock stays deferred). The menu
+    /// item latches the request; a confirm modal applies or discards it, so the user's
+    /// arranged layout is never silently destroyed. Enum defined at namespace scope (above
+    /// this struct) so SmatchetUI.h can name it against the forward-declared session.
+    PendingLayoutResetAction pendingLayoutResetAction = PendingLayoutResetAction::None;
+    /// One-shot OpenPopup latch for the layout-reset confirm modal (popup must be opened
+    /// in the same ID scope that draws it — see the DR22 pattern).
+    bool openLayoutResetConfirm = false;
+
     bool showPreferences = false;
     /// Active Preferences tab this frame (footer save-semantics line). Persists
     /// across frames; defaults to the first tab.
     PreferencesActiveTab preferencesActiveTab = PreferencesActiveTab::Tracker;
+    /// Settings-search box atop the Preferences window (UX critique M4). The query
+    /// live-matches a per-tab keyword index; clicking a match chip sets the jump request
+    /// consumed by SmatchetPreferencesUiDetail::PrefsTabFlags at that tab's BeginTabItem.
+    char prefsSearchBuf[64] = {};
+    std::string prefsSelectTabRequest;
     /// One-frame focus latch for the Preferences window. Set true by the menu-bar
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).

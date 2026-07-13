@@ -25,11 +25,21 @@
 #   (overdue SMATCHET_DEVIATION is covered by the strict `deviation-overdue` lint.)
 #
 # Modes:
-#   --list   (default) plain "postmortem owed: PR #N — <trigger>" lines.
-#   --nudge  SessionStart-formatted block (silent when nothing is owed).
+#   --list     (default) plain "postmortem owed: PR #N — <trigger>" lines.
+#   --nudge    SessionStart-formatted block (silent when nothing is owed).
+#   --blocking opt-in enforcement: same detection + `--list` output, but EXIT 1
+#              when the owed-escape count exceeds POSTMORTEM_BLOCKING_GRACE
+#              (default 0 → any owed escape fails). For a CI/pre-merge gate that
+#              wants un-postmortemed escapes to actually stop the line, not just
+#              nudge. Deliberately NOT wired into SessionStart (that stays
+#              advisory) — a caller opts in explicitly. Degrades to advisory
+#              exit 0 when gh is unavailable (no gate should hard-fail on a
+#              missing/​unauthenticated gh, same fail-open as the other modes).
 #
 # Mirrors memory-drain-nudge.sh: deterministic check -> nudge, no investigation.
-# Advisory — never blocks. Exit 0 always (even without gh; degrades to a notice).
+# Default modes (--list / --nudge) are advisory — never block, exit 0 always
+# (even without gh; degrades to a notice). Only --blocking can exit non-zero,
+# and only on a real owed-escape count over the grace.
 #
 # Test seams (production leaves all unset → identical behaviour):
 #   POSTMORTEM_LEDGER             override the postmortems.md path (has_entry).
@@ -55,9 +65,16 @@ cd "$SCRIPT_DIR/../../.."
 MODE="list"
 case "${1:-}" in
     --nudge) MODE="nudge" ;;
+    --blocking) MODE="blocking" ;;
     --list|"") MODE="list" ;;
-    *) echo "usage: postmortem-owed.sh [--list|--nudge]" >&2; exit 2 ;;
+    *) echo "usage: postmortem-owed.sh [--list|--nudge|--blocking]" >&2; exit 2 ;;
 esac
+
+# Blocking-mode grace: number of outstanding owed escapes tolerated before
+# --blocking exits non-zero. Default 0 (any owed escape blocks). Raise to
+# absorb a known backlog while still catching runaway accumulation. Inert in
+# --list / --nudge (those never block).
+BLOCKING_GRACE="${POSTMORTEM_BLOCKING_GRACE:-0}"
 
 REPO="${REPO:-alexandrosk0/Smatchet}"
 LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
@@ -98,7 +115,9 @@ ALLOW_LIST_RE="$MERGE_GATES_BLOCK_ALLOWLIST_RE"
 
 # gh is required; without it, degrade to a quiet notice (advisory tool).
 if ! command -v gh >/dev/null 2>&1 || ! gh auth status >/dev/null 2>&1; then
-    [ "$MODE" = "list" ] && echo "postmortem-owed: gh unavailable/unauthenticated — skipped (advisory)" >&2
+    # --blocking degrades to advisory here too: a missing/unauthenticated gh is
+    # an environment gap, not a detected escape, so it must never hard-fail a gate.
+    case "$MODE" in list|blocking) echo "postmortem-owed: gh unavailable/unauthenticated — skipped (advisory)" >&2 ;; esac
     exit 0
 fi
 
@@ -640,7 +659,9 @@ if [ "${#warns[@]}" -gt 0 ]; then
 fi
 
 if [ "${#owed[@]}" -eq 0 ]; then
-    [ "$MODE" = "list" ] && echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)."
+    case "$MODE" in
+        list|blocking) echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)." ;;
+    esac
     exit 0
 fi
 
@@ -650,7 +671,14 @@ if [ "$MODE" = "nudge" ]; then
     echo "postmortem (the \`gate-escape-postmortem\` skill) whose mandatory"
     echo "\`### Preventing gate\` field files a new gate into the self-improvement loop:"
     for o in "${owed[@]}"; do echo "  - $o"; done
-else
-    for o in "${owed[@]}"; do echo "postmortem owed: $o"; done
+    exit 0
+fi
+
+# --list / --blocking share the plain-line output.
+for o in "${owed[@]}"; do echo "postmortem owed: $o"; done
+
+if [ "$MODE" = "blocking" ] && [ "${#owed[@]}" -gt "$BLOCKING_GRACE" ]; then
+    echo "postmortem-owed: ${#owed[@]} escape(s) owed a postmortem exceeds grace ($BLOCKING_GRACE) — blocking." >&2
+    exit 1
 fi
 exit 0

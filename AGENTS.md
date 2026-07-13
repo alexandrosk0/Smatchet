@@ -126,7 +126,7 @@ Use **semantic codebase search first** for any "where is X / what calls Y / what
 
 ## Agent file locations
 
-Canonical source: `agents/{core,project}/<name>.md` (per [agents.md spec](https://agents.md/)); shared scripts + skills at `agents/_shared/`. **Agent vs skill** rubric: [`docs/agent-rules/AGENT-VS-SKILL.md`](docs/agent-rules/AGENT-VS-SKILL.md) (skill = bounded-deterministic-inline; agent = exploration / loop / spawn / delegates). Per-harness adapter dirs (`.claude/`, `.cursor/`, `.pi/`) are gitignored; Codex uses `AGENTS.md` natively with no `.codex/` mirror. Fresh clone: [`docs/harness/SETUP.md`](docs/harness/SETUP.md).
+Canonical source: `agents/{core,project}/<name>.md` (per [agents.md spec](https://agents.md/)); shared scripts + skills at `agents/_shared/`. **Agent vs skill** rubric: [`docs/agent-rules/AGENT-VS-SKILL.md`](docs/agent-rules/AGENT-VS-SKILL.md) (skill = bounded-deterministic-inline; agent = exploration / loop / spawn / delegates). Per-harness adapter dirs (`.claude/`, `.cursor/`, `.pi/`, `.codex/`) are gitignored; Codex reads `AGENTS.md` natively and `setup-harness.sh` also generates a `.codex/` mirror (agents + config). Fresh clone: [`docs/harness/SETUP.md`](docs/harness/SETUP.md).
 
 ## Delegation
 

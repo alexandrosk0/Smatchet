@@ -61,11 +61,17 @@ CommandResult ToggleFlag(IMainThreadPoster& app, bool UiDrawSession::*flag, void
 
 void RegisterToggle(CommandRegistry& reg, IMainThreadPoster& app, const char* name, const char* label,
                     bool UiDrawSession::*flag, void (*onOpen)(UiDrawSession&),
-                    bool UiDrawSession::*focusLatch = nullptr) {
+                    bool UiDrawSession::*focusLatch = nullptr, const char* alias = nullptr) {
     Command c;
     c.Name = name;
     c.Category = "view";
     c.Summary = std::string("Toggle ") + label + " panel visibility.";
+    // Short display label — the registry seam UI surfaces (Recently Used Views menu,
+    // palette rows) resolve instead of showing the raw command id.
+    c.Title = label;
+    if (alias != nullptr) {
+        c.Aliases.push_back(alias);
+    }
     c.Destructive = false;
     c.Idempotent = false; // toggling flips state each call
     c.AsyncSafe = true;
@@ -109,10 +115,11 @@ void RegisterViewToggleCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     RegisterToggle(reg, app, "view.toggle.source_annotate", "Annotate", &UiDrawSession::showAnnotateAnalysis,
                    &OnOpenAnnotate);
     RegisterToggle(reg, app, "view.toggle.log", "Log", &UiDrawSession::showLogWindow, nullptr);
-    // `notifications` (not view.toggle.*) — the plan-named ergonomic alias for the Notification
-    // Center; surfaces across CLI / Palette / MCP / Lua like every other view toggle.
-    RegisterToggle(reg, app, "notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
-                   &OnOpenNotificationCenter, &UiDrawSession::requestNotificationCenterFocus);
+    // Canonical id follows the view.toggle.* naming of its siblings; the bare
+    // `notifications` name survives as an alias (ergonomic CLI/MCP/Lua shorthand + saved
+    // keybindings from configs written before the rename keep dispatching).
+    RegisterToggle(reg, app, "view.toggle.notifications", "Notifications", &UiDrawSession::showNotificationCenterWindow,
+                   &OnOpenNotificationCenter, &UiDrawSession::requestNotificationCenterFocus, "notifications");
     RegisterToggle(reg, app, "view.toggle.backend_audit", "Backend Audit", &UiDrawSession::showAuditTrail,
                    &OnOpenAuditTrail);
     RegisterToggle(reg, app, "view.toggle.performance", "Performance", &UiDrawSession::showPerformance, nullptr,

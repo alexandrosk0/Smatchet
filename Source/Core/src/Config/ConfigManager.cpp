@@ -283,6 +283,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"show_panel", &TrackerConfig::ShowPanel},
     {"show_status_bar", &TrackerConfig::ShowStatusBar},
     {"primary_side_bar_on_right", &TrackerConfig::PrimarySideBarOnRight},
+    {"skip_layout_reset_confirm", &TrackerConfig::SkipLayoutResetConfirm},
     {"update_check_enabled", &TrackerConfig::UpdateCheckEnabled},
     {"update_include_prerelease", &TrackerConfig::UpdateIncludePrerelease},
     {"ticket_change_monitor_enabled", &TrackerConfig::TicketChangeMonitorEnabled},

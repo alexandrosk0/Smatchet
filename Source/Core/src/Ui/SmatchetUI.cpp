@@ -1084,6 +1084,11 @@ void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
         SmatchetToastManager::Instance().Render();
     }
     DrawAppUpdateModal(app, d);
+    // Mode-independent home for the layout-reset confirm (latched by the Appearance menu
+    // items): if it were submitted only from the menu-bar path, flipping Zen mode (or the
+    // mobile fork) mid-confirm would leave an unsubmitted modal in ImGui's popup stack —
+    // invisible, yet blocking all mouse input via GetTopMostPopupModal.
+    drawLayoutResetConfirmModal(d);
 }
 
 // Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes

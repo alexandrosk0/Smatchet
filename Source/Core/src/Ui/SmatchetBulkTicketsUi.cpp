@@ -366,13 +366,9 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
         ImGui::TextUnformatted(
             SmatchetLocalization::T("bulkImport.chooseProject.title", "Choose target project for bulk import"));
         ImGui::Separator();
-        const std::string backendKind = (d.cfg.TrackerType == "Plane")    ? std::string("Plane")
-                                        : (d.cfg.TrackerType == "Linear") ? std::string("Linear")
-                                                                          : std::string("Jira");
-        const std::string endpoint =
-            (d.cfg.TrackerType == "Plane")    ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug)
-            : (d.cfg.TrackerType == "Linear") ? (d.cfg.LinearBaseUrl + std::string("|") + d.cfg.LinearTeamId)
-                                              : d.cfg.Domain;
+        std::string backendKind;
+        std::string endpoint;
+        SmatchetProjectPicker::ResolveBackendKindAndEndpoint(d.cfg, backendKind, endpoint);
         ImGui::SetNextItemWidth(360.0f);
         SmatchetProjectPicker::Draw("bulk_project", d.bulkImportProjectPickerState, app, backendKind, endpoint,
                                     d.bulkImportProjectModalChosenKey);

@@ -1,4 +1,4 @@
-// EngineHostContext — see EngineHostContext.h. Mutex-guarded snapshot string;
+// EngineHostContext — see EngineHostContext.h. Mutex-guarded snapshot string,
 // intentionally tiny so the host's ~1 Hz push and the popup's on-open read never
 // contend with the frame loop (nothing here is touched per frame).
 

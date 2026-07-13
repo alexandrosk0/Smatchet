@@ -154,3 +154,30 @@ Three patterns recur across the findings and are worth fixing at the root rather
 ---
 
 *This critique was produced by static reading of the UI source. Findings marked with a specific `file:line` were verified against the tree at the branch head; the "run the app and watch it" verification (e.g. confirming the empty grid truly renders blank, or that a light-theme toast is unreadable) was not performed and is the recommended next step before acting on the High findings.*
+
+---
+
+## 7. Implementation status (2026-07-13)
+
+| Finding | Status | Where |
+|---|---|---|
+| H1 grid states | **Done** — welcome/loading/error states replace the empty table; zero-results/filter-no-match render a strip above it (headers + inline new-issue row stay usable) | `SmatchetActiveProjectGridTable.cpp` |
+| H2 command-id leak | **Done** — Recently Used Views resolves labels via the new `Command::Title` registry seam (title-cased-slug fallback) | `SmatchetUI_MainMenu.cpp`, `Command.h` |
+| H3 layout-destroy guard | **Done (option b)** — confirm modal with persisted *Don't ask again* (`skip_layout_reset_confirm`); the targeted DockBuilder re-dock remains deferred | `SmatchetUI_MainMenu.cpp` |
+| H4 first-run orientation | **Done** — welcome panel in the grid body while `!BackendHasBeenReachable`: product one-liner, per-backend credential hints + token deep-links, Open Preferences | `SmatchetActiveProjectGridTable.cpp` |
+| H5 theme-aware toasts | **Done** — toast bg/border/text from `ImGuiCol_PopupBg/Border/Text`; semantic accent bar kept | `SmatchetToast.cpp` |
+| M1 toast dismiss | **Done** — click dismisses (error click also opens the center); hover-revealed close cross | `SmatchetToast.cpp` |
+| M2 sticky errors | **Done** — error toasts never auto-expire; unread-error badge in the status bar opens Notifications and clears on view | `SmatchetToast.*`, `SmatchetStatusBarUi.cpp`, `SmatchetNotificationCenterUi.cpp` |
+| M3 View-menu IA | **Done** — toggles grouped Workspace / Diagnostics / Data / System via `SeparatorText` | `SmatchetUI_MainMenu.cpp` |
+| M4 settings search | **Done** — search box + per-tab keyword index; match chips jump to the owning tab (`PrefsTabFlags`) | `SmatchetPreferencesUi*.cpp` |
+| M5 FPS in status bar | **Done** — FPS dropped (lives in the Performance window); right side keeps font/theme with an explanatory tooltip | `SmatchetStatusBarUi.cpp` |
+| M6 raw backend string | **Done** — friendly display names (Jira/Plane/GitHub/Linear), "Not connected" fallback, tooltip | `SmatchetStatusBarUi.cpp` |
+| M7 search entry points | **Done** — omnibar placeholder says issue-search; menu-bar box says commands-not-issues | `SmatchetOmnibarUi.cpp`, `SmatchetUI_MainMenu.cpp` |
+| M8 notifications chord/id | **Done** — renamed to `view.toggle.notifications` (bare `notifications` kept as alias), default `Ctrl+Shift+Y` seeded via `migrated_menu_shortcuts_v2` | `ViewToggleCommands.cpp`, `KeybindingsConfig.cpp`, `ConfigManager_Load.cpp` |
+| L1 recent-view ids | **Done** — Touch ids normalized to registered command ids; sidebar/panel/assistant gained `view.toggle.*` aliases so Recents can re-dispatch them | `SmatchetUI_MainMenu.cpp`, `AppViewCommands.cpp` |
+| L2 Zen chord | Deferred — single-item consistency change; revisit with a keybinding-defaults pass | — |
+| L3 "ImGui" in theme list | **Done** — display name "Classic Bright" (persisted config string unchanged) | `SmatchetUI_MainMenu.cpp`, `SmatchetStatusBarUi.cpp` |
+| L4 font list | **Done (partial)** — "Built-in Default" entry + "(not installed)" annotation via `SmatchetIsFontAvailable`; custom-path picker deferred | `SmatchetUI_MainMenu.cpp`, `SmatchetImGuiFonts.*` |
+| L5 Ctrl+O collision | Deferred — muscle-memory tradeoff judged acceptable; rebindable via Keyboard Shortcuts | — |
+| L6 terse status strings | **Done** — tooltips on backend / connectivity / queued segments explain state + recovery | `SmatchetStatusBarUi.cpp` |
+| L7 bare `*` indicator | **Done** — amber "Saving..." with tooltip | `SmatchetStatusBarUi.cpp` |

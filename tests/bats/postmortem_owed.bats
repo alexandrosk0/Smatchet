@@ -560,6 +560,10 @@ JSON
     mkdir -p "$FIX_REPO/agents/scripts/core" "$FIX_REPO/docs/self-improvement"
     cp "$REPO_ROOT/agents/scripts/core/postmortem-owed.sh" \
        "$REPO_ROOT/agents/scripts/core/merge-gates.sh" "$FIX_REPO/agents/scripts/core/"
+    # merge-gates.sh fail-closed-sources its merge-gates.d/ modules (the allow-list
+    # constant now lives in 00-common.sh) — the fixture must carry them or the
+    # source aborts and postmortem-owed.sh refuses fail-closed (false negative).
+    cp -r "$REPO_ROOT/agents/scripts/core/merge-gates.d" "$FIX_REPO/agents/scripts/core/"
     if [ -f "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" ]; then
         cp "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" "$FIX_REPO/agents/scripts/core/"
     fi
@@ -572,4 +576,49 @@ JSON
     run bash "$FIX_REPO/agents/scripts/core/postmortem-owed.sh" --list
     [ "$status" -eq 0 ]
     [[ "$output" == *"postmortem owed: PR #8002"* ]]
+}
+
+# ============================================================================
+# --blocking mode (opt-in enforcement; default modes stay advisory exit 0)
+# ============================================================================
+
+@test "blocking mode: clean merge exits 0 (nothing owed)" {
+    prlist <<'JSON'
+[{"number":9101,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "blocking mode: an owed escape exits 1 (default grace 0)" {
+    prlist <<'JSON'
+[{"number":9102,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"postmortem owed: PR #9102 — red-check: Windows + MSVC"* ]]
+}
+
+@test "blocking mode: same owed escape is advisory (exit 0) under --list" {
+    prlist <<'JSON'
+[{"number":9103,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #9103"* ]]
+}
+
+@test "blocking mode: grace absorbs the owed count (exit 0 when count not over grace)" {
+    export POSTMORTEM_BLOCKING_GRACE=1
+    prlist <<'JSON'
+[{"number":9104,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"b4"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"postmortem owed: PR #9104"* ]]
 }

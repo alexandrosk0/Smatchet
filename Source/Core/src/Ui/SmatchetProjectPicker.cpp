@@ -1,6 +1,7 @@
 #include "SmatchetProjectPicker.h"
 
 #include "AppController.h"
+#include "ConfigManager.h"
 #include "FieldCatalogCache.h"
 #include "ITrackerBackend.h"
 #include "Logger.h"
@@ -19,6 +20,21 @@
 #include <vector>
 
 namespace SmatchetProjectPicker {
+
+void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBackendKind, std::string& outEndpoint) {
+    if (cfg.TrackerType == "Plane") {
+        outBackendKind = "Plane";
+        outEndpoint = cfg.PlaneUrl + "|" + cfg.PlaneWorkspaceSlug;
+        return;
+    }
+    if (cfg.TrackerType == "Linear") {
+        outBackendKind = "Linear";
+        outEndpoint = cfg.LinearBaseUrl + "|" + cfg.LinearTeamId;
+        return;
+    }
+    outBackendKind = "Jira";
+    outEndpoint = cfg.Domain;
+}
 
 namespace {
 

@@ -2,9 +2,13 @@
 // Dual-target: no GL/GLFW here; the engine-context prefill degrades to an empty
 // description when no host snapshot exists (standalone build).
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include-block clone, audit #12; owner=cpp-audit; revisit=2026-09-30)
 #include "SmatchetQuickCreateIssueUi.h"
 
+// clang-format off
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=popup needs the create pipeline (CreateIssueAsync/QueueCreateOffline/GetRequiredFieldSet/BuildDraftFromLastTicket) plus SmatchetProjectPicker::Draw which takes AppController&, same facet set as the grandfathered SmatchetNewIssueDraftUi.cpp; owner=quick-create-issue-unreal-context; revisit=2026-12-31)
 #include "AppController.h"
+// clang-format on
 #include "ConfigManager.h"
 #include "Diagnostics/EngineContextFormat.h"
 #include "Diagnostics/EngineHostContext.h"
@@ -197,13 +201,9 @@ void DrawProjectRow(AppController& app, UiDrawSession& d) {
     ImGui::SameLine(110.0f);
     ImGui::SetNextItemWidth(-FLT_MIN);
     const TrackerConfig& cfg = d.cfg;
-    const std::string backendKind = (cfg.TrackerType == "Plane")    ? std::string("Plane")
-                                    : (cfg.TrackerType == "Linear") ? std::string("Linear")
-                                                                    : std::string("Jira");
-    const std::string endpoint =
-        (cfg.TrackerType == "Plane")    ? (cfg.PlaneUrl + std::string("|") + cfg.PlaneWorkspaceSlug)
-        : (cfg.TrackerType == "Linear") ? (cfg.LinearBaseUrl + std::string("|") + cfg.LinearTeamId)
-                                        : cfg.Domain;
+    std::string backendKind;
+    std::string endpoint;
+    SmatchetProjectPicker::ResolveBackendKindAndEndpoint(cfg, backendKind, endpoint);
     std::string selected = d.quickCreateDraft.ProjectKey;
     if (!SmatchetProjectPicker::Draw("quick_create_project", d.quickCreateProjectPickerState, app, backendKind,
                                      endpoint, selected)) {

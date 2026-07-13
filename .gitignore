@@ -140,3 +140,6 @@ Source/Core/src/**/CLAUDE.md
 # pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack)
 .review-ack
 .git-msg.tmp
+
+# LocalCacheManager corruption-test droppings (SmatchetTests run from the repo root)
+smatchet_lcm_*.db.corrupt-*

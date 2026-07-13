@@ -179,7 +179,8 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
 
     const std::string tabLabel =
         std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) + "###prefsTabKeybindings";
-    if (!ImGui::BeginTabItem(tabLabel.c_str())) {
+    if (!ImGui::BeginTabItem(tabLabel.c_str(), nullptr,
+                             SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Keyboard Shortcuts"))) {
         capturingKey.clear(); // tab switched away / closed mid-capture — drop the armed row
         return;
     }

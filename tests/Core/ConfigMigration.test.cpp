@@ -428,6 +428,64 @@ TEST_CASE("ConfigMigration menu shortcuts: flag set on disk skips the seed (clea
     CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}") < 0); // not resurrected
 }
 
+TEST_CASE("ConfigMigration menu shortcuts v2: seeds the Notifications reveal into a pre-existing config") {
+    smatchet_tests::TestEnvGuard env;
+    // Config saved by a build with V1 already applied but predating V2 (the
+    // notifications → view.toggle.notifications rename + its new default chord).
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV2 == true);
+    const int ni = cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}");
+    REQUIRE(ni >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].Hotkey == "Ctrl+Shift+Y");
+    // V1's own seeds are untouched by V2 running after it on the same load.
+    CHECK(cfg.MigratedMenuShortcutsV1 == true);
+}
+
+TEST_CASE("ConfigMigration menu shortcuts v2: renames a legacy `notifications` binding in place, no duplicate") {
+    smatchet_tests::TestEnvGuard env;
+    // User bound the pre-rename bare `notifications` id to their own key. The rename pass
+    // must move that binding onto the canonical id (hotkey / args / enabled preserved) and
+    // the seed must then see the identity as taken — no second Ctrl+Shift+Y row.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"keybindings":{"bindings":[
+        {"command_id":"notifications","hotkey":"Ctrl+Alt+N","args_json":"{\"action\":\"show\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV2 == true);
+    CHECK(CountCommand(cfg.Keybindings, "notifications") == 0); // legacy id gone
+    CHECK(CountCommand(cfg.Keybindings, "view.toggle.notifications") == 1);
+    const int ni = cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}");
+    REQUIRE(ni >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].Hotkey == "Ctrl+Alt+N"); // user key kept
+}
+
+TEST_CASE("ConfigMigration menu shortcuts v2: flag set on disk skips the seed (cleared stays cleared)") {
+    smatchet_tests::TestEnvGuard env;
+    // User on a V2 build cleared the Notifications binding then saved — the persisted flag
+    // must prevent the seed from resurrecting it.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "keybindings":{"bindings":[
+        {"command_id":"view.sidebar.primary","hotkey":"Ctrl+B","args_json":"{\"action\":\"toggle\"}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMenuShortcutsV2 == true);
+    CHECK(cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}") < 0);
+}
+
 TEST_CASE("ConfigMigration menu shortcuts: both views_dashboard arg variants seeded, idempotent on reload") {
     smatchet_tests::TestEnvGuard env;
     const std::string pre = R"json({"tracker_type":"Jira","keybindings":{"bindings":[

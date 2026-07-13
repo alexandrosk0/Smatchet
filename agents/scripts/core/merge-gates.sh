@@ -149,41 +149,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 
 # ----------------------------------------------------------------------------
-# Meant-to-block scope — SINGLE SOURCE OF TRUTH.
-# BLOCK-ON-ANY-RED (all-gates-blocking flip): the regex matches EVERY check
-# name, so any non-required check that reaches a failing terminal state blocks
-# the merge exactly like a required one, and any still-pending check holds
-# GATES_PASSED. This is the mechanised form of the AGENTS.md invariant
-# "Never merge past ANY red check — required or not" (previously curated:
-# Coverage|Sanitizer|Perf PR-fast|Android security gate|Fuzz smoke|
-# Bucket launch-smoke|Intent section|Plan-lock gate, grown one #923-class
-# gate-escape at a time — this flip retires the curation).
-# The ONE remaining exemption is the `advisory`-NAME exclusion in the jq below:
-# a check whose name literally contains "advisory" does not block. After the
-# all-gates-blocking rename sweep NO lane carries that token; it survives as the
-# sanctioned, name-visible convention for any future deliberately-advisory lane
-# (an invisible poller-side list is exactly what this flip removes).
-# Prereqs that made block-all safe (each lane genuinely green first):
-#  * emulator smoke — cold-boot fix removed the ~23% snapshot-restore boot race;
-#  * Android NDK — httplib zstd auto-detect pinned OFF (#1604, hermetic);
-#  * fuzz smoke — the stochastic fuzz STEP stays continue-on-error on PRs
-#    (#1301 design) so only the deterministic build/ctest reds the check;
-#  * bucket-C — the per-scenario golden-diff STEP stays advisory-by-design
-#    (per-developer GPU goldens; lane-integrity + launch-smoke carry the teeth),
-#    so the CHECK reds only on real infra/dead-harness breakage.
-# Override hatches, unchanged: tests-/perf-/intent-/plan-lock-out-of-band labels
-# downgrade their named checks; SKIP_MERGE_GATES=true is the global bypass.
-# Other tooling applies the IDENTICAL scope by sourcing this file
-# (safe-admin-merge.sh, postmortem-owed.sh) — change it HERE and every consumer
-# follows.
-MERGE_GATES_BLOCK_ALLOWLIST_RE="."
-
-# Source prompt shim so `ask_user_question` is callable from the caller's
-# integration flow. Lazy — only if available.
-if [ -f "$SCRIPT_DIR/merge-gates-prompt.sh" ]; then
-    # shellcheck source=agents/scripts/core/merge-gates-prompt.sh
-    source "$SCRIPT_DIR/merge-gates-prompt.sh"
-fi
+# Sourced gate-condition modules — resolved relative to THIS script (SCRIPT_DIR
+# via BASH_SOURCE, so it works whether the file is executed or `source`d, as the
+# bats suite does). Explicit load list, fail-closed if a module is missing
+# (NOT a glob) — mirrors agents/scripts/project/lint-rules.d/. The modules carry:
+#   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
+#                        lazy-source, and gh_pr_ready_idempotent (top-level).
+#   10-gate-filter.sh — the one giant `gh api graphql --jq` GATE_FILTER program
+#                        (the 31-field projection) as a template emitter.
+# The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
+# stay INLINE in poll_merge_gates: they share one tightly-coupled per-poll local
+# state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
+# that cannot be threaded through a function boundary without a subtle
+# behaviour change — the exact risk this split must not take (bats is the net).
+MERGE_GATES_D="$SCRIPT_DIR/merge-gates.d"
+for _mg_mod in "$MERGE_GATES_D"/00-common.sh "$MERGE_GATES_D"/10-gate-filter.sh; do
+    if [ ! -f "$_mg_mod" ]; then
+        echo "merge-gates: ERROR: missing module $_mg_mod" >&2
+        # sourced (bats) → return; executed → exit. Fail-closed either way.
+        # shellcheck disable=SC2317  # reachable only when a module is missing.
+        return 2 2>/dev/null || exit 2
+    fi
+    # shellcheck source=/dev/null
+    . "$_mg_mod"
+done
+unset _mg_mod
 
 # ----------------------------------------------------------------------------
 # poll_merge_gates <owner> <repo> <pr_number>
@@ -249,7 +239,18 @@ poll_merge_gates() {
     esac
     local self_stale=false
     if [ "$fresh_mode" != "off" ]; then
-        local _self_relpath="agents/scripts/core/merge-gates.sh"
+        # Gate logic now spans the entry point PLUS its sourced modules
+        # (merge-gates.d/00-common.sh holds the block allow-list; 10-gate-filter.sh
+        # holds the GATE_FILTER). A stale/tampered MODULE would enforce out-of-date
+        # gate logic while the entry file still matches origin/develop — so freshness
+        # must fingerprint all three, not just BASH_SOURCE[0] (#1428 CR follow-up:
+        # the merge-gates.d/ split moved load-bearing logic out of the entry file).
+        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules)"
+        local _fresh_relpaths=(
+            "agents/scripts/core/merge-gates.sh"
+            "agents/scripts/core/merge-gates.d/00-common.sh"
+            "agents/scripts/core/merge-gates.d/10-gate-filter.sh"
+        )
         local _run_blob _dev_blob
         if [ -n "${MERGE_GATES_FRESH_RUN_BLOB:-}" ]; then
             # Test-only override — bypass git, use injected blobs so the bats suite
@@ -265,9 +266,21 @@ poll_merge_gates() {
                 # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
                 local _fetch_ok=true
                 git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
-                _run_blob="$(git -C "$_root" hash-object "${BASH_SOURCE[0]}" 2>/dev/null)"
-                _dev_blob="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_self_relpath" 2>/dev/null)"
-                if [ "$_fetch_ok" != true ]; then
+                # Combined fingerprint over the whole gate-file set. Any missing local
+                # file or missing develop blob leaves an empty component and blanks the
+                # side → the unverifiable branch below fails closed (#1428).
+                local _rp _rh _dh _incomplete=false
+                _run_blob=""
+                _dev_blob=""
+                for _rp in "${_fresh_relpaths[@]}"; do
+                    _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)"
+                    _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)"
+                    if [ -z "$_rh" ] || [ -z "$_dh" ]; then _incomplete=true; fi
+                    _run_blob="$_run_blob $_rh"
+                    _dev_blob="$_dev_blob $_dh"
+                done
+                if [ "$_incomplete" = true ] || [ "$_fetch_ok" != true ]; then
+                    _run_blob=""
                     _dev_blob=""
                 fi
             else
@@ -284,10 +297,10 @@ poll_merge_gates() {
             fi
         elif [ "$_run_blob" != "$_dev_blob" ]; then
             if [ "$fresh_mode" = "block" ]; then
-                echo "BLOCK: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}) — this merger would enforce out-of-date gate logic. Refresh the checkout to origin/develop and restart. Refusing GATES_PASSED (fail-closed). See postmortems.md #1428." >&2
+                echo "BLOCK: merge-gates.sh or a merge-gates.d/ gate module differs from origin/develop (combined fingerprint '$_run_blob' != develop '$_dev_blob') — this merger would enforce out-of-date gate logic. Refresh the checkout to origin/develop and restart. Refusing GATES_PASSED (fail-closed). See postmortems.md #1428." >&2
                 self_stale=true
             else
-                echo "WARN: merge-gates.sh differs from origin/develop (running ${_run_blob:0:12} != develop ${_dev_blob:0:12}); gate logic may be out of date (MERGE_GATES_FRESHNESS=warn — not blocking)." >&2
+                echo "WARN: merge-gates.sh or a merge-gates.d/ gate module differs from origin/develop (combined fingerprint '$_run_blob' != develop '$_dev_blob'); gate logic may be out of date (MERGE_GATES_FRESHNESS=warn — not blocking)." >&2
             fi
         fi
     fi
@@ -504,226 +517,11 @@ poll_merge_gates() {
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29) and
     # crDisposition (30) are all non-empty tokens, so they are safe at the tail.
-    local GATE_FILTER
-    GATE_FILTER='
-.data.repository.pullRequest as $pr
-| ($pr.headRefOid // "") as $sha
-| ([$pr.labels.nodes[]?.name]) as $labels
-# selfImpOnly — TRUE iff the PR diff is ENTIRELY under docs/self-improvement/**
-# (the self-improvement backlog / postmortem ledger). Such a PR auto-skips the
-# CR + Bugbot gates (user ask 2026-06-20; plan self-improvement-pr-review-exemption).
-# Fail-safe to FALSE on any uncertainty: an empty file list (length 0, the vacuous
-# all() guarded out), a >100-file page (pageInfo.hasNextPage, cannot see every
-# path), or absent files (legacy fixtures) all yield FALSE for full gates. Computed
-# here; consumed by the Bugbot bucket + the CR belt-and-suspenders downgrade below.
-# (NB: no apostrophes in this single-quoted jq filter string.)
-| (($pr.files.nodes // []) | map(.path)) as $changedPaths
-| (($pr.files.pageInfo.hasNextPage // false)) as $filesOverflow
-| (($changedPaths | length) > 0
-   and ($filesOverflow | not)
-   and ($changedPaths | all(startswith("docs/self-improvement/")))) as $selfImpOnly
-| ($labels | any(. == "tests-out-of-band")) as $tests
-| ($labels | any(. == "perf-out-of-band")) as $perf
-| ($labels | any(. == "intent-out-of-band")) as $intent
-| ($labels | any(. == "plan-lock-out-of-band")) as $planlock
-| ($labels | any(. == "cr-out-of-band")) as $cr
-# crDisposition — an explicit operator attestation supplied EITHER as a label
-# prefixed `cr-disposition:` (e.g. `cr-disposition:rate-limit-acked`) OR as a
-# grep-able `cr-disposition:<reason>` marker line in the PR BODY. Whenever
-# `cr-out-of-band` would downgrade a CR block, this disposition is REQUIRED —
-# `cr-out-of-band` alone is NOT honoured (PR-3 cr-out-of-band-disposition-trail,
-# generalising the PR-2 cr-rate-limit-code-pr-auto-pause requirement to EVERY
-# cr-out-of-band downgrade): it proves the operator consciously waived CR review
-# with a recorded reason rather than reflexively slapping a generic override on.
-# Body match: `cr-disposition:` followed by any non-empty reason on the line
-# (regex tolerates leading whitespace / list markers). (NB: no apostrophes in
-# this single-quoted jq filter string.)
-| (($labels | any(startswith("cr-disposition:")))
-   or (($pr.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crdisposition
-| ($labels | any(. == "bugbot-out-of-band")) as $bb
-| ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
-   | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
-                   else ["StatusContext", (.context // "")] end)})
-   | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
-| ([$ctx[] | select(.isRequired == true)]) as $req
-# $blocking — the set the gate must wait on: REQUIRED contexts PLUS every
-# non-required, non-advisory-named check (block-on-any-red — the allow-list
-# regex now matches all names). The $failing set below already unions these
-# (the #923 fix), but the PENDING count historically counted only $req — so a
-# non-required blocking check still IN_PROGRESS (not yet terminal) was
-# invisible: not failing (not terminal) and not pending (not required) →
-# GATES_PASSED fired before ASAN/Coverage/Bucket finished and the merge beat
-# the sanitizer to the line (#1237/#1232/#1227/#1220/#1198 ASAN/Coverage
-# escapes). Counting $blocking (not $req) for pending closes it.
-| ([$ctx[] | select(
-      (.isRequired == true)
-      or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
-          | (test("__BLOCK_ALLOWLIST_RE__"; "i")
-             and (ascii_downcase | contains("advisory") | not))))]) as $blocking
-| (__REQUIRED_CONTEXTS__) as $reqNames
-| ([$ctx[] | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)]) as $ctxNames
-| ([$reqNames[] | select(. as $n | ($ctxNames | any(. == $n)) | not)]) as $reqAbsent
-| ([$ctx[] | select(
-      ((.__typename == "CheckRun" and .status == "COMPLETED" and ((.conclusion // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))) or
-       (.__typename == "StatusContext" and ((.state // "") | IN("FAILURE","ERROR"))))
-      and
-      # A failing check blocks if it is REQUIRED (unchanged), OR it is ANY
-      # non-required check whose name does not contain "advisory"
-      # (block-on-any-red — the spliced regex matches every name; see the
-      # MERGE_GATES_BLOCK_ALLOWLIST_RE comment for the full rationale + the
-      # curated-era history: #923 Coverage escape closed 2026-06-06; Perf
-      # PR-fast 2026-06-07; Android security gate 2026-06-09 — the advisory
-      # mobile jobs let a green develop ship mobile breakage #1021/#1064; Fuzz
-      # smoke 2026-06-16 — #1301 merged past a RED fuzz-smoke whose libFuzzer
-      # driver failed to compile, paired with the continue-on-error guard on
-      # the stochastic fuzz STEP so only the deterministic build/ctest reds the
-      # check). The curated list grew one gate-escape at a time; the flip
-      # retires the curation so the next escape class is impossible by
-      # construction. A red on an "advisory"-named check (none exist post-
-      # rename; the token is the sanctioned future escape) still passes.
-      ((.isRequired == true)
-       or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
-           | (test("__BLOCK_ALLOWLIST_RE__"; "i")
-              and (ascii_downcase | contains("advisory") | not)))))]) as $failing
-| ([$failing[] | select(
-      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))) or
-      ($intent and .__typename == "CheckRun" and .name == "Intent section") or
-      ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
-| ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
-| (if ($crall | length) == 0 then "NONE"
-   else (([$crall[] | select(.commit.oid == $sha)]) as $cur
-         | if ($cur | length) == 0 then "STALE" else ($cur | sort_by(.submittedAt) | .[-1].state) end) end) as $crstate
-| (if ($crall | length) == 0 then ""
-   else (([$crall[] | select(.commit.oid == $sha)]) as $cur
-         | if ($cur | length) > 0 then ($cur | sort_by(.submittedAt) | .[-1].body // "")
-           else ($crall | sort_by(.submittedAt) | .[-1].body // "") end) end) as $crbody
-| ([$pr.comments.nodes[]?
-    | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-    | (.body // "")]
-   | any(
-       contains("skip review by coderabbit.ai")
-       or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))) as $crskip
-# crReviewSkipped — the GENERIC terminal "Review skipped" (docs-only /
-# path-filtered / trivial diff per .coderabbit.yaml): the "CodeRabbit"
-# StatusContext is SUCCESS and its description says "Review skipped" WITHOUT
-# "too many files" (the size-skip variant, handled by $crskip + the NONE size
-# branch). This is TERMINAL — CR processed the PR and declined an incremental
-# review, so no inline review will ever land and the NONE+status-SUCCESS grace
-# must NOT wait it out (PR #976 burned ~10 cycles on a docs-only PR). Distinct
-# from $crskip (a too-many-files BLOCK read from a CONVERSATION COMMENT); this
-# reads the STATUS description and is a PASS signal.
-| ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-    | select(.__typename == "StatusContext" and .context == "CodeRabbit"
-             and (.state == "SUCCESS"))
-    | (.description // "")]
-   | any((test("review skipped"; "i"))
-         and ((test("too many files"; "i")) | not))) as $crreviewskipped
-# crRateLimited — CR declined / deferred the review because it hit its rate
-# limit (PR-2 cr-review-skipped-pure-docs-auto-downgrade /
-# cr-rate-limit-code-pr-auto-pause). Distinct from $crreviewskipped (a clean
-# path-filtered/docs skip, a PASS) and $crskip (the too-many-files size skip):
-# a rate-limit skip is TEMPORARY — CR will re-review once its quota recovers, so
-# it must NOT be treated as a terminal pass on a CODE PR. Read from BOTH the CR
-# conversation-comment bodies AND the "CodeRabbit" StatusContext description
-# (CR surfaces the rate-limit on either surface). Regex tolerates "rate limit",
-# "rate-limited", "rate limited", and the common "try again later" phrasing.
-# (NB: no apostrophes in this single-quoted jq filter string.)
-| (([$pr.comments.nodes[]?
-     | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-     | (.body // "")]
-    + [$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-       | select(.__typename == "StatusContext" and .context == "CodeRabbit")
-       | (.description // "")])
-   | any(test("rate.?limit"; "i") or test("try again later"; "i"))) as $crratelimited
-# pureDocs — the PR diff is strictly within the is-pure-docs-diff.sh allow-list
-# (docs/ , backlog/ , agents/scripts/ , or any *.md ANYWHERE). Mirrors that
-# script over the PR file list so the poller can apply the IDENTICAL pure-docs
-# verdict without a local checkout. Used by the rate-limit auto-downgrade
-# (deliverable 1): a rate-limit skip on a pure-docs PR is harmless to fast-pass
-# (markdown is never compiled), while a rate-limit skip on a CODE PR must pause /
-# require an explicit disposition (deliverable 2). Fail-safe FALSE on an empty
-# file list, a >100-file page (cannot see every path), or absent files.
-| (($changedPaths | length) > 0
-   and ($filesOverflow | not)
-   and ($changedPaths | all(test("^(docs/|backlog/|agents/scripts/|.*[.]md$)")))) as $pureDocs
-# Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
-# reviews authored by cursor[bot] (its summary review, always state COMMENTED).
-# $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries
-# a couldn.t-run / usage-limit status message. The regex uses couldn.t (a jq `.`
-# wildcard, NOT a literal apostrophe) so it (a) stays inside the bash
-# single-quoted filter — a literal apostrophe here would close the string — and
-# (b) tolerates a straight or unicode apostrophe. $bbstate folds the head-review
-# state, the terminal signal, the engaged-but-stale signal, and the no-activity
-# signal into one token — decision order is load-bearing (see the bash bucket):
-# a head review wins, else TERMINAL (no-wedge), else STALE (prior-commit review
-# → grace), else ABSENT (Bugbot-free / not engaged → never waited on).
-| ([$pr.reviews.nodes[] | select(.author.login == "cursor" or .author.login == "cursor[bot]")]) as $bball
-| ([$pr.comments.nodes[]?
-    | select(.author.login == "cursor" or .author.login == "cursor[bot]")
-    | (.body // "")]
-   | any(test("couldn.t run"; "i") or test("usage limit"; "i"))) as $bbterminal
-| (([$bball[] | select(.commit.oid == $sha)]) as $bbcur
-   | if ($bbcur | length) > 0 then ($bbcur | sort_by(.submittedAt) | .[-1].state)
-     elif $bbterminal then "TERMINAL"
-     elif ($bball | length) > 0 then "STALE"
-     else "ABSENT" end) as $bbstate
-| (
-    ($pr.state // "UNKNOWN"),
-    $sha,
-    (((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.pageInfo.hasNextPage // false)
-       or ($pr.reviews.pageInfo.hasNextPage // false)
-       or ($pr.reviewThreads.pageInfo.hasNextPage // false)
-       or ($pr.comments.pageInfo.hasNextPage // false)
-       or ($pr.labels.pageInfo.hasNextPage // false)
-       or (any($pr.reviewThreads.nodes[]?; .comments.pageInfo.hasNextPage // false)))) | tostring),
-    ($tests | tostring),
-    ($perf | tostring),
-    ($req | length),
-    ([$failing[] | select(. as $f | ($downgraded | any(.name == $f.name and .__typename == $f.__typename)) | not)] | length),
-    ([$blocking[] | select(
-        (.__typename == "CheckRun" and .status != "COMPLETED") or
-        (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED"))))] | length),
-    ($downgraded | length),
-    ([$downgraded[].name] | join(", ")),
-    $crstate,
-    (($crbody | split("\n"))[0] // ""),
-    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-        and any(.comments.nodes[]; .author.login == "coderabbitai" or .author.login == "coderabbitai[bot]"))] | length),
-    ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-      | if (.__typename == "StatusContext" and .context == "CodeRabbit") then .state
-        elif (.__typename == "CheckRun"
-              and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))
-              and (.conclusion != null))
-          then (if ((.conclusion) | IN("SUCCESS","NEUTRAL","SKIPPED")) then "SUCCESS" else .conclusion end)
-        else empty end] | (.[0] // "ABSENT")),
-    ([$pr.reviewThreads.nodes[]? | .comments.nodes[]?
-      | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]") and (.commit.oid // "") == $sha)] | length),
-    (([$pr.comments.nodes[] | select(.author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase))] | length)
-     + ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-          and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)),
-    ($pr.reviewDecision // "NONE"),
-    ($pr.mergeStateStatus // "UNKNOWN"),
-    ($cr | tostring),
-    ($crskip | tostring),
-    (if ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-          | select((.__typename == "StatusContext" and .context == "CodeRabbit")
-                or (.__typename == "CheckRun"
-                    and ((.name == "CodeRabbit") or (.name == "CR findings (0 actionable)"))))] | length) > 0
-     then 1 else 0 end),
-    ($reqAbsent | join(", ")),
-    ($reqAbsent | length),
-    ($crreviewskipped | tostring),
-    $bbstate,
-    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-        and any(.comments.nodes[]; .author.login == "cursor" or .author.login == "cursor[bot]"))] | length),
-    ($bb | tostring),
-    ($selfImpOnly | tostring),
-    ($pureDocs | tostring),
-    ($crratelimited | tostring),
-    ($crdisposition | tostring)
-  )
-'
+    # GATE_FILTER — the 31-field jq projection (see field-order map above).
+    # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
+    # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
+    # command-substitution newline trim); placeholders spliced below as before.
+    local GATE_FILTER="$_MG_GATE_FILTER_TEMPLATE"
     GATE_FILTER="${GATE_FILTER//__ORCH_USER__/$ORCH_USER}"
     # Splice the required-context JSON array (built UTF-8-safe above) as a jq
     # literal. Unlike ORCH_USER (a bare login spliced into a string compare),
@@ -1463,40 +1261,8 @@ poll_merge_gates() {
 }
 
 # ----------------------------------------------------------------------------
-# gh_pr_ready_idempotent <pr_number>
+# gh_pr_ready_idempotent — moved to merge-gates.d/00-common.sh (sourced at top).
 # ----------------------------------------------------------------------------
-# H2: positive-check fallback. `gh pr ready` returns non-zero with an English
-# stderr message ("not in draft state" / "already marked ready") when called
-# against an already-non-draft PR. Matching on English text breaks if `gh`
-# updates its wording, ships a localised build, or the user is on a locale-
-# overridden CLI. Fall back to a positive state probe via
-# `gh pr view --json isDraft`: if the PR is observably non-draft, the
-# original `gh pr ready` failure was the benign "already ready" case and we
-# can return 0. Any other failure surfaces as exit 6.
-gh_pr_ready_idempotent() {
-    local prNumber="${1:?gh_pr_ready_idempotent: pr_number required}"
-    local out
-    if ! out=$(gh pr ready "$prNumber" 2>&1); then
-        # Fast path — known English phrases. Cheaper than the extra API call
-        # and preserves backward compatibility with the prior contract.
-        case "$out" in
-            *"not in draft state"*|*"already marked ready"*)
-                return 0
-                ;;
-        esac
-        # Positive-check fallback: probe the PR's actual draft state. If it's
-        # already non-draft, the `gh pr ready` failure was benign. Robust
-        # against `gh` wording changes + locale variation + CLI version drift.
-        local is_draft
-        if is_draft=$(gh pr view "$prNumber" --json isDraft --jq .isDraft 2>/dev/null); then
-            if [ "$is_draft" = "false" ]; then
-                return 0
-            fi
-        fi
-        echo "$out" >&2
-        return 6
-    fi
-}
 
 # ----------------------------------------------------------------------------
 # CLI entry point — only when invoked directly (not sourced).
