@@ -5,9 +5,10 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-#include "LocalCacheManager.h"
+#include "Interfaces/IAppSync.h" // fan-in: sync.* depends on the narrow IAppSync facet, not the full AppController.h.
+#include "Sync/SyncTypes.h"      // TrackerIssueFetchPack
+#include "CachedTicketTypes.h"   // CachedTicket (pack.Tickets element)
+#include <nlohmann/json.hpp>     // this sync command TU uses nlohmann::json directly.
 
 #include <string>
 #include <utility>
@@ -19,7 +20,7 @@ using builtin_detail::MakeCommand;
 
 namespace {
 
-void RegisterSyncIncrementalCommand(CommandRegistry& reg, AppController& app) {
+void RegisterSyncIncrementalCommand(CommandRegistry& reg, IAppSync& app) {
     {
         Command c = MakeCommand("sync.incremental", "Delta sync from tracker (last-fetched timestamp onward).",
                                 [&app](const nlohmann::json&, const CommandContext& ctx) {
@@ -42,7 +43,7 @@ void RegisterSyncIncrementalCommand(CommandRegistry& reg, AppController& app) {
     }
 }
 
-void RegisterSyncFullCommand(CommandRegistry& reg, AppController& app) {
+void RegisterSyncFullCommand(CommandRegistry& reg, IAppSync& app) {
     {
         Command c =
             MakeCommand("sync.full", "Full sync: wipe local cache and re-fetch all tickets from tracker.",
@@ -67,7 +68,7 @@ void RegisterSyncFullCommand(CommandRegistry& reg, AppController& app) {
     }
 }
 
-void RegisterSyncRefreshLocalCommand(CommandRegistry& reg, AppController& app) {
+void RegisterSyncRefreshLocalCommand(CommandRegistry& reg, IAppSync& app) {
     {
         Command c =
             MakeCommand("sync.refresh_local", "Rebuild in-memory ticket list from the local SQLite cache (no network).",
@@ -79,12 +80,12 @@ void RegisterSyncRefreshLocalCommand(CommandRegistry& reg, AppController& app) {
     }
 }
 
-void RegisterSyncTrackerStatusCommand(CommandRegistry& reg, AppController& app) {
+void RegisterSyncTrackerStatusCommand(CommandRegistry& reg, IAppSync& app) {
     {
         Command c = MakeCommand("sync.tracker_status",
                                 "Last connectivity state and diagnostic from the tracker reachability probe.",
                                 [&app](const nlohmann::json&, const CommandContext&) {
-                                    using S = AppController::TrackerConnectivityState;
+                                    using S = ::TrackerConnectivityState;
                                     const S s = app.GetLastTrackerConnectivityState();
                                     const char* stateStr = "unknown";
                                     switch (s) {
@@ -114,7 +115,7 @@ void RegisterSyncTrackerStatusCommand(CommandRegistry& reg, AppController& app) 
     }
 }
 
-void RegisterSyncFetchActiveViewCommand(CommandRegistry& reg, AppController& app) {
+void RegisterSyncFetchActiveViewCommand(CommandRegistry& reg, IAppSync& app) {
     {
         Command c =
             MakeCommand("sync.fetch_active_view",
@@ -147,7 +148,7 @@ void RegisterSyncFetchActiveViewCommand(CommandRegistry& reg, AppController& app
 
 } // namespace
 
-void RegisterSyncCommands(CommandRegistry& reg, AppController& app) {
+void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app) {
     RegisterSyncIncrementalCommand(reg, app);
     RegisterSyncFullCommand(reg, app);
     RegisterSyncRefreshLocalCommand(reg, app);

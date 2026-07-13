@@ -120,6 +120,7 @@ class AiAssistantController;
 #include "Interfaces/IAppTicketMutations.h"
 #include "Interfaces/IAppCommands.h"
 #include "Interfaces/IAppScenarioHost.h"
+#include "Interfaces/IAppSync.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -158,7 +159,8 @@ class AppController : public IAppThreading,
                       public IAppTicketData,
                       public IAppTicketMutations,
                       public IAppCommands,
-                      public IAppScenarioHost {
+                      public IAppScenarioHost,
+                      public IAppSync {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -290,7 +292,7 @@ class AppController : public IAppThreading,
      * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
      * to refill from the tracker.
      */
-    bool RecreateLocalCacheDatabase(std::string& outError);
+    bool RecreateLocalCacheDatabase(std::string& outError) override;
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
@@ -595,7 +597,7 @@ class AppController : public IAppThreading,
      * Pass the in-memory UI config + views store when syncing from the app so JQL/fields match
      * the active view without relying on an immediate disk round-trip.
      */
-    void SyncWithBackend(const TrackerConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr);
+    void SyncWithBackend(const TrackerConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr) override;
 
     /** Process queued streaming ticket batches on the UI thread (frame-budgeted). */
     void TickStreamingApply();
@@ -608,12 +610,12 @@ class AppController : public IAppThreading,
      * Does not touch the SQLite cache; pair with ApplyIssueFetchPack on the UI thread.
      */
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
-                                                   const ViewsStore* viewsOverride = nullptr);
+                                                   const ViewsStore* viewsOverride = nullptr) override;
 
     /** Merges fetch results into the local cache and updates connectivity banners. */
     void ApplyIssueFetchPack(TrackerIssueFetchPack pack);
 
-    void RefreshLocalData();
+    void RefreshLocalData() override;
     // Generation-checked refreshes (issue #1081) go through RefreshLocalDataCheckedImpl_,
     // private on purpose: every checked caller must pass the GridLiveContext it latched the
     // generation from (UpdateTicket inline; replay workers via the friend
@@ -665,12 +667,12 @@ class AppController : public IAppThreading,
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.
     const std::vector<TrackerUser>& GetAvailableUsers() const { return fieldCatalog().AvailableUsers; }
-    const std::string& GetFieldCatalogError() const { return fieldCatalog().LastTrackerFieldCatalogError; }
+    const std::string& GetFieldCatalogError() const override { return fieldCatalog().LastTrackerFieldCatalogError; }
     const std::string& GetFieldCatalogWarning() const { return fieldCatalog().LastTrackerFieldCatalogWarning; }
     /** Set when a live JQL refresh failed with a transport-style error; UI may show cached tickets.
      *  Returns a const reference (callers bind a reference); delegates to ConnectivityMonitorService.
      *  De-inlined (Phase 3) — the body lives in AppController.cpp where the service is a complete type. */
-    const std::string& GetLastTicketSyncWarning() const;
+    const std::string& GetLastTicketSyncWarning() const override;
 
     /**
      * One banner for field-catalog error/warning, ticket-list cache warning, and optional session note
@@ -686,7 +688,7 @@ class AppController : public IAppThreading,
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
     /** Latest reachability from background probe (or after a successful live backend request).
      *  De-inlined (Phase 3) — delegates to ConnectivityMonitorService (a complete type only in the .cpp). */
-    TrackerConnectivityState GetLastTrackerConnectivityState() const;
+    TrackerConnectivityState GetLastTrackerConnectivityState() const override;
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
