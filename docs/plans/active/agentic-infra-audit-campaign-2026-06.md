@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-infra-audit-campaign-2026-06` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — audit-campaign tracker. No fix-slice has been executed as such; **9 findings have since been closed incidentally by unrelated PRs, 1 is partially addressed, 57 remain open** (2026-07-13 reconciliation pass — see § Reconciliation pass (2026-07-13)). Flip to `shipped` only once every slice has merged (or been re-deferred) and § Implementation log is filled.
+> **Status**: `active` — audit-campaign tracker. **9 findings closed incidentally by unrelated PRs, 1 fixed in this PR (`core-scripts-python-02`, the reversed sanitizer preset), 1 partially addressed, 56 remain open** (2026-07-13 reconciliation pass — see § Reconciliation pass (2026-07-13)). Flip to `shipped` only once every slice has merged (or been re-deferred) and § Implementation log is filled.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template. This is a meta-campaign (like `agentic-harness-campaign.md`): it ranks + sequences fix-slices, it does not re-author them.
 
@@ -57,8 +57,9 @@ A read-only re-verification of all 67 confirmed findings against `develop` @ `a1
 
 **PARTIAL (1):** `merge-pipeline-04` (P1) — `cr-out-of-band` no longer downgrades on its own; it now requires a paired `cr-disposition` attestation (PR-3 mechanism, not the proposed "≥1 CR StatusContext SUCCESS" check). A CR-never-ran bypass is still possible *with* an attestation, so the original defect is reduced, not closed. Keep the slice (B6), re-scoped to the residual.
 
+**Fixed in this PR (1):** `core-scripts-python-02` (P1) — the reversed sanitizer preset. Extracted `_select_sanitizer_preset(status_line)` (pure, unit-tested): TSAN→`ninja-tsan-linux`, UBSAN→`ninja-clang-asan` (the only ASan+UBSan preset), ASAN→`ninja-msvc-asan`; the auto-act call site now uses it. Previously both branches returned an ASAN preset, so a data-race failure was handed a build that could never reproduce it. Guarded by a `merge_watcher.bats` case incl. a "TSAN never maps to ASAN" assertion.
+
 **Highest-value still-OPEN:**
-- `core-scripts-python-02` (P1) — sanitizer auto-act still selects an **ASAN preset for a TSAN failure** (`merge-watcher.py:2659-2662`; neither branch is `ninja-tsan-linux`). Cheapest real correctness fix in the set.
 - The three remaining P0s: `merge-pipeline-01` (override-label race — no labeled-event timestamping), `merge-pipeline-02` (admin-merge ledger gap — [ADR-0017](../../adr/0017-merge-time-snapshot-ledger.md) confirms the admin path is still "remaining writer to wire"), `bats-coverage-01` (5 bare `python3` probes in `markdown_links.bats`).
 - merge-watcher NONE-state (`core-scripts-python-01` seed + `-04` parse), CR-thread pagination (`core-scripts-python-05` — query now requests `hasNextPage` but the reader ignores it), `postmortem-owed` blocking mode (`merge-pipeline-03`), and the false `merge-watcher.py` Phase-1 docstring (`merge-pipeline-05`).
 
@@ -288,7 +289,8 @@ These survived mining but the verifier found the root cause already tracked; lis
 - **Already shipped from this debacle**: PR #1139 (`postmortem-owed.sh` fix + bats), PR #1141 (`workflow-fleets.md`).
 
 ## Implementation log
-- 2026-07-13 · **reconciliation pass, no slice shipped** · four-agent read-only re-verification of all 67 findings vs `develop` @ `a166404` → **9 FIXED** (all incidental — closed by unrelated PRs, not by a campaign slice), **1 PARTIAL** (`merge-pipeline-04`), **57 OPEN**. Details + the FIXED mechanisms + three synthesis corrections in § Reconciliation pass (2026-07-13). No fix authored here — this is a status update only.
+- 2026-07-13 · **reconciliation pass** · four-agent read-only re-verification of all 67 findings vs `develop` @ `a166404` → **9 FIXED** (all incidental — closed by unrelated PRs), **1 PARTIAL** (`merge-pipeline-04`), **57 OPEN**. Details + FIXED mechanisms + three synthesis corrections in § Reconciliation pass (2026-07-13).
+- 2026-07-13 · **fix `core-scripts-python-02` (P1)** · the reversed sanitizer-preset selector in `merge-watcher.py` — extracted the pure `_select_sanitizer_preset` (TSAN→`ninja-tsan-linux`, UBSAN→`ninja-clang-asan`, ASAN→`ninja-msvc-asan`) + a `merge_watcher.bats` case; a TSAN failure no longer auto-acts with an ASAN build. Drops the open count 57→56.
 
 *(future entries — bullet per shipped slice: `<sha> · <slice> · <one-line summary>`)*
 

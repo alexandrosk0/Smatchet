@@ -1468,6 +1468,31 @@ def _looks_like_sanitizer_failure(status_line: str) -> bool:
     )
 
 
+def _select_sanitizer_preset(status_line: str) -> str:
+    """Map a sanitizer CI failure status line to the CMake preset that reproduces it.
+
+    - TSAN / ThreadSanitizer  → `ninja-tsan-linux` (the only TSAN preset).
+    - UBSAN / UndefinedBehaviorSanitizer → `ninja-clang-asan` — per
+      `.github/workflows/sanitizer-nightly.yml`, the *only* preset delivering
+      ASan AND UBSan (clang-cl); the MSVC preset lacks UBSan.
+    - ASAN / everything else → `ninja-msvc-asan` (the "Sanitizer (ASAN via MSVC)"
+      PR lane).
+
+    Order matters: check TSAN then UBSAN then fall through to ASAN, because a
+    combined "ASan+UBSan" line contains both tokens and must map to the clang
+    preset. Before 2026-07 both branches returned an ASAN preset, so a TSAN
+    (data-race) failure was handed an ASAN build that can never reproduce it
+    (`core-scripts-python-02`); the auto-act repro then always failed to
+    reproduce and the debug loop stalled.
+    """
+    s = status_line.lower()
+    if "tsan" in s or "threadsanitizer" in s:
+        return "ninja-tsan-linux"
+    if "ubsan" in s or "undefinedbehaviorsanitizer" in s:
+        return "ninja-clang-asan"
+    return "ninja-msvc-asan"
+
+
 def _extract_failing_test_from_status(status_line: str) -> str:
     """Best-effort extraction of the failing test name from a sanitizer status line.
 
@@ -2655,12 +2680,9 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
         # Extract a rough failing-test name from the status line. The
         # merge-gates poller includes the check name; best-effort parse.
         failing_test = _extract_failing_test_from_status(status_line)
-        # Select preset based on which sanitizer triggered.
-        sanitizer_preset = (
-            "ninja-clang-asan"
-            if "tsan" in status_line.lower() or "threadsanitizer" in status_line.lower()
-            else "ninja-msvc-asan"
-        )
+        # Select the preset that actually reproduces the failing sanitizer
+        # (TSAN→tsan preset, UBSAN→clang ASan+UBSan, ASAN→msvc); see helper.
+        sanitizer_preset = _select_sanitizer_preset(status_line)
         prompt = AUTO_ACT_SANITIZER_PROMPT.format(
             pr=pr, owner=owner, repo=repo,
             head_sha=head_sha[:12], budget=budget, attempt=attempts_after,
