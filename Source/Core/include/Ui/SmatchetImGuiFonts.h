@@ -21,6 +21,12 @@ void SmatchetSetInjectedFontBytes(const void* data, int dataSize, float sizePixe
 // Request a dynamic font change on the next frame boundary.
 void SmatchetRequestFontReload(const std::string& fontName, float fontSizePixels);
 
+// True when `fontName` resolves to a font file present on this machine. Lets the Font
+// picker mark entries that would silently fall back to the built-in default (a missing
+// system TTF is common on trimmed installs / non-Windows hosts). Names the resolver does
+// not know return false.
+bool SmatchetIsFontAvailable(const std::string& fontName);
+
 // Check if a font reload is pending and reload the font if so. Returns true if a reload happened.
 bool SmatchetCheckAndApplyFontReload();
 

@@ -228,7 +228,10 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
 /// chrome. The popup is drawn as part of this call. `drawProjectPill` appends
 /// the project-scope pill beneath the bar (dashboard only — the global omnibar
 /// passes false; the pill is hard-bound to the dashboard's viewJqlEditor).
-void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill = true);
+/// `hint`: optional InputTextWithHint placeholder (the omnibar states what it
+/// searches); null keeps the plain InputText used by the dashboard editor.
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill = true,
+                                const char* hint = nullptr);
 
 /// Vertical splitter that lets the user drag a horizontal divider; stores the new
 /// height in *height and clamps to [min, max]. Triggers ConfigManager::Save(d.cfg)

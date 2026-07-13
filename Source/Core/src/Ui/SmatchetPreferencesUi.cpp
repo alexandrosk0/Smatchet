@@ -24,6 +24,7 @@
 #include "IAiClient.h"
 #endif
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "EmailMaskForLog.h"
@@ -46,7 +47,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <chrono>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <iterator>
@@ -512,7 +515,7 @@ void DrawUserInfoFeedSettings(UiDrawSession& d) {
 } // namespace
 
 void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("Tracker")) {
+    if (!ImGui::BeginTabItem("Tracker", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Tracker"))) {
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Tracker;
@@ -533,7 +536,7 @@ void SmatchetUI::drawPreferencesTrackerTab(UiDrawSession& d) {
 }
 
 void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("User Info")) {
+    if (!ImGui::BeginTabItem("User Info", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "User Info"))) {
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::UserInfo;
@@ -543,7 +546,7 @@ void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
 
 #if defined(SMATCHET_WITH_MCP)
 void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("Integrations")) {
+    if (!ImGui::BeginTabItem("Integrations", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Integrations"))) {
         return;
     }
     d.preferencesActiveTab = PreferencesActiveTab::Integrations;
@@ -729,6 +732,98 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
 }
 
+namespace SmatchetPreferencesUiDetail {
+
+int PrefsTabFlags(UiDrawSession& d, const char* canonicalName) {
+    if (!d.prefsSelectTabRequest.empty() && d.prefsSelectTabRequest == canonicalName) {
+        d.prefsSelectTabRequest.clear();
+        return ImGuiTabItemFlags_SetSelected;
+    }
+    return ImGuiTabItemFlags_None;
+}
+
+} // namespace SmatchetPreferencesUiDetail
+
+namespace {
+
+// Settings-search index (UX critique M4): finding a setting shouldn't require knowing
+// which of ~13 tabs owns it. Each entry pairs a top-level tab's canonical name with a
+// lowercase keyword bag covering the labels/concepts that tab hosts. Curated by hand —
+// the tab bodies are static label strings, so drift is caught on sight when a tab gains
+// a new concept.
+struct PrefsSearchEntry {
+    const char* tab;      // canonical tab name (BeginTabItem literal)
+    const char* keywords; // lowercase, space-separated
+};
+
+const PrefsSearchEntry kPrefsSearchIndex[] = {
+    {"Tracker",
+     "backend jira plane github linear connection domain email api token pat credentials workspace url project "
+     "read-only sync"},
+    {"User Info", "git commit repos activity feed vcs production group user changes"},
+#if defined(SMATCHET_WITH_MCP)
+    {"Integrations", "mcp model context protocol server port remote lan bind auth token lua automation agent"},
+#endif
+#if defined(SMATCHET_WITH_AI)
+    {"Assistant", "ai provider model api key openai anthropic claude chat assistant temperature context"},
+#endif
+#if defined(SMATCHET_WITH_WHISPER)
+    {"Whisper", "dictation speech voice microphone audio transcribe push to talk hotkey whisper model recording"},
+#endif
+    {"Local data", "cache database offline local data sqlite log level verbose clear catalog projects"},
+    {"Appearance", "theme font size density compact zoom color dark light ui mode mobile date format"},
+    {"Keyboard Shortcuts", "keyboard shortcut hotkey binding chord rebind keys keybindings"},
+    {"Grid", "grid rows tooltip hover estimate chip write badge editing markdown"},
+    // Time Estimates / Work Log Templates / Quick Comments live as sub-tabs INSIDE the
+    // Fields Inputs tab — their keywords jump to that top-level parent.
+    {"Fields Inputs",
+     "field input default inherit issue type new issue draft autocomplete time estimate duration suggestions "
+     "worklog work log template quick comment"},
+    {"Annotate", "annotate perforce p4 blame changelist source"},
+};
+
+// Case-insensitive substring match of `needleLower` against haystack (also lowercased).
+bool PrefsKeywordsMatch(const char* haystack, const std::string& needleLower) {
+    std::string hay(haystack);
+    for (std::size_t i = 0; i < hay.size(); ++i) {
+        hay[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(hay[i])));
+    }
+    return hay.find(needleLower) != std::string::npos;
+}
+
+// The search box + match chips drawn above the tab bar. Clicking a chip selects that tab
+// via d.prefsSelectTabRequest / PrefsTabFlags.
+void DrawPrefsSearchBox(UiDrawSession& d) {
+    ImGui::SetNextItemWidth(280.0f);
+    ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
+    if (d.prefsSearchBuf[0] == '\0') {
+        return;
+    }
+    std::string needle(d.prefsSearchBuf);
+    for (std::size_t i = 0; i < needle.size(); ++i) {
+        needle[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.found_in", "Found in:"));
+    int matches = 0;
+    for (const PrefsSearchEntry& entry : kPrefsSearchIndex) {
+        if (!PrefsKeywordsMatch(entry.tab, needle) && !PrefsKeywordsMatch(entry.keywords, needle)) {
+            continue;
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton(entry.tab)) {
+            d.prefsSelectTabRequest = entry.tab;
+        }
+        ++matches;
+    }
+    if (matches == 0) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.no_match", "no matching tab"));
+    }
+}
+
+} // namespace
+
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded) {
     // embedded (dual-ui slice 4): mobile Settings page draws the body directly into the page
     // child; skip the show-gate + beginPreferencesWindow/End chrome. Desktop path below is
@@ -745,6 +840,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     }
 
     loadPreferencesBuffers(d);
+
+    DrawPrefsSearchBox(d);
 
     if (ImGui::BeginTabBar("PreferencesTabs")) {
         drawPreferencesTrackerTab(d);

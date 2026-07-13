@@ -13,6 +13,7 @@ struct ToastNotification {
     ToastType Type = ToastType::Info;
     std::chrono::steady_clock::time_point Expiry;
     float FadeIn = 0.0f;      // 0..1
+    bool Sticky = false;      // never auto-expires; requires an explicit dismiss (Error toasts)
     ToastRowAction RowAction; // optional; the history entry's action (transient click opens the center)
 };
 
@@ -37,9 +38,16 @@ class SmatchetToastManager {
     void RequestOpenCenter() { m_openCenterRequested = true; }
     bool ConsumeOpenCenterRequest();
 
+    // Unread-error trail: incremented on every Error push, cleared when the Notification
+    // Center renders (MarkHistorySeen). Drives the persistent status-bar badge so a
+    // dismissed/faded error toast still leaves a visible signal.
+    int UnreadErrorCount() const { return m_unreadErrorCount; }
+    void MarkHistorySeen() { m_unreadErrorCount = 0; }
+
   private:
     std::vector<ToastNotification> m_toasts;
     std::vector<ToastHistoryEntry> m_history;
     bool m_openCenterRequested = false;
+    int m_unreadErrorCount = 0;
     static const std::size_t kHistoryCap = 200;
 };

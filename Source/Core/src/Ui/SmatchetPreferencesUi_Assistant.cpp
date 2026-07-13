@@ -780,7 +780,7 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     const bool dirty = SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(work, d.cfg);
     const char* tabLabel = dirty ? "Assistant *###AssistantPrefsTab" : "Assistant###AssistantPrefsTab";
 
-    if (ImGui::BeginTabItem(tabLabel)) {
+    if (ImGui::BeginTabItem(tabLabel, nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Assistant"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Assistant;
         // Validator runs against the working copy so the user gets live feedback
         // for the unsaved text they're typing.

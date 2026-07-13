@@ -28,7 +28,7 @@
 namespace {
 
 void DrawGridSubTab(UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Grid")) {
+    if (ImGui::BeginTabItem("Grid", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Grid"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Templates;
         ImGui::TextUnformatted("Editing");
         ImGui::Separator();
@@ -443,7 +443,7 @@ void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateF
 }
 
 void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Fields Inputs")) {
+    if (ImGui::BeginTabItem("Fields Inputs", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Fields Inputs"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Templates;
         if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
             DrawTimeEstimatesSubTab(d, flags);
@@ -463,7 +463,7 @@ void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>
                                  SmatchetPreferencesUiTemplateFlags& flags) {
     DrawGridSubTab(d);
     DrawFieldsInputsSubTab(d, flags);
-    if (ImGui::BeginTabItem("Annotate")) {
+    if (ImGui::BeginTabItem("Annotate", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Annotate"))) {
         d.preferencesActiveTab = PreferencesActiveTab::Annotate;
         ui.DrawAnnotatePreferencesTabForwarded(availableFields, ticketMutations);
         ImGui::EndTabItem();

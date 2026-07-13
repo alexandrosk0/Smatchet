@@ -256,6 +256,9 @@ struct TrackerConfig {
     // build. from_json replaces (not merges) the binding table, so without this an
     // upgrading user never receives the new defaults. Persisted so the seed fires once.
     bool MigratedMenuShortcutsV1 = false;
+    // V2: seeds the Notifications reveal binding (view.toggle.notifications) added when
+    // the bare `notifications` command id was renamed onto the view.toggle.* scheme.
+    bool MigratedMenuShortcutsV2 = false;
 
     // Custom suggestions and templates saved in smatchet_config.json
     std::vector<std::string> DurationSuggestions = {"15m", "30m", "1h", "2h", "4h", "8h", "1d", "2d", "1w"};
@@ -291,6 +294,10 @@ struct TrackerConfig {
 
     // Side bar orientation: true = right (VS Code default), false = left.
     bool PrimarySideBarOnRight = true;
+
+    // "Don't ask again" for the confirm shown before Panel Position / Move Primary Side Bar
+    // (both currently reset the whole window layout — the targeted re-dock is deferred).
+    bool SkipLayoutResetConfirm = false;
 
     // --- Smatchet Assistant (AI) — Phase A' ---
     // AiProvider enum value persisted as int; unknown / out-of-range values clamp to 0 (OpenAi)

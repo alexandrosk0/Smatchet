@@ -38,6 +38,8 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
+#include <cctype>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -110,6 +112,34 @@ static void DispatchMenuCommand(MainMenuDrawCtx& ctx, const char* commandId) {
     if (!r.Ok) {
         LOG_DEBUG("SmatchetUI: menu command dispatch failed: %s", commandId);
     }
+}
+
+// Human display label for a Recently Used Views entry. The command registry's Title is
+// the id→label seam (alias-aware via FindLocked); the title-cased-slug fallback ensures a
+// raw dotted command id never reaches the menu even for an unregistered id. The Title is
+// copied out immediately — the FindLocked pointer must not be retained.
+static std::string RecentViewDisplayLabel(MainMenuDrawCtx& ctx, const std::string& cmdId) {
+    const smatchet::cmd::Command* c = ctx.app.Commands().FindLocked(cmdId);
+    if (c != nullptr && !c->Title.empty()) {
+        return c->Title;
+    }
+    static const char kPrefix[] = "view.toggle.";
+    const std::string slug =
+        (cmdId.compare(0U, sizeof(kPrefix) - 1U, kPrefix) == 0) ? cmdId.substr(sizeof(kPrefix) - 1U) : cmdId;
+    std::string out;
+    out.reserve(slug.size());
+    bool wordStart = true;
+    for (std::size_t i = 0; i < slug.size(); ++i) {
+        const char sc = slug[i];
+        if (sc == '-' || sc == '_' || sc == '.') {
+            out.push_back(' ');
+            wordStart = true;
+            continue;
+        }
+        out.push_back(wordStart ? static_cast<char>(std::toupper(static_cast<unsigned char>(sc))) : sc);
+        wordStart = false;
+    }
+    return out;
 }
 
 void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
@@ -189,6 +219,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         ImGui::PopStyleColor();
     }
     ImGui::EndMainMenuBar();
+
+    // Layout-destroying appearance changes latched above confirm here, OUTSIDE the menu-bar
+    // window (a popup opened inside a closing menu scope never appears — DR22 class).
+    drawLayoutResetConfirmModal(d);
 }
 
 #if defined(SMATCHET_WITH_WHISPER)
@@ -333,12 +367,11 @@ void SmatchetUI::drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx) {
             const char* label;
         };
         constexpr ThemeEntry kEntries[] = {
-            {ThemeId::ImGuiDefaultDark, "ImGui Default Dark (bright)"},
-            {ThemeId::SmatchetDark, "Smatchet Dark"},
-            {ThemeId::ModernDark, "Modern Dark"},
-            {ThemeId::Vs2022Dark, "VS 2022 Dark"},
-            {ThemeId::Vs2022Light, "VS 2022 Light"},
-            {ThemeId::HighContrast, "High Contrast"},
+            // Display name only — the persisted config string stays "ImGuiDefaultDark".
+            // "ImGui" is framework vocabulary users don't know (UX critique L3).
+            {ThemeId::ImGuiDefaultDark, "Classic Bright"},  {ThemeId::SmatchetDark, "Smatchet Dark"},
+            {ThemeId::ModernDark, "Modern Dark"},           {ThemeId::Vs2022Dark, "VS 2022 Dark"},
+            {ThemeId::Vs2022Light, "VS 2022 Light"},        {ThemeId::HighContrast, "High Contrast"},
             {ThemeId::NortonCommander, "Norton Commander"},
         };
         for (const ThemeEntry& e : kEntries) {
@@ -368,13 +401,28 @@ void SmatchetUI::drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx) {
         ImGui::EndMenu();
     }
     if (ImGui::BeginMenu("Font")) {
+        // Always-working baseline: the bundled default font needs no system TTF, so on a
+        // machine missing the named fonts the picker still offers a choice that does
+        // something (UX critique L4).
+        const bool defaultSelected = (d.cfg.SelectedFontName == "Default");
+        if (ImGui::MenuItem("Built-in Default", nullptr, defaultSelected)) {
+            d.cfg.SelectedFontName = "Default";
+            ConfigManager::Save(d.cfg);
+            SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
+        }
+        ImGui::Separator();
         const char* kFonts[] = {
             "Segoe UI", "Consolas", "Calibri", "Arial", "Cascadia Code", "JetBrains Mono",
         };
         const int kFontCount = static_cast<int>(sizeof(kFonts) / sizeof(kFonts[0]));
         for (int fi = 0; fi < kFontCount; ++fi) {
             const bool selected = (d.cfg.SelectedFontName == kFonts[fi]);
-            if (ImGui::MenuItem(kFonts[fi], nullptr, selected)) {
+            // Annotate fonts whose TTF is missing on this machine — selecting one silently
+            // falls back to the built-in default, so say so up front.
+            const bool available = SmatchetIsFontAvailable(kFonts[fi]);
+            const std::string label =
+                available ? std::string(kFonts[fi]) : std::string(kFonts[fi]) + " (not installed)";
+            if (ImGui::MenuItem(label.c_str(), nullptr, selected)) {
                 d.cfg.SelectedFontName = kFonts[fi];
                 ConfigManager::Save(d.cfg);
                 SmatchetRequestFontReload(d.cfg.SelectedFontName, static_cast<float>(d.cfg.FontSizePt));
@@ -385,27 +433,102 @@ void SmatchetUI::drawAppearanceThemeDensityFont(MainMenuDrawCtx& ctx) {
 }
 
 // Panel Position nested submenu inside Appearance. Owns its own BeginMenu/EndMenu pair; runs
-// inside the active Appearance scope.
+// inside the active Appearance scope. Both entries (and the side-bar swap) currently apply
+// by resetting the whole window layout (dock rebuild is complex and fragile), which would
+// silently destroy a user-arranged layout — so the change is latched and confirmed via the
+// modal in drawLayoutResetConfirmModal before anything is destroyed.
 void SmatchetUI::drawAppearancePanelPosition(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("Panel Position")) {
         if (ImGui::MenuItem("Bottom", nullptr, d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Bottom)) {
             if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Bottom) {
-                d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Bottom;
-                ConfigManager::Save(d.cfg);
-                // Dock rebuild is complex and fragile; reset layout instead.
-                // The panel will be repositioned after layout reset on next launch.
-                resetWindowLayoutToDefault(d);
+                requestLayoutResetAction(d, PendingLayoutResetAction::PanelBottom);
             }
         }
         if (ImGui::MenuItem("Right", nullptr, d.cfg.PanelDockSide == TrackerConfig::PanelPosition::Right)) {
             if (d.cfg.PanelDockSide != TrackerConfig::PanelPosition::Right) {
-                d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
-                ConfigManager::Save(d.cfg);
-                resetWindowLayoutToDefault(d);
+                requestLayoutResetAction(d, PendingLayoutResetAction::PanelRight);
             }
         }
         ImGui::EndMenu();
+    }
+}
+
+// Latch a layout-resetting appearance change: applied immediately when the user opted out
+// of the confirm ("Don't ask again"), otherwise deferred to the confirm modal.
+void SmatchetUI::requestLayoutResetAction(UiDrawSession& d, PendingLayoutResetAction action) {
+    d.pendingLayoutResetAction = action;
+    if (d.cfg.SkipLayoutResetConfirm) {
+        applyPendingLayoutResetAction(d);
+    } else {
+        d.openLayoutResetConfirm = true;
+    }
+}
+
+// Apply the confirmed layout-resetting change: mutate the config, persist, reset the dock
+// layout. The panel is repositioned as part of the default-layout rebuild.
+void SmatchetUI::applyPendingLayoutResetAction(UiDrawSession& d) {
+    switch (d.pendingLayoutResetAction) {
+    case PendingLayoutResetAction::PanelBottom:
+        d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Bottom;
+        break;
+    case PendingLayoutResetAction::PanelRight:
+        d.cfg.PanelDockSide = TrackerConfig::PanelPosition::Right;
+        break;
+    case PendingLayoutResetAction::SwapPrimarySideBar:
+        d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
+        break;
+    case PendingLayoutResetAction::None:
+    default:
+        return;
+    }
+    d.pendingLayoutResetAction = PendingLayoutResetAction::None;
+    ConfigManager::Save(d.cfg);
+    resetWindowLayoutToDefault(d);
+}
+
+// Confirm modal for layout-destroying appearance changes (H3): warns that the window
+// layout will be reset, with a persisted "Don't ask again" opt-out. Drawn after
+// EndMainMenuBar so OpenPopup and BeginPopupModal share one ID scope (DR22 pattern).
+void SmatchetUI::drawLayoutResetConfirmModal(UiDrawSession& d) {
+    if (d.openLayoutResetConfirm) {
+        ImGui::OpenPopup("Reset window layout?");
+        d.openLayoutResetConfirm = false;
+    }
+    if (ImGui::BeginPopupModal("Reset window layout?", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        const char* change = "This appearance change";
+        switch (d.pendingLayoutResetAction) {
+        case PendingLayoutResetAction::PanelBottom:
+            change = "Moving the panel to the bottom";
+            break;
+        case PendingLayoutResetAction::PanelRight:
+            change = "Moving the panel to the right";
+            break;
+        case PendingLayoutResetAction::SwapPrimarySideBar:
+            change = "Moving the primary side bar";
+            break;
+        case PendingLayoutResetAction::None:
+        default:
+            break;
+        }
+        ImGui::Text("%s resets the window layout.", change);
+        ImGui::TextWrapped("Your current window arrangement (docked panes, sizes, floating windows) will be replaced "
+                           "with the default layout. This cannot be undone.");
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Don't ask again", &d.cfg.SkipLayoutResetConfirm)) {
+            ConfigManager::Save(d.cfg);
+        }
+        ImGui::Spacing();
+        if (ImGui::Button("Reset layout and continue")) {
+            applyPendingLayoutResetAction(d);
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel")) {
+            d.pendingLayoutResetAction = PendingLayoutResetAction::None;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -432,9 +555,7 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         const char* swapLabel =
             d.cfg.PrimarySideBarOnRight ? "Move Primary Side Bar Left" : "Move Primary Side Bar Right";
         if (ImGui::MenuItem(swapLabel)) {
-            d.cfg.PrimarySideBarOnRight = !d.cfg.PrimarySideBarOnRight;
-            ConfigManager::Save(d.cfg);
-            resetWindowLayoutToDefault(d);
+            requestLayoutResetAction(d, PendingLayoutResetAction::SwapPrimarySideBar);
         }
     }
     ImGui::Separator();
@@ -454,21 +575,23 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         DispatchMenuCommand(ctx, "ui.zoom.reset");
     }
     ImGui::Separator();
+    // recentViews_.Touch ids below are registered view.toggle.* ALIASES of the chrome
+    // commands (view.sidebar.* / view.panel.bottom) so the Recently Used Views submenu can
+    // re-dispatch them. Status Bar has no backing command, so it is not recorded.
     if (ImGui::MenuItem("Primary Side Bar", MenuShortcut(ctx, "view.sidebar.primary", "Ctrl+B").c_str(),
                         d.cfg.ShowPrimarySideBar)) {
         SetViewVisible(d.cfg, ViewSlot::PrimarySideBar, !d.cfg.ShowPrimarySideBar);
-        recentViews_.Touch("view.toggle.primary-side-bar");
+        recentViews_.Touch("view.toggle.primary_side_bar");
         ConfigManager::Save(d.cfg);
     }
     if (ImGui::MenuItem("Secondary Side Bar", MenuShortcut(ctx, "view.sidebar.secondary", "Ctrl+Alt+B").c_str(),
                         d.cfg.ShowSecondarySideBar)) {
         SetViewVisible(d.cfg, ViewSlot::SecondarySideBar, !d.cfg.ShowSecondarySideBar);
-        recentViews_.Touch("view.toggle.secondary-side-bar");
+        recentViews_.Touch("view.toggle.secondary_side_bar");
         ConfigManager::Save(d.cfg);
     }
     if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
         d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
-        recentViews_.Touch("view.toggle.status-bar");
         ConfigManager::Save(d.cfg);
     }
     if (ImGui::MenuItem("Panel", MenuShortcut(ctx, "view.panel.bottom", "Ctrl+J").c_str(), d.cfg.ShowPanel)) {
@@ -531,7 +654,10 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
         } else {
             for (int ri = static_cast<int>(recent.size()) - 1; ri >= 0; --ri) {
                 const std::string& cmdId = recent[static_cast<size_t>(ri)];
-                if (ImGui::MenuItem(cmdId.c_str())) {
+                // Display label, never the raw command id (H2): resolve through the
+                // registry's Title seam; dispatch still uses the id below.
+                const std::string label = RecentViewDisplayLabel(ctx, cmdId);
+                if (ImGui::MenuItem(label.c_str())) {
                     smatchet::cmd::CommandContext cmdCtx;
                     cmdCtx.ScenarioHost = &app;
                     cmdCtx.Threading = &app;
@@ -555,9 +681,13 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
 // Window-visibility toggle MenuItems inside the View menu (Views Dashboard through the
 // optional Scripts & Actions entry). Split out of drawMenuBarViewMenu to keep both under the
 // branch cap; runs inside the active View BeginMenu scope (no Begin/End pair of its own).
+// Grouped by intent (Workspace / Diagnostics / Data / System) so the 13 toggles read as
+// four small clusters instead of one undifferentiated list. recentViews_.Touch ids are the
+// REGISTERED command ids (underscore scheme) — they are dispatched verbatim from the
+// Recently Used Views submenu, so a drifting id silently broke that menu.
 void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
-    ImGui::Separator();
+    ImGui::SeparatorText("Workspace");
     if (ImGui::MenuItem(
             "Views Dashboard",
             MenuShortcutArgs(ctx, "view.toggle.views_dashboard", "{\"action\":\"show\"}", "Ctrl+Shift+E").c_str(),
@@ -568,30 +698,24 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         // inline (not Dispatch) to preserve the recentViews_.Touch the command lacks.
         d.showViewsDashboard = true;
         d.requestViewsDashboardFocus = true;
-        recentViews_.Touch("view.toggle.views-dashboard");
+        recentViews_.Touch("view.toggle.views_dashboard");
     }
     if (ImGui::MenuItem("Annotate", MenuShortcut(ctx, "view.toggle.source_annotate", "Ctrl+Shift+N").c_str(),
                         d.showAnnotateAnalysis)) {
         d.showAnnotateAnalysis = !d.showAnnotateAnalysis;
-        recentViews_.Touch("view.toggle.source-annotate");
+        recentViews_.Touch("view.toggle.source_annotate");
     }
-    ImGui::Separator();
+    ImGui::SeparatorText("Diagnostics");
     if (ImGui::MenuItem("Log", MenuShortcut(ctx, "view.toggle.log", "Ctrl+Shift+U").c_str(), d.showLogWindow)) {
         d.showLogWindow = true;
         d.requestLogFocus = true;
         recentViews_.Touch("view.toggle.log");
     }
-    if (ImGui::MenuItem("Notifications", MenuShortcut(ctx, "notifications", "").c_str(),
-                        d.showNotificationCenterWindow)) {
-        d.showNotificationCenterWindow = true;
-        d.requestNotificationCenterFocus = true;
-        recentViews_.Touch("notifications");
-    }
     if (ImGui::MenuItem("Backend Audit", MenuShortcut(ctx, "view.toggle.backend_audit", "Ctrl+Shift+M").c_str(),
                         d.showAuditTrail)) {
         d.showAuditTrail = true;
         d.requestAuditTrailFocus = true;
-        recentViews_.Touch("view.toggle.backend-audit");
+        recentViews_.Touch("view.toggle.backend_audit");
     }
     if (ImGui::MenuItem("Performance", MenuShortcut(ctx, "view.toggle.performance", "Ctrl+Shift+F").c_str(),
                         d.showPerformance)) {
@@ -605,17 +729,25 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.requestPlanDocViewerFocus = true;
         recentViews_.Touch("view.toggle.plan_doc_viewer");
     }
+    ImGui::SeparatorText("Data");
     if (ImGui::MenuItem("Bulk Import", MenuShortcut(ctx, "view.toggle.bulk_import", "Ctrl+Shift+I").c_str(),
                         d.showBulkImport)) {
         d.showBulkImport = true;
         d.requestBulkImportFocus = true;
-        recentViews_.Touch("view.toggle.bulk-import");
+        recentViews_.Touch("view.toggle.bulk_import");
     }
     if (ImGui::MenuItem("Bulk Export", MenuShortcut(ctx, "view.toggle.bulk_export", "Ctrl+Shift+X").c_str(),
                         d.showBulkExport)) {
         d.showBulkExport = true;
         d.requestBulkExportFocus = true;
-        recentViews_.Touch("view.toggle.bulk-export");
+        recentViews_.Touch("view.toggle.bulk_export");
+    }
+    ImGui::SeparatorText("System");
+    if (ImGui::MenuItem("Notifications", MenuShortcut(ctx, "view.toggle.notifications", "Ctrl+Shift+Y").c_str(),
+                        d.showNotificationCenterWindow)) {
+        d.showNotificationCenterWindow = true;
+        d.requestNotificationCenterFocus = true;
+        recentViews_.Touch("view.toggle.notifications");
     }
     if (ImGui::MenuItem("Preferences", MenuShortcut(ctx, "view.toggle.preferences", "Ctrl+,").c_str(),
                         d.showPreferences)) {
@@ -628,7 +760,7 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
                         d.showMcpServerWindow)) {
         d.showMcpServerWindow = true;
         d.requestMcpServerFocus = true;
-        recentViews_.Touch("view.toggle.mcp-server");
+        recentViews_.Touch("view.toggle.mcp_server");
     }
 #endif
 #if defined(SMATCHET_WITH_AI)
@@ -636,6 +768,8 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
                         d.assistantPanelOpen)) {
         d.assistantPanelOpen = true;
         d.requestAssistantFocus = true;
+        // Registered alias of view.assistant — satisfies the LRU's view.toggle.* filter
+        // AND dispatches (the previous unregistered id silently failed from Recents).
         recentViews_.Touch("view.toggle.assistant");
     }
 #endif
@@ -645,7 +779,7 @@ void SmatchetUI::drawMenuBarViewWindowToggles(MainMenuDrawCtx& ctx) {
         d.showLuaAutomationWindow = true;
         d.requestLuaAutomationFocus = true;
         d.requestScriptingEditorTabFocus = true;
-        recentViews_.Touch("view.toggle.scripts-and-actions");
+        recentViews_.Touch("view.toggle.scripts");
     }
 #endif
 }
@@ -725,9 +859,11 @@ void SmatchetUI::drawMenuBarInlinePalette(MainMenuDrawCtx& ctx) {
         ImGui::SetCursorPosX(menuRightEdge + xPad);
         ImGui::SetNextItemWidth(inputW);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
-        const bool committed =
-            ImGui::InputTextWithHint("##cmd-palette-input", "Search commands (Ctrl+Shift+P)", d.paletteInlineBuf,
-                                     IM_ARRAYSIZE(d.paletteInlineBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        // Placeholder says COMMANDS explicitly so this box is not mistaken for the top
+        // omnibar (issue search) — each search entry point states what it searches (M7).
+        const bool committed = ImGui::InputTextWithHint(
+            "##cmd-palette-input", "Search commands, not issues (Ctrl+Shift+P)", d.paletteInlineBuf,
+            IM_ARRAYSIZE(d.paletteInlineBuf), ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::PopStyleVar();
         const bool edited = ImGui::IsItemEdited();
         const bool activated = ImGui::IsItemActivated();

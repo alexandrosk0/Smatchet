@@ -19,6 +19,13 @@ struct UiDrawSession;
 
 namespace SmatchetPreferencesUiDetail {
 
+/// Settings-search "jump to tab" support (UX critique M4): the search box atop the
+/// Preferences window sets d.prefsSelectTabRequest to a tab's canonical name; each
+/// top-level BeginTabItem passes this as its flags argument, which returns
+/// ImGuiTabItemFlags_SetSelected (and consumes the request) when that tab is the target.
+/// Returns int so this header stays imgui-free. Defined in SmatchetPreferencesUi.cpp.
+int PrefsTabFlags(UiDrawSession& d, const char* canonicalName);
+
 /// Maps the persisted cfg.DateFormatOption string to the Combo index used by the
 /// Appearance tab's "Date Format Style" dropdown. Unknown / "compact" → 0. Pure —
 /// no ImGui / no session state — so it is bucket-A testable in isolation.

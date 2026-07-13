@@ -125,8 +125,12 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
         }
         ImGui::SameLine();
         // No project pill on the omnibar — the pill is hard-bound to the dashboard editor.
-        SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d, d.omniJqlEditor,
-                                                                   /*drawProjectPill=*/false);
+        // The placeholder distinguishes this ISSUE-search bar from the command-search
+        // entry points (menu-bar box / Ctrl+Shift+P palette).
+        SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(
+            app, d, d.omniJqlEditor,
+            /*drawProjectPill=*/false,
+            SmatchetLocalization::T("omnibar.hint", "Search issues: key, filter query, or title text"));
 
         if (d.omniJqlEditor.jqlWantsApplyFromEnter) {
             d.omniJqlEditor.jqlWantsApplyFromEnter = false;

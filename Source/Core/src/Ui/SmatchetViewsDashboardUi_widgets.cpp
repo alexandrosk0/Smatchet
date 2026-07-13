@@ -307,7 +307,8 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
 }
 } // namespace
 
-void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill) {
+void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill,
+                                const char* hint) {
     // Lightweight variant of DrawJqlQueryEditor — used when the surrounding tab
     // already provides the label / open-in-browser chrome. Reuses the same
     // autocomplete machinery (TrackerQueryAcp_*) and the JqlEditorState buffer so the
@@ -332,9 +333,17 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float inputW = ImGui::GetContentRegionAvail().x - clearBtnW - spacing;
     ImGui::SetNextItemWidth((std::max)(120.0f, inputW));
-    ImGui::InputText("##JQLEmbedded", st.buf, sizeof(st.buf),
-                     ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackHistory,
-                     &TrackerQueryAcp_InputTextCallback, &jqlCb);
+    // Optional placeholder (omnibar passes one) so each of the app's search entry points
+    // states what it searches; the dashboard editor keeps its surrounding label chrome.
+    if (hint != nullptr) {
+        ImGui::InputTextWithHint("##JQLEmbedded", hint, st.buf, sizeof(st.buf),
+                                 ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackHistory,
+                                 &TrackerQueryAcp_InputTextCallback, &jqlCb);
+    } else {
+        ImGui::InputText("##JQLEmbedded", st.buf, sizeof(st.buf),
+                         ImGuiInputTextFlags_CallbackAlways | ImGuiInputTextFlags_CallbackHistory,
+                         &TrackerQueryAcp_InputTextCallback, &jqlCb);
+    }
     const bool jqlInputHot = ImGui::IsItemActive() || ImGui::IsItemFocused();
     const ImVec2 jqlFieldRectMin = ImGui::GetItemRectMin();
     const ImVec2 jqlFieldRectSize = ImGui::GetItemRectSize();

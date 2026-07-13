@@ -282,6 +282,31 @@ void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cf
     cfg.MigratedMenuShortcutsV1 = true;
 }
 
+// V2 of the same seed pattern: the Notifications reveal binding, added when the bare
+// `notifications` command id was renamed to `view.toggle.notifications`. Same
+// once-per-config, skip-if-the-identity-already-bound contract as V1.
+void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedMenuShortcutsV2 = j.value("migrated_menu_shortcuts_v2", false);
+    if (cfg.MigratedMenuShortcutsV2) {
+        return;
+    }
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int seeded = 0;
+    for (const Keybinding& def : defaults.Bindings) {
+        if (def.CommandId == "view.toggle.notifications" &&
+            cfg.Keybindings.FindBindingIndex(def.CommandId, def.ArgsJson) < 0) {
+            cfg.Keybindings.Bindings.push_back(def);
+            ++seeded;
+        }
+    }
+    if (seeded > 0) {
+        LOG_INFO("ConfigManager: seeded %d new menu-shortcut keybinding(s) into an existing config "
+                 "(migrated_menu_shortcuts_v2)",
+                 seeded);
+    }
+    cfg.MigratedMenuShortcutsV2 = true;
+}
+
 // List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
 // suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
 void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -384,6 +409,7 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
 
     MigrateBugReportHotkeyToKeybindings(j, cfg);
     MigrateMenuShortcutKeybindingsV1(j, cfg);
+    MigrateMenuShortcutKeybindingsV2(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's
