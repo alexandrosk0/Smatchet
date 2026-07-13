@@ -140,6 +140,35 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
+@test "_select_sanitizer_preset maps TSAN to tsan, UBSAN to clang, ASAN to msvc (never TSAN to ASAN)" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+sel = m._select_sanitizer_preset
+
+# TSAN / ThreadSanitizer → the TSAN preset (regression: core-scripts-python-02,
+# where a data-race failure was incorrectly handed an ASAN build).
+assert sel("Sanitizer (TSan) — ThreadSanitizer data race FAILED") == "ninja-tsan-linux"
+assert sel("check 'sanitizer-tsan' failed") == "ninja-tsan-linux"
+# UBSAN → clang preset (the only ASan+UBSan preset per sanitizer-nightly.yml).
+assert sel("Sanitizer (UBSan via Clang) blocked") == "ninja-clang-asan"
+assert sel("UndefinedBehaviorSanitizer: signed overflow") == "ninja-clang-asan"
+# Combined ASan+UBSan line contains both tokens → must resolve to clang.
+assert sel("Sanitizer nightly (Clang ASan+UBSan) failed") == "ninja-clang-asan"
+# Pure ASAN (the MSVC PR lane) → the MSVC ASAN preset.
+assert sel("Sanitizer (ASAN via MSVC) failed") == "ninja-msvc-asan"
+assert sel("AddressSanitizer: heap-buffer-overflow") == "ninja-msvc-asan"
+# Hard guard: a TSAN line must NEVER select an ASAN preset.
+assert "asan" not in sel("threadsanitizer failed"), "TSAN mapped to ASAN — bug reintroduced"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
 @test "_parse_gate_snapshot extracts downgraded names + cr_override; None when absent" {
     run python - <<'PY'
 import importlib.util, os, sys

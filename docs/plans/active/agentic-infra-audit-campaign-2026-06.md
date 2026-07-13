@@ -2,7 +2,7 @@
 
 > **Slug**: `agentic-infra-audit-campaign-2026-06` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — audit-campaign tracker. This doc is the deliverable of the salvage; the fix-slices below are not yet started. Flip to `shipped` only once every slice has merged (or been re-deferred) and § Implementation log is filled.
+> **Status**: `active` — audit-campaign tracker. **9 findings closed incidentally by unrelated PRs, 1 fixed in this PR (`core-scripts-python-02`, the reversed sanitizer preset), 1 partially addressed, 56 remain open** (2026-07-13 reconciliation pass — see § Reconciliation pass (2026-07-13)). Flip to `shipped` only once every slice has merged (or been re-deferred) and § Implementation log is filled.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template. This is a meta-campaign (like `agentic-harness-campaign.md`): it ranks + sequences fix-slices, it does not re-author them.
 
@@ -36,6 +36,39 @@ Three secondary themes, each a cheap themed slice:
 **Triage verdict:** all 67 confirmed findings are agent-infrastructure / harness maintainability. **None is a user-observable product defect** — no confirmed finding touches `Source/Core/` runtime behaviour. Per `AGENTS.md` § Issue triage, that means **zero GitHub Issues are warranted**; this campaign's slice plan is the canonical artifact, and individual fixes route to `docs/self-improvement/categories/*` as they ship. (The fleet's only near-product-facing surface, the merge-pipeline correctness cluster, is CI/automation infrastructure, not shipped app behaviour.)
 
 **Numbers:** 67 confirmed (4 P0 · 18 P1 · 27 P2 · 18 P3), 6 already-tracked (appendix), ~30 refuted as stale / by-design / no-repro (validating the refutation design — e.g. all of charter `ci-workflows`' P0 and 4 of its 9 candidates fell, the entire `vexp-*` finding family collapsed because the code was deleted in commit `4b18918c` one day after the evidence was gathered).
+
+## Reconciliation pass (2026-07-13)
+
+A read-only re-verification of all 67 confirmed findings against `develop` @ `a166404` (four parallel agents, one per file-cluster; each cited line re-located by symbol since 2026-06 line numbers have drifted). **Tally: 9 FIXED · 1 PARTIAL · 57 OPEN.** No slice of this campaign was ever run — every closure below is a side-effect of an unrelated PR that happened to touch the same file. The campaign remains a live backlog.
+
+**FIXED (9) — incidentally, not by a campaign slice:**
+
+| ID | Sev | How it closed |
+|---|---|---|
+| rule-docs-drift-01 | P0 | `AGENTS.md` § Merge gates was rewritten to block-on-any-red (all-gates-blocking flip); the "5 required checks" claim no longer exists. |
+| rule-docs-drift-04 | P1 | `subagent-eval.md:5` now links the real `../plans/active/subagent-eval-agentic-coverage.md` (target present). |
+| core-agent-prompts-02 | P1 | `perf-instrument.md` cites the correct `Source/Core/include/Ui/UiPerfMonitor.h`. |
+| project-prompts-skills-01 | P1 | `historical-code-review` is now in `SKILL_ONLY_HELPERS` (parity gate passes). |
+| rule-docs-drift-06 | P2 | `agent-size-baseline.md` matches `--baseline-md` output (in sync). |
+| core-agent-prompts-04 | P2 | `perf-gatekeeper.md` banner now reads `read-edit`. |
+| self-improvement-loop-07 | P2 | The `Status: applied` backlog migration ran — ~310 entries in `applied.md`; live category files ~0 (one stray in `test.md`). |
+| merge-pipeline-09 | P3 | `merge-gates.graphql` now paginates `contexts` + `merge-gates.sh` fails closed on `PAGINATION_OVERFLOW`. |
+| HP-08 | P3 | The stale `hooks-equivalent.md` Codex line is gone from `portable-purity-baseline.txt`. |
+
+**PARTIAL (1):** `merge-pipeline-04` (P1) — `cr-out-of-band` no longer downgrades on its own; it now requires a paired `cr-disposition` attestation (PR-3 mechanism, not the proposed "≥1 CR StatusContext SUCCESS" check). A CR-never-ran bypass is still possible *with* an attestation, so the original defect is reduced, not closed. Keep the slice (B6), re-scoped to the residual.
+
+**Fixed in this PR (1):** `core-scripts-python-02` (P1) — the reversed sanitizer preset. Extracted `_select_sanitizer_preset(status_line)` (pure, unit-tested): TSAN→`ninja-tsan-linux`, UBSAN→`ninja-clang-asan` (the only ASan+UBSan preset), ASAN→`ninja-msvc-asan`; the auto-act call site now uses it. Previously both branches returned an ASAN preset, so a data-race failure was handed a build that could never reproduce it. Guarded by a `merge_watcher.bats` case incl. a "TSAN never maps to ASAN" assertion.
+
+**Highest-value still-OPEN:**
+- The three remaining P0s: `merge-pipeline-01` (override-label race — no labeled-event timestamping), `merge-pipeline-02` (admin-merge ledger gap — [ADR-0017](../../adr/0017-merge-time-snapshot-ledger.md) confirms the admin path is still "remaining writer to wire"), `bats-coverage-01` (5 bare `python3` probes in `markdown_links.bats`).
+- merge-watcher NONE-state (`core-scripts-python-01` seed + `-04` parse), CR-thread pagination (`core-scripts-python-05` — query now requests `hasNextPage` but the reader ignores it), `postmortem-owed` blocking mode (`merge-pipeline-03`), and the false `merge-watcher.py` Phase-1 docstring (`merge-pipeline-05`).
+
+**Corrections to the 2026-06 synthesis (found stale on re-read):**
+- `self-improvement-loop-04` (P2) — **overstated.** Only ~1 genuinely-stale migrated ref remains; `gen-sbom` / `osv-scan` / `perf-compare` / `pre-ship` / `worktree-prune` legitimately still live under `scripts/dev/`. Re-scope before working.
+- `self-improvement-loop-05` (P2) — **mostly resolved.** The cited `process.md:73` / `debt.md:47,59` are tiered now; one flat path persists (`debt.md:34`).
+- `project-prompts-skills-07` and `core-scripts-python-06` — arguably **by-design** (the `ls` glob is required; `md_lint.py` documents its single rule as an intentional starting point). Confirm intent before filing as defects.
+
+Everything not named above remains **OPEN** exactly as tabulated below; the per-finding evidence is preserved in this pass's agent transcripts (session scratch). The slice plan (§ below) is unchanged except that A0-fold / C-fast items whose findings are now FIXED can be dropped from their slices.
 
 ## Confirmed findings — ranked P0 → P3
 
@@ -256,7 +289,10 @@ These survived mining but the verifier found the root cause already tracked; lis
 - **Already shipped from this debacle**: PR #1139 (`postmortem-owed.sh` fix + bats), PR #1141 (`workflow-fleets.md`).
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped slice: `<sha> · <slice> · <one-line summary>`)*
+- 2026-07-13 · **reconciliation pass** · four-agent read-only re-verification of all 67 findings vs `develop` @ `a166404` → **9 FIXED** (all incidental — closed by unrelated PRs), **1 PARTIAL** (`merge-pipeline-04`), **57 OPEN**. Details + FIXED mechanisms + three synthesis corrections in § Reconciliation pass (2026-07-13).
+- 2026-07-13 · **fix `core-scripts-python-02` (P1)** · the reversed sanitizer-preset selector in `merge-watcher.py` — extracted the pure `_select_sanitizer_preset` (TSAN→`ninja-tsan-linux`, UBSAN→`ninja-clang-asan`, ASAN→`ninja-msvc-asan`) + a `merge_watcher.bats` case; a TSAN failure no longer auto-acts with an ASAN build. Drops the open count 57→56.
+
+*(future entries — bullet per shipped slice: `<sha> · <slice> · <one-line summary>`)*
 
 ## Deviations from plan
 *(none yet)*
