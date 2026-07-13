@@ -271,6 +271,25 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
 // IsTrackerTransportErrorText (formerly here, then TrackerHttpPure.cpp) was deleted in N12
 // slice 3 — transport-ness travels as the structured TrackerError kind.
 
+cpr::Response TrackerDeleteLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                  const std::function<bool()>& cancelled) {
+    // DELETE on tracker resources is idempotent (deleting an already-deleted element
+    // re-reports the same terminal state) — safe to retry like PUT/PATCH.
+    TrackerHttpResult result = TrackerHttpRequestWithRetry(
+        [&]() {
+            cpr::Redirect redirect = MakeTrackerRedirectPolicy();
+            cpr::Response response =
+                cpr::Delete(cpr::Url{url}, headers, redirect, cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
+                            cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
+            NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker,
+                                                   NetworkUsageTracker::kEstimatedGetUploadBytes, response);
+            LogTrackerHttpResult(clientName, "DELETE", url, response);
+            return ClassifyTrackerResponse(response);
+        },
+        kTrackerHttpDefaultMaxAttempts, cancelled);
+    return std::move(result.Response);
+}
+
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body, const std::function<bool()>& cancelled) {
     // PATCH on tracker fields is idempotent (set-to-value, not delta) — safe to retry like PUT.

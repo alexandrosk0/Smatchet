@@ -5,11 +5,13 @@
 #include "GitHubClientHelpers.h"
 #include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
+#include "GitHubMutationPure.h"
 #include "GitHubQueryFromJql.h"
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
+#include "TrackerFieldPayloadPure.h"
 #include "TrackerFieldSchema.h"
 #include "TrackerHttpUtils.h"
 
@@ -40,11 +42,6 @@ const char* const kPrMergeableLabel = "PR Mergeable";
 const char* const kPrDraftLabel = "PR Draft";
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
-
-void StubError(std::string& out, const char* method) {
-    out = std::string(method) + ": GitHubClient HTTP impl deferred to a follow-up slice of "
-                                "docs/plans/shipped/github-tracker-backend.md";
-}
 
 } // namespace
 
@@ -421,7 +418,11 @@ Result<std::vector<TrackerIssueComment>, TrackerError> GitHubClient::FetchIssueC
             // A 2xx-non-200 (201/202/204) reaches this failure branch; for a 2xx
             // TrackerErrorFromHttpStatus returns Ok() (Kind==None, detail discarded).
             // Carry the verbatim detail under an explicit non-OK kind (DR20).
-            // SMATCHET_DEVIATION(rule=duplication; reason=the 2xx-non-200 guard idiom (LOG_ERROR + `if 2xx return TrackerErrorUnknown(detail,status)` else FromHttpStatus) is deliberately uniform across the tracker read paths (mirrors GitHubIssueSearch + GitHubClient::CreateIssue + JiraUserAndMeta) so the swallow-as-Ok bug is fixed identically everywhere; extracting a helper would need a Result-type-generic wrapper spanning independent client TUs; owner=deep-review; revisit=2026-10-01)
+            // SMATCHET_DEVIATION(rule=duplication; reason=the 2xx-non-200 guard idiom (LOG_ERROR + `if 2xx return
+            // TrackerErrorUnknown(detail,status)` else FromHttpStatus) is deliberately uniform across the tracker read
+            // paths (mirrors GitHubIssueSearch + GitHubClient::CreateIssue + JiraUserAndMeta) so the swallow-as-Ok bug
+            // is fixed identically everywhere; extracting a helper would need a Result-type-generic wrapper spanning
+            // independent client TUs; owner=deep-review; revisit=2026-10-01)
             if (resp.status_code >= 200 && resp.status_code < 300) {
                 return CommentsResult::Err(TrackerErrorUnknown(msg, static_cast<int>(resp.status_code)));
             }
@@ -513,60 +514,228 @@ std::string GitHubClient::BuildBrowseUrl(const TrackerConfig& cfg, const std::st
 // github-commit-tracker-rows — shared read-only message for commit-key mutations.
 static const char* const kCommitReadOnlyError = "GitHub commit rows are immutable history and cannot be edited";
 
-TrackerError GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/) {
-    smatchet::github::ParsedCommitKey ck;
-    if (smatchet::github::ParseGitHubCommitKey(issueId, ck)) {
-        return TrackerErrorInvalidRequest(kCommitReadOnlyError);
+namespace {
+
+// Resolve a milestone display title to its number via GET /repos/{o}/{r}/milestones
+// (state=all so a closed milestone can still be assigned — the grid shows titles,
+// PATCH wants the number). Paginated, exact-title match. False → outError is already
+// classified for the caller's retry/offline-queue semantics.
+bool ResolveGitHubMilestoneNumber(const std::string& baseUrl, const cpr::Header& headers,
+                                  const smatchet::github::ParsedIssueKey& key, const std::string& title,
+                                  std::int64_t& outNumber, TrackerError& outError) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=the paginated GET scaffold (page/per_page URL → TrackerGetLogged →
+    // status guard → bounded parse → short-page break) is deliberately uniform with FetchIssueComments above; a shared
+    // PaginatedGitHubFetch helper would need a Result-type-generic per-page callback spanning the two call shapes
+    // (accumulate-and-map vs find-first-and-stop) for two call sites in one TU — same trade recorded at the
+    // FetchIssueComments guard idiom; owner=tracker-backend; revisit=2026-10-01)
+    constexpr int kPerPage = 100;
+    constexpr int kMaxPages = 10; // 1000 milestones is well past any real repo
+    for (int page = 1; page <= kMaxPages; ++page) {
+        std::ostringstream urlOut;
+        urlOut << baseUrl << "/repos/" << key.Owner << "/" << key.Repo << "/milestones?state=all&per_page=" << kPerPage
+               << "&page=" << page;
+        const cpr::Response resp = TrackerGetLogged("GitHubClient", urlOut.str(), headers);
+        if (resp.status_code != 200) {
+            const std::string msg =
+                smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+            LOG_ERROR("GitHubClient::UpdateIssueFields: milestone lookup HTTP %ld — %s", resp.status_code, msg.c_str());
+            outError = ClassifyRejectedHttpStatus(resp.status_code, "Milestone lookup failed: " + msg);
+            return false;
+        }
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
+        if (parsed.is_discarded() || !parsed.is_array()) {
+            outError = TrackerErrorParse("GitHub milestones response was not a JSON array.");
+            return false;
+        }
+        const std::int64_t number = smatchet::github::FindGitHubMilestoneNumberByTitle(parsed, title);
+        if (number > 0) {
+            outNumber = number;
+            return true;
+        }
+        if (parsed.size() < static_cast<std::size_t>(kPerPage)) {
+            break; // short page — no more milestones to scan
+        }
     }
-    std::string outError;
-    StubError(outError, "UpdateIssueFields");
-    return TrackerErrorInvalidRequest(outError);
+    outError = TrackerErrorInvalidRequest("Milestone '" + title + "' not found in " + key.Owner + "/" + key.Repo +
+                                          " (create it on GitHub first, or clear the field)");
+    return false;
 }
 
-TrackerError GitHubClient::UpdateField(const std::string& issueId, const TrackerField& field,
-                                       const std::vector<std::string>& values) {
-    // github-commit-tracker-rows — reject commit keys before issue-key parsing;
-    // the defensive last line behind editmeta's all-false map.
+// Reconcile the intended full label set against GitHub's additive label API (plan
+// decision 4): GET current → ComputeLabelEditDiff → one batch POST for the additions +
+// one DELETE per removal. Emits label_add / label_remove audit rows under the caller's
+// auditOp so the outer issue_update_fields pair brackets the per-primitive evidence
+// (plan § audit-row nesting). A DELETE 404 counts as converged — the label is already
+// gone and set-replace only cares about the end state. False → outError classified.
+bool ApplyGitHubLabelSetReplace(const std::string& baseUrl, const cpr::Header& headers, const std::string& issueId,
+                                const smatchet::github::ParsedIssueKey& key, const std::vector<std::string>& intended,
+                                const std::string& auditOp, TrackerError& outError) {
+    const std::string issueSuffix = smatchet::github::BuildIssuePatchUrlSuffix(key.Owner, key.Repo, key.Number);
+    const cpr::Response current = TrackerGetLogged("GitHubClient", baseUrl + issueSuffix, headers);
+    if (current.status_code != 200) {
+        const std::string msg =
+            smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(current.status_code), current.text);
+        LOG_ERROR("GitHubClient::UpdateIssueFields: label pre-fetch HTTP %ld for %s — %s", current.status_code,
+                  issueId.c_str(), msg.c_str());
+        outError = ClassifyRejectedHttpStatus(current.status_code, "Label pre-fetch failed: " + msg);
+        return false;
+    }
+    // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+    const nlohmann::json issueJson = smatchet::json_safe::ParseBoundedOrDiscarded(current.text);
+    if (issueJson.is_discarded() || !issueJson.is_object()) {
+        outError = TrackerErrorParse("GitHub issue response (label pre-fetch) was not a JSON object.");
+        return false;
+    }
+    const smatchet::github::LabelEditDiff diff =
+        smatchet::github::ComputeLabelEditDiff(smatchet::github::ExtractGitHubIssueLabelNames(issueJson), intended);
+    if (!diff.ToAdd.empty()) {
+        nlohmann::json body = nlohmann::json::object();
+        body["labels"] = nlohmann::json(diff.ToAdd);
+        const cpr::Response resp =
+            TrackerPostLogged("GitHubClient", baseUrl + issueSuffix + "/labels", headers, body.dump());
+        const bool ok = (resp.status_code == 200 || resp.status_code == 201);
+        const std::string msg =
+            ok ? std::string()
+               : smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        BackendAuditTrail::AppendResult("label_add", "github_client", issueId, auditOp, ok, msg,
+                                        nlohmann::json{{"labels", diff.ToAdd}});
+        if (!ok) {
+            LOG_ERROR("GitHubClient::UpdateIssueFields: label add HTTP %ld for %s — %s", resp.status_code,
+                      issueId.c_str(), msg.c_str());
+            outError = ClassifyRejectedHttpStatus(resp.status_code, "Label add failed: " + msg);
+            return false;
+        }
+    }
+    for (const std::string& name : diff.ToRemove) {
+        const cpr::Response resp =
+            TrackerDeleteLogged("GitHubClient", baseUrl + issueSuffix + "/labels/" + UrlEncode(name), headers);
+        const bool ok = (resp.status_code == 200 || resp.status_code == 204 || resp.status_code == 404);
+        const std::string msg =
+            ok ? std::string()
+               : smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+        BackendAuditTrail::AppendResult("label_remove", "github_client", issueId, auditOp, ok, msg,
+                                        nlohmann::json{{"label", name}});
+        if (!ok) {
+            LOG_ERROR("GitHubClient::UpdateIssueFields: label remove HTTP %ld for %s — %s", resp.status_code,
+                      issueId.c_str(), msg.c_str());
+            outError = ClassifyRejectedHttpStatus(resp.status_code, "Label remove failed: " + msg);
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+TrackerError GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) {
     smatchet::github::ParsedCommitKey commitKey;
     if (smatchet::github::ParseGitHubCommitKey(issueId, commitKey)) {
         return TrackerErrorInvalidRequest(kCommitReadOnlyError);
     }
     smatchet::github::ParsedIssueKey parsed;
     if (!smatchet::github::ParseGitHubIssueKey(issueId, parsed)) {
-        return TrackerErrorInvalidRequest("GitHubClient::UpdateField: invalid issueId shape (expected owner/repo#N): " +
-                                          issueId);
+        return TrackerErrorInvalidRequest(
+            "GitHubClient::UpdateIssueFields: invalid issueId shape (expected owner/repo#N): " + issueId);
     }
+    const std::string auditOp = BackendAuditTrail::MakeOperationId("issue-update");
+    BackendAuditTrail::AppendBegin("issue_update_fields", "github_client", issueId, auditOp,
+                                   nlohmann::json{{"diff", BackendAuditTrail::MakeFieldDiffUnknownBefore(fields)}});
+    // Single failure funnel — every reject below records the audit result exactly once.
+    auto fail = [&issueId, &auditOp](TrackerError error) {
+        BackendAuditTrail::AppendResult("issue_update_fields", "github_client", issueId, auditOp, false, error.Detail);
+        return error;
+    };
+
     // No cfg parameter on this interface — resolve from the settled on-disk config
     // (issue #979; same per-request pattern JiraIssueMutation uses).
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
     if (auth.Pat.empty()) {
-        return TrackerErrorAuth(kPatMissingError);
+        return fail(TrackerErrorAuth(kPatMissingError));
     }
-    // Label-field set-replace: real impl pre-fetches current labels, computes
-    // diff via LabelEditDiffPure, then issues POST/DELETE per element. Stub
-    // logs the diff intent so the audit trail still shows the attempted edit.
-    if (field.Id == "labels") {
-        std::vector<std::string> current;
-        const smatchet::github::LabelEditDiff diff = smatchet::github::ComputeLabelEditDiff(current, values);
-        LOG_INFO("GitHubClient::UpdateField labels stub: %s toAdd=%zu toRemove=%zu", issueId.c_str(), diff.ToAdd.size(),
-                 diff.ToRemove.size());
+    auto planResult = smatchet::github::BuildGitHubIssueUpdatePlan(fields);
+    if (!planResult) {
+        return fail(TrackerErrorInvalidRequest(planResult.error()));
     }
-    std::string outError;
-    StubError(outError, "UpdateField");
-    return TrackerErrorInvalidRequest(outError);
+    smatchet::github::GitHubIssueUpdatePlan plan = std::move(planResult.value());
+
+    const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
+    if (plan.NeedsMilestoneResolve) {
+        std::int64_t milestoneNumber = 0;
+        TrackerError resolveError;
+        if (!ResolveGitHubMilestoneNumber(auth.BaseUrl, headers, parsed, plan.MilestoneTitle, milestoneNumber,
+                                          resolveError)) {
+            return fail(resolveError);
+        }
+        plan.PatchBody["milestone"] = milestoneNumber;
+    }
+    if (!plan.PatchBody.empty()) {
+        const std::string url =
+            auth.BaseUrl + smatchet::github::BuildIssuePatchUrlSuffix(parsed.Owner, parsed.Repo, parsed.Number);
+        const cpr::Response resp = TrackerPatchLogged("GitHubClient", url, headers, plan.PatchBody.dump());
+        if (resp.status_code != 200) {
+            const std::string msg =
+                smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+            LOG_ERROR("GitHubClient::UpdateIssueFields: PATCH HTTP %ld for %s — %s", resp.status_code, issueId.c_str(),
+                      msg.c_str());
+            return fail(ClassifyRejectedHttpStatus(resp.status_code, msg));
+        }
+    }
+    if (plan.HasLabelsEdit) {
+        TrackerError labelError;
+        if (!ApplyGitHubLabelSetReplace(auth.BaseUrl, headers, issueId, parsed, plan.LabelsIntended, auditOp,
+                                        labelError)) {
+            return fail(labelError);
+        }
+    }
+    LOG_INFO("GitHubClient: updated GitHub issue %s fields successfully.", issueId.c_str());
+    BackendAuditTrail::AppendResult("issue_update_fields", "github_client", issueId, auditOp, true, std::string());
+    return TrackerError::Ok();
+}
+
+TrackerError GitHubClient::UpdateField(const std::string& issueId, const TrackerField& field,
+                                       const std::vector<std::string>& values) {
+    // github-commit-tracker-rows — reject commit keys before payload building; the
+    // defensive last line behind editmeta's all-false map.
+    smatchet::github::ParsedCommitKey commitKey;
+    if (smatchet::github::ParseGitHubCommitKey(issueId, commitKey)) {
+        return TrackerErrorInvalidRequest(kCommitReadOnlyError);
+    }
+    // Set-replace single-field edit: catalog-id-keyed payload → the shared PATCH +
+    // label-reconcile path. Interface-mandated routing shape shared with Jira/Linear.
+    // SMATCHET_DEVIATION(rule=duplication; reason=UpdateField routing symmetry; owner=tracker; revisit=2026-12-31)
+    auto payloadResult = BuildFieldPayload(field, values);
+    if (!payloadResult) {
+        return payloadResult.error();
+    }
+    return UpdateIssueFields(issueId, payloadResult.value());
 }
 
 Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const TrackerField& field,
                                                                      const std::vector<std::string>& values) {
-    if (field.Id == "labels" || field.Id == "assignees") {
-        return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json(values)); // array of strings
+    // Catalog-id-keyed single-field payload consumed by UpdateIssueFields (the grid edit
+    // pipeline calls BuildFieldPayload → UpdateIssueFields). Ids here are the
+    // FetchFieldCatalog ids; BuildGitHubIssueUpdatePlan translates them to the REST
+    // names (summary→title, status→state, assignee→assignees) at PATCH time.
+    if (field.Id == "labels" || field.Id == "assignee") {
+        nlohmann::json set = nlohmann::json::array();
+        for (const auto& value : values) {
+            // Grid cells carry multi-value fields comma-joined; split like the mapper joins.
+            for (const std::string& token : TrackerFieldPayloadPure::SplitCommaSeparatedTrimmed(value)) {
+                set.push_back(token);
+            }
+        }
+        nlohmann::json outPayload = nlohmann::json::object();
+        outPayload[field.Id] = std::move(set);
+        return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
     }
-    if (field.Id == "state" || field.Id == "milestone" || field.Id == "title" || field.Id == "body") {
-        return Result<nlohmann::json, TrackerError>::Ok(
-            nlohmann::json(values.empty() ? std::string() : values.front()));
+    if (field.Id == "summary" || field.Id == "description" || field.Id == "status" || field.Id == "milestone") {
+        nlohmann::json outPayload = nlohmann::json::object();
+        outPayload[field.Id] = values.empty() ? std::string() : values.front();
+        return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
     }
     return Result<nlohmann::json, TrackerError>::Err(
-        TrackerErrorInvalidRequest(std::string("GitHubClient::BuildFieldPayload: unknown field '") + field.Id + "'"));
+        TrackerErrorInvalidRequest(std::string("GitHub field '") + field.Id + "' is not editable"));
 }
 
 Result<nlohmann::json, TrackerError> GitHubClient::BuildCreatePayload(const IssueDraft& draft,

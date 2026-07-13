@@ -156,7 +156,7 @@ CachedTicket MapIssueOrPullRequestJsonToCachedTicket(const nlohmann::json& issue
     // glance even when the four pr.* columns aren't selected in the view.
     std::string title = JsonString(issue, "title");
     if (isPr) {
-        title = std::string("[PR] ") + title;
+        title = std::string(kPullRequestSummaryPrefix) + title;
     }
     ticket.fieldValues["summary"] = title;
 
