@@ -106,7 +106,7 @@
   },
   "harness": {
     "discovery_mode": "flat-symlink",
-    "supported": ["claude-code", "codex", "cursor"]
+    "supported": ["claude-code", "codex", "cursor", "pi"]
   },
   "guards": {
     "doc_validation": [

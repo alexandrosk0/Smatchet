@@ -15,7 +15,7 @@ triggers:
   - p4
   - perforce
   - annotate
-  - annotate
+  - describe
   - callstack
   - symbolicate
 harness-hints:

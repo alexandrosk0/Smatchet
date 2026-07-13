@@ -60,5 +60,5 @@ closeout (`ship-loops.md`). This agent is the deeper, periodic pass.
 
 ## Output
 
-End with `## Outcome: <applied | partial | aborted>` (telemetry keys on this per
+End with `## Outcome: <applied | halted | failed | partial | aborted>` (telemetry keys on this per
 AGENTS.md § Agent output contract) + a `## Self-improvement` section (empty is fine).

@@ -66,4 +66,4 @@ Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/g
 
 ## Known follow-up
 
-The portable **structure** is in place, but the portable files still embed project literals in prose (157 baselined in `portable-purity-baseline.txt`). **Full de-Smatchet-ification** of `agents/core/` + `docs/agent-rules/` prose (replace literals with `project.config` references) is tracked in `docs/self-improvement/categories/` — until done, reuse means copy + adapt the prompts, not copy verbatim. `test-portable-purity` prevents the baseline from growing.
+The portable **structure** is in place, but the portable files still embed project literals in prose (baselined in `portable-purity-baseline.txt` — see that file for the current count). **Full de-Smatchet-ification** of `agents/core/` + `docs/agent-rules/` prose (replace literals with `project.config` references) is tracked in `docs/self-improvement/categories/` — until done, reuse means copy + adapt the prompts, not copy verbatim. `test-portable-purity` prevents the baseline from growing.

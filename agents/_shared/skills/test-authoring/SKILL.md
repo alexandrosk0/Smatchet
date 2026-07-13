@@ -116,7 +116,7 @@ When the path needs multiple frames (scroll, animation, cache warmup), use an `I
 3. Tears down in `OnCancel` AND `OnFinish` — both must restore state.
 4. Returns `UiPerfMonitor::Instance().GetLastFrameRows()` from `OnFinish` so bash can parse perf metrics.
 
-Register in `AppController.cpp::Initialize` next to other `scenarioRunner_->RegisterFactory(...)` lines.
+Register in `Source/Core/src/Commands/Scenarios/SmatchetScenarioRegistry.cpp` next to the other `runner.RegisterFactory(...)` lines (the registration table the pre-refactor `scenarioRunner_->RegisterFactory(...)` calls moved into).
 
 Bash drives it with `scenario.run --name=<name> --frames=<N> --mcp-port=<...> --spawn --yes`. Assert on row totals via the same `extract` helper, indexing into `data.rows[N]`.
 

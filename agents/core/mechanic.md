@@ -38,7 +38,7 @@ Execute fully-specified mechanical edits across Smatchet. **Stop and ask** the m
 - Renames cover declarations, definitions, call sites, comments, **and** string literals that reference the symbol.
 - Scope for renames in this repo:
   - C++: `Source/Core/{include,src}/`, `Source/Standalone/`, `Source/Plugins/`, `Source/UnrealPlugins/`
-  - Lua: `scripts/{Automation,SmatchetHooks,RunLua}.lua`
+  - Lua: `scripts/Automation.lua`, `scripts/SmatchetHooks.lua`, `scripts/RunLua.lua`
   - Docs: `README.md`, `BUILD.md`, `CLI_GUIDE.md`, `LUA_GUIDE.md`, `MCP_GUIDE.md`, `AGENTS.md`
   - Localization: `Locales/*.json`
   - CMake: only if the symbol is a target or option name (`CMakeLists.txt`, `CMakePresets.json`, `cmake/*.cmake`)
