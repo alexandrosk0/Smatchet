@@ -2,7 +2,7 @@
 
 > **Slug**: `self-improvement-pr-review-exemption` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -97,7 +97,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **`bb_override`/exemption attribution in the `GATE_SNAPSHOT` ledger** — the auto-skip emits an operator-visible stderr `INFO` line only; threading an "auto-exempt" reason into the ADR-0017 merge-snapshot is the same follow-up `bugbot-merge-gate.md` deferred for `bb_override`.
 
 ## Implementation log
-*(branch `claude/trusting-pasteur-mk1ebw`; squash sha filled at merge.)*
+*(branch `claude/trusting-pasteur-mk1ebw`; squash-merged to develop as `4685997d` / #1468.)*
 - `.coderabbit.yaml` — added `!docs/self-improvement/**` to `path_filters`; CR now has nothing reviewable on a pure self-improvement PR and posts its terminal `Review skipped` status (the `crReviewSkipped` fast-pass — no `merge-gates.sh` change needed for the CR gate proper).
 - `agents/scripts/core/merge-gates.graphql` — added the `files(first: 100) { pageInfo { hasNextPage } nodes { path } }` projection (not folded into the global pagination-overflow OR; files overflow only fails `selfImpOnly` safe).
 - `agents/scripts/core/merge-gates.sh` — GATE_FILTER computes `$selfImpOnly` (changed-paths all under `docs/self-improvement/`, non-empty, no file-page overflow) as the trailing tuple field (27); field-count guard `-ne 27`→`-ne 28` + field-index inventory; reads `self_imp_only`; Bugbot bucket auto-downgrades a `bb_open>0` block to WARN + short-circuits the STALE-grace wait; a belt-and-suspenders CR downgrade (does NOT set `cr_overridden`); header contract (auto-exemption note + field 27).
@@ -110,7 +110,7 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Bugbot open-findings-free auto-skip is shown only when load-bearing.** The `selfImpOnly` pass branch fires for `bb_state==STALE` only (to short-circuit the grace wait); an `ABSENT`/clean-on-head self-improvement PR falls through to the normal clean-pass print, so the "auto-skipped" label never appears when there is nothing to skip (bats case 7 pins this).
 - **No new fixture files.** The 7 new cases inject a `files` node via the existing `fixture_override` helper on the `bb_*` / `cr_changes` / `pass` fixtures, rather than adding 4 JSON fixtures — legacy fixtures have no `files` node, so `selfImpOnly` defaults false and the Bugbot (1)-(12) not-exempt baseline is unchanged.
 - **Heavy-test regression-pin (plan item 10, optional) not added.** The heavy C++ suite is already skipped for `docs/*` by `build-and-test.yml`'s `changes` job (verified — no code change), and `doc-validation` already covers these PRs; a dedicated bats pin was judged redundant.
-- **Archival deferred (Status stays `active`).** Moving this plan to `docs/plans/shipped/` requires regenerating `docs/plans/INDEX.md`, but this container's `test-plan-index.sh --fix` produces INDEX content that diverges from develop's committed (CI-validated) INDEX — committing it would red the `test-plan-index` / `autosync-plan-index` checks. The `git mv` + `test-plan-index.sh --fix` is therefore deferred to merge-time in a CI-matching environment (see § Archive). Self-references use the tier-less `docs/plans/self-improvement-pr-review-exemption.md` form so the later move can't break them.
+- **Archival deferred (Status stayed `active` at ship time).** Moving this plan to `docs/plans/shipped/` requires regenerating `docs/plans/INDEX.md`, but the ship-time container's `test-plan-index.sh --fix` produced INDEX content that diverged from develop's committed (CI-validated) INDEX (shallow clone — the index's approx-date column comes from git first-commit dates) — committing it would have redded the `test-plan-index` / `autosync-plan-index` checks. Self-references use the tier-less `docs/plans/self-improvement-pr-review-exemption.md` form so the later move can't break them. **Resolved 2026-07-13**: archival performed in a full-history environment where `test-plan-index.sh` validates clean against develop's committed INDEX.
 
 ## Verification (actual)
 - `bash agents/scripts/core/test-merge-gates.sh` → **Passed: 153 Failed: 0** (146 pre-existing CR/CI/user/Bugbot regression canaries stay green + 7 new self-improvement cases: pure-diff Bugbot auto-skip PASS, mixed-diff BLOCK, files-overflow fail-safe BLOCK, empty-files BLOCK, STALE-grace short-circuit PASS, CR-block belt-and-suspenders PASS, moot-exemption clean PASS with `cr_override=0` + no spurious WARN).
@@ -119,10 +119,3 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **Build gate**: N/A — no C++ in the diff (agentic-shell + YAML + docs).
 - **Ops residue (manual, named)**: add `docs/self-improvement/**` to Bugbot's ignore paths in the **Cursor dashboard** — the only lever that stops Bugbot *reviewing* (it has no in-repo config); the gate change only stops it *blocking*. Documented in `docs/agent-rules/merge-gates.md` § Self-improvement doc PR auto-exemption.
 
-## Archive (post-ship — DEFERRED to merge-time, see § Deviations)
-*Deferred this PR: this container's INDEX regeneration diverges from CI's, so moving to `shipped/` + regenerating the index here would red `test-plan-index`. At merge-time, in a CI-matching environment —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them.*

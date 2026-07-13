@@ -2,7 +2,7 @@
 
 **Slug:** `spawn-mcp-auth`
 **Owner:** orchestrator (Config + MCP + command-system)
-**Status:** active
+**Status:** shipped
 **Created:** 2026-06-27
 
 ## Problem
@@ -497,8 +497,8 @@ must stay green.
 - [x] PR B: **CR round-1 security-review** of the provision/request split — verdict **GO** (no CRITICAL/HIGH): configured-token branch traced to inject nothing, no token logging, AuthRejected envelope leak-free, `--outPath` confinement byte-unchanged; one MEDIUM (Windows parent-env transient same-user window) + two LOW (`random_device`, scrub-timing) deferred to PR D, none merge-blocking
 - [x] Gate-escape postmortem for #1566 filed with a `### Preventing gate` — PR #1575
 - [x] PR B: CI gates green on the PR — #1576 merged to develop @ `870702de` (Perf PR-fast green with the PR-A env opt-out still in place; the gates themselves still ran tokenless — PR C is what runs them under the secure default)
-- [ ] PR C: removed PR A's CI env opt-out from all 3 `--spawn` workflows — the PR's own CI (every `--spawn` gate green under the SECURE default, the first time) is the self-validating proof + the standing #1566 regression guard
-- [ ] PR D (follow-up): thread confined `--outPath` to all `--spawn` callers (un-mask whisper/screenshot) + optional hardening (`lpEnvironment` block, CSPRNG, scrub-at-entry)
+- [x] PR C: removed PR A's CI env opt-out from all 3 `--spawn` workflows — the PR's own CI (every `--spawn` gate green under the SECURE default, the first time) is the self-validating proof + the standing #1566 regression guard *(duplicate of the #1577 box below — merged @ `14b77f4f`)*
+- [x] PR D (follow-up): shipped as C1+H1+M1 in #1578 — H1 resolved by **removing** `NormalizeOutPath`/`NormalizePathArgInPlace` (parent reads the child-reported confined `data.outPath`), not by threading; the `outPath`/`outLog` copy-back asymmetry is intentionally out of scope (see § Verification); M1 `lpEnvironment` block shipped; CSPRNG (M2) + scrub-at-entry (L1) backlogged (see § Deviations)
 - [x] PR E (#1581, Fixes #1579): doctest rig green — full `SmatchetTests` 2227/2227 cases (`ctest -R ^smatchet_tests$` PASS, 15.5 s); the new `SpawnOutLogBasename` cases run isolated 6/6, 12 assertions PASS (traversal collapse, absolute strip, `.`/`..`/`""` fallback, normal-leaf preserved, `spawn-` prefix, entropy-uniqueness)
 - [x] PR E: DX12 dual-target compile verify — `cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12 SmatchetStandalone` clean; `SpawnOutLogBasename.cpp` + `UiTestScenario.cpp` compiled in BOTH worlds, `SmatchetCore_DX12.lib` + `Smatchet.exe` linked (new Core header has no GLFW/GL pollution)
 - [x] PR E: lint gate PASS — `test-lint-rules.sh --diff origin/develop` exit 0 (strict-zone rules on the new Commands/ files clean, no new duplication, no oversized function); only pre-existing advisory `unused-symbol-under-config-guard` WARNs (unrelated MCP-gated helpers, non-blocking)
@@ -511,5 +511,5 @@ must stay green.
 - [x] PR D C1 (untrusted MCP wire rejection): `debug.window.screenshot` with an absolute path → `validation-error: path rejected: absolute paths are not allowed`; with `../../../../escape.png` → `path traversal ('..') is not allowed`; leak-check `C:/Windows/Temp/evil_pwn.png` absent → no arbitrary-file-write
 - [x] PR D M1: `test-spawn-mcp-default-auth.sh` 2/2 PASS (no-token mint+inject via the new merged `lpEnvironment` block + persisted operator token) under the compiled secure default
 - [x] PR D: security-review + code-review of the trust-boundary diff (mandatory — MCP/CLI/Lua surface) ran pre-open — findings triaged into Deviations (parent-fulfill asymmetry = OUT OF SCOPE, dup-gate handled, L1/L2/M2 backlogged); no unresolved CRITICAL/HIGH
-- [ ] PR D: CI gates green on the PR
-- [ ] PR D follow-ups (backlogged, not in this PR): L1 scrub-at-entry, L2 `debug.window.screenshot` Destructive, M2 OS-CSPRNG token (see Deviations + `docs/self-improvement/categories/security/2026-06-28-*`)
+- [x] PR D: CI gates green on the PR — merged to develop @ `176e59f3` (#1578)
+- [ ] PR D follow-ups (backlogged, not in this plan): L1 scrub-at-entry, L2 `debug.window.screenshot` Destructive, M2 OS-CSPRNG token — tracked in `docs/self-improvement/categories/security/2026-06-28-*` (see Deviations); not a blocker for archival

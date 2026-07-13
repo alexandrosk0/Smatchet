@@ -2,7 +2,7 @@
 
 > **Slug**: `error-message-quality-pass`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -117,6 +117,7 @@ N/A — adds one small pure TU; no split of an over-cap file.
 
 ## Implementation log
 
+- `f56694df` · feat(errors): error-message quality pass — what/why/next, internals out of the UI (#1615, squash-merged to develop)
 - plan doc + inventory (`docs/guides/error-surface-inventory.md`)
 - fixes commit — extractor + ~12 surface fixes + catalog rows + doctest
 - review-fixes commit — 3-angle finder pass: AppendCapped underflow/UTF-8 cap
