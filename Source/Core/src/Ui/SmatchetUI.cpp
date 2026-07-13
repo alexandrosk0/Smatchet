@@ -59,6 +59,7 @@
 #define NOMINMAX
 #endif
 #endif
+#include <atomic>
 #include <chrono>
 #include <cstring>
 #include <exception>
@@ -798,18 +799,18 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
 }
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
-// Test seam: the live SmatchetUI whose dispatchKeybindings last ran this frame. No other accessor
-// reaches the live instance (UiTestScenario surfaces only the AppController + the engine), so a
-// bucket-E test that programmatically rebinds a hotkey needs this to trigger MarkKeybindingsDirty()
-// and force the dispatch-cache rebuild — the exact rebind→dirty→rebuild→fire seam that was the
-// keybindings-editor residue. Compiled out entirely in ship builds (zero cost).
+// Test seam: a bucket-E test that programmatically rebinds a hotkey needs to trigger the
+// dispatch-cache rebuild (MarkKeybindingsDirty), which no other accessor reaches on the live
+// SmatchetUI. The shim sets a process-global REQUEST FLAG rather than caching a SmatchetUI* — the
+// live instance consumes it at the top of its next dispatchKeybindings and marks itself dirty, so
+// there is no cached instance pointer to dangle if the UI object is torn down between calls. This is
+// the rebind→dirty→rebuild→fire seam that was the keybindings-editor residue; compiled out entirely
+// in ship builds (zero cost).
 namespace {
-SmatchetUI* g_uiTestActiveInstance = nullptr;
+std::atomic<bool> g_uiTestKeybindingsDirtyRequest{false};
 } // namespace
 extern "C" void SmatchetUiTestMarkKeybindingsDirty() {
-    if (g_uiTestActiveInstance != nullptr) {
-        g_uiTestActiveInstance->MarkKeybindingsDirty();
-    }
+    g_uiTestKeybindingsDirtyRequest.store(true, std::memory_order_release);
 }
 #endif
 
@@ -851,7 +852,12 @@ void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
 // widget, not a registry command). Runs on the UI thread, before any sub-window draws.
 void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
 #if defined(SMATCHET_BUILD_UI_TESTS)
-    g_uiTestActiveInstance = this; // expose the live instance to the keybindings rebind test seam
+    // Consume a pending rebuild request from the keybindings rebind test seam (flag, not a cached
+    // instance pointer — nothing to dangle). Runs before the dirty-check so the rebuild lands this
+    // same frame.
+    if (g_uiTestKeybindingsDirtyRequest.exchange(false, std::memory_order_acq_rel)) {
+        MarkKeybindingsDirty();
+    }
 #endif
     if (keybindingCacheDirty_) {
         rebuildKeybindingCache(d);

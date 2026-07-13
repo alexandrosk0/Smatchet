@@ -92,10 +92,12 @@ extern "C" ImGuiTestEngine* SmatchetActiveUiTestEngine();
 class AppController;
 AppController* SmatchetActiveUiTestAppController();
 
-// Marks the live SmatchetUI's keybinding dispatch cache dirty (SmatchetUI::MarkKeybindingsDirty),
-// forcing a rebuild from cfg.Keybindings on the next dispatchKeybindings. A bucket-E test uses this
-// after programmatically rebinding a hotkey so the NEW combo enters the dispatch cache — no other
-// accessor reaches the live SmatchetUI. Defined in Ui/SmatchetUI.cpp; no-op before the first frame.
+// Requests that the live SmatchetUI mark its keybinding dispatch cache dirty (rebuild from
+// cfg.Keybindings on the next dispatchKeybindings). A bucket-E test uses this after programmatically
+// rebinding a hotkey so the NEW combo enters the dispatch cache — no other accessor reaches the live
+// SmatchetUI. Defined in Ui/SmatchetUI.cpp: sets a process-global flag the live instance consumes at
+// the top of its next dispatchKeybindings (no cached SmatchetUI pointer, so nothing dangles if the
+// UI object is torn down between calls). No-op before the first dispatchKeybindings frame.
 extern "C" void SmatchetUiTestMarkKeybindingsDirty();
 #endif
 
