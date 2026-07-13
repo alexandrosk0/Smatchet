@@ -27,7 +27,8 @@ Subcommands:
                   Pure parsing for the shared bash coverage primitive in
                   lock-table-cache.sh (Layers A/B/C); does NO coverage match.
 
-Pure stdlib. Targets Python 3.7+ (datetime.utcnow available everywhere).
+Pure stdlib. Targets Python 3.7+; emits timezone-aware UTC via
+datetime.now(timezone.utc) (datetime.utcnow is deprecated in 3.12+).
 Underscore-prefixed name marks the file as internal-helper to the lock
 scripts and not part of the supported scripts/dev/ surface.
 """

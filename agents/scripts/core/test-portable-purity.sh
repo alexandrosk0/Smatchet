@@ -87,6 +87,6 @@ if [ "${new:-0}" -eq 0 ]; then
 fi
 echo "test-portable-purity: $new NEW project-literal leak(s) into portable dirs:" >&2
 comm -13 <(printf '%s\n' "$base" | sort -u) <(printf '%s\n' "$current" | sort -u) | sed 's/^/  /' >&2
-echo "  Use config-key references instead, or (if intentional) refresh: bash scripts/dev/test-portable-purity.sh --refresh" >&2
+echo "  Use config-key references instead, or (if intentional) refresh: bash agents/scripts/core/test-portable-purity.sh --refresh" >&2
 echo "Passed: 0  Failed: 1"
 exit 1

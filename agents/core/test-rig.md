@@ -82,4 +82,4 @@ ctest --output-on-failure → <N>/<N> Test #<id>: smatchet_tests ... Passed (<M>
 none
 ```
 
-End with `## Outcome: applied | partial | failed | aborted` then `## Self-improvement` (empty unless real friction surfaced — for example, a unit needed for testing that has banned-include leakage, or a CMake gap that forced a refactor).
+End with `## Outcome: applied | halted | failed | partial | aborted` then `## Self-improvement` (empty unless real friction surfaced — for example, a unit needed for testing that has banned-include leakage, or a CMake gap that forced a refactor).

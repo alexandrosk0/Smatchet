@@ -1,6 +1,6 @@
 # Delegation — agent orchestration rules
 
-> Lifted from [`AGENTS.md`](../../AGENTS.md) § Delegation in PR #TBD. AGENTS.md retains a redirect stub listing every subsection here so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
+> Lifted from [`AGENTS.md`](../../AGENTS.md) § Delegation during the agentic-layer prompt-slimming. AGENTS.md retains a redirect stub listing every subsection here so external `AGENTS.md § <subsection>` references continue to resolve. Edit this file directly — no parallel copy in AGENTS.md.
 
 
 ## Default behaviour
