@@ -453,11 +453,12 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip | ImGuiHoveredFlags_AllowWhenDisabled)) {
         ImGui::BeginTooltip();
         ImGui::PushTextWrapPos(ImGui::GetFontSize() * 42.0f);
-        ImGui::TextUnformatted(
+        ImGui::TextUnformatted(SmatchetLocalization::T(
+            "bulk.run_import.tooltip",
             "Creates new issues and updates existing keys. Rows with no field changes vs the cached "
             "ticket are skipped (no tracker call). Re-running only retries rows that failed — rows "
             "already created or skipped are never resubmitted. Update rows still fetching into cache "
-            "wait until the load finishes so skips can apply.");
+            "wait until the load finishes so skips can apply."));
         ImGui::PopTextWrapPos();
         ImGui::EndTooltip();
     }
@@ -481,8 +482,10 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
             }
         }
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_ForTooltip)) {
-            ImGui::SetTooltip("Stop submitting further rows. Rows already sent finish and keep their "
-                              "result; stopped rows can be re-run.");
+            ImGui::SetTooltip(
+                "%s", SmatchetLocalization::T("bulk.stop.tooltip",
+                                              "Stop submitting further rows. Rows already sent finish and keep their "
+                                              "result; stopped rows can be re-run."));
         }
     }
 }
@@ -554,7 +557,7 @@ void DrawBulkImportPreviewRow(AppController& app, UiDrawSession& d, size_t i,
     ImGui::TableSetColumnIndex(4);
     const char* status = (i < d.bulkImportStatus.size()) ? d.bulkImportStatus[i].c_str() : "";
     if (!row.Error.empty() && (i >= d.bulkImportStatus.size() || d.bulkImportStatus[i].empty())) {
-        ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", row.Error.c_str());
+        ImGui::TextColored(SmatchetTheme::GetActiveSemanticColors().ErrorText, "%s", row.Error.c_str());
     } else {
         ImGui::TextUnformatted(status);
     }

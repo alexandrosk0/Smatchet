@@ -146,6 +146,13 @@ std::vector<std::string> ParseCsv(const std::string& csv) {
 void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.preferencesBuffersLoaded = false;
     d.mcpPrefsSavedHintUntil = {};
+    // Tracker "Test connection" verdict is close-scoped: reopening must not show a stale
+    // "Connected" for credentials edited since. The generation bump makes any still-running
+    // probe's completion a no-op (same staleness contract as the Assistant probe's cancel).
+    d.trackerPrefsTestInFlight = false;
+    d.trackerPrefsTestResult.clear();
+    d.trackerPrefsTestResultKind = 0;
+    ++d.trackerPrefsTestGen;
     // Pillar 2 (#892): drop the Tracker-tab open-edge latch so reopening the window re-snapshots
     // the cached-project list once (instead of re-reading disk every frame the tab is visible).
     d.prefsTrackerTabWasOpen = false;
@@ -560,10 +567,14 @@ void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
         d.trackerPrefsTestInFlight = true;
         d.trackerPrefsTestResult.clear();
         d.trackerPrefsTestResultKind = 0;
+        const int probeGen = ++d.trackerPrefsTestGen;
         AppController* appPtr = &app;
-        app.LaunchBackgroundTask([appPtr, probeCfg]() {
+        app.LaunchBackgroundTask([appPtr, probeCfg, probeGen]() {
             const TrackerReachabilityProbeResult probe = appPtr->ProbeTrackerCredentials(probeCfg);
-            appPtr->PostToMainThread([probe]() {
+            appPtr->PostToMainThread([probe, probeGen]() {
+                if (g_ui.trackerPrefsTestGen != probeGen) {
+                    return; // superseded by a newer probe or a window close — drop silently
+                }
                 g_ui.trackerPrefsTestInFlight = false;
                 switch (probe.Kind) {
                 case TrackerReachabilityProbeKind::AuthenticatedReachable:

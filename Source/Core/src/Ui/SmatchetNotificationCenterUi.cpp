@@ -55,6 +55,9 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
     // WHILE the center is open still appear.
     if (::ImGui::IsWindowAppearing()) {
         mgr.DismissAllLive();
+        // An armed-but-unconfirmed "Clear all" must not survive close/reopen — a stale
+        // primed Confirm button is exactly the misclick this two-step flow guards against.
+        ::ImGui::GetStateStorage()->SetBool(::ImGui::GetID("##clear_all_armed"), false);
     }
     const std::vector<ToastHistoryEntry>& history = mgr.History();
 

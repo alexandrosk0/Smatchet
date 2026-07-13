@@ -1030,11 +1030,109 @@ const TranslationEntry kEntries[] = {
     {"omnibar.no_active_view", "No active view to search — open a grid pane first.",
      u8"Aucune vue active à rechercher — ouvrez d'abord un panneau de grille."},
     {"omnibar.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
-    {"omnibar.mode.ticket_key", "Ticket key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
+    {"omnibar.mode.ticket_key", "Issue key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
     {"omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.",
      u8"Requête de filtre — Entrée remplace la requête de la vue active."},
     {"omnibar.mode.title_search", "Title search — Enter filters the focused grid.",
      u8"Recherche par titre — Entrée filtre la grille active."},
+
+    // UX critique pass 2 (UX_DESIGN_CRITIQUE.md §8) — confirmation guards, probe verdicts,
+    // and feedback strings added by the pass-2 implementation.
+    {"toast.new_issue", "New issue", u8"Nouveau ticket"},
+    {"draft.cancel_confirm", "Discard this draft? Typed fields and staged attachments will be lost.",
+     u8"Abandonner ce brouillon ? Les champs saisis et les pièces jointes préparées seront perdus."},
+    {"draft.discarded_on_view_change", "The in-progress new-issue draft was discarded by the view change.",
+     u8"Le brouillon de ticket en cours a été abandonné par le changement de vue."},
+    {"draft.project.fetch_failed", "Couldn't load projects: %s", u8"Impossible de charger les projets : %s"},
+    {"draft.project.none", "No projects found.", u8"Aucun projet trouvé."},
+    {"draft.project.none_filtered", "No projects match the filter.", u8"Aucun projet ne correspond au filtre."},
+    {"draft.project.recent.none", "No recent projects", u8"Aucun projet récent"},
+    {"draft.project.retry", "Retry", u8"Réessayer"},
+    {"comments.discard_confirm", "Discard the comment you're writing?",
+     u8"Abandonner le commentaire en cours de rédaction ?"},
+    {"grid.sort.remove_key", "Remove this sort key", u8"Supprimer cette clé de tri"},
+    {"cmdpalette.scope", "Showing %s commands only", u8"Affichage des commandes %s uniquement"},
+    {"prefs.search.too_short", "type at least 3 characters", u8"saisissez au moins 3 caractères"},
+    {"prefs.tracker.close_guard.body",
+     "The Tracker tab has unsaved edits. Save & Sync applies them; closing without saving discards them.",
+     u8"L'onglet Suivi contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "
+     u8"enregistrer les abandonne."},
+    {"prefs.tracker.test.ok", "Connected - credentials verified.", u8"Connecté - identifiants vérifiés."},
+    {"prefs.tracker.test.auth",
+     "Reached the server, but sign-in failed: ", u8"Serveur atteint, mais l'authentification a échoué : "},
+    {"prefs.tracker.test.transport", "Couldn't reach the server: ", u8"Impossible d'atteindre le serveur : "},
+    {"prefs.tracker.test.unavailable", "Service unavailable.", u8"Service indisponible."},
+    {"prefs.tracker.test.testing", "Testing...", u8"Test en cours..."},
+    {"keybindings.editor.needs_modifier", "Include Ctrl, Alt, or Win (Shift alone types text) - or an F-key alone.",
+     u8"Incluez Ctrl, Alt ou Win (Maj seul saisit du texte) - ou une touche F seule."},
+    {"keybindings.editor.resetConfirm",
+     "Replace all %d shortcuts with the defaults? Custom bindings are lost immediately (this tab saves "
+     "automatically).",
+     u8"Remplacer les %d raccourcis par les valeurs par défaut ? Les raccourcis personnalisés sont perdus "
+     u8"immédiatement (cet onglet enregistre automatiquement)."},
+    {"keybindings.editor.resetConfirmYes", "Reset to defaults", u8"Rétablir les valeurs par défaut"},
+    {"keybindings.editor.resetConfirmNo", "Keep my shortcuts", u8"Conserver mes raccourcis"},
+    {"layoutReset.confirm.generic", "This appearance change resets the window layout.",
+     u8"Ce changement d'apparence réinitialise la disposition des fenêtres."},
+    {"layoutReset.confirm.panelBottom", "Moving the panel to the bottom resets the window layout.",
+     u8"Déplacer le panneau vers le bas réinitialise la disposition des fenêtres."},
+    {"layoutReset.confirm.panelRight", "Moving the panel to the right resets the window layout.",
+     u8"Déplacer le panneau vers la droite réinitialise la disposition des fenêtres."},
+    {"layoutReset.confirm.sideBar", "Moving the primary side bar resets the window layout.",
+     u8"Déplacer la barre latérale principale réinitialise la disposition des fenêtres."},
+    {"layoutReset.confirm.resetOnly", "This resets the window layout to the default arrangement.",
+     u8"Ceci réinitialise la disposition des fenêtres à l'arrangement par défaut."},
+    {"offline.discard_confirm",
+     "%d row(s) are still queued to replay to the tracker - they are the only copy of that offline work. "
+     "Discard deletes them permanently.",
+     u8"%d ligne(s) sont encore en file pour être rejouées vers le suivi - elles sont la seule copie de ce "
+     u8"travail hors ligne. Abandonner les supprime définitivement."},
+    {"statusbar.errors_one", "%d error", u8"%d erreur"},
+    {"statusbar.errors_many", "%d errors", u8"%d erreurs"},
+    {"statusbar.conn.online.tip", "Connected and authenticated to the tracker backend.",
+     u8"Connecté et authentifié auprès du backend de suivi."},
+    {"statusbar.conn.auth_error.tip",
+     "The backend is reachable but rejected the credentials or configuration.\n"
+     "Check the API token and connection settings in Preferences > Tracker.",
+     u8"Le backend est joignable mais a rejeté les identifiants ou la configuration.\n"
+     u8"Vérifiez le jeton d'API et les paramètres de connexion dans Préférences > Suivi."},
+    {"statusbar.conn.offline.tip",
+     "No network route to the backend. Edits are queued locally and sync\n"
+     "automatically when the connection returns.",
+     u8"Aucune route réseau vers le backend. Les modifications sont mises en file localement et se\n"
+     u8"synchronisent automatiquement au retour de la connexion."},
+    {"statusbar.conn.unavailable.tip",
+     "The backend service is temporarily unavailable. Smatchet keeps retrying\n"
+     "automatically; queued edits sync once it recovers.",
+     u8"Le service backend est temporairement indisponible. Smatchet réessaie\n"
+     u8"automatiquement ; les modifications en file se synchronisent dès son retour."},
+    {"statusbar.conn.unknown.tip", "Connectivity has not been probed yet.",
+     u8"La connectivité n'a pas encore été testée."},
+    {"toast.attachment.open", "Open attachment", u8"Ouvrir la pièce jointe"},
+    {"attachment.open.url_fallback", "Download failed (%s) - opened \"%s\" in your browser instead.",
+     u8"Téléchargement échoué (%s) - « %s » a été ouvert dans votre navigateur à la place."},
+    {"attachment.open.launch_failed", "Downloaded \"%s\" but couldn't open it: %s",
+     u8"« %s » a été téléchargé mais n'a pas pu être ouvert : %s"},
+    {"attachment.open.downloading", "Downloading \"%s\"...", u8"Téléchargement de « %s »..."},
+    {"bugreport.preview_stale",
+     "The preview is out of date - description changes since it was built won't be sent. Edit the preview "
+     "(or reopen it) to include them.",
+     u8"L'aperçu n'est plus à jour - les modifications de description faites depuis sa création ne seront "
+     u8"pas envoyées. Modifiez l'aperçu (ou rouvrez-le) pour les inclure."},
+    {"bulk.run_import.tooltip",
+     "Creates new issues and updates existing keys. Rows with no field changes vs the cached ticket are "
+     "skipped (no tracker call). Re-running only retries rows that failed — rows already created or "
+     "skipped are never resubmitted. Update rows still fetching into cache wait until the load finishes "
+     "so skips can apply.",
+     u8"Crée de nouveaux tickets et met à jour les clés existantes. Les lignes sans changement de champ par "
+     u8"rapport au ticket en cache sont ignorées (aucun appel au suivi). Relancer ne réessaie que les lignes "
+     u8"en échec — les lignes déjà créées ou ignorées ne sont jamais renvoyées. Les lignes de mise à jour en "
+     u8"cours de chargement attendent la fin du chargement pour que les exclusions s'appliquent."},
+    {"bulk.stop.tooltip",
+     "Stop submitting further rows. Rows already sent finish and keep their result; stopped rows can be "
+     "re-run.",
+     u8"Arrête l'envoi des lignes suivantes. Les lignes déjà envoyées se terminent et conservent leur "
+     u8"résultat ; les lignes arrêtées peuvent être relancées."},
 
     // Command palette.
     {"cmdpalette.parameters", "Parameters:", u8"Paramètres :"},

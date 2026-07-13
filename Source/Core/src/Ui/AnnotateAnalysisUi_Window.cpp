@@ -841,7 +841,8 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
                         State().lastUiStatus = "Assignee updated.";
                     } else {
                         LOG_ERROR("Annotate UI: assign failed: %s", err.c_str());
-                        State().lastUiStatus = "Error: " + err;
+                        State().lastUiStatus =
+                            "Error: " + (err.empty() ? std::string("the assignee update failed.") : err);
                     }
                 });
             });
@@ -878,7 +879,7 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
                     State().lastUiStatus = "Annotate context comment posted.";
                 } else {
                     LOG_ERROR("Annotate UI: comment failed: %s", err.c_str());
-                    State().lastUiStatus = "Error: " + err;
+                    State().lastUiStatus = "Error: " + (err.empty() ? std::string("the comment failed to post.") : err);
                 }
             });
         });
@@ -984,7 +985,8 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                         State().lastUiStatus = "Assigned and commented.";
                     } else {
                         LOG_ERROR("Annotate UI: assign/comment failed: %s", err.c_str());
-                        State().lastUiStatus = "Error: " + err;
+                        State().lastUiStatus =
+                            "Error: " + (err.empty() ? std::string("the assign-and-comment failed.") : err);
                     }
                 });
             });

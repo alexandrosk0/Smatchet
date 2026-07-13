@@ -480,6 +480,20 @@ std::string BuildGridContextSignature(const ViewDefinition* view, const std::str
     return s;
 }
 
+namespace {
+
+bool HasNonWhitespaceChar(const char* text, std::size_t len) {
+    for (std::size_t i = 0; i < len && text[i] != '\0'; ++i) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     if (!d.newIssueDraft.StagedAttachments.empty()) {
         return true;
@@ -487,14 +501,15 @@ bool NewIssueDraftHasUserContent(const UiDrawSession& d) {
     static const char* const kContentFields[] = {"summary", "description"};
     for (const char* fieldId : kContentFields) {
         const auto it = d.newIssueDraft.FieldValues.find(fieldId);
-        if (it == d.newIssueDraft.FieldValues.end()) {
-            continue;
+        if (it != d.newIssueDraft.FieldValues.end() && HasNonWhitespaceChar(it->second.data(), it->second.size())) {
+            return true;
         }
-        for (std::size_t i = 0; i < it->second.size(); ++i) {
-            const unsigned char c = static_cast<unsigned char>(it->second[i]);
-            if (c != ' ' && c != '\t' && c != '\n' && c != '\r') {
-                return true;
-            }
+        // The committed FieldValues lag the live InputText buffers (text lands there on
+        // Enter/deactivate), so a typed-but-unsubmitted summary must count as content too.
+        const auto bufIt = d.newIssueDraftEditBufs.find(fieldId);
+        if (bufIt != d.newIssueDraftEditBufs.end() && !bufIt->second.empty() &&
+            HasNonWhitespaceChar(bufIt->second.data(), bufIt->second.size())) {
+            return true;
         }
     }
     return false;

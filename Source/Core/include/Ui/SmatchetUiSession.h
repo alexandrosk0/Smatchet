@@ -304,6 +304,9 @@ struct UiDrawSession {
     bool trackerPrefsTestInFlight = false;
     std::string trackerPrefsTestResult;
     int trackerPrefsTestResultKind = 0;
+    /// Probe generation: bumped on every probe start AND on Preferences close, so a
+    /// completion from a superseded/abandoned probe can't overwrite fresh state.
+    int trackerPrefsTestGen = 0;
     /// One-frame focus latch for the Preferences window. Set true by the menu-bar
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).
