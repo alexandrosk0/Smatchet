@@ -277,6 +277,169 @@ TEST_CASE("replace range — identifier straddle, selection override, open strin
     }
 }
 
+TEST_CASE("tokenizer — quoted literals, escapes, punctuation, multi-char operators, stray bytes") {
+    const auto fields = DefaultFields();
+    {
+        // A closed quoted literal (with an escaped quote inside) is one token; the clause
+        // after it resolves back to field mode.
+        const std::string buf = "summary ~ \"a\\\"b\" AND stat";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "status"));
+    }
+    {
+        // Two-char operator token (!=) still lands in value mode for the field on its left.
+        const std::string buf = "status != ";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "Open"));
+    }
+    {
+        const std::string buf = "created >= start";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "startOfDay()"));
+    }
+    {
+        // A byte that is neither id-char, quote, punct, nor operator becomes a lone token
+        // that matches nothing: no field/operator suggestions, no crash.
+        const std::string buf = "status = #";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(out.Items.empty());
+    }
+}
+
+TEST_CASE("value mode — reached through '(' and ',' with the field resolved across NOT/WAS/punct") {
+    const auto fields = DefaultFields();
+    {
+        // IN-list opener: value mode for the field left of the operator.
+        const std::string buf = "status in (";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "Open"));
+    }
+    {
+        // Continuing the IN list after a comma stays in value mode.
+        const std::string buf = "status in (Open, ";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "\"In Progress\""));
+    }
+    {
+        // NOT between field and operator is skipped when resolving the value field.
+        const std::string buf = "status not in (";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "Open"));
+    }
+    {
+        // WAS is skipped the same way.
+        const std::string buf = "status was in (";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "Open"));
+    }
+    {
+        // Punctuation between operator and field name (a parenthesised clause) is skipped too.
+        const std::string buf = "(status) = ";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "Open"));
+    }
+    {
+        // Unknown field before the opener degrades to field mode, not value mode.
+        const std::string buf = "nosuchfield in (";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "status"));
+        CHECK_FALSE(HasInsert(out, "Open"));
+    }
+}
+
+TEST_CASE("order-by tail — after ASC/DESC the engine goes quiet until a new prefix is typed") {
+    const auto fields = DefaultFields();
+    {
+        const std::string buf = "status = Open order by created asc ";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(out.Items.empty());
+    }
+    {
+        // Typing after a sort direction re-enters order-field mode (a second sort key).
+        const std::string buf = "status = Open order by created asc cr";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "created"));
+    }
+}
+
+TEST_CASE("value mode — user-field options carry accountId inserts with display-name labels") {
+    auto fields = DefaultFields();
+    TrackerField& assignee = fields[1];
+    TrackerFieldOption jane;
+    jane.Id = "acc-1";
+    jane.Value = "Jane Doe";
+    assignee.AllowedValueOptions.push_back(jane);
+    TrackerFieldOption secondary; // display name arrives in SecondaryValue when Value is empty
+    secondary.Id = "acc-2";
+    secondary.SecondaryValue = "Sec Ondary";
+    assignee.AllowedValueOptions.push_back(secondary);
+
+    {
+        const std::string buf = "assignee = jane";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
+        // Both the accountId row (labelled with the display name) and the display-name
+        // row (annotated, quoted insert) surface for the same option.
+        CHECK(HasLabel(out, "Jane Doe"));
+        CHECK(HasInsert(out, "\"Jane Doe\""));
+        CHECK(HasLabel(out, "Jane Doe (display name) -> \"Jane Doe\""));
+    }
+    {
+        const std::string buf = "assignee = sec";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
+        CHECK(HasLabel(out, "Sec Ondary"));
+    }
+}
+
+TEST_CASE("value mode — non-user option lists suggest by value and by id, skipping empties") {
+    auto fields = DefaultFields();
+    TrackerField component = MakeField("component", "Component", TrackerFieldFamily::Text);
+    TrackerFieldOption backend;
+    backend.Id = "10001";
+    backend.Value = "Backend";
+    component.AllowedValueOptions.push_back(backend);
+    component.AllowedValues.push_back(""); // catalog rot: empty entries are ignored
+    fields.push_back(component);
+
+    {
+        const std::string buf = "component = back";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
+        CHECK(HasInsert(out, "Backend"));
+        CHECK_FALSE(HasLabel(out, "10001 (Backend)")); // id row requires an id-prefix match
+    }
+    {
+        const std::string buf = "component = 100";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
+        CHECK(HasLabel(out, "10001 (Backend)"));
+        CHECK(HasInsert(out, "10001"));
+    }
+}
+
+TEST_CASE("user catalog — accountId insert fallback when the display name is empty") {
+    const auto fields = DefaultFields();
+    std::vector<TrackerUser> users;
+    TrackerUser idOnly; // server sent no display name — the quoted accountId is still queryable
+    idOnly.AccountId = "only-id";
+    idOnly.EmailAddress = "noname@example.com";
+    users.push_back(idOnly);
+    TrackerUser ghost; // no display name AND no accountId — the empty insert is dropped, no crash
+    ghost.EmailAddress = "ghost@example.com";
+    users.push_back(ghost);
+
+    {
+        const std::string buf = "assignee = noname";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, users);
+        CHECK(HasInsert(out, "\"only-id\""));
+        CHECK(HasLabel(out, " (noname@example.com)"));
+    }
+    {
+        // AddSuggestionUnique refuses an empty insert, so the row never surfaces.
+        const std::string buf = "assignee = ghost";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, users);
+        CHECK_FALSE(HasLabel(out, " (ghost@example.com)"));
+        CHECK(out.Items.empty());
+    }
+}
+
 TEST_CASE("robustness — null buffer, out-of-range cursor, suggestion cap") {
     {
         QuerySuggestBuild out;

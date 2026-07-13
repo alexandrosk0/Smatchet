@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
+#include "Ui/AnnotateAnalysisUi_Modals_detail.h"
 #include "Ui/P4ClPreview.h"
 
 #include <nlohmann/json.hpp>
@@ -16,6 +17,25 @@
 #include <sstream>
 #include <string>
 #include <utility>
+
+namespace {
+
+// Pure formatting/matching half — extracted to AnnotateAnalysisUi_Modals_detail.cpp
+// (gap-map Tier 5 `_detail` pattern) so it is doctest-covered without this TU's
+// ImGui/AppController/State() closure. This shell keeps the I/O: user search, worker
+// dispatch, State() locking, ImGui styling.
+AnnotateUiPure::AnnotateRowView RowView(const AnnotateRow& row) {
+    AnnotateUiPure::AnnotateRowView v;
+    v.Function = row.Parsed.Function;
+    v.Path = row.PathForP4;
+    v.Line = row.Parsed.LineNumber;
+    v.User = row.Annotate.User;
+    v.Changelist = row.Annotate.Changelist;
+    v.Date = row.Annotate.Date;
+    return v;
+}
+
+} // namespace
 
 namespace AnnotateInternal {
 
@@ -31,21 +51,7 @@ bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User,
     if (!app.SearchUsersByQuery(p4User, users, err)) {
         return false;
     }
-    const std::string pl = ToLowerAsciiCopy(p4User);
-    for (const auto& u : users) {
-        size_t at = u.EmailAddress.find('@');
-        const std::string local = at == std::string::npos ? u.EmailAddress : u.EmailAddress.substr(0, at);
-        if (!local.empty() && ToLowerAsciiCopy(local) == pl) {
-            accountId = u.AccountId;
-            return true;
-        }
-    }
-    if (!users.empty()) {
-        accountId = users.front().AccountId;
-        return true;
-    }
-    err = "No Jira user match.";
-    return false;
+    return AnnotateUiPure::PickJiraAccountForP4User(users, p4User, accountId, err);
 }
 
 std::string BuildAiExport() {
@@ -76,24 +82,7 @@ std::string BuildAiExport() {
     return oss.str();
 }
 
-std::string CsvEscape(const std::string& s) {
-    bool needsQuotes =
-        std::any_of(s.begin(), s.end(), [](char c) { return c == ',' || c == '"' || c == '\n' || c == '\r'; });
-    if (!needsQuotes) {
-        return s;
-    }
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (char c : s) {
-        if (c == '"') {
-            out.push_back('"');
-        }
-        out.push_back(c);
-    }
-    out.push_back('"');
-    return out;
-}
+std::string CsvEscape(const std::string& s) { return AnnotateUiPure::CsvEscape(s); }
 
 std::string BuildAnnotateExportCsv() {
     std::lock_guard<std::mutex> lk(State().displayMutex);
@@ -141,50 +130,9 @@ std::string BuildAnnotateExportJson() {
     return root.dump(2);
 }
 
-namespace {
-
-std::string ReplaceStringPlaceholder(std::string str, const std::string& placeholder, const std::string& replacement) {
-    size_t pos = 0;
-    while ((pos = str.find(placeholder, pos)) != std::string::npos) {
-        str.replace(pos, placeholder.length(), replacement);
-        pos += replacement.length();
-    }
-    return str;
-}
-
-} // namespace
-
 std::string BuildAnnotateQuickCommentTemplate(const std::string& issueKey, const std::string& templateId,
                                               const AnnotateRow& row, const std::vector<CommentTemplate>& templates) {
-    std::string text;
-    bool found = false;
-    auto it =
-        std::find_if(templates.begin(), templates.end(), [&templateId](const auto& t) { return t.Id == templateId; });
-    if (it != templates.end()) {
-        text = it->Text;
-        found = true;
-    }
-    if (!found) {
-        if (templateId == "need_repro") {
-            text = "Need repro details for {key} (annotate context: {path}:{line}, CL {cl}).";
-        } else if (templateId == "need_logs") {
-            text =
-                "Please attach logs/diagnostics for {key} to continue triage.\nReference: {function} @ {path}:{line}.";
-        } else {
-            text = "Triage handoff for {key}:\n- Suggested owner: {user}\n- Suspect location: {function} "
-                   "({path}:{line})\n- CL: {cl}";
-        }
-    }
-
-    text = ReplaceStringPlaceholder(text, "{key}", issueKey);
-    text = ReplaceStringPlaceholder(text, "{issueKey}", issueKey);
-    text = ReplaceStringPlaceholder(text, "{path}", row.PathForP4);
-    text = ReplaceStringPlaceholder(text, "{line}", std::to_string(row.Parsed.LineNumber));
-    text = ReplaceStringPlaceholder(text, "{cl}", row.Annotate.Changelist);
-    text = ReplaceStringPlaceholder(text, "{function}", row.Parsed.Function);
-    text = ReplaceStringPlaceholder(text, "{user}", row.Annotate.User);
-
-    return text;
+    return AnnotateUiPure::BuildQuickCommentText(issueKey, templateId, RowView(row), templates);
 }
 
 ImVec4 ThCol(const float* c) { return ImVec4(c[0], c[1], c[2], c[3]); }
@@ -207,12 +155,7 @@ void PushAnnotateLinkTextOnly(const AnnotateUiThemeColors& theme) {
 
 void PopAnnotateLinkTextOnly() { ImGui::PopStyleColor(1); }
 
-std::string NormalizeDateDisplay(const std::string& raw) {
-    if (raw.size() >= 10 && raw[4] == '-' && raw[7] == '-') {
-        return raw.substr(0, 4) + "/" + raw.substr(5, 2) + "/" + raw.substr(8, 2);
-    }
-    return raw;
-}
+std::string NormalizeDateDisplay(const std::string& raw) { return AnnotateUiPure::NormalizeDateDisplay(raw); }
 
 std::string ShortenPathForDisplay(const std::string& path, float maxWidthPx) {
     if (path.empty() || maxWidthPx <= 8.f) {
@@ -403,30 +346,9 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
 }
 
 std::string BuildCallstackRowTsv(const AnnotateRow& row, size_t displayIndex) {
-    std::ostringstream o;
-    o << (displayIndex + 1) << '\t' << row.Parsed.Function << '\t' << row.PathForP4 << ':' << row.Parsed.LineNumber
-      << '\t' << row.Annotate.User << '\t' << row.Annotate.Changelist << '\t' << row.Annotate.Date;
-    return o.str();
+    return AnnotateUiPure::BuildCallstackRowTsv(RowView(row), displayIndex);
 }
 
-namespace {
-
-std::string SanitizeTsvCell(std::string s) {
-    for (char& c : s) {
-        if (c == '\t' || c == '\r' || c == '\n') {
-            c = ' ';
-        }
-    }
-    return s;
-}
-
-} // namespace
-
-std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln) {
-    std::ostringstream o;
-    o << ln.SourceLine << '\t' << SanitizeTsvCell(ln.Changelist) << '\t' << SanitizeTsvCell(ln.User) << '\t'
-      << SanitizeTsvCell(ln.Date) << '\t' << SanitizeTsvCell(ln.Code);
-    return o.str();
-}
+std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln) { return AnnotateUiPure::BuildAnnotatedRowTsv(ln); }
 
 } // namespace AnnotateInternal
