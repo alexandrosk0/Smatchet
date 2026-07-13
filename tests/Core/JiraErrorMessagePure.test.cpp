@@ -68,14 +68,21 @@ TEST_CASE("cap boundary: a huge second message cannot blow past the cap via the 
 }
 
 TEST_CASE("cap never splits a multi-byte UTF-8 sequence") {
-    // 200 x 'é' (2 bytes each) = 400 bytes of message; with the "HTTP 400: " prefix the cap
-    // cuts inside the run — the cut must land on a lead-byte boundary.
+    // 300 x 'é' (2 bytes each) = 600 bytes of message — past the 400-byte joined cap, so the
+    // truncation branch actually runs and its lead-byte backoff is what's under test. (The
+    // previous 200 x 'é' = exactly-400-byte message fit the `<= cap` append whole, so the
+    // backoff loop never executed and a mutant of it survived — MUTATION_PILOT.md Phase 3
+    // JIRAERR-02.) The cut must land on a lead-byte boundary.
     std::string msg;
-    for (int i = 0; i < 200; ++i) {
+    for (int i = 0; i < 300; ++i) {
         msg += "\xC3\xA9";
     }
     const std::string body = std::string(R"({"errorMessages":[")") + msg + R"("]})";
     const std::string out = ExtractJiraErrorMessage(400, body);
+    // Truncation must actually have engaged (otherwise this test asserts nothing about the
+    // backoff): the ellipsis marker is appended only on the truncation path.
+    CHECK(out.size() >= 3);
+    CHECK(out.compare(out.size() - 3, 3, "\xE2\x80\xA6") == 0);
     // No byte in the result may be a lone continuation byte after a non-lead byte cut;
     // simplest check: the char before the ellipsis must not be a UTF-8 lead byte expecting
     // a continuation that never came. Verify by scanning for validity.
