@@ -63,5 +63,17 @@ surface at the BOTTOM, past the reserved history height, that the short docked p
 
 ## Status
 
-open (3 of 5 scenarios shipped; 2 blocked on the input-reachability harness seam above — a
-concrete deferred-automation plan, not a flat "out of scope")
+**RESOLVED 2026-07-13** — unblocked via **option 1** the same day it was recorded. A new
+`OpenAssistantPanelWithInput` test helper `ctx->UndockWindow`s the "Smatchet Assistant" panel to
+a floating window then `ctx->WindowResize`s it to 520×700, so the bottom `##AiAssistantInput` row
+is no longer clipped off the docked sidebar (`WindowResize` is a no-op on a docked window — the
+undock must precede it; confirmed with a diagnostic `IM_CHECK(ItemExists("**/##AiAssistantInput"))`).
+Both remaining scenarios then shipped in `tests/ui/ai_chat_panel.test.cpp`:
+**keyboard-nav** (`KeyboardEnter_SubmitsThroughConsentGate` — bare Enter → offline first-send
+consent gate) and **history-persist** (`HistoryPersist_AppendRoundTripsThroughSqlite` — drives
+`chat_persist::EnqueueAppendAndTrim` → `LoadAiChatMessages` directly, no send/network needed).
+`ui_test.run --name=AiChat --spawn` → **5/5**. All 5 mandatory ai-chat-claude-desktop-parity
+scenarios are now covered.
+
+_Was:_ open (3 of 5 scenarios shipped; 2 blocked on the input-reachability harness seam above — a
+concrete deferred-automation plan, not a flat "out of scope").
