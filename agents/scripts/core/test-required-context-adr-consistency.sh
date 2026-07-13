@@ -45,10 +45,14 @@ command -v jq >/dev/null 2>&1 || { echo "test-required-context-adr-consistency: 
 REJECT_RE='reject|NOT a required|do not add|must not'
 
 # head_contexts <root> — the working-tree required_contexts, one per line.
+# `tr -d '\r'` strips the CR that jq.exe emits under Git-Bash on Windows (CRLF output): a trailing
+# \r on each name would otherwise (a) defeat the base-membership `case` test — so every context
+# reads as newly-added — and (b) make `grep -F "$name"` miss its doc mention, so an ADR-rejected
+# addition sails through undetected (a silent fail-open on CRLF environments; the --selftest caught it).
 head_contexts() {
     local cfg="$1/project.config.json"
     [ -f "$cfg" ] || { echo "test-required-context-adr-consistency: missing $cfg" >&2; return 2; }
-    jq -r '.branch_protection.required_contexts[]? // empty' "$cfg"
+    jq -r '.branch_protection.required_contexts[]? // empty' "$cfg" | tr -d '\r'
 }
 
 # doc_files <root> — the rejection corpus.
@@ -96,7 +100,7 @@ run_check() {
     else
         base_ref="${RC_ADR_BASE_REF:-origin/develop}"
         if ! base="$(git -C "$root" show "$base_ref:project.config.json" 2>/dev/null \
-                        | jq -r '.branch_protection.required_contexts[]? // empty')"; then
+                        | jq -r '.branch_protection.required_contexts[]? // empty' | tr -d '\r')"; then
             base=""
         fi
         if [ -z "$base" ]; then
