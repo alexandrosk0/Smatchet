@@ -168,7 +168,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", kTestToken);
             httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 200);
             IM_CHECK(res->body.find("tools") != std::string::npos);
         }
@@ -177,7 +177,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
         {
             httplib::Client cli = MakeClient(port);
             httplib::Result res = cli.Get("/mcp/tools/list");
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 401);
             IM_CHECK(res->has_header("WWW-Authenticate"));
         }
@@ -188,7 +188,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", "not-the-token");
             httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 401);
         }
 
@@ -200,7 +200,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             h.emplace("Host", "evil.example");
             h.emplace("X-Smatchet-Token", kTestToken);
             httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 403);
         }
 
@@ -211,7 +211,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             h.emplace("Origin", "https://evil.example");
             h.emplace("X-Smatchet-Token", kTestToken);
             httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 403);
         }
 
@@ -250,7 +250,7 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", kTestToken);
             httplib::Result res = cli.Get("/mcp/sse", h);
-            IM_CHECK(res != nullptr);
+            IM_CHECK(res.error() == httplib::Error::Success);
             IM_CHECK_EQ(res->status, 503);
             IM_CHECK(res->has_header("Retry-After"));
         }
