@@ -70,8 +70,8 @@ HIGH_RISK_UNITS=(
     "MergeWatchNotifyPure"         # network-facing notify-endpoint request validation — 100%
     "AiPrefsTestConnectionPure"    # credential-slot routing + endpoint-sanitizer gate — 100% (AI-gated: absent => fail-open)
     "PlaneCustomPropertyPure"      # custom-property serialization from grid strings (C4) — 97%
-    # NOT ratcheted: JqlSuggestEnginePure measured 82% under its suite — needs a test
-    # top-up to clear the floor before it can join.
+    # 2026-07-13 ratchet — test top-up landed in the SAME change per the gate contract:
+    "JqlSuggestEnginePure"         # per-keystroke JQL tokenizer/mode resolver — 99% after top-up (was 82%)
 )
 
 DEFAULT_FLOOR=90

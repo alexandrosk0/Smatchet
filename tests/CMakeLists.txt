@@ -425,6 +425,11 @@ add_executable(SmatchetTests
     # _detail TU depends on nothing but <algorithm> — no ImGui, no AppController.
     Core/GridHeaderToolbarLayout.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridHeaderUi_detail.cpp"
+    # Gap-map Tier 5 — priority-icon resolution core extracted from SmatchetFieldIconRender.cpp:
+    # tracker-supplied priority-JSON parse, slug normalisation, and the audit-#14 same-origin
+    # iconUrl confinement. The _detail TU pulls StringUtil/JsonParseUtil/nlohmann only.
+    Core/SmatchetFieldIconRender_detail.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetFieldIconRender_detail.cpp"
     # Pure cached-project filter extracted from DrawJqlQueryEditorEmbedded's project pill. The
     # _detail TU reads only CachedProjectEntry struct fields — no ImGui, no FieldCatalogCache call.
     Core/JqlProjectPillFilter.test.cpp
@@ -462,6 +467,11 @@ add_executable(SmatchetTests
     # ImGui-free + AppController-free, so the test rig links just that one cpp.
     Core/AnnotateRowDisplayPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AnnotateAnalysisUi_Window_detail.cpp"
+    # Gap-map Tier 5 — pure export/clipboard escaping, quick-comment template expansion,
+    # and P4-user -> Jira-account selection extracted from AnnotateAnalysisUi_Modals.cpp
+    # (audit-#23's TU). The _detail TU pulls ConfigManager/P4Annotate/schema headers only.
+    Core/AnnotateModalsPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AnnotateAnalysisUi_Modals_detail.cpp"
     # Pure audit-window filter/pagination helpers extracted from SmatchetUI::drawAuditWindow.
     # The _detail TU depends only on nlohmann/json — no ImGui, no AppController.
     Core/AuditWindowFilter.test.cpp
@@ -830,6 +840,27 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioRunner.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Command.cpp"
+    # Gap-map Tier 3 — handler-body coverage for the facet-based Builtin command TUs
+    # inside this rig (the scenario sweep + the Linux-only SmatchetCommandsTests cover
+    # registration/pre-handler against a real AppController; this puts the handler
+    # bodies in the OpenCppCoverage denominator). Fake IApp* facets live in the test.
+    # CommandRegistry.cpp + FuzzyMatch.cpp join so Dispatch (confirm gate, validation,
+    # alias + fuzzy resolution) runs for real; their deps (ConfigManager, Logger,
+    # BoundedJsonParse) are already linked. The AppController-coupled Builtin TUs
+    # (Meta/Config/Perf/Fields/Ai) and the UI-session ones (Debug/Ui/BugReport/
+    # Scenario/UiTest) stay out — they are the SmatchetCommandsTests lane's job.
+    Commands/BuiltinFacetCommands.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_App.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Tickets.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Sync.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Users.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Offline.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Attach.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Automation.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
     Core/LabelEditDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
@@ -1247,6 +1278,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
+    # Gap-map Tier-2 close-out — GitHubCommitsForUser, the last backend HTTP shell
+    # outside the rig. Same loopback fixture; its deps (GitHubCommitsParse,
+    # VcsSubmission, GitHubClientHelpers, TrackerHttpUtils, cpr) are all linked
+    # elsewhere in this target.
+    Core/GitHubCommitsHttp.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/GitHubCommits.cpp"
     # Slice 3 (same plan) — the Plane/Linear WRITE shells (the audit's data-loss class).
     # PlaneIssueMutation.cpp is already linked above (PlaneClient vtable); the LinearClient
     # vtable spans LinearClient.cpp + LinearIssueMutation.cpp (both here). Their deps
@@ -1298,7 +1335,8 @@ add_executable(SmatchetTests
     # (ParseChangesForUserOutput; P4AnnotateParse.cpp already linked above),
     # email→p4-user, p4-date normalisation, day-window cutoff, GitHub commit-list
     # JSON parse, newest-first two-feed merge. GitHubCommitsParse.cpp is the pure
-    # parse TU — the cpr/HTTP fetch half (GitHubCommits.cpp) stays OUT of the rig.
+    # parse TU; the cpr/HTTP fetch half (GitHubCommits.cpp) is linked above with
+    # GitHubCommitsHttp.test.cpp driving it at the loopback fixture.
     Core/VcsSubmission.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/VcsSubmission.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Vcs/GitHubCommitsParse.cpp"
