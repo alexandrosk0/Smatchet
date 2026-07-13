@@ -197,7 +197,7 @@ Registered once `ViewState` is loaded (first render frame). Returns `{id, name, 
 | `view.create` | `name` *(required)*, `jql?`, `fields?` *(JSON array)*, `triggerSync?` | Create a new view (auto-activated). Dry-run supported. |
 | `view.update` | `name?`, `jql?`, `fields?` *(JSON array)* | Edit the currently active view in place. Omitted keys preserve current value. Dry-run supported. |
 | `view.delete` | `id` *(required)* | Destructive (`--yes`). Refuses to delete the last remaining view. Dry-run supported. |
-| `view.toggle.<id>` | — | Toggle a side-bar / panel window. `<id>` is one of `views_dashboard`, `source_annotate`, `log`, `notifications`, `backend_audit`, `performance`, `bulk_import`, `bulk_export`, `preferences`, `mcp_server`, `scripts`. Returns `{open: bool}`. |
+| `view.toggle.<id>` | `action?` | Toggle a side-bar / panel window. `action` is `show`, `hide`, or `toggle` (default), for any `<id>`. `<id>` is one of `views_dashboard`, `source_annotate`, `log`, `notifications`, `backend_audit`, `performance`, `bulk_import`, `bulk_export`, `preferences`, `mcp_server`, `scripts`. Returns `{open: bool}`. |
 | `view.toggle.notifications` | `action` | Open / toggle the Notification Center (the newest-first log of every toast the app has raised). `action` is `show`, `hide`, or `toggle` (default). Returns `{open: bool}`. The bare name `notifications` survives as an alias. |
 
 ```bash

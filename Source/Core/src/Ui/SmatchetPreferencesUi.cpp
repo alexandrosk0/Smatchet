@@ -810,7 +810,17 @@ void DrawPrefsSearchBox(UiDrawSession& d) {
         if (!PrefsKeywordsMatch(entry.tab, needle) && !PrefsKeywordsMatch(entry.keywords, needle)) {
             continue;
         }
-        ImGui::SameLine();
+        // Wrap onto a new line when the next chip wouldn't fit — a broad query can match
+        // most of the tab set and would otherwise run off the window edge. Measured from
+        // the PREVIOUS item's right edge (the standard ImGui wrapping idiom): checking
+        // GetContentRegionAvail before SameLine would read a fresh-line cursor and never
+        // trigger.
+        const float chipW = ImGui::CalcTextSize(entry.tab).x + ImGui::GetStyle().FramePadding.x * 2.0f;
+        const float windowRightX = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+        const float nextChipEndX = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + chipW;
+        if (nextChipEndX < windowRightX) {
+            ImGui::SameLine();
+        }
         if (ImGui::SmallButton(entry.tab)) {
             d.prefsSelectTabRequest = entry.tab;
         }

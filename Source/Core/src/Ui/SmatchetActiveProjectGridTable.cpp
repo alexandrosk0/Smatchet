@@ -430,12 +430,14 @@ void DrawGridErrorState(ActiveProjectDrawCtx& ctx) {
 }
 
 // H1 (zero results) — connected and loaded, but nothing to show: either the view's query
-// matched nothing, or the quick filter hides every loaded row. Drawn as a one-line strip
-// ABOVE the table (headers + inline new-issue row stay usable below).
-void DrawGridZeroResultsStrip(ActiveProjectDrawCtx& ctx) {
+// matched nothing (`viewIsEmpty`), or the quick filter hides every loaded row. Drawn as a
+// one-line strip ABOVE the table (headers + inline new-issue row stay usable below). The
+// cause is passed explicitly — a stale filter buffer carried over from a prior view must
+// not relabel a genuinely-empty view as a filter miss (Clear filter would be a no-op).
+void DrawGridZeroResultsStrip(ActiveProjectDrawCtx& ctx, bool viewIsEmpty) {
     UiDrawSession& d = ctx.d;
     GridPane& pane = ctx.pane;
-    const bool filterActive = pane.gridFilterBuf[0] != '\0';
+    const bool filterActive = !viewIsEmpty && pane.gridFilterBuf[0] != '\0';
     ImGui::AlignTextToFramePadding();
     if (filterActive) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.state.filter_no_match", "No issues match the filter."));
@@ -488,11 +490,11 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
             DrawGridErrorState(ctx);
             return;
         }
-        DrawGridZeroResultsStrip(ctx);
+        DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/true);
     } else if (ctx.pane.filteredIndices.empty() && ctx.pane.gridFilterBuf[0] != '\0') {
         // Loaded rows exist but the quick filter hides them all (filteredIndices lags one
         // frame behind the projection rebuild inside the table — fine for a hint strip).
-        DrawGridZeroResultsStrip(ctx);
+        DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/false);
     }
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));

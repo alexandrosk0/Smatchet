@@ -284,11 +284,21 @@ void MigrateMenuShortcutKeybindingsV1(const nlohmann::json& j, TrackerConfig& cf
 
 // V2 of the same seed pattern: the Notifications reveal binding, added when the bare
 // `notifications` command id was renamed to `view.toggle.notifications`. Same
-// once-per-config, skip-if-the-identity-already-bound contract as V1.
+// once-per-config, skip-if-the-identity-already-bound contract as V1, plus a rename
+// pass: a user-made binding saved under the legacy bare id is renamed IN PLACE
+// (hotkey / args / enabled / order preserved) so it keeps its identity under the
+// canonical id and the seed below cannot add a conflicting duplicate next to it.
 void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cfg) {
     cfg.MigratedMenuShortcutsV2 = j.value("migrated_menu_shortcuts_v2", false);
     if (cfg.MigratedMenuShortcutsV2) {
         return;
+    }
+    int renamed = 0;
+    for (std::size_t i = 0; i < cfg.Keybindings.Bindings.size(); ++i) {
+        if (cfg.Keybindings.Bindings[i].CommandId == "notifications") {
+            cfg.Keybindings.Bindings[i].CommandId = "view.toggle.notifications";
+            ++renamed;
+        }
     }
     const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
     int seeded = 0;
@@ -299,10 +309,10 @@ void MigrateMenuShortcutKeybindingsV2(const nlohmann::json& j, TrackerConfig& cf
             ++seeded;
         }
     }
-    if (seeded > 0) {
-        LOG_INFO("ConfigManager: seeded %d new menu-shortcut keybinding(s) into an existing config "
-                 "(migrated_menu_shortcuts_v2)",
-                 seeded);
+    if (renamed > 0 || seeded > 0) {
+        LOG_INFO("ConfigManager: menu-shortcut migration v2 — renamed %d legacy notification binding(s), "
+                 "seeded %d default(s) (migrated_menu_shortcuts_v2)",
+                 renamed, seeded);
     }
     cfg.MigratedMenuShortcutsV2 = true;
 }
