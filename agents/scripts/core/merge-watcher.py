@@ -936,6 +936,13 @@ def maybe_remove_from_registry(pr: int, clone_path: str) -> None:
 #: Gate-logic files whose staleness changes a MERGE decision — the drift TRIGGER set.
 _GATE_LOGIC_RELPATHS = (
     "agents/scripts/core/merge-gates.sh",
+    # merge-gates.sh fail-closed-sources these; they hold the block allow-list
+    # (00-common.sh) and the GATE_FILTER jq projection (10-gate-filter.sh), so
+    # drift in a module is drift in the gate logic just as much as the entry file.
+    # NOT in _DAEMON_CODE_RELPATHS: merge-gates.sh re-reads them from disk each
+    # poll, so an ff-pull suffices — no daemon re-exec needed.
+    "agents/scripts/core/merge-gates.d/00-common.sh",
+    "agents/scripts/core/merge-gates.d/10-gate-filter.sh",
     "agents/scripts/core/merge-gates.graphql",
     "agents/scripts/core/merge-watcher.py",
     "agents/scripts/core/merge-watcher-cli.py",

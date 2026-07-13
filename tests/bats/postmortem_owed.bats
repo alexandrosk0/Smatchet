@@ -560,6 +560,10 @@ JSON
     mkdir -p "$FIX_REPO/agents/scripts/core" "$FIX_REPO/docs/self-improvement"
     cp "$REPO_ROOT/agents/scripts/core/postmortem-owed.sh" \
        "$REPO_ROOT/agents/scripts/core/merge-gates.sh" "$FIX_REPO/agents/scripts/core/"
+    # merge-gates.sh fail-closed-sources its merge-gates.d/ modules (the allow-list
+    # constant now lives in 00-common.sh) — the fixture must carry them or the
+    # source aborts and postmortem-owed.sh refuses fail-closed (false negative).
+    cp -r "$REPO_ROOT/agents/scripts/core/merge-gates.d" "$FIX_REPO/agents/scripts/core/"
     if [ -f "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" ]; then
         cp "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" "$FIX_REPO/agents/scripts/core/"
     fi

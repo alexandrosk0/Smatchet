@@ -55,10 +55,15 @@ _discovery_files() {
 }
 
 # Print impl files (a NON-comment line here counts as an implementation).
+# merge-gates.sh's gate-condition logic is split across the entry point +
+# the sourced merge-gates.d/ modules (the GATE_FILTER jq projection — where the
+# per-label `any(. == "<label>")` reads live — moved to 10-gate-filter.sh).
+# Both count as implementation for the label-wired-somewhere check.
 _impl_files() {
     local root="$1"
     find "$root/.github/workflows" -maxdepth 1 -name '*.yml' 2>/dev/null || true
     [ -f "$root/agents/scripts/core/merge-gates.sh" ] && echo "$root/agents/scripts/core/merge-gates.sh"
+    [ -f "$root/agents/scripts/core/merge-gates.d/10-gate-filter.sh" ] && echo "$root/agents/scripts/core/merge-gates.d/10-gate-filter.sh"
 }
 
 # Collect the set of documented label names under $root.
@@ -124,15 +129,25 @@ _run_check() {
 # _mg_ci_downgrade_labels <merge-gates.sh> — the labels merge-gates.sh actually
 # applies as CI downgrades: jq vars referenced inside the `$failing → $downgraded`
 # select block, resolved back through their `any(. == "<label>")) as $var` binding.
+# The GATE_FILTER jq projection (with the $downgraded block + the label bindings)
+# lives in the sourced module merge-gates.d/10-gate-filter.sh; if the passed file
+# has no inline $downgraded block, fall back to that sibling module (a
+# self-contained parity fixture keeps its block inline, so it is read directly).
 _mg_ci_downgrade_labels() {
-    local f="$1" region v
+    local f="$1" region v jqf
+    jqf="$f"
+    if ! grep -q 'as \$downgraded' "$f"; then
+        local mod
+        mod="$(dirname "$f")/merge-gates.d/10-gate-filter.sh"
+        [ -r "$mod" ] && jqf="$mod"
+    fi
     # `q` at the closing anchor stops after the FIRST block — later `$failing`
     # mentions (the poller's count expressions) must not extend the region.
-    region="$(sed -n '/\[\$failing\[\] | select(/,/as \$downgraded/{p;/as \$downgraded/q;}' "$f")"
-    [ -n "$region" ] || { echo "test-oob-label-impl: no \$downgraded block in $f" >&2; return 2; }
+    region="$(sed -n '/\[\$failing\[\] | select(/,/as \$downgraded/{p;/as \$downgraded/q;}' "$jqf")"
+    [ -n "$region" ] || { echo "test-oob-label-impl: no \$downgraded block in $jqf" >&2; return 2; }
     printf '%s\n' "$region" | grep -oE '\$[A-Za-z_][A-Za-z_0-9]*' | sort -u | while IFS= read -r v; do
         v="${v#\$}"
-        sed -n "s/.*any(\\. == \"\\([a-z0-9-]*-out-of-band\\)\")) as \\\$${v}[[:space:]]*\$/\\1/p" "$f"
+        sed -n "s/.*any(\\. == \"\\([a-z0-9-]*-out-of-band\\)\")) as \\\$${v}[[:space:]]*\$/\\1/p" "$jqf"
     done | sort -u
 }
 

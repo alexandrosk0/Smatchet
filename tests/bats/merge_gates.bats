@@ -242,7 +242,23 @@ set_fixture() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"WARN: merge-gates.sh differs from origin/develop"* ]]
+    [[ "$output" == *"WARN: merge-gates.sh or a merge-gates.d/ gate module differs from origin/develop"* ]]
+}
+
+@test "freshness guard fingerprints EVERY merge-gates.d/ module (no silent escape) (#1428 split)" {
+    # Regression guard for the merge-gates.d/ split: the block allow-list and the
+    # GATE_FILTER moved into modules, so a stale/tampered module must invalidate
+    # the freshness check too. Every *.sh under merge-gates.d/ must appear in BOTH
+    # the shell guard's _fresh_relpaths AND merge-watcher.py's _GATE_LOGIC_RELPATHS,
+    # or a future module would enforce out-of-date gate logic undetected.
+    local core="$REPO_ROOT/agents/scripts/core"
+    local mod rel missing=0
+    for mod in "$core"/merge-gates.d/*.sh; do
+        rel="agents/scripts/core/merge-gates.d/$(basename "$mod")"
+        grep -qF "$rel" "$core/merge-gates.sh" || { echo "MISSING in merge-gates.sh _fresh_relpaths: $rel"; missing=1; }
+        grep -qF "$rel" "$core/merge-watcher.py" || { echo "MISSING in merge-watcher.py _GATE_LOGIC_RELPATHS: $rel"; missing=1; }
+    done
+    [ "$missing" -eq 0 ]
 }
 
 @test "freshness BLOCK + unverifiable (no develop blob) -> fail-closed block" {

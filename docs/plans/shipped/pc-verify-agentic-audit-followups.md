@@ -2,7 +2,7 @@
 
 > **Slug**: `pc-verify-agentic-audit-followups` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — narrowed to **Task B** only. Tasks A and C were satisfied by CI when PR #1812 merged (2026-07-13): the bucket-E lanes compiled+ran the C6 test green, and the gate suite (bucket-E, ctest/Coverage, dual-target MSVC, `agent_size.bats`, doc-validation) went green on the merge. The one genuine dev-machine item left is Task B (the `merge-gates.sh` split, which needs `bats`). See § Verification (actual).
+> **Status**: `shipped` — all three tasks complete. Tasks A and C were satisfied by CI when PR #1812 merged (2026-07-13). Task B (the `merge-gates.sh` split) landed on a `windows-dev` machine with `bats`: `merge-gates.sh` (1506 → 1249 lines) split into a thin entry point + two sourced modules under `agents/scripts/core/merge-gates.d/` (`00-common.sh` = the block-on-any-red allow-list constant + prompt-shim + `gh_pr_ready_idempotent`; `10-gate-filter.sh` = the 31-field GATE_FILTER jq projection), with `tests/bats/merge_gates.bats` held 164/164 green at each extraction step and byte-identical behaviour proven. See § Verification (actual).
 
 ## Context
 
@@ -88,9 +88,14 @@ Per `AGENTS.md` § Verification automation. Run from a Windows dev machine (or a
 ## Verification (actual)
 - **Task A (C6) — DONE, CI-verified.** `Bucket-E UI tests (Mesa headless GL)` green on PR #1812 (commits `1547763`, `e79190f`); all six assertions pass over a real `httplib` socket. Post-merge re-check on `develop`: the TU carries the `httpRes` / `res.error()` fixes, is registered + enrolled, and the driver `bash -n`-parses.
 - **Task C (gate sweep) — DONE.** Runnable-locally subset green on merged `develop` (agent-size `--selftest`, `AGENTS.md` no longer self-suppresses, delta gate exit 0, doc-anchors, agent-contract 27/0, markdown-links); the non-container subset (bucket-E, ctest/Coverage, dual-target MSVC, `agent_size.bats`) green on the merge CI.
-- **Task B (merge-gates split) — OPEN, deferred.** Not attempted (needs `bats`, unrunnable in a Linux container); remains tracked in the C2 backlog entry `tooling/2026-07-06-test-lint-rules-monolith-split.md`. This is the sole reason the plan stays `active`.
+- **Task B (merge-gates split) — DONE, bats-verified.** `agents/scripts/core/merge-gates.sh` split from 1506 → 1249 lines into a thin entry point + two fail-closed sourced modules under a new `agents/scripts/core/merge-gates.d/` (explicit load list, script-relative via `BASH_SOURCE`/`SCRIPT_DIR`, mirroring `lint-rules.d/`):
+  - `00-common.sh` (85 lines) — the block-on-any-red allow-list constant `MERGE_GATES_BLOCK_ALLOWLIST_RE`, the `merge-gates-prompt.sh` lazy-source, and the standalone `gh_pr_ready_idempotent` (all formerly top-level). Consumers that `source merge-gates.sh` (`safe-admin-merge.sh` 19/19, `safe-merge.sh` 13/13, `postmortem-owed.sh`, `pr-status-watch.sh`) still see both symbols transitively.
+  - `10-gate-filter.sh` (234 lines) — the one giant `gh api graphql --jq` GATE_FILTER (31-field projection) relocated VERBATIM into a single-quoted `_MG_GATE_FILTER_TEMPLATE` global the entry point copies byte-for-byte (no command-substitution newline trim); the three placeholders splice in the entry point exactly as before. `diff` of the inner content confirmed byte-identical.
+  - **bats: 164/164 green** after each extraction step (baseline 164/164 confirmed first). **Behaviour preservation**: every CLI mode (SKIP bypass, missing-ORCH_USER, freshness typo, bad-poll-int, freshness block/warn with injected blobs) diffed byte-identical stdout+stderr+exit vs the pristine `origin/develop` copy — the only delta is the script's own path/line-number in the `set -u` "owner required" message (an artifact of the two files living at different paths, not a behaviour change). The `#1428` freshness self-check stayed in the entry-point function so `hash-object "${BASH_SOURCE[0]}"` still resolves to `merge-gates.sh` (proven identical).
+  - **Coupled gate fixed same-PR**: `test-oob-label-impl.sh` greps `merge-gates.sh` for the `$failing → $downgraded` jq region + `any(. == "<label>")` label bindings, both of which moved into `10-gate-filter.sh`. Extended `_impl_files` + `_mg_ci_downgrade_labels` to fall back to the sibling module (self-contained parity fixtures still read their inline block); its 9-case bats selftest + the real-tree parity case pass.
+  - **Seam that resisted (reported, not forced)**: the four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments) are ONE indivisible stateful poll loop — they share ~15 per-poll locals (`cr_pass`, `cr_open_blocks`, `cr_overridden`, the `stale_streak`/`none_streak` cross-iteration counters, the `nudge_coderabbit` closure) plus function-local `return` codes; extracting them into eval-functions would thread that state across a boundary (the exact subtle-behaviour risk the contract forbids). Left inline. The C2 `--selftest` bonus was NOT added (the entry point stays `source`-able; no top-level `exit`).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip the § Status header to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+1. flip the § Status header to `shipped` — DONE,
+2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md` — DONE (this PR),
+3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix` — DONE.
