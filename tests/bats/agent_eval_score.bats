@@ -22,9 +22,15 @@ setup() {
     VALIDATOR="$REPO_ROOT/tests/agent-eval/validate_schema.py"
     export SCORER POLICY VALIDATOR
 
-    # Pick a python 3 interpreter (python3 on Linux CI, python on Windows).
-    if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+    # Pick a WORKING python 3 interpreter, exec-validating each candidate
+    # (bats-coverage-02): a bare `command -v python3` matches the Windows WinStore
+    # alias that exits 49 on run. Skip cleanly when none works.
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
     export PY
+    [ -n "$PY" ] || skip "no working python interpreter"
 
     WORK="$BATS_TEST_TMPDIR"
 

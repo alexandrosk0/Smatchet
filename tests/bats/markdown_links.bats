@@ -15,6 +15,16 @@ setup() {
     export LINT="$REPO_ROOT/agents/scripts/core/test-markdown-links.sh"
     FIXTURE_DIR="$(mktemp -d)"
     export FIXTURE_DIR
+    # Resolve a WORKING python interpreter (bats-coverage-01): a bare `python3`
+    # matches the Windows WinStore alias which passes `command -v` but exits 49
+    # on exec, red-walling 5/7 of these tests. Exec-validate each candidate and
+    # skip cleanly when none runs (mirrors agent_size.bats).
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
+    export PY
+    [ -n "$PY" ] || skip "no working python interpreter"
 }
 
 teardown() {
@@ -46,7 +56,7 @@ MD
         PY_FIXTURE_DIR="$(cygpath -w "$FIXTURE_DIR")"
     fi
     # Assert the regex + path-resolve mechanics directly.
-    run python3 -c "
+    run "$PY" -c "
 import os, re
 os.chdir(r'$PY_FIXTURE_DIR')
 text = open('docs/broken.md').read()
@@ -64,7 +74,7 @@ for m in LINK_RE.finditer(text):
 }
 
 @test "absolute / external / anchor links are NOT flagged" {
-    run python3 -c "
+    run "$PY" -c "
 import re
 LINK_RE = re.compile(r'(?<!\!)\[[^\]]*\]\(([^)\s]+)\)')
 hrefs = ['/abs/path.md', 'https://example.com', 'http://a.b', 'mailto:x@y',
@@ -81,7 +91,7 @@ print(f'flagged={flagged}')
 }
 
 @test "image links (![alt](path)) are NOT flagged" {
-    run python3 -c "
+    run "$PY" -c "
 import re
 text = '![image](missing.png)\n[regular](missing.md)'
 LINK_RE = re.compile(r'(?<!\!)\[[^\]]*\]\(([^)\s]+)\)')
@@ -94,7 +104,7 @@ print('hits:', hits)
 }
 
 @test "line-anchor suffix (path:NNN) is stripped before existence check" {
-    run python3 -c "
+    run "$PY" -c "
 import re, os
 hrefs = ['Source/Core/include/Foo.h:58', 'Source/Core/src/Bar.cpp:123:7', 'Plain.md']
 for h in hrefs:
@@ -111,7 +121,7 @@ for h in hrefs:
 # ---------- exclude archived plan dirs ----------
 
 @test "docs/plans/shipped/ is excluded from default scan (was docs/design/archive/)" {
-    run python3 -c "
+    run "$PY" -c "
 import os
 EXCLUDED = ('docs/plans/shipped',)
 def is_active_md(rel_in):

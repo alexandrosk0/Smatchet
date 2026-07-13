@@ -23,8 +23,15 @@ setup() {
     CASE="$REPO_ROOT/tests/agent-eval/code-review/cr-dpapi-secret-loss.json"
     export RUNNER SCORER VALIDATOR POLICY CASE
 
-    if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+    # Exec-validate the interpreter (bats-coverage-02): a bare `command -v python3`
+    # matches the Windows WinStore alias that exits 49 on run. Try each candidate
+    # and skip cleanly when none works.
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
     export PY
+    [ -n "$PY" ] || skip "no working python interpreter"
 
     WORK="$BATS_TEST_TMPDIR"
     export WORK

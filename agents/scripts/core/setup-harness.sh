@@ -392,11 +392,15 @@ _pi_pkg_dir() {
 setup_pi() {
   echo "Setting up pi adapter at .pi/ ..."
 
-  # 1. Generate the pi-native agent files.
-  if command -v python3 >/dev/null 2>&1; then
-    python3 agents/scripts/core/gen-pi-agents.py "$ROOT" "$ROOT/.pi/agents"
+  # 1. Generate the pi-native agent files. Resolve via find_python (exec-validating)
+  # rather than a bare `command -v python3`, which matches the Windows WinStore
+  # alias that passes command -v but exits 49 on run (core-scripts-bash-08); mirrors
+  # the codex branch below.
+  local py
+  if py="$(find_python)"; then
+    "$py" agents/scripts/core/gen-pi-agents.py "$ROOT" "$ROOT/.pi/agents"
   else
-    echo "  error: python3 not found — needed to generate .pi/agents/*.md" >&2
+    echo "  error: python not found — needed to generate .pi/agents/*.md" >&2
     exit 1
   fi
 
