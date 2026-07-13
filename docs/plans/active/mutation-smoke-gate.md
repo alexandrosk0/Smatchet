@@ -2,7 +2,7 @@
 
 > **Slug**: `mutation-smoke-gate` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **Phases 1 + 2 shipped in this PR.** Phase 1 = harness + seed corpus (dry-run-validated). Phase 2 = advisory nightly wiring + bats + local mirror, per the owner's decisions (2026-07-10): **advisory nightly → graduate to blocking after clean runs**, **10-mutant seed @ 80% floor** to start. Phase 3 (corpus expansion to the full 17-TU set) and Phase 4 (blocking graduation) remain future work — the gate is `continue-on-error` until then, so it can never block a nightly.
+> **Status**: `active` — **Phases 1 + 2 shipped** (harness + seed corpus; advisory nightly wiring + bats + local mirror, per the owner's decisions 2026-07-10: **advisory nightly → graduate to blocking after clean runs**, **80% floor**). **Phase 3 (corpus expansion to the full dedicated-test TU set) shipped 2026-07-13** — 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs in the TSan rig, every entry live-validated in-container (full sweep: 33/33 killed, 0 mis-ruled equivalents, 100% adjusted kill rate; see § Implementation log). Phase 4 (blocking graduation after clean nightly runs) remains — the gate is `continue-on-error` until then, so it can never block a nightly.
 >
 > **Roadmap**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **F** (Gap 4, "Mutation-smoke / coverage-delta gate"). **Precursor**: [`MUTATION_PILOT.md`](../../../MUTATION_PILOT.md) (2026-07-05). **Originating backlog**: `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md`.
 
@@ -79,6 +79,14 @@ Phase 1 (this PR), all run locally in-container:
 ## Implementation log
 
 - `<phase-1-sha>` · Phase 1 — `mutation-smoke.sh` harness + `mutation-smoke-corpus.json` seed (10 mutants), dry-run-validated. CI wiring held for § Decisions.
+- 2026-07-13 · Phase 3 — corpus expanded 10 → 38 mutants, now covering **all 20 dedicated-test TUs** in the TSan rig (the pilot-era "17-TU set" grew as new service TUs gained dedicated tests). Every entry **live-validated in-container** (`libclang-rt-18-dev` installed per the pilot's infra note; full build + 226-case suite green first). Changes:
+  - **Stale `survived` expects flipped → `killed`** (GR5, GR6, MergeWatch-m3): their backlogged pinning assertions landed post-pilot, the harness's own "flip expect → killed" nudge confirmed all three now KILLED — they graduate to regression guards, exactly the § Approach lifecycle.
+  - **4 more pilot-fixed survivors added as guards** (PLANE-03, JQL-03, LinearQueryFromJql JQL-05, LinearClientHelpers m5) + the pilot's 5th equivalent (JQL-01 `not in` offset) — the corpus now carries the pilot's complete vetted mutant set.
+  - **23 new mutants over the 13 previously-uncovered TUs** (JiraErrorMessagePure, AiPrefsTestConnectionPure, TicketSyncService, EditMetaCacheService, FieldEditPipelineService, ConnectivityMonitorService, LocalCacheManager, GridLiveContext, OfflineQueueService, ConfigSaveWorker, AiAssistantController + scored guards for the equivalent-only TrackerDateTimePure/TrackerLabelsPure/LinearIssueMappingPure).
+  - **1 new genuine weak assertion found + fixed** (the Phase-3 sweep's only real survivor): `JiraErrorMessagePure.test.cpp` "cap never splits a multi-byte UTF-8 sequence" used a 200×'é' = exactly-400-byte message that fit `<= kMaxJoinedErrorLen` and appended whole — the truncation backoff it documents never executed, so mutant JIRAERR-02 survived. Test now uses 300×'é' (600 B) and asserts the ellipsis marker (proof truncation engaged); SURVIVED → KILLED verified.
+  - **1 mutant rejected as flaky** (honesty rule — no silent caps): a `ConfigSaveWorker` drain-loop dirty-flag mutant (CSW-02) classified KILLED or SURVIVED depending on worker-thread timing (3 SURVIVED / 2 KILLED over 5 runs) — a nondeterministic oracle has no place in a nightly gate; dropped. `CSW-01` (post-Stop synchronous-save path, synchronous assertion, 5/5 deterministic) keeps the TU scored.
+  - **1 candidate skipped as out-of-oracle**: `GridLiveContext.h` `everVisible` default — consumed only by AppController (Windows-rig territory), so a survivor here would be a false gap (pilot LCM-06 class), and a permanently-unfixable `survived` entry can never graduate. Not added.
+  - Final gated sweep: **killed=33 survived=0 build_fail=0, equivalents 5 checked / 0 mis-ruled, adjusted kill rate 100% (floor 80%)**, tree clean throughout.
 
 ## Deviations from plan
 
@@ -93,6 +101,7 @@ Phase 1 (this PR), all run locally in-container:
 
 - Phase 1: shellcheck clean; corpus valid JSON; `--dry-run` green with tree clean afterward (see § Verification).
 - Bats wrapper: `test-mutation-smoke-bats.sh` runs `mutation_smoke.bats` 9/9 green; `test-orphan-bats.sh` PASS (all 63 suites wrapped); shellcheck clean.
+- Phase 3 (2026-07-13, all in-container): `SmatchetTsanTests` baseline green (226 cases / 2150 assertions incl. the strengthened UTF-8-cap test); full gated sweep `--gate --floor 80` → 33/33 killed, 5/5 equivalents correctly surviving, 0 mis-ruled, exit 0, tree clean; concurrency-adjacent guards (AIC-01/AIC-02/CSW-01) re-run 3× each — deterministic; `test-mutation-smoke.sh` 4/4; `mutation_smoke.bats` 9/9; shellcheck clean.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 

@@ -9,6 +9,12 @@
 
 <!-- Latest first. Append on archival. -->
 
+- 2026-07-13 · orchestrator (mutation-smoke Phase 3 corpus expansion) · [test] · P2 — the Phase-3 mutation sweep (`docs/plans/active/mutation-smoke-gate.md`, 23 new mutants over the 13 TUs the pilot didn't reach) found **1 new genuine weak assertion**: `JiraErrorMessagePure.test.cpp` "cap never splits a multi-byte UTF-8 sequence" never executed the truncation backoff it documents
+  Details: the test built a 200×'é' = exactly-400-byte message; `AppendCapped`'s `out.size() + candidate.size() <= kMaxJoinedErrorLen` (400) appended it whole, so the UTF-8 lead-byte backoff loop never ran and mutant JIRAERR-02 (`== 0x80u` → `!= 0x80u` in the continuation-byte test) survived. Same at-the-boundary-but-not-past-it shape as the pilot's MergeWatch-m3 finding — a test that stops exactly at a cap asserts nothing about the over-cap branch.
+  Resolution: applied — test now uses 300×'é' (600 B, past the cap) and additionally asserts the trailing ellipsis marker (proof the truncation path engaged, so the case can never silently regress to a no-op again); JIRAERR-02 re-run SURVIVED → KILLED, suite 2150/2150 green. Guard kept in `scripts/dev/mutation-smoke-corpus.json` as a permanent regression guard.
+  Status: applied
+  Last-reviewed: 2026-07-13
+
 <!-- reconcile round 2 (2026-07-11): entries below were fixed on develop but never marked applied; verified against the tree and archived. -->
 
 # `daemon_loop` bats tests don't stub `maybe_self_resync`, so they run real git/network and flake in the required selftests lane

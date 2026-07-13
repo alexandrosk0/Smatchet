@@ -177,3 +177,12 @@ The harness (`scripts/dev/` candidate for Slice F) drives a JSON spec of `{file,
 - **(a)** This report.
 - **(b)** One PR strengthening the 3 worst survivors — each new assertion proven to kill its mutant (SURVIVED → KILLED confirmed): `tests/Core/JqlSuggestEnginePure.test.cpp`, `tests/Core/PlaneQuerySuggestEnginePure.test.cpp`, `tests/Core/TrackerGridFieldDisplayPure.test.cpp`.
 - **(c)** Backlog entries for the remaining 7 weak assertions + the TSan-runtime infra gap + the reusable harness → `docs/self-improvement/categories/{test,infra,tooling}/2026-07-05-*`.
+
+## Addendum — Phase 3 corpus expansion (2026-07-13)
+
+Everything above shipped and was followed through: the 7 backlogged weak assertions were pinned post-pilot (all 7 re-verified KILLED), and the harness was productionised as `scripts/dev/mutation-smoke.sh` + `scripts/dev/mutation-smoke-corpus.json` with an advisory nightly gate (plan `docs/plans/active/mutation-smoke-gate.md`, Phases 1–2). Phase 3 (2026-07-13) expanded the corpus from the 10-mutant seed to **38 mutants covering all 20 dedicated-test TUs** now in the TSan rig — every entry live-validated in-container against `SmatchetTsanTests`:
+
+- The 3 fixed-gap seeds (GR5, GR6, MergeWatch-m3) graduated `survived` → `killed` guards; the pilot's 4 other fixed survivors + the 5th equivalent (JQL-01) joined the corpus, completing the pilot's vetted set.
+- 23 new mutants covered the 13 TUs the pilot didn't reach. **One survived** — a new genuine weak assertion, and a subtle one: `JiraErrorMessagePure.test.cpp`'s "cap never splits a multi-byte UTF-8 sequence" built a 200×'é' = exactly-400-byte message, which fits `<= kMaxJoinedErrorLen` (400) and appends whole — the truncation backoff the test documents never executed, so the test asserted nothing about it. Fixed (300×'é' + an ellipsis-marker assertion proving truncation engaged); SURVIVED → KILLED verified. The same at-the-boundary-but-not-past-it shape as the pilot's MergeWatch-m3 finding.
+- One candidate was rejected as **flaky** (a `ConfigSaveWorker` drain-loop mutant whose verdict depended on worker-thread timing — 3 SURVIVED / 2 KILLED over 5 runs; a nightly gate needs deterministic oracles) and one skipped as **out-of-oracle** (`GridLiveContext.h` `everVisible`, consumed only by Windows-rig-tested AppController code — the LCM-06 class).
+- Final gated sweep: **33/33 guards killed, 5/5 equivalents correctly surviving, 0 mis-ruled, 100% adjusted kill rate**, tree clean throughout.

@@ -29,26 +29,250 @@
     "file": "Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp",
     "search": "if (s.MaxResults > 0) {",
     "replace": "if (s.MaxResults >= 0) {",
-    "expect": "survived",
-    "note": "known gap: 'Page size (maxResults)' tooltip line unasserted (backlog test/GR5)"
+    "expect": "killed",
+    "note": "'Page size (maxResults)' tooltip line at 0; regression guard (MUTATION_PILOT.md GR5, backlog fix landed -> flipped survived->killed 2026-07-13)"
   },
   {
     "id": "GR6-thispage-tooltip",
     "file": "Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp",
     "search": "if (s.Total > 0 && s.WorklogsOnPage > 0) {",
     "replace": "if (s.Total > 0 || s.WorklogsOnPage > 0) {",
-    "expect": "survived",
-    "note": "known gap: 'This page: a-b of N' tooltip branch never exercised at one-operand-zero (backlog test/GR6)"
+    "expect": "killed",
+    "note": "'This page: a-b of N' tooltip branch at one-operand-zero; regression guard (MUTATION_PILOT.md GR6, backlog fix landed -> flipped survived->killed 2026-07-13)"
   },
   {
     "id": "MW-m3-truncation-cap",
     "file": "Source/Core/src/MergeWatchNotifyPure.cpp",
     "search": "if (out.size() > kMaxMessageBytes) {",
     "replace": "if (out.size() >= kMaxMessageBytes) {",
-    "expect": "survived",
-    "note": "known gap: notify-payload truncation exact-cap boundary unasserted; trust-boundary TU (backlog test/MergeWatch-m3)"
+    "expect": "killed",
+    "note": "notify-payload truncation exact-cap boundary; trust-boundary TU; regression guard (MUTATION_PILOT.md MergeWatch-m3, backlog fix landed -> flipped survived->killed 2026-07-13)"
   },
 
+  {
+    "id": "PLANE03-empty-option",
+    "file": "Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp",
+    "search": "if (raw.empty()) {",
+    "replace": "if (raw.empty() && false) {",
+    "expect": "killed",
+    "note": "tryAdd empty-option-value guard (hostile/degenerate catalog); regression guard (MUTATION_PILOT.md PLANE-03, backlog fix landed)"
+  },
+  {
+    "id": "JQL03-user-cap",
+    "file": "Source/Core/src/Tracker/JqlSuggestEnginePure.cpp",
+    "search": "if (++added >= kMaxUsers) {",
+    "replace": "if (++added > kMaxUsers) {",
+    "expect": "killed",
+    "note": "50-user suggestion-cap boundary (50 vs 51 emitted); regression guard (MUTATION_PILOT.md JQL-03, backlog fix landed)"
+  },
+  {
+    "id": "JQL05-quoted-operand",
+    "file": "Source/Core/src/Tracker/LinearQueryFromJql.cpp",
+    "search": "if (s.size() >= 2 && (s.front() == '\"' || s.front() == '\\'') && s.back() == s.front()) {",
+    "replace": "if (s.size() > 2 && (s.front() == '\"' || s.front() == '\\'') && s.back() == s.front()) {",
+    "expect": "killed",
+    "note": "unquote helper 2-char quoted-operand boundary (\"\"/''); regression guard (MUTATION_PILOT.md LinearQueryFromJql JQL-05, backlog fix landed)"
+  },
+  {
+    "id": "LCH-m5-negative-header",
+    "file": "Source/Core/src/Tracker/LinearClientHelpers.cpp",
+    "search": "negative = (s[0] == '-');",
+    "replace": "negative = false;",
+    "expect": "killed",
+    "note": "ParseLongOr negative-magnitude sign handling (rate-limit headers); regression guard (MUTATION_PILOT.md LinearClientHelpers m5, backlog fix landed)"
+  },
+  {
+    "id": "JIRAERR-01-fallback-guard",
+    "file": "Source/Core/src/Tracker/JiraErrorMessagePure.cpp",
+    "search": "if (joined.empty()) {\n        return fallback;\n    }\n    return fallback + \": \" + joined;",
+    "replace": "if (!joined.empty()) {\n        return fallback;\n    }\n    return fallback + \": \" + joined;",
+    "expect": "killed",
+    "note": "inverts the nothing-parsed guard: empty errors return 'HTTP 500: ' and joined errors return bare fallback (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "JIRAERR-02-utf8-leadbyte",
+    "file": "Source/Core/src/Tracker/JiraErrorMessagePure.cpp",
+    "search": "== 0x80u) {\n        --cut;",
+    "replace": "!= 0x80u) {\n        --cut;",
+    "expect": "killed",
+    "note": "inverts the UTF-8 continuation-byte test so the length cap splits multi-byte sequences (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "AIPREFS-01-planprobe-empty",
+    "file": "Source/Core/src/AiPrefsTestConnectionPure.cpp",
+    "search": "if (target.BaseUrl.empty()) {",
+    "replace": "if (!target.BaseUrl.empty()) {",
+    "expect": "killed",
+    "note": "flips the empty-slot default-BaseUrl fallback in PlanProbe (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "AIPREFS-02-key-sanitise",
+    "file": "Source/Core/src/AiPrefsTestConnectionPure.cpp",
+    "search": "return c != '\\r' && c != '\\n' && c != '\\0';",
+    "replace": "return c != '\\r' || c != '\\n' || c != '\\0';",
+    "expect": "killed",
+    "note": "&&->|| makes the header-smuggling strip predicate always true, so CR/LF/NUL survive in the API key (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "TSS-01-keepcount-guard",
+    "file": "Source/Core/src/Sync/TicketSyncService.cpp",
+    "search": "if (keepCount > 0) {",
+    "replace": "if (keepCount >= 0) {",
+    "expect": "killed",
+    "note": "zero-keep full-sync wipe guard boundary (stale-deletion rejection) (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "TSS-02-emptywipe-streak",
+    "file": "Source/Core/src/Sync/TicketSyncService.cpp",
+    "search": "return consecutiveEmptyFullSyncs < emptyWipeThreshold;",
+    "replace": "return consecutiveEmptyFullSyncs > emptyWipeThreshold;",
+    "expect": "killed",
+    "note": "empty-full-sync streak threshold comparison: first empty sync no longer skips mass deletion (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "EMC-01-status-editable",
+    "file": "Source/Core/src/EditMetaCacheService.cpp",
+    "search": "if (fieldKey == \"status\") {",
+    "replace": "if (fieldKey != \"status\") {",
+    "expect": "killed",
+    "note": "status always-editable short-circuit inverted: every non-status field becomes blanket-editable (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "EMC-02-carveout-or-to-and",
+    "file": "Source/Core/src/EditMetaCacheService.cpp",
+    "search": "    if (fieldIt == it->second.fieldCanEdit.end()) {\n        if (fieldKey == \"priority\" || fieldKey == \"components\") {",
+    "replace": "    if (fieldIt == it->second.fieldCanEdit.end()) {\n        if (fieldKey == \"priority\" && fieldKey == \"components\") {",
+    "expect": "killed",
+    "note": "priority/components force-editable carve-out condition becomes always-false (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "FEP-01-editmeta-deny",
+    "file": "Source/Core/src/FieldEditPipelineService.cpp",
+    "search": "    if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {\n        outError = \"Field cannot be edited for this issue (Jira edit metadata).\";",
+    "replace": "    if (editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {\n        outError = \"Field cannot be edited for this issue (Jira edit metadata).\";",
+    "expect": "killed",
+    "note": "editmeta deny gate inverted: a denied field goes through to the PUT (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "FEP-02-retry-400",
+    "file": "Source/Core/src/FieldEditPipelineService.cpp",
+    "search": "ErrorTextContainsHttpStatus(outError, 400)",
+    "replace": "ErrorTextContainsHttpStatus(outError, 401)",
+    "expect": "killed",
+    "note": "HTTP 400 no longer triggers the editmeta-refresh-and-retry path (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "CMS-01-banner-error",
+    "file": "Source/Core/src/ConnectivityMonitorService.cpp",
+    "search": "if (!ce.empty()) {",
+    "replace": "if (ce.empty()) {",
+    "expect": "killed",
+    "note": "catalog-error banner branch fires only when there is NO error (banner priority inverted) (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "CMS-02-loss-warning",
+    "file": "Source/Core/src/ConnectivityMonitorService.cpp",
+    "search": "if (prev == TrackerConnectivityState::AuthenticatedReachable &&\n        (next == TrackerConnectivityState::TransportDown || next == TrackerConnectivityState::ServiceUnavailable)) {",
+    "replace": "if (prev == TrackerConnectivityState::AuthenticatedReachable &&\n        (next == TrackerConnectivityState::TransportDown && next == TrackerConnectivityState::ServiceUnavailable)) {",
+    "expect": "killed",
+    "note": "Authenticated->down transition can never match both states, so the lost-connection warning is never written (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "LCM-01-drop-attempts-boundary",
+    "file": "Source/Core/src/Persistence/LocalCacheManager.cpp",
+    "search": "SQLite::Statement del(db, \"DELETE FROM pending_creates WHERE attempts >= ?\");",
+    "replace": "SQLite::Statement del(db, \"DELETE FROM pending_creates WHERE attempts > ?\");",
+    "expect": "killed",
+    "note": "off-by-one on the legacy at-max-attempts drop boundary (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "LCM-02-empty-rich-skip",
+    "file": "Source/Core/src/Persistence/LocalCacheManager.cpp",
+    "search": "        if (kv.second.empty())\n            continue;\n        richUpsert.bind(1, backendKey);",
+    "replace": "        if (!kv.second.empty())\n            continue;\n        richUpsert.bind(1, backendKey);",
+    "expect": "killed",
+    "note": "inverts the empty-rich-value skip in SaveTicket: non-empty values dropped, empty ones stored (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "GLC-01-revision-init",
+    "file": "Source/Core/include/GridLiveContext.h",
+    "search": "std::atomic<std::uint64_t> ActiveTicketsRevision{0};",
+    "replace": "std::atomic<std::uint64_t> ActiveTicketsRevision{1};",
+    "expect": "killed",
+    "note": "initial tickets-revision constant (boot state + publish-path revision checks); header mutant, brace-init only (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "OQ-01-threeway-unchanged",
+    "file": "Source/Core/src/Sync/OfflineQueueService.cpp",
+    "search": "if (theirsRich == row.OriginalRichValue) {",
+    "replace": "if (theirsRich != row.OriginalRichValue) {",
+    "expect": "killed",
+    "note": "inverts the server-unchanged->replay short-circuit for rich values: diverged value replays instead of 3-way-merging (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "OQ-02-scalar-moved-guard",
+    "file": "Source/Core/src/Sync/OfflineQueueService.cpp",
+    "search": "if (!OfflineFieldConflictPolicy::ServerMovedFromCapturedBase(row.HasOriginalValue, row.OriginalValue, theirs)) {",
+    "replace": "if (OfflineFieldConflictPolicy::ServerMovedFromCapturedBase(row.HasOriginalValue, row.OriginalValue, theirs)) {",
+    "expect": "killed",
+    "note": "drops the negation on the scalar moved-base conflict guard: suspends become replays and vice versa (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "CSW-01-post-stop-sync-save",
+    "file": "Source/Core/src/ConfigSaveWorker.cpp",
+    "search": "        if (s.running) {\n            s.annotatePending = cfg;",
+    "replace": "        if (!s.running) {\n            s.annotatePending = cfg;",
+    "expect": "killed",
+    "note": "inverts the queue-vs-synchronous decision: post-Stop annotate enqueue queues to a dead worker instead of saving synchronously (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "AIC-01-stale-turngen",
+    "file": "Source/Core/src/AiAssistantController.cpp",
+    "search": "            if (ui->AssistantTurnGen() != turnGen) {\n                return; // stale callback — Cancel or newer Submit raced us\n            }",
+    "replace": "            if (ui->AssistantTurnGen() == turnGen) {\n                return; // stale callback — Cancel or newer Submit raced us\n            }",
+    "expect": "killed",
+    "note": "flips the stale-callback drop: the matching-turn delta is discarded, no assistant message committed (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "AIC-02-coalesce-flush",
+    "file": "Source/Core/src/AiAssistantController.cpp",
+    "search": "if (!isFinal && coalesce->pending.size() <= kFlushBytes && now - coalesce->lastPostAt < kFlushWindow) {",
+    "replace": "if (!isFinal && coalesce->pending.size() >= kFlushBytes && now - coalesce->lastPostAt < kFlushWindow) {",
+    "expect": "killed",
+    "note": "flips the buffer-size flush boundary: tiny chunks never coalesce, each delta posts its own dispatcher task (Phase 3 expansion 2026-07-13)"
+  },
+  {
+    "id": "DT-01-leapyear-rule",
+    "file": "Source/Core/src/Tracker/TrackerDateTimePure.cpp",
+    "search": "return (y % 4 == 0 && y % 100 != 0) || (y % 400 == 0);",
+    "replace": "return (y % 4 == 0 || y % 100 != 0) || (y % 400 == 0);",
+    "expect": "killed",
+    "note": "Gregorian leap-year rule &&->||: 1900/2100 become leap years (Phase 3 expansion 2026-07-13; gives the DT TU a scored guard beside its two equivalents)"
+  },
+  {
+    "id": "LABELS-01-substring-match",
+    "file": "Source/Core/src/Tracker/TrackerLabelsPure.cpp",
+    "search": "return ToLowerAsciiCopy(label).find(filterLower) != std::string::npos;",
+    "replace": "return ToLowerAsciiCopy(label).find(filterLower) == std::string::npos;",
+    "expect": "killed",
+    "note": "LabelMatchesFilter substring match inverted (Phase 3 expansion 2026-07-13; gives the Labels TU a scored guard beside its equivalent)"
+  },
+  {
+    "id": "MAP-01-label-join-sep",
+    "file": "Source/Core/src/Tracker/LinearIssueMappingPure.cpp",
+    "search": "        if (!out.empty()) {\n            out += \", \";",
+    "replace": "        if (out.empty()) {\n            out += \", \";",
+    "expect": "killed",
+    "note": "label comma-join separator guard inverted: 'bug, p1' becomes ', bugp1' (Phase 3 expansion 2026-07-13; gives the mapping TU a scored guard beside its equivalent)"
+  },
+  {
+    "id": "JQL01-notin-offset",
+    "file": "Source/Core/src/Tracker/LinearQueryFromJql.cpp",
+    "search": "valueRaw = clause.substr(p + 8);",
+    "replace": "valueRaw = clause.substr(p + 7);",
+    "expect": "equivalent",
+    "note": "equivalent: ' not in ' is detected but every field handler rejects it as unsupported, so valueRaw is never consumed (MUTATION_PILOT.md JQL-01)"
+  },
   {
     "id": "DT2-daysinmonth-bound",
     "file": "Source/Core/src/Tracker/TrackerDateTimePure.cpp",
