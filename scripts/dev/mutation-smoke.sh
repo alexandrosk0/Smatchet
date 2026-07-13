@@ -216,7 +216,16 @@ echo "----------------------------------------------------------------"
 echo "mutation-smoke: killed=$killed survived=$survived build_fail=$buildfail  (equivalents: $equiv_checked checked, $equiv_bad mis-ruled)"
 if [ "$scored" -eq 0 ]; then
     echo "mutation-smoke: no scorable (non-equivalent) mutants ran — nothing to gate."
-    [ "$equiv_bad" -gt 0 ] && exit 1 || exit 0  # fail-open-ok: advisory mutation pilot — zero scorable mutants is not yet a hard gate (roadmap slice F)
+    [ "$equiv_bad" -gt 0 ] && exit 1
+    if [ "$GATE" -eq 1 ]; then
+        # --gate is the explicit opt-in to blocking. A zero-scorable run under it verified zero
+        # assertion strength — every guard mutant landed in a FILE-MISSING/SPEC-ERROR/BUILD_FAIL
+        # bucket (corpus rot after a refactor, or a systemic build break). Fail closed: a green
+        # exit here would let the nightly --gate lane pass having tested nothing (finding #1698).
+        echo "mutation-smoke: FAIL — --gate requires >=1 scorable mutant; zero scored means nothing was verified."
+        exit 1
+    fi
+    exit 0  # fail-open-ok: advisory (non-gate) pilot run — zero scorable mutants is informational, not a failure
 fi
 rate=$(( killed * 100 / scored ))
 echo "mutation-smoke: adjusted kill rate = ${rate}% (floor ${FLOOR}%)"

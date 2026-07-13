@@ -494,18 +494,24 @@ void EmitAdfCodeBlock(const json& node, AdfWalkState& s) {
     }
     AppendIndent(s.out, s.listIndent);
     s.out << "```" << lang << "\n";
+    // Track the last char emitted for THIS block instead of copying the whole accumulated buffer
+    // (s.out.str()) on every code block — the copy made conversion O(blocks × total-output). The
+    // opening fence just wrote '\n', so the content is newline-terminated unless a text node ends
+    // otherwise; each non-empty text node updates lastCh.
+    char lastCh = '\n';
     if (node.contains("content") && node["content"].is_array()) {
         for (const auto& c : node["content"]) {
             if (c.is_object() && c.value("type", std::string()) == "text") {
-                s.out << c.value("text", std::string());
+                const std::string text = c.value("text", std::string());
+                if (!text.empty()) {
+                    s.out << text;
+                    lastCh = text.back();
+                }
             }
         }
     }
-    if (s.out.tellp() > 0) {
-        const std::string current = s.out.str();
-        if (!current.empty() && current.back() != '\n')
-            s.out << '\n';
-    }
+    if (lastCh != '\n')
+        s.out << '\n';
     AppendIndent(s.out, s.listIndent);
     s.out << "```\n\n";
 }

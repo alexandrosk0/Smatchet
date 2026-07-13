@@ -2,7 +2,7 @@
 
 > **Slug**: `appcontroller-fan-in-phase6-dissolution`
 >
-> **Status**: `shipped` — executed 2026-07-10 (five slices, fan-in 111 → 77). Successor to `docs/plans/appcontroller-fan-in-phase5-facets.md` (8 facets, −10).
+> **Status**: `shipped` — executed 2026-07-10 (five slices, fan-in 111 → 77). Successor to `docs/plans/shipped/appcontroller-fan-in-phase5-facets.md` (8 facets, −10).
 
 <!-- index-summary: Phase 6 of the AppController fan-in reduction — a full audit of all 111 AppController.h includers classified every file into tiers; five shipped slices (free include-drops, poster registrars, the UiSession.h nested-type hoist, and the IAppCommands / IAppThreading / IAppScenarioHost facets) brought fan-in from 111 to 77, the documented terminal set. -->
 

@@ -11,6 +11,32 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Remediation pass (2026-07-12) — Batch 17's 4 findings, all fixed
+
+The 4 findings from the latest sweep (Batch 17, #1737–#1696) — all `userVisible:false`,
+backlog-only until now — are fixed on develop, each with non-vacuous coverage where a
+gate/behaviour is involved (reverting the fix fails the new test):
+
+- **#1698** (MEDIUM) `scripts/dev/mutation-smoke.sh` — a zero-scorable run under **`--gate`**
+  now **fails closed** (exit 1) instead of green: `--gate` is the explicit opt-in to blocking
+  (the nightly TSan lane runs `--gate --floor 80`), so a run where every guard mutant landed in
+  a FILE-MISSING/SPEC-ERROR/BUILD_FAIL bucket verified zero assertion strength and must not pass.
+  The **non-gate advisory** pilot path stays exit-0 (`fail-open-ok:` retained, slice-F scope).
+  Two new bats cases lock both halves (`tests/bats/mutation_smoke.bats`: gate→exit 1, non-gate→exit 0).
+- **#1732** (LOW) `Source/Core/src/Ui/AdfToMarkdown.cpp` — `EmitAdfCodeBlock` no longer copies the
+  whole accumulated `s.out.str()` per code block (O(blocks × total-output) quadratic); it tracks the
+  last emitted char locally (O(1) per block). New doctest covers the multi-node newline-terminated
+  branch (`tests/Core/MarkdownConvertAdf.test.cpp`).
+- **#1728** (LOW) `docs/plans/shipped/god-file-splits.md` — the 5 broken `../<slug>.md` sibling links
+  now point to each target's real home (`appcontroller-clusters-followup.md` moved to `shipped/`
+  since the finding → same-dir; `build-quality-velocity-hardening.md` + `testing-surface-roadmap.md`
+  are in `active/` → `../active/…`). `test-plan-ref-integrity` green (195/195).
+- **#1722** (LOW) `docs/plans/shipped/appcontroller-fan-in-phase6-dissolution.md` — the Phase 5
+  successor ref now cites `docs/plans/shipped/appcontroller-fan-in-phase5-facets.md`.
+
+The historical-review **open list is again empty** — every documented finding through Batch 17 is
+resolved. (Next sweep still resumes from #1738; the #1738–#1798 range is not yet survivor-swept.)
+
 ## Remediation pass (2026-07-10) — the 7 open findings, all fixed
 
 All 7 findings the reconcile pass (below) re-verified STILL OPEN are now fixed on

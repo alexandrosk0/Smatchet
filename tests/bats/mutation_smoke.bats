@@ -100,6 +100,28 @@ EOF
     [[ "$output" == *"B: SURVIVED (equivalent, excluded from floor)"* ]]
 }
 
+@test "zero scorable mutants under --gate fails closed (finding #1698)" {
+    # The only mutant's search text is absent -> SPEC-ERROR -> not scored -> scored=0.
+    # --gate is the opt-in to blocking, so a run that verified nothing must NOT pass green.
+    cat > corpus.json <<'EOF'
+[{"id":"A","file":"prod.c","search":"return 42;","replace":"return 9;","expect":"killed"}]
+EOF
+    run_smoke --gate --floor 80
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no scorable"* ]]
+    [[ "$output" == *"nothing was verified"* ]]
+}
+
+@test "zero scorable mutants WITHOUT --gate stays advisory (exit 0)" {
+    # Same zero-scorable corpus, but the default advisory (non-gate) pilot run is informational.
+    cat > corpus.json <<'EOF'
+[{"id":"A","file":"prod.c","search":"return 42;","replace":"return 9;","expect":"killed"}]
+EOF
+    run_smoke --floor 80
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no scorable"* ]]
+}
+
 @test "refuses to run on a dirty tree" {
     echo "// scratch" >> prod.c
     cat > corpus.json <<'EOF'
