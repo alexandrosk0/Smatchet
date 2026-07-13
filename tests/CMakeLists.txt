@@ -1140,6 +1140,10 @@ add_executable(SmatchetTests
     # bounded oldest-first eviction + RowAction retention, the core of SmatchetToastManager::Push's
     # new history record. Pure STL (no ImGui), so it links in this pure block.
     Core/ToastHistoryPure.test.cpp
+    # UX-critique triple-check — live-toast stack bound (SmatchetToastManager::Push evicts
+    # oldest past kMaxLiveToasts; sticky error toasts never expire so the bound is load-
+    # bearing). Push/LiveCount never touch ImGui; SmatchetToast.cpp already links here.
+    Core/ToastManagerLiveCap.test.cpp
     # ticket-change-monitor S3 — Notification Center row formatting (Ui/NotificationCenterPure.h,
     # header-only): severity tag + UTC HH:MM:SS timestamp. Pure STL (no ImGui); the window body
     # that consumes it is bucket-E (tests/ui/notification_center.test.cpp).

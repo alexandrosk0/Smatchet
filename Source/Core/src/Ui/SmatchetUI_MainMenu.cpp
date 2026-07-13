@@ -219,10 +219,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         ImGui::PopStyleColor();
     }
     ImGui::EndMainMenuBar();
-
-    // Layout-destroying appearance changes latched above confirm here, OUTSIDE the menu-bar
-    // window (a popup opened inside a closing menu scope never appears — DR22 class).
-    drawLayoutResetConfirmModal(d);
+    // The layout-reset confirm modal latched by the Appearance items above is drawn from
+    // drawGlobalOverlays, NOT here: this menu-bar path is skipped in Zen mode (and in the
+    // mobile shell), and a modal left in ImGui's popup stack without being submitted
+    // blocks all mouse input invisibly (the Ctrl+M,Z chord can flip Zen mid-confirm).
 }
 
 #if defined(SMATCHET_WITH_WHISPER)

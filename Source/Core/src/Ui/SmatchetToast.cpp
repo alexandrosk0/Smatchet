@@ -25,6 +25,13 @@ void SmatchetToastManager::Push(const std::string& title, const std::string& mes
     toast.Sticky = (type == ToastType::Error);
     toast.RowAction = rowAction;
     m_toasts.push_back(std::move(toast));
+    // Bound the live stack: sticky error toasts never expire, so a burst of failures
+    // (e.g. one toast per failed bulk edit) would otherwise pile past the viewport top
+    // and demand one dismissal click each. Oldest-first eviction — the evicted toast's
+    // history entry and, for errors, the unread-error badge keep the trail visible.
+    while (m_toasts.size() > kMaxLiveToasts) {
+        m_toasts.erase(m_toasts.begin());
+    }
     if (type == ToastType::Error) {
         ++m_unreadErrorCount;
     }
