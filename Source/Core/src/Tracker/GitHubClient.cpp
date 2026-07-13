@@ -11,12 +11,15 @@
 #include "Json/BoundedJsonParse.h"
 #include "LabelEditDiffPure.h"
 #include "Logger.h"
+#include "Sync/JqlChangedSincePure.h"
 #include "TrackerFieldPayloadPure.h"
 #include "TrackerFieldSchema.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>
 
+#include <chrono>
+#include <cstdint>
 #include <iterator>
 #include <sstream>
 
@@ -269,6 +272,78 @@ GitHubClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std
         return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorAuth(kPatMissingError));
     }
     return smatchet::github::FetchIssuesForKeysViaRestApi(auth.BaseUrl, auth.Pat, issueKeys);
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+GitHubClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& /*views*/,
+                                      std::chrono::seconds window, const std::vector<std::string>& /*salientFields*/) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    // Lightweight change probe: append a native `updated:>=<ISO>` qualifier to the translated
+    // GraphQL search so GitHub filters server-side — an idle poll returns a near-empty page instead
+    // of the whole view. The `since` lower bound is now minus the caller's window (anchor + margin).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (auth.Pat.empty()) {
+        return FetchResult::Err(TrackerErrorAuth(kPatMissingError));
+    }
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity window; owner=tracker-backend; revisit=2026-12-31)
+    const std::int64_t nowUnix =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string sinceIso = smatchet::IsoSinceFromWindow(nowUnix, static_cast<std::int64_t>(window.count()));
+    const std::string qualifier = std::string("updated:>=") + sinceIso;
+
+    bool fullSync = false;
+    std::string fetchError;
+    std::string fetchWarning;
+    TrackerError structured;
+    std::vector<CachedTicket> results = smatchet::github::FetchIssuesViaRestApi(
+        auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery, &fullSync, &fetchError, &fetchWarning,
+        /*onPage=*/nullptr, &structured, qualifier);
+    if (!fetchError.empty()) {
+        return FetchResult::Err(structured.Kind != TrackerErrorKind::None ? structured
+                                                                          : TrackerErrorUnknown(fetchError));
+    }
+    // A capped (warning) or incomplete walk is not an authoritative changed-since snapshot — refuse
+    // it so the membership reconcile never acts on a truncated view (mirrors the default impl).
+    if (!fullSync || !fetchWarning.empty()) {
+        return FetchResult::Err(TrackerErrorUnknown("changed-since probe returned a partial/warned fetch"));
+    }
+    return FetchResult::Ok(std::move(results));
+}
+
+Result<bool, TrackerError> GitHubClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
+    using ProbeResult = Result<bool, TrackerError>;
+    // One `GET /repos/{owner}/{repo}/issues/{n}` to separate a deletion/transfer (404 → Ok(false))
+    // from an issue that merely left the view (still 200 → Ok(true)). Any other non-200 is an
+    // inconclusive Err that the reconcile treats non-destructively.
+    if (issueKey.empty()) {
+        return ProbeResult::Err(TrackerErrorInvalidRequest("ProbeIssueExists: empty issue key"));
+    }
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (auth.Pat.empty()) {
+        return ProbeResult::Err(TrackerErrorAuth(kPatMissingError));
+    }
+    smatchet::github::ParsedIssueKey parsed;
+    if (!smatchet::github::ParseGitHubIssueKey(issueKey, parsed)) {
+        return ProbeResult::Err(
+            TrackerErrorInvalidRequest(std::string("Invalid GitHub issue key (expected owner/repo#N): ") + issueKey));
+    }
+    const cpr::Header headers = smatchet::github::BuildGitHubHeaders(auth.Pat);
+    const std::string url =
+        auth.BaseUrl + "/repos/" + parsed.Owner + "/" + parsed.Repo + "/issues/" + std::to_string(parsed.Number);
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
+    const cpr::Response resp = TrackerGetLogged("GitHubClient", url, headers);
+    if (resp.status_code == 200) {
+        return ProbeResult::Ok(true);
+    }
+    if (resp.status_code == 404) {
+        return ProbeResult::Ok(false);
+    }
+    if (resp.status_code >= 200 && resp.status_code < 300) {
+        return ProbeResult::Err(
+            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(resp.status_code)));
+    }
+    return ProbeResult::Err(
+        TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), "ProbeIssueExists HTTP error"));
 }
 
 Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/,

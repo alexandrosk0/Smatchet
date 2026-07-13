@@ -9,6 +9,7 @@
 #include "ITrackerIssueReader.h"
 #include "ConfigManager.h"
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <string>
@@ -53,6 +54,19 @@ class PlaneClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& views) override;
+
+    // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
+    // FetchIssuesChangedSince adds Plane's native `updated_at__gte=<ISO>` list filter so an idle
+    // probe is near-empty; ProbeIssueExists is a single work-item GET (404 → deleted).
+    // FetchIssueKeysForView is intentionally NOT overridden: Plane's list endpoint returns full
+    // work-items regardless, so the ITrackerIssueReader default (full fetch → project ids) is already
+    // the minimal path — see the plan's § Deviations (deferred slice).
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
+                            const std::vector<std::string>& salientFields) override;
+    Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) override;
 
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;
@@ -169,10 +183,13 @@ class PlaneClient : public ITrackerBackend,
 
     // Shared body behind FetchIssuesStreamed. `sequenceIdInFilter`, when non-empty, is passed to
     // Plane's work-items list as `sequence_id__in=<csv>` so the server returns only the requested
-    // issues (BACKLOG_CODE_REVIEW.md §B4-v2). Empty ≡ the unfiltered full/early-exit sweep; the
-    // public FetchIssuesStreamed override always passes empty (a full sync needs every issue).
+    // issues (BACKLOG_CODE_REVIEW.md §B4-v2). `updatedAtGteFilter`, when non-empty, is passed as
+    // `updated_at__gte=<ISO>` for the ticket-change monitor's server-side change window. Empty ≡ the
+    // unfiltered full/early-exit sweep; the public FetchIssuesStreamed override always passes empty
+    // for both (a full sync needs every issue).
     TrackerIssueFetchSummary FetchIssuesStreamedImpl(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
                                                      const TrackerConfig* configOverride,
                                                      const ViewsStore* viewsOverride,
-                                                     const std::string& sequenceIdInFilter);
+                                                     const std::string& sequenceIdInFilter,
+                                                     const std::string& updatedAtGteFilter = std::string());
 };

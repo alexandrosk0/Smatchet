@@ -2,6 +2,7 @@
 
 #include "JiraCommentMappingPure.h"
 #include "JiraIssueMappingPure.h"
+#include "Sync/JqlChangedSincePure.h"
 #include "Tracker/JqlEscape.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
@@ -279,6 +280,76 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
     return keys;
 }
 
+// Outcome of driving the /search/jql pagination loop for a prebuilt search URL.
+struct JiraPageLoopResult {
+    bool endedCleanly = false;  // every page consumed with a clean isLast (no abort / cap / error)
+    int fetchedPages = 0;       // pages that returned HTTP 200 and were mapped
+    bool tokenLeftover = false; // a next-page token remained when the loop stopped (cap hit)
+};
+
+// Drive the token-paginated /search/jql loop for `baseSearchUrl`, mapping each page through
+// ProcessJiraSearchPage into `onBatch` and classifying failures onto `summary`. Extracted so the
+// full sync (FetchIssuesStreamed) and the lightweight change-monitor probes share one copy of the
+// loop instead of three near-identical clones (dup-gate). The caller owns everything AFTER the
+// loop (zero-result diagnostics, FullSyncCompleted, key projection) so this stays generic.
+JiraPageLoopResult
+JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& headers,
+                      const std::vector<std::string>& selectedFields,
+                      const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
+                      const JiraClient::BatchCallback& onBatch, const JiraClient::CancelCallback& shouldCancel,
+                      TrackerIssueFetchSummary& summary) {
+    JiraPageLoopResult result;
+    std::string nextPageToken;
+    const int kMaxPages = 50;
+
+    for (int page = 1; page <= kMaxPages; ++page) {
+        if (shouldCancel && shouldCancel()) {
+            result.endedCleanly = false;
+            break;
+        }
+
+        std::string pageUrl = baseSearchUrl;
+        if (!nextPageToken.empty()) {
+            pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
+        }
+        LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
+
+        // Thread the sync worker's cancellation token into the retry loop so an abort during a
+        // backoff/retry window is honoured immediately, not only at the next page boundary.
+        auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
+        const std::string lastResponseBody = response.text;
+        if (response.status_code != 200) {
+            summary.FetchError = LogAndBuildPageFetchError(page, response);
+            // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
+            summary.Error =
+                (response.status_code >= 200 && response.status_code < 300)
+                    ? TrackerErrorUnknown(summary.FetchError, static_cast<int>(response.status_code))
+                    : TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), summary.FetchError);
+            break;
+        }
+
+        result.fetchedPages++;
+        JiraSearchPageOutcome outcome = ProcessJiraSearchPage(page, response.text, lastResponseBody, selectedFields,
+                                                              fetchIssueComments, onBatch, shouldCancel, summary);
+        if (outcome.HadFetchError) {
+            summary.FetchError = std::move(outcome.FetchError);
+            // Every ProcessJiraSearchPage error producer is body-shape/parse class.
+            summary.Error = TrackerErrorParse(summary.FetchError);
+        }
+        if (outcome.Stop) {
+            result.endedCleanly = outcome.EndedCleanly;
+            break;
+        }
+        nextPageToken = std::move(outcome.NextToken);
+    }
+
+    result.tokenLeftover = !nextPageToken.empty();
+    if (result.fetchedPages >= kMaxPages && result.tokenLeftover) {
+        LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);
+    }
+    return result;
+}
+
 } // namespace
 
 // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
@@ -357,60 +428,13 @@ TrackerIssueFetchSummary JiraClient::FetchIssuesStreamed(const BatchCallback& on
         return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
     };
 
-    std::string nextPageToken;
-    const int kMaxPages = 50;
-    int fetchedPages = 0;
-    bool syncEndedCleanly = false;
+    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments,
+                                                          onBatch, shouldCancel, summary);
 
-    for (int page = 1; page <= kMaxPages; ++page) {
-        if (shouldCancel && shouldCancel()) {
-            syncEndedCleanly = false;
-            break;
-        }
-
-        std::string pageUrl = baseSearchUrl;
-        if (!nextPageToken.empty()) {
-            pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
-        }
-        LOG_DEBUG("JiraClient: fetching issues page %d from URL: %s", page, pageUrl.c_str());
-
-        // Thread the sync worker's cancellation token into the retry loop so an abort during a
-        // backoff/retry window is honoured immediately, not only at the next page boundary.
-        auto response = TrackerGetLogged("JiraClient", pageUrl, headers, shouldCancel);
-        const std::string lastResponseBody = response.text;
-        if (response.status_code != 200) {
-            summary.FetchError = LogAndBuildPageFetchError(page, response);
-            // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
-            summary.Error =
-                (response.status_code >= 200 && response.status_code < 300)
-                    ? TrackerErrorUnknown(summary.FetchError, static_cast<int>(response.status_code))
-                    : TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), summary.FetchError);
-            break;
-        }
-
-        fetchedPages++;
-        JiraSearchPageOutcome outcome = ProcessJiraSearchPage(page, response.text, lastResponseBody, selectedFields,
-                                                              fetchIssueComments, onBatch, shouldCancel, summary);
-        if (outcome.HadFetchError) {
-            summary.FetchError = std::move(outcome.FetchError);
-            // Every ProcessJiraSearchPage error producer is body-shape/parse class.
-            summary.Error = TrackerErrorParse(summary.FetchError);
-        }
-        if (outcome.Stop) {
-            syncEndedCleanly = outcome.EndedCleanly;
-            break;
-        }
-        nextPageToken = std::move(outcome.NextToken);
-    }
-
-    if (fetchedPages >= kMaxPages && !nextPageToken.empty()) {
-        LOG_WARN("JiraClient: reached pagination safety limit (%d pages). Results may be incomplete.", kMaxPages);
-    }
-
-    summary.FullSyncCompleted = syncEndedCleanly && fetchedPages > 0 && (!shouldCancel || !shouldCancel());
+    summary.FullSyncCompleted = loop.endedCleanly && loop.fetchedPages > 0 && (!shouldCancel || !shouldCancel());
 
     if (summary.FetchedCount == 0 && summary.FetchError.empty()) {
-        JiraDiagnoseZeroIssueResult(cfg, base, headers, fetchedPages);
+        JiraDiagnoseZeroIssueResult(cfg, base, headers, loop.fetchedPages);
     }
 
     return summary;
@@ -527,6 +551,145 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         }
     }
     return FetchResult::Ok(std::move(outTickets));
+}
+
+// SMATCHET_DEVIATION(rule=duplication; reason=backend-parity signature; owner=tracker-backend; revisit=2026-12-31)
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
+                                    const std::vector<std::string>& /*salientFields*/) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    // The lightweight change probe: wrap the pane's view JQL in a server-side `updated >= -Nm`
+    // window so an idle poll returns a near-empty page instead of the whole view. We keep the
+    // view's own field list (not just `salientFields`) so the cache rows patched from the result
+    // stay complete — the `updated` filter is what makes this cheap, not narrowing the columns.
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return FetchResult::Err(TrackerErrorAuth(outError));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
+    // window already carries AppController's margin; round up to whole minutes (Jira `updated` has
+    // minute granularity) and clamp to >= 1 so a sub-minute window still probes.
+    const int minutes = smatchet::ChangedSinceWindowMinutes(window);
+    const std::string windowedJql = smatchet::WrapJqlChangedWithin(jqlRaw, minutes);
+    const std::string jqlEncoded = UrlEncode(windowedJql);
+
+    std::vector<std::string> fieldsList;
+    std::vector<std::string> selectedFields;
+    smatchet::jira::BuildFetchFieldListsFromView(views, fieldsList, selectedFields);
+    const std::string fields = JoinStrings(fieldsList, ",");
+
+    const std::string baseSearchUrl =
+        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=" + fields + "&expand=changelog";
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
+        return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
+    };
+
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity collect; owner=tracker-backend; revisit=2026-12-31)
+    std::vector<CachedTicket> results;
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+    };
+    auto shouldCancel = []() { return false; };
+    TrackerIssueFetchSummary summary;
+    const JiraPageLoopResult loop = JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, fetchIssueComments,
+                                                          onBatch, shouldCancel, summary);
+
+    if (!summary.FetchError.empty()) {
+        return FetchResult::Err(summary.Error.Kind != TrackerErrorKind::None ? summary.Error
+                                                                             : TrackerErrorUnknown(summary.FetchError));
+    }
+    // A capped/partial page walk is NOT an authoritative changed-since snapshot; refusing it keeps
+    // the monitor's membership reconcile from acting on a truncated list (mirrors the default impl).
+    if (!loop.endedCleanly || loop.tokenLeftover) {
+        return FetchResult::Err(TrackerErrorUnknown("changed-since probe returned a partial page walk"));
+    }
+    return FetchResult::Ok(std::move(results));
+}
+
+Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView(const TrackerConfig& cfg,
+                                                                                 const ViewsStore& views) {
+    using KeysResult = Result<std::vector<std::string>, TrackerError>;
+    // Keys-only membership snapshot for the disappearance reconcile: the view's full JQL (NO
+    // `updated` window — we need the whole current membership) with `fields=*none` so each issue
+    // rides back as just its top-level key. A backend that rejects `*none` fails this fetch, which
+    // the monitor treats as a non-destructive skip of the reconcile for this cycle.
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return KeysResult::Err(TrackerErrorAuth(outError));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const std::string jqlRaw =
+        TrimJqlWhitespace(cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery);
+    const std::string jqlEncoded = UrlEncode(jqlRaw);
+    const std::string baseSearchUrl =
+        base + "/rest/api/3/search/jql?jql=" + jqlEncoded + "&maxResults=100&fields=*none";
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    // fields=*none ⇒ no per-field mapping; the ticket carries only its key (its `id`), which we
+    // project out. Reuse the shared page loop so pagination/classification stay identical.
+    const std::vector<std::string> selectedFields; // empty: keys only
+    auto noComments = [](const std::string&, nlohmann::json&) -> bool { return true; };
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity keys; owner=tracker-backend; revisit=2026-12-31)
+    std::vector<std::string> keys;
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        for (std::size_t i = 0; i < batch.size(); ++i) {
+            if (!batch[i].id.empty()) {
+                keys.push_back(batch[i].id);
+            }
+        }
+    };
+    auto shouldCancel = []() { return false; };
+    TrackerIssueFetchSummary summary;
+    const JiraPageLoopResult loop =
+        JiraRunSearchPageLoop(baseSearchUrl, headers, selectedFields, noComments, onBatch, shouldCancel, summary);
+
+    if (!summary.FetchError.empty()) {
+        return KeysResult::Err(summary.Error.Kind != TrackerErrorKind::None ? summary.Error
+                                                                            : TrackerErrorUnknown(summary.FetchError));
+    }
+    if (!loop.endedCleanly || loop.tokenLeftover) {
+        return KeysResult::Err(TrackerErrorUnknown("keys-only membership fetch returned a partial page walk"));
+    }
+    return KeysResult::Ok(std::move(keys));
+}
+
+Result<bool, TrackerError> JiraClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity probe; owner=tracker-backend; revisit=2026-12-31)
+    using ProbeResult = Result<bool, TrackerError>;
+    // One cheap `GET /issue/{key}` to tell a deletion (404 → Ok(false)) apart from a ticket that
+    // merely left the view (still 200 → Ok(true)). Any other non-200 is an inconclusive Err, which
+    // the reconcile treats non-destructively (keeps the cache row).
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return ProbeResult::Err(TrackerErrorAuth(outError));
+    }
+    if (issueKey.empty()) {
+        return ProbeResult::Err(TrackerErrorInvalidRequest("ProbeIssueExists: empty issue key"));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    const std::string url = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "?fields=*none";
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
+    auto response = TrackerGetLogged("JiraClient", url, headers);
+    if (response.status_code == 200) {
+        return ProbeResult::Ok(true);
+    }
+    if (response.status_code == 404) {
+        return ProbeResult::Ok(false);
+    }
+    // 2xx-other would map to Ok() in FromHttpStatus (FIX-1 precedent) — wrap Unknown.
+    if (response.status_code >= 200 && response.status_code < 300) {
+        return ProbeResult::Err(
+            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(response.status_code)));
+    }
+    return ProbeResult::Err(
+        TrackerErrorFromHttpStatus(static_cast<int>(response.status_code), "ProbeIssueExists HTTP error"));
 }
 
 Result<std::vector<TrackerIssueComment>, TrackerError> JiraClient::FetchIssueComments(const std::string& issueKey) {

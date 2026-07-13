@@ -569,7 +569,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         NotifyLuaTicketDataChanged();
     }
     if (!changes.empty()) {
-        NotifyTicketChanges(changes);
+        NotifyTicketChanges(changes, paneId);
     }
     // Advance the anchor to the poll-issue instant (no gap). nextChangePollAt was already pushed
     // out at dispatch, so this slice does not re-stamp it here.

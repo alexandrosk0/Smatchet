@@ -11,6 +11,7 @@
 #include "ITrackerIssueReader.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <unordered_map>
@@ -64,6 +65,20 @@ class GitHubClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& views) override;
+
+    // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
+    // FetchIssuesChangedSince pushes a native `updated:>=<ISO>` window into the GraphQL search so an
+    // idle probe is near-empty; ProbeIssueExists is a single `GET /issues/{n}` (404 → deleted).
+    // FetchIssueKeysForView is intentionally NOT overridden: GitHub's GraphQL search returns full
+    // nodes regardless, so the ITrackerIssueReader default (full fetch → project ids) is already the
+    // minimal path for GitHub — see the plan's § Deviations (deferred slice).
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
+                            const std::vector<std::string>& salientFields) override;
+    Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) override;
+
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;
     std::string BuildBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const override;

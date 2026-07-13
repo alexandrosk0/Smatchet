@@ -33,6 +33,7 @@
 #include "SmatchetBugReportUi.h"
 #include "SmatchetQuickCreateIssueUi.h"
 #include "ImGuiHotkey.h"
+#include "SmatchetTicketChangeNotifications.h"
 #include "SmatchetUiSession.h"
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
@@ -652,6 +653,24 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
     // Register pane.* commands (multi-grid Slice 4) — same idempotent guard; the grid-pane
     // state lives on the UiDrawSession singleton, so pass the live session in.
     smatchet::cmd::RegisterPaneCommands(app, app, d);
+    // Register the ticket-change-monitor focus handler once (ticket-change-monitor plan item 11).
+    // Clicking a ticket-change row in the Notification Center calls this on the UI thread: switch
+    // focus to the owning pane (host reassignment latch), select the changed ticket, and arm the
+    // one-shot scroll latch drained by drawActiveProjectGridRows.
+    static bool s_ticketFocusHandlerRegistered = false;
+    if (!s_ticketFocusHandlerRegistered) {
+        s_ticketFocusHandlerRegistered = true;
+        SetTicketChangeFocusHandler([](const std::string& paneId, const std::string& issueId) {
+            if (!paneId.empty()) {
+                g_ui.focusedPaneId = paneId;
+                g_ui.gridPaneFocusReassigned = true;
+                if (GridPane* p = FindGridPaneById(g_ui.gridPanes, paneId)) {
+                    p->gridState.SetActiveIssue(issueId);
+                }
+            }
+            g_ui.pendingFocusIssueId = issueId;
+        });
+    }
     {
         SMATCHET_UI_PERF_SCOPE("TickTrackerConnectivityMonitor");
         app.TickTrackerConnectivityMonitor(g_ui.cfg);

@@ -147,6 +147,70 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
     return TrackerError::Ok();
 }
 
+Result<bool, TrackerError> PlaneClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity probe; owner=tracker-backend; revisit=2026-12-31)
+    using ProbeResult = Result<bool, TrackerError>;
+    // ticket-change-monitor: one work-item GET to tell a deletion (404 → Ok(false)) apart from an
+    // issue that merely left the view (still 200 → Ok(true)). Mirrors UpdateIssueFields' project +
+    // visual-key→UUID resolution. Any other non-200 is an inconclusive Err the reconcile treats
+    // non-destructively (keeps the shared cache row).
+    if (issueKey.empty()) {
+        return ProbeResult::Err(TrackerErrorInvalidRequest("ProbeIssueExists: empty issue key"));
+    }
+    std::string outError;
+    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
+    const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+    cpr::Header headers;
+    for (const auto& kv : BuildPlaneHeaders(cfg)) {
+        headers.insert({kv.first, kv.second});
+    }
+
+    std::string resolvedProjectId;
+    std::string targetUuid;
+    {
+        std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
+        TrackerError resolveClassified;
+        if (planeProjectId_.empty()) {
+            ResolvePlaneProject(planeApi, cfg, projectKey, headers, planeProjectId_, planeProjectIdentifier_, &outError,
+                                &resolveClassified);
+        }
+        if (planeProjectId_.empty()) {
+            return ProbeResult::Err(resolveClassified.IsOk() ? TrackerErrorUnknown(outError) : resolveClassified);
+        }
+        resolvedProjectId = planeProjectId_;
+
+        targetUuid = issueKey;
+        if (!LooksLikeUuid(issueKey)) {
+            auto it = keyToId_.find(issueKey);
+            if (it == keyToId_.end()) {
+                // Not in the visual-key→UUID cache (never fetched, or evicted). Cannot form the GET
+                // URL — return non-destructive "still exists" so the reconcile keeps the row.
+                LOG_INFO("PlaneClient::ProbeIssueExists: no cached UUID for '%s'; treating as still-exists",
+                         issueKey.c_str());
+                return ProbeResult::Ok(true);
+            }
+            targetUuid = it->second;
+        }
+    }
+
+    const std::string url = planeApi + "/api/v1/workspaces/" + cfg.PlaneWorkspaceSlug + "/projects/" +
+                            resolvedProjectId + "/work-items/" + targetUuid + "/";
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity classify; owner=tracker-backend; revisit=2026-12-31)
+    const cpr::Response resp = TrackerGetLogged("PlaneClient", url, headers);
+    if (resp.status_code == 200) {
+        return ProbeResult::Ok(true);
+    }
+    if (resp.status_code == 404) {
+        return ProbeResult::Ok(false);
+    }
+    if (resp.status_code >= 200 && resp.status_code < 300) {
+        return ProbeResult::Err(
+            TrackerErrorUnknown("ProbeIssueExists: unexpected 2xx", static_cast<int>(resp.status_code)));
+    }
+    return ProbeResult::Err(
+        TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), "ProbeIssueExists HTTP error"));
+}
+
 Result<nlohmann::json, TrackerError> PlaneClient::BuildFieldPayload(const TrackerField& field,
                                                                     const std::vector<std::string>& values) {
     std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
