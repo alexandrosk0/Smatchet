@@ -167,19 +167,19 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Client cli = MakeClient(port);
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", kTestToken);
-            httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 200);
-            IM_CHECK(res->body.find("tools") != std::string::npos);
+            httplib::Result httpRes = cli.Get("/mcp/tools/list", h);
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 200);
+            IM_CHECK(httpRes->body.find("tools") != std::string::npos);
         }
 
         // 2. No token → 401 + WWW-Authenticate challenge.
         {
             httplib::Client cli = MakeClient(port);
-            httplib::Result res = cli.Get("/mcp/tools/list");
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 401);
-            IM_CHECK(res->has_header("WWW-Authenticate"));
+            httplib::Result httpRes = cli.Get("/mcp/tools/list");
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 401);
+            IM_CHECK(httpRes->has_header("WWW-Authenticate"));
         }
 
         // 3. Wrong token → 401 (constant-time compare rejects).
@@ -187,9 +187,9 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Client cli = MakeClient(port);
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", "not-the-token");
-            httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 401);
+            httplib::Result httpRes = cli.Get("/mcp/tools/list", h);
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 401);
         }
 
         // 4. DNS-rebind shape: attacker's hostname in Host, token VALID —
@@ -199,9 +199,9 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Headers h;
             h.emplace("Host", "evil.example");
             h.emplace("X-Smatchet-Token", kTestToken);
-            httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 403);
+            httplib::Result httpRes = cli.Get("/mcp/tools/list", h);
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 403);
         }
 
         // 5. Cross-origin browser shape: hostile Origin, token VALID → 403.
@@ -210,9 +210,9 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Headers h;
             h.emplace("Origin", "https://evil.example");
             h.emplace("X-Smatchet-Token", kTestToken);
-            httplib::Result res = cli.Get("/mcp/tools/list", h);
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 403);
+            httplib::Result httpRes = cli.Get("/mcp/tools/list", h);
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 403);
         }
 
         // 6. SSE cap: hold kMaxConcurrentSseConnections streams open (each
@@ -249,10 +249,10 @@ void RegisterLiveHttpAuthTest(ImGuiTestEngine* engine) {
             httplib::Client cli = MakeClient(port);
             httplib::Headers h;
             h.emplace("X-Smatchet-Token", kTestToken);
-            httplib::Result res = cli.Get("/mcp/sse", h);
-            IM_CHECK(res.error() == httplib::Error::Success);
-            IM_CHECK_EQ(res->status, 503);
-            IM_CHECK(res->has_header("Retry-After"));
+            httplib::Result httpRes = cli.Get("/mcp/sse", h);
+            IM_CHECK(httpRes.error() == httplib::Error::Success);
+            IM_CHECK_EQ(httpRes->status, 503);
+            IM_CHECK(httpRes->has_header("Retry-After"));
         }
         // Fixture destructor: release + join SSE holders, stop the test server,
         // restore instance.json and the persisted config.
