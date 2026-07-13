@@ -140,7 +140,7 @@ PY
     [[ "$output" == *"OK"* ]]
 }
 
-@test "_select_sanitizer_preset maps TSAN→tsan, UBSAN→clang, ASAN→msvc (never TSAN→ASAN)" {
+@test "_select_sanitizer_preset maps TSAN to tsan, UBSAN to clang, ASAN to msvc (never TSAN to ASAN)" {
     run python - <<'PY'
 import importlib.util, os, sys
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
