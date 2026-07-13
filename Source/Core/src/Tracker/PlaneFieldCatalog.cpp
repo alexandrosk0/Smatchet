@@ -502,17 +502,55 @@ Result<TrackerFieldCatalogResult, TrackerError> PlaneClient::FetchFieldCatalog(c
 }
 
 Result<std::unordered_map<std::string, bool>, TrackerError>
-PlaneClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/) {
+PlaneClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& /*issueKeyOrId*/) {
     std::unordered_map<std::string, bool> outFieldIdCanEdit;
     // Plane v1 has no per-issue capability endpoint; report every built-in field the mutation
     // paths (`BuildCreatePayload`, `BuildUpdatePayload`, `AddIssueToSprint`) can serialize as
     // editable. Server still gets the final say — a rejected update surfaces through the same
-    // error path as any other mutation failure. C4's `properties.<uuid>` serialization landed
-    // (BuildPlaneCustomProperties), but this seam has no catalog parameter to enumerate the
-    // custom UUIDs from, so customs stay unreported here until the seam grows one.
+    // error path as any other mutation failure.
     for (const char* fieldId :
          {"summary", "description", "priority", "status", "assignee", "labels", "sprint", "type", "parent"}) {
         outFieldIdCanEdit[fieldId] = true;
+    }
+
+    // §C3 — report custom (work-item property) catalog fields as editable too. C4 made customs
+    // serializable under `properties.<uuid>` (BuildPlaneCustomProperties); without enumerating the
+    // UUIDs here, EditMetaCacheService::CanEditFieldForIssue treated every UUID not in this map as
+    // NON-editable (a loaded map denies unknown keys), so the field editor showed customs read-only
+    // even though the create/update payloads accept them. Enumerate the same custom catalog
+    // FetchFieldCatalog uses and mark each editable. Any resolve/fetch failure is non-fatal: the
+    // built-in map above still returns Ok (customs simply stay unreported, the prior behaviour) so a
+    // config/permission hiccup never regresses built-in editability.
+    const std::string projectKey = ExtractProjectFromQuery(cfg.JqlQuery);
+    if (!cfg.PlaneUrl.empty() && !cfg.PlaneWorkspaceSlug.empty() && !cfg.PlaneApiKey.empty() && !projectKey.empty()) {
+        const std::string planeApi = NormalizePlaneApiBase(cfg.PlaneUrl);
+        cpr::Header headers;
+        for (const auto& kv : BuildPlaneHeaders(cfg)) {
+            headers.insert({kv.first, kv.second});
+        }
+        std::string resolvedProjectId;
+        std::string resolvedProjectIdentifier;
+        std::string resolveError;
+        TrackerError resolveClassified;
+        if (ResolvePlaneProject(planeApi, cfg, projectKey, headers, resolvedProjectId, resolvedProjectIdentifier,
+                                &resolveError, &resolveClassified) &&
+            !resolvedProjectId.empty()) {
+            std::unordered_map<std::string, TrackerField> customs;
+            std::vector<std::string> warns;
+            FetchPlaneCustomFields(planeApi, cfg, resolvedProjectId, headers, customs, warns);
+            for (const auto& kv : customs) {
+                if (!kv.first.empty()) {
+                    outFieldIdCanEdit[kv.first] = true;
+                }
+            }
+            if (!warns.empty()) {
+                LOG_TRACE("PlaneClient::FetchIssueEditMeta: %zu custom-field warning(s) enumerating editables",
+                          warns.size());
+            }
+        } else {
+            LOG_TRACE("PlaneClient::FetchIssueEditMeta: could not resolve project for customs (%s); built-ins only",
+                      resolveError.c_str());
+        }
     }
     return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
 }

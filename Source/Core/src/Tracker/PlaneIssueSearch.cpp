@@ -219,7 +219,7 @@ struct PlaneIssuePageFetch {
 // inline non-200 / empty / HTML / invalid-JSON / no-results-array error paths byte-for-byte.
 PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::string& workspaceSlug,
                                         const std::string& planeProjectId, const cpr::Header& headers, int pageSize,
-                                        const std::string& listCursor,
+                                        const std::string& listCursor, const std::string& sequenceIdInFilter,
                                         const PlaneClient::CancelCallback& shouldCancel) {
     PlaneIssuePageFetch out;
     const std::string listBase =
@@ -229,6 +229,11 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     params.Add({"expand", "assignees,labels,state"});
     if (!listCursor.empty()) {
         params.Add({"cursor", listCursor});
+    }
+    // §B4-v2: server-side narrowing to the requested sequence_ids. cpr URL-encodes the value, so
+    // the comma-separated list is transmitted safely. Empty ≡ no filter (full/early-exit sweep).
+    if (!sequenceIdInFilter.empty()) {
+        params.Add({"sequence_id__in", sequenceIdInFilter});
     }
 
     // Thread the sync worker's cancellation token into the retry loop so an abort during a
@@ -343,7 +348,8 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
                  const std::string& projectIdentifier, const cpr::Header& headers,
                  const std::vector<smatchet::plane::UserDisplayLookup>& userLookup,
                  const PlaneClient::BatchCallback& onBatch, const PlaneClient::CancelCallback& shouldCancel,
-                 std::unordered_map<std::string, std::string>& localKeyToId, TrackerIssueFetchSummary& summary) {
+                 const std::string& sequenceIdInFilter, std::unordered_map<std::string, std::string>& localKeyToId,
+                 TrackerIssueFetchSummary& summary) {
     PlanePageLoopResult result;
     const int pageSize = 100;
     // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
@@ -371,8 +377,8 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         ++result.PageCount;
 
         // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
-        PlaneIssuePageFetch page =
-            FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize, listCursor, shouldCancel);
+        PlaneIssuePageFetch page = FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize,
+                                                       listCursor, sequenceIdInFilter, shouldCancel);
         if (!page.Ok) {
             LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
             summary.FetchError = page.Error;
@@ -447,6 +453,17 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
                                                           const CancelCallback& shouldCancel,
                                                           const TrackerConfig* configOverride,
                                                           const ViewsStore* viewsOverride) {
+    // Public full-sync path: no server-side key narrowing (a sync needs every issue). The
+    // sequence_id__in filter is B4-v2's targeted-fetch optimisation, applied only by
+    // FetchIssuesForKeys via FetchIssuesStreamedImpl.
+    return FetchIssuesStreamedImpl(onBatch, shouldCancel, configOverride, viewsOverride, std::string());
+}
+
+TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamedImpl(const BatchCallback& onBatch,
+                                                              const CancelCallback& shouldCancel,
+                                                              const TrackerConfig* configOverride,
+                                                              const ViewsStore* viewsOverride,
+                                                              const std::string& sequenceIdInFilter) {
 
     TrackerIssueFetchSummary summary;
 
@@ -524,7 +541,7 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
         // Phases 4-6: drive the cursor-paginated work-items fetch/map/stream loop.
         PlanePageLoopResult loop =
             RunPlanePageLoop(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers,
-                             userLookup, filteredOnBatch, shouldCancel, localKeyToId, summary);
+                             userLookup, filteredOnBatch, shouldCancel, sequenceIdInFilter, localKeyToId, summary);
         if (loop.HardFailed) {
             return summary;
         }
@@ -591,11 +608,19 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
         return FetchResult::Ok(std::move(outTickets));
     }
 
+    // §B4-v2: server-side narrowing. When every requested key parses to a Plane sequence_id
+    // (visual keys `PROJ-123`), pass `sequence_id__in=<csv>` so the list endpoint returns only the
+    // requested issues — O(1-2 pages) instead of scanning until the keys happen to appear. If ANY
+    // key can't parse (a bare UUID or malformed key), the filter is abandoned (empty) so the server
+    // never excludes an issue we still need; the early-exit pagination below then does the work.
+    const std::string sequenceIdInFilter = smatchet::plane::BuildPlaneSequenceIdInFilter(issueKeys);
+
     // Stream pages and early-exit once every requested key has been found. Cuts wall-time and
     // HTTP cost on hot prefetch-open-links paths where the targeted keys typically live on the
     // first one or two pages. Falls back to a full sweep only when keys are missing or spread
-    // across the page cap. Server-side `sequence_id__in` filtering would be the next win — out
-    // of scope here because it requires touching FetchIssuesStreamed's URL builder.
+    // across the page cap. With the server-side sequence_id__in filter above, the very first page
+    // typically already carries every match; the early-exit sweep remains as the safety net for
+    // the unparseable-key (empty-filter) fallback and for any server that ignores the param.
     std::unordered_set<std::string> wanted(issueKeys.begin(), issueKeys.end());
     std::unordered_set<std::string> found;
     found.reserve(wanted.size());
@@ -618,7 +643,8 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
     };
     auto shouldCancel = [&]() { return found.size() >= wanted.size(); };
 
-    TrackerIssueFetchSummary summary = FetchIssuesStreamed(onBatch, shouldCancel, &cfg, nullptr);
+    TrackerIssueFetchSummary summary =
+        FetchIssuesStreamedImpl(onBatch, shouldCancel, &cfg, nullptr, sequenceIdInFilter);
     if (!summary.FetchError.empty()) {
         // The summary now carries the kind classified at the page-fetch site (item 12); fall back
         // to Unknown only for a legacy path that did not classify.

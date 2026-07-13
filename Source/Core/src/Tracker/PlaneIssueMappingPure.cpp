@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <string>
+#include <unordered_set>
 
 namespace smatchet {
 namespace plane {
@@ -231,6 +232,75 @@ std::string ExtractKeyFromPlaneQuery(const std::string& planeQueryJson) {
         return std::string();
     }
     return std::string();
+}
+
+namespace {
+
+// A canonical Plane work-item UUID (8-4-4-4-12 hex, lowercase or upper). We must NEVER treat a
+// bare UUID as a visual key: its final dash-segment is 12 hex chars that can, by chance, be all
+// decimal digits — which would otherwise slip past the "digit suffix" test below and send a
+// bogus `sequence_id__in` value. Detecting UUID shape lets us abandon the server filter cleanly.
+bool LooksLikePlaneUuid(const std::string& s) {
+    if (s.size() != 36) {
+        return false;
+    }
+    for (std::string::size_type i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (c != '-') {
+                return false;
+            }
+            continue;
+        }
+        const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+        if (!hex) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+std::string BuildPlaneSequenceIdInFilter(const std::vector<std::string>& issueKeys) {
+    if (issueKeys.empty()) {
+        return std::string();
+    }
+    std::string out;
+    std::unordered_set<std::string> seen;
+    seen.reserve(issueKeys.size());
+    for (const std::string& key : issueKeys) {
+        // The sequence_id is the numeric suffix after the last '-' (e.g. `SMT-123` → `123`).
+        // A bare UUID, a key with no '-', an empty suffix, an empty identifier prefix, or a
+        // non-digit suffix all mean "cannot map to a sequence_id" — abandon the whole filter
+        // so the caller does the unfiltered sweep rather than server-side-excluding an issue
+        // we still need. UUIDs are rejected explicitly (their last segment can be all digits).
+        if (LooksLikePlaneUuid(key)) {
+            return std::string();
+        }
+        const std::string::size_type dash = key.rfind('-');
+        if (dash == std::string::npos || dash == 0 || dash + 1 >= key.size()) {
+            return std::string();
+        }
+        const std::string suffix = key.substr(dash + 1);
+        bool allDigits = true;
+        for (char c : suffix) {
+            if (c < '0' || c > '9') {
+                allDigits = false;
+                break;
+            }
+        }
+        if (!allDigits) {
+            return std::string();
+        }
+        if (seen.insert(suffix).second) {
+            if (!out.empty()) {
+                out += ',';
+            }
+            out += suffix;
+        }
+    }
+    return out;
 }
 
 } // namespace plane

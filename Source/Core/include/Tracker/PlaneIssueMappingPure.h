@@ -77,6 +77,19 @@ std::string NextPaginationCursor(const nlohmann::json& listPayload);
 /// member" and "malformed JSON" — callers treat empty as "no key clause".
 std::string ExtractKeyFromPlaneQuery(const std::string& planeQueryJson);
 
+/// BACKLOG_CODE_REVIEW.md §B4-v2 — build the comma-joined `sequence_id__in` value
+/// for Plane's work-items list filter from a set of requested issue keys.
+/// Each visual key is `<identifier>-<sequence_id>` (e.g. `SMT-123`); the numeric
+/// suffix after the LAST `-` is the Plane `sequence_id`. Only keys whose suffix is
+/// a run of ASCII digits contribute. If ANY key fails to parse (a bare UUID, a
+/// malformed key, an empty token), the whole filter is abandoned — returns "" so
+/// the caller falls back to the unfiltered early-exit sweep and never silently
+/// drops the unparseable key from the result set (correctness over speed).
+/// Duplicate sequence_ids are de-duplicated; output order follows first-seen input
+/// order (stable, so the URL is deterministic for a given key set). Empty input
+/// returns "".
+std::string BuildPlaneSequenceIdInFilter(const std::vector<std::string>& issueKeys);
+
 } // namespace plane
 } // namespace smatchet
 

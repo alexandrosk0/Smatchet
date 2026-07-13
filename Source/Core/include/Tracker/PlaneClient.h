@@ -166,4 +166,13 @@ class PlaneClient : public ITrackerBackend,
     std::shared_ptr<std::atomic<bool>> mutationCancel_;
 
     static std::unordered_map<std::string, std::string> BuildPlaneHeaders(const TrackerConfig& cfg);
+
+    // Shared body behind FetchIssuesStreamed. `sequenceIdInFilter`, when non-empty, is passed to
+    // Plane's work-items list as `sequence_id__in=<csv>` so the server returns only the requested
+    // issues (BACKLOG_CODE_REVIEW.md §B4-v2). Empty ≡ the unfiltered full/early-exit sweep; the
+    // public FetchIssuesStreamed override always passes empty (a full sync needs every issue).
+    TrackerIssueFetchSummary FetchIssuesStreamedImpl(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
+                                                     const TrackerConfig* configOverride,
+                                                     const ViewsStore* viewsOverride,
+                                                     const std::string& sequenceIdInFilter);
 };
