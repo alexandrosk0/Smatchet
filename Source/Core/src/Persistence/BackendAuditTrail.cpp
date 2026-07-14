@@ -378,10 +378,8 @@ void AppendEvent(const AuditEvent& event) {
     }
 }
 
-std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string* outError) {
-    if (outError) {
-        outError->clear();
-    }
+Result<std::vector<nlohmann::json>> ReadRecentEvents(std::size_t maxEvents) {
+    using R = Result<std::vector<nlohmann::json>>;
     std::vector<nlohmann::json> out;
     try {
         std::lock_guard<std::mutex> lock(AuditMutex());
@@ -395,7 +393,7 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
         if (!file.is_open()) {
             cache.Offset = std::streampos(0);
             cache.Events.clear();
-            return out;
+            return R::Ok(std::move(out)); // no audit file yet = no events, not an error
         }
         file.seekg(0, std::ios::end);
         const std::streampos end = file.tellg();
@@ -423,16 +421,12 @@ std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string*
         for (std::size_t i = skip; i < cache.Events.size(); ++i) {
             out.push_back(cache.Events[i]);
         }
+        return R::Ok(std::move(out));
     } catch (const std::exception& ex) {
-        if (outError) {
-            *outError = ex.what();
-        }
+        return R::Err(ex.what());
     } catch (...) {
-        if (outError) {
-            *outError = "Unknown audit read error.";
-        }
+        return R::Err("Unknown audit read error.");
     }
-    return out;
 }
 
 } // namespace BackendAuditTrail

@@ -326,7 +326,7 @@ std::vector<AiContextBlock> AiAssistantController::ResolveDeferredContext(const 
             std::string body;
             try {
                 std::vector<nlohmann::json> events =
-                    BackendAuditTrail::ReadRecentEvents(AiContextBuilder::kAuditCap, nullptr);
+                    BackendAuditTrail::ReadRecentEvents(AiContextBuilder::kAuditCap).value_or({});
                 std::vector<std::string> lines;
                 lines.reserve(events.size());
                 for (const auto& ev : events) {

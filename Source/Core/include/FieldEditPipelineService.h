@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CachedTicketTypes.h"    // CachedTicket (SubmitFieldEditCtx ticketsSnap)
+#include "SmatchetResult.h"       // VoidResult (SubmitFieldEdit* branch helpers)
 #include "Types/FieldEditTypes.h" // FieldEditResult
 
 class IFieldEditDeps;
@@ -69,7 +70,7 @@ class FieldEditPipelineService {
 
     /// Apply a successful FieldEditResult (from SubmitFieldEditNetworkOnly or an offline replay) to
     /// the local cache + grid model. UI thread.
-    bool ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result, std::string& outError);
+    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
 
   private:
     /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
@@ -87,11 +88,11 @@ class FieldEditPipelineService {
     };
 
     /// Sprint-field branch of SubmitFieldEdit (AddIssueToSprint + local-cache sync).
-    bool SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError);
+    VoidResult SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx);
     /// Editable timetracking estimate branch of SubmitFieldEdit (UpdateIssueFields timetracking wrapper).
-    bool SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError);
+    VoidResult SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx);
     /// Regular field branch of SubmitFieldEdit (editmeta check + UpdateIssueFields + 400-retry).
-    bool SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError);
+    VoidResult SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx);
 
     /// Build the network field payload (editmeta-gated, backend BuildFieldPayload) + optimistic
     /// display map. Shared by SubmitFieldEditNetworkOnly + TryPrepareOfflineFieldEdit.

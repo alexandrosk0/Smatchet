@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 
-/// Line-based 3-way text merge for offline-edit replay (RICH_TEXT_EDITING_V2_PLAN.md PR-E).
+/// Line-based 3-way text merge for offline-edit replay (docs/plans/rich-text-editing-v2-remaining.md PR-E).
 /// Takes three versions of a document as plain-text strings (typically Markdown produced by
 /// MarkdownConvert):
 ///   base  — the document at the time the user started editing (stored alongside the offline edit)

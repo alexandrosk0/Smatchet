@@ -585,9 +585,9 @@ ContextBundle GatherContext(const IAppMeta& app, const BugReportOptions& opts) {
     }
 
     // Recent audit events — already redacted by ReadRecentEvents' RedactJson pass,
-    // but redact again defensively.
-    std::string auditErr;
-    const std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(opts.MaxAuditEvents, &auditErr);
+    // but redact again defensively. A read error is non-fatal for a bug bundle: fall
+    // back to no audit events (the same empty-vector outcome as before).
+    const std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(opts.MaxAuditEvents).value_or({});
     nlohmann::json auditArr = nlohmann::json::array();
     for (const nlohmann::json& ev : events) {
         auditArr.push_back(BackendAuditTrail::RedactJson(ev));

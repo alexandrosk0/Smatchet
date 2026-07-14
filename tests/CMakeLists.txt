@@ -57,7 +57,15 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "fuzzer")
     return()
 endif()
 
-if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
+# SMATCHET_CORE_TEST_SUBSET (finding C3 / Proposal P6): build the SAME curated
+# ImGui-free Core unit-test subset WITHOUT a sanitizer — the fast runnable unit
+# signal for a linux-container environment (preset ninja-test-linux), where the
+# MSVC test presets + the ImGui doctest rig are [n/a]. smatchet_apply_sanitizers()
+# is a no-op when SMATCHET_SANITIZER is off (cmake/Sanitizers.cmake), so this one
+# block serves both the nightly TSan lane and the plain per-PR test lane, and the
+# subset can never silently diverge between them.
+option(SMATCHET_CORE_TEST_SUBSET "Build only the curated ImGui-free Core unit-test subset (SmatchetTsanTests target), no sanitizer" OFF)
+if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan") OR SMATCHET_CORE_TEST_SUBSET))
     add_executable(SmatchetTsanTests
         test_main.cpp
         # --- Pure-logic units (no threads) — prove the subset compiles + links
@@ -645,6 +653,9 @@ add_executable(SmatchetTests
     # tests/support/ (already on the include path).
     Core/P4AnnotateE2E.test.cpp
     Core/P4DescribeCacheE2E.test.cpp
+    # #21 Result<T> migration of the two P4 changelist queries (P4ChangesForUser +
+    # P4FirstSubmittedChangelistOnCalendarDay) — same runner-seam fake, no p4 spawn.
+    Core/P4ChangeQueriesResult.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Annotate.cpp"
     Core/TrackerLabelsPure.test.cpp
     # WS2 / Issue #1068 — runtime TLS-trust seam (ResolveSslConfig + process-global CA-path
@@ -875,8 +886,9 @@ add_executable(SmatchetTests
     # CommandRegistry.cpp + FuzzyMatch.cpp join so Dispatch (confirm gate, validation,
     # alias + fuzzy resolution) runs for real; their deps (ConfigManager, Logger,
     # BoundedJsonParse) are already linked. Meta/Config take no app object (registry-
-    # introspection + ConfigManager singleton), so they join here too. The remaining
-    # AppController-coupled Builtin TUs (Perf/Fields/Ai) and the UI-session ones
+    # introspection + ConfigManager singleton), so they join here too. Fields rides the
+    # narrow IAppFields facet (list/get/refresh/icon_for) driven by a fake in the test.
+    # The remaining AppController-coupled Builtin TUs (Perf/Ai) and the UI-session ones
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
@@ -892,6 +904,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Offline.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Attach.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Automation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Fields.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
     Core/LabelEditDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"

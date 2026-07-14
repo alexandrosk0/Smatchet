@@ -2,6 +2,7 @@
 #define P4_ANNOTATE_H
 
 #include "ConfigManager.h"
+#include "SmatchetResult.h"
 
 #include <mutex>
 #include <string>
@@ -66,18 +67,19 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, c
  * Oldest submitted changelist whose submit time falls on [year/month/day, next day),
  * via `p4 changes -r -m 1 -s submitted //...@yyyy/mm/dd,yyyy/mm/dd`. Uses the server's
  * calendar interpretation for the date range (same as other Perforce date rev specs).
+ * Ok(changelist) on success; Err(reason) on a bad date, spawn/exit failure, or no match.
  */
-bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month, int day,
-                                             std::string& outChangelist, std::string& outError);
+Result<std::string> P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month,
+                                                            int day);
 
 /**
  * Most recent submitted changelists by a user, newest first, via
  * `p4 changes -u <user> -m <maxN> -s submitted`. Blocking (call off the UI thread).
- * Returns false on spawn/exit failure with outError set; an empty result with true
- * means the user has no visible submitted changes.
+ * Err(reason) on spawn/exit failure; Ok with an empty vector means the user has no
+ * visible submitted changes.
  */
-bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User, int maxN,
-                      std::vector<P4ChangeSummary>& outChanges, std::string& outError);
+Result<std::vector<P4ChangeSummary>> P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User,
+                                                      int maxN);
 
 /**
  * Resolve a Perforce login from an email by matching the `<email>` column of

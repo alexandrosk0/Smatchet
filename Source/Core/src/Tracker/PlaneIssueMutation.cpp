@@ -222,7 +222,7 @@ Result<nlohmann::json, TrackerError> PlaneClient::BuildFieldPayload(const Tracke
         // round-trips to empty string. The modal's raw-mode save (kicks in for HTML the converter
         // can't safely round-trip) ships verbatim — sniffed by "starts with `<` and contains
         // a closing tag", which is essentially never true for real user-typed Markdown. See
-        // RICH_TEXT_EDITING_V2_PLAN.md.
+        // docs/plans/rich-text-editing-v2-remaining.md.
         const std::string& md = values.empty() ? std::string() : values[0];
         if (md.empty()) {
             outPayload["description_html"] = std::string();
@@ -498,7 +498,7 @@ Result<nlohmann::json, TrackerError> PlaneClient::BuildCreatePayload(const Issue
         const std::string& desc = draft.FieldValues.at("description");
         if (!desc.empty()) {
             // New-issue draft also goes through the modal-style Markdown surface; convert to the
-            // HTML subset Plane accepts. See RICH_TEXT_EDITING_V2_PLAN.md.
+            // HTML subset Plane accepts. See docs/plans/rich-text-editing-v2-remaining.md.
             outPayload["description_html"] = MarkdownConvert::MarkdownToHtml(desc);
         }
     }

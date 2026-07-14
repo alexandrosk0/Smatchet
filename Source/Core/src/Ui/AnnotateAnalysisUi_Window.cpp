@@ -224,14 +224,14 @@ void DrawCallstackProcessControls(AnnotateDrawCtx& ctx) {
                 State().detachedBeforeClFuts.push_back(State().beforeClFut);
             }
             State().beforeClFut = std::async(std::launch::async, [cfgCopy, y, mo, d]() {
-                                      std::string cl;
-                                      std::string err;
                                       // Encode failure as an empty changelist so the UI-thread apply
                                       // branches exactly as the old synchronous code did on `false`.
-                                      if (!P4FirstSubmittedChangelistOnCalendarDay(cfgCopy, y, mo, d, cl, err)) {
-                                          cl.clear();
+                                      Result<std::string> clResult =
+                                          P4FirstSubmittedChangelistOnCalendarDay(cfgCopy, y, mo, d);
+                                      if (clResult.has_value()) {
+                                          return std::make_pair(clResult.value(), std::string());
                                       }
-                                      return std::make_pair(cl, err);
+                                      return std::make_pair(std::string(), clResult.error());
                                   }).share();
         } else {
             State().lastUiStatus = "Error: that date couldn't be parsed - pick the date again.";

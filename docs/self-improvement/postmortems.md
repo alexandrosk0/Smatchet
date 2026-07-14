@@ -9,8 +9,8 @@
 > (SessionStart nudge). Blameless by construction — entries name the gate hole,
 > never an agent/person.
 >
-> **Entry shape (the `### Preventing gate` field is mandatory — an entry cannot
-> close without it):**
+> **Entry shape (the `### Preventing gate` and `### Eval case` fields are both
+> mandatory — an entry cannot close without them):**
 >
 > ```
 > ## <date> · PR #N[, #M …] · <trigger>
@@ -21,6 +21,13 @@
 > ### Preventing gate
 > <the concrete new gate/rule/test/lint that catches the class — or
 >  "none — override legitimate (reason)" for a deliberate, correct override>
+> ### Eval case
+> <a subagent-eval candidate case when the miss was agent-reviewable (a code
+>  smell / logic bug / policy violation a review agent scores) — the RCA is the
+>  spec: missed defect = input, "a competent reviewer flags X" = reference
+>  outcome; suggestion-only, promoted by a human. Or "none — not
+>  agent-reviewable (reason)" for a pure CI-config / infra / required-context gap.
+>  Closes the postmortem→eval flywheel (docs/plans/deferred/subagent-eval-flywheel.md)>
 > ### Filed as
 > <link to the spawned docs/self-improvement/categories/<cat>.md entry>
 > ```
@@ -67,7 +74,7 @@ Blameless — a **PR-creation path with no intent-capture step**, compounded by 
 Make the out-of-band PR-creation contract require a hand-authored `## Intent`: a rule in [`ship-loops.md`](../agent-rules/ship-loops.md) § Intent capture that any agent calling the GitHub API/MCP `create_pull_request` (i.e. with no local ship-loop) MUST include a filled `## Intent` section in the PR `body`. This catches the *class* (API-created PRs lacking intent) at authoring time — the only point an agent controls when there is no local hook. Promoting `Intent section` to a branch-protection required context is explicitly NOT the fix — ADR-0022 keeps it off to avoid a merge_group deadlock.
 
 ### Filed as
-[`docs/self-improvement/categories/process/2026-06-20-intent-section-api-created-pr.md`](categories/process/2026-06-20-intent-section-api-created-pr.md)
+[`process/2026-06-20-intent-section-api-created-pr` (archived → applied.md)](categories/applied.md)
 
 ## 2026-06-19 · PR #1428 · red `Intent section` (block-allowlisted) merged by the `merge-watcher` daemon running STALE gate logic — the poller *was* consulted, but its allow-list predated `Intent section`
 
@@ -112,7 +119,7 @@ stopped+disabled until a develop-current checkout is available).
 
 ### Filed as
 New tooling per-entry backlog file
-[`categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md`](categories/tooling/2026-06-19-merge-watcher-runs-stale-gate-logic.md)
+[`tooling/2026-06-19-merge-watcher-runs-stale-gate-logic` (archived → applied.md)](categories/applied.md)
 (P1) — carries the freshness self-guard (shipped here) plus the residual *restart-from-fresh-checkout* +
 *periodic daemon self-resync* operational gate, cross-ref'd to #1428 and distinguished from the
 PRs #1406/#1414/#1415 poller-bypass entry.
@@ -170,7 +177,7 @@ side, not branch-protection — this promotes the 2026-06-11 advisory "use the p
 
 ### Filed as
 New process per-entry backlog file
-[`categories/process/2026-06-19-intent-gate-bypassed-via-non-poller-merge.md`](categories/process/2026-06-19-intent-gate-bypassed-via-non-poller-merge.md)
+[`process/2026-06-19-intent-gate-bypassed-via-non-poller-merge` (archived → applied.md)](categories/applied.md)
 (P2) — carries the non-admin poll-gated merge wrapper above as its `Concrete next action`, cross-ref'd to
 #1406 / #1414 / #1415 and the 2026-06-11 raw-`--auto` advisory entry it supersedes.
 

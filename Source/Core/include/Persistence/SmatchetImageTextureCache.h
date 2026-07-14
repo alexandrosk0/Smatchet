@@ -1,5 +1,6 @@
 #pragma once
 
+#include "SmatchetResult.h"
 #include "imgui.h"
 
 #include <cstdint>
@@ -31,11 +32,12 @@ bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out);
  * Decode image bytes (PNG/JPEG/WebP/etc. via stb) and return a registered ImTextureData.
  * @param cacheKey stable key (e.g. `file:` + path or `url:` + url) for LRU.
  */
-bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes, size_t byteCount,
-                         SmatchetLoadedIconTexture& out, std::string& outError);
+// Ok(texture) on a decode+upload success (or an LRU cache hit); Err(reason) on empty
+// input, a renderer without texture support, a decode failure, or a GPU-upload failure.
+Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes,
+                                                      size_t byteCount);
 
-bool GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath, SmatchetLoadedIconTexture& out,
-                       std::string& outError);
+Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath);
 
 void EvictCacheKey(const std::string& cacheKey);
 
@@ -47,9 +49,3 @@ std::size_t IconCacheEntryCount();
 std::size_t IconCacheApproxBytes();
 
 } // namespace SmatchetImageTextureCache
-
-
-
-
-
-

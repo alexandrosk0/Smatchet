@@ -56,3 +56,53 @@ JSON
     run bash "$SCRIPT" --bogus
     [ "$status" -eq 2 ]
 }
+
+# ---------- --apply path (bats-coverage-08) ----------
+# Stub `gh` on PATH so --apply's auto-act calls are recorded, not real. The stub
+# logs every invocation to $GH_LOG and exits 0; ISSUES_JSON/MERGED_PRS_JSON still
+# feed the read side, so the ONLY live gh calls are the mutating edits under test.
+_mk_gh_stub() {
+    mkdir -p "$WORK/bin"
+    export GH_LOG="$WORK/gh.log"; : > "$GH_LOG"
+    cat > "$WORK/bin/gh" <<STUB
+#!/usr/bin/env bash
+echo "gh \$*" >> "$GH_LOG"
+exit 0
+STUB
+    chmod +x "$WORK/bin/gh"
+    export PATH="$WORK/bin:$PATH"
+}
+
+@test "--apply relabels a bot-authored stray via gh issue edit" {
+    _mk_gh_stub
+    MERGED_PRS_JSON="$WORK/none.json"; echo '[]' > "$MERGED_PRS_JSON"
+    ISSUES_JSON="$ISSUES_JSON" MERGED_PRS_JSON="$MERGED_PRS_JSON" run bash "$SCRIPT" --apply
+    [ "$status" -eq 0 ]
+    # Only the unlabeled bot Issue #734 is acted on -> exactly one bot-only action.
+    [[ "$output" == *"applied 1 bot-only action(s)"* ]]
+    grep -q "gh issue edit 734 --repo .* --add-label bug" "$GH_LOG"
+}
+
+@test "--apply never auto-acts on a human-authored Issue" {
+    _mk_gh_stub
+    MERGED_PRS_JSON="$WORK/none.json"; echo '[]' > "$MERGED_PRS_JSON"
+    ISSUES_JSON="$ISSUES_JSON" MERGED_PRS_JSON="$MERGED_PRS_JSON" run bash "$SCRIPT" --apply
+    [ "$status" -eq 0 ]
+    # #900 is human-authored (KEEP, report-only) -> gh must never touch it.
+    ! grep -q "gh issue edit 900" "$GH_LOG"
+}
+
+@test "--apply strips a lingering out-of-band label off a merged PR" {
+    _mk_gh_stub
+    ISSUES_JSON="$WORK/empty.json"; echo '[]' > "$ISSUES_JSON"
+    cat > "$WORK/merged.json" <<'JSON'
+[
+ {"number":555,"labels":[{"name":"cr-out-of-band"},{"name":"area:sync"}]}
+]
+JSON
+    ISSUES_JSON="$ISSUES_JSON" MERGED_PRS_JSON="$WORK/merged.json" run bash "$SCRIPT" --apply
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OOB-STRIP #555 remove-label 'cr-out-of-band'"* ]]
+    [[ "$output" == *"removed 1"* ]]
+    grep -q "gh pr edit 555 --repo .* --remove-label cr-out-of-band" "$GH_LOG"
+}

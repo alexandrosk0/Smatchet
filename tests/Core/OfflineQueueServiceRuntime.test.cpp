@@ -391,9 +391,9 @@ TEST_CASE("OfflineQueueServiceRuntime: replay emits audit-trail row per attempt"
     const std::size_t lineMatches = WaitForAuditLines(idStr, 2u);
     CHECK(lineMatches >= 2u);
 
-    std::string readErr;
-    const auto events = BackendAuditTrail::ReadRecentEvents(500u, &readErr);
-    CHECK(readErr.empty());
+    const auto readResult = BackendAuditTrail::ReadRecentEvents(500u);
+    CHECK(readResult.has_value());
+    const std::vector<nlohmann::json> events = readResult.value_or({});
     std::size_t queueCount = 0;
     std::size_t replayCount = 0;
     for (const auto& ev : events) {

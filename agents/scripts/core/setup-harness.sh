@@ -253,6 +253,9 @@ setup_claude_code() {
   copy_template "docs/harness/claude-code/hooks/resync-head-baseline.sh" ".claude/hooks/resync-head-baseline.sh"
   copy_template "docs/harness/claude-code/hooks/guard-shared-tree.sh"    ".claude/hooks/guard-shared-tree.sh"
   copy_template "docs/harness/claude-code/hooks/capture-intent.sh"       ".claude/hooks/capture-intent.sh"
+  # Always deployed; self-gates on SMATCHET_AGENT_VCS=p4 (exits 0 immediately in
+  # the default git mode), so it is inert unless the session opts into p4.
+  copy_template "docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh" ".claude/hooks/pretool-edit-p4-lock-check.sh"
   # Wiring doctor (pr-intent-capture-hardening #1): confirm the capture hook is
   # actually live — registered on UserPromptSubmit AND a python interpreter
   # resolves — so a silently-unwired hook (the gap that left no evidence capture

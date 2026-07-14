@@ -63,7 +63,12 @@ ambiguous spec, no gate/test to confirm correctness, irreversible-and-unauthoris
 or cost-unbounded. This is ship-loop pause-exception **(6)
 cannot-autonomously-validate / cost-unbounded** and fires in on-the-loop mode
 too — it is a *new pause trigger*, not a weakening of on-the-loop autonomy
-within its authorised scope. "Validated" means a **concrete** signal
+within its authorised scope. The runnable-validation surface **per environment**
+is declared in [`project.config.json`](project.config.json) § environments
+(surfaced by `scripts/dev/doctor.sh --tier <name>`): a check that lands as
+`[n/a]` there is a *validate-elsewhere* signal — treat it as
+cannot-validate-**here** (escalate / defer to the tier that owns it), never as a
+silent pass. "Validated" means a **concrete** signal
 (gate/test/spec, authorised scope, bounded cost); rationalising an assumption as
 "validated" is itself a misjudgement the
 [`gate-escape-postmortem`](agents/_shared/skills/gate-escape-postmortem/SKILL.md)

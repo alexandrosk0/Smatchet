@@ -359,12 +359,12 @@ sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-entries = m._CLI.read_registry()
+entries = m.read_registry()
 assert entries, "no registry entries after register"
 clone = entries[0]["clone_path"]
 # Pass all five fields incl. the new none_head/none_streak (core-scripts-python-04).
 m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6)
-e = m._CLI.read_registry()[0]
+e = m.read_registry()[0]
 assert e["nudged_head"] == "headSHA999", e
 assert e["stale_head"] == "headSHA999", e
 assert e["stale_streak"] == 4, e
@@ -372,7 +372,7 @@ assert e["none_head"] == "noneHEAD", e
 assert e["none_streak"] == 6, e
 # Backward-compat: the two none_* params default so an older call site still works.
 m._bump_nudge_state(999, clone, "h2", "h2", 1)
-e2 = m._CLI.read_registry()[0]
+e2 = m.read_registry()[0]
 assert e2["none_head"] == "" and e2["none_streak"] == 0, e2
 print("OK")
 PY
@@ -2050,13 +2050,13 @@ os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='5'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
 mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'aaaa1111bbbb2222cccc3333dddd4444eeee5555'}
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
 res = mw.maybe_pass_cr_none_grace(entry, state)
 print('count:', res.get('cr_none_grace_polls'))
 print('action:', res.get('cr_none_grace_action'))
 print('flipped:', res.get('last_state'))
-reg = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+reg = next(e for e in mw.read_registry() if int(e['pr'])==999)
 print('persisted:', reg.get('cr_none_grace_polls'), reg.get('cr_none_grace_head','')[:8])
 "
     [ "$status" -eq 0 ]
@@ -2075,7 +2075,7 @@ os.environ['MERGE_WATCH_CR_NONE_GRACE_CYCLES']='5'
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
 mw._gh_json = lambda args, cwd=None, timeout=30: {'headRefOid':'99990000999900009999000099990000abcd9999'}
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 entry['cr_none_grace_polls']=4
 entry['cr_none_grace_head']='0000oldoldoldoldoldoldoldoldoldoldold000'
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+pending (poll 1/10)'}
@@ -2099,7 +2099,7 @@ def fake_poll(entry, extra_gates_env=None):
     captured['env'] = extra_gates_env
     return {'pr':999,'clone_path':entry['clone_path'],'last_state':'GATES_PASSED','last_status_line':'forced pass'}
 mw.poll_one = fake_poll
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 entry['cr_none_grace_polls']=2
 entry['cr_none_grace_head']='headheadheadheadheadheadheadheadhead0001'
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
@@ -2127,7 +2127,7 @@ mw._gh_json = boom
 def fake_poll(entry, extra_gates_env=None):
     raise AssertionError('poll_one must NOT be called when HEAD fetch fails')
 mw.poll_one = fake_poll
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
 res = mw.maybe_pass_cr_none_grace(entry, state)
 print('flipped:', res.get('last_state'))
@@ -2147,14 +2147,14 @@ mw = importlib.util.module_from_spec(spec); spec.loader.exec_module(mw)
 def fake_poll(entry, extra_gates_env=None):
     raise AssertionError('poll_one must NOT be called on a non-wait reset')
 mw.poll_one = fake_poll
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 entry['cr_none_grace_polls']=4
 entry['cr_none_grace_head']='someheadsomeheadsomeheadsomeheadsomehead'
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: COMMENTED (2 actionable - block)'}
 res = mw.maybe_pass_cr_none_grace(entry, state)
 print('count:', res.get('cr_none_grace_polls'))
 print('action:', res.get('cr_none_grace_action'))
-reg = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+reg = next(e for e in mw.read_registry() if int(e['pr'])==999)
 print('persisted:', reg.get('cr_none_grace_polls'))
 "
     [ "$status" -eq 0 ]
@@ -2238,7 +2238,7 @@ def fake_poll(entry, extra_gates_env=None):
     captured['env'] = extra_gates_env
     return {'pr':999,'clone_path':entry['clone_path'],'last_state':'GATES_PASSED','last_status_line':'forced pass'}
 mw.poll_one = fake_poll
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+status-SUCCESS-waiting-for-inline (poll 1/10)'}
 res = mw.maybe_pass_cr_none_grace(entry, state)
 print('flipped:', res.get('last_state'))
@@ -2266,7 +2266,7 @@ mw._pr_diff_is_pure_docs = lambda pr, clone_path: False
 def fake_poll(entry, extra_gates_env=None):
     raise AssertionError('poll_one must NOT fire on cycle 1 of a 10-cycle code window')
 mw.poll_one = fake_poll
-entry = next(e for e in mw._CLI.read_registry() if int(e['pr'])==999)
+entry = next(e for e in mw.read_registry() if int(e['pr'])==999)
 state = {'pr':999,'last_state':'BLOCKED','last_status_line':'CodeRabbit: NONE+pending (poll 1/10)'}
 res = mw.maybe_pass_cr_none_grace(entry, state)
 print('count:', res.get('cr_none_grace_polls'))

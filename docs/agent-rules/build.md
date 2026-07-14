@@ -8,7 +8,7 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 
 ## ctest presets
 
-`CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.
+`CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-test-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.
 
 ## TSan on Linux (`ninja-tsan-linux`) — install the Clang TSan runtime first
 
@@ -17,6 +17,14 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 `sudo apt-get install -y libclang-rt-18-dev` (generally `libclang-rt-$LLVM_VERSION-dev`)
 
 Then `cmake --preset ninja-tsan-linux && cmake --build --preset ninja-tsan-linux && ctest --preset ninja-tsan-linux`. The preset's FetchContent deps are all git-clone based, so it configures through the agent proxy without the release-tarball 403 workaround other presets need (infra `remote-container-fetchcontent-403`). Verified end-to-end in a remote container 2026-07-09: package install → configure → 97-target build → link → suite green.
+
+## Fast Linux unit signal (`ninja-test-linux`) — a linux-container agent's runnable test tier
+
+`ninja-test-linux` builds + runs the **same** curated ImGui-free Core unit subset as `ninja-tsan-linux` but **without the sanitizer** — a fast local unit signal for a `linux-container` environment (finding C3 / Proposal P6), where the MSVC test presets and the ImGui doctest rig are `[n/a]` (`scripts/dev/doctor.sh --tier linux-container`; `project.config.json` § environments). It needs no `libclang-rt` package (no TSan runtime) and, like the TSan preset, resolves `doctest` via git clone (no release-tarball egress). Run it end-to-end:
+
+`cmake --preset ninja-test-linux && cmake --build --preset ninja-test-linux && ctest --preset ninja-test-linux`
+
+One `SMATCHET_CORE_TEST_SUBSET=ON` gate (`tests/CMakeLists.txt`) drives the identical subset for both lanes, so the plain and TSan builds can never silently diverge. CI coverage of this subset already runs via the TSan lane (PR-on-threading-paths + nightly, `.github/workflows/tsan-linux-nightly.yml`); this preset adds the *fast local* signal a container agent runs before it escalates. Verified end-to-end in a remote container 2026-07-14: configure → build → `ctest` green (0 failures).
 
 ## Warnings as errors
 

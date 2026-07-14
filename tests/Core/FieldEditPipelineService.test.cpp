@@ -194,6 +194,35 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprin
     CHECK(rig.fieldDeps.DeferredNotifyCalls >= 1);
 }
 
+// The sprint + timetracking branch helpers migrated from `bool + outError` to VoidResult
+// (build-quality-velocity-hardening #21). These pin the migrated Err paths as they surface
+// back through the public SubmitFieldEdit bool + outError contract (via VoidResultToBool).
+TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch rejects clearing (empty values)") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+
+    std::string err;
+    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {}, err);
+
+    CHECK_FALSE(ok);
+    CHECK(err == "Clearing sprint is not supported by this action.");
+    CHECK(rig.fieldDeps.Fake()->AddIssueToSprintCallCount() == 0); // rejected before any backend call
+}
+
+TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch rejects clearing (empty estimate)") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+
+    std::string err;
+    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {}, err);
+
+    CHECK_FALSE(ok);
+    CHECK(err == "Clearing Jira timetracking estimates is not supported by this editor.");
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
+}
+
 // ---------------------------------------------------------------------------
 // (6) Timetracking branch — wraps the estimate into a `timetracking` payload.
 // ---------------------------------------------------------------------------
@@ -297,11 +326,9 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult applies a successful r
     result.Ok = true;
     result.UpdatedDisplayValues["summary"] = "applied summary";
 
-    std::string err;
-    const bool ok = rig.svc.ApplyFieldEditResult("ABC-1", result, err);
+    const VoidResult r = rig.svc.ApplyFieldEditResult("ABC-1", result);
 
-    CHECK(ok);
-    CHECK(err.empty());
+    CHECK(r.has_value());
     REQUIRE(rig.fieldDeps.UpdatedTickets.size() == 1);
     CHECK(rig.fieldDeps.UpdatedTickets.front().GetFieldValue("summary") == "applied summary");
 }
@@ -315,11 +342,10 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult rejects a not-ok resul
     result.Ok = false;
     result.Error = "backend rejected the edit";
 
-    std::string err;
-    const bool ok = rig.svc.ApplyFieldEditResult("ABC-1", result, err);
+    const VoidResult r = rig.svc.ApplyFieldEditResult("ABC-1", result);
 
-    CHECK_FALSE(ok);
-    CHECK(err == "backend rejected the edit");
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error() == "backend rejected the edit");
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
 }
 
@@ -332,10 +358,9 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult fails when no cache is
     result.Ok = true;
     result.UpdatedDisplayValues["summary"] = "x";
 
-    std::string err;
-    const bool ok = rig.svc.ApplyFieldEditResult("ABC-1", result, err);
+    const VoidResult r = rig.svc.ApplyFieldEditResult("ABC-1", result);
 
-    CHECK_FALSE(ok);
-    CHECK(err.find("Local cache is unavailable") != std::string::npos);
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error().find("Local cache is unavailable") != std::string::npos);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
 }

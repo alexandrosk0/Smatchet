@@ -356,6 +356,31 @@
             }
         },
         {
+            "name": "ninja-test-linux",
+            "inherits": [
+                "_smatchet-clang-linux-base"
+            ],
+            "displayName": "Ninja Core Tests (Linux Clang, no sanitizer)",
+            "description": "Fast headless Linux Clang build of the curated ImGui-free Core unit-test subset (the SmatchetTsanTests target) WITHOUT a sanitizer — the runnable unit signal for a linux-container environment (finding C3 / Proposal P6), where the MSVC test presets and the doctest UI rig are [n/a] (project.config.json § environments). Same feature-OFF set as ninja-tsan-linux (SMATCHET_BUILD_APP=OFF -> no GLFW/ImGui/Lua/whisper/X11/OpenGL), minus TSan, so it builds + runs fast. doctest resolves via git clone, so no release-tarball egress is needed.",
+            "binaryDir": "${sourceDir}/build/ninja-test-linux",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "SMATCHET_SANITIZER": "off",
+                "SMATCHET_CORE_TEST_SUBSET": "ON",
+                "SMATCHET_BUILD_TESTS": "ON",
+                "SMATCHET_BUILD_APP": "OFF",
+                "SMATCHET_WITH_LUA_AUTOMATION": "OFF",
+                "SMATCHET_WITH_MCP": "OFF",
+                "SMATCHET_WITH_AI": "OFF",
+                "SMATCHET_WITH_WHISPER": "OFF",
+                "SMATCHET_WHISPER_LOCAL_BACKEND": "OFF",
+                "SMATCHET_BUILD_LUA_TESTS": "OFF",
+                "SMATCHET_AGENT_DEBUG": "OFF",
+                "SMATCHET_BUILD_AGENT_DEBUG_TESTS": "OFF"
+            }
+        },
+        {
             "name": "ninja-fuzzer-linux",
             "inherits": [
                 "_smatchet-clang-linux-base"
@@ -559,6 +584,14 @@
             ]
         },
         {
+            "name": "ninja-test-linux",
+            "configurePreset": "ninja-test-linux",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetTsanTests"
+            ]
+        },
+        {
             "name": "ninja-fuzzer-linux",
             "configurePreset": "ninja-fuzzer-linux",
             "inheritConfigureEnvironment": true
@@ -648,6 +681,14 @@
         {
             "name": "ninja-tsan-linux",
             "configurePreset": "ninja-tsan-linux",
+            "inheritConfigureEnvironment": true,
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "ninja-test-linux",
+            "configurePreset": "ninja-test-linux",
             "inheritConfigureEnvironment": true,
             "output": {
                 "outputOnFailure": true

@@ -39,6 +39,7 @@ struct McpToolDefinition;
 #include <map>
 #include "GridLiveContext.h"
 #include "ITrackerBackend.h"
+#include "SmatchetResult.h" // VoidResult (field-edit delegators — #21 AppController public-API flip)
 #include "MainThreadDispatcher.h"
 #include "Commands/IAppThreading.h"
 #include "SmatchetMergeWatchNotifyServer.h"
@@ -121,6 +122,7 @@ class AiAssistantController;
 #include "Interfaces/IAppCommands.h"
 #include "Interfaces/IAppScenarioHost.h"
 #include "Interfaces/IAppSync.h"
+#include "Interfaces/IAppFields.h"
 
 class ITrackerBackendFactory;
 class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include); `std::unique_ptr<LocalCacheManager>
@@ -160,7 +162,8 @@ class AppController : public IAppThreading,
                       public IAppTicketMutations,
                       public IAppCommands,
                       public IAppScenarioHost,
-                      public IAppSync {
+                      public IAppSync,
+                      public IAppFields {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -547,7 +550,7 @@ class AppController : public IAppThreading,
                                   std::string& outResultSummary) override;
     /** Lua `register_field_icon_map`; returns false when Lua automation is disabled. */
     bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField* field, const std::string& rawValue,
-                                  std::string& outPathOrUrl) const;
+                                  std::string& outPathOrUrl) const override;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     // NOTE (hardening #19c): every sol-typed Lua binding method (LuaGetTicketBind /
@@ -686,7 +689,7 @@ class AppController : public IAppThreading,
     /** Bumped when the field catalog changes (fetch, error clear, etc.); UI sort cache should invalidate. */
     std::uint64_t GetFieldCatalogRevision() const { return fieldCatalog().TrackerFieldCatalogRevision.load(); }
 
-    bool RefreshFieldCatalog(const TrackerConfig& cfg);
+    bool RefreshFieldCatalog(const TrackerConfig& cfg) override;
     /** Refetch the catalog scoped to a specific project. The project key is plumbed to
      *  the fetcher via a transient capture on the backend cfg snapshot (see TrackerFieldCatalog
      *  and PlaneClient single-capture sites) and used by SetFieldCatalog to land the snapshot
@@ -709,7 +712,7 @@ class AppController : public IAppThreading,
     std::string BuildIssueBrowseUrl(const TrackerConfig& cfg, const std::string& issueKey) const;
     static std::string BuildJqlSearchUrl(const TrackerConfig& cfg, const std::string& jql);
 
-    const std::vector<TrackerField>& GetAvailableFields() const { return fieldCatalog().AvailableFields; }
+    const std::vector<TrackerField>& GetAvailableFields() const override { return fieldCatalog().AvailableFields; }
     const std::vector<TrackerComponent>& GetAvailableComponents() const { return fieldCatalog().AvailableComponents; }
     /// Last-fetched user catalog. May be empty before the first catalog fetch completes
     /// or when the active backend doesn't surface a users endpoint.
@@ -976,7 +979,7 @@ class AppController : public IAppThreading,
                                     const std::string& remainingEstimateSnapshot,
                                     const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
                                     std::string& outFieldsPayloadJson, std::string& outError);
-    bool ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result, std::string& outError);
+    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 

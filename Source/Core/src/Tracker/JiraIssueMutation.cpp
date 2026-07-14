@@ -6,6 +6,7 @@
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
 #include "Tracker/JiraErrorMessagePure.h"
+#include "Tracker/TrackerFieldPayloadPure.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "NetworkUsageTracker.h"
@@ -62,30 +63,6 @@ std::string FindTransitionIdInArray(const nlohmann::json& transitionsArray, cons
                  match.transitionName.c_str(), targetStatusName.c_str(), match.toStatusName.c_str());
     }
     return match.id;
-}
-
-nlohmann::json AdfDocumentFromPlainText(const std::string& plainText) {
-    nlohmann::json content = nlohmann::json::array();
-    std::string line;
-    std::istringstream iss(plainText);
-    while (std::getline(iss, line)) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        nlohmann::json inner = nlohmann::json::array();
-        nlohmann::json textNode = nlohmann::json::object();
-        textNode["type"] = "text";
-        textNode["text"] = line;
-        inner.push_back(std::move(textNode));
-        para["content"] = std::move(inner);
-        content.push_back(std::move(para));
-    }
-    if (content.empty()) {
-        nlohmann::json para = nlohmann::json::object();
-        para["type"] = "paragraph";
-        para["content"] = nlohmann::json::array({nlohmann::json{{"type", "text"}, {"text", ""}}});
-        content.push_back(std::move(para));
-    }
-    return nlohmann::json{{"type", "doc"}, {"version", 1}, {"content", std::move(content)}};
 }
 
 // Extract the target status id + name from the requested status value (object
@@ -362,7 +339,9 @@ TrackerError JiraClient::AddIssueCommentPlain(const TrackerConfig& cfg, const st
     const cpr::Header headers = BuildTrackerHeaders(cfg, true);
 
     nlohmann::json body = nlohmann::json::object();
-    body["body"] = AdfDocumentFromPlainText(plainText);
+    // The comment text is Markdown-authored (same as the grid long-text editor + the Plane
+    // MarkdownToHtml comment path); convert to ADF so formatting is preserved on Jira.
+    body["body"] = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown(plainText);
     const std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/comment";
     const std::string bodyStr = body.dump();
     auto response = TrackerPostLogged("JiraClient", postUrl, headers, bodyStr);
@@ -417,7 +396,7 @@ TrackerError JiraClient::AddWorklog(const TrackerConfig& cfg, const std::string&
     body["timeSpent"] = timeSpent;
     body["started"] = startedDate;
     if (!workDescription.empty()) {
-        body["comment"] = AdfDocumentFromPlainText(workDescription);
+        body["comment"] = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown(workDescription);
     }
 
     std::string postUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKey) + "/worklog";

@@ -17,7 +17,7 @@ struct CachedTicket {
     /// same field id as `fieldValues`. Populated by `JiraIssueSearch` (ADF JSON-stringified) and
     /// `PlaneClient` (description_html). Used by the long-text modal editor to seed Markdown
     /// fidelity and avoid silent format loss when an unedited field is later re-saved. See
-    /// RICH_TEXT_EDITING_V2_PLAN.md.
+    /// docs/plans/rich-text-editing-v2-remaining.md.
     std::unordered_map<std::string, std::string> fieldRichValues;
 
     std::string GetFieldValue(const std::string& key) const {
@@ -97,7 +97,7 @@ struct PendingFieldEditRecord {
     /// JSON blob populated when HasMergeConflict is true. Top-level `kind` ∈ {text, scalar,
     /// unverified} selects the conflict category (absent = legacy rich "text"); the rich `text`
     /// shape additionally carries `richKind` ∈ {adf, html} for reconversion. See ADR-0016 /
-    /// RICH_TEXT_EDITING_V2_PLAN.md.
+    /// docs/plans/rich-text-editing-v2-remaining.md.
     std::string ConflictContextJson;
     int Attempts = 0;
     std::string LastError;
