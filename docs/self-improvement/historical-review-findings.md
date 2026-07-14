@@ -228,9 +228,11 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   (#1696–#1737, incl. #1700 itself), 4 findings (1 MEDIUM fail-open + 3 LOW),
   0 user-visible. **Batch 18 (2026-07-11) extended the frontier to #1795** —
   55 PRs (#1738–#1795), 8 findings (5 MEDIUM incl. 1 user-visible data-loss →
-  Issue #1797, + 3 LOW), 45 clean, 2 superseded. **The next sweep resumes from
-  #1796** (same recipe; sha-resolved variant recipe in the Batch 13 header for
-  gh-less environments).
+  Issue #1797, + 3 LOW), 45 clean, 2 superseded. **Batch 19 (2026-07-12) extended
+  the frontier to #1876** — 72 PRs (#1796–#1876), 5 findings (2 MEDIUM + 3 LOW),
+  65 clean, 2 superseded, 0 user-visible. **The next sweep resumes from #1877**
+  (same recipe; sha-resolved variant recipe in the Batch 13 header for gh-less
+  environments).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;
@@ -292,6 +294,23 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   User-visible ones → GitHub Issues per ADR-0014 when actioned.)_
 
 <!-- Batches appended at the top. -->
+
+## Batch 19 — #1876–#1796 (72-PR sweep, 2026-07-12)
+
+Coverage: **72 reviewed — 5 with findings, 65 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 2 MEDIUM, 3 LOW.** Incremental on top of the Batch 18 frontier: everything merged after #1795 up to develop @ `b4227fd5`. **The frontier is now #1–#1876 contiguous; the next sweep resumes from #1877.** Survivor-filtered against origin/develop. (Same sha-resolved workflow + reviewer model as Batches 13–18; 72/72 returned, 0 died; ~25 min, ~2.64M tokens.) **All 5 findings are `userVisible:false` → NO GitHub Issues; backlog only per ADR-0014.** Cleanest batch by rate yet (90% clean). Headline is the #1840 Lua-consent TOCTOU — a safety-gate hardening gap (candidate for elevation to an Issue if the local-file-swap threat model is in scope).
+
+### MEDIUM (2)
+- **#1840 (7f8f5bad) · `Source/Core/src/AppController_LuaScriptFiles.cpp:263`** — **consent TOCTOU**: `IsLuaScriptConsented` reads the script bytes to fingerprint them then discards them, and callers re-read the file separately via sol `load_file`/`script_file` (`AppController_LuaBindings.cpp:415/568/647`) — two independent disk reads, violating the consent core's documented "hash-then-load on one read" invariant (`LuaScriptConsent.h` L33-35). A file swapped between the consent read and the loader read runs **unapproved content**. Fix: return the hashed bytes from the consent check and hand those exact bytes to the Lua loader (sol load/script from the in-memory buffer) so check and execution operate on the same bytes. _(Adversary-required hardening gap → backlog per the reviewer's userVisible:false; elevate to an Issue if local-FS-race is in the threat model.)_
+- **#1815 (b656738d) · `docs/plans/active/n4-trackeractions-interface.md:21`** — broken cross-refs: cites `docs/plans/appcontroller-fan-in-phase5-facets.md` and `…-phase6-dissolution.md`, but both live at `docs/plans/shipped/…` (recurs at :143 and :162). Bare inline code-spans, so the ref-integrity gate doesn't catch them. Fix: add the `shipped/` prefix to all three.
+
+### LOW (3)
+- **#1834 (c0fd3ac4) · `Source/Core/src/Diagnostics/EngineContextFormat.cpp:76`** — `AppendPieState` / `AppendSelectedActors` (:100-101) call nlohmann `value()` on nested keys without a type check; a mistyped nested field (`{"pie":{"active":"yes"}}`, actor `label:42`) throws `type_error.302`, contradicting the header's "every helper tolerates mistyped keys by skipping the field" claim. The `LaunchBackgroundTask` firewall contains the throw (no crash) but the entire prefill is dropped rather than the offending field. Fix: `is_boolean()`/`is_string()` guards matching the `StrField` pattern; add a nested-mistype test.
+- **#1831 (fa21e318) · `Source/Core/src/AttachmentAppUpdateService.cpp:325`** — comment (:304-308) claims a revoked-but-cached cert still fails, but the code sets `fdwRevocationChecks = WTD_REVOKE_NONE`, disabling ALL revocation checking; `WTD_CACHE_ONLY_URL_RETRIEVAL` is a no-op unless revocation is enabled, so a known-revoked cert chaining to a trusted root would pass — weaker than documented. Fix: set `WTD_REVOKE_WHOLECHAIN` (keeping cache-only for offline) to match intent, or correct the comment.
+- **#1868 (1778bd0e) · `docs/plans/deferred/subagent-eval-flywheel.md:5`** — status line cites `docs/plans/subagent-eval-agentic-coverage.md`; the file lives at `docs/plans/active/…` (every other ref uses the `active/` prefix). Fix: add `active/`.
+
+**Clean (65, surviving lines reviewed, no findings):** #1876, #1875, #1873, #1872, #1871, #1869, #1867, #1865, #1864, #1863, #1862, #1861, #1860, #1859, #1858, #1857, #1855, #1853, #1852, #1851, #1849, #1848, #1847, #1846, #1845, #1844, #1843, #1842, #1841, #1839, #1838, #1837, #1836, #1835, #1833, #1832, #1830, #1829, #1828, #1827, #1826, #1825, #1824, #1823, #1822, #1821, #1819, #1818, #1817, #1816, #1814, #1813, #1812, #1811, #1810, #1809, #1807, #1806, #1805, #1804, #1803, #1801, #1800, #1799, #1798.
+
+**Fully superseded (2, no review surface):** #1820, #1796 — every introduced line was changed/removed by a later PR; excluded by construction.
 
 ## Batch 18 — #1795–#1738 (55-PR sweep, 2026-07-11)
 
