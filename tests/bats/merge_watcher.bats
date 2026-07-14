@@ -122,18 +122,35 @@ watch_cli() {
 
 # ---------- cross-poll nudge/STALE persistence (registry-counter, mirrors cr_none_grace) ----------
 
-@test "_parse_gate_carry extracts nudge_head/stale_head/stale_streak; None when absent" {
+@test "_parse_gate_carry extracts nudge/stale/none head+streak; None when absent" {
     run python - <<'PY'
 import importlib.util, os, sys
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-got = m._parse_gate_carry("Poll 1/1 — CI: ...\nGATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5\n")
-assert got == {"nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5}, got
+# Full five-field GATE_CARRY line (merge-gates.sh emits none_head/none_streak too).
+got = m._parse_gate_carry(
+    "Poll 1/1 — CI: ...\n"
+    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7\n"
+)
+assert got == {
+    "nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5,
+    "none_head": "nnn", "none_streak": 7,
+}, got
 assert m._parse_gate_carry("no carry line here") is None
-g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0")
-assert g2 == {"nudged_head": "", "stale_head": "", "stale_streak": 0}, g2
+# Empty values -> zeros/blanks.
+g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0")
+assert g2 == {
+    "nudged_head": "", "stale_head": "", "stale_streak": 0,
+    "none_head": "", "none_streak": 0,
+}, g2
+# Legacy line without the none_* fields (older merge-gates.sh) -> none defaults.
+g3 = m._parse_gate_carry("GATE_CARRY nudge_head=a stale_head=b stale_streak=2")
+assert g3["none_head"] == "" and g3["none_streak"] == 0, g3
+# Non-numeric none_streak -> 0 (never raises).
+g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN")
+assert g4["none_streak"] == 0, g4
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -280,7 +297,7 @@ print('s2:', e2.get('merge_snapshot'))
     [ "$output" -eq 1 ]
 }
 
-@test "_bump_nudge_state persists nudged_head/stale_head/stale_streak into the registry entry" {
+@test "_bump_nudge_state persists nudge/stale/none head+streak into the registry entry" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
     # Single self-contained block: load the module, read the registered entry's
@@ -294,11 +311,18 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 entries = m._CLI.read_registry()
 assert entries, "no registry entries after register"
 clone = entries[0]["clone_path"]
-m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4)
+# Pass all five fields incl. the new none_head/none_streak (core-scripts-python-04).
+m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6)
 e = m._CLI.read_registry()[0]
 assert e["nudged_head"] == "headSHA999", e
 assert e["stale_head"] == "headSHA999", e
 assert e["stale_streak"] == 4, e
+assert e["none_head"] == "noneHEAD", e
+assert e["none_streak"] == 6, e
+# Backward-compat: the two none_* params default so an older call site still works.
+m._bump_nudge_state(999, clone, "h2", "h2", 1)
+e2 = m._CLI.read_registry()[0]
+assert e2["none_head"] == "" and e2["none_streak"] == 0, e2
 print("OK")
 PY
     [ "$status" -eq 0 ]
