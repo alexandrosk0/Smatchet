@@ -308,7 +308,7 @@ void RegisterTicketsMonitorCommand(CommandRegistry& reg) {
 
 } // namespace
 
-void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
+void RegisterConfigCommands(CommandRegistry& reg) {
     RegisterConfigPathCommand(reg);
     RegisterConfigGetCommand(reg);
     RegisterConfigReloadCommand(reg);

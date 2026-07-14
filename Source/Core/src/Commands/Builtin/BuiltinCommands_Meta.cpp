@@ -176,7 +176,7 @@ void RegisterCommandsRecentsCommand(CommandRegistry& reg) {
 
 } // namespace
 
-void RegisterMetaCommands(CommandRegistry& reg, AppController& /*app*/) {
+void RegisterMetaCommands(CommandRegistry& reg) {
     RegisterCommandsListCommand(reg);
     RegisterCommandsHelpCommand(reg);
     RegisterCommandsSearchCommand(reg);

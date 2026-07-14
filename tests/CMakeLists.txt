@@ -846,14 +846,17 @@ add_executable(SmatchetTests
     # bodies in the OpenCppCoverage denominator). Fake IApp* facets live in the test.
     # CommandRegistry.cpp + FuzzyMatch.cpp join so Dispatch (confirm gate, validation,
     # alias + fuzzy resolution) runs for real; their deps (ConfigManager, Logger,
-    # BoundedJsonParse) are already linked. The AppController-coupled Builtin TUs
-    # (Meta/Config/Perf/Fields/Ai) and the UI-session ones (Debug/Ui/BugReport/
-    # Scenario/UiTest) stay out — they are the SmatchetCommandsTests lane's job.
+    # BoundedJsonParse) are already linked. Meta/Config take no app object (registry-
+    # introspection + ConfigManager singleton), so they join here too. The remaining
+    # AppController-coupled Builtin TUs (Perf/Fields/Ai) and the UI-session ones
+    # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_App.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Meta.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Config.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Tickets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Sync.cpp"
