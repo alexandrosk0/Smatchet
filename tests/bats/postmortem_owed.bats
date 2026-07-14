@@ -57,6 +57,12 @@ setup() {
 set -euo pipefail
 case "$1" in
     auth) exit 0 ;;
+    repo)
+        # `gh repo view --json nameWithOwner --jq .nameWithOwner` (resolve-repo.sh).
+        # Emit $STUB_REPO_SLUG when set; otherwise fail (unresolvable) so the
+        # advisory degrade path can be exercised with REPO unset.
+        if [ -n "${STUB_REPO_SLUG:-}" ]; then echo "$STUB_REPO_SLUG"; exit 0; fi
+        exit 1 ;;
     pr)
         case "${2:-}" in
             list)
@@ -564,6 +570,9 @@ JSON
     # constant now lives in 00-common.sh) — the fixture must carry them or the
     # source aborts and postmortem-owed.sh refuses fail-closed (false negative).
     cp -r "$REPO_ROOT/agents/scripts/core/merge-gates.d" "$FIX_REPO/agents/scripts/core/"
+    # postmortem-owed.sh now sources lib/resolve-repo.sh (core-scripts-bash-07);
+    # the fixture must carry it or the `. lib/resolve-repo.sh` aborts under set -e.
+    cp -r "$REPO_ROOT/agents/scripts/core/lib" "$FIX_REPO/agents/scripts/core/"
     if [ -f "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" ]; then
         cp "$REPO_ROOT/agents/scripts/core/merge-gates-prompt.sh" "$FIX_REPO/agents/scripts/core/"
     fi
@@ -621,4 +630,34 @@ JSON
     run bash "$SCRIPT" --blocking
     [ "$status" -eq 0 ]
     [[ "$output" == *"postmortem owed: PR #9104"* ]]
+}
+
+# ============================================================================
+# Repo-slug resolution (core-scripts-bash-07) — no hardcoded fallback
+# ============================================================================
+
+@test "REPO unset + gh cannot resolve slug -> advisory skip, exit 0 (no hardcoded fallback)" {
+    # Drop the $REPO seam and leave STUB_REPO_SLUG unset so the stub gh's
+    # `repo view` exits non-zero: resolve_repo returns unresolvable and the
+    # advisory detector must skip cleanly (exit 0), never fall back to a
+    # hardcoded owner/name.
+    unset REPO
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"cannot resolve repo"* ]]
+    [[ "$output" != *"alexandrosk0"* ]]
+}
+
+@test "REPO unset + gh resolves slug -> detector runs against the derived repo" {
+    # With STUB_REPO_SLUG set, resolve_repo derives the slug via gh and the
+    # detector proceeds normally (clean fixture -> owes nothing).
+    unset REPO
+    export STUB_REPO_SLUG="derived/repo"
+    prlist <<'JSON'
+[{"number":2002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run bash "$SCRIPT" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no gate escapes owed"* ]]
 }

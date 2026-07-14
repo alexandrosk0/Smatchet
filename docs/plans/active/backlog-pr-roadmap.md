@@ -2,7 +2,7 @@
 
 > **Slug**: `backlog-pr-roadmap` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — a living tracker, not a single-feature plan. **Substantially shipped** as of the 2026-06-20 campaign: 17 of 23 PR groups landed (#1502-1518); 6 remain `deferred` (visual / hardware / decision-gated), so the doc stays `active` until those are resolved or retired. Each PR group's row carries its `shipped #N` / `deferred — <reason>` status. This file flips to `shipped` and moves to `docs/plans/shipped/` only once the roadmap is exhausted or explicitly retired.
+> **Status**: `active` — a living tracker, not a single-feature plan. **Substantially shipped** as of the 2026-06-20 campaign: 17 of 23 PR groups landed (#1502-1518); 6 were then `deferred` (visual / hardware / decision-gated). A **2026-07-14 validity re-sweep** (this branch) re-verified every deferred row against `develop`: 3 of the 6 have since shipped in follow-up PRs (PR-10 all-but-one-scenario, PR-11, PR-18), PR-13b's bug fixes landed and PR-13c was **closed as unsound** (see § Deviations), leaving **3 genuinely-open groups** — PR-14 (coverage ramp, measurement-gated), PR-19 (DX12 readback, hardware-blocked), PR-21 (per-pane catalog, grid behavior) — plus one bucket-E residue (PR-10 `user-info-window`). Each PR group's row carries its `shipped #N` / `deferred — <reason>` status. This file flips to `shipped` and moves to `docs/plans/shipped/` only once the roadmap is exhausted or explicitly retired.
 
 ## Context
 
@@ -13,6 +13,19 @@ Source data: the trap-sweep run (`wux8jz521`, run `wf_ca0057a0-57d`). Reconcilia
 ### Roadmap triple-check (2026-06-20)
 
 2026-06-20 campaign: 17 of 23 groups shipped (#1502-1518); 6 deferred (visual/hardware/decision). See per-row status.
+
+### Validity re-sweep (2026-07-14)
+
+Re-verified the 6 deferred rows against `develop` @ HEAD (branch `claude/backlog-pr-roadmap-validity-*`). Findings, each git-cited:
+
+- **PR-10** (bucket-E grid/views/UI): 6 of 7 members shipped — `views-editor-field-selection` #1793, `help-marker-hover-fallback` #1790, `keybindings-editor-rebind` #1810, `multigrid-slice3` #1794, `data-dependent-windows` #1795, `grid-description-tooltip` (`tests/ui/description_tooltip_markdown_render.test.cpp`). **Residue: `user-info-window-bucket-e-coverage`** — no `tests/ui/*user_info*` bucket-E scenario exists (`tests/Core/UserInfoActivityCancelUaf.test.cpp` is a Core UAF regression, not the window smoke).
+- **PR-11** (bucket-E AI chat): **fully shipped** — clear-confirm #1796, copy-to-clipboard #1799, pin + keyboard-nav + history-persist #1821 (all 5 scenarios).
+- **PR-13b** (prefs-UI bugs): shipped — assistant Anthropic base-URL field + `SeedDefaultWhisperModel` default present in `SmatchetPreferencesUi_{Assistant,Whisper}.cpp`; prefs bucket-E coverage under `tests/ui/ai_assistant_preferences_*`.
+- **PR-13c** (`imgui-define-macro`): **closed — UNSOUND**, not deferrable. See § Deviations. Logged in `docs/self-improvement/categories/applied.md` (2026-06-20), halted during PR-13a (#1515).
+- **PR-18** (pink-clear dock-gap): shipped — `DockGapSentinelScenario.cpp` arms the magenta `(255,0,255)` clear; `tests/bats/bucket_lane_launch_smoke.bats` asserts the zero-pink-pixel scan.
+- **PR-9 follow-up** (case-8 self-activation): shipped — `SMATCHET_UITEST_WITH_LOCAL_CACHE` opt-in wired in `UiTestScenario.cpp` + `AppController_LocalCacheDb.cpp`.
+
+Still genuinely open: **PR-14** (threshold still `65` in `project.config.json` + `coverage.yml`), **PR-19** (only a Slate-backbuffer log line exists; no `CopyResource`→readback→PPM path — needs an Unreal/DX12 build env), **PR-21** (`resolvePaneCatalog`/`ChoosePaneCatalogSource` absent from the tree).
 
 This revision was verified before publish:
 
@@ -65,22 +78,23 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Members | Status |
 |---|---|---|
-| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | shipped #1518 (case-8 self-activation = follow-up) |
-| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | deferred — screenshot baselines need golden-image approval (user) |
-| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | deferred — screenshot baselines need golden-image approval (user) |
+| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | shipped #1518 (case-8 self-activation follow-up shipped — `SMATCHET_UITEST_WITH_LOCAL_CACHE`) |
+| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | shipped 6/7 (#1793/#1790/#1810/#1794/#1795 + description-tooltip) — **residue: `user-info-window-bucket-e-coverage` (open)** |
+| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | shipped #1796/#1799/#1821 (all 5 scenarios) |
 
 ### AI / assistant subsystem (owner: tracker-backend / test-rig)
 
 | PR | Members | Status |
 |---|---|---|
 | PR-12 AI client tests | `aiclientcancel-per-client-regression`, `per-client-error-body-redaction-gate`, `aiassistant-streaming-scenarios-s2-s4-s5` | shipped #1513 |
-| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | PR-13a shipped #1515; PR-13b (prefs-UI) deferred-visual; PR-13c (imgui-macro) deferred-respec |
+| PR-13 AI prefs/controller bug fixes | `assistant-prefs-3-bugs`, `aiassistantcontroller-3-loads`, `whisper-prefs-4-bugs`, `imgui-define-macro`, `whisper-local-backend-default-flip-decision` | PR-13a shipped #1515; PR-13b (prefs-UI) shipped (base-URL + whisper-default; #1819); PR-13c (imgui-macro) **closed — UNSOUND** (applied.md 2026-06-20, see § Deviations) |
 
 ### Coverage / build / hygiene / infra
 
 | PR | Members | Owner | Status |
 |---|---|---|---|
 | PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | shipped #1854 — 49 JiraClient HTTP-fixture tests lifted measured line coverage 67%→71%; threshold flipped 65→70 (measured headroom) |
+| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | **open** (re-verified 2026-07-14: threshold still `65`) — flip needs measured headroom; add tests first |
 | PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build-doctor | shipped #1516 |
 | PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | git-janitor | shipped #1512 |
 | PR-17 Ship-loop discipline rules (docs) | `not-started-status-verified-against-merged-code`, `review-before-commit-hardening`, `adversarial-rca-before-coding`, `security-review-plan-time-trust-boundary`, `ship-time-issue-elevation-check`, `exe-auto-launch-diff-trigger`, `ci-config-slice-dup-preflight` | docs | shipped #1508 |
@@ -89,10 +103,10 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Member | Owner | Status |
 |---|---|---|---|
-| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | deferred — touches main.cpp clear-color/rendering (visual) |
-| PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | deferred — needs Unreal/DX12 build environment (visual) |
+| PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | shipped — `DockGapSentinelScenario` magenta clear + `bucket_lane_launch_smoke.bats` zero-pink assertion |
+| PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | **open** (re-verified 2026-07-14: no readback path present) — needs Unreal/DX12 build environment (visual) |
 | PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | shipped #1517 |
-| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | deferred — grid behavior change (visual validation) |
+| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | **open** (re-verified 2026-07-14: `resolvePaneCatalog`/`ChoosePaneCatalogSource` absent) — grid behavior change (visual validation) |
 | PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | shipped #1514 (bounded de-smatchetify) |
 | PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | shipped #1507 |
 
@@ -235,8 +249,24 @@ Per `AGENTS.md` § Project rules — this is a pure-docs roadmap; no build/test 
 *(populated as PR groups land — bullet per shipped member: `#N · PR-<k> <slug> shipped`)*
 - `#1854` · PR-14 `backend-impl-coverage-recovery` + `raise-core-coverage-67-to-70` shipped (2026-07-14) — 49 JiraClient HTTP-fixture doctest cases (JiraUserAndMeta / JiraIssueSearch / JiraIssueMutation comment+worklog) lifted measured line coverage 67%→71% (OpenCppCoverage), clearing the ramp target with headroom. Blocking floor raised 65→70 in `project.config.json` + `coverage.yml`. The `coverage-out-of-band` label is kept (serves the #939-class structural-expansion escape, not just the ramp).
 
+- 2026-06-20 campaign · PR-1..9, 12, 13a, 15, 16, 17, 20, 22, 23 shipped (#1502-1518).
+- Post-campaign follow-ups (verified 2026-07-14 re-sweep):
+  - `#1518-followup` · PR-9 `case-8 self-activation` shipped — `SMATCHET_UITEST_WITH_LOCAL_CACHE`.
+  - `#1794` · PR-10 `multigrid-slice3-lifecycle-bucket-e` shipped.
+  - `#1793` · PR-10 `views-editor-field-selection-bucket-e` shipped.
+  - `#1790` · PR-10 `help-marker-hover-fallback-bucket-e` shipped.
+  - `#1810` · PR-10 `keybindings-editor-rebind-bucketE-residue` shipped.
+  - `#1795` · PR-10 `data-dependent-windows-bucket-e-render` shipped (all listed windows covered).
+  - `—` · PR-10 `grid-description-tooltip-bucket-e` shipped (`tests/ui/description_tooltip_markdown_render.test.cpp`).
+  - `#1796 / #1799 / #1821` · PR-11 `ai-chat-bucket-e-coverage` shipped (all 5 scenarios).
+  - `#1819` · PR-13b `assistant-prefs` / `whisper-prefs` bug fixes shipped (base-URL field + `SeedDefaultWhisperModel`).
+  - `—` · PR-18 `pink-clear-dock-gap-scan` shipped (`DockGapSentinelScenario` + `bucket_lane_launch_smoke.bats`).
+
 ## Deviations from plan
 *(populated as the roadmap is revised — regrouping, reprioritisation, new entries from future sweeps)*
+
+- **2026-07-14 · PR-13c `imgui-define-macro` reclassified `deferred-respec` → `closed — UNSOUND`.** The original deliverable (replace `#define ImGui SmatchetLocalizedImGui` with `using namespace SmatchetLocalizedImGui;`) is wrong by construction: every call site is the **qualified** name `ImGui::Foo`, which the `#define` textually rewrites to `SmatchetLocalizedImGui::Foo`, but a `using namespace` directive does **not** redirect qualified-name lookup — so `ImGui::Foo` would bind to the real `::ImGui::Foo`, compiling clean while silently skipping the localization overrides (`LabelFromSource`/`TranslateSource`/`WindowTitleFromSource`) across ~40 TUs. `SmatchetUI_Internal.h` documents the qualified-rewrite as deliberate. A clean-compiling silent i18n regression is worse than a build break; halted during PR-13a (#1515), logged in `docs/self-improvement/categories/applied.md`. No further work owed — the macro is load-bearing and stays.
+- **2026-07-14 · 3 of 6 deferred groups had already shipped** (PR-10 all-but-`user-info`, PR-11, PR-18) — the doc's status rows were stale by ~3 weeks. Reconciled above; remaining open set is PR-14, PR-19, PR-21, plus the PR-10 `user-info-window` bucket-E residue.
 
 ## Verification (actual)
 *(populated post-ship)*

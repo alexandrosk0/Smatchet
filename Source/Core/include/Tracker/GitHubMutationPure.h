@@ -30,19 +30,32 @@ namespace github {
 ///   title); PATCH wants the milestone NUMBER. An all-digit value is used as the number
 ///   directly; anything else sets `NeedsMilestoneResolve` and the caller looks the
 ///   title up via GET /repos/{o}/{r}/milestones.
+/// One Projects v2 field edit carried through the fields payload: the target
+/// field's GraphQL node id plus the ready `ProjectV2FieldValue` object (JSON
+/// null = clear). Built by GitHubClient::BuildFieldPayload (which owns the
+/// grid-string → typed-value conversion, having the catalog TrackerField);
+/// executed by UpdateIssueFields via updateProjectV2ItemFieldValue.
+struct GitHubProjectV2Edit {
+    std::string FieldNodeId;
+    nlohmann::json Value;
+};
+
 struct GitHubIssueUpdatePlan {
     nlohmann::json PatchBody = nlohmann::json::object();
     bool HasLabelsEdit = false;
     std::vector<std::string> LabelsIntended;
     bool NeedsMilestoneResolve = false;
     std::string MilestoneTitle;
+    std::vector<GitHubProjectV2Edit> ProjectV2Edits;
 };
 
 /// Translate a catalog-id-keyed fields payload into the PATCH plan. Editable ids:
 /// `summary` (→ title; non-empty required), `description` (→ body; empty clears),
 /// `status` (→ state; "open"/"closed", case-insensitive), `assignee` (→ assignees;
 /// JSON string array or CSV string, empty clears), `labels` (array or CSV; empty
-/// clears all), `milestone` (empty clears). Any other id → Err (read-only on GitHub).
+/// clears all), `milestone` (empty clears). A "pv2."-prefixed id (Projects v2 custom
+/// field) expects the `{"fieldId": ..., "value": ...}` object BuildFieldPayload emits
+/// and collects into `ProjectV2Edits`. Any other id → Err (read-only on GitHub).
 /// A leading "[PR] " on summary is stripped — it is the grid's display prefix
 /// (`GitHubIssueSearchMapping`), not part of the real title; without the strip a PR
 /// title edit would compound the prefix on every round-trip.

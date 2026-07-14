@@ -288,6 +288,18 @@ struct FakeAutomation : IAppAutomation {
     void RunFlatScriptAsync(const std::string& scriptPath) override { LastFlatScript = scriptPath; }
     void RunLuaSetupScript(const std::string& scriptPath) override { LastSetupScript = scriptPath; }
     std::vector<std::string> GetLuaGlobalActionNames() const override { return {"alpha", "beta"}; }
+    bool ApproveLuaScript(const std::string& scriptName, std::string&) override {
+        LastApprovedScript = scriptName;
+        return true;
+    }
+    bool RevokeLuaScript(const std::string& scriptName, std::string&) override {
+        LastRevokedScript = scriptName;
+        return true;
+    }
+    std::vector<std::string> ListApprovedLuaScriptPaths() const override { return ApprovedPaths; }
+    std::string LastApprovedScript;
+    std::string LastRevokedScript;
+    std::vector<std::string> ApprovedPaths;
 };
 
 // The doctest rig is single-threaded, so "already on the UI thread" is the truthful

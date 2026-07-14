@@ -24,6 +24,7 @@
 // SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include "AttachmentMimeUtils.h"
 #include "ConfigManager.h"
+#include "EnvUtil.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "SemanticVersionPure.h"
@@ -220,32 +221,12 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     return true;
 }
 
-std::string ReadEnvString(const char* name) {
-#if defined(_WIN32) && defined(_MSC_VER)
-    // MSVC: getenv is deprecated (C4996); _dupenv_s is not linked the same way on MinGW.
-    char* buf = nullptr;
-    size_t sz = 0;
-    if (_dupenv_s(&buf, &sz, name) != 0 || !buf) {
-        if (buf) {
-            std::free(buf);
-        }
-        return {};
-    }
-    std::string out(buf);
-    std::free(buf);
-    return out;
-#else
-    const char* env = std::getenv(name);
-    return env ? std::string(env) : std::string();
-#endif
-}
-
 std::string GetTempDir() {
-    std::string t = ReadEnvString("TEMP");
+    std::string t = smatchet::env::ReadVar("TEMP");
     if (!t.empty()) {
         return t;
     }
-    t = ReadEnvString("TMP");
+    t = smatchet::env::ReadVar("TMP");
     if (!t.empty()) {
         return t;
     }
@@ -356,7 +337,7 @@ long VerifyInstallerAuthenticodeStatus(const std::string& filePath) {
 
 bool IsUpdateUnsignedOverrideSet() {
     const std::string value =
-        ToLowerAsciiCopy(TrimCopyAsciiWhitespace(ReadEnvString("SMATCHET_UPDATE_ALLOW_UNSIGNED")));
+        ToLowerAsciiCopy(TrimCopyAsciiWhitespace(smatchet::env::ReadVar("SMATCHET_UPDATE_ALLOW_UNSIGNED")));
     return value == "1" || value == "true" || value == "yes";
 }
 #endif

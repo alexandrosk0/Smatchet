@@ -76,7 +76,16 @@ esac
 # --list / --nudge (those never block).
 BLOCKING_GRACE="${POSTMORTEM_BLOCKING_GRACE:-0}"
 
-REPO="${REPO:-alexandrosk0/Smatchet}"
+# Resolve the target repo dynamically (no hardcoded slug — core-scripts-bash-07).
+# $REPO overrides (test seam); else derive via gh. Advisory degrade: if the slug
+# can't be resolved (gh absent / unauthenticated / not a gh checkout) there is no
+# repo to scan, so exit 0 with a notice — same fail-open as the gh check below.
+# shellcheck source=agents/scripts/core/lib/resolve-repo.sh
+. "$SCRIPT_DIR/lib/resolve-repo.sh"
+if ! REPO="$(resolve_repo)"; then
+    case "$MODE" in list|blocking) echo "postmortem-owed: cannot resolve repo (set REPO=owner/name or authenticate gh) — skipped (advisory)" >&2 ;; esac
+    exit 0
+fi
 LEDGER="${POSTMORTEM_LEDGER:-docs/self-improvement/postmortems.md}"
 CONFIG_FILE="${POSTMORTEM_CONFIG_FILE:-project.config.json}"
 SCAN_N="${POSTMORTEM_SCAN_N:-20}"

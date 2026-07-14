@@ -148,6 +148,20 @@ Result<GitHubIssueUpdatePlan, std::string> BuildGitHubIssueUpdatePlan(const nloh
                 plan.NeedsMilestoneResolve = true; // display title — caller resolves the number
                 plan.MilestoneTitle = milestone;
             }
+        } else if (id.compare(0, 4, "pv2.") == 0) {
+            // Projects v2 edit — BuildFieldPayload embedded the field node id and the
+            // ready ProjectV2FieldValue (null = clear); a bare string here means the
+            // offline queue's verbatim fallback ran without the catalog, which cannot
+            // carry the node id — reject with a pointer at the real path.
+            if (!value.is_object() || !value.contains("fieldId") || !value["fieldId"].is_string()) {
+                return PlanResult::Err("GitHub project field '" + id +
+                                       "' needs the catalog-built payload (fieldId + value); re-apply the edit "
+                                       "from the grid");
+            }
+            GitHubProjectV2Edit edit;
+            edit.FieldNodeId = value["fieldId"].get<std::string>();
+            edit.Value = value.contains("value") ? value["value"] : nlohmann::json(nullptr);
+            plan.ProjectV2Edits.push_back(std::move(edit));
         } else {
             return PlanResult::Err("GitHub field '" + id + "' is not editable");
         }

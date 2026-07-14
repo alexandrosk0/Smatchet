@@ -1,5 +1,5 @@
-// GitHubIssueSearchMapping doctest — pure JSON → CachedTicket mapping +
-// per-PR field enrichment helper. PR12 of docs/plans/shipped/github-tracker-backend.md.
+// GitHubIssueSearchMapping doctest — pure JSON → CachedTicket mapping + per-PR field
+// enrichment helper (the mapping slice of docs/plans/shipped/github-tracker-backend.md).
 
 #include "GitHubIssueSearchMapping.h"
 
@@ -894,4 +894,36 @@ TEST_CASE("MapGraphQlNodesToTickets — hostile node array skips bad rows, never
     // The one well-formed Issue node maps through; every hostile node is skipped.
     REQUIRE(tickets.size() == 1);
     CHECK(tickets[0].id == "alexandrosk0/Smatchet#11");
+}
+
+TEST_CASE("AppendGitHubReposAsRemoteProjects — /user/repos page → owner/repo picker rows") {
+    using smatchet::github::AppendGitHubReposAsRemoteProjects;
+    std::vector<RemoteProject> out;
+    SUBCASE("well-formed repos map id/key/displayName; malformed rows are skipped") {
+        const nlohmann::json page = nlohmann::json::array({
+            nlohmann::json{{"id", 42}, {"full_name", "acme/widgets"}},
+            nlohmann::json{{"id", 7}, {"full_name", "acme/tools"}, {"private", true}},
+            nlohmann::json{{"id", 9}},                                   // no full_name
+            nlohmann::json{{"id", 10}, {"full_name", "no-slash"}},       // not owner/repo shaped
+            nlohmann::json{{"id", 11}, {"full_name", "/leading-slash"}}, // empty owner
+            nlohmann::json{{"full_name", "acme/no-id"}},                 // no id
+            nlohmann::json{{"id", 0}, {"full_name", "acme/zero-id"}},    // non-positive id
+            nlohmann::json(nullptr),                                     // hostile element
+        });
+        AppendGitHubReposAsRemoteProjects(page, out);
+        REQUIRE(out.size() == 2);
+        CHECK(out[0].id == "42");
+        CHECK(out[0].key == "acme/widgets"); // feeds IssueDraft::ProjectKey's owner/repo split
+        CHECK(out[0].displayName == "acme/widgets");
+        CHECK(out[1].key == "acme/tools");
+    }
+    SUBCASE("appends across pages; a non-array page is a no-op") {
+        out.push_back(RemoteProject());
+        AppendGitHubReposAsRemoteProjects(nlohmann::json::object(), out);
+        AppendGitHubReposAsRemoteProjects(nlohmann::json(nullptr), out);
+        CHECK(out.size() == 1);
+        AppendGitHubReposAsRemoteProjects(nlohmann::json::array({nlohmann::json{{"id", 1}, {"full_name", "a/b"}}}),
+                                          out);
+        CHECK(out.size() == 2);
+    }
 }

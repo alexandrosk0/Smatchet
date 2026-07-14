@@ -2,14 +2,16 @@
 // fixture coverage for the `GitHubClient.cpp` shell methods that carry an explicit
 // TrackerConfig (probe, comment post, the streamed-fetch shim, per-key fetch). A real
 // `GitHubClient` is driven at an in-process httplib loopback over real cpr HTTP. The
-// cfg-less paths (FetchIssueComments / CreateIssue / UpdateField) resolve credentials
-// from the on-disk ConfigManager and are deliberately out of scope here — the doctest
-// rig must not depend on (or mutate) the container's real config file.
+// cfg-less MUTATION paths (FetchIssueComments / CreateIssue / UpdateField) live in
+// GitHubIssueMutationHttp.test.cpp; the one cfg-less READ path covered here
+// (ListProjects) runs under TestEnvGuard so the rig never touches the container's
+// real config file.
 // Characterization tests — they pin CURRENT behaviour of the shipped shell.
 
 #include "GitHubClient.h"
 #include "HttpRequestCapture.h"
 #include "JiraCatalogHttpFixture.h"
+#include "TestEnvGuard.h"
 
 #include <doctest/doctest.h>
 
@@ -171,5 +173,42 @@ TEST_CASE("GitHub per-key fetch — the class shim resolves live-cfg credentials
         REQUIRE(r.has_value());
         REQUIRE(r.value().size() == 1);
         CHECK(r.value()[0].id == "o/r#4");
+    }
+}
+
+TEST_CASE("GitHub ListProjects — paginated /user/repos → owner/repo picker rows") {
+    smatchet_tests::TestEnvGuard guard;
+    JiraCatalogHttpFixture fx;
+    {
+        // ListProjects is cfg-less (interface has no cfg parameter) — persist the
+        // loopback config into the guard's private dir so ResolveAuth finds it.
+        TrackerConfig cfg = ConfigManager::Load();
+        cfg.TrackerType = "github";
+        cfg.GitHubBaseUrl = "http://127.0.0.1:" + std::to_string(fx.Port());
+        cfg.GitHubPat = "loopback-pat";
+        ConfigManager::Save(cfg);
+    }
+    GitHubClient client("http://bogus.invalid", "ctor-pat");
+
+    SUBCASE("short page ends the walk; rows carry full_name as key and displayName") {
+        fx.ScriptJson("/user/repos", nlohmann::json::array({nlohmann::json{{"id", 42}, {"full_name", "acme/widgets"}},
+                                                            nlohmann::json{{"id", 7}, {"full_name", "acme/tools"}}}));
+        const std::vector<RemoteProject> projects = client.ListProjects();
+        REQUIRE(projects.size() == 2);
+        CHECK(projects[0].id == "42");
+        CHECK(projects[0].key == "acme/widgets"); // feeds IssueDraft::ProjectKey
+        CHECK(projects[1].displayName == "acme/tools");
+        CHECK(fx.RequestCount("/user/repos") == 1); // 2 < per_page → no second page requested
+    }
+    SUBCASE("an HTTP error degrades to an empty list (picker falls back to configured repo)") {
+        fx.ScriptStatus("/user/repos", 401);
+        CHECK(client.ListProjects().empty());
+    }
+    SUBCASE("a cleared PAT fails fast without HTTP") {
+        TrackerConfig cfg = ConfigManager::Load();
+        cfg.GitHubPat.clear();
+        ConfigManager::Save(cfg);
+        CHECK(client.ListProjects().empty());
+        CHECK(fx.RequestCount("/user/repos") == 0);
     }
 }

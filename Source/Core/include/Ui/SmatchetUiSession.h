@@ -525,6 +525,9 @@ struct UiDrawSession {
     char githubPatBuf[512]{};
     char githubOwnerBuf[128]{};
     char githubRepoBuf[128]{};
+    // Projects v2 board number under Owner; 0 = no board
+    // (docs/plans/shipped/github-projects-v2-fields.md).
+    int githubProjectNumber = 0;
     char linearApiKeyBuf[512]{};
     char linearBaseUrlBuf[256]{};
     char linearTeamKeyBuf[128]{};

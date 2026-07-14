@@ -39,10 +39,13 @@ constexpr int kGitHubMaxPages = 10;
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
+} // namespace
+
 // Resolve the GraphQL endpoint from the REST base URL.
 //   - "https://api.github.com"     → "https://api.github.com/graphql"
 //   - "https://<host>/api/v3"      → "https://<host>/api/graphql"
 // GHE convention: REST lives at `/api/v3`, GraphQL lives at `/api/graphql`.
+// Exported (GitHubIssueSearch.h) — GitHubProjectsV2.cpp shares it.
 std::string ResolveGraphQlEndpoint(const std::string& baseUrl) {
     const std::string kApiV3Suffix = "/api/v3";
     if (baseUrl.size() > kApiV3Suffix.size() &&
@@ -51,6 +54,8 @@ std::string ResolveGraphQlEndpoint(const std::string& baseUrl) {
     }
     return baseUrl + "/graphql";
 }
+
+namespace {
 
 // The GraphQL document. Inline `search()` so we get both Issues and PRs in
 // one round-trip. PullRequest fragment carries the 4 PR-only fields
@@ -132,9 +137,12 @@ std::string BuildGraphQlBody(const std::string& effectiveQuery, const std::strin
     return body.dump();
 }
 
+} // namespace
+
 // Flatten `parsed.errors[]` (when present) into a single human-readable string.
 // Returns empty when no errors. GraphQL HTTP responses can be 200 OK with a
 // non-empty `errors` array — we must surface that as a fatal fetch error.
+// Exported (GitHubIssueSearch.h) — GitHubProjectsV2.cpp shares it.
 std::string ExtractGraphQlErrors(const nlohmann::json& parsed) {
     if (!parsed.is_object()) {
         return std::string();
@@ -159,6 +167,8 @@ std::string ExtractGraphQlErrors(const nlohmann::json& parsed) {
     }
     return out;
 }
+
+namespace {
 
 // Outcome of parsing one GraphQL search-page HTTP response. `Fatal` true means
 // the page is unusable (sets `Error`); otherwise `Tickets` + paging fields are

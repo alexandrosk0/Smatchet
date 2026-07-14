@@ -699,6 +699,12 @@ bool AppController::ScenarioRegisterLuaCachedProvider(const std::string& fieldId
                 if (!fs::is_regular_file(fs::path(path), ec)) {
                     continue;
                 }
+                // Consent gate before auto-loading a probed hook script (UI thread → interactive).
+                std::string consentReason;
+                if (!IsLuaScriptConsented(path, /*interactive=*/true, consentReason)) {
+                    loadErr = path + ": " + consentReason;
+                    continue;
+                }
                 try {
                     sol::protected_function_result r = lua.script_file(path);
                     if (!r.valid()) {
@@ -1098,6 +1104,14 @@ std::string AppController::ExecuteLuaScriptForMcp(const std::string& scriptName,
     if (path.empty()) {
         outError = "Invalid script path";
         LOG_TRACE("ExecuteLuaScriptForMcp: invalid scriptName=%s", scriptName.c_str());
+        return "";
+    }
+    // Consent gate: MCP runs on an httplib worker → non-interactive, fail closed. An unapproved
+    // Scripts/*.lua cannot be run by name via the MCP run_lua(mode="script") surface.
+    std::string consentReason;
+    if (!IsLuaScriptConsented(path, /*interactive=*/false, consentReason)) {
+        outError = consentReason;
+        LOG_TRACE("ExecuteLuaScriptForMcp: consent_blocked path=%s", path.c_str());
         return "";
     }
 

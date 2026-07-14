@@ -581,5 +581,37 @@ std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, 
     return out;
 }
 
+void AppendGitHubReposAsRemoteProjects(const nlohmann::json& reposArray, std::vector<RemoteProject>& out) {
+    if (!reposArray.is_array()) {
+        return;
+    }
+    out.reserve(out.size() + reposArray.size());
+    for (const auto& repo : reposArray) {
+        if (!repo.is_object()) {
+            continue;
+        }
+        const auto nameIt = repo.find("full_name");
+        if (nameIt == repo.end() || !nameIt->is_string()) {
+            continue;
+        }
+        const std::string fullName = nameIt->get<std::string>();
+        // BuildCreatePayload splits ProjectKey on '/' — require the owner/repo shape here
+        // so a malformed row can never produce an unroutable picker entry.
+        const std::size_t slash = fullName.find('/');
+        if (slash == std::string::npos || slash == 0 || slash + 1 >= fullName.size()) {
+            continue;
+        }
+        const auto idIt = repo.find("id");
+        if (idIt == repo.end() || !idIt->is_number_integer() || idIt->get<std::int64_t>() <= 0) {
+            continue;
+        }
+        RemoteProject project;
+        project.id = std::to_string(idIt->get<std::int64_t>());
+        project.key = fullName;
+        project.displayName = fullName;
+        out.push_back(std::move(project));
+    }
+}
+
 } // namespace github
 } // namespace smatchet
