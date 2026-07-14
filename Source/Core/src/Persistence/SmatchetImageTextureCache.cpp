@@ -112,8 +112,8 @@ static bool CreateTextureFromRgba(const std::vector<unsigned char>& pixels, int 
 // to the pure policy so the loop also makes room when the *new* entry is what tips a cap. The
 // `!g_lru.empty()` guard stops a single oversized entry from looping against an empty cache.
 static void EvictToFitUnlocked(std::size_t incomingBytes) {
-    while (!g_lru.empty() && smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes,
-                                                    kMaxCacheEntries, kMaxCacheBytes)) {
+    while (!g_lru.empty() &&
+           smatchet::CacheOverCap(g_lru.size() + 1, g_totalBytes + incomingBytes, kMaxCacheEntries, kMaxCacheBytes)) {
         const std::string victim = g_lru.back();
         g_lru.pop_back();
         const auto it = g_map.find(victim);
@@ -160,8 +160,7 @@ static bool DecodeWithStb(const unsigned char* bytes, size_t byteCount, std::vec
     w = 0;
     h = 0;
     channels = 0;
-    unsigned char* pix =
-        stbi_load_from_memory(bytes, static_cast<int>(byteCount), &w, &h, &channels, STBI_rgb_alpha);
+    unsigned char* pix = stbi_load_from_memory(bytes, static_cast<int>(byteCount), &w, &h, &channels, STBI_rgb_alpha);
     if (pix == nullptr || w <= 0 || h <= 0) {
         if (pix) {
             stbi_image_free(pix);
@@ -220,28 +219,26 @@ bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out) {
     return true;
 }
 
-bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes, size_t byteCount,
-                         SmatchetLoadedIconTexture& out, std::string& outError) {
-    out = {};
-    outError.clear();
+Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes,
+                                                      size_t byteCount) {
+    using R = Result<SmatchetLoadedIconTexture>;
     if (cacheKey.empty() || bytes == nullptr || byteCount == 0) {
-        outError = "Invalid cache key or empty image bytes.";
-        return false;
+        return R::Err("Invalid cache key or empty image bytes.");
     }
     const ImGuiIO& io = ImGui::GetIO();
     if ((io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) == 0) {
-        outError = "Renderer does not support textures.";
-        return false;
+        return R::Err("Renderer does not support textures.");
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
     auto itExisting = g_map.find(cacheKey);
     if (itExisting != g_map.end() && itExisting->second.Texture != nullptr) {
         TouchLruUnlocked(cacheKey);
+        SmatchetLoadedIconTexture out;
         out.Texture = itExisting->second.Texture;
         out.Width = itExisting->second.Width;
         out.Height = itExisting->second.Height;
-        return true;
+        return R::Ok(out);
     }
     if (itExisting != g_map.end()) {
         g_totalBytes -= EntryBytes(itExisting->second.Width, itExisting->second.Height);
@@ -255,57 +252,55 @@ bool GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes
     std::vector<unsigned char> rgba;
     int w = 0;
     int h = 0;
-    if (!DecodeWithStb(bytes, byteCount, rgba, w, h, outError)) {
-        return false;
+    std::string decodeError;
+    if (!DecodeWithStb(bytes, byteCount, rgba, w, h, decodeError)) {
+        return R::Err(std::move(decodeError));
     }
 
     EvictToFitUnlocked(EntryBytes(w, h));
 
     ImTextureData* tex = nullptr;
-    if (!CreateTextureFromRgba(rgba, w, h, tex, outError)) {
-        return false;
+    std::string createError;
+    if (!CreateTextureFromRgba(rgba, w, h, tex, createError)) {
+        return R::Err(std::move(createError));
     }
 
     g_lru.push_front(cacheKey);
     g_map[cacheKey] = CacheValue{tex, w, h, g_lru.begin()};
     g_totalBytes += EntryBytes(w, h);
     // LruIt is set; TouchLruUnlocked will use it for O(1) splice on subsequent accesses.
+    SmatchetLoadedIconTexture out;
     out.Texture = tex;
     out.Width = w;
     out.Height = h;
-    return true;
+    return R::Ok(out);
 }
 
-bool GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath, SmatchetLoadedIconTexture& out,
-                       std::string& outError) {
-    out = {};
-    outError.clear();
+Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath) {
+    using R = Result<SmatchetLoadedIconTexture>;
     if (absolutePath.empty()) {
-        outError = "Empty path.";
-        return false;
+        return R::Err("Empty path.");
     }
-    if (TryGetCached(cacheKey, out)) {
-        return true;
+    SmatchetLoadedIconTexture cached;
+    if (TryGetCached(cacheKey, cached)) {
+        return R::Ok(cached);
     }
     std::ifstream ifs(absolutePath.c_str(), std::ios::binary);
     if (!ifs) {
-        outError = "Failed to open file.";
-        return false;
+        return R::Err("Failed to open file.");
     }
     ifs.seekg(0, std::ios::end);
     const std::streamoff len = ifs.tellg();
     if (len <= 0 || static_cast<size_t>(len) > kMaxFileReadBytes) {
-        outError = "File too large or empty.";
-        return false;
+        return R::Err("File too large or empty.");
     }
     ifs.seekg(0, std::ios::beg);
     std::vector<unsigned char> buf(static_cast<size_t>(len));
     ifs.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(len));
     if (!ifs) {
-        outError = "Failed to read file.";
-        return false;
+        return R::Err("Failed to read file.");
     }
-    return GetOrLoadFromMemory(cacheKey, buf.data(), buf.size(), out, outError);
+    return GetOrLoadFromMemory(cacheKey, buf.data(), buf.size());
 }
 
 void EvictCacheKey(const std::string& cacheKey) {
@@ -336,9 +331,3 @@ std::size_t IconCacheApproxBytes() {
 }
 
 } // namespace SmatchetImageTextureCache
-
-
-
-
-
-
