@@ -25,7 +25,19 @@ namespace github {
 /// by every GitHub REST call. Mirrors the helper in the anon
 /// namespace of GitHubClient.cpp — re-exposed here so GitHubIssueSearch.cpp
 /// can reuse it without copying the implementation.
+// SMATCHET_DEVIATION(rule=duplication; reason=declaration-scaffold token run; owner=tracker; revisit=2026-12-31)
 cpr::Header BuildGitHubHeaders(const std::string& pat);
+
+/// GraphQL endpoint for a REST base URL ("https://api.github.com" → ".../graphql";
+/// GHE "https://<host>/api/v3" → "https://<host>/api/graphql"). Shared by the
+/// GraphQL search path here and the Projects v2 surface (GitHubProjectsV2.cpp).
+// SMATCHET_DEVIATION(rule=duplication; reason=declaration-scaffold token run; owner=tracker; revisit=2026-12-31)
+std::string ResolveGraphQlEndpoint(const std::string& baseUrl);
+
+/// Flatten a GraphQL response's `errors[]` into one human-readable string
+/// (empty = no errors). GraphQL responds 200 OK even when errors[] is set, so
+/// every GraphQL caller must consult this. Shared with GitHubProjectsV2.cpp.
+std::string ExtractGraphQlErrors(const nlohmann::json& parsed);
 
 /// Paginated fetch entry point used by GitHubClient::FetchIssues.
 /// Two flow shapes selected by owner/repo presence:

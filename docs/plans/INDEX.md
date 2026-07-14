@@ -197,6 +197,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`plane-custom-properties`](shipped/plane-custom-properties.md) | 2026-07-11 | Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4) |
 | [`retire-transport-error-text`](shipped/retire-transport-error-text.md) | 2026-07-11 | Plan — Retire the IsTrackerTransportErrorText string heuristic (N12) |
 | [`pc-verify-agentic-audit-followups`](shipped/pc-verify-agentic-audit-followups.md) | 2026-07-13 | Plan — PC-side verification & completion of the agentic-audit-review follow-ups |
+| [`github-projects-v2-fields`](shipped/github-projects-v2-fields.md) | 2026-07-14 | Plan — GitHub Projects v2 custom fields + ListProjects |
 <!-- END auto-plan-index -->
 
 ### Notes
