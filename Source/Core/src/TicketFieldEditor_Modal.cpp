@@ -13,7 +13,12 @@
 #include "TicketFieldEditorLongTextPure.h"
 #include "TrackerFieldSchema.h"
 
+#include "Json/BoundedJsonParse.h"
+
+#include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetUiSession.h"
+
+#include <nlohmann/json.hpp>
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -58,6 +63,21 @@ struct ActiveLongTextEditorState {
     bool RawMode = false;
     /// ADF node types that AdfToMarkdown skipped (panels, mentions, smart links, ...).
     std::vector<std::string> DroppedAdfNodeTypes;
+    /// True once the user ticks the "I understand" acknowledgement for a formatting-loss save.
+    /// Reset on every Open. Gates the Save action while AssessLongTextSaveFidelity().RequireAck holds.
+    bool LossAcknowledged = false;
+    /// Pretty-printed original rich payload (ADF JSON re-indented, or raw HTML) for the read-only
+    /// source pane. Computed once at Open; empty when there is nothing worth showing.
+    std::string OriginalRichPretty;
+    /// Cached save-fidelity assessment for the current buffer revision. Recomputed (with a fresh
+    /// round-trip) by RefreshSaveFidelityCache whenever the buffer changes, so the acknowledgement
+    /// gate + on-save toast are authoritative in every preview mode — including EditOnly, where the
+    /// preview pane's round-trip never runs — and never inherit a stale result. Reset on Open.
+    std::string LastFidelityInput;
+    bool LastFidelityAssessed = false;
+    bool LastFidelityRequireAck = false;
+    bool LastFidelityLossPossible = false;
+    std::string LastFidelitySummary;
 
     static constexpr size_t kBufferSize = 64 * 1024;
     std::vector<char> Buffer;
@@ -122,6 +142,48 @@ struct LongTextModalCtx {
     float InputH = 0.0f;
     ImGuiID EditorId = 0;
 };
+
+// Pretty-print the original rich payload for the read-only source pane: ADF JSON is re-indented
+// (falling back to the raw bytes when it will not parse), HTML is shown verbatim. Non-throwing.
+std::string ComputeOriginalRichPretty(LongTextRichKind kind, const std::string& rich) {
+    if (rich.empty() || kind == LongTextRichKind::None) {
+        return {};
+    }
+    if (kind == LongTextRichKind::Adf) {
+        // Route through the depth/node/byte-bounded parser (rich values are external, untrusted
+        // input): a deeply-nested payload would otherwise stack-overflow the recursive ~json DOM
+        // teardown. ParseBoundedOrDiscarded returns a discarded json on any failure.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(rich);
+        if (j.is_discarded()) {
+            return rich; // malformed / oversized — show the raw bytes rather than nothing.
+        }
+        return j.dump(2);
+    }
+    return rich; // Html — verbatim.
+}
+
+// Draws a collapsible, read-only view of the ORIGINAL rich payload (pretty ADF JSON or raw HTML)
+// so the user can consult the source the Markdown editor was derived from on high-risk paths —
+// the raw-HTML fallback, or an ADF document with nodes dropped from the Markdown. Read-only: the
+// buffer is never written back (ImGuiInputTextFlags_ReadOnly), and it bypasses the localized
+// InputTextMultiline wrapper so the dictation router never targets this display-only field.
+void DrawLongTextSourcePane() {
+    const ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    // Only meaningful when there is an original payload AND a fidelity concern to inspect.
+    const bool concern = st.RawMode || !st.DroppedAdfNodeTypes.empty();
+    if (st.OriginalRichPretty.empty() || !concern) {
+        return;
+    }
+    const char* label = st.RichKind == LongTextRichKind::Adf ? "Original source (read-only ADF JSON)"
+                                                             : "Original source (read-only HTML)";
+    if (ImGui::CollapsingHeader(label)) {
+        const float paneH = ImGui::GetTextLineHeight() * 8.0f;
+        ::ImGui::InputTextMultiline("##LongTextOriginalSource", const_cast<char*>(st.OriginalRichPretty.c_str()),
+                                    st.OriginalRichPretty.size() + 1, ImVec2(-FLT_MIN, paneH),
+                                    ImGuiInputTextFlags_ReadOnly);
+        ImGui::Separator();
+    }
+}
 
 // Draws the required-field marker and the loading / raw-HTML / dropped-ADF-nodes fidelity banners
 // at the top of the modal. Extracted verbatim from RenderLongTextModal; behaviour byte-identical.
@@ -366,8 +428,32 @@ void DrawLongTextPreviewPane(const LongTextModalCtx& ctx) {
     }
 }
 
-// Commits the edited buffer (diffed against the seed to skip null edits) into pendingEdits, then
-// closes the modal. Extracted from RenderLongTextModal's save branch; byte-identical.
+// Recompute + cache the save-fidelity assessment for the current buffer if it changed since the
+// last assessment. Runs a fresh round-trip so the acknowledgement gate and the on-save toast are
+// authoritative in every mode (EditOnly included, where the preview never runs) and never reuse a
+// stale result. Cheap on the idle path — a string-compare cache hit when the buffer is unchanged.
+void RefreshSaveFidelityCache() {
+    ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    const char* buf = st.Buffer.data();
+    // Cache-hit fast path: compare the cached input against the buffer's C-string without
+    // materializing a fresh 64 KB std::string every frame (this runs each footer frame).
+    if (st.LastFidelityAssessed && st.LastFidelityInput == buf) {
+        return;
+    }
+    const std::string md(buf);
+    const RoundTripPreview rt = ComputeRoundTripPreview(st.RichKind, md);
+    const TicketFieldEditorLongTextPure::LongTextSaveFidelity f =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(st.RawMode, st.DroppedAdfNodeTypes, rt.Lossy,
+                                                                  st.SeedTruncated, rt.ConversionFailed);
+    st.LastFidelityInput = md;
+    st.LastFidelityAssessed = true;
+    st.LastFidelityRequireAck = f.RequireAck;
+    st.LastFidelityLossPossible = f.LossPossible;
+    st.LastFidelitySummary = f.ToastSummary;
+}
+
+// Commits the edited buffer (diffed against the seed to skip null edits) into pendingEdits, raises
+// a formatting-loss warning toast when the save may drop constructs, then closes the modal.
 void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
     const std::string newValue(s_ActiveLongTextState.Buffer.data());
     // Diff against BufferSeedShown — exactly what was loaded into Buffer at seed time (the
@@ -385,14 +471,25 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
         edit.Preformatted = s_ActiveLongTextState.RawMode;
         edit.OriginalRichValue = s_ActiveLongTextState.OriginalRichValue;
         pendingEdits.push_back(std::move(edit));
+
+        // Warn on save when the stored value may lose formatting. RefreshSaveFidelityCache brings
+        // the assessment current for this exact buffer (the footer already refreshed it this frame,
+        // so this is normally a cache hit) — authoritative regardless of preview mode.
+        RefreshSaveFidelityCache();
+        if (s_ActiveLongTextState.LastFidelityLossPossible) {
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.longtext_lossy_title", "Saved with formatting loss"),
+                s_ActiveLongTextState.FieldLabel + ": " + s_ActiveLongTextState.LastFidelitySummary + ".",
+                ToastType::Warning);
+        }
     }
     ImGui::CloseCurrentPopup();
     CloseLongTextEditor();
 }
 
-// Draws the footer hint, Save / Cancel buttons, and the Edit/Split/Preview segmented control, then
-// applies the save (Ctrl+Enter / Save) or cancel (Esc / Cancel) action. Extracted from
-// RenderLongTextModal; byte-identical.
+// Draws the footer hint, the formatting-loss acknowledgement gate, Save / Cancel buttons, and the
+// Edit/Split/Preview segmented control, then applies the save (Ctrl+Enter / Save) or cancel
+// (Esc / Cancel) action. Save is disabled until the loss acknowledgement is ticked when required.
 void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdit>& pendingEdits) {
     // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
     const bool ctrlEnter = ctx.CtrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
@@ -404,11 +501,32 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
                                    "**bold**, *em*, # heading, - list, ```code```";
     ImGui::TextDisabled("%s", footerHint);
 
-    bool save = ctrlEnter;
+    // Formatting-loss acknowledgement gate. When the save would drop constructs (truncation,
+    // dropped ADF nodes, a lossy round-trip, or a converter failure) require an explicit "I
+    // understand" tick before Save is enabled. RefreshSaveFidelityCache makes the assessment
+    // authoritative for the current buffer in every mode; raw-HTML verbatim saves warn via toast
+    // but never gate here (RequireAck=false).
+    RefreshSaveFidelityCache();
+    const bool blockSave = s_ActiveLongTextState.LastFidelityRequireAck && !s_ActiveLongTextState.LossAcknowledged;
+    if (s_ActiveLongTextState.LastFidelityRequireAck) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+        ImGui::Checkbox("I understand — save anyway (some formatting will be lost)",
+                        &s_ActiveLongTextState.LossAcknowledged);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !s_ActiveLongTextState.LastFidelitySummary.empty()) {
+            ImGui::SetTooltip("%s", s_ActiveLongTextState.LastFidelitySummary.c_str());
+        }
+    }
+
+    bool save = ctrlEnter && !blockSave;
     bool cancel = escPressed;
+    if (blockSave)
+        ImGui::BeginDisabled();
     if (ImGui::Button("Save", ImVec2(100, 0))) {
         save = true;
     }
+    if (blockSave)
+        ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(100, 0))) {
         cancel = true;
@@ -482,6 +600,16 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
                                             : ActiveLongTextEditorState::PreviewModeT::EditOnly;
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
     s_ActiveLongTextState.LoadingMarkdown = false;
+    s_ActiveLongTextState.LossAcknowledged = false;
+    s_ActiveLongTextState.OriginalRichPretty.clear();
+    // Reset the round-trip preview + save-fidelity caches so no assessment leaks in from the
+    // previously-edited document (both keyed on the buffer, which we are about to reseed).
+    s_ActiveLongTextState.LastRoundTripInput.clear();
+    s_ActiveLongTextState.LastRoundTripOutput.clear();
+    s_ActiveLongTextState.LastRoundTripLossy = false;
+    s_ActiveLongTextState.RoundTripPending = false;
+    s_ActiveLongTextState.LastFidelityInput.clear();
+    s_ActiveLongTextState.LastFidelityAssessed = false;
     ++s_ActiveLongTextState.LoadGen;
 
     // Large rich values are parsed on a worker to keep the UI thread responsive; small ones stay inline.
@@ -494,6 +622,9 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
             ComputeLongTextSeed(s_ActiveLongTextState.RichKind, currentRichValue, currentStrippedValue,
                                 s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
         s_ActiveLongTextState.OriginalMarkdown = seed;
+        // Small payload — pretty-print the source pane inline (cheap; kept off the worker path).
+        s_ActiveLongTextState.OriginalRichPretty =
+            ComputeOriginalRichPretty(s_ActiveLongTextState.RichKind, currentRichValue);
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
         SeedLongTextBuffer(seed);
     } else {
@@ -512,8 +643,12 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
             std::vector<std::string> droppedNodes;
             bool rawMode = false;
             std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped, droppedNodes, rawMode);
+            // Pretty-print the (potentially large) source pane here on the worker — parsing +
+            // dumping a >32 KB ADF payload must not run synchronously on the UI thread (Pillar 2).
+            std::string pretty = ComputeOriginalRichPretty(capturedKind, capturedRich);
             app.PostToMainThread([capturedGen, capturedIssueId, seed = std::move(seed),
-                                  droppedNodes = std::move(droppedNodes), rawMode]() mutable {
+                                  droppedNodes = std::move(droppedNodes), pretty = std::move(pretty),
+                                  rawMode]() mutable {
                 // Discard if user opened a different editor since dispatch — LoadGen increases monotonically.
                 if (!s_ActiveLongTextState.Active || s_ActiveLongTextState.LoadGen != capturedGen ||
                     s_ActiveLongTextState.IssueId != capturedIssueId) {
@@ -521,6 +656,7 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
                 }
                 s_ActiveLongTextState.OriginalMarkdown = seed;
                 s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
+                s_ActiveLongTextState.OriginalRichPretty = std::move(pretty);
                 s_ActiveLongTextState.RawMode = rawMode;
                 s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
                 SeedLongTextBuffer(seed);
@@ -572,6 +708,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         DrawLongTextBanners();
+        // Read-only original-source pane (collapsed by default) for raw-HTML / dropped-node paths.
+        // Drawn before the input-size reservation so an expanded pane shrinks the editor, not the footer.
+        DrawLongTextSourcePane();
 
         // Reserve room for the footer (status line + button row).
         const float footerH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +

@@ -5,6 +5,7 @@
 #include <string>
 
 using MarkdownConvert::HtmlSubsetToMarkdown;
+using MarkdownConvert::MarkdownToHtml;
 
 namespace {
 
@@ -13,6 +14,9 @@ std::string Md(const std::string& html) { return HtmlSubsetToMarkdown(html, null
 
 // Convert and capture the fell-back flag.
 std::string Md(const std::string& html, bool& fell) { return HtmlSubsetToMarkdown(html, &fell); }
+
+// Convenience: Markdown -> HTML-subset (the Plane `description_html` producer).
+std::string Html(const std::string& md) { return MarkdownToHtml(md); }
 
 } // namespace
 
@@ -165,3 +169,84 @@ TEST_CASE("ParseHtmlTag: bang declaration ignored") { CHECK(Md("<!DOCTYPE html>t
 TEST_CASE("ParseHtmlTag: processing instruction ignored") { CHECK(Md("<?xml version=\"1.0\"?>text") == "text"); }
 
 TEST_CASE("ParseHtmlTag: lone '<' is literal when no tag follows") { CHECK(Md("a < b") == "a < b"); }
+
+// ---------------------------------------------------------------------------
+// MarkdownToHtml — the Plane `description_html` producer (md4c HTML renderer
+// via Md4cParserFlags()). Each case pins the byte-for-byte output for one
+// construct so a future md4c bump or flag change surfaces as a golden diff.
+// Goldens were captured from the live MarkdownConvert::MarkdownToHtml over the
+// vendored md4c release-0.5.2. Sibling coverage: HtmlSubsetToMarkdown above
+// (the inverse) and MarkdownConvertAdf.test.cpp (the ADF pair).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("MarkdownToHtml: paragraph") {
+    CHECK(Html("Hello world.") == "<p>Hello world.</p>");
+    CHECK(Html("one\n\ntwo\n\nthree") == "<p>one</p><p>two</p><p>three</p>");
+    CHECK(Html("") == "");
+}
+
+TEST_CASE("MarkdownToHtml: inline emphasis") {
+    CHECK(Html("**bold** and *italic*") == "<p><strong>bold</strong> and <em>italic</em></p>");
+    CHECK(Html("***both***") == "<p><em><strong>both</strong></em></p>");
+    CHECK(Html("*a **b** c*") == "<p><em>a <strong>b</strong> c</em></p>");
+    CHECK(Html("~~gone~~") == "<p><s>gone</s></p>");
+}
+
+TEST_CASE("MarkdownToHtml: headings h1-h6") {
+    CHECK(Html("# Title\n\nBody text.") == "<h1>Title</h1><p>Body text.</p>");
+    CHECK(Html("###### Deep") == "<h6>Deep</h6>");
+}
+
+TEST_CASE("MarkdownToHtml: unordered list") {
+    CHECK(Html("- one\n- two\n- three") == "<ul><li>one</li><li>two</li><li>three</li></ul>");
+}
+
+TEST_CASE("MarkdownToHtml: nested unordered list") {
+    CHECK(Html("- a\n    - a1\n    - a2\n- b") ==
+          "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>");
+}
+
+TEST_CASE("MarkdownToHtml: ordered list") {
+    CHECK(Html("1. first\n2. second") == "<ol><li>first</li><li>second</li></ol>");
+    // A non-1 starting index carries through as the `start` attribute.
+    CHECK(Html("3. three\n4. four") == "<ol start=\"3\"><li>three</li><li>four</li></ol>");
+}
+
+TEST_CASE("MarkdownToHtml: inline code and fenced block") {
+    CHECK(Html("Use `printf` here.") == "<p>Use <code>printf</code> here.</p>");
+    CHECK(Html("```\nint x = 1;\n```") == "<pre><code>int x = 1;\n</code></pre>");
+    // Angle brackets inside code are HTML-escaped, not treated as tags.
+    CHECK(Html("`a<b>c`") == "<p><code>a&lt;b&gt;c</code></p>");
+}
+
+TEST_CASE("MarkdownToHtml: links and autolinks") {
+    CHECK(Html("See [Jira](https://jira.example.com).") ==
+          "<p>See <a href=\"https://jira.example.com\">Jira</a>.</p>");
+    CHECK(Html("<https://ex.com>") == "<p><a href=\"https://ex.com\">https://ex.com</a></p>");
+}
+
+TEST_CASE("MarkdownToHtml: blockquote") {
+    CHECK(Html("> quoted line") == "<blockquote><p>quoted line</p></blockquote>");
+}
+
+TEST_CASE("MarkdownToHtml: thematic break") {
+    CHECK(Html("text\n\n---\n\nmore") == "<p>text</p><hr/><p>more</p>");
+}
+
+TEST_CASE("MarkdownToHtml: line breaks collapse to <br/>") {
+    // Both hard (trailing-two-space) and soft breaks render as <br/> under the
+    // pipeline's parser flags — see Md4cParserFlags().
+    CHECK(Html("line1  \nline2") == "<p>line1<br/>line2</p>");
+    CHECK(Html("line1\nline2") == "<p>line1<br/>line2</p>");
+}
+
+TEST_CASE("MarkdownToHtml: table") {
+    CHECK(Html("| A | B |\n|---|---|\n| 1 | 2 |") ==
+          "<table><thead><tr><th>A</th><th>B</th></tr></thead>"
+          "<tbody><tr><td>1</td><td>2</td></tr></tbody></table>");
+}
+
+TEST_CASE("MarkdownToHtml: special characters are HTML-escaped") {
+    CHECK(Html("5 < 6 & 7 > 4") == "<p>5 &lt; 6 &amp; 7 &gt; 4</p>");
+    CHECK(Html("Tom & Jerry") == "<p>Tom &amp; Jerry</p>");
+}
