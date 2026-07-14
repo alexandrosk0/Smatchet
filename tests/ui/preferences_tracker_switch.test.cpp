@@ -1,11 +1,12 @@
 // preferences_tracker_switch.test.cpp — bucket-E coverage for the Preferences
-// tracker-backend switch (the github-tracker-backend.md § Remaining PR10 backlog
-// item). Guards the TicketSyncService::SwapBackendIfTrackerChanged contract the
-// Preferences "Save & Sync" flow drives: a TrackerType change must swap the live
-// backend INSTANCE to the requested kind and clear the in-memory ActiveTickets so
-// the old backend's rows never linger in the grid (the cross-kind stale-grid bug
-// this plan's PR3 fixed for GitHub had been silently latent for Jira↔Plane; a
-// future fifth tracker missing its swap branch regresses exactly here).
+// tracker-backend switch (the last open backlog item of
+// docs/plans/shipped/github-tracker-backend.md § Remaining). Guards the
+// TicketSyncService::SwapBackendIfTrackerChanged contract the Preferences
+// "Save & Sync" flow drives: a TrackerType change must swap the live backend
+// INSTANCE to the requested kind and clear the in-memory ActiveTickets so the
+// old backend's rows never linger in the grid — the cross-kind stale-grid bug
+// once latent for Jira↔Plane; a future fifth tracker missing its swap branch
+// regresses exactly here.
 //
 // Registered under the "JiraDeterministic" group so the existing
 // scripts/dev/test-ui-jira-deterministic-backend.sh driver + CI bucket-E
