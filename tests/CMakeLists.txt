@@ -538,6 +538,9 @@ add_executable(SmatchetTests
     Core/ScenarioRunnerReplaceActive.test.cpp
     Core/ShutdownFutureDrain.test.cpp
     Core/UpdateInstallerFilenameSanitize.test.cpp
+    # Auto-update installer Authenticode launch policy (header-inline pure seam; the Win32
+    # WinVerifyTrust caller lives in AttachmentAppUpdateService.cpp, linked below).
+    Core/UpdateInstallerSignaturePolicy.test.cpp
     Core/MainThreadDispatchShutdown.test.cpp
     Core/TrackerPostTimeoutClassify.test.cpp
     Core/Tracker2xxErrorGuard.test.cpp
@@ -1540,8 +1543,9 @@ target_link_libraries(SmatchetTests PRIVATE
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
 # Linked here because the test exe pulls ConfigManager via TrackerFieldValueUtils.
+# AttachmentAppUpdateService.cpp uses WinVerifyTrust (installer Authenticode check) from wintrust.
 if(WIN32)
-    target_link_libraries(SmatchetTests PRIVATE crypt32)
+    target_link_libraries(SmatchetTests PRIVATE crypt32 wintrust)
 endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)

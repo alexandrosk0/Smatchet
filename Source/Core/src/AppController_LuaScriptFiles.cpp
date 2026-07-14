@@ -41,7 +41,15 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
         return luaScriptsDirectory_ + filename;
     }
 
-    return std::string("Scripts/") + filename;
+    // Fail closed when the configured scripts root is unset (GetRuntimeAssetDirectory empty).
+    // The old cwd-relative "Scripts/" fallback meant launching Smatchet from an untrusted
+    // working directory surfaced — and resolved for execution — whatever .lua files that
+    // directory happened to carry.
+    LOG_WARN("ResolveLuaScriptPath: scripts directory is not configured; refusing cwd-relative "
+             "resolution of %s",
+             filename.c_str());
+
+    return std::string();
 }
 
 std::vector<std::string> AppController::ListLuaScriptFiles() const {
@@ -54,16 +62,15 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
         std::error_code ec;
 
-        fs::path root;
+        if (luaScriptsDirectory_.empty()) {
 
-        if (!luaScriptsDirectory_.empty()) {
-
-            root = fs::path(luaScriptsDirectory_);
-
-        } else {
-
-            root = fs::path("Scripts");
+            // Match ResolveLuaScriptPath: no configured scripts root -> no cwd-relative
+            // enumeration (an untrusted working directory's .lua files must not appear in
+            // the script picker).
+            return out;
         }
+
+        const fs::path root(luaScriptsDirectory_);
 
         if (!fs::is_directory(root, ec)) {
 
@@ -136,16 +143,35 @@ std::string AppController::GetAutomationScriptContent() {
     if (path.empty())
         return "";
 
-    std::ifstream ifs(path);
+    std::ifstream ifs(path, std::ios::binary);
 
     if (!ifs.is_open())
         return "";
 
-    std::stringstream ss;
+    // Byte-capped read (SECURITY_AUDIT #33 class): an oversized Automation.lua must not be
+    // slurped fully into memory before any validation. 8 MiB dwarfs any real automation script.
+    constexpr std::streamoff kMaxAutomationScriptBytes = 8ll * 1024 * 1024;
+    ifs.seekg(0, std::ios::end);
+    const std::streamoff size = ifs.tellg();
+    if (size < 0 || size > kMaxAutomationScriptBytes) {
+        LOG_WARN("GetAutomationScriptContent: refusing %s (size=%lld bytes, cap=%lld).", path.c_str(),
+                 static_cast<long long>(size), static_cast<long long>(kMaxAutomationScriptBytes));
+        return "";
+    }
+    ifs.seekg(0, std::ios::beg);
 
-    ss << ifs.rdbuf();
+    std::string content(static_cast<std::size_t>(size), '\0');
+    if (size > 0 && !ifs.read(&content[0], size)) {
+        LOG_WARN("GetAutomationScriptContent: short read on %s.", path.c_str());
+        return "";
+    }
 
-    return ss.str();
+    // The pre-cap implementation opened in text mode (CRLF -> LF on Windows); the binary open
+    // above makes the size cap exact, so normalize line endings here to keep the editor/Lua
+    // round-trip identical.
+    content.erase(std::remove(content.begin(), content.end(), '\r'), content.end());
+
+    return content;
 }
 
 bool AppController::SaveAutomationScriptContent(const std::string& content, std::string& outError) {

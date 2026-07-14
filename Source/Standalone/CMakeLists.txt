@@ -215,7 +215,9 @@ if(SMATCHET_WITH_WHISPER)
 endif()
 
 if(WIN32)
-    target_link_libraries(SmatchetStandalone PRIVATE opengl32 ws2_32 crypt32)
+    # wintrust: WinVerifyTrust — the auto-updater's Authenticode check on the downloaded installer
+    # (AttachmentAppUpdateService.cpp).
+    target_link_libraries(SmatchetStandalone PRIVATE opengl32 ws2_32 crypt32 wintrust)
     # Native DX12 renderer (default on Windows+MSVC) — Dx12Bootstrap + the imgui
     # DX12 backend need the D3D12 / DXGI runtime libs and d3dcompiler (the backend
     # compiles its embedded shaders at runtime via D3DCompile). MSVC-only: MinGW

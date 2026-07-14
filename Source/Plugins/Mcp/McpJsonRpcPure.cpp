@@ -298,6 +298,15 @@ bool CanAcceptSseConnection(int currentActive) {
     return currentActive < kMaxConcurrentSseConnections;
 }
 
+std::string ResolveSseCorsOrigin(const std::string& requestOrigin, bool loopbackBind) {
+    // Re-vet instead of trusting the caller's earlier Authorize pass: the grant must stay
+    // loopback-only even if a future route wires this up without the Host/Origin gate.
+    if (requestOrigin.empty() || !loopbackBind || !IsAllowedMcpOrigin(requestOrigin)) {
+        return std::string();
+    }
+    return requestOrigin;
+}
+
 nlohmann::json BuildRunLuaToolEntry() {
     return {{"name", "run_lua"},
             {"description", "Run a Lua snippet or Scripts/*.lua file with optional args."},

@@ -94,6 +94,15 @@ constexpr int kMaxConcurrentSseConnections = 4;
 // caller owns the atomic counter + the 503 response. Negative input fails closed (false).
 bool CanAcceptSseConnection(int currentActive);
 
+// Access-Control-Allow-Origin value for the SSE route, or "" for "emit no CORS header".
+// Never a wildcard: a native MCP client sends no Origin and needs no CORS grant, and a
+// browser client only ever passes Authorize on the loopback bind (where the Host/Origin
+// gate above has already vetted its Origin as loopback) — echo exactly that vetted Origin,
+// re-vetted here via IsAllowedMcpOrigin for defence in depth. On the 0.0.0.0 bind the
+// Host/Origin gate is intentionally skipped, so any grant would let an arbitrary web origin
+// read the token-authenticated stream: emit nothing.
+std::string ResolveSseCorsOrigin(const std::string& requestOrigin, bool loopbackBind);
+
 /// Cap a string to `maxChars` characters and append "..." when truncated. Pure.
 std::string TruncateOneLine(const std::string& s, std::size_t maxChars);
 
