@@ -29,6 +29,26 @@ setup() {
     [[ "$output" == *"coverage.sh --selftest: PASS"* ]]
 }
 
+# ---------- coverage.sh: quarantine-exclude wired into BOTH captures ----------
+# The quarantine-safe capture fix (ci-falsepositive-hardening Cluster-C /
+# coverage-quarantine-safe) passes `--test-case-exclude=*[quarantined:*]*` to the
+# doctest child on every capture so a known-flaky quarantined case cannot flake
+# the Coverage lane and masquerade as a coverage regression. That flag living in
+# the script is the entire fix — if it is silently dropped the false-red returns.
+# This pins it: the flag must be defined AND handed to both the SmatchetTests and
+# SmatchetLuaTests capture invocations (a full OpenCppCoverage integration run
+# needs the Windows toolchain, so this is a static regression-pin, not a capture).
+@test "coverage.sh: quarantine-exclude flag defined and passed to both captures" {
+    # Defined once as the shared flag var.
+    run grep -qF "DOCTEST_EXCLUDE_QUARANTINED='--test-case-exclude=*[quarantined:*]*'" "$COVERAGE"
+    [ "$status" -eq 0 ]
+    # Handed to the doctest child (after `--`) on exactly the two capture lines —
+    # SmatchetTests + SmatchetLuaTests. Two references beyond the definition.
+    run bash -c "grep -c '\"\$DOCTEST_EXCLUDE_QUARANTINED\"' '$COVERAGE'"
+    [ "$status" -eq 0 ]
+    [ "$output" -ge 2 ]
+}
+
 # ---------- coverage-delta-gate.sh: classifier incl. wrapped LOG_* join ----------
 
 @test "coverage-delta-gate.sh --selftest passes (classifier + multi-line LOG_ join)" {

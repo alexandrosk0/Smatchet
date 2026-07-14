@@ -166,7 +166,7 @@ one-glance summary.
 Where each gap is tracked in the self-improvement backlog
 ([`docs/self-improvement/categories/`](../self-improvement/categories/)). **7 of
 8 gaps are now tracked** (one fully, six as a narrower slice — Gap 6 newly, via
-plan [`slice-g-db-corruption.md`](../plans/active/slice-g-db-corruption.md)); only
+plan [`slice-g-db-corruption.md`](../plans/shipped/slice-g-db-corruption.md)); only
 the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 
 | Gap | Tracked as | File | Status |
@@ -176,7 +176,7 @@ the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 | 3 — no fuzz / property tests | crafted-PNG-dims fuzz against `GoldenImage.h` cap | [`security.md`](../self-improvement/categories/security.md):59-60 | open — **partial**: image-dims/cpp-lex/callstack/ADF/SSE/NDJSON + tracker GitHub/Plane/Linear mappers (E2a-c) covered; MCP-dispatch/config-locale/p4/WAV unbacklogged ([`test/2026-07-05-fuzz-surfaces-next-batch.md`](../self-improvement/categories/test/2026-07-05-fuzz-surfaces-next-batch.md)) |
 | 4 — test-delta ≠ assertion quality | auto-PASS classifier for no-runtime-surface diffs | [`infra.md`](../self-improvement/categories/infra.md):60-61 | open — **inverse direction**: tracks false-RED, not the false-GREEN/mutation-signal half (unbacklogged) |
 | 5 — agent fleet near-untested | subagent-eval harness graduation + trace flywheel | [`tooling.md`](../self-improvement/categories/tooling.md):505-507 + plan [`subagent-eval-agentic-coverage.md`](../plans/active/subagent-eval-agentic-coverage.md) | open — Phase 2 (flywheel) gated on Phase 0 judge calibration |
-| 6 — persistence corruption untested | Slice G — cache-open corruption: Phase 1 characterization (this slice) → Phase 2 graceful-rebuild fix → G2 `SQLITE_BUSY` | plan [`slice-g-db-corruption.md`](../plans/active/slice-g-db-corruption.md) | open — **partial**: Phase 1 characterizes `LocalCacheManager` corrupt/truncated/empty-on-open ([`LocalCacheManagerCorruption.test.cpp`](../../tests/Core/LocalCacheManagerCorruption.test.cpp), in review); Phase 2 fix + the config open path + `SQLITE_BUSY` (G2) still open |
+| 6 — persistence corruption untested | Slice G — cache-open corruption: Phase 1 characterization (this slice) → Phase 2 graceful-rebuild fix → G2 `SQLITE_BUSY` | plan [`slice-g-db-corruption.md`](../plans/shipped/slice-g-db-corruption.md) | open — **partial**: Phase 1 characterizes `LocalCacheManager` corrupt/truncated/empty-on-open ([`LocalCacheManagerCorruption.test.cpp`](../../tests/Core/LocalCacheManagerCorruption.test.cpp), in review); Phase 2 fix + the config open path + `SQLITE_BUSY` (G2) still open |
 | 7 — worktree-skip (6→3) | skip mechanism (`WORKTREE_INCOMPATIBLE_RE`) + the `GIT_EXEC_PATH` build fix | [`applied.md`](../self-improvement/categories/applied.md):342, [`tooling.md`](../self-improvement/categories/tooling.md):196, [`infra.md`](../self-improvement/categories/infra.md):229, [`test.md`](../self-improvement/categories/test.md):63 | **resolved 2026-06-14** (Slice H): regex trimmed 6→3 (3 dead scripts removed); 3 survivors justified + orthogonal to #1166 |
 | 8 — perf gate = fast subset | "8 of 15 candidate perf scenarios don't emit `rows[]`" | [`applied.md`](../self-improvement/categories/applied.md):265 (7/15 baselined) + [`tooling.md`](../self-improvement/categories/tooling.md) follow-up | open — 8 scenarios need a `rows[]` retrofit before they can gate |
 
@@ -184,7 +184,7 @@ the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 backlog row or GitHub Issue): the **mutation-signal half of Gap 4** — a
 mutation-smoke harness (flip-and-rerun) to expose no-op assertions that the
 test-delta gate waves through GREEN. (**Gap 6** is now tracked by Slice G — plan
-[`slice-g-db-corruption.md`](../plans/active/slice-g-db-corruption.md): Phase 1
+[`slice-g-db-corruption.md`](../plans/shipped/slice-g-db-corruption.md): Phase 1
 characterizes the cache open path, Phase 2 adds the fix, G2 covers `SQLITE_BUSY`.)
 
 ---
@@ -221,7 +221,7 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
   changed lines, not just a touched file. **[new]** — the false-GREEN/mutation half
   of Gap 4 has no entry.
 - **DB-corruption corpus** test for cache/config open paths. **[in progress]** —
-  Gap 6, now Slice G (plan [`slice-g-db-corruption.md`](../plans/active/slice-g-db-corruption.md)):
+  Gap 6, now Slice G (plan [`slice-g-db-corruption.md`](../plans/shipped/slice-g-db-corruption.md)):
   Phase 1 characterizes the `LocalCacheManager` open path (this PR); Phase 2 adds the
   graceful-rebuild fix, the config open path + `SQLITE_BUSY` (G2) still to do.
 - ~~Root-cause the **worktree-skip 6** so the default dev loop runs them.~~ **[done 2026-06-14,

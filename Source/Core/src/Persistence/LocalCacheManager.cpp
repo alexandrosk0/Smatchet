@@ -14,6 +14,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <thread> // std::this_thread::sleep_for — bounded backoff between schema-init retries (G2)
 
 namespace {
 
@@ -155,19 +156,38 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
       db(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
     ApplyWalPragmas();
-    // Schema-init is where a corrupt on-disk file first surfaces (the open is lazy). Catch it
-    // and rebuild — but ONLY for genuine on-disk corruption. A transient SQLITE_BUSY /
-    // SQLITE_CANTOPEN / SQLITE_IOERR (DB momentarily locked, a permission/ENOENT race) must
-    // NOT nuke a healthy cache, so re-throw anything that is not NOTADB / CORRUPT. (Empty and
-    // missing files are not corrupt — SQLite opens them as a fresh DB and InitSchema succeeds,
-    // so they never reach this catch.)
-    try {
-        InitSchema();
-    } catch (const SQLite::Exception& ex) {
-        if (!smatchet::IsRebuildableCorruptCode(ex.getErrorCode())) {
-            throw;
+    // Schema-init is where a corrupt on-disk file OR live write-contention first surfaces (the
+    // open is lazy). Three outcomes:
+    //   * genuine on-disk corruption (NOTADB/CORRUPT) → quarantine + rebuild (Phase 2, #1352).
+    //   * transient contention (BUSY/LOCKED) from a SECOND Smatchet opening the same shared
+    //     cache → bounded backoff-and-retry (Phase 3 / G2), so a momentary lock window during
+    //     startup does not crash the ctor (Pillar 3). busy_timeout already makes SQLite WAIT on
+    //     lock acquisition; the retry covers the codes it returns immediately (e.g. a WAL
+    //     snapshot conflict) and the case where the WAL pragma failed to arm the timeout.
+    //   * anything else (CANTOPEN/IOERR permission/ENOENT race) → re-throw untouched: not
+    //     corruption (never nuke a healthy cache) and not transient (retry would never clear it).
+    // Empty/missing files are not corrupt — SQLite opens them as a fresh DB and InitSchema
+    // succeeds, so they never reach this catch.
+    constexpr int kMaxInitAttempts = 5;
+    for (int attempt = 0;; ++attempt) {
+        try {
+            InitSchema();
+            break;
+        } catch (const SQLite::Exception& ex) {
+            const int code = ex.getErrorCode();
+            if (smatchet::IsRebuildableCorruptCode(code)) {
+                RebuildFreshAfterCorruption(ex);
+                break;
+            }
+            if (smatchet::ShouldRetryBusyInit(code, attempt, kMaxInitAttempts)) {
+                const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
+                LOG_WARN("LocalCacheManager: schema-init contended (%s); retry %d/%d after %d ms",
+                         ex.what(), attempt + 2, kMaxInitAttempts, backoffMs);
+                std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+                continue;
+            }
+            throw; // non-transient, or the retry budget is exhausted → propagate
         }
-        RebuildFreshAfterCorruption(ex);
     }
     LOG_INFO("LocalCacheManager: schema ready");
 }
@@ -193,12 +213,16 @@ void LocalCacheManager::RebuildFreshAfterCorruption(const SQLite::Exception& ex)
 }
 
 void LocalCacheManager::ApplyWalPragmas() {
-    // WAL improves crash safety and allows readers while a writer is active.
-    // synchronous=NORMAL is the recommended pairing with WAL (fsync on checkpoint, not every commit).
+    // Arm the busy-timeout FIRST (Slice-G Phase 3 / G2): the journal_mode=WAL pragma needs a
+    // brief exclusive lock and can itself return SQLITE_BUSY under a concurrent open, so it must
+    // run with the lock-wait already in effect; arming it first also guarantees the timeout is
+    // set even if a later pragma throws. WAL improves crash safety and lets readers run while a
+    // writer is active; synchronous=NORMAL is the recommended WAL pairing (fsync on checkpoint,
+    // not every commit).
     try {
+        db.setBusyTimeout(5000);
         db.exec("PRAGMA journal_mode=WAL");
         db.exec("PRAGMA synchronous=NORMAL");
-        db.setBusyTimeout(5000);
     } catch (const std::exception& ex) {
         LOG_WARN("LocalCacheManager: failed to set WAL pragmas: %s", ex.what());
     }

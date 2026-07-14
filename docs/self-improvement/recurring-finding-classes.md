@@ -33,7 +33,7 @@ whole-tree clean invariants bats-asserted, campaign sweep modes
 (`--scan-bare-json` / `--scan-catch-all` / `--scan-json-walkers` /
 `--scan-slurps`), remediation printed on every failure.
 
-## Reconciliation vs `docs/plans/active/ci-falsepositive-hardening.md`
+## Reconciliation vs `docs/plans/shipped/ci-falsepositive-hardening.md`
 
 Checked before building (campaign charter requirement). No overlap to extend:
 Cluster C hardens gates that **mis-fire** (false-RED on noise, false-green on

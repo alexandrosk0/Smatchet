@@ -33,4 +33,48 @@ inline std::string MakeCorruptQuarantineSuffix(long long unixSeconds) {
     return ".corrupt-" + std::to_string(unixSeconds);
 }
 
+// --- Slice-G Phase 3 / G2: transient-contention (SQLITE_BUSY) classification ---
+//
+// Separate from the corruption axis above. When a SECOND Smatchet process opens the same
+// on-disk cache, schema-init can hit a transient write-lock conflict. busy_timeout already
+// makes SQLite WAIT on lock acquisition, but some paths (a WAL snapshot conflict) return a
+// busy code immediately, and a failed WAL pragma can leave the timeout un-armed — so
+// LocalCacheManager wraps schema-init in a bounded backoff-and-retry keyed on these codes,
+// instead of crashing the ctor (Pillar 3 — never crash). These are NOT corruption (never
+// quarantine) and NOT a permanent fault like SQLITE_CANTOPEN (retry would never clear it).
+
+/// True for a TRANSIENT lock/contention fault a brief backoff-and-retry can clear:
+/// SQLITE_BUSY (another connection holds a conflicting lock), SQLITE_BUSY_SNAPSHOT (a WAL
+/// snapshot conflict on the write path — extended code, included for callers that pass the
+/// extended result), SQLITE_LOCKED (a table/shared-cache lock), or SQLITE_PROTOCOL (a
+/// legacy locking-protocol retry hint). Distinct from IsRebuildableCorruptCode: a transient
+/// code is neither rebuilt nor a permanent failure — it is retried.
+inline bool IsTransientBusyCode(int sqliteErrorCode) {
+    return sqliteErrorCode == SQLITE_BUSY || sqliteErrorCode == SQLITE_BUSY_SNAPSHOT ||
+           sqliteErrorCode == SQLITE_LOCKED || sqliteErrorCode == SQLITE_PROTOCOL;
+}
+
+/// Decide whether schema-init should be retried after a fault: retry only while the code is
+/// transient-busy AND attempts remain. `attempt` is 0-based (0 = the first try that just
+/// failed); `maxAttempts` is the total budget. Pure so the retry policy is unit-testable
+/// without forcing real lock contention (which a doctest can only flakily reproduce).
+inline bool ShouldRetryBusyInit(int sqliteErrorCode, int attempt, int maxAttempts) {
+    return IsTransientBusyCode(sqliteErrorCode) && (attempt + 1) < maxAttempts;
+}
+
+/// Backoff (ms) before the next schema-init retry — a capped exponential from a small base
+/// (25 → 50 → 100 → 200 → 400 ms, then flat) so the total wait across the default budget is a
+/// few hundred ms (a human-imperceptible startup hiccup), not the multi-second busy_timeout
+/// wall. `attempt` is 0-based; negatives clamp to 0.
+inline int BusyRetryBackoffMs(int attempt) {
+    if (attempt < 0) {
+        attempt = 0;
+    }
+    int ms = 25;
+    for (int i = 0; i < attempt && ms < 400; ++i) {
+        ms *= 2;
+    }
+    return ms > 400 ? 400 : ms;
+}
+
 } // namespace smatchet

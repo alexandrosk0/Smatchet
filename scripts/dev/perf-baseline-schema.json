@@ -80,6 +80,8 @@
       "properties": {
         "mean_delta_pct": { "type": "number" },
         "p99_abs_ceiling_ms": { "type": "number" },
+        "p99_rel_pct": { "type": ["number", "null"] },
+        "p99_min_abs_delta_ms": { "type": "number" },
         "max_abs_ceiling_ms": { "type": "number" },
         "consecutive_run_required": { "type": "integer" },
         "min_baseline_calls": { "type": "integer" }

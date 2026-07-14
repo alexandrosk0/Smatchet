@@ -2,6 +2,7 @@
 #include "CliCommandRunner_Internal.h"
 
 #include "CliArgCoercion.h"
+#include "CliResultFileRead.h"
 #include "StandaloneAppBootstrap.h"
 
 #include "Commands/Command.h"
@@ -142,8 +143,14 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
         return 8;
     }
 
-    std::FILE* f = std::fopen(outPath.c_str(), "rb");
-    if (!f) {
+    // Bounded read via the shared leaf (command-input-hardening Phase 1.3): a corrupt/oversized
+    // result file must not balloon parent memory before ParseBounded's 4 MiB cap rejects it.
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=the read leaf itself is now shared (CliResultFileRead.h); only the per-surface error-envelope emit remains cloned with CliDispatch.cpp's --spawn reader and differs irreducibly by command var (toolName vs commandName), message prefix, and shutdown call (standalone::Shutdown(boot) vs PostAppQuitBestEffort(cli)) — a shared emitter would take all three as params for a 4-line body, worse coupling than the DRY gate doc endorses exempting; owner=orchestrator; revisit=if a source-tagged CLI error-envelope emitter lands)
+    // clang-format on
+    std::string content;
+    switch (smatchet::cli::ReadResultFileBounded(outPath, 4u * 1024u * 1024u, content)) {
+    case smatchet::cli::ResultFileReadStatus::OpenFailed: {
         nlohmann::json errEnv;
         errEnv["ok"] = false;
         errEnv["command"] = toolName;
@@ -152,17 +159,23 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
         standalone::Shutdown(boot);
         return kExitHandler;
     }
-    std::string content;
-    char buf[4096];
-    size_t n = 0;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0) {
-        content.append(buf, n);
+    case smatchet::cli::ResultFileReadStatus::TooLarge: {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = toolName;
+        errEnv["error"] = {{"code", "handler-error"},
+                           {"message", "Scenario result file too large (> 4 MiB): " + outPath}};
+        EmitErrorToStderr(errEnv);
+        standalone::Shutdown(boot);
+        return kExitHandler;
     }
-    std::fclose(f);
+    case smatchet::cli::ResultFileReadStatus::Ok:
+        break;
+    }
     try {
         std::string parseErr;
         // clang-format off
-        // SMATCHET_DEVIATION(rule=duplication; reason=the read-result-file-then-ParseBounded-into-an-error-envelope block is a pre-existing clone of SpawnAndRunHandleAsync (now in CliDispatch.cpp); the in-process and --spawn scenario result readers share this shape by construction and the god-file-split only moved them into separate TUs; owner=orchestrator; revisit=when a shared scenario-result reader leaf is extracted)
+        // SMATCHET_DEVIATION(rule=duplication; reason=the ParseBounded-then-emit-envelope tail is a pre-existing clone of CliDispatch.cpp's --spawn reader; the in-process and --spawn scenario result paths share this shape by construction and the god-file-split moved them into separate TUs, differing irreducibly by command var + shutdown call; owner=orchestrator; revisit=if a source-tagged CLI result-envelope emitter lands)
         // clang-format on
         nlohmann::json scenarioData = smatchet::json_safe::ParseBounded(content, parseErr);
         if (!parseErr.empty()) {

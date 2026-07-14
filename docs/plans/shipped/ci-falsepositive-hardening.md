@@ -2,7 +2,7 @@
 
 > **Slug**: `ci-falsepositive-hardening` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -64,13 +64,29 @@ Session learnings filed with this PR (not Cluster-C items, but surfaced this ses
 - `tooling.md` `merge-watcher-bats-repo-root-conflates-script-path-and-clone-path` (the worktree-only test-fail debt from PR #1393).
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Slice 1 — unicode-bats silent-skip.** Shipped: `scripts/dev/test-all.sh` detects + exports a UTF-8 `LC_ALL`/`LANG` before the bats runner loop (present on develop; the roadmap's original slice).
+- **2026-07-14 — Cluster-C roadmap close-out (this PR).** The remaining roadmap items were either newly implemented or verified already-applied on develop:
+  - **shell-lint SIGPIPE class → generalized (NEW).** Added **Rule 8** (`check_early_break_pipe`) to `agents/scripts/core/test-shell-lint.sh` — the #1593 follow-up. Beyond Rule 6's `$(… | head)` shape, it flags the general `producer | fn` case where `fn` is a same-script function that reads with `while … read` and `break`s early (early break → producer SIGPIPE 141 → script aborts under pipefail; CI-only, msys ignores SIGPIPE). Two-pass awk (fixed the `boundary(/re/)` function-arg-regex gotcha), conservative (requires while+read+break in the body). Fixtures `known-{bad,good}-8-early-break-pipe.sh` + two `shell_lint.bats` cases. **Verified locally**: fires on the bad fixture, silent on the good, **zero false-positives across all 293 real repo scripts**, dogfoods clean, full bats green.
+  - **p99 relative-gate (NEW, greenlit).** Added the relative-p99 mechanism to `scripts/dev/perf-compare.py` (`p99_rel_pct` + `p99_min_abs_delta_ms` knobs, mirroring the relative-mean gate) + `regression-policy.json` default + `perf-baseline-schema.json`. Verified locally: silent when disabled, fires on real creep when armed, suppressed by the abs-Δ noise floor, markdown surfaces the armed knob. **ARMED 2026-07-14 on user sign-off** at `p99_rel_pct = 75.0` + `p99_min_abs_delta_ms = 1.5`, calibrated against the existing 108-sample CI distribution (`docs/perf/calibration-observations.md`): hottest-scope baseline p99 ~0.74-0.79 ms, worst observed 0.857 ms (positive swing ~0.065 ms, full range ~0.27 ms), so the 1.5 ms floor sits ~5.5× above the observed band and fires only on a genuine blowup to ≥~2.3 ms that stays under the 10 ms absolute ceiling. Re-verified against the observed distribution (silent on 0.857 / 0.90 / 1.6; fires on 2.5 / 6.0). Escape hatch: `perf-out-of-band` label.
+  - **coverage-quarantine false-red — regression-pin (NEW).** The `coverage.sh` fix itself (the `--test-case-exclude=*[quarantined:*]*` on both captures + the test-binary-vs-tooling verdict split via `classify_capture_failure`) was already applied; the missing action-item was the fixture. Added a `coverage_gate.bats` case pinning that the quarantine-exclude flag is defined AND handed to both capture invocations, so a silent removal (the exact false-red regression) reds a discoverable test.
+  - **comment-noise reds the required build + skips buckets — verified already shipped.** The high-integrity/comment-noise gate is already decoupled into its own required `comment-noise-gate` ubuntu lane (no `needs: windows-msvc`), so a style nit reds only its own check and no longer skips bucket-C/E (`.github/workflows/build-and-test.yml:223-277`). No change needed.
+  - **StubAiClientCancel wall-clock — verified already shipped (#1280).** Both the outer wall-clock asserts and the stub's internal 100 ms cancel-ack budget are guarded with `SMATCHET_COVERAGE` (×8) in `StubAiClient.h` / `StubAiClientCancel.test.cpp`. No change needed.
+  - **Bucket-E `--spawn` advisory-gate — verified already shipped (#1681).** No change needed.
+  - **perf-gate p99 warmup-FP — superseded.** `infra.md` downgraded the absolute-ceiling FP to P3 ("nothing to gate; never an autonomous flip") after #1385 removed the warmup pollution; the relative-p99 mechanism above is the structural follow-up, shipped disabled.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Slice-per-PR → single close-out PR.** The plan framed each roadmap item as its own PR; this session bundled the roadmap remainder (with `command-input-hardening` + `slice-g-db-corruption`) onto one branch at the user's direction. Each item is an independent, separately-revertable commit.
+- **p99 gate: mechanism first, then armed on explicit sign-off.** The initial push added the mechanism + tests and left it disabled (the responsible default for a live merge gate). The user then explicitly signed off on arming it, so it was calibrated against the existing 108-sample CI distribution and armed (`p99_rel_pct = 75.0` + `p99_min_abs_delta_ms = 1.5`) in the same PR — mirroring how `mean_abs_ceiling_ms` shipped disabled then armed. The calibration (not the flip) is the load-bearing part: the abs-Δ floor sits ~5.5× above the observed runner p99 band.
+- **Several roadmap items were already applied on develop** (comment-noise decouple, StubAiClientCancel, Bucket-E spawn, shell-lint SIGPIPE #1593, the coverage.sh exclude/split) — this PR verifies + regression-pins them rather than re-implementing.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **shell-lint Rule 8**: `bats tests/bats/shell_lint.bats` green (24 tests incl. the 2 new); full `test-shell-lint.sh` over 293 real scripts = `Passed: 293  Failed: 0` (no Rule-8 FP); dogfood self-lint clean.
+- **p99 gate**: `perf-compare.py` imported + driven with synthetic baseline/fresh rows — disabled-default silent, armed-fires, noise-floor-suppressed, markdown-knob-shown all assert-pass; `regression-policy.json` + `perf-baseline-schema.json` valid JSON; `perf-compare.py` parses clean.
+- **coverage-quarantine pin**: `bats tests/bats/coverage_gate.bats` green (5 tests incl. the new pin); `coverage.sh --selftest` PASS.
+- **Lint gates on the whole diff**: `test-lint-rules.sh --diff origin/develop` PASS; `comment_audit.py --diff` clean; `shellcheck -S warning` clean on the modified linter.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip § Status to `shipped`,

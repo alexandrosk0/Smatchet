@@ -34,3 +34,23 @@ The step-5 backlog entry and plan flagged that baseline `calls = 1–2` starves 
 3. **Baseline recapture / frame-count deepening (Phase 2):** downgrade to optional follow-up — the absolute ceilings already run on 600-frame data. Recapture only if the relative %-delta gate is later wanted for multi-call scopes.
 
 The flip itself is a live-gate tighten → **user sign-off required** per the plan + AI_POLICY § escalate-when-unvalidatable; this doc is the evidence packet for that decision.
+
+## Relative-p99 gate arming (2026-07-14, user sign-off)
+
+The `ci-falsepositive-hardening` (Cluster C) plan added a **relative p99 gate** (`p99_rel_pct` +
+`p99_min_abs_delta_ms`) to close the gap the absolute 10 ms p99 ceiling leaves: a steady-state p99
+that creeps up but stays under 10 ms. It shipped disabled; **armed here on the same 108-sample
+distribution above**:
+
+- Baseline p99 for the hottest scope `SmatchetUI::Draw` is **~0.74–0.79 ms** across the six
+  `ci-windows-latest` baselines; the **worst p99 observed in any of the 6 runs was 0.857 ms**
+  (priority-grid-scroll) — a positive run-to-run swing above baseline of only **~0.065 ms**, and a
+  full observed run range of **~0.27 ms**.
+- Armed at **`p99_rel_pct = 75.0` + `p99_min_abs_delta_ms = 1.5`** (AND). The 1.5 ms absolute-Δ
+  floor is ~5.5× the full observed run range (~23× the positive swing), so the gate **cannot fire on
+  runner p99 noise**; it fires only on a genuine regression to **≥ ~2.3 ms** (still under the 10 ms
+  absolute ceiling — the exact blind spot). Verified against the observed distribution: silent on
+  0.857 (worst noise), 0.90 (beyond the range), and 1.6 (a 2× regression under the floor); fires on
+  2.5 and 6.0.
+- Escape hatch: a rare hot-job draw that false-reds is dismissed by the `perf-out-of-band` label.
+  Retighten/loosen only with fresh observed evidence + sign-off.

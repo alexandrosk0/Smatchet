@@ -2,7 +2,7 @@
 
 > **Slug**: `command-input-hardening`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Owner**: command-system. **Created**: 2026-06-20.
 >
@@ -110,14 +110,17 @@ Already shipped / tracked — do not redo:
 - 2026-06-20 · #1438 — plan doc landed (this file).
 - 2026-06-20 · #1441 — Phase 0: `ParamType::Json` coercion + `config.set` value parse routed through `json_safe::ParseBounded`; `ParamSpec` gained opt-in `MinInt`/`MaxInt`/`MaxLen` enforced in `ValidateAndResolveArgs` via the new pure `ParamBoundsPure.h`; bucket-A test `tests/Core/ParamBoundsPure.test.cpp`. MSVC build + Coverage doctest rig went green.
 - 2026-06-20 · #1444 — Phases 1-3: CLI argv bounds (`--mcp-port` 1-65535, `--timeout` >= 0, non-empty `--mcp-host`) + `scenario.run --frames` overflow clamp at both driver sites, via new pure `CliArgCoercion` helpers (`IsValidMcpPort` / `ClampScenarioFrames` / `ScenarioFramesFromJson`, tested in `tests/Core/CliArgCoercion.test.cpp`); MCP `attachment_proxy` `url` length cap (8 KiB -> HTTP 414); Command Palette selection reset on empty filter.
+- 2026-07-14 — **the two deferred items closed** (this PR):
+  - **Phase 1.3 — CLI result-file size cap.** The scenario RESULT-file readers in `CliCommandRunner.cpp` (in-process) and `CliDispatch.cpp` (`--spawn`) read the whole file into a `std::string` *before* `json_safe::ParseBounded`'s 4 MiB cap could reject it, so a multi-GB result file OOM'd the parent first. Both now read through the extracted shared leaf `Source/Standalone/CliResultFileRead.h` (`ReadResultFileBounded` → `{Ok, OpenFailed, TooLarge}`), which stops past a 4 MiB cap and returns `TooLarge` (surfaced as a clean `handler-error` envelope, not a misleading "invalid JSON"). The extraction retires the pre-existing read-loop clone the DRY gate flagged and shrinks `SpawnAndRunHandleAsync` back under the 120-line cap; the residual per-surface error-envelope emit (differs by command var + shutdown call) stays clone-exempt. `instance.json` was already capped (#1747). Helper behaviour verified locally (Ok / OpenFailed / TooLarge paths) on a clang build; the two dispatch TUs compile only under MSVC → CI is the compile validator.
+  - **`fuzz_bounded_json` driver.** Per the plan's own recommendation ("a lower-risk `fuzz_bounded_json` over the header-only `ParseBounded` is the recommended first cut"), added `tests/fuzz/fuzz_bounded_json.cpp` + 8-seed corpus + `smatchet_add_fuzz_target` wiring. It fuzzes `ParseBounded` / `ParseBoundedOrDiscarded` (the shared ingress the `ParamType::Json` coercion + `config.set` value parse route through) on adversarial bytes with input-derived depth/node/byte caps to steer the SAX abort paths. **Built + fuzz-smoked locally** under `-fsanitize=fuzzer,address,undefined` (clang 18): `-runs=0` corpus smoke passes and a 20,000-run session found no crash. `fuzz_closure_audit` PASS (16 targets). The `CoerceJsonValue`/`ValidateAndResolveArgs`-through-`Dispatch` driver the plan floated as the harder alternative stays deferred (needs the registry link-closure) — `fuzz_bounded_json` covers the shared depth-bomb parser that is the actual crash-class.
 
 ## Deviations from plan
 
 - **Test strategy** — the new bounds checks were extracted into pure headers / helpers (`ParamBoundsPure.h`, `CliArgCoercion`) and bucket-A tested directly rather than via registry-linked integration tests, mirroring `CommandSourceTrust.test.cpp` (the doctest rig deliberately keeps the registry + handlers out of its link closure).
 - **Phase 3 doc item already satisfied** — the Lua instruction budgets the plan asked to document are already in `LUA_GUIDE.md`, so no doc edit shipped.
-- **Deferred (status stays `active` until these land):**
-  - **Phase 1.3 — CLI response / `instance.json` size cap.** Defensive OOM bound, lower value than the overflow/validation fixes. Follow-up.
-  - **`fuzz_command_args` driver.** `CoerceJsonValue` / `ValidateAndResolveArgs` are anonymous-namespace, so a driver must fuzz through `CommandRegistry::Dispatch` and link the registry closure; best authored where a local libFuzzer build exists (this session had no local toolchain). A lower-risk `fuzz_bounded_json` over the header-only `ParseBounded` is the recommended first cut. Follow-up.
+- **Deferred items — now LANDED (2026-07-14, this PR), status flipped to `shipped`:**
+  - **Phase 1.3 — CLI result-file size cap.** Done via the shared `CliResultFileRead.h` leaf (see § Implementation log). Scope note: the plan title said "response / `instance.json`"; `instance.json` was already capped (#1747), so this closed the remaining scenario-RESULT-file readers.
+  - **`fuzz_command_args` driver.** Shipped as `fuzz_bounded_json` — the plan's own recommended first cut over the header-only `ParseBounded` (the shared depth-bomb parser the command-arg `Json` coercion routes through). The `Dispatch`-linked registry-closure driver stays a deferred follow-up (higher build cost, same crash-class already covered).
 
 ## Verification (actual)
 
