@@ -115,6 +115,15 @@ std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, 
 // built JSON; Err holds the validation message (formerly the outError out-parameter).
 Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues);
 
+/**
+ * Build a Jira ADF comment/worklog body from Markdown-authored text, giving comments the same
+ * Markdown→ADF fidelity as the grid long-text editor (BuildAdfScalar / the Plane MarkdownToHtml
+ * comment path). Always returns a valid, non-empty ADF `doc`: when the Markdown converts to an
+ * empty document (empty / whitespace-only input) it falls back to a single empty paragraph, so
+ * Jira never receives an empty-content body it rejects.
+ */
+nlohmann::json AdfCommentBodyFromMarkdown(const std::string& markdown);
+
 } // namespace TrackerFieldPayloadPure
 
 #endif

@@ -145,8 +145,8 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
                               ImVec2(-FLT_MIN, 80.0f));
     const bool hasText = s_CommentsState.PostBuf.data()[0] != '\0';
     if (!hasText) {
-        ImGui::TextDisabled("%s",
-                            SmatchetLocalization::T("comments.post_placeholder", "Write a comment (plain text)..."));
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     }
     const bool post =
         ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0)) && hasText;

@@ -3,7 +3,7 @@
 
 Tracks gaps in the rich-text-editing v2 work after the core grid pipeline landed (`MarkdownConvert`, md4c, `fieldRichValues`, long-text modal, offline 3-way merge, conflict modal). The original `RICH_TEXT_EDITING_V2_PLAN.md` design doc predates this repo's `docs/plans/` tree and was never migrated in; this file is the surviving canonical tracker for the v2 subset and its open items.
 
-> **Status (2026-07-14 audit + slice):** the *Raw-mode and fidelity UX* section is now **done** (read-only source pane, Save acknowledgement gate, on-save loss toast); the *Cache / submit behavior* item (untouched rich fields) is **done by architecture**; the converter-goldens item is **partial** (`MarkdownToHtml` golden coverage added; real-sample fixture capture still open). The *Field coverage and surfaces* items (comments, worklog, bulk import, new-issue draft) remain open — each is a multi-surface change with a product/UX decision (whether those surfaces adopt Markdown semantics) and needs UI verification, so they were deliberately left for a follow-up. Section markers updated inline.
+> **Status (2026-07-14 audit + slice):** the *Raw-mode and fidelity UX* section is now **done** (read-only source pane, Save acknowledgement gate, on-save loss toast); the *Cache / submit behavior* item (untouched rich fields) is **done by architecture**; **comment posting** now has full Markdown→ADF fidelity (Jira parity with Plane); the converter-goldens item is **partial** (`MarkdownToHtml` golden coverage added; real-sample fixture capture still open). Still open: rich **display** of fetched comment ADF, worklog-input modal, bulk import, and new-issue-draft modal reuse — each a further UI change. Section markers updated inline.
 
 ## Testing and quality
 
@@ -22,8 +22,8 @@ Tracks gaps in the rich-text-editing v2 work after the core grid pipeline landed
 
 ## Field coverage and surfaces (plan §5–6)
 
-- **Comments:** Same Markdown ↔ ADF fidelity as grid long-text (today comment paths may still use plain paragraph ADF helpers).
-- **Worklog descriptions:** Decide migrate to **modal** vs keep small inline multiline; if modal, share the grid long-text helper.
+- **Comments — DONE (Jira posting).** Jira comment + worklog-comment bodies now convert Markdown → ADF via `TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown` (same converter as grid long-text / the Plane `MarkdownToHtml` comment path), instead of the flat plain-paragraph helper. Empty/whitespace input falls back to a valid single-paragraph ADF doc so Jira never rejects an empty body; the comment box hint now reads "Markdown supported". *Still open:* rich **display** of fetched comment ADF in the comments modal (today comment bodies render as flattened plain text).
+- **Worklog descriptions:** Decide migrate to **modal** vs keep small inline multiline; if modal, share the grid long-text helper. (The worklog *comment* body already gets the Markdown→ADF fidelity above.)
 - **Plane:** Audit **non-description** multiline fields in `PlaneClient.cpp` and route like description where applicable.
 - **Bulk import:** [`SmatchetBulkTicketsUi.cpp`](../../../Source/Core/src/Ui/SmatchetBulkTicketsUi.cpp) — wire **Markdown + converters** for description-like fields (plan PR-G).
 - **New issue draft:** [`SmatchetNewIssueDraftUi.cpp`](../../../Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp) — optional: reuse the **same modal component** as the grid for consistency (today description is **inline** multiline with Markdown hint).
