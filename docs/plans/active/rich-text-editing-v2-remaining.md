@@ -3,18 +3,18 @@
 
 Tracks gaps in the rich-text-editing v2 work after the core grid pipeline landed (`MarkdownConvert`, md4c, `fieldRichValues`, long-text modal, offline 3-way merge, conflict modal). The original `RICH_TEXT_EDITING_V2_PLAN.md` design doc predates this repo's `docs/plans/` tree and was never migrated in; this file is the surviving canonical tracker for the v2 subset and its open items.
 
-> **Status (2026-07-14 audit):** most items below are still open. Item under *Cache / submit behavior* (untouched rich fields) is **done by architecture**; the converter-goldens item is **partial** (`MarkdownToHtml` golden coverage added; real-sample fixture capture still open). Section markers updated inline.
+> **Status (2026-07-14 audit + slice):** the *Raw-mode and fidelity UX* section is now **done** (read-only source pane, Save acknowledgement gate, on-save loss toast); the *Cache / submit behavior* item (untouched rich fields) is **done by architecture**; the converter-goldens item is **partial** (`MarkdownToHtml` golden coverage added; real-sample fixture capture still open). The *Field coverage and surfaces* items (comments, worklog, bulk import, new-issue draft) remain open — each is a multi-surface change with a product/UX decision (whether those surfaces adopt Markdown semantics) and needs UI verification, so they were deliberately left for a follow-up. Section markers updated inline.
 
 ## Testing and quality
 
 - **Converter goldens — PARTIAL.** Inline golden/snapshot tests exist for `HtmlSubsetToMarkdown` and `MarkdownToHtml` ([`tests/Core/MarkdownConvert.test.cpp`](../../../tests/Core/MarkdownConvert.test.cpp)) and for `MarkdownToAdf` / `AdfToMarkdown` ([`tests/Core/MarkdownConvertAdf.test.cpp`](../../../tests/Core/MarkdownConvertAdf.test.cpp)). **Still open:** capture real Jira ADF and Plane `description_html` samples as external **fixture documents** (today's goldens are inline string literals, not captured real-world payloads).
 - **Regression:** Re-run or extend tests after md4c bumps or flag changes (`Md4cParserFlags()`).
 
-## Raw-mode and fidelity UX (plan §103–113)
+## Raw-mode and fidelity UX (plan §103–113) — DONE
 
-- **Read-only source pane:** Show original **ADF JSON** or **HTML** in a read-only code area above the editor when in raw / high-risk paths (today raw mode is mainly **HTML in the same buffer**; dropped ADF nodes only get a **warning banner**, not a JSON preview).
-- **Acknowledgement:** **Disable Save** until the user confirms **“I understand”** (or equivalent) when formatting loss is possible.
-- **Toasts:** On save, **warn** if constructs were dropped or if save is best-effort (plan mentions toast when something was dropped).
+- **Read-only source pane — DONE.** `TicketFieldEditor_Modal.cpp` `DrawLongTextSourcePane()` shows the original **ADF JSON** (re-indented) or **HTML** in a collapsible read-only pane above the editor on high-risk paths (raw-HTML fallback, or an ADF doc with dropped nodes).
+- **Acknowledgement — DONE.** `DrawLongTextFooter()` disables **Save** behind an **“I understand — save anyway”** checkbox whenever the save would drop constructs (truncation, dropped ADF nodes, or a lossy round-trip). Decision logic is the unit-tested `TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity`.
+- **Toasts — DONE.** `CommitLongTextEdit()` raises a **Warning** toast on save summarizing what will be lost / stored best-effort (raw-HTML verbatim warns but does not block the save).
 
 ## Server errors (plan §92–98)
 

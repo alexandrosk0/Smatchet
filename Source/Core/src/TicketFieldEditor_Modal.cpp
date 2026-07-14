@@ -13,7 +13,10 @@
 #include "TicketFieldEditorLongTextPure.h"
 #include "TrackerFieldSchema.h"
 
+#include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetUiSession.h"
+
+#include <nlohmann/json.hpp>
 
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -58,6 +61,12 @@ struct ActiveLongTextEditorState {
     bool RawMode = false;
     /// ADF node types that AdfToMarkdown skipped (panels, mentions, smart links, ...).
     std::vector<std::string> DroppedAdfNodeTypes;
+    /// True once the user ticks the "I understand" acknowledgement for a formatting-loss save.
+    /// Reset on every Open. Gates the Save action while AssessLongTextSaveFidelity().RequireAck holds.
+    bool LossAcknowledged = false;
+    /// Pretty-printed original rich payload (ADF JSON re-indented, or raw HTML) for the read-only
+    /// source pane. Computed once at Open; empty when there is nothing worth showing.
+    std::string OriginalRichPretty;
 
     static constexpr size_t kBufferSize = 64 * 1024;
     std::vector<char> Buffer;
@@ -122,6 +131,45 @@ struct LongTextModalCtx {
     float InputH = 0.0f;
     ImGuiID EditorId = 0;
 };
+
+// Pretty-print the original rich payload for the read-only source pane: ADF JSON is re-indented
+// (falling back to the raw bytes when it will not parse), HTML is shown verbatim. Non-throwing.
+std::string ComputeOriginalRichPretty(LongTextRichKind kind, const std::string& rich) {
+    if (rich.empty() || kind == LongTextRichKind::None) {
+        return {};
+    }
+    if (kind == LongTextRichKind::Adf) {
+        nlohmann::json j = nlohmann::json::parse(rich, /*cb=*/nullptr, /*allow_exceptions=*/false);
+        if (j.is_discarded()) {
+            return rich; // malformed JSON — show the raw bytes rather than nothing.
+        }
+        return j.dump(2);
+    }
+    return rich; // Html — verbatim.
+}
+
+// Draws a collapsible, read-only view of the ORIGINAL rich payload (pretty ADF JSON or raw HTML)
+// so the user can consult the source the Markdown editor was derived from on high-risk paths —
+// the raw-HTML fallback, or an ADF document with nodes dropped from the Markdown. Read-only: the
+// buffer is never written back (ImGuiInputTextFlags_ReadOnly), and it bypasses the localized
+// InputTextMultiline wrapper so the dictation router never targets this display-only field.
+void DrawLongTextSourcePane() {
+    const ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    // Only meaningful when there is an original payload AND a fidelity concern to inspect.
+    const bool concern = st.RawMode || !st.DroppedAdfNodeTypes.empty();
+    if (st.OriginalRichPretty.empty() || !concern) {
+        return;
+    }
+    const char* label = st.RichKind == LongTextRichKind::Adf ? "Original source (read-only ADF JSON)"
+                                                             : "Original source (read-only HTML)";
+    if (ImGui::CollapsingHeader(label)) {
+        const float paneH = ImGui::GetTextLineHeight() * 8.0f;
+        ::ImGui::InputTextMultiline("##LongTextOriginalSource", const_cast<char*>(st.OriginalRichPretty.c_str()),
+                                    st.OriginalRichPretty.size() + 1, ImVec2(-FLT_MIN, paneH),
+                                    ImGuiInputTextFlags_ReadOnly);
+        ImGui::Separator();
+    }
+}
 
 // Draws the required-field marker and the loading / raw-HTML / dropped-ADF-nodes fidelity banners
 // at the top of the modal. Extracted verbatim from RenderLongTextModal; behaviour byte-identical.
@@ -366,8 +414,8 @@ void DrawLongTextPreviewPane(const LongTextModalCtx& ctx) {
     }
 }
 
-// Commits the edited buffer (diffed against the seed to skip null edits) into pendingEdits, then
-// closes the modal. Extracted from RenderLongTextModal's save branch; byte-identical.
+// Commits the edited buffer (diffed against the seed to skip null edits) into pendingEdits, raises
+// a formatting-loss warning toast when the save may drop constructs, then closes the modal.
 void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
     const std::string newValue(s_ActiveLongTextState.Buffer.data());
     // Diff against BufferSeedShown — exactly what was loaded into Buffer at seed time (the
@@ -385,14 +433,29 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
         edit.Preformatted = s_ActiveLongTextState.RawMode;
         edit.OriginalRichValue = s_ActiveLongTextState.OriginalRichValue;
         pendingEdits.push_back(std::move(edit));
+
+        // Warn on save when the stored value may lose formatting. Recompute the round-trip fresh:
+        // LastRoundTripLossy is only maintained while the preview pane is visible, so an EditOnly
+        // save would otherwise miss typing-introduced loss.
+        const bool roundTripLossy =
+            ComputeRoundTripPreview(s_ActiveLongTextState.RichKind, newValue).Lossy;
+        const TicketFieldEditorLongTextPure::LongTextSaveFidelity fidelity =
+            TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
+                s_ActiveLongTextState.RawMode, s_ActiveLongTextState.DroppedAdfNodeTypes, roundTripLossy,
+                s_ActiveLongTextState.SeedTruncated);
+        if (fidelity.LossPossible) {
+            SmatchetToastManager::Instance().Push(
+                SmatchetLocalization::T("toast.longtext_lossy_title", "Saved with formatting loss"),
+                s_ActiveLongTextState.FieldLabel + ": " + fidelity.ToastSummary + ".", ToastType::Warning);
+        }
     }
     ImGui::CloseCurrentPopup();
     CloseLongTextEditor();
 }
 
-// Draws the footer hint, Save / Cancel buttons, and the Edit/Split/Preview segmented control, then
-// applies the save (Ctrl+Enter / Save) or cancel (Esc / Cancel) action. Extracted from
-// RenderLongTextModal; byte-identical.
+// Draws the footer hint, the formatting-loss acknowledgement gate, Save / Cancel buttons, and the
+// Edit/Split/Preview segmented control, then applies the save (Ctrl+Enter / Save) or cancel
+// (Esc / Cancel) action. Save is disabled until the loss acknowledgement is ticked when required.
 void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdit>& pendingEdits) {
     // Ctrl+Enter saves; Esc cancels. Both work even when the textarea is focused.
     const bool ctrlEnter = ctx.CtrlDown && ImGui::IsKeyPressed(ImGuiKey_Enter, false);
@@ -404,11 +467,33 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
                                    "**bold**, *em*, # heading, - list, ```code```";
     ImGui::TextDisabled("%s", footerHint);
 
-    bool save = ctrlEnter;
+    // Formatting-loss acknowledgement gate. When the save would drop constructs (truncation,
+    // dropped ADF nodes, or a lossy round-trip) require an explicit "I understand" tick before
+    // Save is enabled. Raw-HTML verbatim saves warn via toast but never gate here (RequireAck=false).
+    const TicketFieldEditorLongTextPure::LongTextSaveFidelity fidelity =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
+            s_ActiveLongTextState.RawMode, s_ActiveLongTextState.DroppedAdfNodeTypes,
+            s_ActiveLongTextState.LastRoundTripLossy, s_ActiveLongTextState.SeedTruncated);
+    const bool blockSave = fidelity.RequireAck && !s_ActiveLongTextState.LossAcknowledged;
+    if (fidelity.RequireAck) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
+        ImGui::Checkbox("I understand — save anyway (some formatting will be lost)",
+                        &s_ActiveLongTextState.LossAcknowledged);
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered() && !fidelity.ToastSummary.empty()) {
+            ImGui::SetTooltip("%s", fidelity.ToastSummary.c_str());
+        }
+    }
+
+    bool save = ctrlEnter && !blockSave;
     bool cancel = escPressed;
+    if (blockSave)
+        ImGui::BeginDisabled();
     if (ImGui::Button("Save", ImVec2(100, 0))) {
         save = true;
     }
+    if (blockSave)
+        ImGui::EndDisabled();
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(100, 0))) {
         cancel = true;
@@ -482,6 +567,11 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
                                             : ActiveLongTextEditorState::PreviewModeT::EditOnly;
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
     s_ActiveLongTextState.LoadingMarkdown = false;
+    s_ActiveLongTextState.LossAcknowledged = false;
+    // Pretty-print the original payload once for the read-only source pane. Independent of the
+    // seed path (sync/async) — the pane's visibility (raw / dropped-nodes) is decided per-frame.
+    s_ActiveLongTextState.OriginalRichPretty =
+        ComputeOriginalRichPretty(s_ActiveLongTextState.RichKind, currentRichValue);
     ++s_ActiveLongTextState.LoadGen;
 
     // Large rich values are parsed on a worker to keep the UI thread responsive; small ones stay inline.
@@ -572,6 +662,9 @@ void TicketFieldEditor::RenderLongTextModal(std::vector<PendingFieldEdit>& pendi
     if (ImGui::BeginPopupModal(kLongTextModalPopupId, &modalOpen,
                                ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings)) {
         DrawLongTextBanners();
+        // Read-only original-source pane (collapsed by default) for raw-HTML / dropped-node paths.
+        // Drawn before the input-size reservation so an expanded pane shrinks the editor, not the footer.
+        DrawLongTextSourcePane();
 
         // Reserve room for the footer (status line + button row).
         const float footerH = ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +

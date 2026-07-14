@@ -120,4 +120,41 @@ bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& sho
     return newValue != shownSeed;
 }
 
+LongTextSaveFidelity AssessLongTextSaveFidelity(bool rawMode, const std::vector<std::string>& droppedAdfNodeTypes,
+                                                bool roundTripLossy, bool seedTruncated) {
+    LongTextSaveFidelity out;
+    std::vector<std::string> reasons;
+    if (seedTruncated) {
+        out.RequireAck = true;
+        reasons.push_back("the document exceeds the editor buffer and the text beyond it was not loaded");
+    }
+    if (!droppedAdfNodeTypes.empty()) {
+        out.RequireAck = true;
+        std::string list;
+        for (std::size_t i = 0; i < droppedAdfNodeTypes.size() && i < 5; ++i) {
+            if (!list.empty())
+                list += ", ";
+            list += droppedAdfNodeTypes[i];
+        }
+        if (droppedAdfNodeTypes.size() > 5)
+            list += ", ...";
+        reasons.push_back("constructs not in the Markdown subset will be dropped (" + list + ")");
+    }
+    if (roundTripLossy) {
+        out.RequireAck = true;
+        reasons.push_back("some formatting will change in the round-trip conversion");
+    }
+    if (rawMode) {
+        // Raw HTML is stored verbatim (best-effort, no structured validation) — warn, never block.
+        reasons.push_back("raw HTML is saved verbatim without validation");
+    }
+    out.LossPossible = !reasons.empty();
+    for (std::size_t i = 0; i < reasons.size(); ++i) {
+        if (i != 0)
+            out.ToastSummary += "; ";
+        out.ToastSummary += reasons[i];
+    }
+    return out;
+}
+
 } // namespace TicketFieldEditorLongTextPure
