@@ -276,17 +276,14 @@ bool AppController::IsLuaScriptConsented(const std::string& resolvedPath, bool i
     return false;
 }
 
-bool AppController::ApproveLuaScript(const std::string& scriptName, std::string& outError) {
-    outError.clear();
+VoidResult AppController::ApproveLuaScript(const std::string& scriptName) {
     const std::string resolved = ResolveLuaScriptPath(scriptName);
     if (resolved.empty()) {
-        outError = "Invalid or unresolvable script name: " + scriptName;
-        return false;
+        return VoidResult::Err("Invalid or unresolvable script name: " + scriptName);
     }
     std::string bytes;
     if (!ReadLuaScriptBytesCapped(resolved, bytes)) {
-        outError = "Script could not be read: " + resolved;
-        return false;
+        return VoidResult::Err("Script could not be read: " + resolved);
     }
     const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
 
@@ -297,21 +294,19 @@ bool AppController::ApproveLuaScript(const std::string& scriptName, std::string&
     cfg.LuaScriptConsentInitialized = true;
     ConfigManager::Save(cfg);
     LOG_INFO("Lua consent: approved script path=%s sha=%s", resolved.c_str(), sha.c_str());
-    return true;
+    return VoidOk();
 }
 
-bool AppController::RevokeLuaScript(const std::string& scriptName, std::string& outError) {
-    outError.clear();
+VoidResult AppController::RevokeLuaScript(const std::string& scriptName) {
     const std::string resolved = ResolveLuaScriptPath(scriptName);
     if (resolved.empty()) {
-        outError = "Invalid or unresolvable script name: " + scriptName;
-        return false;
+        return VoidResult::Err("Invalid or unresolvable script name: " + scriptName);
     }
     TrackerConfig cfg = ConfigManager::Load();
     cfg.ApprovedLuaScripts = smatchet::lua_consent::WithoutApproval(cfg.ApprovedLuaScripts, resolved);
     ConfigManager::Save(cfg);
     LOG_INFO("Lua consent: revoked approval for script path=%s", resolved.c_str());
-    return true;
+    return VoidOk();
 }
 
 std::vector<std::string> AppController::ListApprovedLuaScriptPaths() const {
