@@ -326,6 +326,7 @@ Result<ProjectV2ItemsPage, std::string> ParseProjectV2ItemsPage(const nlohmann::
                 } else if (value.contains("date") && value["date"].is_string()) {
                     display = value["date"].get<std::string>();
                 } else if (value.contains("name") && value["name"].is_string()) {
+                    // SMATCHET_DEVIATION(rule=duplication; reason=display chain; owner=tracker; revisit=2026-12-31)
                     display = value["name"].get<std::string>(); // single-select option name
                 } else if (value.contains("title") && value["title"].is_string()) {
                     display = value["title"].get<std::string>(); // iteration title

@@ -74,6 +74,7 @@ Result<ProjectV2Catalog, TrackerError> FetchProjectV2Catalog(const std::string& 
     return CatalogResult::Ok(std::move(parsed.value()));
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=decl/def signature pair; owner=tracker; revisit=2026-12-31)
 Result<std::map<std::string, std::vector<std::pair<std::string, std::string>>>, TrackerError>
 FetchProjectV2ItemValues(const std::string& baseUrl, const std::string& pat, const std::string& projectNodeId,
                          const std::vector<TrackerField>& catalogFields, std::string* outWarning) {
