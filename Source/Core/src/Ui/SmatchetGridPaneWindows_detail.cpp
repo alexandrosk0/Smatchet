@@ -75,10 +75,9 @@ std::string ResolveNewPaneView(const std::string& backendKey, const std::string&
     return ws.Views.front().Id;
 }
 
-PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,
-                                                         PaneAddRequest& addRequest,
-                                                         const std::unordered_map<std::string, ViewWorkspaceState>&
-                                                             viewBuckets) {
+PaneRequestApplyOutcome
+ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId, PaneAddRequest& addRequest,
+                                 const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets) {
     PaneRequestApplyOutcome outcome;
 
     // Close sweep — windows whose tab X was clicked wrote pane.open = false.
@@ -113,8 +112,8 @@ PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& 
         GridPane dup;
         dup.id = GenerateUniquePaneId(panes);
         dup.title = src->title;
-        const bool crossBackend = !addRequest.targetBackendKey.empty() &&
-                                  addRequest.targetBackendKey != src->backendKey;
+        const bool crossBackend =
+            !addRequest.targetBackendKey.empty() && addRequest.targetBackendKey != src->backendKey;
         if (crossBackend) {
             dup.backendKey = addRequest.targetBackendKey;
             dup.viewId = ResolveNewPaneView(addRequest.targetBackendKey, addRequest.targetViewId, viewBuckets);
@@ -156,8 +155,10 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
     // Unresolvable own view: keep the column set captured while it WAS resolvable. Frozen
     // until refocus reloads the pane's bucket. The cold-start hole (no session capture after a
     // restart) is closed by the pane context's resolvedOwnView upgrade in
-    // SmatchetUI::resolvePaneColumns. Per-pane catalog VALUE routing stays deferred (it needs
-    // per-context catalog population first — see docs/self-improvement/categories/debt.md).
+    // SmatchetUI::resolvePaneColumns. Per-pane catalog VALUE routing now lands via
+    // ChoosePaneCatalogSource + resolvePaneCatalog (per-context catalog population fetches the
+    // pane's own backend catalog into GridLiveContext::fieldCatalog); backend Reader display
+    // resolution (ResolveDisplayValue) remains focused-backend-routed (separate follow-up).
     if (cachedColumnsValid && !paneViewId.empty() && cachedColumnsViewId == paneViewId) {
         return PaneColumnsSource::CachedFrozen;
     }
@@ -167,6 +168,16 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
 bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::string& paneViewId,
                                            const std::string& ownResolvedViewId) {
     return source == PaneColumnsSource::SharedFallback && !paneViewId.empty() && ownResolvedViewId == paneViewId;
+}
+
+PaneCatalogSource ChoosePaneCatalogSource(bool paneFocused, bool paneCatalogPopulated) {
+    // Focused pane is the focused context — its catalog IS the shared focused catalog, so
+    // there is nothing to route. A non-focused pane routes to its OWN catalog only once
+    // populated; until then the shared focused catalog is the safe (unchanged) fallback.
+    if (paneFocused || !paneCatalogPopulated) {
+        return PaneCatalogSource::SharedFocused;
+    }
+    return PaneCatalogSource::OwnContext;
 }
 
 } // namespace detail
