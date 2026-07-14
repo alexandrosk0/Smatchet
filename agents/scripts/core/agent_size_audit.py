@@ -41,6 +41,9 @@ Modes mirror function_size_audit.py:
   agent_size_audit.py                  # human report of all current over-budget files
   agent_size_audit.py --list           # one `rule<TAB>path<TAB>NN lines (cap MM)` per violation
   agent_size_audit.py --baseline-md     # deterministic markdown grandfather snapshot
+  agent_size_audit.py --prune-stale-baseline [--fix]  # report (or --fix rewrite) committed
+                                        #   baseline entries now deleted / under-cap (also a
+                                        #   non-failing WARN in --selftest)
   agent_size_audit.py --diff <ref>      # DELTA gate: emit hard-cap violations NEW or just-crossed
                                         #   vs the merge-base of <ref>, PLUS advisory
                                         #   `[agent-size] WARN ...` lines (non-failing)
@@ -322,30 +325,96 @@ def run_list():
     return 0
 
 
-def run_baseline_md():
+BASELINE_MD = "docs/high-integrity/agent-size-baseline.md"
+
+
+def _baseline_path():
+    """Committed grandfather-snapshot path. SMATCHET_AGENTSIZE_BASELINE overrides it (the bats seam;
+    production leaves it unset → the repo-root file)."""
+    override = os.environ.get("SMATCHET_AGENTSIZE_BASELINE")
+    return override if override else os.path.join(_repo_root(), BASELINE_MD)
+
+# Baseline entry line: `- `<path>` · <n> lines (...)`. Anchored so a prose
+# backtick-path elsewhere in the file can never be mistaken for an entry.
+_BASELINE_ENTRY_RE = re.compile(r"^- `([^`]+)` · \d+ lines")
+
+
+def _render_baseline_md():
+    """Return the deterministic grandfather-snapshot markdown (the text --baseline-md prints and
+    --prune-stale-baseline --fix writes). Sourced from the live scan_head(), so a fresh render never
+    carries a stale (deleted / now-under-cap) entry."""
     head = scan_head()
     hard_p, soft_p, hard_c, soft_c, soft_s = _budgets()
-    rows = []
-    for (rule, path), (lines, cap, cls) in sorted(head.items()):
-        rows.append("- `%s` · %d lines (cap %d, %s)" % (path, lines, cap, cls))
-    print("# Agent-prompt / AGENTS.md size — grandfathered baseline")
-    print()
-    print("_Auto-generated. Do not hand-edit; run "
-          "`bash agents/scripts/project/test-lint-rules.sh --agentsize-baseline` and commit._")
-    print("_The gate is a live merge-base delta vs `origin/develop` (agent_size_audit.py --diff); "
-          "this file is an informational snapshot, not the gate input._")
-    print()
-    print("## %s (%d entries, cap %d lines agent-prompt / %d lines AGENTS.md)"
-          % (RULE, len(rows), hard_p, hard_c))
-    if rows:
-        for r in rows:
-            print(r)
-    else:
-        print("- (none)")
-    print()
-    print("## Totals")
-    print("- oversized agent files grandfathered: %d" % len(rows))
+    rows = ["- `%s` · %d lines (cap %d, %s)" % (path, lines, cap, cls)
+            for (rule, path), (lines, cap, cls) in sorted(head.items())]
+    lines_out = [
+        "# Agent-prompt / AGENTS.md size — grandfathered baseline",
+        "",
+        "_Auto-generated. Do not hand-edit; run "
+        "`bash agents/scripts/project/test-lint-rules.sh --agentsize-baseline` and commit._",
+        "_The gate is a live merge-base delta vs `origin/develop` (agent_size_audit.py --diff); "
+        "this file is an informational snapshot, not the gate input._",
+        "",
+        "## %s (%d entries, cap %d lines agent-prompt / %d lines AGENTS.md)"
+        % (RULE, len(rows), hard_p, hard_c),
+    ]
+    lines_out.extend(rows if rows else ["- (none)"])
+    lines_out.extend(["", "## Totals", "- oversized agent files grandfathered: %d" % len(rows)])
+    return "\n".join(lines_out) + "\n"
+
+
+def run_baseline_md():
+    sys.stdout.write(_render_baseline_md())
     return 0
+
+
+def _parse_baseline_entries(text):
+    """Extract the `path` of every grandfather entry line in a baseline-md text (excludes the
+    `- (none)` placeholder + any prose)."""
+    return [m.group(1) for m in (_BASELINE_ENTRY_RE.match(ln) for ln in text.splitlines()) if m]
+
+
+def find_stale_baseline_entries():
+    """Return [(path, reason)] for committed baseline entries no longer justified — the file was
+    DELETED (no longer git-tracked) or is now UNDER the cap (trimmed / reclassified). Empty when the
+    committed baseline is absent or fully current. Cross-references `git ls-files` per the finding."""
+    baseline_path = _baseline_path()
+    try:
+        with open(baseline_path, "r", encoding="utf-8", errors="replace") as fh:
+            committed = fh.read()
+    except OSError:
+        return []  # no committed baseline → nothing to prune
+    current_over = {path for (_rule, path) in scan_head()}
+    stale = []
+    for path in _parse_baseline_entries(committed):
+        if path in current_over:
+            continue
+        tracked = bool(_git_ok(["ls-files", "--", path]).strip())
+        stale.append((path, "now under cap / reclassified" if tracked else "deleted (no longer tracked)"))
+    return stale
+
+
+def run_prune_stale_baseline(fix):
+    """Report (or, with --fix, rewrite) stale committed-baseline entries. Exit 1 when stale entries
+    exist and --fix was not passed (a --check-style signal the snapshot needs regeneration); 0 when
+    clean or after a successful rewrite."""
+    stale = find_stale_baseline_entries()
+    if not stale:
+        print("agent_size_audit: baseline is current — no stale grandfather entries.")
+        return 0
+    for path, reason in stale:
+        print("stale-baseline\t%s\t%s" % (path, reason))
+    if fix:
+        baseline_path = _baseline_path()
+        with open(baseline_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(_render_baseline_md())
+        print("agent_size_audit: pruned %d stale entr%s — %s rewritten."
+              % (len(stale), "y" if len(stale) == 1 else "ies", BASELINE_MD))
+        return 0
+    print("agent_size_audit: %d stale baseline entr%s — rerun with --fix (or "
+          "`test-lint-rules.sh --agentsize-baseline`) to regenerate."
+          % (len(stale), "y" if len(stale) == 1 else "ies"), file=sys.stderr)
+    return 1
 
 
 def run_report():
@@ -443,6 +512,11 @@ def run_selftest():
             "<!-- SMATCHET_DEVIATION(rule=agent-too-long; reason=t; owner=t; revisit=never) -->"):
         print("SELFTEST FAIL: HTML-comment deviation marker must suppress", file=sys.stderr)
         miss = 1
+    # (e) stale-baseline drift (advisory — the committed snapshot is informational, not the gate
+    # input, so a stale entry WARNs but never fails selftest; --prune-stale-baseline --fix clears it).
+    for path, reason in find_stale_baseline_entries():
+        print("selftest: WARN stale baseline entry — `%s` (%s); regenerate via "
+              "`agent_size_audit.py --prune-stale-baseline --fix`" % (path, reason), file=sys.stderr)
     if miss:
         return 1
     print("selftest: agent-size budgets in sync with project.config.json + AGENTS.md")
@@ -464,6 +538,11 @@ def main():
     ap.add_argument("--scan-file", metavar="PATH")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--baseline-md", action="store_true")
+    ap.add_argument("--prune-stale-baseline", action="store_true",
+                    help="report stale committed-baseline entries (deleted / now-under-cap); "
+                         "with --fix, regenerate the snapshot")
+    ap.add_argument("--fix", action="store_true",
+                    help="with --prune-stale-baseline, rewrite the baseline snapshot in place")
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
     try:
@@ -477,6 +556,8 @@ def main():
             sys.exit(run_list())
         if args.baseline_md:
             sys.exit(run_baseline_md())
+        if args.prune_stale_baseline:
+            sys.exit(run_prune_stale_baseline(args.fix))
         sys.exit(run_report())
     except Exception as e:  # never crash-as-clean: surface as infra error (>=2)
         print("agent_size_audit: ERROR: %s" % e, file=sys.stderr)
