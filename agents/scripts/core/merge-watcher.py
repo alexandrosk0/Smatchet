@@ -81,7 +81,6 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import importlib.util
 import json
 import os
 import pathlib
@@ -175,14 +174,19 @@ GIT_BIN = _resolve_bin(
     r"C:\Program Files (x86)\Git\cmd\git.exe",
 )
 
-# Import shared helpers from the CLI module (in the same directory).
+# Shared per-user registry primitives (core-scripts-python-10): imported normally
+# from an import-legal sibling module instead of the prior fragile
+# `importlib.util.spec_from_file_location(... "merge-watcher-cli.py")` +
+# exec_module dance (forced only by that file's hyphenated, non-importable name).
 _HERE = pathlib.Path(__file__).resolve().parent
-_CLI_SPEC = importlib.util.spec_from_file_location("merge_watcher_cli", _HERE / "merge-watcher-cli.py")
-_CLI = importlib.util.module_from_spec(_CLI_SPEC)
-_CLI_SPEC.loader.exec_module(_CLI)  # type: ignore[union-attr]
-watcher_root = _CLI.watcher_root
-state_dir = _CLI.state_dir
-read_registry = _CLI.read_registry
+sys.path.insert(0, str(_HERE))  # so the sibling module resolves under any launch cwd
+from merge_watcher_registry import (  # noqa: E402
+    watcher_root,
+    state_dir,
+    read_registry,
+    write_registry,
+    registry_lock,
+)
 
 
 MERGE_GATES_SCRIPT = _HERE / "merge-gates.sh"
@@ -926,8 +930,8 @@ def maybe_remove_from_registry(pr: int, clone_path: str) -> None:
     """After a successful merge, drop the PR from active.json so the daemon
     stops polling it. Uses the same file-lock as the CLI.
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         before = len(entries)
         entries = [
             e
@@ -935,7 +939,7 @@ def maybe_remove_from_registry(pr: int, clone_path: str) -> None:
             if not (int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path)
         ]
         if len(entries) != before:
-            _CLI.write_registry(entries)
+            write_registry(entries)
 
 
 # ---------------------------------------------------------------------------
@@ -1555,15 +1559,15 @@ def _bump_triage_attempts(pr: int, clone_path: str, new_count: int, head_sha: st
     Backwards-compatible: callers passing only (pr, clone_path, new_count)
     leave triage_for_head_sha untouched (legacy per-PR-lifetime semantics).
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["triage_attempts"] = new_count
                 if head_sha:
                     e["triage_for_head_sha"] = head_sha
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def _bump_auto_act_state(pr: int, clone_path: str, head_sha: str, new_attempts: int) -> None:
@@ -1574,15 +1578,15 @@ def _bump_auto_act_state(pr: int, clone_path: str, head_sha: str, new_attempts: 
     can't auto-retry forever. `auto_act_for_head_sha` deduplicates within a
     single head (one attempt per push).
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["auto_act_attempts"] = new_attempts
                 e["auto_act_for_head_sha"] = head_sha
                 e["auto_act_dispatched_at_unix"] = int(time.time())
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: int):
@@ -1598,8 +1602,8 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
     attempts=N+1, dispatching N+1 spawns instead of one. The check +
     bump now happen inside a single `registry_lock()` critical section.
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) != pr or e.get("clone_path") != clone_path:
                 continue
@@ -1612,7 +1616,7 @@ def _atomic_reserve_auto_act(pr: int, clone_path: str, head_sha: str, budget: in
             e["auto_act_attempts"] = attempts_after
             e["auto_act_for_head_sha"] = head_sha
             e["auto_act_dispatched_at_unix"] = int(time.time())
-            _CLI.write_registry(entries)
+            write_registry(entries)
             return ("ok", attempts_after)
         # PR not in registry — shouldn't happen, but treat as dedup-block.
         return ("dedup", None)
@@ -1630,8 +1634,8 @@ def _atomic_reserve_auto_update(pr: int, clone_path: str, head_sha: str, budget:
 
     Returns ("ok", attempts_after) / ("dedup", None) / ("budget", attempts).
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) != pr or e.get("clone_path") != clone_path:
                 continue
@@ -1644,7 +1648,7 @@ def _atomic_reserve_auto_update(pr: int, clone_path: str, head_sha: str, budget:
             e["auto_update_attempts"] = attempts_after
             e["auto_update_for_head_sha"] = head_sha
             e["auto_update_dispatched_at_unix"] = int(time.time())
-            _CLI.write_registry(entries)
+            write_registry(entries)
             return ("ok", attempts_after)
         return ("dedup", None)
 
@@ -1731,14 +1735,14 @@ def _bump_cr_none_grace(
     Mirrors `_bump_triage_attempts`. `cr_none_grace_head` pins the counter to a
     HEAD so a fresh push (CR may review the new commit) restarts the window.
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["cr_none_grace_polls"] = new_count
                 e["cr_none_grace_head"] = head_sha
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def _bump_nudge_state(
@@ -1759,8 +1763,8 @@ def _bump_nudge_state(
     model that resets merge-gates.sh's in-process locals every cycle — the five
     fields are written together from the one GATE_CARRY line under a single lock.
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["nudged_head"] = nudged_head
@@ -1769,7 +1773,7 @@ def _bump_nudge_state(
                 e["none_head"] = none_head
                 e["none_streak"] = none_streak
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def maybe_pass_cr_none_grace(
@@ -2018,15 +2022,15 @@ def _bump_resolved_threads(
     head_sha at the time of resolution so subsequent polls can dedup (don't
     re-resolve already-resolved threads on the same head).
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["last_resolved_threads_count"] = resolved_count
                 e["last_resolved_at_unix"] = int(time.time())
                 e["last_resolved_for_head_sha"] = head_sha
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def maybe_resolve_stuck_cr_threads(
@@ -2277,15 +2281,15 @@ def _bump_stuck_streak(
     fresh push (progress) restarts it; `stuck_reason` feeds the CLI status
     highlight + the SessionStart nudge.
     """
-    with _CLI.registry_lock():
-        entries = _CLI.read_registry()
+    with registry_lock():
+        entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
                 e["stuck_streak"] = new_count
                 e["stuck_head"] = head_sha
                 e["stuck_reason"] = reason
                 break
-        _CLI.write_registry(entries)
+        write_registry(entries)
 
 
 def maybe_auto_update_behind(
