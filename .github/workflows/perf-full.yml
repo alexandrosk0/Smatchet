@@ -24,10 +24,12 @@ on:
         type: boolean
         default: false
 
+# Least-privilege default (ci-workflows-05): the workflow-level token is read-only
+# so any future job added here is read-only unless it opts in. The single perf-full
+# job that pushes baseline-bump branches + opens regression issues elevates its own
+# token below.
 permissions:
-  contents: write
-  issues: write
-  pull-requests: write
+  contents: read
 
 env:
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
@@ -45,6 +47,14 @@ jobs:
     name: Perf full-suite (windows-2022)
     runs-on: windows-2022
     timeout-minutes: 60
+    # Elevated per-job (ci-workflows-05): this job pushes baseline-bump branches
+    # (contents) and opens regression / scenario-failure issues (issues); the
+    # baseline-recapture path opens a PR (pull-requests). The workflow-level
+    # default stays read-only.
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
 
     steps:
       - name: Checkout
