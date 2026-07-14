@@ -81,10 +81,9 @@ std::string ResolveNewPaneView(const std::string& backendKey, const std::string&
 /// viewBuckets is used to resolve the new pane's view when targetBackendKey is
 /// non-empty (cross-backend create); pass an empty map when targetBackendKey is
 /// always empty (Slice 1 write sites; Slice 2 threads the real buckets through).
-PaneRequestApplyOutcome ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId,
-                                                         PaneAddRequest& addRequest,
-                                                         const std::unordered_map<std::string, ViewWorkspaceState>&
-                                                             viewBuckets);
+PaneRequestApplyOutcome
+ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focusedPaneId, PaneAddRequest& addRequest,
+                                 const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets);
 
 /// True when a dangling pane.viewId may be self-repaired to the active view: only
 /// when the pane belongs to the currently-loaded (focused) backend bucket. A
@@ -124,7 +123,7 @@ bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::
 /// labels / display names against the shared FOCUSED catalog or its OWN context catalog.
 enum class PaneCatalogSource {
     SharedFocused, ///< Focused pane OR the pane context has no populated own catalog — use the shared focused index.
-    OwnContext     ///< Non-focused pane whose OWN context catalog is populated (seed or fetch) — build a per-pane index.
+    OwnContext ///< Non-focused pane whose OWN context catalog is populated (seed or fetch) — build a per-pane index.
 };
 
 /// Pure catalog-source policy. The focused pane always reads the focused catalog (it IS the

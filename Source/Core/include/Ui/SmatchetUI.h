@@ -484,11 +484,9 @@ class SmatchetUI {
     // effectiveCatalogRevision: the revision of the catalog `catalogIndex` was resolved from
     // (per-pane routed own-context revision, else the focused revision) — keys the column cache
     // so a per-pane catalog refetch invalidates the pane's header labels (Slice 4 routing).
-    const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane,
-                                                            const TrackerFieldCatalogIndex& catalogIndex,
-                                                            const ViewDefinition* paneView,
-                                                            const ViewDefinition* paneOwnResolvedView,
-                                                            std::uint64_t effectiveCatalogRevision);
+    const std::vector<TicketGridColumn>&
+    resolvePaneColumns(GridPane& pane, const TrackerFieldCatalogIndex& catalogIndex, const ViewDefinition* paneView,
+                       const ViewDefinition* paneOwnResolvedView, std::uint64_t effectiveCatalogRevision);
     // resolvePaneCatalog: pick the field-catalog INDEX this pane resolves its cell option
     // labels / display names through (per-pane-catalog-value-read-routing). The focused pane
     // (and any pane whose own context catalog isn't populated yet) uses the shared per-frame

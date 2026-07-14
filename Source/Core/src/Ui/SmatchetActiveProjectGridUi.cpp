@@ -711,4 +711,3 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
         ImGui::EndPopup();
     }
 }
-

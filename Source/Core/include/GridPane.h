@@ -32,9 +32,9 @@
 /// backend (today's behaviour, bytes-identical). targetViewId.empty() = resolve
 /// the backend's default / active view via ResolveNewPaneView.
 struct PaneAddRequest {
-    std::string sourceId;          ///< Focused pane to duplicate; empty = no request.
-    std::string targetBackendKey;  ///< Backend for the new pane; empty = same as source.
-    std::string targetViewId;      ///< View for the new pane; empty = backend default.
+    std::string sourceId;         ///< Focused pane to duplicate; empty = no request.
+    std::string targetBackendKey; ///< Backend for the new pane; empty = same as source.
+    std::string targetViewId;     ///< View for the new pane; empty = backend default.
 };
 
 struct GridPane {
