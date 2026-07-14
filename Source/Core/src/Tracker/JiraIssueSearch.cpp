@@ -611,7 +611,7 @@ JiraClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& 
 }
 
 Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView(const TrackerConfig& cfg,
-                                                                                 const ViewsStore& views) {
+                                                                                 const ViewsStore& /*views*/) {
     using KeysResult = Result<std::vector<std::string>, TrackerError>;
     // Keys-only membership snapshot for the disappearance reconcile: the view's full JQL (NO
     // `updated` window — we need the whole current membership) with `fields=*none` so each issue
