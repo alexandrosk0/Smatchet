@@ -165,12 +165,15 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`slice-e2-libfuzzer`](shipped/slice-e2-libfuzzer.md) | 2026-06-15 | Slice E2 — libFuzzer harness for the untrusted-byte parsers |
 | [`slice-e2b-libfuzzer`](shipped/slice-e2b-libfuzzer.md) | 2026-06-15 | Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b) |
 | [`fuzz-smoke-gate-promotion`](shipped/fuzz-smoke-gate-promotion.md) | 2026-06-16 | Plan — promote `Fuzz smoke` deterministic build to a merge blocker |
+| [`slice-g-db-corruption`](shipped/slice-g-db-corruption.md) | 2026-06-16 | Slice G — DB-corruption robustness for the local cache |
 | [`codeql-code-scanning`](shipped/codeql-code-scanning.md) | 2026-06-17 | Plan — CodeQL c-cpp code scanning |
 | [`bugbot-merge-gate`](shipped/bugbot-merge-gate.md) | 2026-06-18 | Plan — Wire Cursor Bugbot into the merge-gate poller + triage |
+| [`ci-falsepositive-hardening`](shipped/ci-falsepositive-hardening.md) | 2026-06-18 | Plan — CI / gate false-positive hardening (Cluster C) |
 | [`concurrent-session-guard-hardening`](shipped/concurrent-session-guard-hardening.md) | 2026-06-18 | Plan — Concurrent-session guard hardening (Cluster A) |
 | [`merge-watcher-clone-and-behind-hardening`](shipped/merge-watcher-clone-and-behind-hardening.md) | 2026-06-18 | Plan — Merge-watcher clone-key + BEHIND-advance hardening (Cluster B) |
 | [`pr-intent-capture-hardening`](shipped/pr-intent-capture-hardening.md) | 2026-06-18 | Plan — PR intent capture hardening (observability + blocking gate + cross-harness) |
 | [`appcontroller-god-object-decomposition`](shipped/appcontroller-god-object-decomposition.md) | 2026-06-19 | Plan — AppController god-object decomposition |
+| [`command-input-hardening`](shipped/command-input-hardening.md) | 2026-06-19 | Plan — Command-input hardening (CLI · MCP · Palette · Lua) |
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 | [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
 | [`self-improvement-pr-review-exemption`](shipped/self-improvement-pr-review-exemption.md) | 2026-06-20 | Plan — Exempt pure self-improvement doc PRs from CR / Bugbot review + heavy tests |

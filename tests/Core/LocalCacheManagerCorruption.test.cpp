@@ -1,5 +1,5 @@
 // LocalCacheManager corruption-on-open characterization — Slice G Phase 1 (testing-surface.md §6
-// Gap 6, plan docs/plans/active/slice-g-db-corruption.md).
+// Gap 6, plan docs/plans/shipped/slice-g-db-corruption.md).
 //
 // Phase 2 (this slice): the ctor now SURVIVES a corrupt on-disk cache file. Before opening the
 // `db` member, the ctor probes the file (QuarantineIfCorrupt in LocalCacheManager.cpp); an

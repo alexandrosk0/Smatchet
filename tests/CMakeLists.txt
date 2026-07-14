@@ -594,6 +594,11 @@ add_executable(SmatchetTests
     # (the throw is on the on-disk header read), so it uses the shared support/TempDbFile.h RAII
     # helper. Links the production LCM TU already pulled in below.
     Core/LocalCacheManagerCorruption.test.cpp
+    # Slice-G Phase 3 / G2 — concurrent-open contention: a stampede of threads constructing a
+    # LocalCacheManager on ONE on-disk path must all survive (busy_timeout + the G2 schema-init
+    # backoff-retry absorb a transient SQLITE_BUSY instead of crashing the ctor). [high-risk]
+    # (timing-dependent), file-backed via support/TempDbFile.h. Links the production LCM TU below.
+    Core/LocalCacheManagerContention.test.cpp
     # Pure classification behind LCM corrupt-cache recovery — header-only seam
     # (Source/Core/include/Persistence/SqliteOpenRecoveryPure.h); pins the transient
     # SQLITE_BUSY/CANTOPEN/IOERR codes the file-backed corruption test cannot force. No .cpp to link.

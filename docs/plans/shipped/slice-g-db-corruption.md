@@ -1,6 +1,6 @@
 # Slice G — DB-corruption robustness for the local cache
 
-**Status:** Phases 1–2 **shipped** — Phase 1 characterization (#1327); Phase 2 corrupt-file rebuild (this PR). Phase 3 (`SQLITE_BUSY` contention) not yet greenlit. Plan stays active to track Phase 3.
+**Status:** **shipped** — Phase 1 characterization (#1327); Phase 2 corrupt-file rebuild; Phase 3 / G2 `SQLITE_BUSY` contention hardening (2026-07-14, greenlit in-session).
 **Source:** `docs/guides/testing-surface.md` §6 Gap 6 ("persistence corruption untested").
 **Routing:** `offline-sync` (owns `LocalCacheManager`); `test-rig` refuses SQLite surfaces.
 **Loop mode:** `in` (plan-gated). Phase 2 was greenlit in-session and shipped against this doc; Phase 3 ships under its own approved plan.
@@ -56,10 +56,35 @@ first), reopens fresh on the same path, and re-inits. Empty/missing files never 
 opens them as a fresh DB and `InitSchema` succeeds). No per-open probe → zero extra work on the healthy
 startup path (this is the v1 double-open that regressed `Perf PR-fast`).
 
-### Phase 3 → Slice G2 — `SQLITE_BUSY` contention (separate slice, NOT greenlit)
+### Phase 3 → Slice G2 — `SQLITE_BUSY` contention (SHIPPED 2026-07-14)
 
-Concurrent-open / busy-timeout behaviour under contention. Split out so its concurrency surface does not
-gate the Phase 1 safety net.
+Concurrent-open / busy-timeout behaviour under contention. Split out so its concurrency surface did not
+gate the Phase 1 safety net. Greenlit in-session and shipped here.
+
+**Shipped approach.** Phase 2 deliberately RE-THREW a transient `SQLITE_BUSY` out of the ctor (never
+quarantine a healthy-but-locked cache) — correct for the corruption axis, but it left a second Smatchet
+opening the same on-disk cache able to crash startup on the schema-init write-lock conflict (Pillar 3).
+G2 closes that:
+
+1. **`ApplyWalPragmas` arms `busy_timeout` FIRST** (before `journal_mode=WAL`), so even the WAL pragma —
+   which needs a brief exclusive lock and can itself return `SQLITE_BUSY` under a concurrent open — waits
+   on the lock, and the timeout is set even if a later pragma throws. (Previously the timeout was set
+   LAST, so a `SQLITE_BUSY` on the WAL pragma left `InitSchema` running with no wait → immediate crash.)
+2. **Bounded backoff-and-retry around `InitSchema`.** New pure classifier `IsTransientBusyCode`
+   (`SQLITE_BUSY` / `SQLITE_BUSY_SNAPSHOT` / `SQLITE_LOCKED` / `SQLITE_PROTOCOL`) + policy helpers
+   `ShouldRetryBusyInit` / `BusyRetryBackoffMs` in `SqliteOpenRecoveryPure.h` (disjoint from the
+   corruption axis — a transient is neither quarantined nor a permanent fault). The ctor retries
+   schema-init up to 5 attempts with a capped-exponential backoff (25→50→100→200→400 ms; total < 400 ms,
+   a human-imperceptible startup hiccup) on a transient code, rebuilds on corruption (unchanged), and
+   re-throws anything else (`CANTOPEN`/`IOERR`) untouched.
+
+**Tests.** Pure retry-policy + classifier cases appended to `SqliteOpenRecoveryPure.test.cpp`
+(mutual-exclusion with `IsRebuildableCorruptCode`, attempt-budget boundaries, backoff shape) —
+verified locally against the real `/usr/include/sqlite3.h` codes via a standalone harness. A new
+`[high-risk]` concurrency doctest `tests/Core/LocalCacheManagerContention.test.cpp` drives an 8-thread
+stampede of ctors on ONE on-disk path through a start-gate and asserts every open survives + the shared
+cache is coherent afterwards (file-backed via `TempDbFile.h`). The doctest rig is CI-built (local VS18
+`/EHsc` blocker, same posture as Phase 2).
 
 ## Files (this PR)
 
@@ -70,7 +95,7 @@ gate the Phase 1 safety net.
 | `tests/Core/LocalCacheTicketsV2Migration.test.cpp` | consume shared helper; drop local class + dead includes |
 | `tests/CMakeLists.txt` | wire new TU into `SmatchetTests` (LCM + SQLiteCpp already linked) |
 | `docs/guides/testing-surface.md` | Gap 6 status: unbacklogged → in-progress (Phase 1) |
-| `docs/plans/active/slice-g-db-corruption.md` | this plan |
+| `docs/plans/shipped/slice-g-db-corruption.md` | this plan |
 
 ## Perf gate
 
