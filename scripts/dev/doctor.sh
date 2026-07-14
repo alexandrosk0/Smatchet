@@ -45,8 +45,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # instead of a RED [FAIL], so an agent learns up-front what it cannot
 # self-validate here (cannot-validate -> escalate) instead of flat-REDding on a
 # toolchain that is not this environment's job. --tier / SMATCHET_DOCTOR_TIER
-# select the tier; omitting both keeps the legacy every-check-required behaviour
-# (config default_tier).
+# select the tier; omitting both resolves the config `default_tier` — which is
+# legacy-equivalent (every check required) only WHILE that tier `expects` every
+# check (windows-dev does today). Repoint default_tier to a partial tier and a
+# bare `doctor.sh` starts skipping — the no-arg path is locked by a bats case.
 # ---------------------------------------------------------------------------
 TIER=""
 while [ $# -gt 0 ]; do
@@ -99,10 +101,16 @@ PY
         TIER_KNOWN=1
     fi
 fi
-# If a tier was explicitly requested but did not resolve, that is a usage error
-# (typo / unknown tier) — fail loudly rather than silently requiring everything.
+# An explicitly-requested tier that did not resolve is a usage error — fail
+# loudly (exit 2) rather than silently requiring everything. Distinguish the two
+# causes so the message is not misleading: a genuinely-unknown tier name vs an
+# upstream resolution failure (no python to read the config).
 if [ -n "$TIER" ] && [ "$TIER_KNOWN" -eq 0 ]; then
-    echo "doctor: unknown tier '$TIER' (see project.config.json § environments.tiers)" >&2
+    if ! { command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; }; then
+        echo "doctor: cannot resolve tier '$TIER' -- no python3/python on PATH to read project.config.json" >&2
+    else
+        echo "doctor: unknown tier '$TIER' (not in project.config.json § environments.tiers, or the environments block is missing/unreadable)" >&2
+    fi
     exit 2
 fi
 

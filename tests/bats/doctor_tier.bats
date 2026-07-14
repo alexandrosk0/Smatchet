@@ -56,6 +56,17 @@ _compiler_stripped_path() {
     [[ "$output" != *"[n/a]  compiler"* ]]
 }
 
+@test "no --tier/env resolves default_tier (windows-dev today): absent compiler still [FAIL]s, not silently skipped" {
+    # Locks the no-arg path: omitting --tier must NOT degrade to an all-[n/a]
+    # skip. It resolves default_tier, which today expects the compiler, so a
+    # stripped compiler is a hard FAIL (RED) exactly as the legacy doctor was.
+    local sp; sp="$(_compiler_stripped_path)"
+    run env -u SMATCHET_DOCTOR_TIER PATH="$sp" bash "$DOCTOR"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[FAIL] compiler"* ]]
+    [[ "$output" == *"Environment: tier 'windows-dev'"* ]]
+}
+
 @test "unknown tier is a loud usage error (exit 2), never a silent all-pass" {
     run bash "$DOCTOR" --tier no-such-tier
     [ "$status" -eq 2 ]

@@ -173,7 +173,13 @@
             "required": ["expects"],
             "properties": {
               "description": { "type": "string" },
-              "expects": { "type": "array", "items": { "type": "string" } }
+              "expects": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "enum": ["cmake", "ninja", "git", "compiler", "link.exe", "python"]
+                }
+              }
             }
           }
         }
