@@ -1265,6 +1265,13 @@ add_executable(SmatchetTests
     # (the IsRetryable() contract the field-edit offline-queue chain branches on). Same
     # loopback fixture + Jira TUs; cfg-less paths run under TestEnvGuard.
     Core/JiraIssueMutationHttp.test.cpp
+    # backend-impl-coverage-recovery (debt.md 2026-06-07) — extend the JiraCatalogHttpFixture
+    # pattern to the search / user-meta / comment-worklog paths of the JiraClient impl TUs that
+    # entered the coverage denominator largely uncovered (the JiraIssueSearch / JiraUserAndMeta /
+    # JiraIssueMutation TUs already linked below). Same loopback fixture; cfg-explicit paths only.
+    Core/JiraIssueSearchHttp.test.cpp
+    Core/JiraUserAndMetaHttp.test.cpp
+    Core/JiraIssueMutationCommentHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMutation.cpp"
