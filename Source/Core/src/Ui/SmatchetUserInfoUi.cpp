@@ -166,9 +166,9 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
         if (p4User.empty()) {
             p.P4Error = "No Perforce user (email unknown).";
         } else {
-            std::vector<P4ChangeSummary> changes;
-            std::string err;
-            if (P4ChangesForUser(annotateCfg, p4User, maxN, changes, err)) {
+            Result<std::vector<P4ChangeSummary>> changesResult = P4ChangesForUser(annotateCfg, p4User, maxN);
+            if (changesResult.has_value()) {
+                const std::vector<P4ChangeSummary>& changes = changesResult.value();
                 for (size_t i = 0; i < changes.size(); ++i) {
                     Vcs::VcsSubmission row = Vcs::FromP4Change(changes[i]);
                     if (Vcs::KeepOnOrAfterCutoff(row.Timestamp, cutoff)) {
@@ -176,7 +176,7 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
                     }
                 }
             } else {
-                p.P4Error = err.empty() ? "p4 changes failed." : err;
+                p.P4Error = changesResult.error().empty() ? "p4 changes failed." : changesResult.error();
             }
         }
         // WS-A: skip the second (GitHub) round-trip when cancelled between IO chunks.

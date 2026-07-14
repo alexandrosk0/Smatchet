@@ -645,6 +645,9 @@ add_executable(SmatchetTests
     # tests/support/ (already on the include path).
     Core/P4AnnotateE2E.test.cpp
     Core/P4DescribeCacheE2E.test.cpp
+    # #21 Result<T> migration of the two P4 changelist queries (P4ChangesForUser +
+    # P4FirstSubmittedChangelistOnCalendarDay) — same runner-seam fake, no p4 spawn.
+    Core/P4ChangeQueriesResult.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/P4Annotate.cpp"
     Core/TrackerLabelsPure.test.cpp
     # WS2 / Issue #1068 — runtime TLS-trust seam (ResolveSslConfig + process-global CA-path
