@@ -3,9 +3,10 @@
 # modify a file currently held under an exclusive Perforce `+l` lock by a
 # different client.
 #
-# Off by default. Opt in by running `bash agents/scripts/core/setup-harness.sh
-# claude-code` with `SMATCHET_AGENT_VCS=p4` exported — setup-harness will
-# junction this template into `.claude/hooks/pretool-edit-p4-lock-check.sh`.
+# Always deployed by `setup-harness.sh` into `.claude/hooks/` and registered on
+# the PreToolUse Edit|Write|MultiEdit matcher, but SELF-GATED: the first line of
+# the body exits 0 immediately unless `SMATCHET_AGENT_VCS=p4`, so it is inert in
+# the default git mode and only does work when the session opts into p4.
 # `.claude/` is gitignored; the template here is what survives commit.
 #
 # This is a WARNING, not a hard block — the hook exits 0 even when a
