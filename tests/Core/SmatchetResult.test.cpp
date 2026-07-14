@@ -4,6 +4,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 // Wrong-state access (value() on disengaged / error() on ok) is a two-stage
 // Pillar-3 contract in SmatchetResult.h: assert() in DEBUG, then throw
@@ -245,4 +246,41 @@ TEST_CASE("Result: copy-assignment onto an error state stays exception-safe (#10
         CHECK(target.error() == "orig-err");
     }
     CHECK(ThrowOnCopy::liveCount == 0);
+}
+
+// --- VoidResult / Unit — the no-payload Result shape (#21 groundwork) ------------
+
+TEST_CASE("VoidResult: VoidOk() is a success with no payload") {
+    const VoidResult r = VoidOk();
+    CHECK(r.has_value());
+    CHECK(static_cast<bool>(r));
+    (void)r.value(); // Unit — nothing to inspect, but must not assert/throw on the ok path
+}
+
+TEST_CASE("VoidResult: Err carries the failure reason") {
+    const VoidResult r = VoidResult::Err("nope");
+    CHECK_FALSE(r.has_value());
+    CHECK_FALSE(static_cast<bool>(r));
+    CHECK(r.error() == "nope");
+}
+
+TEST_CASE("VoidResult: copy and move preserve the ok/err state") {
+    VoidResult ok = VoidOk();
+    const VoidResult okCopy = ok;
+    CHECK(okCopy.has_value());
+    const VoidResult okMove = std::move(ok);
+    CHECK(okMove.has_value());
+
+    VoidResult err = VoidResult::Err("boom");
+    const VoidResult errCopy = err;
+    CHECK_FALSE(errCopy.has_value());
+    CHECK(errCopy.error() == "boom");
+    const VoidResult errMove = std::move(err);
+    CHECK_FALSE(errMove.has_value());
+    CHECK(errMove.error() == "boom");
+}
+
+TEST_CASE("VoidResult: reading error() on a success VoidResult is the wrong-state contract") {
+    const VoidResult r = VoidOk();
+    SMATCHET_CHECK_WRONGSTATE_THROWS(r.error(), std::logic_error);
 }

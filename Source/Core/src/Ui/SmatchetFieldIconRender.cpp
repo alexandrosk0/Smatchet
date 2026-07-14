@@ -281,10 +281,9 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
                 if (bytes.empty()) {
                     return;
                 }
-                SmatchetLoadedIconTexture loaded;
-                std::string err;
-                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
-                                                                     err);
+                // Fire-and-forget: warms the LRU texture cache for a later frame; the
+                // Result (texture / error) is intentionally discarded here.
+                (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size());
             });
         });
         outDeferred = true;
@@ -334,10 +333,9 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
                 return;
             }
             ClearIconUrlFetchFailure(capturedUrl);
-            SmatchetLoadedIconTexture loaded;
-            std::string err;
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size(), loaded,
-                                                                 err);
+            // Fire-and-forget: warms the LRU texture cache for a later frame; the
+            // Result (texture / error) is intentionally discarded here.
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedUrlKey, bytes.data(), bytes.size());
         });
     });
     outDeferred = true;
@@ -385,10 +383,9 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
             if (bytes.empty()) {
                 return;
             }
-            SmatchetLoadedIconTexture loaded;
-            std::string err;
-            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedCacheKey, bytes.data(), bytes.size(), loaded,
-                                                                 err);
+            // Fire-and-forget: warms the LRU texture cache for a later frame; the
+            // Result (texture / error) is intentionally discarded here.
+            (void)SmatchetImageTextureCache::GetOrLoadFromMemory(capturedCacheKey, bytes.data(), bytes.size());
         });
     });
     outDeferred = true;

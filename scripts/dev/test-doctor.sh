@@ -55,7 +55,7 @@ run_doctor_sh() {
             *) PATH="$ucrt:$PATH";;
         esac
     fi
-    PATH="$PATH" bash "$DOCTOR_SH" 2>&1
+    PATH="$PATH" bash "$DOCTOR_SH" "$@" 2>&1
     return $?
 }
 
@@ -63,19 +63,31 @@ echo "test-doctor: runner=bash (doctor.sh)"
 echo
 
 # ---------------------------------------------------------------------------
-# Assertion 1: current host passes
+# Assertion 1: current host does not RED for THIS environment's declared tier.
+# On a full Windows box the MSVC compiler is present (windows-dev -> GREEN). In a
+# Linux container / ci-ubuntu the MSVC toolchain is [n/a] by declaration
+# (linux-container tier, project.config.json § environments), so the doctor must
+# NOT flat-RED on a toolchain that is not this environment's job (finding C3 /
+# Proposal P5). "not RED" = exit != 1 (GREEN=0 or YELLOW=2 both acceptable) so a
+# genuinely-relevant optional-tool WARN (e.g. cppcheck) does not fail this gate.
 # ---------------------------------------------------------------------------
 
-echo "[1/2] doctor on current host -- expect exit 0"
-OUT_PASS=$(run_doctor_sh) || RC_PASS=$?
+if command -v cl.exe >/dev/null 2>&1 || command -v clang-cl >/dev/null 2>&1; then
+    ENV_TIER="windows-dev"
+else
+    ENV_TIER="linux-container"
+fi
+
+echo "[1/2] doctor --tier $ENV_TIER on current host -- expect not-RED (exit != 1)"
+OUT_PASS=$(run_doctor_sh --tier "$ENV_TIER") || RC_PASS=$?
 RC_PASS="${RC_PASS:-0}"
 echo "$OUT_PASS" | sed 's/^/    /'
 echo "    (exit=$RC_PASS)"
 
-if [ "$RC_PASS" -eq 0 ]; then
-    note_pass "doctor exits 0 on current host"
+if [ "$RC_PASS" -ne 1 ]; then
+    note_pass "doctor does not RED for tier '$ENV_TIER' on current host (exit $RC_PASS)"
 else
-    note_fail "expected exit 0, got $RC_PASS -- toolchain may be broken or doctor regressed"
+    note_fail "expected not-RED for tier '$ENV_TIER', got RED (exit 1) -- toolchain broken or doctor regressed"
 fi
 echo
 

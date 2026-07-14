@@ -336,25 +336,7 @@ jobs:
         run: ctest --output-on-failure
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        shell: bash
-        env:
-          # Pin to an immutable tag, not the mutable `6.x` branch — protects
-          # against silent upstream changes / branch hijack.
-          FA_TAG: "6.7.2"
-          # sha256 of fa-solid-900.ttf at tag 6.7.2. Bump in lockstep with FA_TAG.
-          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-        run: |
-          set -euo pipefail
-          # `-f` flips curl to fail on HTTP error (so a 404 HTML page doesn't
-          # land in the font path). `-L` follows redirects.
-          # `--retry*` rides out transient 429/5xx on the raw fetch — a parallel
-          # PR burst rate-limited this exact URL for ~2h on 2026-07-09, redding
-          # otherwise-green jobs post-build. curl honors Retry-After on 429.
-          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-               -o assets/fonts/fa-solid-900.ttf
-          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
-          ls -l assets/fonts/fa-solid-900.ttf
+        uses: ./.github/actions/fetch-fontawesome
 
       - name: Configure ninja-iter-msvc
         run: cmake --preset ninja-iter-msvc
@@ -452,16 +434,7 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        shell: bash
-        env:
-          FA_TAG: "6.7.2"
-          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-               -o assets/fonts/fa-solid-900.ttf
-          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+        uses: ./.github/actions/fetch-fontawesome
 
       - name: Configure ninja-iter-msvc-arm64
         run: cmake --preset ninja-iter-msvc-arm64
@@ -544,16 +517,7 @@ jobs:
             ${{ runner.os }}-winarm64native-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        shell: bash
-        env:
-          FA_TAG: "6.7.2"
-          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-               -o assets/fonts/fa-solid-900.ttf
-          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+        uses: ./.github/actions/fetch-fontawesome
 
       - name: Confirm native ARM64 host (guard against an x64 fallback runner)
         shell: pwsh
@@ -745,16 +709,7 @@ jobs:
             ${{ runner.os }}-winarm64native-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        shell: bash
-        env:
-          FA_TAG: "6.7.2"
-          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-               -o assets/fonts/fa-solid-900.ttf
-          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+        uses: ./.github/actions/fetch-fontawesome
 
       - name: Install Inno Setup 6 (ISCC.exe)
         shell: pwsh
@@ -874,16 +829,7 @@ jobs:
             ${{ runner.os }}-fetchcontent-
 
       - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
-        shell: bash
-        env:
-          FA_TAG: "6.7.2"
-          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
-               -o assets/fonts/fa-solid-900.ttf
-          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+        uses: ./.github/actions/fetch-fontawesome
 
       - name: Install Inno Setup 6 (ISCC.exe)
         shell: pwsh

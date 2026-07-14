@@ -34,6 +34,11 @@ std::set<std::string> ExpectedNames() {
     expected.insert("command-palette-fuzzy");
     expected.insert("code-syntax-coloring");
     expected.insert("theme-switch-roundtrip");
+    // User Info window bucket-C goldens — 2x2 matrix (desktop/narrow x unified/separate).
+    expected.insert("user-info-desktop-unified");
+    expected.insert("user-info-desktop-separate");
+    expected.insert("user-info-narrow-unified");
+    expected.insert("user-info-narrow-separate");
 #if defined(SMATCHET_WITH_AI)
     expected.insert("ai-chat-history-render");
 #endif

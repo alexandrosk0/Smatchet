@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SmatchetResult.h"
+
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
@@ -30,12 +32,9 @@ void AppendResult(const std::string& action, const std::string& source, const st
                   const std::string& operationId, bool success, const std::string& error,
                   const nlohmann::json& data = nlohmann::json::object());
 void AppendEvent(const AuditEvent& event);
-std::vector<nlohmann::json> ReadRecentEvents(std::size_t maxEvents, std::string* outError = nullptr);
+// Ok(events) on a successful read (an empty vector when there is no audit file yet or no
+// events within maxEvents); Err(reason) when the read itself fails (filesystem/parse-lock
+// exception). Distinguishing "no events" from "read error" is the point of the Result shape.
+Result<std::vector<nlohmann::json>> ReadRecentEvents(std::size_t maxEvents);
 
 } // namespace BackendAuditTrail
-
-
-
-
-
-

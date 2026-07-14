@@ -1,0 +1,31 @@
+name: Fetch Font Awesome 6 Solid TTF
+description: >-
+  Download + checksum-verify assets/fonts/fa-solid-900.ttf from a pinned,
+  immutable Font Awesome tag. Single source of the fetch step that the UI-test /
+  bucket / installer build jobs all share, so the tag + sha256 pin live in
+  exactly one place (bump them here, in lockstep) instead of being copy-pasted
+  across five jobs.
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+      shell: bash
+      env:
+        # Pin to an immutable tag, not the mutable `6.x` branch — protects
+        # against silent upstream changes / branch hijack.
+        FA_TAG: "6.7.2"
+        # sha256 of fa-solid-900.ttf at tag 6.7.2. Bump in lockstep with FA_TAG.
+        FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
+      run: |
+        set -euo pipefail
+        # `-f` flips curl to fail on HTTP error (so a 404 HTML page doesn't
+        # land in the font path). `-L` follows redirects.
+        # `--retry*` rides out transient 429/5xx on the raw fetch — a parallel
+        # PR burst rate-limited this exact URL for ~2h on 2026-07-09, redding
+        # otherwise-green jobs post-build. curl honors Retry-After on 429.
+        curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
+             "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+             -o assets/fonts/fa-solid-900.ttf
+        echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+        ls -l assets/fonts/fa-solid-900.ttf

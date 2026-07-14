@@ -28,6 +28,16 @@
 
 namespace {
 
+// Adapt a branch helper's VoidResult back onto the public SubmitFieldEdit's bool + outError
+// contract (the public API stays unchanged; only the private branch helpers migrated to
+// VoidResult — build-quality-velocity-hardening #21).
+bool VoidResultToBool(const VoidResult& r, std::string& outError) {
+    if (!r.has_value()) {
+        outError = r.error();
+    }
+    return r.has_value();
+}
+
 // COPIED (internal linkage) from AppController_CatalogAndFieldEdit.cpp — also copied in
 // EditMetaCacheService.cpp. Anonymous-namespace internal linkage in each TU → no ODR clash.
 bool IsSprintField(const TrackerField& field) {
@@ -152,7 +162,8 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
     return true;
 }
 
-bool FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx, std::string& outError) {
+VoidResult FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& ctx) {
+    std::string outError;
     const std::string& issueId = ctx.issueId;
     const TrackerField& field = ctx.field;
     const auto& values = ctx.values;
@@ -165,7 +176,7 @@ bool FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& c
         outError = "Clearing sprint is not supported by this action.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit sprint clear not supported issue=%s field=%s",
                  issueId.c_str(), field.Id.c_str());
-        return false;
+        return VoidResult::Err(outError);
     }
     const std::string sprintId = values.front();
     auto ticketIt =
@@ -182,7 +193,7 @@ bool FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& c
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", sprintId}});
-        return false;
+        return VoidResult::Err(outError);
     }
     if (ticketIt != tickets.end()) {
         CachedTicket updatedTicket = *ticketIt;
@@ -203,10 +214,11 @@ bool FieldEditPipelineService::SubmitFieldEditSprint(const SubmitFieldEditCtx& c
                        {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                        {"after", sprintId}});
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return true;
+    return VoidOk();
 }
 
-bool FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx, std::string& outError) {
+VoidResult FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEditCtx& ctx) {
+    std::string outError;
     const std::string& issueId = ctx.issueId;
     const TrackerField& field = ctx.field;
     const auto& values = ctx.values;
@@ -220,7 +232,7 @@ bool FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEdit
         outError = "Clearing Jira timetracking estimates is not supported by this editor.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked timetracking clear issue=%s field=%s",
                  issueId.c_str(), field.Id.c_str());
-        return false;
+        return VoidResult::Err(outError);
     }
 
     auto ticketIt =
@@ -247,7 +259,7 @@ bool FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEdit
     }
     if (timetrackingPayload.empty()) {
         outError = "Timetracking update requires at least one estimate value.";
-        return false;
+        return VoidResult::Err(outError);
     }
 
     nlohmann::json fieldsPayload = nlohmann::json::object();
@@ -271,7 +283,7 @@ bool FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEdit
                            {"before", nlohmann::json{{"timeoriginalestimate", beforeOriginalEstimate},
                                                      {"timeestimate", beforeRemainingEstimate}}},
                            {"after", fieldsPayload["timetracking"]}});
-        return false;
+        return VoidResult::Err(outError);
     }
 
     if (ticketIt != tickets.end()) {
@@ -289,10 +301,11 @@ bool FieldEditPipelineService::SubmitFieldEditTimetracking(const SubmitFieldEdit
                                                  {"timeestimate", beforeRemainingEstimate}}},
                        {"after", fieldsPayload["timetracking"]}});
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return true;
+    return VoidOk();
 }
 
-bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx, std::string& outError) {
+VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& ctx) {
+    std::string outError;
     const std::string& issueId = ctx.issueId;
     const TrackerField& field = ctx.field;
     const auto& rawValues = ctx.rawValues;
@@ -309,7 +322,7 @@ bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& 
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked by editmeta issue=%s field=%s", issueId.c_str(),
                  field.Id.c_str());
-        return false;
+        return VoidResult::Err(outError);
     }
 
     auto fieldPayloadResult = mutations->BuildFieldPayload(field, rawValues);
@@ -317,7 +330,7 @@ bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& 
         outError = fieldPayloadResult.error().Detail;
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit invalid value issue=%s field=%s err=%s", issueId.c_str(),
                  field.Id.c_str(), outError.c_str());
-        return false;
+        return VoidResult::Err(outError);
     }
     nlohmann::json fieldsPayload = std::move(fieldPayloadResult.value());
 
@@ -343,7 +356,7 @@ bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& 
                     {"field_id", field.Id},
                     {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                     {"after", rawValues}});
-            return false;
+            return VoidResult::Err(outError);
         }
         updateErr = mutations->UpdateIssueFields(issueId, fieldsPayload);
         outError = updateErr.Detail;
@@ -366,7 +379,7 @@ bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& 
             nlohmann::json{{"field_id", field.Id},
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", rawValues}});
-        return false;
+        return VoidResult::Err(outError);
     }
 
     // Keep local cache and in-memory model in sync with the successful backend update.
@@ -397,7 +410,7 @@ bool FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEditCtx& 
     }
 
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return true;
+    return VoidOk();
 }
 
 bool FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
@@ -444,7 +457,7 @@ bool FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const
         issueId, field, rawValues, values, mutations, backend, ticketsSnap, fieldEditAuditOp, fieldEditAuditSource};
 
     if (IsSprintField(field)) {
-        return SubmitFieldEditSprint(ctx, outError);
+        return VoidResultToBool(SubmitFieldEditSprint(ctx), outError);
     }
 
     if (IsNonEditableTimetrackingFieldId(field.Id)) {
@@ -455,10 +468,10 @@ bool FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const
     }
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        return SubmitFieldEditTimetracking(ctx, outError);
+        return VoidResultToBool(SubmitFieldEditTimetracking(ctx), outError);
     }
 
-    return SubmitFieldEditRegular(ctx, outError);
+    return VoidResultToBool(SubmitFieldEditRegular(ctx), outError);
 }
 
 bool FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
@@ -692,22 +705,17 @@ bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const std::string& iss
     return true;
 }
 
-bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result,
-                                                    std::string& outError) {
-    outError.clear();
+VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
     if (!result.Ok) {
-        outError = result.Error.empty() ? std::string("Failed to save field update.") : result.Error;
-        return false;
+        return VoidResult::Err(result.Error.empty() ? std::string("Failed to save field update.") : result.Error);
     }
     if (!deps_.HasCache()) {
-        outError = SmatchetLocalization::T("fieldedit.cache_unavailable",
-                                           "Local cache is unavailable, so this edit cannot be applied. Restart "
-                                           "Smatchet or check Settings -> Preferences -> Local data.");
-        return false;
+        return VoidResult::Err(SmatchetLocalization::T(
+            "fieldedit.cache_unavailable", "Local cache is unavailable, so this edit cannot be applied. Restart "
+                                           "Smatchet or check Settings -> Preferences -> Local data."));
     }
     if (issueId.empty()) {
-        outError = "Issue id is empty.";
-        return false;
+        return VoidResult::Err("Issue id is empty.");
     }
 
     const auto ticketsSnapApply = deps_.GetActiveTicketsSnapshot();
@@ -716,7 +724,7 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
                                  [&](const CachedTicket& ticket) { return ticket.id == issueId; });
     if (ticketIt == ticketsApply.end()) {
         deps_.RefreshLocalData();
-        return true;
+        return VoidOk();
     }
 
     CachedTicket updatedTicket = *ticketIt;
@@ -724,5 +732,5 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
         updatedTicket.fieldValues[pair.first] = pair.second;
     }
     deps_.UpdateTicket(updatedTicket);
-    return true;
+    return VoidOk();
 }

@@ -19,6 +19,19 @@
 
 namespace {
 
+// Transitional shim: AppController::ApplyFieldEditResult flipped to VoidResult (#21 AppController
+// public-API flip). This grid pipeline still branches on bool + an error string for its toast /
+// cell-feedback, so adapt the VoidResult back here. Converting these two call sites to consume
+// VoidResult directly is a follow-up.
+bool ApplyFieldEditResultBool(AppController& app, const std::string& issueId, const FieldEditResult& result,
+                              std::string& outError) {
+    const VoidResult r = app.ApplyFieldEditResult(issueId, result);
+    if (!r.has_value()) {
+        outError = r.error();
+    }
+    return r.has_value();
+}
+
 // Apply the final commit result on the UI thread. Runs from the
 // MainThreadDispatcher::Drain at the top of the next frame, which mutates
 // `d` (the singleton UiDrawSession via `g_ui`) safely from the UI thread.
@@ -48,7 +61,7 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             feedback.Message = qerr;
             feedback.FramesRemaining = 0;
             d.cellFeedbackByKey[editKey] = feedback;
-        } else if (!app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError)) {
+        } else if (!ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError)) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.apply_error", "Apply Error"),
                 applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
@@ -73,7 +86,7 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             d.cellFeedbackByKey[editKey] = feedback;
         }
     } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
-        const bool applied = app.ApplyFieldEditResult(edit.IssueId, result.ApplyResult, applyError);
+        const bool applied = ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError);
         if (!applied) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.save_error", "Save Error"),
