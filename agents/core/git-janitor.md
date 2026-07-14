@@ -36,9 +36,7 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
-**See also**: [`p4-janitor`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`). Covers shelf GC, task-stream pruning, `p4 verify`. Git remains the ship-line; `p4-janitor` handles only the dual-VCS local-state side. See [`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology.
-
-**P4-gated ship-loop note**: `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only. Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic. `git-janitor` NEVER touches p4 shelves, streams, or any p4 server state — that's `p4-janitor`'s remit. If it notices a stranded p4 shelf or task stream during cleanup, it reports the residue per § Residue requiring user action and routes the user to `p4-janitor`.
+**See also**: [`p4-janitor`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`); it owns shelf GC, task-stream pruning, `p4 verify` ([`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only and NEVER touches p4 shelves, streams, or any p4 server state; Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic. A stranded p4 shelf / task stream noticed during cleanup is reported per § Residue requiring user action and routed to `p4-janitor`.
 
 ## Hard refusals
 
@@ -55,13 +53,12 @@ These are the agent's non-negotiable stops. (The protected-branch-guard bash and
 
 ### FF-clean docs-batch exception (the decision)
 
-The PR-only-to-`develop` rule is suspended for a single batch when **all** hold; any failed check falls back to PR-only:
+The PR-only-to-`develop` rule is suspended for a single batch — `develop` only, `main` is never eligible — when **all** hold; any failed check falls back to PR-only:
 
 1. **Strictly ahead, FF-only** — `rev-list --left-right --count origin/develop...develop` reports `0  N`, `N ≥ 1` (zero behind; FF push succeeds with no merge commit).
 2. **Path whitelist** — every commit touches only `docs/**`, `agents/**`, `scripts/dev/**` (+ the two named core scripts), `tests/**` (sources/fixtures + root `tests/CMakeLists.txt`), `backlog/**`, `.gitignore`, `AGENTS.md`, root `*.md`.
 3. **Path blacklist** — zero commits touching `Source/{Core,Plugins,Standalone,UnrealPlugins}/**`, `cmake/**`, root `CMakeLists.txt`, `CMakePresets.json`. A single hit kicks the whole batch to PR-only.
 4. **Gates green** — `bash scripts/dev/test-all.sh` exits 0. The dual-target rebuild is not required here (no C++ TU in the diff); mandatory everywhere else.
-5. **`develop` only** — `main` is never eligible.
 
 **Pure-docs sub-exception** (relaxes precondition 4): when the ahead-range is **strictly** docs (`docs/**`, `backlog/**`, `agents/scripts/**`, any `*.md` at any depth), `test-all.sh` is skipped — nothing to compile/validate. Deny-list (any hit restores the full gate): `agents/**` except `agents/scripts/**`, `scripts/**`, `tests/**`, `.gitignore`, `.github/**`, CMake, or any C++/Lua/Python/shell source. The allow-list is exhaustive — anything not allow-listed deny-lists by default. Discriminator: `bash agents/scripts/core/is-pure-docs-diff.sh develop`. (`Locales/*.json` belongs to AGENTS.md § Trivial-visual-only change envelope (a separate gate-relaxation path); don't conflate.)
 
@@ -77,46 +74,14 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
 
 1. **Verify merge state** via the poll-until-stable helper (skill § Poll-until-stable) — require `MERGEABLE` + `CLEAN`; `CONFLICTING` → halt (user resolves); `UNKNOWN` is transient (the helper waits it out, but sustained `UNKNOWN` after 20s is itself halt-worthy).
 2. **Best-effort pre-flip draft → ready** (`gh_pr_ready_idempotent`) so CodeRabbit's `auto_review.drafts:false` doesn't skip review. Non-blocking — the gates poll retries the flip.
-3. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`. This rc-handling is the orchestration judgment this agent owns — never auto-fall-through to merge on an unexpected code:
+3. **Run merge gates** (per AGENTS.md § Merge gates) unless `SKIP_MERGE_GATES=true`. This rc-handling is the orchestration judgment this agent owns — never auto-fall-through to merge on an unexpected code. Run `poll_merge_gates` with `MERGE_GATES_FLIP_READY=true` (authorized merge flips draft→ready at poll start, ADR 0006 amendment) and map its rc:
+   - `0` — gates passed → proceed.
+   - `1|2|3` — gates blocked → `ask_user_question`: **Skip gates and merge anyway** (log `WARN: user skipped gates: code=$rc`) · **Keep waiting** (double `MERGE_GATES_MAX_POLLS`, reset timer, re-poll once; a second failure exits) · **Abandon** (exit).
+   - `4` — PR no longer mergeable (CLOSED/MERGED) → surface + abandon.
+   - `5` — pagination overflow, manual review required → `ask_user_question`: **Abandon (manual review)** · **Skip and merge anyway** (acknowledge risk, log the WARN).
+   - any other rc — defensive catch-all: HALT. `poll_merge_gates` returns 0-5 today; an unexpected code must never silently fall through to auto-merge.
 
-   ```bash
-   if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
-       # Authorized merge → flip draft→ready at poll start (ADR 0006 amendment).
-       MERGE_GATES_FLIP_READY=true poll_merge_gates "$OWNER" "$REPO" "$N"
-       rc=$?
-       case "$rc" in
-           0) ;;                                                        # gates passed
-           1|2|3)
-               choice=$(ask_user_question "Gates blocked (code=$rc)." \
-                          "Skip gates and merge anyway" \
-                          "Keep waiting (double MAX_POLLS, reset timer)" \
-                          "Abandon")
-               case "$choice" in
-                   "Skip gates and merge anyway") echo "WARN: user skipped gates: code=$rc" >&2 ;;
-                   "Keep waiting"*) MERGE_GATES_MAX_POLLS=$((MERGE_GATES_MAX_POLLS*2)) \
-                                   MERGE_GATES_FLIP_READY=true \
-                                   poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
-                   *) exit 1 ;;
-               esac
-               ;;
-           4) ask_user_question "PR no longer mergeable (CLOSED/MERGED)." "Abandon"; exit 1 ;;
-           5)
-               choice=$(ask_user_question "Pagination overflow — manual review required." \
-                          "Abandon (manual review)" \
-                          "Skip and merge anyway (acknowledge risk)")
-               case "$choice" in
-                   "Skip and merge anyway"*) echo "WARN: user skipped gates: code=5 (pagination)" >&2 ;;
-                   *) exit 1 ;;
-               esac
-               ;;
-           *)
-               # Defensive catch-all. poll_merge_gates returns 0-5 today; any unexpected rc
-               # must HALT — never silently fall through to auto-merge.
-               echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2; exit 1
-               ;;
-       esac
-   fi
-   ```
+   The verbatim case block → skill § Merge-gates rc-handling (executable form) — keep it in lockstep with this mapping.
 
 4. **Re-confirm PR ready** (defence-in-depth; idempotent no-op if step 2 flipped).
 5. **Squash-merge via API**, capture the `sha`. → skill § Standard cleanup loop step 5.
