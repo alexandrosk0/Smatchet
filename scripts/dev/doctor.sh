@@ -6,14 +6,16 @@
 #   1 -- one or more required checks failed (Doctor: RED)
 #   2 -- only warn-only checks failed (Doctor: YELLOW)
 #
-# Required checks:
+# Required checks (an absent tool = [FAIL], EXCEPT under `--tier <name>` where a
+# tool absent-and-not-in-the-tier's-`expects` reports [n/a] instead — see the
+# tier block below + project.config.json § environments):
 #   - cmake >= 3.24
 #   - ninja present
 #   - git present
 #   - cl.exe OR clang-cl reachable (MSVC or Clang/LLVM compiler)
 #   - link.exe reachable (MSVC linker — needed for both cl.exe and clang-cl)
 #   - python >= 3.10
-#   - >= 4 GB free under <repo>/build
+#   - >= 4 GB free under <repo>/build (environment-agnostic; always required)
 #
 # Warn-only checks:
 #   - cppcheck
@@ -36,16 +38,114 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# ---------------------------------------------------------------------------
+# Environment capability tier (project.config.json § environments; finding C3 /
+# Proposal P5). A required toolchain check whose tool is ABSENT and NOT in the
+# active tier's `expects` list is reported as an informational [n/a] skip
+# instead of a RED [FAIL], so an agent learns up-front what it cannot
+# self-validate here (cannot-validate -> escalate) instead of flat-REDding on a
+# toolchain that is not this environment's job. --tier / SMATCHET_DOCTOR_TIER
+# select the tier; omitting both keeps the legacy every-check-required behaviour
+# (config default_tier).
+# ---------------------------------------------------------------------------
+TIER=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --tier) TIER="${2:-}"; shift 2 || { echo "doctor: --tier needs a value" >&2; exit 2; } ;;
+        --tier=*) TIER="${1#*=}"; shift ;;
+        -h|--help)
+            cat <<'USAGE'
+Usage: bash scripts/dev/doctor.sh [--tier <name>]
+
+Toolchain pre-flight. --tier keys off project.config.json § environments: a
+required tool that is absent AND not in that tier's `expects` list reports as
+[n/a] (informational) instead of [FAIL]. Tiers: windows-dev, linux-container,
+ci-windows, ci-ubuntu (or SMATCHET_DOCTOR_TIER=<name>). Omit --tier to require
+every check (default_tier).
+USAGE
+            exit 0 ;;
+        *) echo "doctor: unknown arg '$1'" >&2; exit 2 ;;
+    esac
+done
+TIER="${TIER:-${SMATCHET_DOCTOR_TIER:-}}"
+
+# Resolve the tier's expected-check set from the config. TIER_KNOWN stays 0 when
+# no tier resolves (no arg/env + unreadable config) -> every check is required,
+# exactly the legacy behaviour, so a missing/old config never masks a real gap.
+TIER_EXPECTS=""
+TIER_KNOWN=0
+TIER_RESOLVED=""
+if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+    _py="$(command -v python3 || command -v python)"
+    _tier_out="$("$_py" - "$REPO_ROOT/project.config.json" "$TIER" <<'PY' 2>/dev/null || true
+import json, sys
+cfg_path, want = sys.argv[1], sys.argv[2]
+try:
+    env = json.load(open(cfg_path, encoding="utf-8")).get("environments", {})
+except Exception:
+    sys.exit(0)
+tiers = env.get("tiers", {})
+name = want or env.get("default_tier", "")
+t = tiers.get(name)
+if t is None:
+    sys.exit(0)
+print(name)
+print(" ".join(t.get("expects", [])))
+PY
+)"
+    if [ -n "$_tier_out" ]; then
+        TIER_RESOLVED="$(printf '%s\n' "$_tier_out" | sed -n '1p')"
+        TIER_EXPECTS="$(printf '%s\n' "$_tier_out" | sed -n '2p')"
+        TIER_KNOWN=1
+    fi
+fi
+# If a tier was explicitly requested but did not resolve, that is a usage error
+# (typo / unknown tier) — fail loudly rather than silently requiring everything.
+if [ -n "$TIER" ] && [ "$TIER_KNOWN" -eq 0 ]; then
+    echo "doctor: unknown tier '$TIER' (see project.config.json § environments.tiers)" >&2
+    exit 2
+fi
+
 FAIL_COUNT=0
 WARN_COUNT=0
+SKIP_COUNT=0
 
 color_red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 color_green()  { printf '\033[32m%s\033[0m\n' "$*"; }
 color_yellow() { printf '\033[33m%s\033[0m\n' "$*"; }
+color_cyan()   { printf '\033[36m%s\033[0m\n' "$*"; }
 
 write_pass() { color_green  "[PASS] $1 -- $2"; }
 write_fail() { color_red    "[FAIL] $1 -- $2"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
 write_warn() { color_yellow "[WARN] $1 -- $2"; WARN_COUNT=$((WARN_COUNT + 1)); }
+write_skip() { color_cyan   "[n/a]  $1 -- $2"; SKIP_COUNT=$((SKIP_COUNT + 1)); }
+
+# True when check id $1 is expected in the active tier. When no tier resolved
+# (TIER_KNOWN=0) every check is expected (legacy behaviour).
+tier_expects() {
+    [ "$TIER_KNOWN" -eq 0 ] && return 0
+    case " $TIER_EXPECTS " in *" $1 "*) return 0 ;; *) return 1 ;; esac
+}
+
+# An absent required tool: [FAIL] if the tier expects it, else an informational
+# [n/a] skip ("not this environment's job — validate on a tier that expects it").
+fail_or_skip() {
+    local id="$1" fail_msg="$2"
+    if tier_expects "$id"; then
+        write_fail "$id" "$fail_msg"
+    else
+        write_skip "$id" "not runnable in tier '${TIER_RESOLVED}' (project.config.json § environments) — validate where it is expected"
+    fi
+}
+# Same, for a check that is warn-only (not fail) when absent + expected.
+warn_or_skip() {
+    local id="$1" warn_msg="$2"
+    if tier_expects "$id"; then
+        write_warn "$id" "$warn_msg"
+    else
+        write_skip "$id" "not runnable in tier '${TIER_RESOLVED}' (project.config.json § environments) — validate where it is expected"
+    fi
+}
 
 # Print the first line of `<cmd> --version` (or alt args), or empty if missing.
 tool_version() {
@@ -93,7 +193,7 @@ echo ""
 # cmake >= 3.24
 cmake_line=$(tool_version cmake --version)
 if [ -z "$cmake_line" ]; then
-    write_fail 'cmake' 'install: winget install Kitware.CMake (or your distro package)'
+    fail_or_skip 'cmake' 'install: winget install Kitware.CMake (or your distro package)'
 else
     cmake_ver=$(parse_version "$cmake_line")
     if [ -z "$cmake_ver" ]; then
@@ -108,7 +208,7 @@ fi
 # ninja present
 ninja_line=$(tool_version ninja --version)
 if [ -z "$ninja_line" ]; then
-    write_fail 'ninja' 'install: included with Visual Studio, or winget install Ninja-build.Ninja'
+    fail_or_skip 'ninja' 'install: included with Visual Studio, or winget install Ninja-build.Ninja'
 else
     write_pass 'ninja' "ninja $ninja_line"
 fi
@@ -116,7 +216,7 @@ fi
 # git present
 git_line=$(tool_version git --version)
 if [ -z "$git_line" ]; then
-    write_fail 'git' 'install: winget install Git.Git (or your distro package)'
+    fail_or_skip 'git' 'install: winget install Git.Git (or your distro package)'
 else
     write_pass 'git' "$git_line"
 fi
@@ -137,7 +237,7 @@ if command -v clang-cl >/dev/null 2>&1; then
     write_pass 'clang-cl' "$clangcl_ver"
 fi
 if [ "$cl_found" -eq 0 ] && [ "$clangcl_found" -eq 0 ]; then
-    write_fail 'compiler' 'need cl.exe (VS Developer Command Prompt) or clang-cl (winget install LLVM.LLVM)'
+    fail_or_skip 'compiler' 'need cl.exe (VS Developer Command Prompt) or clang-cl (winget install LLVM.LLVM)'
 fi
 
 # MSVC linker (link.exe) -- required for both cl.exe and clang-cl on Windows.
@@ -153,7 +253,7 @@ if command -v link.exe >/dev/null 2>&1; then
             ;;
     esac
 else
-    write_warn 'link.exe' 'not found -- run from a VS Developer Command Prompt for MSVC builds'
+    warn_or_skip 'link.exe' 'not found -- run from a VS Developer Command Prompt for MSVC builds'
 fi
 
 # python >= 3.10
@@ -162,7 +262,7 @@ if [ -z "$py_line" ]; then
     py_line=$(tool_version python3 --version)
 fi
 if [ -z "$py_line" ]; then
-    write_fail 'python' 'install: winget install Python.Python.3.12'
+    fail_or_skip 'python' 'install: winget install Python.Python.3.12'
 else
     py_ver=$(parse_version "$py_line")
     if [ -z "$py_ver" ]; then
@@ -249,6 +349,11 @@ fi
 # ---------------------------------------------------------------------------
 
 echo ""
+if [ "$TIER_KNOWN" -eq 1 ]; then
+    _tier_note="tier '${TIER_RESOLVED}'"
+    [ "$SKIP_COUNT" -gt 0 ] && _tier_note="$_tier_note, $SKIP_COUNT check(s) [n/a] here — validate elsewhere"
+    color_cyan "Environment: $_tier_note"
+fi
 if [ "$FAIL_COUNT" -gt 0 ]; then
     color_red    "Doctor: RED ($FAIL_COUNT required failure(s), $WARN_COUNT warning(s))"
     exit 1

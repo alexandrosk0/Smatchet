@@ -158,6 +158,27 @@
         "supported": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
       }
     },
+    "environments": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["default_tier", "tiers"],
+      "properties": {
+        "_doc": { "type": "string" },
+        "default_tier": { "type": "string" },
+        "tiers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["expects"],
+            "properties": {
+              "description": { "type": "string" },
+              "expects": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
     "guards": {
       "type": "object",
       "additionalProperties": false,
