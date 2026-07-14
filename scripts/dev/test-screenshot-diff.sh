@@ -126,6 +126,10 @@ SCENARIOS=(
     "dock-gap-sentinel"
     "command-palette-fuzzy"
     "code-syntax-coloring"
+    "user-info-desktop-unified"
+    "user-info-desktop-separate"
+    "user-info-narrow-unified"
+    "user-info-narrow-separate"
 )
 # NOTE: theme-switch-roundtrip is NOT in this list. Its assertion shape is
 # different — it does not gate against a committed golden PNG. Instead the
@@ -158,11 +162,29 @@ run_scenario() {
     echo
     echo "=== Scenario: $scen ==="
 
+    # The user-info-* goldens must be config-INDEPENDENT: the real user-data dir
+    # may carry cached tracker creds, which would load a live backend (populated
+    # grid rows, activity/groups async, sync toasts) whose content varies run to
+    # run and machine to machine. Point those scenarios at a throwaway EMPTY
+    # user-data dir (SMATCHET_USER_DATA, honoured by StandaloneAppBootstrap and
+    # inherited by the --spawn child) so every capture starts from the same clean
+    # first-launch state. The other scenarios are UNTOUCHED — they run with the
+    # ambient env exactly as before, so their committed goldens are unperturbed.
+    local iso_env=()
+    local iso_dir=""
+    case "$scen" in
+    user-info-*)
+        iso_dir="$TMP_DIR/userdata-$scen"
+        mkdir -p "$iso_dir"
+        iso_env=(env "SMATCHET_USER_DATA=$iso_dir")
+        ;;
+    esac
+
     # 20 warm-up frames keeps the docking + palette layout settled before the
     # screenshot trigger. Frames argument feeds the spawn-mode timeout calc
     # but also bounds the scenario's internal warm-up via --warmupFrames.
     local out
-    out=$("$EXE" cmd scenario.run \
+    out=$("${iso_env[@]}" "$EXE" cmd scenario.run \
         --name="$scen" \
         --frames=20 \
         --warmupFrames=16 \

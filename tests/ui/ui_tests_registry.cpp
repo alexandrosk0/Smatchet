@@ -42,6 +42,7 @@ extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* e
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewQuickSwitcherTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterViewsFieldSelectionTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterUserInfoWindowTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteInlineTypingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCommandPaletteDeferredDispatchTests(ImGuiTestEngine* engine);
@@ -99,6 +100,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterMobileViewsConfirmModalTests(engine);
     SmatchetRegisterMobileViewQuickSwitcherTests(engine);
     SmatchetRegisterViewsFieldSelectionTests(engine);
+    SmatchetRegisterUserInfoWindowTests(engine);
     SmatchetRegisterKeybindingsEditorRebindTests(engine);
     SmatchetRegisterCommandPaletteInlineTypingTests(engine);
     SmatchetRegisterCommandPaletteDeferredDispatchTests(engine);
