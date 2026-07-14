@@ -29,6 +29,11 @@ std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario() { return
 std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeCodeSyntaxColoringScenario() { return NullScenario(); }
 std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario() { return NullScenario(); }
+// User Info window bucket-C goldens — 2x2 matrix (desktop/narrow x unified/separate).
+std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoDesktopUnifiedScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoDesktopSeparateScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoNarrowUnifiedScenario() { return NullScenario(); }
+std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoNarrowSeparateScenario() { return NullScenario(); }
 #if defined(SMATCHET_WITH_AI)
 std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario() { return NullScenario(); }
 #endif
