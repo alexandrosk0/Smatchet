@@ -878,8 +878,9 @@ add_executable(SmatchetTests
     # CommandRegistry.cpp + FuzzyMatch.cpp join so Dispatch (confirm gate, validation,
     # alias + fuzzy resolution) runs for real; their deps (ConfigManager, Logger,
     # BoundedJsonParse) are already linked. Meta/Config take no app object (registry-
-    # introspection + ConfigManager singleton), so they join here too. The remaining
-    # AppController-coupled Builtin TUs (Perf/Fields/Ai) and the UI-session ones
+    # introspection + ConfigManager singleton), so they join here too. Fields rides the
+    # narrow IAppFields facet (list/get/refresh/icon_for) driven by a fake in the test.
+    # The remaining AppController-coupled Builtin TUs (Perf/Ai) and the UI-session ones
     # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
@@ -895,6 +896,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Offline.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Attach.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Automation.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Fields.cpp"
     # PR2 of docs/design/github-tracker-backend.md — pure helpers + label diff.
     Core/LabelEditDiffPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
