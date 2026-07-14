@@ -150,6 +150,22 @@ setup() {
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]
 }
 
+# ---------- rule 8: producer | early-break reader (SIGPIPE-141 class) ----------
+
+@test "rule 8 (early-break-pipe): fires on producer | early-break-reader-fn under pipefail" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-bad-8-early-break-pipe.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"SHELL_LINT_EARLY_BREAK_PIPE"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
+@test "rule 8 (early-break-pipe): silent on full-drain reader + temp-file-fed early-break reader" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-good-8-early-break-pipe.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_EARLY_BREAK_PIPE"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
 # ---------- rule 7: NUL-byte guard ----------
 
 @test "rule 7 (nul-byte): fires on a script containing an embedded NUL byte" {
@@ -179,7 +195,7 @@ setup() {
 
 # ---------- known-good: all rules clean ----------
 
-@test "known-good fixture passes all 7 rules" {
+@test "known-good fixture passes all 8 rules" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-good.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]

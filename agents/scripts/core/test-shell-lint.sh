@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# test-shell-lint.sh — seven-rule self-review lint for shell scripts.
+# test-shell-lint.sh — eight-rule self-review lint for shell scripts.
 #
 # Closes docs/self-improvement/categories/process.md 2026-05-28 P1 entry
 # "Implementer-side self-review didn't catch real shell-script bugs".
@@ -26,6 +26,13 @@
 #      drops the rest of the script at execution while the file looks intact in
 #      most editors. Catches corruption / mis-encoding (UTF-16, truncated write)
 #      at lint time.
+#   8. early-break-pipe SIGPIPE guard — generalizes rule 6 beyond `$(… | head)`:
+#      under pipefail, a `producer | fn` pipeline where `fn` is a same-script
+#      function that reads with `while … read` and `break`s early. The early
+#      break closes the pipe → producer SIGPIPE (141) → script aborts (CI-only,
+#      msys ignores SIGPIPE). Closes the #1593 follow-up (feed the reader from a
+#      temp file). Requires while+read+break in the fn body, so a full-drain
+#      reader is not flagged.
 #
 # Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
 # layout; maxdepth 1, so scripts/dev/local/ is excluded) + scripts/mobile/**
@@ -317,6 +324,72 @@ check_pipefail_head() {
     done < <(printf '%s\n' "$nc" | grep -nE '=\$\(.*\|[[:space:]]*head([[:space:]]|\))' || true)
 }
 
+# Rule 8 — producer | early-break reader under pipefail (the general SIGPIPE-141
+# class Rule 6 only catches for the `$(... | head)` shape). This is the exact trap
+# that reddened CI on #1593: a producer piped into a shell FUNCTION whose body
+# reads with `while ... read` and `break`s early. The early break closes the read
+# end of the pipe before the producer finishes writing; the producer takes SIGPIPE
+# (128+13=141); under `set -o pipefail` the pipeline returns 141 and (with the
+# common `set -e` companion) the whole script aborts with a bare
+# `Process completed with exit code 141` instead of the intended message. msys
+# bash ignores SIGPIPE, so — like Rule 6 — this passes locally and only reds in CI.
+# The safe shape is a temp file (`producer >tmp; reader <tmp`), which keeps the
+# producer's own exit status observable; a `reader < <(producer)` process
+# substitution stops the SIGPIPE but drops that exit status (the mitigation's own
+# trap on #1593's first pass), so it is NOT recommended and NOT treated as safe.
+#
+# Two-pass, conservative:
+#   (1) collect same-script functions that are early-break readers — a function
+#       whose body contains a `while`, a `read`, AND a `break`. All three are
+#       required, so a full-drain `while read; do … done` (no early break, no
+#       SIGPIPE) is never flagged.
+#   (2) flag any top-level `producer | <that-fn>` pipeline. `|| true` / `|| :`
+#       opt-outs are honoured (author accepted the RC), matching Rule 6.
+# Only fires under pipefail (without it the producer's SIGPIPE exit is discarded).
+check_early_break_pipe() {
+    local script="$1"
+    local nc
+    nc=$(non_comment "$script")
+    if ! grep -qE '(^|[[:space:]])set[[:space:]]+(-[a-z]*o[[:space:]]+pipefail|-o[[:space:]]+pipefail)' <<<"$nc"; then
+        return
+    fi
+    # Pass 1 — early-break reader function names. Regexes are inlined against $0
+    # (POSIX-awk boundary classes, no \b) — NOT via a helper taking `/re/` as an
+    # arg, which awk evaluates against $0 first and passes the 0/1 result, not the
+    # pattern. `{`/`}` are counted with gsub for a crude brace-depth so nested
+    # blocks don't end the function early.
+    local readers
+    readers=$(printf '%s\n' "$nc" | awk '
+        /^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(\)[[:space:]]*\{/ {
+            name=$0; sub(/[[:space:]]*\(\).*/, "", name); sub(/^[[:space:]]*/, "", name)
+            infn=1; depth=1; hasWhile=0; hasRead=0; hasBreak=0; next
+        }
+        infn {
+            opens=gsub(/\{/, "{"); closes=gsub(/\}/, "}"); depth += opens - closes
+            if ($0 ~ /(^|[^A-Za-z0-9_])while([^A-Za-z0-9_]|$)/) hasWhile=1
+            if ($0 ~ /(^|[^A-Za-z0-9_])read([^A-Za-z0-9_]|$)/)  hasRead=1
+            if ($0 ~ /(^|[^A-Za-z0-9_])break([^A-Za-z0-9_]|$)/) hasBreak=1
+            if (depth<=0) { if (hasWhile && hasRead && hasBreak) print name; infn=0 }
+        }
+    ')
+    if [ -z "$readers" ]; then return; fi
+    # Pass 2 — pipelines feeding one of those readers. The fn name may be followed
+    # by `)` (inside `$(producer | fn)`), whitespace, or end-of-line — so the
+    # trailing boundary is any non-identifier char, not just whitespace/EOL.
+    local fn re
+    while IFS= read -r fn; do
+        [ -n "$fn" ] || continue
+        re="\\|[[:space:]]*${fn}([^A-Za-z0-9_]|\$)"
+        while IFS=: read -r lno content; do
+            case "$content" in
+                *'|| true'*|*'|| :'*) continue ;;
+            esac
+            emit "$script" "$lno" "SHELL_LINT_EARLY_BREAK_PIPE" \
+                "producer | ${fn} under pipefail: ${fn} reads with an early break, so the producer can SIGPIPE (141) and abort the script; write the producer to a temp file and feed ${fn} from it"
+        done < <(printf '%s\n' "$nc" | grep -nE "$re" || true)
+    done <<<"$readers"
+}
+
 # Rule 7 — NUL-byte guard. A tracked first-party `*.sh` is a text file; an embedded NUL
 # (`\x00`) means it was corrupted / partially-binary-written / mis-encoded (UTF-16 with BOM,
 # a truncated write, an accidental binary paste). bash treats a NUL as a string terminator, so
@@ -350,6 +423,7 @@ for script in "${TARGETS[@]}"; do
     check_sha256 "$script"
     check_flag_parity "$script"
     check_pipefail_head "$script"
+    check_early_break_pipe "$script"
     after="${#VIOLATIONS[@]}"
     if [ "$after" -gt "$before" ]; then
         FAILED=$((FAILED + 1))

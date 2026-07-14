@@ -75,6 +75,20 @@ DEFAULT_POLICY: Dict[str, Any] = {
     # microsecond-scale scope. 0.05 ms = 0.7 % of the 6.94 ms frame budget;
     # a regression that matters moves a scope by more than that.
     "mean_min_abs_delta_ms": 0.05,
+    # RELATIVE p99 gate (Cluster-C ci-falsepositive-hardening; infra.md
+    # p99-gate-warmup-frame-exclusion follow-up). The ABSOLUTE p99 ceiling
+    # (p99_abs_ceiling_ms) catches a blowup but not a steady-state p99 that
+    # creeps up while staying under 10 ms. This relative gate closes that gap:
+    # it fires when a scope's p99 regresses by more than p99_rel_pct AND the
+    # absolute delta exceeds p99_min_abs_delta_ms. Ships DISABLED (None) — same
+    # posture mean_abs_ceiling_ms shipped under — because the relative form does
+    # NOT cancel the CI runner's p99 noise band (common-mode cancellation only
+    # helps a systematic offset, not a hot-job draw), so p99_min_abs_delta_ms
+    # must be armed ABOVE the observed runner band from real CI runs. Arming a
+    # live merge gate is a human-judgment call gated on observed-run evidence +
+    # sign-off, never an autonomous flip — set both knobs in regression-policy.json.
+    "p99_rel_pct": None,
+    "p99_min_abs_delta_ms": 0.5,
 }
 
 
@@ -204,6 +218,12 @@ def evaluate(
     min_abs_delta = _to_float(
         policy.get("mean_min_abs_delta_ms", 0.05), "policy.mean_min_abs_delta_ms"
     ) or 0.0
+    # RELATIVE p99 gate — None ⇒ disabled (ships off until CI-run calibration
+    # arms it above the runner p99 noise band; see DEFAULT_POLICY note).
+    p99_rel_pct = _to_float(policy.get("p99_rel_pct"), "policy.p99_rel_pct")
+    p99_min_abs_delta = _to_float(
+        policy.get("p99_min_abs_delta_ms", 0.5), "policy.p99_min_abs_delta_ms"
+    ) or 0.0
 
     for name in all_names:
         b = base_idx.get(name)
@@ -262,6 +282,30 @@ def evaluate(
             regressions.append(
                 f"{name}: p99Ms {f_p99:.3f} exceeds Pillar 1 ceiling {p99_cap:.3f}"
             )
+
+        # RELATIVE p99 gate (disabled until p99_rel_pct is armed). Catches a
+        # steady-state p99 creep that stays under the absolute ceiling. The
+        # abs-Δ floor (p99_min_abs_delta_ms) is the noise guard — it must be
+        # armed above the runner p99 band, which the relative form does NOT
+        # cancel. Independent of the min_baseline_calls floor: p99 is a
+        # frame-level percentile, not a per-call sample, so a low `calls` scope
+        # (e.g. the SmatchetUI::Draw umbrella) still carries a meaningful p99.
+        if (
+            p99_rel_pct is not None
+            and b_p99 is not None
+            and f_p99 is not None
+        ):
+            dp99 = pct_delta(b_p99, f_p99)
+            if (
+                dp99 is not None
+                and dp99 > p99_rel_pct
+                and (f_p99 - b_p99) > p99_min_abs_delta
+            ):
+                regressions.append(
+                    f"{name}: p99Ms regressed {dp99:+.1f}% "
+                    f"(baseline {b_p99:.3f} → fresh {f_p99:.3f}, policy {p99_rel_pct:+.1f}% "
+                    f"and Δ > {p99_min_abs_delta:.3f} ms)"
+                )
 
         # Pillar 1 absolute mean budget (perf-gate-revival step 5). Disabled
         # while mean_abs_ceiling_ms is null — enabled per-policy after the
@@ -324,6 +368,7 @@ def emit_markdown(
     p99_cap = _to_float(policy.get("p99_abs_ceiling_ms", 10.0), "policy.p99_abs_ceiling_ms") or 10.0
     max_cap = _to_float(policy.get("max_abs_ceiling_ms", 50.0), "policy.max_abs_ceiling_ms") or 50.0
     mean_cap = _to_float(policy.get("mean_abs_ceiling_ms"), "policy.mean_abs_ceiling_ms")
+    p99_rel_pct = _to_float(policy.get("p99_rel_pct"), "policy.p99_rel_pct")
     policy_line = (
         f"- policy: mean Δ ≤ {mean_pct:.1f} % · p99 ≤ "
         f"{p99_cap:.2f} ms · max ≤ "
@@ -331,6 +376,8 @@ def emit_markdown(
     )
     if mean_cap is not None:
         policy_line += f" · mean ≤ {mean_cap:.2f} ms"
+    if p99_rel_pct is not None:
+        policy_line += f" · p99 Δ ≤ {p99_rel_pct:.1f} %"
     lines.append(policy_line)
     lines.append("")
 
