@@ -192,7 +192,7 @@ void RegisterLuaScriptConsentCommand(CommandRegistry& reg, IAppAutomation& app, 
         }
         std::string err;
         if (!(app.*action)(script, err)) {
-            return CommandResult::Failure(ErrorCode::InvalidArg, err);
+            return CommandResult::Failure(ErrorCode::ValidationError, err);
         }
         return CommandResult::Success(nlohmann::json{{resultKey, script}});
     });
