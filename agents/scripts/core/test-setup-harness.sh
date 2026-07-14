@@ -15,10 +15,10 @@
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
-set -u
+set -euo pipefail
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
-cd "$PROJ_DIR"
+cd "$PROJ_DIR" || exit 1
 
 PY=""
 for _c in python3 python py; do
@@ -87,7 +87,7 @@ resolve_agent_md() {
 # -------------------------------------------------------------------- Test 1
 note "Test 1 — first run links perf-measure + perf-instrument skills"
 # setup-harness.sh is idempotent; if links exist, this is a no-op.
-SETUP_OUT_1=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1)
+SETUP_OUT_1=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 
 if [[ -e ".claude/skills/perf-measure/SKILL.md" ]]; then
     ok "perf-measure SKILL.md reachable via .claude/skills/"
@@ -113,7 +113,7 @@ done
 
 # -------------------------------------------------------------------- Test 3
 note "Test 3 — re-run produces zero new link-dir lines (idempotency)"
-SETUP_OUT_2=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1)
+SETUP_OUT_2=$(bash agents/scripts/core/setup-harness.sh claude-code 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 NEW_LINKS=$(echo "$SETUP_OUT_2" | grep -c '^\s*link-' || true)
 if [[ "$NEW_LINKS" -eq 0 ]]; then
     ok "idempotent re-run (zero new link- lines)"
@@ -235,7 +235,7 @@ fi
 
 # -------------------------------------------------------------------- Test 8
 note "Test 8 - codex setup generates native hooks/agents without clobbering Claude setup"
-SETUP_CODEX_OUT=$(bash agents/scripts/core/setup-harness.sh codex 2>&1)
+SETUP_CODEX_OUT=$(bash agents/scripts/core/setup-harness.sh codex 2>&1) || true  # assert on artifacts regardless of exit; keep the suite running
 if echo "$SETUP_CODEX_OUT" | grep -q 'Codex parity report:'; then
     ok "codex setup emits parity report"
 else
@@ -266,8 +266,8 @@ if [[ -f ".codex/config.toml" && -f ".codex/hooks.json" ]]; then
 else
     nope ".codex config or hooks missing after codex setup"
 fi
-CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ') + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ') ))
-CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ')
+CANONICAL_AGENT_COUNT=$(( $(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) + $(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ' || true) ))
+CODEX_AGENT_COUNT=$(find .codex/agents -maxdepth 1 -name '*.toml' 2>/dev/null | wc -l | tr -d ' ' || true)
 if [[ "$CODEX_AGENT_COUNT" -eq "$CANONICAL_AGENT_COUNT" ]]; then
     ok ".codex/agents count matches canonical agent count"
 else

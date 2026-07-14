@@ -15,7 +15,7 @@
 #
 # Companion: agents/scripts/core/tail-agent.sh consumes this file when present.
 
-set -uo pipefail
+set -euo pipefail
 
 # Single-string form: "phase: text". Two-arg form: phase text.
 if [ "$#" -eq 0 ]; then

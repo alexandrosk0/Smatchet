@@ -26,7 +26,7 @@
 #
 # Exit codes: 0 ok · 2 gh missing / bad args.
 
-set -uo pipefail
+set -euo pipefail
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null || true
 
 MODE="dry-run"

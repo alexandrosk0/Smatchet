@@ -77,7 +77,7 @@ if [ "${1:-}" = "--list-targets" ]; then
 fi
 
 if ! command -v shellcheck >/dev/null 2>&1; then
-    echo "test-shell-lint: WARN: shellcheck not on PATH; install via 'npm install -g shellcheck'" >&2
+    echo "test-shell-lint: WARN: shellcheck not on PATH; install via scoop (scoop install shellcheck), brew (brew install shellcheck), or apt (apt-get install shellcheck) — see https://github.com/koalaman/shellcheck#installing" >&2
     echo "Passed: 0  Failed: 0"
     exit 0
 fi

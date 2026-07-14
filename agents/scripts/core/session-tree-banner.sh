@@ -19,14 +19,14 @@
 #
 # See docs/agent-rules/process-rules.md § Concurrent interactive sessions.
 
-set -u
+set -euo pipefail
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
 # Shared liveness primitives (real-pid liveness + dead+stale prune). Source the
 # sibling lib; if it is somehow absent, fall back to degraded inline shims so the
 # banner never breaks SessionStart.
-_sr_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)/session-registry-lib.sh"
+_sr_lib="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd || true)/session-registry-lib.sh"  # cd can fail → keep the banner non-blocking; line 30 falls back to $PROJ
 [ -f "$_sr_lib" ] || _sr_lib="$PROJ/agents/scripts/core/session-registry-lib.sh"
 if [ -f "$_sr_lib" ]; then
   # shellcheck source=agents/scripts/core/session-registry-lib.sh

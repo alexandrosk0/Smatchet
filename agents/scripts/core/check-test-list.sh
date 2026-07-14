@@ -15,7 +15,7 @@
 #
 # Exit: 0 pass · 1 unreferenced test(s) found / selftest fail · 2 usage.
 
-set -uo pipefail
+set -euo pipefail
 
 # unreferenced <core-dir> <cmakelists> -> prints basenames present on disk but
 # not mentioned anywhere in the CMakeLists text.

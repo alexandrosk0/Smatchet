@@ -11,7 +11,7 @@
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
-set -u
+set -euo pipefail
 
 command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
 
@@ -123,7 +123,7 @@ note "Test 5 — project skill resolves SKILL.md path + approx_tokens > 0"
 # Requires .claude/skills/perf-measure to exist (Phase 0 setup-harness).
 if [[ ! -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     note "  (running setup-harness.sh claude-code to seed perf-measure link)"
-    bash "$PROJ_DIR/agents/scripts/core/setup-harness.sh" claude-code >/dev/null 2>&1
+    bash "$PROJ_DIR/agents/scripts/core/setup-harness.sh" claude-code >/dev/null 2>&1 || true  # seed-only; the -e check below reports if the link is still absent
 fi
 if [[ -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     rm -f "$LOG"
@@ -138,13 +138,13 @@ if [[ -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
     echo "$PAYLOAD_PROJ" | python "$HOOK"
     RECORD="$(cat "$LOG")"
     # Path uses platform separator; check substring + non-null instead of regex.
-    PATH_FIELD=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read()).get('skill_md_path') or '')")
+    PATH_FIELD=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read()).get('skill_md_path') or '')" || true)  # malformed record -> empty, let the assertion below report
     if [[ -n "$PATH_FIELD" ]] && [[ "$PATH_FIELD" == *"perf-measure"* ]] && [[ "$PATH_FIELD" == *"SKILL.md" ]]; then
         ok "project skill skill_md_path resolved ($PATH_FIELD)"
     else
         nope "project skill skill_md_path not resolved (got: $PATH_FIELD)"
     fi
-    APPROX=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read())['approx_tokens'])")
+    APPROX=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read())['approx_tokens'])" || echo 0)  # missing key -> 0, let the assertion below report
     if [[ "$APPROX" -gt 0 ]]; then
         ok "project skill approx_tokens > 0 (got $APPROX)"
     else

@@ -21,8 +21,11 @@ import re
 import subprocess
 import sys
 
+# Intentional sys.path shim: comment_lib.py is a sibling module in this same
+# directory, not an installed package, so prepend our own dir to import it when
+# comment_audit.py is invoked as a standalone script (no package context).
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import comment_lib as cl
+import comment_lib as cl  # noqa: E402  (import follows the path shim above)
 
 # --- scope ---------------------------------------------------------------------
 

@@ -38,7 +38,7 @@
 # Env overrides: FOLLOWUP_FETCH_N (pr-count gh --limit, default 200),
 #   FOLLOWUP_TODAY (today's date, for deterministic selftest), FOLLOWUP_CAT_DIR.
 
-set -uo pipefail
+set -euo pipefail
 cd "$(dirname "$0")/../../.." || exit 0
 
 MODE="nudge"

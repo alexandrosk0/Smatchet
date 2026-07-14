@@ -12,7 +12,7 @@
 #
 # exit 0 always.
 
-set -u
+set -euo pipefail
 
 PROJ="${CLAUDE_PROJECT_DIR:-$(pwd)}"
 
@@ -21,7 +21,7 @@ if [ ! -t 0 ]; then
   RAW="$(cat || true)"
   if [ -n "$RAW" ]; then
     EXTRACTED="$(printf '%s' "$RAW" \
-      | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1)"
+      | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n1 || true)"  # head can SIGPIPE sed on a multi-match payload; must-not-block hook
     [ -n "$EXTRACTED" ] && SESSION_ID="$EXTRACTED"
   fi
 fi

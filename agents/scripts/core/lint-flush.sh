@@ -9,7 +9,7 @@
 #
 # Exits 0 on clean drain, 2 on findings (same contract as the Stop hook).
 
-set -u
+set -euo pipefail
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"

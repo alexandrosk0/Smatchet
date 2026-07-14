@@ -23,7 +23,7 @@
 # Authoritative spec: docs/self-improvement/categories/process.md
 # (2026-05-19 orchestrator P2 — option b).
 
-set -uo pipefail
+set -euo pipefail
 
 # Resolve main repo via the worktree's common dir (`.git` file in worktrees
 # points at the canonical `.git/worktrees/<id>` dir inside the main repo).
@@ -38,11 +38,13 @@ fi
 case "$common_dir" in
   */\.git/worktrees/*)
     # Worktree case: <repo>/.git/worktrees/<id>/ → main repo at <repo>/.
-    main_repo=$(cd "$common_dir/../.." && pwd)
+    # cd can fail if the worktree vanished between git rev-parse and here; a Stop
+    # hook must exit 0 (never block session end), so degrade instead of aborting.
+    main_repo=$(cd "$common_dir/../.." 2>/dev/null && pwd) || exit 0
     ;;
   */\.git)
     # Already in main repo: <repo>/.git → main repo at <repo>/.
-    main_repo=$(cd "$common_dir/.." && pwd)
+    main_repo=$(cd "$common_dir/.." 2>/dev/null && pwd) || exit 0
     ;;
   *)
     # Unknown shape; skip to avoid false alarm.
