@@ -203,7 +203,7 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
 
 } // namespace
 
-void OpenCommentsModal(AppController& app, const std::string& issueId) {
+void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody) {
     s_CommentsState = CommentsModalState{};
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
@@ -213,6 +213,10 @@ void OpenCommentsModal(AppController& app, const std::string& issueId) {
     // open is distinguishable from a prior open's still-in-flight fetch (#1713).
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+    if (!prefillBody.empty()) {
+        const std::size_t copyLen = (std::min)(prefillBody.size(), CommentsModalState::kPostBufferSize - 1);
+        std::memcpy(s_CommentsState.PostBuf.data(), prefillBody.data(), copyLen);
+    }
     KickCommentsFetch(app, issueId, s_CommentsState.Gen);
 }
 
@@ -261,7 +265,40 @@ void RenderCommentsModal(AppController& app, bool readOnlyMode) {
         DrawCommentsPostBox(app, readOnlyMode);
 
         ImGui::Separator();
-        if (ImGui::Button("Close", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+        bool wantClose = ImGui::Button("Close", ImVec2(100, 0));
+        // P2-M3: Esc while the post box (or any input) is being edited only defocuses it
+        // (ImGui's own revert-and-deactivate) — it must not also tear down the modal
+        // around the draft. Only a second, unfocused Esc reaches the close path.
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !ImGui::GetIO().WantTextInput) {
+            wantClose = true;
+        }
+        if (!modalOpen) { // title-bar X — same guard as Close/Esc (the local resets next frame)
+            wantClose = true;
+        }
+        if (wantClose) {
+            if (s_CommentsState.PostBuf.data()[0] != '\0') {
+                ImGui::OpenPopup("Discard comment?###CommentsDiscardConfirm");
+            } else {
+                ImGui::CloseCurrentPopup();
+                CloseCommentsModal();
+            }
+        }
+        bool discardConfirmed = false;
+        if (ImGui::BeginPopupModal("Discard comment?###CommentsDiscardConfirm", nullptr,
+                                   ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("comments.discard_confirm", "Discard the comment you're writing?"));
+            if (ImGui::Button("Discard comment")) {
+                discardConfirmed = true;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Keep writing")) {
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::EndPopup();
+        }
+        if (discardConfirmed) {
             ImGui::CloseCurrentPopup();
             CloseCommentsModal();
         }

@@ -1,3 +1,4 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -6,6 +7,7 @@
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
+#include "Ui/SmatchetDestructiveButton.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 #include "Logger.h"
@@ -400,14 +402,12 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     if (disableDelete) {
         ImGui::BeginDisabled();
     }
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
+    SmatchetPushDestructiveButtonColors();
     if (ImGui::Button("Delete view")) {
         d.viewsPendingDeleteId = activeView->Id; // DR13b: header button deletes the active view.
         d.viewsShowDeleteConfirm = true;
     }
-    ImGui::PopStyleColor(3);
+    SmatchetPopDestructiveButtonColors();
     if (disableDelete) {
         ImGui::EndDisabled();
     }
@@ -894,9 +894,7 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         const std::string targetName = SmatchetViewsDashboardUiDetail::FindViewName(ctx.store, targetId, activeView->Name);
         ImGui::Text("Delete view \"%s\"? This cannot be undone.", targetName.c_str());
         ImGui::Spacing();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.18f, 0.18f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.22f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.80f, 0.25f, 0.25f, 1.0f));
+        SmatchetPushDestructiveButtonColors();
         if (ImGui::Button("Delete")) {
             // Defer the erase to top-of-next-frame: Views::Delete erases from store.Views — same
             // pointer-invalidation class as the create latch. Copy the name now, mutate next frame.
@@ -905,7 +903,7 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
             d.viewsPendingDeleteToastName = targetName;
             ImGui::CloseCurrentPopup();
         }
-        ImGui::PopStyleColor(3);
+        SmatchetPopDestructiveButtonColors();
         ImGui::SameLine();
         if (ImGui::Button("Cancel")) {
             d.viewsPendingDeleteId.clear();

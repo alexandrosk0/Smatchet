@@ -80,7 +80,7 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
     // Center row is clicked (item 11). Only when there is a focusable (non-deleted) target and the
     // pane is known; otherwise fall through to the plain 4-arg Push and the row stays informational.
     const std::string focusId = PrimaryFocusableId(changes);
-    const std::string title = SmatchetLocalization::T("toast.tickets", "Tickets");
+    const std::string title = SmatchetLocalization::T("toast.tickets", "Issues");
     if (!focusId.empty() && !paneId.empty()) {
         SmatchetToastManager::Instance().Push(title, body, ToastType::Info, 5000, [paneId, focusId]() {
             const TicketChangeFocusHandler& h = FocusHandlerRef();

@@ -131,10 +131,13 @@ void DrawTimeEstimatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlag
         static char s_prefNewSuggestionBuf[16] = "";
         ImGui::Text("Add Custom Suggestion");
         ImGui::SetNextItemWidth(140.0f);
-        ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf));
+        // EnterReturnsTrue commits from the input itself — the old IsItemFocused() check
+        // ran on the BUTTON, so Enter in the field silently did nothing (P2-L10).
+        const bool suggestionEntered =
+            ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf),
+                             ImGuiInputTextFlags_EnterReturnsTrue);
         ImGui::SameLine();
-        if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) ||
-            (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+        if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || suggestionEntered) {
             std::string newVal = s_prefNewSuggestionBuf;
             if (!newVal.empty()) {
                 if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
@@ -226,10 +229,11 @@ void DrawWorkLogTemplatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateF
         static char s_prefNewTemplateBuf[128] = "";
         ImGui::Text("Add Comment Template");
         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
-        ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf));
+        const bool templateEntered =
+            ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf),
+                             ImGuiInputTextFlags_EnterReturnsTrue); // Enter adds (P2-L10)
         ImGui::SameLine();
-        if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) ||
-            (ImGui::IsItemFocused() && ImGui::IsKeyPressed(ImGuiKey_Enter))) {
+        if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || templateEntered) {
             std::string newVal = s_prefNewTemplateBuf;
             if (!newVal.empty()) {
                 if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
@@ -254,8 +258,12 @@ struct CommentTemplateSubTabState {
     int selectedIdx = -1;
     char titleBuf[64] = "";
     char idBuf[64] = "";
-    char textBuf[512] = "";
+    char textBuf[4096] = ""; // 512 silently truncated longer bodies on the first keystroke (P2-L9)
     int lastSelectedIdx = -2;
+    /// Row index whose two-step delete is armed (-1 = none). A member (not index-keyed
+    /// ImGui storage) so reorder/delete can clear it — storage keyed by position would
+    /// let "armed" drift onto whatever template lands in that slot.
+    int armedDeleteIdx = -1;
 };
 
 // Scrollable list of templates with per-row move-up / move-down / delete. Extracted from the shared
@@ -275,6 +283,7 @@ void DrawCommentTemplateList(UiDrawSession& d, const char* childId, std::vector<
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
         if (i > 0) {
             if (ImGui::Button("▲")) {
+                st.armedDeleteIdx = -1; // positions shift — never carry an armed delete across
                 std::swap(st.workingList[i], st.workingList[i - 1]);
                 if (st.selectedIdx == static_cast<int>(i))
                     st.selectedIdx = static_cast<int>(i - 1);
@@ -292,6 +301,7 @@ void DrawCommentTemplateList(UiDrawSession& d, const char* childId, std::vector<
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
         if (i < st.workingList.size() - 1) {
             if (ImGui::Button("▼")) {
+                st.armedDeleteIdx = -1;
                 std::swap(st.workingList[i], st.workingList[i + 1]);
                 if (st.selectedIdx == static_cast<int>(i))
                     st.selectedIdx = static_cast<int>(i + 1);
@@ -307,8 +317,23 @@ void DrawCommentTemplateList(UiDrawSession& d, const char* childId, std::vector<
         }
 
         ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+        // P2-L9: two-step delete — this tab autosaves, so an instant ✖ permanently
+        // destroys a hand-authored template on one stray click. First click arms; the
+        // second (now "✔?") confirms. A click anywhere else disarms.
+        const bool armed = st.armedDeleteIdx == static_cast<int>(i);
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-        if (ImGui::Button("✖")) {
+        const bool delClicked = ImGui::Button(armed ? "✔?" : "✖");
+        const bool delHovered = ImGui::IsItemHovered();
+        if (armed && delHovered) {
+            ImGui::SetTooltip("Click again to delete this template");
+        }
+        if (delClicked && !armed) {
+            st.armedDeleteIdx = static_cast<int>(i);
+        } else if (armed && !delClicked && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !delHovered) {
+            st.armedDeleteIdx = -1;
+        }
+        if (delClicked && armed) {
+            st.armedDeleteIdx = -1;
             st.workingList.erase(st.workingList.begin() + i);
             if (st.selectedIdx == static_cast<int>(i)) {
                 st.selectedIdx = -1;
@@ -370,6 +395,13 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
             t.Text = st.textBuf;
             cfgField = st.workingList;
             MarkPrefsDirty(d);
+        }
+        // Make the cap visible instead of silently cutting the body off (P2-L9).
+        ImGui::TextDisabled("%d / %d", static_cast<int>(std::strlen(st.textBuf)),
+                            static_cast<int>(sizeof(st.textBuf) - 1));
+        if (t.Text.size() > sizeof(st.textBuf) - 1) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(stored body is longer than the editor cap - editing here would truncate it)");
         }
     } else {
         ImGui::TextDisabled("Select a template above to view or edit its details.");

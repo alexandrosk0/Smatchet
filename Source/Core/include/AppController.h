@@ -197,6 +197,12 @@ class AppController : public IAppThreading,
     /// leaves it null and `Initialize` lazily wires `DefaultTrackerBackendFactory`.
     void SetBackendFactory(std::unique_ptr<ITrackerBackendFactory> factory);
 
+    /// Probe reachability/auth for `probeCfg` with a THROWAWAY backend built from it —
+    /// the Preferences "Test connection" seam (P2-M12). Does not touch the live backend
+    /// or the saved config. Blocking network I/O: dispatch on a worker via
+    /// LaunchBackgroundTask. Requires Initialize() (backendFactory_ wired).
+    TrackerReachabilityProbeResult ProbeTrackerCredentials(const TrackerConfig& probeCfg);
+
     void Initialize(const std::string& dbPath, const std::string& backendType);
 
   private:
@@ -440,8 +446,11 @@ class AppController : public IAppThreading,
      * - If no host/in-app handler path is available: falls back to OpenUrl(url).
      */
     void OpenAttachment(const std::string& url, const std::string& filename, const std::string& mimeType) override;
-    /** Download to temp then open local file in OS default app (matches Unreal attachment viewer). */
-    void OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType);
+    /** Forwarder to AttachmentAppUpdateService::OpenAttachmentInSystemViewer; see that
+     *  header for the outcome contract. Blocking network I/O. */
+    // SMATCHET_DEVIATION(rule=duplication; reason=forwarder mirrors service header; owner=ui; revisit=dup-scoping)
+    bool OpenAttachmentInSystemViewer(const std::string& url, const std::string& filename, const std::string& mimeType,
+                                      std::string* outError = nullptr, bool* outFellBackToUrl = nullptr);
     bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
                                       std::string* outError) override; // default (=nullptr) lives on IAppAttachments
     std::string GetAppVersion() const override;

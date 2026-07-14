@@ -220,6 +220,7 @@ void CloseAnnotateModal(bool* pOpen) {
     State().lastCallstackIssueKey.clear();
     State().annotateStreamlinedFromGrid = false;
     State().annotatePendingAutoProcess = false;
+    State().annotateHidePreservesState = false;
     State().showRaw = false;
     *pOpen = false;
 }

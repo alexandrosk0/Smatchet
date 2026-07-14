@@ -52,9 +52,30 @@ struct SmatchetThemeAiColors {
     float AiPinStripBg[4];
 };
 
+/** Per-theme palette for semantic status TEXT (UX critique P2-H9). Error/warning/success
+ *  copy was previously hardcoded as dark-theme pastels (e.g. amber ImVec4(1,0.85,0.3))
+ *  that drop to ~1.4:1 contrast on the light theme — invisible exactly where it matters
+ *  most. These slots are set per theme by ApplyStyle so a theme switch keeps status text
+ *  readable; consumers use these instead of literal ImVec4 colors for any user-facing
+ *  error/warning/success text. (The fixed STATUS-FIELD colors in SmatchetTheme::Colors —
+ *  StatusDone etc. — color data values, not chrome text, and stay as-is.) */
+struct SmatchetThemeSemanticColors {
+    ImVec4 ErrorText;
+    ImVec4 WarningText;
+    ImVec4 SuccessText;
+};
+
 namespace SmatchetTheme {
 /** Apply the named style palette to the current ImGui context. */
 void ApplyStyle(ThemeId theme);
+
+/** Pure mapping from a ThemeId to its semantic status-text palette — no ImGui side
+ *  effects (mirrors BuildSyntaxColorsForTheme; tests can pin the table without a
+ *  context). Unrecognized ids return the dark-family palette. */
+SmatchetThemeSemanticColors BuildSemanticColorsForTheme(ThemeId theme);
+
+/** Active theme's semantic status-text palette. Updated by ApplyStyle. */
+const SmatchetThemeSemanticColors& GetActiveSemanticColors();
 
 /** Scale every size / spacing / rounding metric of the current style by `densityScale`
  *  (wraps ImGui::GetStyle().ScaleAllSizes). Mobile host-injection seam (#13): a high-DPI

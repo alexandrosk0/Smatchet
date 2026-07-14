@@ -16,7 +16,9 @@ class AppController;
 /// Captures `issueId`, resets modal state, marks it active + just-opened, and kicks the fetch
 /// worker (sets the in-flight flag). Safe to call from inside a table cell — the actual
 /// `OpenPopup`/`BeginPopupModal` happens at top-level depth in `RenderCommentsModal`.
-void OpenCommentsModal(AppController& app, const std::string& issueId);
+/// `prefillBody` (optional) seeds the post box — quick comment templates open here for
+/// review/editing instead of posting to the tracker sight-unseen (P2-M2).
+void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody = std::string());
 
 /// Renders the comments modal once per frame from a stable top-level location. On just-opened runs
 /// `OpenPopup`. Body: in-flight spinner while fetching, then a scrollable read-only thread (each

@@ -336,7 +336,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         UnifiedOfflineRow u;
         u.kind = UnifiedOfflineKind::DeadCreate;
         u.key = MakeUnifiedOfflineRowKey(u.kind, row.DeadId);
-        u.state = "Dead";
+        u.state = "Failed";
         u.type = "Issue create";
         u.dbId = row.DeadId;
         u.originalId = row.OriginalId;
@@ -376,7 +376,7 @@ static std::vector<UnifiedOfflineRow> BuildUnifiedOfflineRows(const std::vector<
         UnifiedOfflineRow u;
         u.kind = UnifiedOfflineKind::DeadFieldEdit;
         u.key = MakeUnifiedOfflineRowKey(u.kind, row.DeadId);
-        u.state = "Dead";
+        u.state = "Failed";
         u.type = "Field edit";
         u.dbId = row.DeadId;
         u.originalId = row.OriginalId;
@@ -680,14 +680,30 @@ static void DrawOfflineQueueHeader(OfflineDrawCtx& ctx) {
     }
 
     ImGui::TextDisabled(
-        "Queued rows replay when Tracker is reachable. Dead rows are archived after retries or validation failure. "
-        "Retry applies only to failed issue creates. Discard removes rows locally only.");
+        "Queued rows post automatically when the tracker is reachable. Failed rows stopped retrying "
+        "(too many attempts or a validation error) until you retry them. Discard only deletes the local copy.");
 }
 
-static void OnDiscardSelected(OfflineDrawCtx& ctx) {
+// Discard-confirm staging (P2-M1): queued creates/edits are the ONLY copy of
+// offline-authored work, so a discard whose target set contains pending rows is parked
+// here and executed from the panel-level confirm modal instead of running on the click.
+static std::vector<std::string> g_offlineDiscardConfirmKeys;
+static bool g_offlineDiscardConfirmRequested = false;
+
+static bool OfflineKeysContainPendingWork(const OfflineDrawCtx& ctx, const std::vector<std::string>& keys) {
+    for (const UnifiedOfflineRow& r : ctx.rows) {
+        if ((r.kind == UnifiedOfflineKind::PendingCreate || r.kind == UnifiedOfflineKind::PendingFieldEdit) &&
+            std::find(keys.begin(), keys.end(), r.key) != keys.end()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void DiscardOfflineRowKeys(OfflineDrawCtx& ctx, const std::vector<std::string>& keys) {
     int disc = 0;
     int fail = 0;
-    for (const std::string& key : g_selectedOfflineRowKeys) {
+    for (const std::string& key : keys) {
         auto rIt =
             std::find_if(ctx.rows.begin(), ctx.rows.end(), [&](const UnifiedOfflineRow& r) { return r.key == key; });
         if (rIt != ctx.rows.end()) {
@@ -697,11 +713,30 @@ static void OnDiscardSelected(OfflineDrawCtx& ctx) {
                 ++fail;
             }
         }
+        g_selectedOfflineRowKeys.erase(key);
     }
-    g_selectedOfflineRowKeys.clear();
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "Discard offline edits: removed %d rows from DB (failed %d).", disc, fail);
+    std::snprintf(buf, sizeof(buf), "Discarded %d row(s) (couldn't delete %d).", disc, fail);
     ArmOfflineQueuePanelStatus(ctx.d, buf);
+}
+
+// Routes a discard request: straight through for archived (dead) rows, via the confirm
+// modal when any target row is still queued to replay (P2-M1).
+static void RequestOfflineDiscard(OfflineDrawCtx& ctx, const std::vector<std::string>& keys) {
+    if (keys.empty()) {
+        return;
+    }
+    if (OfflineKeysContainPendingWork(ctx, keys)) {
+        g_offlineDiscardConfirmKeys = keys;
+        g_offlineDiscardConfirmRequested = true;
+        return;
+    }
+    DiscardOfflineRowKeys(ctx, keys);
+}
+
+static void OnDiscardSelected(OfflineDrawCtx& ctx) {
+    RequestOfflineDiscard(ctx,
+                          std::vector<std::string>(g_selectedOfflineRowKeys.begin(), g_selectedOfflineRowKeys.end()));
 }
 
 static void OnClearArchivedDead(OfflineDrawCtx& ctx) {
@@ -717,7 +752,7 @@ static void OnClearArchivedDead(OfflineDrawCtx& ctx) {
         }
     }
     char buf[256];
-    std::snprintf(buf, sizeof(buf), "Cleared archived dead rows: deleted %d rows (failed %d).", del, fail);
+    std::snprintf(buf, sizeof(buf), "Cleared failed rows: deleted %d (couldn't delete %d).", del, fail);
     ArmDeadLetterPanelStatus(ctx.d, buf);
 }
 
@@ -737,7 +772,7 @@ static void DrawOfflineQueueToolbar(OfflineDrawCtx& ctx) {
         ctx.app.TickOfflineFieldEdits();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Clear archived dead rows##unifiedoff")) {
+    if (ImGui::Button("Clear failed rows##unifiedoff")) {
         OnClearArchivedDead(ctx);
     }
 }
@@ -762,7 +797,7 @@ static void DrawOfflineRowActionCell(const UnifiedOfflineRow& row) {
         ImGui::TextDisabled("Queued create");
     } else if (row.kind == UnifiedOfflineKind::DeadCreate) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextUnformatted("Dead create");
+        ImGui::TextUnformatted("Failed create - won't retry automatically");
         ImGui::PopStyleColor();
         // remove-global-project-key.md: surface a small badge for
         // rows the legacy-project sweep dead-lettered, so the user knows to restore
@@ -789,7 +824,7 @@ static void DrawOfflineRowActionCell(const UnifiedOfflineRow& row) {
         }
     } else if (row.kind == UnifiedOfflineKind::DeadFieldEdit) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
-        ImGui::TextUnformatted("Dead edit");
+        ImGui::TextUnformatted("Failed edit - won't retry automatically");
         ImGui::PopStyleColor();
     }
 }
@@ -838,19 +873,12 @@ static void OnContextOpenDraft(UiDrawSession& d, const std::vector<UnifiedOfflin
 }
 
 static void OnContextDiscard(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
-    int del = 0;
-    int failed = 0;
+    std::vector<std::string> keys;
+    keys.reserve(picks.size());
     for (const auto& p : picks) {
-        if (DeleteOfflineRowFromDb(ctx.app, p)) {
-            ++del;
-        } else {
-            ++failed;
-        }
-        g_selectedOfflineRowKeys.erase(p.key);
+        keys.push_back(p.key);
     }
-    char buf[256];
-    std::snprintf(buf, sizeof(buf), "Discard offline context: successfully deleted %d rows (failed %d).", del, failed);
-    ArmOfflineQueuePanelStatus(ctx.d, buf);
+    RequestOfflineDiscard(ctx, keys);
 }
 
 static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
@@ -919,21 +947,21 @@ static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineR
         d.showConflictResolveModal = true;
     }
 
-    if (ImGui::MenuItem("Discard record(s) from DB")) {
+    if (ImGui::MenuItem("Discard selected row(s)")) {
         OnContextDiscard(ctx, picks);
     }
 
     const bool hasDeadCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
         return p.kind == UnifiedOfflineKind::DeadCreate;
     });
-    if (hasDeadCreates && ImGui::MenuItem("Move dead create(s) back to retry queue")) {
+    if (hasDeadCreates && ImGui::MenuItem("Retry failed create(s)")) {
         OnContextRestoreDeadCreates(ctx, picks);
     }
 
     const bool hasDeadEdits = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
         return p.kind == UnifiedOfflineKind::DeadFieldEdit;
     });
-    if (hasDeadEdits && ImGui::MenuItem("Move dead edit(s) back to retry queue")) {
+    if (hasDeadEdits && ImGui::MenuItem("Retry failed edit(s)")) {
         OnContextRestoreDeadEdits(ctx, picks);
     }
 }
@@ -1378,6 +1406,37 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
 
 } // namespace
 
+// P2-M1 confirm modal: opened from RequestOfflineDiscard when the discard set contains
+// rows still queued to replay. Panel-level (outside the row context popup) so the modal
+// survives the context menu closing on the click.
+static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
+    if (g_offlineDiscardConfirmRequested) {
+        ImGui::OpenPopup("Discard queued work?###OfflineDiscardConfirm");
+        g_offlineDiscardConfirmRequested = false;
+    }
+    if (!ImGui::BeginPopupModal("Discard queued work?###OfflineDiscardConfirm", nullptr,
+                                ImGuiWindowFlags_AlwaysAutoResize)) {
+        return;
+    }
+    ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                 "offline.discard_confirm",
+                                 "%d row(s) are still queued to replay to the tracker - they are the only copy "
+                                 "of that offline work. Discard deletes them permanently.",
+                                 static_cast<int>(g_offlineDiscardConfirmKeys.size())));
+    ImGui::Spacing();
+    if (ImGui::Button("Discard rows")) {
+        DiscardOfflineRowKeys(ctx, g_offlineDiscardConfirmKeys);
+        g_offlineDiscardConfirmKeys.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Keep")) {
+        g_offlineDiscardConfirmKeys.clear();
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::EndPopup();
+}
+
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     const OfflineQueueData data = FetchOfflineQueueData(app);
     if (data.total == 0) {
@@ -1399,5 +1458,6 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     ImGui::PopID();
 
     DrawOfflineConflictModal(ctx);
+    DrawOfflineDiscardConfirmModal(ctx);
     return true;
 }

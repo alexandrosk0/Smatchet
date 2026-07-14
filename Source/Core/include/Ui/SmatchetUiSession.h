@@ -65,6 +65,10 @@ struct AttachmentPreviewUpdate {
     std::string MimeType;
     std::string Filename;
     std::string Url;
+    /// Non-empty when the preview download FAILED (P2-H7): applied as the entry's
+    /// PreviewError instead of a local path, and the request latch is released so
+    /// re-selecting the attachment retries.
+    std::string Error;
 };
 
 struct AttachmentWindowEntry {
@@ -153,7 +157,7 @@ enum class CellWriteState { Saving, Success, Error };
 /// Appearance change that requires a full window-layout reset (Panel Position / Move
 /// Primary Side Bar). Namespace-scope (not nested in UiDrawSession) so SmatchetUI.h can
 /// name it in member signatures against the forward-declared session.
-enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimarySideBar };
+enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimarySideBar, ResetLayoutOnly };
 
 /// Which top-level Preferences tab is selected this frame. Recorded by each
 /// tab's BeginTabItem-true branch so the shared footer under the tab bar can
@@ -274,6 +278,10 @@ struct UiDrawSession {
     /// arranged layout is never silently destroyed. Enum defined at namespace scope (above
     /// this struct) so SmatchetUI.h can name it against the forward-declared session.
     PendingLayoutResetAction pendingLayoutResetAction = PendingLayoutResetAction::None;
+    /// "Don't ask again" checkbox STAGED while the layout-reset confirm modal is open;
+    /// committed to cfg.SkipLayoutResetConfirm only when the user confirms (P2-M6 —
+    /// previously a checked box persisted even when the modal was cancelled).
+    bool layoutResetDontAskStaged = false;
     /// One-shot OpenPopup latch for the layout-reset confirm modal (popup must be opened
     /// in the same ID scope that draws it — see the DR22 pattern).
     bool openLayoutResetConfirm = false;
@@ -287,6 +295,19 @@ struct UiDrawSession {
     /// consumed by SmatchetPreferencesUiDetail::PrefsTabFlags at that tab's BeginTabItem.
     char prefsSearchBuf[64] = {};
     std::string prefsSelectTabRequest;
+    /// Set when the Preferences window is closed while the Tracker tab holds unsaved
+    /// credential edits (P2-H3): the window reopens and this opens the Save & Sync /
+    /// Discard / Keep-editing guard modal.
+    bool prefsTrackerCloseGuardOpen = false;
+    /// Tracker-tab "Test connection" probe state (P2-M12). InFlight set on the UI
+    /// thread at click; cleared by the worker's PostToMainThread completion. Kind:
+    /// 0 = none, 1 = ok, 2 = warning (transport), 3 = error (auth/config).
+    bool trackerPrefsTestInFlight = false;
+    std::string trackerPrefsTestResult;
+    int trackerPrefsTestResultKind = 0;
+    /// Probe generation: bumped on every probe start AND on Preferences close, so a
+    /// completion from a superseded/abandoned probe can't overwrite fresh state.
+    int trackerPrefsTestGen = 0;
     /// One-frame focus latch for the Preferences window. Set true by the menu-bar
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).
@@ -881,6 +902,9 @@ struct UiDrawSession {
     std::mutex attachmentPreviewMutex;
     std::deque<AttachmentCollectionRequest> attachmentCollectionQueue;
     std::deque<AttachmentPreviewUpdate> attachmentPreviewUpdateQueue;
+    /// Url of the attachment an async "Open selected" download is running for (P2-H8);
+    /// empty when idle. Drives the button's disabled state + "Opening..." cue.
+    std::string attachmentOpenInFlightUrl;
     bool attachmentPreviewCallbackRegistered = false;
     bool attachmentPreviewWindowOpen = false;
     std::vector<AttachmentWindowEntry> attachmentWindowEntries;

@@ -211,6 +211,12 @@ void LoadSelected(ViewerState& s) {
     }
     bool oversize = false;
     std::string body = ReadCapped(path, kMaxDocBytes, oversize);
+    if (body.empty()) {
+        // P2-L12: an unreadable (or genuinely empty) file used to render a silently
+        // blank body — indistinguishable from a working viewer on an empty doc.
+        body = "[Couldn't read this file (it may have moved, or be empty): " + path + "]";
+        LOG_WARN("plan-doc viewer: empty/unreadable file %s", path.c_str());
+    }
     if (oversize) {
         body.append("\n\n---\n[truncated at 1 MiB — open the file directly to view the full content]\n");
         LOG_WARN("plan-doc viewer: truncated oversized file %s", path.c_str());
@@ -263,7 +269,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         ImGui::SetNextWindowFocus();
     }
     bool open = d.showPlanDocViewer;
-    if (!ImGui::Begin("Plan docs", &open)) {
+    if (!ImGui::Begin("Plan Docs", &open)) {
         d.showPlanDocViewer = open;
         if (wantFocus) {
             d.requestPlanDocViewerFocus = false;
@@ -280,7 +286,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     if (s.indexInFlight) {
         ImGui::TextDisabled("Scanning plan docs...");
     } else if (s.files.empty()) {
-        ImGui::TextDisabled("No plan docs found under docs/plans/active or docs/adr.");
+        ImGui::TextDisabled("No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
         if (ImGui::Button("Rescan")) {
             StartRescanIndex(s);
         }

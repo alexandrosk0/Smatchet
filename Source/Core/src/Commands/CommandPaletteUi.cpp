@@ -27,6 +27,8 @@ void CommandPaletteUi::Open() {
     open_ = true;
     selected_ = 0;
     argFormStep_ = -1;
+    categoryPrefix_.clear();
+    categoryLabel_.clear();
     std::memset(filterBuf_, 0, sizeof(filterBuf_));
     // DR27: drop the list built for the previous session so the first Draw after
     // opening rebuilds from the now-empty filter buffer. Without this a reopened
@@ -45,7 +47,16 @@ void CommandPaletteUi::Close() {
     open_ = false;
     argFormStep_ = -1;
     argFormBufs_.clear();
+    categoryPrefix_.clear();
+    categoryLabel_.clear();
     g_dictationRouter.UnregisterInputText(filterBuf_);
+}
+
+void CommandPaletteUi::SetCategoryPrefix(const char* prefix, const char* label) {
+    categoryPrefix_ = prefix != nullptr ? prefix : "";
+    categoryLabel_ = label != nullptr ? label : "";
+    filtered_.clear(); // force a rebuild under the new scope on the next Draw
+    selected_ = 0;
 }
 
 void CommandPaletteUi::SetFilterText(const char* query) {
@@ -64,7 +75,14 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
     // the whole registry, so the empty-query branch below must reuse this snapshot
     // rather than re-fetching it once per recent (was up to 9 All() calls per
     // rebuild — CPP_CODE_AUDIT.md #33 perf sub-item).
-    const std::vector<Command> all = app.Commands().All();
+    std::vector<Command> all = app.Commands().All();
+    if (!categoryPrefix_.empty()) {
+        all.erase(std::remove_if(all.begin(), all.end(),
+                                 [this](const Command& c) {
+                                     return c.Name.compare(0U, categoryPrefix_.size(), categoryPrefix_) != 0;
+                                 }),
+                  all.end());
+    }
     if (q.empty()) {
         // Empty query: show recent commands first, then all sorted by name.
         filtered_.clear();
@@ -97,7 +115,7 @@ void CommandPaletteUi::rebuildFiltered(AppController& app) {
         std::vector<Scored> scored;
         scored.reserve(all.size());
         for (const Command& c : all) {
-            const int s = FuzzyScore(q, c.Name + " " + c.Summary);
+            const int s = FuzzyScore(q, c.Title + " " + c.Name + " " + c.Summary);
             if (s > 0)
                 scored.push_back({s, c});
         }
@@ -186,7 +204,7 @@ void CommandPaletteUi::drawArgForm() {
     bool allFilled = true;
     for (size_t i = 0; i < argFormCmd_.Params.size(); ++i) {
         const ParamSpec& p = argFormCmd_.Params[i];
-        ImGui::Text("--%s%s:", p.Name.c_str(), p.Required ? " *" : "");
+        ImGui::Text("%s%s:", p.Name.c_str(), p.Required ? " *" : "");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(-1.f);
         const std::string label = "##arg" + std::to_string(i);
@@ -258,6 +276,13 @@ void CommandPaletteUi::Draw(AppController& app) {
         ImGui::SetKeyboardFocusHere();
     }
 
+    // Active category scope (e.g. "Open View..."): say so instead of leaking the id
+    // prefix into the search box (P2-M7).
+    if (!categoryLabel_.empty()) {
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::Format("cmdpalette.scope", "Showing %s commands only", categoryLabel_.c_str()));
+    }
+
     // Filter text input.
     const bool filterChanged =
         ImGui::InputTextWithHint("##cmdq", SmatchetLocalization::T("cmdpalette.hint", "Type a command or search..."),
@@ -283,9 +308,9 @@ void CommandPaletteUi::Draw(AppController& app) {
     // Hint line.
     ImGui::Separator();
     if (!filtered_.empty() && filtered_[selected_].Destructive) {
-        ImGui::TextColored(
-            SmatchetTheme::Colors::PriorityHigh, "%s",
-            SmatchetLocalization::T("cmdpalette.destructive_hint", "Destructive — hold Shift+Enter to confirm"));
+        ImGui::TextColored(SmatchetTheme::Colors::PriorityHigh, "%s",
+                           SmatchetLocalization::T("cmdpalette.destructive_hint",
+                                                   "Destructive — hold Shift and click, or press Shift+Enter"));
     } else {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("cmdpalette.footer_hint",
                                                           "Enter to run · Esc to close · Up/Down to navigate"));
@@ -332,9 +357,13 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
             ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::Colors::PriorityHigh);
         }
 
-        // Selectable row. The combo (if any) is drawn separately right-aligned, not baked into
-        // the label, so the selectable id stays stable as bindings change.
-        const std::string rowLabel = c.Name + "  " + c.Summary;
+        // Selectable row. Leads with the human Title (title-cased-slug fallback — the
+        // registry's own contract says raw ids never reach a widget, P2-M7); the dotted
+        // id is drawn dimmed after the text. The combo (if any) is drawn separately
+        // right-aligned, not baked into the label, so the selectable id stays stable as
+        // bindings change (##Name keeps it stable across Title edits too).
+        const std::string primary = c.Title.empty() ? TitleCasedSlugFromCommandId(c.Name) : c.Title;
+        const std::string rowLabel = primary + "  " + c.Summary + "###row_" + c.Name;
         if (ImGui::Selectable(rowLabel.c_str(), isSelected, ImGuiSelectableFlags_None, ImVec2(0, 0))) {
             selected_ = i;
             if (!c.Destructive || io.KeyShift) {
@@ -351,6 +380,12 @@ void CommandPaletteUi::drawCommandList(const ImGuiIO& io) {
             }
             ImGui::EndPopup();
         }
+        // Dotted command id, dimmed, inline after the label text (power users still see /
+        // can learn the id; novices read the Title).
+        const float labelW = ImGui::CalcTextSize(primary.c_str()).x + ImGui::CalcTextSize("  ").x * 2.0f +
+                             ImGui::CalcTextSize(c.Summary.c_str()).x;
+        ImGui::SameLine(labelW + ImGui::GetStyle().ItemSpacing.x * 2.0f);
+        ImGui::TextDisabled("%s", c.Name.c_str());
         // Surface the bound combo, dimmed, right-aligned on the same row.
         const std::string combo = keybindings_ != nullptr ? BoundHotkeyDisplay(*keybindings_, c.Name) : std::string();
         if (!combo.empty()) {

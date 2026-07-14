@@ -30,7 +30,7 @@
 //      no backend needed.
 //
 //   3. Plan Doc Viewer (DrawPlanDocViewer, SmatchetPlanDocViewerUi.cpp)
-//      Title: "Plan docs". Opens via showPlanDocViewer + requestPlanDocViewerFocus.
+//      Title: "Plan Docs". Opens via showPlanDocViewer + requestPlanDocViewerFocus.
 //      Under the test harness the doc-scanner finds no files (the repo root is
 //      not the working dir at runtime) so the viewer renders
 //      "No plan docs found..." + a "Rescan" button. Both paths are covered:
@@ -293,7 +293,7 @@ void RegisterBulkExportWindowRenderSmoke(ImGuiTestEngine* engine) {
 // ============================================================================
 // 3. Plan Doc Viewer
 // ============================================================================
-// DrawPlanDocViewer (SmatchetPlanDocViewerUi.cpp). Title "Plan docs".
+// DrawPlanDocViewer (SmatchetPlanDocViewerUi.cpp). Title "Plan Docs".
 // Opens via showPlanDocViewer + requestPlanDocViewerFocus.
 //
 // Under the test harness the async file scanner runs but finds no .md files
@@ -318,10 +318,10 @@ void RegisterPlanDocViewerWindowRenderSmoke(ImGuiTestEngine* engine) {
         g_ui.showPlanDocViewer = true;
         g_ui.requestPlanDocViewerFocus = true;
 
-        ctx->SetRef("Plan docs");
+        ctx->SetRef("Plan Docs");
         const bool visible = YieldUntil(ctx, [&] {
             g_ui.requestPlanDocViewerFocus = true;
-            return WindowIsLive("Plan docs");
+            return WindowIsLive("Plan Docs");
         });
         IM_CHECK_NO_RET(visible);
 

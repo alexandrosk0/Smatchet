@@ -49,11 +49,39 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
     // Viewing the center clears the status-bar unread-error badge — this history IS the
     // error trail the badge points at.
     mgr.MarkHistorySeen();
+    // ... and dismisses the live toast stack (P2-M8): the errors the sticky toasts were
+    // holding on screen are now safely in view below, so the user shouldn't have to click
+    // each toast individually after reading them here. Open-edge only — toasts raised
+    // WHILE the center is open still appear.
+    if (::ImGui::IsWindowAppearing()) {
+        mgr.DismissAllLive();
+        // An armed-but-unconfirmed "Clear all" must not survive close/reopen — a stale
+        // primed Confirm button is exactly the misclick this two-step flow guards against.
+        ::ImGui::GetStateStorage()->SetBool(::ImGui::GetID("##clear_all_armed"), false);
+    }
     const std::vector<ToastHistoryEntry>& history = mgr.History();
 
+    // Two-step Clear all (P2-L2): this history is the only record of faded errors — a
+    // single misclick must not destroy it. Arm state lives in the window's ImGui storage.
     bool clearRequested = false;
-    if (ImGui::Button("Clear all")) {
-        clearRequested = true;
+    {
+        ImGuiStorage* storage = ::ImGui::GetStateStorage();
+        const ImGuiID armId = ::ImGui::GetID("##clear_all_armed");
+        const bool armed = storage->GetBool(armId, false);
+        if (!armed) {
+            if (ImGui::Button("Clear all")) {
+                storage->SetBool(armId, true);
+            }
+        } else {
+            if (ImGui::Button("Confirm clear all")) {
+                clearRequested = true;
+                storage->SetBool(armId, false);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Keep")) {
+                storage->SetBool(armId, false);
+            }
+        }
     }
     ImGui::SameLine();
     // Raw (::) sink: Format already returns finished text. Singular/plural are separate catalog
@@ -78,9 +106,12 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
             const std::int64_t unixSec =
                 std::chrono::duration_cast<std::chrono::seconds>(e.CreatedAt.time_since_epoch()).count();
             ImGui::PushID(static_cast<int>(i));
-            const std::string header = std::string("[") + smatchet::FormatClockHMS(unixSec) + "] " +
-                                       smatchet::ToastTypeShortLabel(e.Type) + "  " + e.Title;
             const bool actionable = static_cast<bool>(e.RowAction);
+            // Actionable rows get a leading chevron so they read as clickable while
+            // scanning, not only via the hover cursor (P2-L2).
+            const std::string header = std::string(actionable ? "\xE2\x80\xBA " : "  ") + "[" +
+                                       smatchet::FormatClockHMS(unixSec) + "] " +
+                                       smatchet::ToastTypeShortLabel(e.Type) + "  " + e.Title;
             // SelectableRaw: the row header is data (timestamp + type + toast title) — skip the
             // per-row TranslateSource pass the aliased Selectable would pay (200-row cap, no clipper).
             if (ImGui::SelectableRaw(header.c_str()) && actionable) {

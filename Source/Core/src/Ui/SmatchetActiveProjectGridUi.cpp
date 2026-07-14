@@ -2,6 +2,7 @@
 #include "SmatchetActiveProjectGridUi_Internal.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
+#include "Ui/SmatchetBackendDisplay.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
 #include "AppController.h"
@@ -101,7 +102,7 @@ static void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
             }
             const auto it = diskBackends.find(key);
             const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
-            const std::string label = "New " + key + " pane";
+            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
 
             if (hasViews && ImGui::BeginMenu(label.c_str())) {
                 const ViewWorkspaceState& ws = it->second;
@@ -550,6 +551,13 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.viewsHasOriginalSnapshot = false;
             d.pendingViewStateSave = false;
             ViewState.BumpRevision(); // force grid to redraw columns in the stored order
+            // If the unsaved edit included the QUERY (the omnibar / User-Info add-to-query
+            // path — P2-H1), restoring the definition must also restore the visible rows:
+            // re-adopt the saved JQL and re-run it, or the grid keeps showing the search.
+            if (d.cfg.JqlQuery != restoreSource->Jql) {
+                d.cfg.JqlQuery = restoreSource->Jql;
+                SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            }
             SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.reverted_layout", "Reverted layout"),
                                                   restoreSource->Name, ToastType::Info, 1500);
         }
@@ -562,7 +570,7 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
     const bool drewOfflineSection = DrawUnifiedOfflineQueuesPanel(app, d);
     if (drewOfflineSection) {
         ImGui::Spacing();
-        ImGui::SeparatorText("Ticket grid");
+        ImGui::SeparatorText("Issue grid"); // P2-M15
         ImGui::Spacing();
     }
 }

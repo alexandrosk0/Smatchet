@@ -32,6 +32,12 @@ class CommandPaletteUi {
     /// so typing into the bar opens + pre-filters the palette.
     void SetFilterText(const char* query);
 
+    /// Restrict the palette to commands whose id starts with `prefix`, shown to the
+    /// user as `label` (e.g. "Views") — the "Open View..." funnel pre-scopes with this
+    /// instead of stuffing the literal `view.toggle.` id into the search box (P2-M7).
+    /// Cleared by Open()/Close(); the user types WITHIN the scope.
+    void SetCategoryPrefix(const char* prefix, const char* label);
+
     /// Read the current filter buffer (NUL-terminated). Test-observability accessor
     /// for the inline typing -> filter path (bucket-E coverage); zero-cost inline,
     /// not on any per-frame/render path. See tests/ui/command_palette_inline_typing.test.cpp.
@@ -61,6 +67,10 @@ class CommandPaletteUi {
 
     /// Text filter buffer.
     char filterBuf_[256] = {};
+
+    /// Optional command-id prefix scope + its human label (see SetCategoryPrefix).
+    std::string categoryPrefix_;
+    std::string categoryLabel_;
 
     /// Index into the current filtered list.
     int selected_ = 0;

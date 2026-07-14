@@ -176,6 +176,14 @@ void DrawAuditTable(UiDrawSession& d, const std::vector<nlohmann::json>& events,
     ImGui::TableSetupColumn("Error", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableSetupColumn("Details", ImGuiTableColumnFlags_WidthStretch, 1.0f);
     ImGui::TableHeadersRow();
+    // Empty / zero-results state (P2-L1): bare headers over nothing left "no events" and
+    // "filters matched nothing" indistinguishable.
+    if (filteredIndices.empty()) {
+        ImGui::TableNextRow();
+        ImGui::TableSetColumnIndex(0);
+        ImGui::TextDisabled("%s",
+                            events.empty() ? "No audit events recorded yet." : "No events match the current filters.");
+    }
     const std::size_t begin = static_cast<std::size_t>(d.auditPage) * static_cast<std::size_t>(d.auditRowsPerPage);
     const std::size_t end = (std::min)(filteredIndices.size(), begin + static_cast<std::size_t>(d.auditRowsPerPage));
     for (std::size_t rowIndex = begin; rowIndex < end; ++rowIndex) {
@@ -333,6 +341,6 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     DrawAuditTable(d, events, eventFullJson, eventDataJson, filteredIndices);
     ImGui::TextDisabled("Copy filtered table: all matching rows as TSV. Right-click a row detail for full JSON. Cached "
                         "tail shows latest "
-                        "1000+ events.");
+                        "1000 events.");
     ImGui::End();
 }

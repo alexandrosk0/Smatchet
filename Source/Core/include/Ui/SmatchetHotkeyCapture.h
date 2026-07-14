@@ -37,6 +37,13 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out);
 bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
                              bool& capturing, std::string& out);
 
+/// True when any rebind control (editor row / quick-bind popup) was in capture mode
+/// this frame or the previous one. dispatchKeybindings consults this to stand down
+/// while a capture is armed — otherwise pressing a combo DURING capture also fires
+/// the command it is currently bound to on that same frame (P2-M4). The one-frame
+/// grace covers draw order (the capture widget draws after dispatch runs).
+bool HotkeyCaptureArmedRecently();
+
 /// First binding in `bindings` whose parsed combo equals `candidateHotkey`'s,
 /// excluding the (selfCommandId, selfArgsJson) row being edited and any disabled /
 /// empty / unparseable binding. Returns the conflicting binding's CommandId, or ""
