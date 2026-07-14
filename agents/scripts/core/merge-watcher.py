@@ -348,10 +348,14 @@ def _poll_run_gates(owner: str, repo: str, pr: int, env: dict):
 
 
 def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
-    """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=…` line the
-    poller emits before its blocked `return 1`. Returns
-    {nudged_head, stale_head, stale_streak}, or None when absent (pass /
-    early-return — the caller carries the prior registry values forward)."""
+    """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=… none_head=…
+    none_streak=…` line the poller emits before its blocked `return 1`. Returns
+    {nudged_head, stale_head, stale_streak, none_head, none_streak}, or None when
+    absent (pass / early-return — the caller carries the prior registry values
+    forward). The none_head/none_streak fields carry the once-per-HEAD CR=NONE
+    @coderabbitai-review nudge counter (core-scripts-python-04); merge-gates.sh has
+    emitted them on GATE_CARRY since it re-seeds via MERGE_GATES_PRIOR_NONE_* but
+    the watcher previously dropped them, so the streak reset every cycle."""
     for ln in stdout.splitlines():
         if ln.startswith("GATE_CARRY "):
             fields: dict[str, str] = {}
@@ -362,10 +366,16 @@ def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
                 streak = int(fields.get("stale_streak", "0") or "0")
             except ValueError:
                 streak = 0
+            try:
+                none_streak = int(fields.get("none_streak", "0") or "0")
+            except ValueError:
+                none_streak = 0
             return {
                 "nudged_head": fields.get("nudge_head", ""),
                 "stale_head": fields.get("stale_head", ""),
                 "stale_streak": streak,
+                "none_head": fields.get("none_head", ""),
+                "none_streak": none_streak,
             }
     return None
 
@@ -527,6 +537,14 @@ def poll_one(
     env["MERGE_GATES_PRIOR_NUDGE_HEAD"] = str(entry.get("nudged_head", "") or "")
     env["MERGE_GATES_PRIOR_STALE_HEAD"] = str(entry.get("stale_head", "") or "")
     env["MERGE_GATES_PRIOR_STALE_STREAK"] = str(int(entry.get("stale_streak", 0) or 0))
+    # NONE-state carry (core-scripts-python-01): merge-gates.sh emits
+    # none_head/none_streak on GATE_CARRY and re-seeds them from
+    # MERGE_GATES_PRIOR_NONE_HEAD/STREAK so its once-per-HEAD CR=NONE
+    # @coderabbitai-review nudge survives the MERGE_GATES_MAX_POLLS=1 model. Without
+    # seeding these two (siblings of the nudge/stale trio above), the none-streak
+    # resets to 0 every cycle and the NONE_NUDGE_POLLS threshold is never reached.
+    env["MERGE_GATES_PRIOR_NONE_HEAD"] = str(entry.get("none_head", "") or "")
+    env["MERGE_GATES_PRIOR_NONE_STREAK"] = str(int(entry.get("none_streak", 0) or 0))
     # Per-invocation overrides (e.g. MERGE_GATES_CR_GRACE_POLLS=0 from the
     # CR-NONE grace-elapsed re-poll). update(), not setdefault(), so the
     # override wins over the daemon defaults above and the inherited env.
@@ -1724,14 +1742,22 @@ def _bump_cr_none_grace(
 
 
 def _bump_nudge_state(
-    pr: int, clone_path: str, nudged_head: str, stale_head: str, stale_streak: int
+    pr: int,
+    clone_path: str,
+    nudged_head: str,
+    stale_head: str,
+    stale_streak: int,
+    none_head: str = "",
+    none_streak: int = 0,
 ) -> None:
-    """Persist the cross-cycle CR-nudge guard + STALE streak in the registry.
+    """Persist the cross-cycle CR-nudge guard + STALE streak + CR=NONE streak.
 
     Mirrors `_bump_cr_none_grace`. `nudged_head` pins the once-per-HEAD
     @coderabbitai-review guard; `stale_head` / `stale_streak` carry the STALE
-    re-review counter. Both survive the MERGE_GATES_MAX_POLLS=1 single-poll model
-    that resets merge-gates.sh's in-process locals every cycle.
+    re-review counter; `none_head` / `none_streak` carry the CR=NONE nudge counter
+    (core-scripts-python-04). All survive the MERGE_GATES_MAX_POLLS=1 single-poll
+    model that resets merge-gates.sh's in-process locals every cycle — the five
+    fields are written together from the one GATE_CARRY line under a single lock.
     """
     with _CLI.registry_lock():
         entries = _CLI.read_registry()
@@ -1740,6 +1766,8 @@ def _bump_nudge_state(
                 e["nudged_head"] = nudged_head
                 e["stale_head"] = stale_head
                 e["stale_streak"] = stale_streak
+                e["none_head"] = none_head
+                e["none_streak"] = none_streak
                 break
         _CLI.write_registry(entries)
 
@@ -3078,6 +3106,8 @@ def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
             nudge_carry["nudged_head"],
             nudge_carry["stale_head"],
             nudge_carry["stale_streak"],
+            nudge_carry.get("none_head", ""),
+            nudge_carry.get("none_streak", 0),
         )
     # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
     # skipped/absent-review grace window has elapsed across real
