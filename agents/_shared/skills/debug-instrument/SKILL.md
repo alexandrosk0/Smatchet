@@ -56,12 +56,7 @@ Public API the template exposes (untracked-path branch only):
 
 Schema per line: `{"sessionId":"<hex>","location":"...","hypothesisId":"h1|h2|...","message":"...","data":{"i":<long long>},"timestamp":<ms>}`.
 
-Notes on the helper:
-
-- `static` functions → per-TU copies, no link conflicts; the same header may be `#include`d from multiple TUs in the same investigation without ODR violations.
-- Dual-target safe (no GLFW / OpenGL / DX12). Compiles into both `SmatchetStandalone` and `SmatchetCore_DX12`.
-- `ghc::filesystem` matches the project FetchContent dep (AGENTS.md § Available libs).
-- Schema carries one `dataInt` per call. If a hypothesis needs string / multi-int data, extend the helper inline (still gitignored, still removed at cleanup) — do not let format drift in the call site instead.
+Notes on the helper: `static` functions give per-TU copies (no ODR/link conflicts when `#include`d from multiple TUs in the same investigation); dual-target safe — no GLFW / OpenGL / DX12, compiles into both `SmatchetStandalone` and `SmatchetCore_DX12`; `ghc::filesystem` matches the project FetchContent dep (AGENTS.md § Available libs). The schema carries one `dataInt` per call — if a hypothesis needs string / multi-int data, extend the helper inline (still gitignored, still removed at cleanup) rather than letting the format drift at the call site.
 
 ### Add the include + call sites
 
@@ -143,23 +138,11 @@ Smatchet.exe cmd commands.help --name=<cmd>
 Smatchet.exe cmd commands.search --query=<q>
 ```
 
-| Command | Purpose |
-|---|---|
-| `debug.log` | Emit a known breadcrumb into the runtime log. |
-| `debug.mcp_status` | Check MCP reachability and last activity. |
-| `debug.thread_dump` | Inspect thread state. |
-| `debug.dock.dump` | Dump ImGui dock nodes. |
-| `debug.dock.reset` | Recovery only; not a diagnosis by itself. |
-| `debug.window.resize` | Reproduce layout regressions. |
-| `debug.window.screenshot` | Capture viewport evidence. |
-| `debug.lua_eval` | Probe runtime state without rebuilding. |
-| `scenario.list` | Discover deterministic scenarios. |
-| `scenario.run --name=<n> --frames=<N> --yes` | Run a deterministic scenario. |
-| `scenario.cancel` | Stop active automation. |
-| `tickets.list_active` | Inspect active ticket state. |
-| `tickets.get --id=<id>` | Inspect a specific ticket. |
-| `sync.tracker_status` | Inspect sync-layer state. |
-| `app.version` | Confirm build hash/version. |
+Command groups (details via the discovery commands above):
+
+- `debug.*` — `log` (emit a known breadcrumb into the runtime log) · `mcp_status` (MCP reachability / last activity) · `thread_dump` · `dock.dump` (ImGui dock nodes) · `dock.reset` (recovery only, not a diagnosis) · `window.resize` (reproduce layout regressions) · `window.screenshot` (viewport evidence) · `lua_eval` (probe runtime state without rebuilding).
+- `scenario.*` — `list` (discover deterministic scenarios) · `run --name=<n> --frames=<N> --yes` · `cancel` (stop active automation).
+- `tickets.list_active` / `tickets.get --id=<id>` (ticket state) · `sync.tracker_status` (sync-layer state) · `app.version` (confirm build hash/version).
 
 Prerequisite: a running Smatchet instance with `mcp_enabled: true`.
 
@@ -344,37 +327,17 @@ A deterministic reproducer means one of:
 - The scenario-add lands on the **same branch as the fix**, not a precursor PR.
 - Crash logs, minidumps, stack traces, assertion text, and sanitizer reports remain valid *evidence* — they still feed phase 0 dimension (b) — but they are not, by themselves, a reproducer. The agent still wires a scenario that triggers them deterministically.
 
-If the bug is intermittent, the new scenario must define a repeat loop and an expected failure signal (assertion / log line / `rows[]` value) so the loop is deterministic-by-construction.
-
-Good-enough reproducer examples:
-
-```bash
-Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
-Smatchet.exe cmd tickets.get --id=<id>
-Smatchet.exe 2> debug.log
-```
-
-For crashes, first collect:
-
-- Exact exception/assertion text.
-- Top stack frames.
-- Build config and executable path.
-- Whether symbols are present.
-- Whether the same repro fails in Debug, RelWithDebInfo, or Release.
+If the bug is intermittent, the new scenario must define a repeat loop and an expected failure signal (assertion / log line / `rows[]` value) so the loop is deterministic-by-construction. (Run-command shapes → § Run; the crash-collect checklist → § Crash — sanitizer setup.)
 
 ## Hypothesis + metric examples
 
 The agent owns the hypothesis/metric *rules* (≥ 2 falsifiable causes ranked by distinguishing-evidence cost; a metric recorded before instrumenting and re-checked after the fix). These are the worked examples.
 
-Good hypothesis list:
+Good hypothesis list (bad = a single unfalsifiable "It is probably a race."):
 
 > 1. `TicketGridModel::ApplySort` invalidates row indices before `TicketSelection::Restore` reads them.
 > 2. `OnFieldEditCommit` runs on a worker thread while UI iterates the same `rows_` vector.
 > 3. `kCurrentLayoutSchemaVersion` mismatch silently resets selection during config load.
-
-Bad hypothesis list:
-
-> It is probably a race.
 
 Metric examples (observable value the bug produces vs what the fix should produce):
 
@@ -384,33 +347,11 @@ Metric examples (observable value the bug produces vs what the fix should produc
 
 ## Evidence-source catalogue
 
-Prefer existing evidence before adding logs:
-
-- Stack trace.
-- Assertions.
-- Existing logs.
-- Command output.
-- State dump commands.
-- Sanitizer reports.
-- Debugger watch/backtrace.
-- Existing tests.
-
-Only instrument when existing evidence cannot distinguish the hypotheses from each other.
+Prefer existing evidence before adding logs: stack trace, assertions, existing logs, command output, state-dump commands, sanitizer reports, debugger watch/backtrace, existing tests. Only instrument when existing evidence cannot distinguish the hypotheses from each other.
 
 ## Race / ordering checklist
 
-For suspected races:
-
-- Identify shared state.
-- Identify all writers.
-- Identify expected owning thread.
-- Identify synchronization contract.
-- Log thread identity and sequence numbers.
-- Prefer deterministic scheduling evidence over timing guesses.
-- Do not add sleeps as proof.
-- Use TSan if supported.
-
-A race hypothesis must name the specific read, write, and missing ordering/synchronization edge.
+A race hypothesis must name the specific read, write, and missing ordering/synchronization edge. For suspected races: identify the shared state, all writers, the expected owning thread, and the synchronization contract; log thread identity and sequence numbers; prefer deterministic scheduling evidence over timing guesses; do not add sleeps as proof; use TSan if supported.
 
 ## Handoff
 
