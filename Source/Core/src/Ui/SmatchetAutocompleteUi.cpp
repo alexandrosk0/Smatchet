@@ -5,6 +5,7 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
+#include "Tracker/TrackerQuerySuggestCommon.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "imgui.h"
@@ -13,7 +14,6 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <algorithm>
-#include <cctype>
 #include <chrono>
 #include <cstdint>
 #include <cstring>
@@ -36,37 +36,6 @@ static void MergeAsyncUserSuggestionsIntoBuild(const JqlEditorState& st, QuerySu
     if (static_cast<int>(b.Items.size()) > kMaxMerged) {
         b.Items.resize(static_cast<size_t>(kMaxMerged));
     }
-}
-
-static bool ValueNeedsQuotesForId(const std::string& s) {
-    if (s.empty()) {
-        return true;
-    }
-    return std::any_of(s.begin(), s.end(), [](unsigned char ch) {
-        const bool ok = std::isalnum(ch) != 0 || ch == '_' || ch == '.' || ch == '-';
-        return !ok || ch == '"' || ch == '\\';
-    });
-}
-
-static std::string QuotedJqlStyle(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (unsigned char c : s) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(static_cast<char>(c));
-    }
-    out.push_back('"');
-    return out;
-}
-
-static std::string InsertTokenForUserAccountId(const std::string& accountId) {
-    if (ValueNeedsQuotesForId(accountId)) {
-        return QuotedJqlStyle(accountId);
-    }
-    return accountId;
 }
 
 static void RunSuggestBuild(TrackerQuerySuggestKind kind, const char* buf, int bufLen, int cursor, int selStart,
@@ -106,18 +75,6 @@ static int ApplyInlineReplace(ImGuiInputTextCallbackData* data, int replaceStart
     return newCursor;
 }
 
-/** Strip the \x7F caret-anchor sentinel from `text` (used by JQL function suggestions like
- *  `membersOf("\x7F")` so the caret lands between the parens on insert). Returns the byte
- *  offset where the sentinel was, or -1 if not present. */
-static int StripCaretAnchorSentinel(std::string& text) {
-    const std::string::size_type pos = text.find('\x7F');
-    if (pos == std::string::npos) {
-        return -1;
-    }
-    text.erase(pos, 1);
-    return static_cast<int>(pos);
-}
-
 } // namespace
 
 bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySuggestBuild& b, int index,
@@ -128,7 +85,7 @@ bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySugges
     st.jqlAcpReplaceStart = b.ReplaceStart;
     st.jqlAcpReplaceEnd = b.ReplaceEnd;
     st.jqlAcpReplaceText = b.Items[static_cast<size_t>(index)].Insert;
-    st.jqlAcpReplaceCaretOffset = StripCaretAnchorSentinel(st.jqlAcpReplaceText);
+    st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
     st.jqlAcpApplyReplace = true;
     st.jqlAcpListDismissed = false;
     // Always re-focus: both keyboard (Enter may deactivate InputText) and mouse (popup click
@@ -290,7 +247,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
             st.jqlAcpReplaceStart = syncBuild.ReplaceStart;
             st.jqlAcpReplaceEnd = syncBuild.ReplaceEnd;
             st.jqlAcpReplaceText = mergedItems[static_cast<size_t>(i)].Insert;
-            st.jqlAcpReplaceCaretOffset = StripCaretAnchorSentinel(st.jqlAcpReplaceText);
+            st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
             st.jqlAcpApplyReplace = true;
             st.jqlAcpListDismissed = false;
             st.jqlAcpWantsJqlInputFocus = true;
@@ -369,7 +326,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
                     if (u.AccountId.empty()) {
                         continue;
                     }
-                    const std::string ins = InsertTokenForUserAccountId(u.AccountId);
+                    const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);
                     if (!seen.insert(ins).second) {
                         continue;
                     }

@@ -7,12 +7,15 @@
 
 #include <doctest/doctest.h>
 
+#include <string>
+
 namespace {
 
 using SmatchetAutocompleteDetail::AcpCommitDecision;
 using SmatchetAutocompleteDetail::AcpHistoryNav;
 using SmatchetAutocompleteDetail::ResolveAcpCommit;
 using SmatchetAutocompleteDetail::ResolveAcpHistoryNav;
+using SmatchetAutocompleteDetail::StripCaretAnchorSentinel;
 
 } // namespace
 
@@ -107,4 +110,16 @@ TEST_CASE("ResolveAcpCommit empty list no Enter is inert") {
     CHECK(d.selected == -1);
     CHECK_FALSE(d.queueApply);
     CHECK_FALSE(d.wantsApplyFromEnter);
+}
+
+TEST_CASE("StripCaretAnchorSentinel — removes the \\x7F marker and returns its offset") {
+    std::string withSentinel = "membersOf(\x7F)";
+    const int at = StripCaretAnchorSentinel(withSentinel);
+    CHECK(at == 10); // byte offset of the sentinel
+    CHECK(withSentinel == "membersOf()");
+    // No sentinel — text untouched, returns -1.
+    std::string plain = "assignee = currentUser()";
+    const std::string before = plain;
+    CHECK(StripCaretAnchorSentinel(plain) == -1);
+    CHECK(plain == before);
 }
