@@ -790,6 +790,22 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
         return color;
     };
 
+    // ticket-change-monitor: one-shot scroll to a focus-requested ticket (a Notification Center row
+    // click → FocusTicketInGrid latches d.pendingFocusIssueId). Resolve the target's ordered row
+    // index and pixel-scroll to it — clipper-safe, mirroring the scenario SetScrollY path — then
+    // clear the latch. Focused pane only, so a background pane showing the same id doesn't grab it.
+    if (!ctx.d.pendingFocusIssueId.empty() && pane.focused) {
+        const float rowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;
+        for (size_t r = 0; r < indicesToUse.size(); ++r) {
+            const size_t ti = indicesToUse[r];
+            if (ti < tickets.size() && tickets[ti].id == ctx.d.pendingFocusIssueId) {
+                ImGui::SetScrollY(static_cast<float>(r) * rowH);
+                ctx.d.pendingFocusIssueId.clear();
+                break;
+            }
+        }
+    }
+
     ImGuiListClipper clipper;
     clipper.Begin(static_cast<int>(indicesToUse.size()));
     while (clipper.Step()) {

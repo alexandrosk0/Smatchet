@@ -87,3 +87,28 @@ TEST_CASE("i18n-sweep popup titles round-trip through the source map") {
     CHECK(std::string(SmatchetLocalization::TranslateSource("Notifications")) == u8"Notifications");
     CHECK(std::string(SmatchetLocalization::TranslateSource("Select all")) == u8"Tout sélectionner");
 }
+
+TEST_CASE("i18n-sweep quick-create popup keys resolve to French under fr-FR") {
+    LanguageResetGuard restore;
+    SmatchetLocalization::SetLanguage("fr-FR");
+
+    SUBCASE("popup body + toasts") {
+        CHECK(std::string(SmatchetLocalization::T("toast.quick_create", kSentinel)) == u8"Création rapide");
+        CHECK(std::string(SmatchetLocalization::T("quickcreate.summary", kSentinel)) == u8"Résumé");
+        CHECK(std::string(SmatchetLocalization::T("quickcreate.refresh_context", kSentinel)) ==
+              u8"Actualiser le contexte");
+        CHECK(std::string(SmatchetLocalization::T("quickcreate.queued_offline", kSentinel)) ==
+              u8"Hors ligne détecté ; mis en file d'attente.");
+    }
+
+    SUBCASE("preferences tab") {
+        CHECK(std::string(SmatchetLocalization::T("quickcreate.prefs.engine_version", kSentinel)) ==
+              u8"Version du moteur");
+        CHECK(std::string(SmatchetLocalization::T("quickcreate.prefs.log_lines", kSentinel)) == u8"Lignes de log");
+    }
+
+    SUBCASE("window title translates by English source (### pairing)") {
+        CHECK(std::string(SmatchetLocalization::TranslateSource("Quick Create Issue")) ==
+              u8"Création rapide de ticket");
+    }
+}

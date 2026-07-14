@@ -111,3 +111,26 @@ TEST_CASE("CanAcceptSseConnection admits below the cap and rejects at/above it")
     CHECK_FALSE(CanAcceptSseConnection(kMaxConcurrentSseConnections + 1));
     CHECK_FALSE(CanAcceptSseConnection(-1)); // corrupted counter fails closed.
 }
+
+// SSE CORS policy: never a wildcard. Echo the Authorize-vetted Origin on the loopback bind
+// only; on the 0.0.0.0 bind (Host/Origin gate intentionally skipped) emit no CORS header at
+// all, so an arbitrary web origin can never read the token-authenticated SSE stream.
+TEST_CASE("ResolveSseCorsOrigin echoes a vetted Origin only on the loopback bind") {
+    using smatchet::mcp::pure::ResolveSseCorsOrigin;
+
+    // Loopback bind: echo exactly the request Origin (already vetted by Authorize).
+    CHECK(ResolveSseCorsOrigin("http://127.0.0.1:42360", true) == "http://127.0.0.1:42360");
+    CHECK(ResolveSseCorsOrigin("null", true) == "null");
+
+    // No Origin header (native MCP client): no CORS header on either bind.
+    CHECK(ResolveSseCorsOrigin("", true).empty());
+    CHECK(ResolveSseCorsOrigin("", false).empty());
+
+    // Remote bind: no grant, whatever the Origin claims to be.
+    CHECK(ResolveSseCorsOrigin("http://127.0.0.1:42360", false).empty());
+    CHECK(ResolveSseCorsOrigin("https://attacker.example.com", false).empty());
+
+    // Defence in depth: a non-loopback Origin gets no grant even on the loopback bind
+    // (Authorize would have 403'd it already; the pure function re-vets regardless).
+    CHECK(ResolveSseCorsOrigin("https://attacker.example.com", true).empty());
+}

@@ -706,3 +706,109 @@ TEST_CASE("registry pre-handler pipeline — unknown command and missing require
         CHECK(r.Error.Code == ErrorCode::MissingRequiredArg);
     }
 }
+
+TEST_CASE("commands.* — registry introspection over the real registered catalog") {
+    // Meta takes no app object — it introspects the CommandRegistry it registers into. Seed
+    // the registry with a couple of other builtins so list/search/recents have real rows.
+    FakeTicketData data;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterMetaCommands(reg);
+    smatchet::cmd::RegisterTicketsCommands(reg, data);
+    const CommandContext ctx = AutomationCtx();
+
+    {
+        const CommandResult r = reg.Dispatch("commands.list", {{"category", "tickets"}}, ctx);
+        REQUIRE(r.Ok);
+        // Every returned row is in the requested category.
+        for (const auto& item : (*r.Data)["items"]) {
+            CHECK(item["name"].get<std::string>().rfind("tickets.", 0) == 0);
+        }
+        CHECK((*r.Data)["total"].get<int>() >= 4);
+    }
+    {
+        const CommandResult r = reg.Dispatch("commands.search", {{"query", "list_active"}}, ctx);
+        REQUIRE(r.Ok);
+        // Fuzzy search returns bare command-name strings (PaginateString); one must match.
+        bool found = false;
+        for (const auto& item : (*r.Data)["items"]) {
+            if (item.get<std::string>().find("list_active") != std::string::npos) {
+                found = true;
+            }
+        }
+        CHECK(found);
+    }
+    {
+        // Successful dispatches DO get recorded (Dispatch → RecordDispatch), so on this
+        // registry recents already holds the earlier list/search calls, newest-first.
+        const CommandResult r = reg.Dispatch("commands.recents", {}, ctx);
+        REQUIRE(r.Ok);
+        REQUIRE(r.Data->contains("items"));
+        const auto& items = (*r.Data)["items"];
+        REQUIRE(items.size() >= 2);
+        CHECK(items[0] == "commands.search"); // most recent successful dispatch first
+        CHECK(items[1] == "commands.list");
+    }
+}
+
+TEST_CASE("commands.recents — fresh registry with no dispatches yields an empty list") {
+    // A default-constructed registry loads nothing from disk (LoadRecents runs only under
+    // AppController), so recents is a well-formed EMPTY envelope until a command dispatches.
+    CommandRegistry reg;
+    smatchet::cmd::RegisterMetaCommands(reg);
+    const CommandResult r = reg.Dispatch("commands.recents", {}, AutomationCtx());
+    REQUIRE(r.Ok);
+    REQUIRE(r.Data->contains("items"));
+    CHECK((*r.Data)["items"].empty());
+    CHECK((*r.Data)["total"] == 0);
+}
+
+TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-trip") {
+    smatchet_tests::TestEnvGuard env; // config.set / tickets.monitor persist via ConfigManager
+    CommandRegistry reg;
+    smatchet::cmd::RegisterConfigCommands(reg);
+    const CommandContext ctx = AutomationCtx();
+
+    {
+        const CommandResult r = reg.Dispatch("config.path", {}, ctx);
+        REQUIRE(r.Ok);
+        CHECK(r.Data->contains("userData"));
+        CHECK((*r.Data)["env"].contains("observed"));
+    }
+    {
+        // A key outside the config.set allowlist is a ValidationError (never written).
+        const CommandResult r = reg.Dispatch("config.set", {{"key", "nope"}, {"value", "x"}}, ctx);
+        REQUIRE_FALSE(r.Ok);
+        CHECK(r.Error.Code == ErrorCode::ValidationError);
+    }
+    {
+        // Dry-run previews the cmd-key → json-key mapping without writing.
+        const CommandResult r =
+            reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "9999"}}, AutomationCtx(false, /*dryRun*/ true));
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["wouldDo"]["jsonKey"] == "mcp_port");
+        CHECK((*r.Data)["wouldDo"]["value"] == 9999);
+    }
+    {
+        // Real write round-trips: config.get reads back the value config.set persisted.
+        const CommandResult w = reg.Dispatch("config.set", {{"key", "mcpPort"}, {"value", "8123"}}, ctx);
+        REQUIRE(w.Ok);
+        CHECK((*w.Data)["written"] == true);
+        const CommandResult g = reg.Dispatch("config.get", {{"key", "mcpPort"}}, ctx);
+        REQUIRE(g.Ok);
+        CHECK((*g.Data)["mcpPort"] == 8123);
+    }
+    {
+        // config.reload triggers a disk re-read (cache flush); it reports success.
+        const CommandResult r = reg.Dispatch("config.reload", {}, ctx);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["triggered"] == true);
+    }
+    {
+        // tickets.monitor status is a read-only projection of the two monitor prefs.
+        const CommandResult r = reg.Dispatch("tickets.monitor", {{"action", "status"}}, ctx);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["action"] == "status");
+        CHECK(r.Data->contains("enabled"));
+        CHECK(r.Data->contains("intervalSec"));
+    }
+}

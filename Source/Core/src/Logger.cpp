@@ -97,7 +97,13 @@ void Logger::Log(LogLevel level, const std::string& message) {
     LogEntry entry;
     entry.timestampSeconds = nowSeconds;
     entry.level = level;
-    entry.message = message;
+    // Redact at ingestion so EVERY sink stores the scrubbed line — the in-memory ring buffer
+    // feeds the in-app log viewer (whose contents get copied into bug reports and screenshots),
+    // not just the on-disk file. Redacting here also keeps the file-sink guarantee (audit
+    // 2026-06-13 LOW) with a single pass instead of one per sink. Call sites that log large
+    // untrusted bodies already pre-redact via RedactHttpBodyForLog; typical LOG_* lines are
+    // short, so the regex cost on the calling thread is negligible.
+    entry.message = smatchet::privacy::RedactLogLine(message);
 
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -319,12 +325,12 @@ void Logger::FileSinkWorker() {
         if (out.is_open()) {
             for (const LogEntry& e : batch) {
                 // Plain text line; format `t=<seconds> level=<name> message`.
-                // Redact on the same path that persists the message: secret/PII
-                // shapes are scrubbed and CR/LF/ANSI is stripped so a
+                // e.message is already redacted at ingestion (Logger::Log): secret/PII
+                // shapes are scrubbed and CR/LF/ANSI is stripped there, so a
                 // server-controlled message cannot leak a credential or forge a
-                // log line in the on-disk file (audit 2026-06-13 LOW).
-                out << "t=" << e.timestampSeconds << " level=" << LogLevelToString(e.level) << ' '
-                    << smatchet::privacy::RedactLogLine(e.message) << '\n';
+                // log line in the on-disk file (audit 2026-06-13 LOW) or in the
+                // in-app viewer's ring buffer.
+                out << "t=" << e.timestampSeconds << " level=" << LogLevelToString(e.level) << ' ' << e.message << '\n';
             }
             out.flush();
             if (!out.good()) {

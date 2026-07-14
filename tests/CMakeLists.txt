@@ -538,6 +538,9 @@ add_executable(SmatchetTests
     Core/ScenarioRunnerReplaceActive.test.cpp
     Core/ShutdownFutureDrain.test.cpp
     Core/UpdateInstallerFilenameSanitize.test.cpp
+    # Auto-update installer Authenticode launch policy (header-inline pure seam; the Win32
+    # WinVerifyTrust caller lives in AttachmentAppUpdateService.cpp, linked below).
+    Core/UpdateInstallerSignaturePolicy.test.cpp
     Core/MainThreadDispatchShutdown.test.cpp
     Core/TrackerPostTimeoutClassify.test.cpp
     Core/Tracker2xxErrorGuard.test.cpp
@@ -846,14 +849,17 @@ add_executable(SmatchetTests
     # bodies in the OpenCppCoverage denominator). Fake IApp* facets live in the test.
     # CommandRegistry.cpp + FuzzyMatch.cpp join so Dispatch (confirm gate, validation,
     # alias + fuzzy resolution) runs for real; their deps (ConfigManager, Logger,
-    # BoundedJsonParse) are already linked. The AppController-coupled Builtin TUs
-    # (Meta/Config/Perf/Fields/Ai) and the UI-session ones (Debug/Ui/BugReport/
-    # Scenario/UiTest) stay out — they are the SmatchetCommandsTests lane's job.
+    # BoundedJsonParse) are already linked. Meta/Config take no app object (registry-
+    # introspection + ConfigManager singleton), so they join here too. The remaining
+    # AppController-coupled Builtin TUs (Perf/Fields/Ai) and the UI-session ones
+    # (Debug/Ui/BugReport/Scenario/UiTest) stay out — SmatchetCommandsTests lane's job.
     Commands/BuiltinFacetCommands.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/CommandRegistry.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/FuzzyMatch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Helpers.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_App.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Meta.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Config.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Tickets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Builtin/BuiltinCommands_Sync.cpp"
@@ -866,6 +872,11 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LabelEditDiffPure.cpp"
     Core/GitHubClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+    # github-tracker-backend.md PR7 — pure write-path plan builder (fields→PATCH body,
+    # milestone title lookup, label-name extraction). TrackerFieldPayloadPure.cpp
+    # (SplitCommaSeparatedTrimmed) + StringUtil are already linked in this rig.
+    Core/GitHubMutationPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubMutationPure.cpp"
     # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
     Core/LinearClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -895,6 +906,12 @@ add_executable(SmatchetTests
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
+    # quick-create-issue-unreal-context — pure host-engine-snapshot → markdown
+    # formatter behind the quick-create description prefill (toggle filtering,
+    # actor cap, log-tail truncation). ConfigManager.cpp (TogglesFromConfig's
+    # TrackerConfig) is already linked below; no other production TU needed.
+    Core/EngineContextFormat.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/EngineContextFormat.cpp"
     # SECURITY_AUDIT_2026-06-13 LOW — Logger file sink now redacts on the persist
     # path (Logger.cpp + TextRedaction.cpp already linked into this rig below).
     Core/LoggerFileSinkRedaction.test.cpp
@@ -1141,7 +1158,7 @@ add_executable(SmatchetTests
     Core/TrackerRedirectNoFollow.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
-    # ticket-change-monitor S1a (docs/plans/active/ticket-change-monitor.md) — three
+    # ticket-change-monitor S1a (docs/plans/ticket-change-monitor.md) — three
     # backend-agnostic pure helpers behind the per-pane change monitor, each unit-tested
     # bucket-A with no backend / pane / toast manager. CachedTicketTypes.h-only (no
     # cpr/SQLite/ImGui), so the doctest rig links the two .cpp directly:
@@ -1279,6 +1296,11 @@ add_executable(SmatchetTests
     # GitHubCommitsParse, LabelEditDiffPure, BackendAuditTrail) are all already linked.
     Core/GitHubIssueSearchHttp.test.cpp
     Core/GitHubClientHttp.test.cpp
+    # github-tracker-backend.md PR7 — the GitHub WRITE shell (UpdateIssueFields /
+    # UpdateField PATCH + label reconcile). cfg-less paths run under TestEnvGuard
+    # with the loopback config saved (JiraIssueMutationHttp precedent); the pure
+    # plan builder (GitHubMutationPure.cpp) is linked above.
+    Core/GitHubIssueMutationHttp.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"
@@ -1521,8 +1543,9 @@ target_link_libraries(SmatchetTests PRIVATE
 
 # ConfigManager.cpp uses CryptProtectData / CryptBinaryToStringA from wincrypt.
 # Linked here because the test exe pulls ConfigManager via TrackerFieldValueUtils.
+# AttachmentAppUpdateService.cpp uses WinVerifyTrust (installer Authenticode check) from wintrust.
 if(WIN32)
-    target_link_libraries(SmatchetTests PRIVATE crypt32)
+    target_link_libraries(SmatchetTests PRIVATE crypt32 wintrust)
 endif()
 
 target_compile_features(SmatchetTests PRIVATE cxx_std_14)

@@ -327,6 +327,9 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     DrainFutureJoinQuiet(d.newIssueCreateFuture);
     d.newIssueCreateInFlight = false;
 
+    DrainFutureJoinQuiet(d.quickCreateFuture);
+    d.quickCreateInFlight = false;
+
     // WS-A: signal cancel BEFORE the join so any still-running create short-circuits
     // its remaining network/refresh work — the join then drains fast (signal → join).
     // The captured AppController is still alive here (teardown ordering), preserving

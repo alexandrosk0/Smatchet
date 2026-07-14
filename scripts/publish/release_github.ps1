@@ -10,8 +10,11 @@
     Examples:
       .\scripts\publish\release_github.ps1 -Tag v1.2.3
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Sign
-      .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Publish -Draft -NotesFile .\RELEASE_NOTES.md
-      .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Publish -Clobber
+      .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Sign -Publish -Draft -NotesFile .\RELEASE_NOTES.md
+      .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Sign -Publish -Clobber
+
+    -Publish requires -Sign (unsigned public releases trip SmartScreen and the in-app
+    updater refuses unverified installers); -AllowUnsignedPublish overrides knowingly.
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -ForceConfigure
       .\scripts\publish\release_github.ps1 -Tag v1.2.3 -Arch arm64   # native Windows-on-ARM standalone + installer
 
@@ -48,6 +51,7 @@ param(
     [switch]$Clobber,
     [switch]$ForceConfigure,
     [switch]$Sign,
+    [switch]$AllowUnsignedPublish,
     [string]$SignToolPath = "",
     [string]$SigningCertificatePath = "",
     [string]$SigningCertificatePassword = "",
@@ -523,6 +527,17 @@ $installerScript = Join-Path $PSScriptRoot "installer\SmatchetStandalone.iss"
 $pluginInstallScript = Join-Path $PSScriptRoot "install_unreal_plugin.ps1"
 $pluginInstallGuide = Join-Path $PSScriptRoot "INSTALL_UNREAL_PLUGIN.md"
 $signingConfig = Get-SigningConfiguration -PreferredSignToolPath $SignToolPath
+
+# Publishing unsigned artifacts is opt-in, never accidental: unsigned binaries trip SmartScreen for
+# every user, and the in-app updater refuses to launch an installer that fails Authenticode
+# verification (AttachmentAppUpdateService), so an unsigned published release breaks auto-update.
+# Local/CI bundles without -Publish stay allowed unsigned (e.g. the ARM64 installer smoke job).
+if ($Publish -and -not $signingConfig.Enabled) {
+    if (-not $AllowUnsignedPublish) {
+        throw "Publishing requires code signing: pass -Sign (see scripts/publish/SIGNING.md). To knowingly publish an unsigned, non-production release, pass -AllowUnsignedPublish."
+    }
+    Write-Warning "Publishing UNSIGNED artifacts (-AllowUnsignedPublish): users will see SmartScreen warnings and the in-app updater will refuse this installer."
+}
 
 if (-not (Test-Path -LiteralPath $presetFile -PathType Leaf)) {
     throw "Missing CMakePresets.json at repo root: $presetFile"

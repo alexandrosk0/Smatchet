@@ -40,6 +40,13 @@ public class SmatchetImGuiPlugin : ModuleRules
                 "Json"
             });
 
+        // Host-context collector reads GEditor / actor selection for the quick-create
+        // snapshot — editor builds only (the code paths are #if WITH_EDITOR).
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
+
         string platformName = Target.Platform.ToString();
         bool isWin64 = Target.Platform == UnrealTargetPlatform.Win64;
         bool isPs5 = platformName.Equals("PS5", StringComparison.OrdinalIgnoreCase);
@@ -93,6 +100,10 @@ public class SmatchetImGuiPlugin : ModuleRules
             // Names must include the .lib suffix — bare "crypt32" makes link.exe look for crypt32.obj (LNK1181).
             PublicSystemLibraries.Add("crypt32.lib");
             PublicSystemLibraries.Add("cryptnet.lib");
+
+            // The auto-updater verifies the downloaded installer's Authenticode signature via
+            // WinVerifyTrust (AttachmentAppUpdateService.cpp).
+            PublicSystemLibraries.Add("wintrust.lib");
 
             // Attachment preview decodes JPEG/PNG/GIF/WebP via WIC (CoCreateInstance + IWICImagingFactory).
             // Without these the Unreal plugin fails to resolve CLSID_WICImagingFactory / CoCreateInstance

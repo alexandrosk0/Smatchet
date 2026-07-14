@@ -5,10 +5,23 @@
 
 namespace smatchet {
 
+int ChangedSinceWindowMinutes(std::chrono::seconds window) {
+    const long long secs = static_cast<long long>(window.count());
+    if (secs <= 0) {
+        return 1;
+    }
+    long long minutes = (secs + 59) / 60; // ceil to whole minutes
+    if (minutes < 1) {
+        minutes = 1;
+    }
+    return static_cast<int>(minutes);
+}
+
 namespace {
 
 // Trim ASCII whitespace from both ends. Returns the trimmed substring.
 std::string Trim(const std::string& s) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=idiomatic STL Trim boilerplate; owner=sync; revisit=2026-12-31)
     std::size_t begin = 0;
     std::size_t end = s.size();
     while (begin < end && std::isspace(static_cast<unsigned char>(s[begin]))) {

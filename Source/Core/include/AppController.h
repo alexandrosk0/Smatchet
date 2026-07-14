@@ -469,8 +469,13 @@ class AppController : public IAppThreading,
     /// AppController::Impl (hardening #19c) — they are sol-typed and no longer visible here.
     void InitLua();
 
+    /// Resolve a script basename against the configured scripts directory. Rejects traversal /
+    /// absolute / drive-qualified names, and fails closed (empty) when no scripts directory is
+    /// configured — there is deliberately no cwd-relative fallback (an untrusted working
+    /// directory's .lua files must never resolve for execution).
     std::string ResolveLuaScriptPath(const std::string& filename) const;
-    /** Basenames of `*.lua` files in the configured scripts directory (non-recursive). */
+    /** Basenames of `*.lua` files in the configured scripts directory (non-recursive; empty when
+     * no scripts directory is configured — no cwd-relative fallback). */
     std::vector<std::string> ListLuaScriptFiles() const;
 
     /**
@@ -606,7 +611,8 @@ class AppController : public IAppThreading,
      * Pass the in-memory UI config + views store when syncing from the app so JQL/fields match
      * the active view without relying on an immediate disk round-trip.
      */
-    void SyncWithBackend(const TrackerConfig* configOverride = nullptr, const ViewsStore* viewsOverride = nullptr) override;
+    void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
+                         const ViewsStore* viewsOverride = nullptr) override;
 
     /** Process queued streaming ticket batches on the UI thread (frame-budgeted). */
     void TickStreamingApply();

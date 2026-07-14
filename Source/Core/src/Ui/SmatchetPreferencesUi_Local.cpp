@@ -448,7 +448,7 @@ void DrawAppearanceUpdatesSection(AppController& app, UiDrawSession& d) {
     ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
 }
 
-// Ticket-change monitor section (docs/plans/active/ticket-change-monitor.md). Enable toggle +
+// Ticket-change monitor section (docs/plans/ticket-change-monitor.md). Enable toggle +
 // poll-interval slider (greyed when the monitor is off). Both persist via MarkPrefsDirty like
 // the sibling Appearance toggles; the interval matches the [30, 3600] s load-clamp band.
 void DrawAppearanceNotificationsSection(UiDrawSession& d) {

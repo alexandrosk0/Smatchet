@@ -67,12 +67,15 @@ std::vector<CachedTicket> FetchIssuesViaRestApi(const std::string& baseUrl, cons
 /// `outFetchErrorStructured` (optional) receives the classified twin of `outFetchError`
 /// (retire-transport-error-text item 12), filled at the same composition sites.
 // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
+/// `extraSearchQualifier` (optional) is appended verbatim to the final GraphQL `search()`
+/// query string (space-separated) after JQL translation — used by the ticket-change monitor
+/// to add a native `updated:>=<ISO>` window that GitHub applies server-side. Empty = no-op.
 std::vector<CachedTicket>
 FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                       const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
                       const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
-                      TrackerError* outFetchErrorStructured = nullptr);
+                      TrackerError* outFetchErrorStructured = nullptr, const std::string& extraSearchQualifier = {});
 
 /// Single-issue lookup loop used by GitHubClient::FetchIssuesForKeys.
 /// For each key in `issueKeys` (canonical `owner/repo#N` shape), issues a

@@ -30,6 +30,12 @@ namespace github {
 /// detection without coupling to the `[PR] ` summary prefix.
 constexpr const char* kIsPullRequestSentinel = "_smatchet_is_pr";
 
+/// Display prefix the mapper prepends to pull-request summaries so users can
+/// tell PRs apart at a glance. Shared with the write path
+/// (GitHubMutationPure), which strips exactly one leading occurrence from a
+/// summary edit so a PR title edit never compounds the prefix on round-trip.
+constexpr const char* kPullRequestSummaryPrefix = "[PR] ";
+
 /// Entry point used by `FetchIssuesViaRestApi` + the doctest rig.
 /// `ownerHint` / `repoHint` are used when the issue payload doesn't carry
 /// `repository_url` (single-issue endpoint shape).

@@ -26,8 +26,8 @@
 #include <string>
 #include <vector>
 
-#include "Types/AppUpdateTypes.h"   // AppUpdateInfo
-#include "Types/AttachmentTypes.h"  // AttachmentDescriptor
+#include "Types/AppUpdateTypes.h"  // AppUpdateInfo
+#include "Types/AttachmentTypes.h" // AttachmentDescriptor
 
 class IAttachmentAppUpdateDeps;
 
@@ -54,8 +54,8 @@ class AttachmentAppUpdateService {
     /// Download a supported image attachment to a temp file and hand it to the in-app preview handler.
     /// Returns false (with an optional reason via outError) when no preview handler is set, the mime
     /// is unsupported, the download fails, or the handler rejects the file.
-    bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename,
-                                      const std::string& mimeType, std::string* outError = nullptr);
+    bool DownloadAttachmentForPreview(const std::string& url, const std::string& filename, const std::string& mimeType,
+                                      std::string* outError = nullptr);
 
     /// Compile-time app version (SMATCHET_APP_VERSION) or "0.0.0" when undefined.
     std::string GetAppVersion() const;
@@ -69,11 +69,14 @@ class AttachmentAppUpdateService {
     /// installer asset. includePrerelease admits prerelease tags into the comparison.
     AppUpdateInfo CheckForAppUpdate(bool includePrerelease = false) const;
 
-    /// Download the installer to the temp dir then launch it via ShellExecute and request app quit.
-    /// Blocking — callers dispatch this on a worker thread. The optional cancelFlag is polled inside
-    /// the cpr write callback; when set the download aborts cleanly, the partial file is removed, and
-    /// the method returns false with outError == "Download cancelled." Windows-only; other platforms
-    /// return false with an unsupported-platform message.
+    /// Download the installer to the temp dir, verify its Authenticode signature (WinVerifyTrust —
+    /// an unverified installer is deleted and refused; SMATCHET_UPDATE_ALLOW_UNSIGNED=1 forgives
+    /// everything except a bad digest, see smatchet::app_update::ShouldLaunchDownloadedInstaller),
+    /// then launch it via ShellExecute and request app quit. Blocking — callers dispatch this on a
+    /// worker thread. The optional cancelFlag is polled inside the cpr write callback; when set the
+    /// download aborts cleanly, the partial file is removed, and the method returns false with
+    /// outError == "Download cancelled." Windows-only; other platforms return false with an
+    /// unsupported-platform message.
     bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
                                           std::string& outError,
                                           std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
@@ -101,8 +104,8 @@ inline std::string SanitizeInstallerFilename(const std::string& rawName) {
     }
     for (char& ch : base) {
         const unsigned char uch = static_cast<unsigned char>(ch);
-        const bool reserved = ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' ||
-                              ch == '"' || ch == '<' || ch == '>' || ch == '|';
+        const bool reserved = ch == '/' || ch == '\\' || ch == ':' || ch == '*' || ch == '?' || ch == '"' ||
+                              ch == '<' || ch == '>' || ch == '|';
         if (reserved || uch < 0x20) {
             ch = '_';
         }
@@ -111,6 +114,61 @@ inline std::string SanitizeInstallerFilename(const std::string& rawName) {
         return std::string("SmatchetUpdateSetup.exe");
     }
     return base;
+}
+
+// Authenticode trust policy for the downloaded installer. The Win32 side (WinVerifyTrust in
+// AttachmentAppUpdateService.cpp) reduces signature verification to a single status code; the pure
+// functions below map that code to the launch decision plus a user-facing reason, so the policy is
+// unit-testable off-Windows. The constants mirror the wintrust/wincrypt HRESULT values (the macros
+// themselves are Windows-only headers).
+const long kInstallerTrustOk = 0L;                                            // ERROR_SUCCESS
+const long kInstallerTrustNoSignature = static_cast<long>(0x800B0100UL);      // TRUST_E_NOSIGNATURE
+const long kInstallerTrustExpiredCert = static_cast<long>(0x800B0101UL);      // CERT_E_EXPIRED
+const long kInstallerTrustUntrustedRoot = static_cast<long>(0x800B0109UL);    // CERT_E_UNTRUSTEDROOT
+const long kInstallerTrustExplicitDistrust = static_cast<long>(0x800B0111UL); // TRUST_E_EXPLICIT_DISTRUST
+const long kInstallerTrustBadDigest = static_cast<long>(0x80096010UL);        // TRUST_E_BAD_DIGEST
+const long kInstallerTrustSecurityPolicy = static_cast<long>(0x80092026UL);   // CRYPT_E_SECURITY_SETTINGS
+
+inline std::string DescribeInstallerTrustStatus(long status) {
+    if (status == kInstallerTrustNoSignature) {
+        return std::string("the installer is not code-signed");
+    }
+    if (status == kInstallerTrustExpiredCert) {
+        return std::string("a certificate in the installer's signing chain has expired");
+    }
+    if (status == kInstallerTrustUntrustedRoot) {
+        return std::string("the installer's signing certificate does not chain to a trusted root");
+    }
+    if (status == kInstallerTrustExplicitDistrust) {
+        return std::string("the installer's signing certificate is explicitly distrusted");
+    }
+    if (status == kInstallerTrustBadDigest) {
+        return std::string("the installer's contents do not match its signature (corrupt or tampered file)");
+    }
+    if (status == kInstallerTrustSecurityPolicy) {
+        return std::string("signature verification was blocked by local security policy");
+    }
+    return std::string("signature verification failed (status ") + std::to_string(status) + ")";
+}
+
+// Decide whether the downloaded installer may be launched given its Authenticode verification
+// status. GitHub HTTPS authenticates the transport, not the artifact, so anything other than a
+// signature chaining to a trusted root fails closed. allowUnsignedOverride (the
+// SMATCHET_UPDATE_ALLOW_UNSIGNED env hatch for local release-pipeline validation with self-signed
+// certificates) forgives every failure EXCEPT a bad digest: a signature that is present but does
+// not match the file bytes is unambiguous tampering and never launches. On refusal, outError
+// carries the user-facing reason.
+inline bool ShouldLaunchDownloadedInstaller(long trustStatus, bool allowUnsignedOverride, std::string& outError) {
+    outError.clear();
+    if (trustStatus == kInstallerTrustOk) {
+        return true;
+    }
+    if (trustStatus != kInstallerTrustBadDigest && allowUnsignedOverride) {
+        return true;
+    }
+    outError = "Update was not applied: " + DescribeInstallerTrustStatus(trustStatus) +
+               ". The downloaded installer was discarded.";
+    return false;
 }
 
 } // namespace app_update

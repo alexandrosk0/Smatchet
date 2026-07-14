@@ -34,6 +34,7 @@
 // Smatchet core components (needed for the pImpl state).
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Diagnostics/EngineHostContext.h"
 #include "GridContextDepsAdapter.h"
 #include "Json/BoundedJsonParse.h"
 #include "Commands/CommandRegistry.h"
@@ -1316,6 +1317,15 @@ void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host) {
     if (!h)
         return;
     h->TickApplicationWork();
+}
+
+void SmatchetHost_SetHostContextJson(SmatchetImGuiHostHandle host, const char* contextJsonUtf8) {
+    // Handle validation only — the snapshot lands in the process-wide hostctx seam
+    // (mutex-guarded, no ImGuiMutex needed; readers are the quick-create prefill worker).
+    auto* h = LookupHost(host);
+    if (!h)
+        return;
+    smatchet::hostctx::SetSnapshotJson(contextJsonUtf8 ? std::string(contextJsonUtf8) : std::string());
 }
 
 void SmatchetHost_BeginFrame(SmatchetImGuiHostHandle host, float deltaTimeSeconds, float viewportWidth,

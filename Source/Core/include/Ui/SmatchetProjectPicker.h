@@ -23,8 +23,16 @@
 class ITrackerConnectivity;
 class ITrackerBackend;
 class AppController;
+struct TrackerConfig;
 
 namespace SmatchetProjectPicker {
+
+/** Resolve the (backendKind, endpoint) identity pair the picker's recently-used filter
+ *  keys on, from the active tracker config: backendKind matches
+ *  FieldCatalogCache::CachedProjectEntry.backend; endpoint is the per-backend connection
+ *  identity (Jira: domain; Plane: url|workspace; Linear: url|team). Shared by every
+ *  Draw call site so the identity grammar can't drift between surfaces. */
+void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBackendKind, std::string& outEndpoint);
 
 /** Async fetch state for the "All projects" lazy expand. Picker state can be heap-owned by the
  *  caller (so the picker survives draw cycles), or stack-owned if the caller manages lifetime. */

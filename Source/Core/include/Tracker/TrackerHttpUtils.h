@@ -59,6 +59,8 @@ cpr::Response TrackerPutLogged(const char* clientName, const std::string& url, c
                                const std::string& body, const std::function<bool()>& cancelled = nullptr);
 cpr::Response TrackerPatchLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                  const std::string& body, const std::function<bool()>& cancelled = nullptr);
+cpr::Response TrackerDeleteLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
+                                  const std::function<bool()>& cancelled = nullptr);
 void LogTrackerHttpResult(const char* clientName, const char* method, const std::string& url,
                           const cpr::Response& response);
 

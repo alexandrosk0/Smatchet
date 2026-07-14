@@ -413,7 +413,7 @@ struct GitHubFetchSetup {
 // `outFetchError` and returns `fatal = true`.
 GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::string& repo,
                                        const std::string& jqlQueryOrEmpty, std::string* outFetchError,
-                                       std::string* outWarning) {
+                                       std::string* outWarning, const std::string& extraSearchQualifier = {}) {
     GitHubFetchSetup setup;
 
     const JqlToGitHubResult translated = TranslateJqlToGitHubSearch(jqlQueryOrEmpty, owner, repo);
@@ -450,6 +450,13 @@ GitHubFetchSetup BuildGitHubFetchSetup(const std::string& owner, const std::stri
     if (graphQlQuery.empty()) {
         graphQlQuery = "is:issue is:open";
     }
+    // Append the change-monitor's native `updated:>=<ISO>` window (or any caller qualifier) to the
+    // already-translated query so GitHub applies it server-side — idle change probes come back
+    // near-empty instead of downloading the whole view.
+    if (!extraSearchQualifier.empty()) {
+        graphQlQuery += " ";
+        graphQlQuery += extraSearchQualifier;
+    }
     setup.graphQlQuery = std::move(graphQlQuery);
     setup.includePullRequests = plan.includePullRequests;
     setup.includeCommits = plan.includeCommits;
@@ -480,7 +487,7 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
                       const std::string& repo, const std::string& jqlQueryOrEmpty, bool* outFullSyncCompleted,
                       std::string* outFetchError, std::string* outWarning,
                       const std::function<void(const std::vector<CachedTicket>& page, bool isLast)>& onPage,
-                      TrackerError* outFetchErrorStructured) {
+                      TrackerError* outFetchErrorStructured, const std::string& extraSearchQualifier) {
     if (outFullSyncCompleted) {
         *outFullSyncCompleted = false;
     }
@@ -495,7 +502,8 @@ FetchIssuesViaRestApi(const std::string& baseUrl, const std::string& pat, const 
         return {};
     }
 
-    const GitHubFetchSetup setup = BuildGitHubFetchSetup(owner, repo, jqlQueryOrEmpty, outFetchError, outWarning);
+    const GitHubFetchSetup setup =
+        BuildGitHubFetchSetup(owner, repo, jqlQueryOrEmpty, outFetchError, outWarning, extraSearchQualifier);
     if (setup.fatal) {
         // Setup failures are config/JQL-translation class; classify from the composed text.
         if (outFetchErrorStructured && outFetchError) {

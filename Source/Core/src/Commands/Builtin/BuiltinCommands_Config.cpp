@@ -138,7 +138,7 @@ const CfgKey* ConfigSetKeyTable() {
         {"mcpPort", "mcp_port", "MCP plugin restart required"},
         {"mcpAllowRemote", "mcp_allow_remote", "MCP plugin restart required"},
         {"mcpAllowLuaExecution", "mcp_allow_lua_execution", "MCP plugin restart required"},
-        // Ticket-change monitor (docs/plans/active/ticket-change-monitor.md). The enabled flag
+        // Ticket-change monitor (docs/plans/ticket-change-monitor.md). The enabled flag
         // is also flippable via the ergonomic `tickets.monitor on|off`; the interval is set
         // here. Both take effect on the next monitor tick (no restart).
         {"ticketChangeMonitorEnabled", "ticket_change_monitor_enabled", "applies on next poll"},
@@ -308,7 +308,7 @@ void RegisterTicketsMonitorCommand(CommandRegistry& reg) {
 
 } // namespace
 
-void RegisterConfigCommands(CommandRegistry& reg, AppController& /*app*/) {
+void RegisterConfigCommands(CommandRegistry& reg) {
     RegisterConfigPathCommand(reg);
     RegisterConfigGetCommand(reg);
     RegisterConfigReloadCommand(reg);
