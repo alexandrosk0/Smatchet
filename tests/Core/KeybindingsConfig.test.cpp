@@ -53,6 +53,9 @@ const ExpectedBinding kExpectedDefaults[] = {
     // Notifications reveal — added with the notifications → view.toggle.notifications
     // rename (UX critique M8); seeded into existing configs via migrated_menu_shortcuts_v2.
     {"Ctrl+Shift+Y", "view.toggle.notifications", "{\"action\":\"show\"}"},
+    // Quick-create issue popup (quick-create-issue-unreal-context plan). Ctrl+Shift+J is
+    // reserved by the Unreal host for the overlay visibility toggle — never seed it here.
+    {"Ctrl+Shift+T", "issue.quick_create.open", "{}"},
 };
 
 } // namespace

@@ -238,3 +238,18 @@ TEST_CASE("builtins — ByCategory partitions the full registry") {
     }
     CHECK(sum == all.size());
 }
+
+TEST_CASE("builtins — issue.quick_create.open registers as a non-destructive opener") {
+    // quick-create-issue-unreal-context plan: the popup opener must reach every
+    // front-end from one registration (palette/CLI/MCP/Lua/Unreal console) and is
+    // read-only until the user submits — Destructive would wrongly arm the confirm
+    // gate for automation sources. Handler body (UI-thread flag write) is not run
+    // here, matching this harness's dispatch-layer-only contract.
+    BuiltinsFixture fx;
+    const Command* c = fx.Reg.FindLocked("issue.quick_create.open");
+    REQUIRE(c != nullptr);
+    CHECK(c->Category == "issue");
+    CHECK_FALSE(c->Destructive);
+    CHECK(c->Idempotent);
+    CHECK(c->AsyncSafe);
+}

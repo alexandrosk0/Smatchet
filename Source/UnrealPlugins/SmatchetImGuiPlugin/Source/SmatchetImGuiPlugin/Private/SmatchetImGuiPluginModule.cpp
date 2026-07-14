@@ -18,11 +18,13 @@
 #include "Slate/SceneViewport.h"
 #include "Widgets/SWindow.h"
 
+#include "SmatchetHostContextCollector.h"
 #include "SmatchetImGuiHostC.h"
 #include "SmatchetImGuiCommandBridge.h"
 #include "SmatchetImGuiInputProcessor.h"
 #include "SmatchetImGuiRenderBackend.h"
 #include "SmatchetImGuiViewExtension.h"
+#include "SmatchetOutputLogTail.h"
 #include "SmatchetDefaults.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSmatchetImGuiPlugin, Log, All);
@@ -154,6 +156,26 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
                 FTickerDelegate::CreateLambda([this](float) { return TryCreateViewExtension() ? false : true; }));
         }
 
+        // Host-context snapshot for the quick-create issue popup: buffer recent Output Log
+        // lines for the snapshot's logTail field, and push a fresh snapshot at ~1 Hz on the
+        // game thread while the overlay is visible (editor state — GEditor, selection,
+        // worlds — is game-thread-only, so a core-side pull callback is not an option).
+        LogTail = MakeUnique<FSmatchetOutputLogTail>();
+        if (GLog) {
+            GLog->AddOutputDevice(LogTail.Get());
+        }
+        ContextPushHandle =
+            FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this](float) {
+                                                     if (Host && SmatchetHost_IsUiVisible(Host) != 0) {
+                                                         const FString ContextJson =
+                                                             SmatchetHostContextCollector_BuildJson(LogTail.Get());
+                                                         FTCHARToUTF8 ContextUtf8(*ContextJson);
+                                                         SmatchetHost_SetHostContextJson(Host, ContextUtf8.Get());
+                                                     }
+                                                     return true;
+                                                 }),
+                                                 1.0f);
+
         SmatchetImGuiConsoleCommands_StartupModule();
     }
 
@@ -162,6 +184,20 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
 
         SmatchetImGuiConsoleCommands_ShutdownModule();
         SmatchetImGuiCommandBridge_ShutdownModule();
+
+        // Stop the context push before anything else and detach the log device before the
+        // host teardown below — GLog would otherwise Serialize into a freed device during
+        // the shutdown log traffic.
+        if (ContextPushHandle.IsValid()) {
+            FTSTicker::GetCoreTicker().RemoveTicker(ContextPushHandle);
+            ContextPushHandle = {};
+        }
+        if (LogTail) {
+            if (GLog) {
+                GLog->RemoveOutputDevice(LogTail.Get());
+            }
+            LogTail.Reset();
+        }
 
         if (InitOptionsRetryHandle.IsValid()) {
             FTSTicker::GetCoreTicker().RemoveTicker(InitOptionsRetryHandle);
@@ -361,6 +397,10 @@ class FSmatchetImGuiPluginModule : public IModuleInterface {
     FTSTicker::FDelegateHandle BackBufferHookRetryHandle{};
     FTSTicker::FDelegateHandle InitOptionsRetryHandle{};
     FTSTicker::FDelegateHandle ViewExtensionRetryHandle{};
+
+    // Quick-create host-context snapshot (docs/plans/quick-create-issue-unreal-context.md).
+    TUniquePtr<FSmatchetOutputLogTail> LogTail;
+    FTSTicker::FDelegateHandle ContextPushHandle{};
 };
 
 SmatchetImGuiHostHandle SmatchetImGuiPlugin_GetNativeHostForCommands() {

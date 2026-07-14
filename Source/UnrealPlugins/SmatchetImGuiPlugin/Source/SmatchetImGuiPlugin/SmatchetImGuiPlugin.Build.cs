@@ -40,6 +40,13 @@ public class SmatchetImGuiPlugin : ModuleRules
                 "Json"
             });
 
+        // Host-context collector reads GEditor / actor selection for the quick-create
+        // snapshot — editor builds only (the code paths are #if WITH_EDITOR).
+        if (Target.bBuildEditor)
+        {
+            PrivateDependencyModuleNames.Add("UnrealEd");
+        }
+
         string platformName = Target.Platform.ToString();
         bool isWin64 = Target.Platform == UnrealTargetPlatform.Win64;
         bool isPs5 = platformName.Equals("PS5", StringComparison.OrdinalIgnoreCase);

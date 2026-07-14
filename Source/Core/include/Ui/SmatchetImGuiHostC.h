@@ -60,6 +60,17 @@ bool SmatchetHost_IsFrameActive(SmatchetImGuiHostHandle host);
 void SmatchetHost_TickApplicationWork(SmatchetImGuiHostHandle host);
 
 /**
+ * Replace the host-engine context snapshot (UTF-8 JSON object) that Smatchet folds into
+ * the quick-create issue description prefill. Push from the game thread whenever the
+ * snapshot changes (~1 Hz while the overlay is visible is plenty); pass null or "" to
+ * clear. Thread-safe; the string is copied. Payloads over ~128 KB are rejected.
+ * Expected keys (all optional): engineVersion, projectName, projectDir, platform,
+ * osVersion, buildConfig, mapName, pie{active,simulating},
+ * selectedActors[{label,class}], logTail[string], capturedAtIso, source.
+ */
+void SmatchetHost_SetHostContextJson(SmatchetImGuiHostHandle host, const char* contextJsonUtf8);
+
+/**
  * Enqueue a unified Smatchet command for async dispatch on the host tick/frame path.
  *
  * Args must be a UTF-8 JSON object string; pass null/empty for `{}`. Returns 0 only when

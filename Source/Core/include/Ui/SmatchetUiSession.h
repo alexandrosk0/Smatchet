@@ -170,6 +170,7 @@ enum class PreferencesActiveTab : std::uint8_t {
     Annotate,
     Keybindings,
     UserInfo,
+    QuickCreate,
 };
 
 struct CellWriteFeedback {
@@ -963,6 +964,30 @@ struct UiDrawSession {
     std::vector<char> bugReportPreviewBuf;   // editable egress preview = exactly what gets sent
     std::string bugReportStagedShotPath;     // captured screenshot path (post-swap)
     std::shared_ptr<smatchet::diagnostics::SubmitResult> bugReportResult; // posted back from the worker
+
+    // --- Quick-create issue popup (docs/plans/quick-create-issue-unreal-context.md) ---
+    // Opened by `issue.quick_create.open` (default hotkey Ctrl+Shift+T). All quickCreate*
+    // fields are read/written ONLY on the UI thread; the prefill worker posts its text back
+    // via mainThreadDispatcher and the create future is polled per frame.
+    bool showQuickCreateIssue = false;
+    bool quickCreateOpenLatch = false;       // set when newly opened — drives first-frame seed + focus
+    bool quickCreateInFlight = false;        // create submit in progress (future polled per frame)
+    bool quickCreateQueueOffered = false;    // non-auto-queued failure — offer explicit "Queue offline"
+    bool quickCreateCtxGenerating = false;   // engine-context prefill building on a worker
+    bool quickCreateDescUserEdited = false;  // user edited the description — stop auto-refreshing it
+    std::string quickCreateError;            // last submit / validation error banner
+    IssueDraft quickCreateDraft;             // project + issuetype selection; summary/description on submit
+    std::vector<char> quickCreateSummaryBuf; // lazy summary input buffer
+    std::vector<char> quickCreateDescBuf;    // lazy multiline description buffer (context-prefilled)
+    std::future<IssueCreateResult> quickCreateFuture;
+    SmatchetProjectPicker::State quickCreateProjectPickerState;
+    // Per-project catalog refetch guard — mirrors newIssueDraftLastFetchedProjectKey.
+    std::string quickCreateLastFetchedProjectKey;
+    // Optional prefills carried from `issue.quick_create.open` args to the open-frame seed.
+    std::string quickCreateArgSummary;
+    std::string quickCreateArgDescription;
+    std::string quickCreateArgProject;
+    std::string quickCreateArgIssueType;
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
     /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive

@@ -287,6 +287,13 @@ const FieldDesc<bool> kBoolFields[] = {
     {"update_check_enabled", &TrackerConfig::UpdateCheckEnabled},
     {"update_include_prerelease", &TrackerConfig::UpdateIncludePrerelease},
     {"ticket_change_monitor_enabled", &TrackerConfig::TicketChangeMonitorEnabled},
+    {"quick_create_ctx_engine_version", &TrackerConfig::QuickCreateCtxEngineVersion},
+    {"quick_create_ctx_project", &TrackerConfig::QuickCreateCtxProject},
+    {"quick_create_ctx_platform", &TrackerConfig::QuickCreateCtxPlatform},
+    {"quick_create_ctx_level", &TrackerConfig::QuickCreateCtxLevel},
+    {"quick_create_ctx_pie_state", &TrackerConfig::QuickCreateCtxPieState},
+    {"quick_create_ctx_selected_actors", &TrackerConfig::QuickCreateCtxSelectedActors},
+    {"quick_create_ctx_log_tail", &TrackerConfig::QuickCreateCtxLogTail},
 };
 
 // Plain ints. Fields with a post-read clamp (ImportMaxConcurrent, GridEndWheel..., McpPort,
@@ -307,6 +314,7 @@ const FieldDesc<int> kIntFields[] = {
     {"user_activity_day_window", &TrackerConfig::UserActivityDayWindow},
     {"max_user_changes", &TrackerConfig::MaxUserChanges},
     {"ticket_change_monitor_interval_sec", &TrackerConfig::TicketChangeMonitorIntervalSec},
+    {"quick_create_ctx_log_lines", &TrackerConfig::QuickCreateCtxLogLines},
 };
 
 // Floats persist as JSON doubles; read via `static_cast<float>(j.value(key, double(member)))`

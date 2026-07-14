@@ -903,6 +903,12 @@ add_executable(SmatchetTests
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
+    # quick-create-issue-unreal-context — pure host-engine-snapshot → markdown
+    # formatter behind the quick-create description prefill (toggle filtering,
+    # actor cap, log-tail truncation). ConfigManager.cpp (TogglesFromConfig's
+    # TrackerConfig) is already linked below; no other production TU needed.
+    Core/EngineContextFormat.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/EngineContextFormat.cpp"
     # SECURITY_AUDIT_2026-06-13 LOW — Logger file sink now redacts on the persist
     # path (Logger.cpp + TextRedaction.cpp already linked into this rig below).
     Core/LoggerFileSinkRedaction.test.cpp
