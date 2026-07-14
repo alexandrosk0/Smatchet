@@ -20,7 +20,13 @@
 #
 # Auto-enrolled by scripts/dev/test-all.sh.
 
-set -uo pipefail
+# set -e: an unexpected failure (missing hook, typo) aborts early rather than
+# cascading into confusing downstream assertion failures. Every command whose
+# non-zero exit is EXPECTED / captured is guarded with `|| rc=$?` (rc reset to 0
+# first) or `|| true`, so set -e never fires on an intentional may-fail step
+# (bash-06). Pipelines whose left side may legitimately fail (a `cat` over an
+# empty queue glob) are likewise guarded.
+set -euo pipefail
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
@@ -67,8 +73,8 @@ PROBE_JSON='{"tool_input": {"file_path": "'"$PROBE_FILE"'"}}'
 note "Test 1 — inline hook produces queue + tree-dirty"
 cleanup
 start_ns="$(date +%s%N 2>/dev/null || date +%s)"
-echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh"
-inline_rc=$?
+inline_rc=0
+echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh" || inline_rc=$?
 end_ns="$(date +%s%N 2>/dev/null || date +%s)"
 
 if [[ $inline_rc -eq 0 ]]; then
@@ -102,12 +108,12 @@ fi
 # -------------------------------------------------------------------- Test 2
 note "Test 2 — multi-edit dedup"
 cleanup
-for _ in 1 2 3; do echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh"; done
+for _ in 1 2 3; do echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh" || true; done
 # Three appends should yield three lines pre-drain.
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
-PRE_DRAIN_LINES=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l)
+PRE_DRAIN_LINES=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l) || true
 if [[ $PRE_DRAIN_LINES -eq 3 ]]; then
     ok "queue has 3 lines pre-drain (one per inline call)"
 else
@@ -115,8 +121,8 @@ else
 fi
 
 # After drain, queue should be empty (dedup → 1 unique path → consumed in chunk).
-bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
-drain_rc=$?
+drain_rc=0
+bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || drain_rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -146,22 +152,22 @@ sed -i 's/smatchet_lint_probe/smatchet_lint_probe_c/' "${MULTI[2]}"
 
 for f in "${MULTI[@]}"; do
     if [[ -f "$f" ]]; then
-        echo '{"tool_input": {"file_path": "'"$f"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+        echo '{"tool_input": {"file_path": "'"$f"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh" || true
     fi
 done
 
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
-PRE=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l)
+PRE=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l) || true
 if [[ $PRE -eq ${#MULTI[@]} ]]; then
     ok "queue has $PRE lines pre-drain (one per file)"
 else
     nope "queue has $PRE lines pre-drain (expected ${#MULTI[@]})"
 fi
 
-bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
-drain_rc=$?
+drain_rc=0
+bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || drain_rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -194,11 +200,11 @@ CPP
 if ! command -v cppcheck >/dev/null 2>&1; then
     skip "Test 4 — cppcheck not on PATH"
 else
-    echo '{"tool_input": {"file_path": "'"$FAULT_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+    echo '{"tool_input": {"file_path": "'"$FAULT_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh" || true
     # Drain with the delta baseline forced unresolvable (fail-open) so the
     # finding on the untracked fixture is not delta-filtered away.
-    DRAIN_OUT="$(LINT_DELTA_BASE="__no_such_ref_pr6__" bash "$HOOKS_DIR/lint-cpp-drain.sh" 2>&1)"
-    drain_rc=$?
+    drain_rc=0
+    DRAIN_OUT="$(LINT_DELTA_BASE="__no_such_ref_pr6__" bash "$HOOKS_DIR/lint-cpp-drain.sh" 2>&1)" || drain_rc=$?
     if printf '%s' "$DRAIN_OUT" | grep -qiE 'arrayIndexOutOfBounds|uninitvar|cppcheck:'; then
         ok "drain surfaced the injected cppcheck violation (rc=$drain_rc)"
     else
@@ -218,22 +224,22 @@ for n in 1 2 3; do
     cp -f "$PROBE_FILE" "$cf"
     sed -i "s/smatchet_lint_probe/smatchet_lint_probe_chunk${n}/" "$cf"
     CHUNKS+=("$cf")
-    echo '{"tool_input": {"file_path": "'"$cf"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+    echo '{"tool_input": {"file_path": "'"$cf"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh" || true
 done
 
-SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || true
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
 # Exactly one queue file should remain, holding the 1-file remainder.
-REMAIN_LINES=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l | tr -d ' ')
+REMAIN_LINES=$(cat "${QUEUE_REAL[@]}" 2>/dev/null | wc -l | tr -d ' ') || true
 if [[ ${#QUEUE_REAL[@]} -eq 1 && $REMAIN_LINES -eq 1 ]]; then
     ok "first chunked drain requeued the 1-file remainder"
 else
     nope "expected 1 remainder file with 1 line; got ${#QUEUE_REAL[@]} files / $REMAIN_LINES lines"
 fi
 
-SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+SMATCHET_LINT_DRAIN_CHUNK=2 bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || true
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -254,8 +260,8 @@ cp -f "$PROBE_FILE" "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp"
 sed -i 's/smatchet_lint_probe/smatchet_lint_probe_pid6/' "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp"
 printf '%s\n' "$PROJ_DIR/tests/fixtures/lint_hook_chunk_1.cpp" > "$CLAUDE_DIR/.lint-queue.222222"
 
-bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
-drain_rc=$?
+drain_rc=0
+bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || drain_rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -268,8 +274,8 @@ fi
 # -------------------------------------------------------------------- Test 7
 note "Test 7 — SMATCHET_LINT_INLINE=1 escape hatch skips the queue"
 cleanup
-SMATCHET_LINT_INLINE=1 bash -c "echo '$PROBE_JSON' | bash '$HOOKS_DIR/lint-cpp.sh'" >/dev/null 2>&1
-rc=$?
+rc=0
+SMATCHET_LINT_INLINE=1 bash -c "echo '$PROBE_JSON' | bash '$HOOKS_DIR/lint-cpp.sh'" >/dev/null 2>&1 || rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -282,9 +288,9 @@ fi
 # -------------------------------------------------------------------- Test 8
 note "Test 8 — manual flush via agents/scripts/core/lint-flush.sh"
 cleanup
-echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh"
-bash "$PROJ_DIR/agents/scripts/core/lint-flush.sh" >/dev/null 2>&1
-flush_rc=$?
+echo "$PROBE_JSON" | bash "$HOOKS_DIR/lint-cpp.sh" || true
+flush_rc=0
+bash "$PROJ_DIR/agents/scripts/core/lint-flush.sh" >/dev/null 2>&1 || flush_rc=$?
 shopt -s nullglob
 QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
 shopt -u nullglob
@@ -302,7 +308,7 @@ cleanup
 
 # Synthesize a PreToolUse:Bash JSON payload.
 echo '{"tool_input": {"command": "cmake --build --preset ninja-iter-msvc --target SmatchetStandalone"}}' \
-    | bash "$HOOKS_DIR/clear-tree-dirty.sh"
+    | bash "$HOOKS_DIR/clear-tree-dirty.sh" || true
 if [[ ! -e "$CLAUDE_DIR/.tree-dirty" ]]; then
     ok ".tree-dirty cleared on cmake --build invocation"
 else
@@ -312,7 +318,7 @@ fi
 # Negative case: an unrelated command must leave .tree-dirty alone.
 : > "$CLAUDE_DIR/.tree-dirty"
 echo '{"tool_input": {"command": "ls -la build/"}}' \
-    | bash "$HOOKS_DIR/clear-tree-dirty.sh"
+    | bash "$HOOKS_DIR/clear-tree-dirty.sh" || true
 if [[ -e "$CLAUDE_DIR/.tree-dirty" ]]; then
     ok ".tree-dirty preserved on unrelated Bash command"
 else
@@ -322,7 +328,7 @@ fi
 # Env-prefix variant: `MSYS2_PATH_TYPE=inherit cmake --build …` must still match.
 : > "$CLAUDE_DIR/.tree-dirty"
 echo '{"tool_input": {"command": "MSYS2_PATH_TYPE=inherit cmake --build --preset ninja-test-msvc"}}' \
-    | bash "$HOOKS_DIR/clear-tree-dirty.sh"
+    | bash "$HOOKS_DIR/clear-tree-dirty.sh" || true
 if [[ ! -e "$CLAUDE_DIR/.tree-dirty" ]]; then
     ok ".tree-dirty cleared with env-var prefix"
 else
@@ -341,14 +347,14 @@ else
     # Hold the lock in a background process, then fire a drain that has work
     # queued: the contending drain must take the non-blocking lock path and exit
     # 0 WITHOUT consuming the queue (the holder will, or a later Stop event).
-    echo '{"tool_input": {"file_path": "'"$PROBE_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh"
+    echo '{"tool_input": {"file_path": "'"$PROBE_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh" || true
     LOCK_FILE="$CLAUDE_DIR/.lint-queue.lock"
     # Background holder: grab the exclusive lock and sleep, holding it.
     ( exec 201>"$LOCK_FILE"; flock 201; sleep 3 ) &
     HOLDER_PID=$!
     sleep 0.4   # give the holder time to acquire
-    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
-    contend_rc=$?
+    contend_rc=0
+    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || contend_rc=$?
     shopt -s nullglob
     QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
     shopt -u nullglob
@@ -360,7 +366,7 @@ else
     fi
     wait "$HOLDER_PID" 2>/dev/null || true
     # After the holder releases, a fresh drain must consume the queue.
-    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1
+    bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || true
     shopt -s nullglob
     QUEUE_REAL=("$CLAUDE_DIR"/.lint-queue.*)
     shopt -u nullglob
@@ -379,7 +385,7 @@ cleanup
 : > "$CLAUDE_DIR/.tree-dirty"
 
 # clear-session-context.sh reads optional JSON on stdin. Empty stdin is fine.
-echo '' | bash "$PROJ_DIR/agents/scripts/core/clear-session-context.sh" >/dev/null 2>&1
+echo '' | bash "$PROJ_DIR/agents/scripts/core/clear-session-context.sh" >/dev/null 2>&1 || true
 
 shopt -s nullglob
 ORPHANS=("$CLAUDE_DIR"/.lint-queue.*)
