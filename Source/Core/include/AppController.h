@@ -469,6 +469,38 @@ class AppController : public IAppThreading,
      * no scripts directory is configured — no cwd-relative fallback). */
     std::vector<std::string> ListLuaScriptFiles() const;
 
+    // --- First-run Lua script consent gate ---------------------------------------------------
+    // A Scripts/*.lua file may only be executed once the user has approved its exact content
+    // (path + sha-256). New or content-changed scripts are BLOCKED (fail closed) so a shared /
+    // silently-dropped script cannot run the app's high-privilege Lua bindings unseen. See
+    // docs/agent-rules and the LuaScriptConsent.h pure core.
+
+    /// Consent decision for a resolved Scripts/*.lua path. Reads the file, fingerprints it, and
+    /// checks it against the persisted approvals (honoring the config kill-switch + the
+    /// SMATCHET_LUA_CONSENT=off env override). Returns true if execution may proceed. On refusal
+    /// returns false with a user-facing reason in outReason; when interactive it also raises the
+    /// scripting-window request so the UI can surface the approval affordance. Fail-closed: an
+    /// unreadable / oversized file is refused.
+    bool IsLuaScriptConsented(const std::string& resolvedPath, bool interactive, std::string& outReason);
+
+    /// Approve a Scripts/*.lua file BY BASENAME at its current content, persisting the fingerprint
+    /// so subsequent runs are permitted (until the content changes). Returns false with outError
+    /// on an invalid name / unreadable file. Deliberate user action (CLI / console / palette).
+    /// IAppAutomation facet override.
+    bool ApproveLuaScript(const std::string& scriptName, std::string& outError) override;
+
+    /// Revoke any approval for a Scripts/*.lua basename, so its next run is blocked again.
+    /// IAppAutomation facet override.
+    bool RevokeLuaScript(const std::string& scriptName, std::string& outError) override;
+
+    /// Resolved paths of every currently-approved Lua script. IAppAutomation facet override.
+    std::vector<std::string> ListApprovedLuaScriptPaths() const override;
+
+    /// One-time migration: if the consent list has never been initialized, seed it with the
+    /// fingerprints of the scripts that already exist in the scripts directory (trust-on-adoption
+    /// so existing setups keep working) and mark it initialized. No-op afterwards. Runs at startup.
+    void SeedLuaScriptConsentIfNeeded();
+
     /**
      * Resolve a URL or local path for field icons / Lua `imgui.image`.
      * Allows http(s) URLs; local files must lie under the Lua scripts directory or the runtime asset directory.

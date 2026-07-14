@@ -541,6 +541,13 @@ add_executable(SmatchetTests
     # Auto-update installer Authenticode launch policy (header-inline pure seam; the Win32
     # WinVerifyTrust caller lives in AttachmentAppUpdateService.cpp, linked below).
     Core/UpdateInstallerSignaturePolicy.test.cpp
+    # Header-only SHA-256 (Sha256.h) pinned to NIST vectors — content digest behind the Lua
+    # script consent gate. No production TU to link.
+    Core/Sha256.test.cpp
+    # Lua script consent gate — pure decision core (LuaScriptConsent.h): fingerprint +
+    # approve/block + kill-switch. Header-only; the AppController-side I/O + wiring is exercised
+    # by the Windows build, not this doctest rig.
+    Core/LuaScriptConsent.test.cpp
     Core/MainThreadDispatchShutdown.test.cpp
     Core/TrackerPostTimeoutClassify.test.cpp
     Core/Tracker2xxErrorGuard.test.cpp

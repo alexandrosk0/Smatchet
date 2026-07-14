@@ -11,19 +11,54 @@
 #include "AppController.h"
 // clang-format on
 
-#include "ConfigManager.h" // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
+#include "ConfigManager.h"    // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
+#include "EnvUtil.h"          // smatchet::env::ReadVar — portable getenv (SMATCHET_LUA_CONSENT kill-switch)
+#include "LuaScriptConsent.h" // consent decision core (path + sha-256 fingerprints)
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <exception>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <system_error>
 #include <vector>
+
+namespace {
+// Byte-capped binary read of a resolved Lua script path. Returns false on open failure or when
+// the file exceeds the cap (SECURITY_AUDIT #33 class — no unbounded slurp). The same cap the
+// automation-script editor uses; scripts are small.
+bool ReadLuaScriptBytesCapped(const std::string& resolvedPath, std::string& outBytes) {
+    constexpr std::streamoff kMaxLuaScriptBytes = 8ll * 1024 * 1024;
+    std::ifstream ifs(resolvedPath, std::ios::binary);
+    if (!ifs.is_open()) {
+        return false;
+    }
+    ifs.seekg(0, std::ios::end);
+    const std::streamoff size = ifs.tellg();
+    if (size < 0 || size > kMaxLuaScriptBytes) {
+        return false;
+    }
+    ifs.seekg(0, std::ios::beg);
+    outBytes.assign(static_cast<std::size_t>(size), '\0');
+    if (size > 0 && !ifs.read(&outBytes[0], size)) {
+        return false;
+    }
+    return true;
+}
+
+// SMATCHET_LUA_CONSENT=off|0|false|no forces the gate off for this process (operator escape
+// hatch, e.g. if a fingerprint mismatch is wrongly blocking a legit workflow).
+bool ConsentDisabledByEnv() {
+    std::string v = smatchet::env::ReadVar("SMATCHET_LUA_CONSENT");
+    std::transform(v.begin(), v.end(), v.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return v == "off" || v == "0" || v == "false" || v == "no";
+}
+} // namespace
 
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
 
@@ -198,4 +233,124 @@ bool AppController::SaveAutomationScriptContent(const std::string& content, std:
     }
 
     return true;
+}
+
+// --- First-run Lua script consent gate ------------------------------------------------------
+
+bool AppController::IsLuaScriptConsented(const std::string& resolvedPath, bool interactive, std::string& outReason) {
+    outReason.clear();
+    if (resolvedPath.empty()) {
+        outReason = "invalid script path";
+        return false;
+    }
+
+    const TrackerConfig cfg = ConfigManager::Load();
+    const bool enforced = cfg.LuaScriptConsentEnforced && !ConsentDisabledByEnv();
+    if (!enforced) {
+        return true;
+    }
+
+    std::string bytes;
+    if (!ReadLuaScriptBytesCapped(resolvedPath, bytes)) {
+        // Fail closed: a script we cannot read/hash cannot be proven approved.
+        outReason = "script could not be read for consent verification";
+        if (interactive) {
+            scriptingWindowOpenRequested_.store(true);
+        }
+        return false;
+    }
+
+    const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
+    if (smatchet::lua_consent::DecideLuaConsent(true, cfg.ApprovedLuaScripts, resolvedPath, sha) ==
+        smatchet::lua_consent::LuaConsentVerdict::Approved) {
+        return true;
+    }
+
+    outReason = "Lua script is not approved — review it, then approve it before it can run "
+                "(command: lua.approve-script, or disable the gate in Preferences). Path: " +
+                resolvedPath;
+    LOG_WARN("Lua consent: blocked unapproved script path=%s", resolvedPath.c_str());
+    if (interactive) {
+        scriptingWindowOpenRequested_.store(true);
+    }
+    return false;
+}
+
+bool AppController::ApproveLuaScript(const std::string& scriptName, std::string& outError) {
+    outError.clear();
+    const std::string resolved = ResolveLuaScriptPath(scriptName);
+    if (resolved.empty()) {
+        outError = "Invalid or unresolvable script name: " + scriptName;
+        return false;
+    }
+    std::string bytes;
+    if (!ReadLuaScriptBytesCapped(resolved, bytes)) {
+        outError = "Script could not be read: " + resolved;
+        return false;
+    }
+    const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
+
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, resolved, sha);
+    // Approving a specific script also settles the one-time seeding boundary — the user has
+    // now made an explicit decision, so don't later auto-trust the whole directory over them.
+    cfg.LuaScriptConsentInitialized = true;
+    ConfigManager::Save(cfg);
+    LOG_INFO("Lua consent: approved script path=%s sha=%s", resolved.c_str(), sha.c_str());
+    return true;
+}
+
+bool AppController::RevokeLuaScript(const std::string& scriptName, std::string& outError) {
+    outError.clear();
+    const std::string resolved = ResolveLuaScriptPath(scriptName);
+    if (resolved.empty()) {
+        outError = "Invalid or unresolvable script name: " + scriptName;
+        return false;
+    }
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.ApprovedLuaScripts = smatchet::lua_consent::WithoutApproval(cfg.ApprovedLuaScripts, resolved);
+    ConfigManager::Save(cfg);
+    LOG_INFO("Lua consent: revoked approval for script path=%s", resolved.c_str());
+    return true;
+}
+
+std::vector<std::string> AppController::ListApprovedLuaScriptPaths() const {
+    const TrackerConfig cfg = ConfigManager::Load();
+    std::vector<std::string> out;
+    out.reserve(cfg.ApprovedLuaScripts.size());
+    for (const auto& a : cfg.ApprovedLuaScripts) {
+        out.push_back(a.Path);
+    }
+    return out;
+}
+
+void AppController::SeedLuaScriptConsentIfNeeded() {
+    TrackerConfig cfg = ConfigManager::Load();
+    if (cfg.LuaScriptConsentInitialized) {
+        return;
+    }
+
+    // Trust-on-adoption: the scripts already present when the gate is first introduced were put
+    // there by this user, so seed them as approved to avoid breaking existing setups. Everything
+    // that arrives AFTER this boundary must be explicitly approved. This runs exactly once.
+    const std::vector<std::string> existing = ListLuaScriptFiles();
+    std::size_t seeded = 0;
+    for (const std::string& name : existing) {
+        const std::string resolved = ResolveLuaScriptPath(name);
+        if (resolved.empty()) {
+            continue;
+        }
+        std::string bytes;
+        if (!ReadLuaScriptBytesCapped(resolved, bytes)) {
+            continue;
+        }
+        const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
+        cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, resolved, sha);
+        ++seeded;
+    }
+    cfg.LuaScriptConsentInitialized = true;
+    ConfigManager::Save(cfg);
+    LOG_INFO("Lua consent: one-time seed — trusted %zu pre-existing script(s); new/changed scripts now require "
+             "explicit approval.",
+             seeded);
 }
