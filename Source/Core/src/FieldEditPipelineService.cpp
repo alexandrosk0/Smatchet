@@ -705,22 +705,17 @@ bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const std::string& iss
     return true;
 }
 
-bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result,
-                                                    std::string& outError) {
-    outError.clear();
+VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
     if (!result.Ok) {
-        outError = result.Error.empty() ? std::string("Failed to save field update.") : result.Error;
-        return false;
+        return VoidResult::Err(result.Error.empty() ? std::string("Failed to save field update.") : result.Error);
     }
     if (!deps_.HasCache()) {
-        outError = SmatchetLocalization::T("fieldedit.cache_unavailable",
-                                           "Local cache is unavailable, so this edit cannot be applied. Restart "
-                                           "Smatchet or check Settings -> Preferences -> Local data.");
-        return false;
+        return VoidResult::Err(SmatchetLocalization::T(
+            "fieldedit.cache_unavailable", "Local cache is unavailable, so this edit cannot be applied. Restart "
+                                           "Smatchet or check Settings -> Preferences -> Local data."));
     }
     if (issueId.empty()) {
-        outError = "Issue id is empty.";
-        return false;
+        return VoidResult::Err("Issue id is empty.");
     }
 
     const auto ticketsSnapApply = deps_.GetActiveTicketsSnapshot();
@@ -729,7 +724,7 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
                                  [&](const CachedTicket& ticket) { return ticket.id == issueId; });
     if (ticketIt == ticketsApply.end()) {
         deps_.RefreshLocalData();
-        return true;
+        return VoidOk();
     }
 
     CachedTicket updatedTicket = *ticketIt;
@@ -737,5 +732,5 @@ bool FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, 
         updatedTicket.fieldValues[pair.first] = pair.second;
     }
     deps_.UpdateTicket(updatedTicket);
-    return true;
+    return VoidOk();
 }

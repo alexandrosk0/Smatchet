@@ -39,6 +39,7 @@ struct McpToolDefinition;
 #include <map>
 #include "GridLiveContext.h"
 #include "ITrackerBackend.h"
+#include "SmatchetResult.h" // VoidResult (field-edit delegators — #21 AppController public-API flip)
 #include "MainThreadDispatcher.h"
 #include "Commands/IAppThreading.h"
 #include "SmatchetMergeWatchNotifyServer.h"
@@ -978,7 +979,7 @@ class AppController : public IAppThreading,
                                     const std::string& remainingEstimateSnapshot,
                                     const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
                                     std::string& outFieldsPayloadJson, std::string& outError);
-    bool ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result, std::string& outError);
+    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
