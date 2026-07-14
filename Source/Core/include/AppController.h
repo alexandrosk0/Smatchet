@@ -1202,6 +1202,30 @@ class AppController : public IAppThreading,
     /// pane build ITS OWN columns even when the focused ViewState bucket can't see its view
     /// (multi-grid Slice 4 cold-start frozen-capture hole). UI thread only.
     std::shared_ptr<const ViewDefinition> GetPaneResolvedView(const std::string& paneId) const;
+
+    // --- Per-pane field-catalog READ routing (per-pane-catalog-value-read-routing) ----------
+    // The single focused catalog (GetAvailableFields / GetFieldCatalogRevision above) is
+    // insufficient for a cross-backend pane: it renders Jira field metadata against a Plane
+    // pane's raw values. These per-pane variants resolve THROUGH the pane's OWN
+    // GridLiveContext::fieldCatalog (populated by EnsurePaneContextLive's same-backend seed and
+    // the per-pane first-sync catalog fetch), so a cross-backend pane resolves its option
+    // labels / display names against its own backend's catalog. All UI-thread only, O(map
+    // lookup) — meant to be resolved ONCE per pane per frame (SmatchetUI::resolvePaneCatalog),
+    // never per cell (Pillar 1). A pane with no live/populated context falls back to the
+    // focused catalog (identical to today's shared read — never worse).
+    /// Per-context field-catalog revision (0 when the pane has no live context). Bumped by the
+    /// pane's catalog seed/fetch; the read-routing cache keys on it so same-backend duplicate
+    /// panes rebuild when the focused catalog refetch re-seeds them (staleness invalidation).
+    std::uint64_t GetPaneFieldCatalogRevision(const std::string& paneId) const;
+    /// True once the pane context's OWN catalog has been populated (seed or fetch). While
+    /// false the read-routing must use the focused catalog (the pane context is still empty).
+    bool IsPaneFieldCatalogPopulated(const std::string& paneId) const;
+    /// Snapshot COPY of the pane context's AvailableFields (mutex-guarded copy — the focused
+    /// GetAvailableFields returns a bare reference, but a non-focused context's catalog may be
+    /// rewritten off-thread by its fetch worker, so callers get a copy to build a
+    /// TrackerFieldCatalogIndex from safely). Falls back to a copy of the focused catalog when
+    /// the pane has no populated context.
+    std::vector<TrackerField> GetPaneAvailableFields(const std::string& paneId) const;
     /// Kick a sync on ONE pane's context with its own (config, views) pair — the per-pane
     /// twin of SyncWithBackend (which targets the focused context).
     void SyncPaneWithBackend(const std::string& paneId, const TrackerConfig* configOverride,
@@ -1257,6 +1281,24 @@ class AppController : public IAppThreading,
     void applyPaneSyncKickOnMainThread_(const std::string& paneId, TrackerConfig cfgCopy, const ViewsStore& views,
                                         const std::string& viewId, std::uint64_t capturedGeneration,
                                         std::vector<CachedTicket> seedTickets);
+    /// Populate a pane context's OWN fieldCatalog after its first sync created the backend
+    /// (per-pane-catalog-value-read-routing). Cross-backend panes start with an empty catalog
+    /// (the same-backend seed in EnsurePaneContextLive doesn't apply), so their grid renders
+    /// raw field values until focus refetches the focused catalog. This kicks an off-thread
+    /// catalog fetch against the pane's OWN backend + config and writes the result INTO the
+    /// captured GridLiveContext (NOT fieldCatalog()), gated by the #1081 kick-time generation
+    /// check so a mid-flight backend swap / context retirement drops the stale apply. UI thread
+    /// only; a no-op when the pane already has a populated catalog (same-backend seed) or is
+    /// backend-less. cfgCopy carries the pane's own backend endpoint fields (flat TrackerConfig
+    /// holds every backend's endpoint simultaneously — no per-backend endpoint plumbing needed).
+    void populatePaneCatalogAfterSync_(const std::string& paneId, const TrackerConfig& cfgCopy,
+                                       const std::string& projectKey, std::uint64_t capturedGeneration);
+    /// Main-thread apply of populatePaneCatalogAfterSync_'s off-thread fetch: re-validate the
+    /// captured context is still current (present + generation unchanged), then write the fields
+    /// into ITS fieldCatalog under the context mutex and bump the per-context revision.
+    void applyPaneCatalogOnMainThread_(const std::string& paneId, std::uint64_t capturedGeneration,
+                                       std::vector<TrackerField> fields, std::vector<TrackerComponent> components,
+                                       std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta);
     /// TickAllContexts phase 2 — retire non-default contexts hidden longer than
     /// kHiddenContextGraceMs whose sync is idle (backend → ADR-0012 graveyard).
     void retireExpiredHiddenContexts_(std::chrono::steady_clock::time_point now);

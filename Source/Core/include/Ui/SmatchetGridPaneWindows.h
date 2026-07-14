@@ -119,6 +119,23 @@ PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const s
 bool ShouldBuildColumnsFromOwnResolvedView(PaneColumnsSource source, const std::string& paneViewId,
                                            const std::string& ownResolvedViewId);
 
+/// Catalog source for one pane this frame (SmatchetUI::resolvePaneCatalog policy core;
+/// per-pane-catalog-value-read-routing). Decides whether a pane resolves its cell option
+/// labels / display names against the shared FOCUSED catalog or its OWN context catalog.
+enum class PaneCatalogSource {
+    SharedFocused, ///< Focused pane OR the pane context has no populated own catalog — use the shared focused index.
+    OwnContext     ///< Non-focused pane whose OWN context catalog is populated (seed or fetch) — build a per-pane index.
+};
+
+/// Pure catalog-source policy. The focused pane always reads the focused catalog (it IS the
+/// focused context — no divergence possible). A non-focused pane reads its OWN context
+/// catalog only once that context is populated; until then it falls back to the focused
+/// catalog, identical to the pre-routing shared read (never a regression — only an upgrade).
+/// Deliberately NOT keyed on backend-key equality: a same-backend duplicate pane whose
+/// context is seeded (and kept fresh by its own revision) legitimately reads its OWN catalog,
+/// and the resolvePaneCatalog cache keys on the per-context revision so it never goes stale.
+PaneCatalogSource ChoosePaneCatalogSource(bool paneFocused, bool paneCatalogPopulated);
+
 } // namespace detail
 
 } // namespace SmatchetGridPaneWindows

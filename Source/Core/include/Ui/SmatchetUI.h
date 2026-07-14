@@ -481,10 +481,29 @@ class SmatchetUI {
     // pane context's OWN view resolved from its backend bucket — used only on the cold-start
     // fallback path so a cross-backend pane with no session capture still renders ITS OWN
     // columns instead of the focused view's (null for the focused pane / when unresolved).
+    // effectiveCatalogRevision: the revision of the catalog `catalogIndex` was resolved from
+    // (per-pane routed own-context revision, else the focused revision) — keys the column cache
+    // so a per-pane catalog refetch invalidates the pane's header labels (Slice 4 routing).
     const std::vector<TicketGridColumn>& resolvePaneColumns(GridPane& pane,
                                                             const TrackerFieldCatalogIndex& catalogIndex,
                                                             const ViewDefinition* paneView,
-                                                            const ViewDefinition* paneOwnResolvedView);
+                                                            const ViewDefinition* paneOwnResolvedView,
+                                                            std::uint64_t effectiveCatalogRevision);
+    // resolvePaneCatalog: pick the field-catalog INDEX this pane resolves its cell option
+    // labels / display names through (per-pane-catalog-value-read-routing). The focused pane
+    // (and any pane whose own context catalog isn't populated yet) uses the shared per-frame
+    // GridFrameContext index. A non-focused pane whose OWN context catalog is populated builds
+    // a per-pane index (cachedPaneCatalogIndex), rebuilt only when that context's catalog
+    // revision changes — resolved ONCE per pane per frame here, never per cell (Pillar 1).
+    const TrackerFieldCatalogIndex& resolvePaneCatalog(AppController& app, GridPane& pane,
+                                                       const TrackerFieldCatalogIndex& sharedFocusedIndex);
+    // resolvePaneCatalogAndColumns_: the shared (desktop + mobile) route-catalog-then-resolve-
+    // columns sequence — routes the pane's catalog, keys the column cache on the routed
+    // revision, and returns the column set. outCatalogIndex (nullable) hands back the routed
+    // index for the desktop cell path; mobile passes null. Resolved ONCE per pane per frame.
+    const std::vector<TicketGridColumn>&
+    resolvePaneCatalogAndColumns_(AppController& app, GridPane& pane, ViewDefinition* activeView,
+                                  const TrackerFieldCatalogIndex** outCatalogIndex);
     // Section helpers for drawActiveProjectWindow (monoliths Slice 1b). Each owns one of
     // the pre-existing SMATCHET_UI_PERF_SCOPE seams VERBATIM. Positional-ImGui Begin/End
     // pairs that span the table body stay in the orchestrator; these helpers run inside
