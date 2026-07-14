@@ -32,11 +32,17 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
 
-REPO="${REPO:-alexandrosk0/Smatchet}"
+command -v gh >/dev/null 2>&1 || { echo "setup-branch-protection: gh CLI is required" >&2; exit 2; }
+
+# Resolve the target repo dynamically (no hardcoded slug — core-scripts-bash-07).
+# $REPO overrides (test seam); else derive via gh. Fail LOUD if unresolvable —
+# this script mutates branch protection, so silently targeting the wrong repo is
+# worse than not running.
+# shellcheck source=agents/scripts/core/lib/resolve-repo.sh
+. agents/scripts/core/lib/resolve-repo.sh
+REPO="$(resolve_repo)" || { echo "setup-branch-protection: cannot resolve target repo (set REPO=owner/name, or run 'gh auth login' in this checkout)" >&2; exit 2; }
 DRY_RUN=0
 [ "${1:-}" = "--dry-run" ] && DRY_RUN=1
-
-command -v gh >/dev/null 2>&1 || { echo "setup-branch-protection: gh CLI is required" >&2; exit 2; }
 
 # Pick a working python (Windows Store-stub aware), mirroring project-config.sh.
 PY=""

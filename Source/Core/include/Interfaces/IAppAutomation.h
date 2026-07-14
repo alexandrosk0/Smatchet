@@ -22,6 +22,13 @@ class IAppAutomation {
     virtual void RunFlatScriptAsync(const std::string& scriptPath) = 0;
     virtual void RunLuaSetupScript(const std::string& scriptPath) = 0;
     virtual std::vector<std::string> GetLuaGlobalActionNames() const = 0;
+
+    // First-run Lua script consent gate (LuaScriptConsent.h). Approve/revoke a Scripts/*.lua
+    // basename at its current content so it may (or may not) execute; list the currently-approved
+    // resolved paths. Returns false + outError on failure. Present with or without the Lua build.
+    virtual bool ApproveLuaScript(const std::string& scriptName, std::string& outError) = 0;
+    virtual bool RevokeLuaScript(const std::string& scriptName, std::string& outError) = 0;
+    virtual std::vector<std::string> ListApprovedLuaScriptPaths() const = 0;
 };
 
 #endif // SMATCHET_INTERFACES_IAPP_AUTOMATION_H

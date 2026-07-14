@@ -27,7 +27,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`remove-global-project-key`](shipped/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
 | [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |
 | [`lua-recorded-cmd-list`](shipped/lua-recorded-cmd-list.md) | 2026-05-14 | Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). |
-| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. |
+| [`lua-recorded-cmd-list-v2`](shipped/lua-recorded-cmd-list-v2.md) | 2026-05-14 | Stub tracking v2 follow-ups. B1 (per-window predicates) + C1 (focus-aware InputText) graduated to active plans; A1/D1/A2/E1/F1 still open, B2 subsumed by B1. |
 | [`agent-ecosystem-gap-fill`](shipped/agent-ecosystem-gap-fill.md) | 2026-05-15 | Fill 8 patterns borrowed from Anthropic multi-agent / OpenAI Agents SDK / OpenHands / wshobson — parallel dispatch, session scratchpad, tool-trace, output-shape contract, trigger map, versioning, skeleton-first, telemetry. |
 | [`first-time-setup-hardening`](shipped/first-time-setup-hardening.md) | 2026-05-15 | First-time setup hardening — cppcheck path detection, doctor checks, CI matrix Slice 5a (MSYS2 UCRT64). Slices 5b/5c/5d deferred — see plan § Implementation log. |
 | [`imgui-test-engine-bucket-e`](shipped/imgui-test-engine-bucket-e.md) | 2026-05-15 | Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. |
@@ -197,6 +197,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`plane-custom-properties`](shipped/plane-custom-properties.md) | 2026-07-11 | Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4) |
 | [`retire-transport-error-text`](shipped/retire-transport-error-text.md) | 2026-07-11 | Plan — Retire the IsTrackerTransportErrorText string heuristic (N12) |
 | [`pc-verify-agentic-audit-followups`](shipped/pc-verify-agentic-audit-followups.md) | 2026-07-13 | Plan — PC-side verification & completion of the agentic-audit-review follow-ups |
+| [`github-projects-v2-fields`](shipped/github-projects-v2-fields.md) | 2026-07-14 | Plan — GitHub Projects v2 custom fields + ListProjects |
 <!-- END auto-plan-index -->
 
 ### Notes

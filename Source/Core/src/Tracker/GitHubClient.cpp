@@ -5,7 +5,9 @@
 #include "GitHubClientHelpers.h"
 #include "GitHubCommentMappingPure.h"
 #include "GitHubIssueSearch.h"
+#include "GitHubIssueSearchMapping.h"
 #include "GitHubMutationPure.h"
+#include "GitHubProjectsV2.h"
 #include "GitHubQueryFromJql.h"
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
@@ -21,13 +23,15 @@
 #include <chrono>
 #include <cstdint>
 #include <iterator>
+#include <map>
 #include <sstream>
 
 namespace {
 
 // Static field catalog — the 6 native GitHub-issue fields. Static because GitHub
-// issues don't have user-configurable schemas like Jira customfields. Projects
-// V2 custom fields are a separate API (deferred per plan § Out of scope).
+// issues don't have user-configurable schemas like Jira customfields. Projects v2
+// custom fields are the one dynamic extension: FetchFieldCatalog appends them from
+// the configured board (docs/plans/shipped/github-projects-v2-fields.md).
 const char* const kStateLabel = "State";
 const char* const kLabelsLabel = "Labels";
 const char* const kAssigneesLabel = "Assignees";
@@ -45,6 +49,26 @@ const char* const kPrMergeableLabel = "PR Mergeable";
 const char* const kPrDraftLabel = "PR Draft";
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
+
+// True when the config anchors a Projects v2 board (owner + project number + PAT all
+// present) — the gate for every projects-v2 code path
+// (docs/plans/shipped/github-projects-v2-fields.md).
+bool ProjectV2Configured(const TrackerConfig& cfg, const smatchet::github::GitHubRequestAuth& auth) {
+    return !cfg.GitHubOwner.empty() && cfg.GitHubProjectNumber > 0 && !auth.Pat.empty();
+}
+
+// Merge the project-field values fetched for this sync into one ticket. No-op for
+// tickets that are not items of the configured project.
+void MergeProjectV2ValuesIntoTicket(
+    CachedTicket& ticket, const std::map<std::string, std::vector<std::pair<std::string, std::string>>>& valuesByKey) {
+    const auto it = valuesByKey.find(ticket.id);
+    if (it == valuesByKey.end()) {
+        return;
+    }
+    for (const auto& kv : it->second) {
+        ticket.fieldValues[kv.first] = kv.second;
+    }
+}
 
 } // namespace
 
@@ -79,6 +103,7 @@ ITrackerActivity* GitHubClient::Activity() { return this; }
 GitHubClient::GitHubClient(const std::string& baseUrl, const std::string& pat)
     : baseUrl_(baseUrl.empty() ? std::string("https://api.github.com") : baseUrl), pat_(pat),
       lastLoggedPatBytes_(pat.size()) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend ctor/auth parity; owner=tracker; revisit=2026-12-31)
     LOG_INFO("GitHubClient: ctor baseUrl='%s' pat_bytes=%zu", baseUrl_.c_str(), pat_.size());
 }
 
@@ -105,6 +130,63 @@ smatchet::github::GitHubRequestAuth GitHubClient::ResolveAuth(const TrackerConfi
                  auth.Pat.size(), pat_.size(), configOverride ? "live-cfg" : "disk");
     }
     return auth;
+}
+
+Result<smatchet::github::ProjectV2Catalog, TrackerError>
+GitHubClient::EnsureProjectV2Catalog(const smatchet::github::GitHubRequestAuth& auth, const std::string& owner,
+                                     int projectNumber) const {
+    using CatalogResult = Result<smatchet::github::ProjectV2Catalog, TrackerError>;
+    {
+        std::lock_guard<std::mutex> lock(pv2Mutex_);
+        if (pv2CatalogLoaded_ && pv2CatalogOwner_ == owner && pv2CatalogNumber_ == projectNumber) {
+            return CatalogResult::Ok(pv2Catalog_);
+        }
+    }
+    auto fetched = smatchet::github::FetchProjectV2Catalog(auth.BaseUrl, auth.Pat, owner, projectNumber);
+    if (!fetched) {
+        return CatalogResult::Err(fetched.error()); // failures are not cached — the next call retries
+    }
+    std::lock_guard<std::mutex> lock(pv2Mutex_);
+    pv2Catalog_ = fetched.value();
+    pv2CatalogLoaded_ = true;
+    pv2CatalogOwner_ = owner;
+    pv2CatalogNumber_ = projectNumber;
+    return CatalogResult::Ok(pv2Catalog_);
+}
+
+std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+GitHubClient::FetchProjectV2ValuesForSync(const smatchet::github::GitHubRequestAuth& auth, const TrackerConfig& cfg,
+                                          std::string* outWarning) const {
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> empty;
+    auto appendWarning = [outWarning](const std::string& text) {
+        if (outWarning == nullptr || text.empty()) {
+            return;
+        }
+        if (!outWarning->empty()) {
+            outWarning->append(" ");
+        }
+        outWarning->append(text);
+    };
+    auto catalog = EnsureProjectV2Catalog(auth, cfg.GitHubOwner, cfg.GitHubProjectNumber);
+    if (!catalog) {
+        appendWarning("GitHub project #" + std::to_string(cfg.GitHubProjectNumber) +
+                      " fields unavailable: " + catalog.error().Detail);
+        return empty;
+    }
+    if (catalog.value().Fields.empty()) {
+        return empty; // board has no representable custom fields — nothing to join
+    }
+    std::string capWarning;
+    auto values = smatchet::github::FetchProjectV2ItemValues(auth.BaseUrl, auth.Pat, catalog.value().ProjectNodeId,
+                                                             catalog.value().Fields, &capWarning);
+    if (!values) {
+        appendWarning("GitHub project #" + std::to_string(cfg.GitHubProjectNumber) +
+                      " field values unavailable: " + values.error().Detail);
+        return empty;
+    }
+    appendWarning(capWarning);
+    // SMATCHET_DEVIATION(rule=duplication; reason=degrade-to-warning tail parity; owner=tracker; revisit=2026-12-31)
+    return std::move(values.value());
 }
 
 std::string GitHubClient::GetTrackerType() const { return "github"; }
@@ -201,9 +283,18 @@ std::vector<CachedTicket> GitHubClient::FetchIssues(bool* outFullSyncCompleted, 
     // thread, per Pillar 2).
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
     const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
-    return smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo,
-                                                   cfg.JqlQuery, outFullSyncCompleted, outFetchError, outWarning,
-                                                   nullptr, outFetchErrorStructured);
+    std::vector<CachedTicket> tickets = smatchet::github::FetchIssuesViaRestApi(
+        auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery, outFullSyncCompleted, outFetchError,
+        outWarning, nullptr, outFetchErrorStructured);
+    // Projects v2 enrichment — join the configured board's field values onto the
+    // fetched rows. Degrades to a warning: a broken board must never fail the sync.
+    if (ProjectV2Configured(cfg, auth) && !tickets.empty()) {
+        const auto pv2Values = FetchProjectV2ValuesForSync(auth, cfg, outWarning);
+        for (auto& ticket : tickets) {
+            MergeProjectV2ValuesIntoTicket(ticket, pv2Values);
+        }
+    }
+    return tickets;
 }
 
 TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& onBatch,
@@ -223,6 +314,17 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     std::size_t pageCount = 0;
     std::size_t totalEmitted = 0;
 
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
+
+    // Projects v2 enrichment — fetched BEFORE the page stream starts so each page can
+    // merge the board's field values as it is emitted (an already-emitted batch cannot
+    // be amended). Degrades to a warning; never fails the sync.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>> pv2Values;
+    if (ProjectV2Configured(cfg, auth)) {
+        pv2Values = FetchProjectV2ValuesForSync(auth, cfg, &fetchWarning);
+    }
+
+    // SMATCHET_DEVIATION(rule=duplication; reason=streamed-page emit parity; owner=tracker; revisit=2026-12-31)
     auto onPage = [&](const std::vector<CachedTicket>& page, bool isLast) {
         ++pageCount;
         totalEmitted += page.size();
@@ -241,10 +343,12 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
         // can't move directly. Per-batch copy is cheap (≤100 tickets) and the
         // alternative is duplicating the helper's signature.
         std::vector<CachedTicket> batch = page;
+        for (auto& ticket : batch) {
+            MergeProjectV2ValuesIntoTicket(ticket, pv2Values);
+        }
         onBatch(std::move(batch));
     };
 
-    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg); // issue #979 — live-cfg credentials
     TrackerError fetchErrorStructured;
     // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     smatchet::github::FetchIssuesViaRestApi(auth.BaseUrl, auth.Pat, cfg.GitHubOwner, cfg.GitHubRepo, cfg.JqlQuery,
@@ -346,10 +450,10 @@ Result<bool, TrackerError> GitHubClient::ProbeIssueExists(const TrackerConfig& c
         TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), "ProbeIssueExists HTTP error"));
 }
 
-Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& /*cfg*/,
+Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(const TrackerConfig& cfg,
                                                                                 const std::string& /*projectKey*/) {
-    // 6 native fields. Static — no per-project enumeration like Jira's
-    // create-meta or Plane's custom fields.
+    // Native fields are static (GitHub issues have no configurable schema); the
+    // Projects v2 block below appends the configured board's custom fields.
     TrackerFieldCatalogResult outCatalog;
     auto addField = [&outCatalog](const char* id, const char* label, const char* type) {
         TrackerField f;
@@ -398,11 +502,27 @@ Result<TrackerFieldCatalogResult, TrackerError> GitHubClient::FetchFieldCatalog(
     addField("commit.url", "Commit URL", "string");
     addField("commit.parents", "Commit Parents", "string");
     addField("commit.verified", "Commit Verified", "string");
+    // Projects v2 custom fields (docs/plans/shipped/github-projects-v2-fields.md) —
+    // the configured board's TEXT / NUMBER / DATE / SINGLE_SELECT / ITERATION fields
+    // as custom columns. A board fetch failure degrades to a catalog Warning so the
+    // native fields still load.
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (ProjectV2Configured(cfg, auth)) {
+        auto pv2 = EnsureProjectV2Catalog(auth, cfg.GitHubOwner, cfg.GitHubProjectNumber);
+        if (pv2) {
+            for (const auto& field : pv2.value().Fields) {
+                outCatalog.Fields.push_back(field);
+            }
+        } else {
+            outCatalog.Warning = "GitHub project #" + std::to_string(cfg.GitHubProjectNumber) +
+                                 " fields unavailable: " + pv2.error().Detail;
+        }
+    }
     return Result<TrackerFieldCatalogResult, TrackerError>::Ok(std::move(outCatalog));
 }
 
 Result<std::unordered_map<std::string, bool>, TrackerError>
-GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId) {
+GitHubClient::FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
     // GitHub has no per-issue editmeta endpoint — the 6 native fields are uniformly
     // editable when the PAT has repo write scope. Return success with all-true so
     // AppController caches the result and doesn't refetch every UI frame (the
@@ -456,6 +576,20 @@ GitHubClient::FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string
     // issue-comments PR-A — comment count is read-only; the UI intercepts the
     // cell, but editmeta must agree so the grid never offers an edit affordance.
     outFieldIdCanEdit["comments"] = false;
+    // Projects v2 fields — MUST be present here: the editmeta cache is default-deny
+    // for ids missing from a loaded map, so an absent "pv2.*" id would silently block
+    // its grid edit. Ids are already-lowercase slugs (the cache lower-cases lookups).
+    // A board fetch failure degrades to native-only editability (edits of pv2 columns
+    // are then blocked until the board is reachable — consistent with the catalog).
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(&cfg);
+    if (ProjectV2Configured(cfg, auth)) {
+        auto pv2 = EnsureProjectV2Catalog(auth, cfg.GitHubOwner, cfg.GitHubProjectNumber);
+        if (pv2) {
+            for (const auto& field : pv2.value().Fields) {
+                outFieldIdCanEdit[field.Id] = !field.ReadOnly;
+            }
+        }
+    }
     return Result<std::unordered_map<std::string, bool>, TrackerError>::Ok(std::move(outFieldIdCanEdit));
 }
 
@@ -701,6 +835,44 @@ bool ApplyGitHubLabelSetReplace(const std::string& baseUrl, const cpr::Header& h
     return true;
 }
 
+// Execute the plan's Projects v2 edits: resolve this issue's item id inside the
+// configured board (absent → the user must add the issue to the project on GitHub
+// first — Smatchet never auto-adds board items), then one update/clear mutation per
+// edit. Emits pv2_field_update audit rows under the caller's auditOp so the outer
+// issue_update_fields pair brackets the per-primitive evidence, mirroring
+// label_add / label_remove above. False → outError classified.
+bool ApplyGitHubProjectV2Edits(const smatchet::github::GitHubRequestAuth& auth, const std::string& issueId,
+                               const smatchet::github::ParsedIssueKey& key, const std::string& projectNodeId,
+                               int projectNumber, const std::vector<smatchet::github::GitHubProjectV2Edit>& edits,
+                               const std::string& auditOp, TrackerError& outError) {
+    auto itemResult = smatchet::github::ResolveProjectV2ItemId(auth.BaseUrl, auth.Pat, key.Owner, key.Repo, key.Number,
+                                                               projectNodeId);
+    if (!itemResult) {
+        outError = itemResult.error();
+        return false;
+    }
+    const std::string itemId = itemResult.value();
+    if (itemId.empty()) {
+        outError = TrackerErrorInvalidRequest("GitHub issue " + issueId + " is not an item of GitHub project #" +
+                                              std::to_string(projectNumber) +
+                                              " — add it to the project on GitHub first, then retry the edit");
+        return false;
+    }
+    for (const auto& edit : edits) {
+        const TrackerError err = smatchet::github::UpdateProjectV2FieldValue(auth.BaseUrl, auth.Pat, projectNodeId,
+                                                                             itemId, edit.FieldNodeId, edit.Value);
+        BackendAuditTrail::AppendResult("pv2_field_update", "github_client", issueId, auditOp, err.IsOk(), err.Detail,
+                                        nlohmann::json{{"fieldNodeId", edit.FieldNodeId}, {"value", edit.Value}});
+        if (!err.IsOk()) {
+            LOG_ERROR("GitHubClient::UpdateIssueFields: projectV2 field update failed for %s — %s", issueId.c_str(),
+                      err.Detail.c_str());
+            outError = err;
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 TrackerError GitHubClient::UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) {
@@ -763,6 +935,27 @@ TrackerError GitHubClient::UpdateIssueFields(const std::string& issueId, const n
             return fail(labelError);
         }
     }
+    if (!plan.ProjectV2Edits.empty()) {
+        // Projects v2 write path (docs/plans/shipped/github-projects-v2-fields.md).
+        // The board anchor comes from the settled on-disk config, same source as the
+        // auth above — a pv2 payload can only exist if FetchFieldCatalog surfaced the
+        // field from a configured board, so an unconfigured anchor here means the
+        // config changed under an in-flight edit.
+        const TrackerConfig cfg = ConfigManager::Load();
+        if (!ProjectV2Configured(cfg, auth)) {
+            return fail(TrackerErrorInvalidRequest(
+                "GitHub project fields need Preferences > Tracker > GitHub owner + project number configured"));
+        }
+        auto catalog = EnsureProjectV2Catalog(auth, cfg.GitHubOwner, cfg.GitHubProjectNumber);
+        if (!catalog) {
+            return fail(catalog.error());
+        }
+        TrackerError pv2Error;
+        if (!ApplyGitHubProjectV2Edits(auth, issueId, parsed, catalog.value().ProjectNodeId, cfg.GitHubProjectNumber,
+                                       plan.ProjectV2Edits, auditOp, pv2Error)) {
+            return fail(pv2Error);
+        }
+    }
     LOG_INFO("GitHubClient: updated GitHub issue %s fields successfully.", issueId.c_str());
     BackendAuditTrail::AppendResult("issue_update_fields", "github_client", issueId, auditOp, true, std::string());
     return TrackerError::Ok();
@@ -792,6 +985,23 @@ Result<nlohmann::json, TrackerError> GitHubClient::BuildFieldPayload(const Track
     // pipeline calls BuildFieldPayload → UpdateIssueFields). Ids here are the
     // FetchFieldCatalog ids; BuildGitHubIssueUpdatePlan translates them to the REST
     // names (summary→title, status→state, assignee→assignees) at PATCH time.
+    if (field.Id.compare(0, 4, "pv2.") == 0) {
+        // Projects v2 custom field — the typed-value conversion happens HERE (this is
+        // the only mutation-path stop that still has the catalog TrackerField with the
+        // option list and the case-sensitive node id in SchemaCustom); the payload
+        // carries both so UpdateIssueFields can run the GraphQL mutation without a
+        // catalog lookup (docs/plans/shipped/github-projects-v2-fields.md).
+        auto valueResult = smatchet::github::BuildProjectV2FieldValue(field, values);
+        if (!valueResult) {
+            return Result<nlohmann::json, TrackerError>::Err(TrackerErrorInvalidRequest(valueResult.error()));
+        }
+        nlohmann::json edit = nlohmann::json::object();
+        edit["fieldId"] = field.SchemaCustom;
+        edit["value"] = std::move(valueResult.value());
+        nlohmann::json outPayload = nlohmann::json::object();
+        outPayload[field.Id] = std::move(edit);
+        return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
+    }
     if (field.Id == "labels" || field.Id == "assignee") {
         nlohmann::json set = nlohmann::json::array();
         for (const auto& value : values) {
@@ -929,6 +1139,42 @@ std::string GitHubClient::ExtractProjectFromQuery(const std::string& query) cons
 }
 
 std::vector<RemoteProject> GitHubClient::ListProjects() {
-    // Deferred — `GET /user/repos` paginated. Empty for now.
-    return {};
+    // Repos the PAT can see (owner / collaborator / org member) via GET /user/repos —
+    // GitHub's "project" for Smatchet is a repository, and the picker row's key feeds
+    // IssueDraft::ProjectKey ("owner/repo") straight into BuildCreatePayload's split.
+    // Best-effort like PlaneClient::ListProjects: any failure returns {} and the
+    // picker falls back to the manually configured owner/repo.
+    const smatchet::github::GitHubRequestAuth auth = ResolveAuth(nullptr);
+    if (auth.Pat.empty()) {
+        LOG_WARN("GitHubClient::ListProjects: PAT not configured.");
+        return {};
+    }
+    const cpr::Header headers = BuildGitHubHeaders(auth.Pat);
+    std::vector<RemoteProject> projects;
+    constexpr int kPerPage = 100;
+    constexpr int kMaxPages = 10; // 1000 visible repos is well past a usable picker list
+    // SMATCHET_DEVIATION(rule=duplication; reason=paginated GET scaffold parity; owner=tracker; revisit=2026-12-31)
+    for (int page = 1; page <= kMaxPages; ++page) {
+        const std::string url = auth.BaseUrl + "/user/repos?sort=full_name&per_page=" + std::to_string(kPerPage) +
+                                "&page=" + std::to_string(page);
+        const cpr::Response resp = TrackerGetLogged("GitHubClient", url, headers);
+        if (resp.status_code != 200) {
+            const std::string msg =
+                smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
+            LOG_WARN("GitHubClient::ListProjects: HTTP %ld on page %d — %s", resp.status_code, page, msg.c_str());
+            return {};
+        }
+        // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
+        const nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
+        if (parsed.is_discarded() || !parsed.is_array()) {
+            LOG_WARN("GitHubClient::ListProjects: page %d response was not a JSON array.", page);
+            return {};
+        }
+        smatchet::github::AppendGitHubReposAsRemoteProjects(parsed, projects);
+        if (parsed.size() < static_cast<std::size_t>(kPerPage)) {
+            break; // short page — no more repos to list
+        }
+    }
+    LOG_INFO("GitHubClient::ListProjects: %zu repo(s) visible to the PAT.", projects.size());
+    return projects;
 }
