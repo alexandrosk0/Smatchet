@@ -8,9 +8,9 @@
 // here so the doctest rig pins it hermetically; the cpr-bound orchestration lives in
 // GitHubProjectsV2.cpp. Null/missing-safe per Pillar 3.
 //
-// Field-id scheme: catalog ids are lowercase slugs "pv2.<name-slug>" (the editmeta
-// cache lower-cases lookup keys, so a mixed-case GraphQL node id could never match);
-// the case-SENSITIVE ProjectV2 field node id travels in TrackerField::SchemaCustom
+// Field-id scheme: catalog ids are lowercase slugs "pv2.<name-slug>" — the editmeta
+// cache lower-cases lookup keys, so a mixed-case GraphQL node id could never match.
+// The case-SENSITIVE ProjectV2 field node id travels in TrackerField::SchemaCustom
 // and inside the BuildFieldPayload output, never as the catalog id.
 
 #include "SmatchetResult.h"

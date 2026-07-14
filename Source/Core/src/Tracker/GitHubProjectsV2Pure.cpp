@@ -250,6 +250,66 @@ Result<ProjectV2Catalog, std::string> ParseProjectV2Catalog(const nlohmann::json
     return CatalogResult::Ok(std::move(out));
 }
 
+namespace {
+
+// "owner/repo#N" join key from one item's `content` object. Empty for draft items
+// (no issue/PR content) and malformed repo shapes — the caller skips those items.
+std::string TicketKeyFromItemContent(const nlohmann::json& item) {
+    const nlohmann::json* content = JsonObjectAt(item, "content");
+    if (content == nullptr) {
+        return std::string();
+    }
+    const nlohmann::json* repo = JsonObjectAt(*content, "repository");
+    const nlohmann::json* owner = repo ? JsonObjectAt(*repo, "owner") : nullptr;
+    const auto numberIt = content->find("number");
+    if (repo == nullptr || owner == nullptr || numberIt == content->end() || !numberIt->is_number_integer()) {
+        return std::string();
+    }
+    const std::string ownerLogin = JsonStringOr(*owner, "login");
+    const std::string repoName = JsonStringOr(*repo, "name");
+    if (ownerLogin.empty() || repoName.empty()) {
+        return std::string();
+    }
+    return ownerLogin + "/" + repoName + "#" + std::to_string(numberIt->get<long long>());
+}
+
+// Grid display string for one typed `fieldValues` node: text verbatim, number via
+// minimal formatting, date "YYYY-MM-DD", single-select option NAME, iteration title.
+// Empty when the node carries none of the typed shapes.
+std::string DisplayValueFromFieldValueNode(const nlohmann::json& value) {
+    const auto numIt = value.find("number");
+    if (value.contains("text") && value["text"].is_string()) {
+        return value["text"].get<std::string>();
+    }
+    if (numIt != value.end() && numIt->is_number()) {
+        return FormatNumberValue(numIt->get<double>());
+    }
+    if (value.contains("date") && value["date"].is_string()) {
+        return value["date"].get<std::string>();
+    }
+    if (value.contains("name") && value["name"].is_string()) {
+        // SMATCHET_DEVIATION(rule=duplication; reason=display chain; owner=tracker; revisit=2026-12-31)
+        return value["name"].get<std::string>(); // single-select option name
+    }
+    if (value.contains("title") && value["title"].is_string()) {
+        return value["title"].get<std::string>(); // iteration title
+    }
+    return std::string();
+}
+
+// Field node id → the catalog's "pv2.<slug>" id; empty when the value belongs to a
+// built-in projection (not one of our columns).
+std::string SlugIdForFieldNodeId(const std::vector<TrackerField>& catalogFields, const std::string& fieldNodeId) {
+    for (const auto& catalogField : catalogFields) {
+        if (catalogField.SchemaCustom == fieldNodeId) {
+            return catalogField.Id;
+        }
+    }
+    return std::string();
+}
+
+} // namespace
+
 Result<ProjectV2ItemsPage, std::string> ParseProjectV2ItemsPage(const nlohmann::json& body,
                                                                 const std::vector<TrackerField>& catalogFields) {
     using PageResult = Result<ProjectV2ItemsPage, std::string>;
@@ -277,23 +337,11 @@ Result<ProjectV2ItemsPage, std::string> ParseProjectV2ItemsPage(const nlohmann::
         if (!item.is_object()) {
             continue;
         }
-        const nlohmann::json* content = JsonObjectAt(item, "content");
-        if (content == nullptr) {
-            continue; // draft items carry no issue/PR content — nothing to join onto
-        }
-        const nlohmann::json* repo = JsonObjectAt(*content, "repository");
-        const nlohmann::json* owner = repo ? JsonObjectAt(*repo, "owner") : nullptr;
-        const auto numberIt = content->find("number");
-        if (repo == nullptr || owner == nullptr || numberIt == content->end() || !numberIt->is_number_integer()) {
-            continue;
-        }
-        const std::string ownerLogin = JsonStringOr(*owner, "login");
-        const std::string repoName = JsonStringOr(*repo, "name");
-        if (ownerLogin.empty() || repoName.empty()) {
-            continue;
-        }
         ProjectV2ItemValues parsed;
-        parsed.TicketKey = ownerLogin + "/" + repoName + "#" + std::to_string(numberIt->get<long long>());
+        parsed.TicketKey = TicketKeyFromItemContent(item);
+        if (parsed.TicketKey.empty()) {
+            continue; // draft item or malformed content — nothing to join onto
+        }
 
         const nlohmann::json* fieldValues = JsonObjectAt(item, "fieldValues");
         const nlohmann::json* valueNodes = fieldValues ? JsonArrayAt(*fieldValues, "nodes") : nullptr;
@@ -304,33 +352,12 @@ Result<ProjectV2ItemsPage, std::string> ParseProjectV2ItemsPage(const nlohmann::
                 }
                 const nlohmann::json* fieldRef = JsonObjectAt(value, "field");
                 const std::string fieldNodeId = fieldRef ? JsonStringOr(*fieldRef, "id") : std::string();
-                if (fieldNodeId.empty()) {
-                    continue;
-                }
-                std::string slugId;
-                for (const auto& catalogField : catalogFields) {
-                    if (catalogField.SchemaCustom == fieldNodeId) {
-                        slugId = catalogField.Id;
-                        break;
-                    }
-                }
+                const std::string slugId =
+                    fieldNodeId.empty() ? std::string() : SlugIdForFieldNodeId(catalogFields, fieldNodeId);
                 if (slugId.empty()) {
                     continue; // a built-in projection value — not one of our columns
                 }
-                std::string display;
-                const auto numIt = value.find("number");
-                if (value.contains("text") && value["text"].is_string()) {
-                    display = value["text"].get<std::string>();
-                } else if (numIt != value.end() && numIt->is_number()) {
-                    display = FormatNumberValue(numIt->get<double>());
-                } else if (value.contains("date") && value["date"].is_string()) {
-                    display = value["date"].get<std::string>();
-                } else if (value.contains("name") && value["name"].is_string()) {
-                    // SMATCHET_DEVIATION(rule=duplication; reason=display chain; owner=tracker; revisit=2026-12-31)
-                    display = value["name"].get<std::string>(); // single-select option name
-                } else if (value.contains("title") && value["title"].is_string()) {
-                    display = value["title"].get<std::string>(); // iteration title
-                }
+                std::string display = DisplayValueFromFieldValueNode(value);
                 if (!display.empty()) {
                     parsed.Values.emplace_back(slugId, std::move(display));
                 }
