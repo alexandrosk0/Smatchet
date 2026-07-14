@@ -618,7 +618,7 @@ FetchContent_MakeAvailable(httplib)
 
 # md4c is the Markdown parser backing the rich-text editing pipeline (md ↔ ADF/HTML for Jira/Plane
 # description fields). We compile only `md4c.c` ourselves rather than using upstream's CMake project,
-# which also builds md4c-html and the md2html CLI we don't need. See RICH_TEXT_EDITING_V2_PLAN.md.
+# which also builds md4c-html and the md2html CLI we don't need. See docs/plans/rich-text-editing-v2-remaining.md.
 smatchet_fetch_status("Fetching md4c (CommonMark/GFM parser)...")
 FetchContent_Declare(md4c
     GIT_REPOSITORY https://github.com/mity/md4c.git

@@ -95,7 +95,7 @@ struct PendingFieldEdit {
     /// When true, `Values[0]` is already in the backend's target format (ADF JSON / HTML /
     /// final string) and the payload layer must NOT run MarkdownConvert on it. Set by the
     /// long-text modal editor's raw-mode path when it can't safely round-trip through Markdown.
-    /// See RICH_TEXT_EDITING_V2_PLAN.md.
+    /// See docs/plans/rich-text-editing-v2-remaining.md.
     bool Preformatted = false;
     /// Original rich payload (ADF JSON or HTML) at the time the user opened the editor.
     /// Persisted alongside the offline queue entry so replay can perform a real 3-way merge:
@@ -261,7 +261,7 @@ struct UiDrawSession {
     // pointer is restored to io.IniFilename on the way back (re-attaches ImGui's desktop auto-save).
     const char* savedDesktopIniFilename = nullptr;
 
-    /// Merge-conflict resolution modal for offline field edits. See RICH_TEXT_EDITING_V2_PLAN.md PR-F.
+    /// Merge-conflict resolution modal for offline field edits. See docs/plans/rich-text-editing-v2-remaining.md PR-F.
     bool showConflictResolveModal = false;
     std::int64_t conflictResolveDbId = 0; ///< DB id of the pending_field_edit with the conflict.
     std::string conflictContextJson;      ///< JSON blob: {base,mine,theirs,richKind}

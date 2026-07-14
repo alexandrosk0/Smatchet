@@ -22,7 +22,6 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 
 | Plan (slug) | Approx. date | One-line summary |
 |---|---|---|
-| [`rich-text-editing-v2-remaining`](shipped/rich-text-editing-v2-remaining.md) | 2026-05-09 | Rich-text editing v2 backlog — golden / snapshot tests for `MarkdownToAdf` / `AdfToMarkdown` / `MarkdownToHtml` / `HtmlSubsetToMarkdown`; raw-mode + fidelity UX. Originally `backlog/RICH_TEXT_EDITING_V2_REMAINING.md`. |
 | [`command-system-plan`](shipped/command-system-plan.md) | 2026-05-11 | Unified Command System (CLI + Palette + MCP + Lua + Scenarios). Originally `backlog/COMMAND_SYSTEM_PLAN.md`. C++ source comments throughout `Source_Core/src/Commands/` + `Target_Standalone/` reference this. |
 | [`remove-global-project-key`](shipped/remove-global-project-key.md) | 2026-05-12 | Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). |
 | [`vs-style-view-menu`](shipped/vs-style-view-menu.md) | 2026-05-12 | VS Code shell — classic menu bar, View menu around VS Code "Views" concept, embedded Command Palette input, locked docking. |

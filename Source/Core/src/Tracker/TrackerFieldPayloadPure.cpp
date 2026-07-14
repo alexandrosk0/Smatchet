@@ -614,7 +614,7 @@ bool BuildAdfScalar(const TrackerField& field, const std::string& scalarValue, n
     // The long-text modal editor produces Markdown for ADF fields (description, environment,
     // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
     // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
-    // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
+    // a single paragraph). See docs/plans/rich-text-editing-v2-remaining.md.
     outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
     return true;
 }
