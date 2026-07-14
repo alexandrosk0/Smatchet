@@ -228,16 +228,14 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     const auto& tickets = *ticketsSnap;
 
     ViewDefinition* activeViewForGrid = resolvePaneView(d, pane);
-    const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
-    // Cross-backend cold-start defense (Slice 4): the pane's OWN view resolved by its context
-    // sync, so resolvePaneColumns can build the pane's OWN column SET even when the focused
-    // ViewState bucket can't see it and no session capture exists yet (after a restart) —
-    // closing the frozen-capture hole that left a restarted unfocused cross-backend pane
-    // rendering the focused view's columns until first focus.
-    std::shared_ptr<const ViewDefinition> paneOwnResolvedView =
-        pane.focused ? nullptr : app.GetPaneResolvedView(pane.id);
+    // Per-pane catalog READ routing + column resolution in one helper (shared with the mobile
+    // shell): routes the pane's cell option labels / display names through its OWN context
+    // catalog when populated, and keys the column cache on the routed revision. See
+    // resolvePaneCatalogAndColumns_.
+    const TrackerFieldCatalogIndex* catalogIndexPtr = nullptr;
     const std::vector<TicketGridColumn>& columns =
-        resolvePaneColumns(pane, catalogIndex, activeViewForGrid, paneOwnResolvedView.get());
+        resolvePaneCatalogAndColumns_(app, pane, activeViewForGrid, &catalogIndexPtr);
+    const TrackerFieldCatalogIndex& catalogIndex = *catalogIndexPtr;
 
     // Orchestrator-owned cross-section state (was function-local in the monolith). These
     // outlive every section helper and are bound by reference into the DrawCtx below.
@@ -332,6 +330,69 @@ ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
     return active;
 }
 
+// Catalog INDEX a pane resolves its cell option labels / display names through
+// (per-pane-catalog-value-read-routing). Source policy is the pure ChoosePaneCatalogSource
+// core: the focused pane (and any pane whose own context catalog isn't populated yet) uses
+// the shared per-frame focused index; a non-focused pane whose OWN context catalog is
+// populated (same-backend seed OR the per-pane fetch in populatePaneCatalogAfterSync_) gets
+// a per-pane index. That index is built ONCE and rebuilt only when the pane's own context
+// catalog REVISION changes — so a same-backend duplicate pane re-seeded by a focused refetch
+// picks up the fresh catalog (staleness invalidation) and a cross-backend pane picks up its
+// own fetched catalog, all without a per-cell rebuild (Pillar 1).
+const TrackerFieldCatalogIndex& SmatchetUI::resolvePaneCatalog(AppController& app, GridPane& pane,
+                                                               const TrackerFieldCatalogIndex& sharedFocusedIndex) {
+    typedef SmatchetGridPaneWindows::detail::PaneCatalogSource PaneCatalogSource;
+    const bool populated = !pane.focused && app.IsPaneFieldCatalogPopulated(pane.id);
+    const PaneCatalogSource source = SmatchetGridPaneWindows::detail::ChoosePaneCatalogSource(pane.focused, populated);
+    if (source == PaneCatalogSource::SharedFocused) {
+        // Focused / unpopulated pane: the shared per-frame focused index is exactly the data
+        // the pre-routing shared read used — never worse. Keep the per-pane cache marked stale
+        // so a later focus flip back to OwnContext rebuilds against the current revision.
+        pane.cachedPaneCatalogValid = false;
+        return sharedFocusedIndex;
+    }
+    // OwnContext: build/refresh the per-pane index only when this context's catalog revision
+    // moved (or the cache is empty). O(map lookup) + a bounded field-list copy on CHANGE only —
+    // steady-state re-renders hit the cached index with zero allocation, so never per cell.
+    const std::uint64_t rev = app.GetPaneFieldCatalogRevision(pane.id);
+    if (!pane.cachedPaneCatalogValid || !pane.cachedPaneCatalogIndex || pane.cachedPaneCatalogRevision != rev) {
+        // Own the fields COPY so the index's raw TrackerField* stay valid (the index points
+        // INTO this vector — GetPaneAvailableFields returns a value, not a live reference).
+        pane.cachedPaneCatalogFields =
+            std::make_shared<const std::vector<TrackerField>>(app.GetPaneAvailableFields(pane.id));
+        pane.cachedPaneCatalogIndex = std::make_shared<const TrackerFieldCatalogIndex>(*pane.cachedPaneCatalogFields);
+        pane.cachedPaneCatalogRevision = rev;
+        pane.cachedPaneCatalogValid = true;
+    }
+    return *pane.cachedPaneCatalogIndex;
+}
+
+// Combined per-pane catalog route + column resolve (per-pane-catalog-value-read-routing).
+// Shared by the desktop grid and the mobile shell (DRY Pillar 5) so the routing + effective-
+// revision + own-view-fetch + column-cache sequence lives in ONE place. Returns the resolved
+// column set; when outCatalogIndex is non-null, also hands back the routed catalog index (the
+// desktop cell path needs it — mobile passes null). Resolved ONCE per pane per frame.
+const std::vector<TicketGridColumn>&
+SmatchetUI::resolvePaneCatalogAndColumns_(AppController& app, GridPane& pane, ViewDefinition* activeView,
+                                          const TrackerFieldCatalogIndex** outCatalogIndex) {
+    const TrackerFieldCatalogIndex& catalogIndex = resolvePaneCatalog(app, pane, *gridFrameCtx_.catalogIndex);
+    if (outCatalogIndex != nullptr) {
+        *outCatalogIndex = &catalogIndex;
+    }
+    // Effective catalog revision: the OWN context revision when the pane routed to its own
+    // catalog, else the focused revision — keys the column cache so a per-pane catalog refetch
+    // invalidates the header labels (which come from catalog.DisplayName). Equal to the focused
+    // revision for a shared-index pane, so the pre-routing behaviour is preserved.
+    const std::uint64_t effectiveCatalogRevision =
+        pane.cachedPaneCatalogValid ? pane.cachedPaneCatalogRevision : gridFrameCtx_.catalogRevision;
+    // Cross-backend cold-start defense (Slice 4): the pane's OWN view resolved by its context
+    // sync lets resolvePaneColumns build the pane's OWN column SET even when the focused
+    // ViewState bucket can't see it and no session capture exists yet (after a restart).
+    std::shared_ptr<const ViewDefinition> paneOwnResolvedView =
+        pane.focused ? nullptr : app.GetPaneResolvedView(pane.id);
+    return resolvePaneColumns(pane, catalogIndex, activeView, paneOwnResolvedView.get(), effectiveCatalogRevision);
+}
+
 // Column set for a pane (per-pane column isolation — the unfocused pane must keep ITS
 // OWN view's field set across focus switches). Source policy is the pure
 // ChoosePaneColumnsSource core (bucket-A covered): the shared per-frame GridFrameContext
@@ -344,7 +405,13 @@ ViewDefinition* SmatchetUI::resolvePaneView(UiDrawSession& d, GridPane& pane) {
 const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pane,
                                                                     const TrackerFieldCatalogIndex& catalogIndex,
                                                                     const ViewDefinition* paneView,
-                                                                    const ViewDefinition* paneOwnResolvedView) {
+                                                                    const ViewDefinition* paneOwnResolvedView,
+                                                                    std::uint64_t effectiveCatalogRevision) {
+    // effectiveCatalogRevision is the revision of the catalog `catalogIndex` was resolved from
+    // (per-pane-catalog-value-read-routing): the pane's OWN context revision when it routed to
+    // its own catalog, else the focused revision. Keying the column cache on it invalidates the
+    // header labels (built from catalog.DisplayName) when the routed catalog changes — for a
+    // shared-index pane it equals gridFrameCtx_.catalogRevision, so behaviour is preserved.
     typedef SmatchetGridPaneWindows::detail::PaneColumnsSource PaneColumnsSource;
     const PaneColumnsSource source = SmatchetGridPaneWindows::detail::ChoosePaneColumnsSource(
         pane.viewId, paneView ? paneView->Id : std::string(), gridFrameCtx_.activeViewId, pane.cachedColumnsValid,
@@ -357,10 +424,10 @@ const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pa
     if (paneOwnResolvedView != nullptr && SmatchetGridPaneWindows::detail::ShouldBuildColumnsFromOwnResolvedView(
                                               source, pane.viewId, paneOwnResolvedView->Id)) {
         if (!pane.cachedColumnsValid || pane.cachedColumnsViewId != paneOwnResolvedView->Id ||
-            pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
+            pane.cachedColumnsCatalogRevision != effectiveCatalogRevision ||
             pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision) {
             pane.cachedColumns = TicketGridColumnsBuilder::Build(*paneOwnResolvedView, catalogIndex);
-            pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
+            pane.cachedColumnsCatalogRevision = effectiveCatalogRevision;
             pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
             pane.cachedColumnsViewId = paneOwnResolvedView->Id;
             pane.cachedColumnsValid = true;
@@ -376,12 +443,12 @@ const std::vector<TicketGridColumn>& SmatchetUI::resolvePaneColumns(GridPane& pa
     // Own view resolved (SharedActive / OwnViewBuild): keep the per-pane capture fresh.
     // SharedActive copies the shared build (no second TicketGridColumnsBuilder run) so a
     // later cross-backend focus switch still finds this pane's own column set cached.
-    if (!pane.cachedColumnsValid || pane.cachedColumnsCatalogRevision != gridFrameCtx_.catalogRevision ||
+    if (!pane.cachedColumnsValid || pane.cachedColumnsCatalogRevision != effectiveCatalogRevision ||
         pane.cachedColumnsViewsRevision != gridFrameCtx_.viewsRevision || pane.cachedColumnsViewId != paneView->Id) {
         pane.cachedColumns = (source == PaneColumnsSource::SharedActive)
                                  ? gridFrameCtx_.columns
                                  : TicketGridColumnsBuilder::Build(*paneView, catalogIndex);
-        pane.cachedColumnsCatalogRevision = gridFrameCtx_.catalogRevision;
+        pane.cachedColumnsCatalogRevision = effectiveCatalogRevision;
         pane.cachedColumnsViewsRevision = gridFrameCtx_.viewsRevision;
         pane.cachedColumnsViewId = paneView->Id;
         pane.cachedColumnsValid = true;
@@ -644,4 +711,3 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
         ImGui::EndPopup();
     }
 }
-

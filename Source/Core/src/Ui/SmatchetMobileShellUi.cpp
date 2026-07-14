@@ -430,11 +430,13 @@ void SmatchetUI::drawMobileGridDetail(AppController& app, UiDrawSession& d, Grid
     }
 
     ViewDefinition* activeView = resolvePaneView(d, pane);
-    const TrackerFieldCatalogIndex& catalogIndex = *gridFrameCtx_.catalogIndex;
-    std::shared_ptr<const ViewDefinition> paneOwnResolvedView =
-        pane.focused ? nullptr : app.GetPaneResolvedView(pane.id);
+    // Per-pane catalog READ routing + column resolution (shared helper with the desktop grid):
+    // route the mobile pane through its OWN context catalog when populated. Single-pane on
+    // mobile today, but a cross-backend mobile pane still gets its own field metadata.
+    const TrackerFieldCatalogIndex* catalogIndexPtr = nullptr;
     const std::vector<TicketGridColumn>& columns =
-        resolvePaneColumns(pane, catalogIndex, activeView, paneOwnResolvedView.get());
+        resolvePaneCatalogAndColumns_(app, pane, activeView, &catalogIndexPtr);
+    const TrackerFieldCatalogIndex& catalogIndex = *catalogIndexPtr;
 
     ::ImGui::TextUnformatted(active->id.c_str());
     ::ImGui::Separator();

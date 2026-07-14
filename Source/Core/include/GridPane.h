@@ -32,9 +32,9 @@
 /// backend (today's behaviour, bytes-identical). targetViewId.empty() = resolve
 /// the backend's default / active view via ResolveNewPaneView.
 struct PaneAddRequest {
-    std::string sourceId;          ///< Focused pane to duplicate; empty = no request.
-    std::string targetBackendKey;  ///< Backend for the new pane; empty = same as source.
-    std::string targetViewId;      ///< View for the new pane; empty = backend default.
+    std::string sourceId;         ///< Focused pane to duplicate; empty = no request.
+    std::string targetBackendKey; ///< Backend for the new pane; empty = same as source.
+    std::string targetViewId;     ///< View for the new pane; empty = backend default.
 };
 
 struct GridPane {
@@ -100,6 +100,31 @@ struct GridPane {
     std::uint64_t cachedColumnsViewsRevision = 0;
     std::string cachedColumnsViewId;
     bool cachedColumnsValid = false;
+
+    /// Per-pane field-catalog index for read routing (per-pane-catalog-value-read-routing).
+    /// A non-focused cross-backend pane resolves its cell option labels / display names
+    /// against ITS OWN context catalog rather than the focused catalog. Built ONCE per pane
+    /// (SmatchetUI::resolvePaneCatalog) and rebuilt only when the pane's OWN context catalog
+    /// revision changes — never per cell (Pillar 1).
+    /// LIFETIME: TrackerFieldCatalogIndex stores raw `const TrackerField*` INTO the fields
+    /// vector it was built from (see TicketGridModel.cpp ctor). The focused path passes a
+    /// reference to the long-lived focused catalog, but GetPaneAvailableFields returns a COPY
+    /// (thread-safety — a non-focused context's catalog may be rewritten off-thread). So the
+    /// pane must OWN that copy alongside the index: cachedPaneCatalogFields holds the backing
+    /// vector, cachedPaneCatalogIndex points into it. Both are shared_ptr<const> (NOT
+    /// unique_ptr): GridPane is value-COPIED (pane duplicate, vector push_back in
+    /// UiDrawSession::focusedPane), and shared_ptr keeps the fields alive for any transient copy
+    /// so the index pointers never dangle. Immutable once built — resolvePaneCatalog REPLACES
+    /// both pointers together on a revision change, never mutates in place. Null until the pane
+    /// first routes to its own catalog; a focused / unpopulated pane reads the shared index.
+    std::shared_ptr<const std::vector<TrackerField>> cachedPaneCatalogFields;
+    std::shared_ptr<const TrackerFieldCatalogIndex> cachedPaneCatalogIndex;
+    /// Per-context catalog revision the cached index was built from (staleness invalidation:
+    /// a same-backend re-seed / a fetch bumps the context revision → the index rebuilds).
+    std::uint64_t cachedPaneCatalogRevision = 0;
+    /// True while cachedPaneCatalogIndex is the live route for this pane (used to detect a
+    /// focus flip back to the shared index without tearing the cache down eagerly).
+    bool cachedPaneCatalogValid = false;
 
     /// Cached ImGui window name ("<title>###GridPane:<id>") rebuilt only when
     /// title/id change — avoids a per-frame std::string build per pane.

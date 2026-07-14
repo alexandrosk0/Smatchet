@@ -92,8 +92,8 @@
     "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band", "coverage-out-of-band", "intent-out-of-band"]
   },
   "coverage": {
-    "_doc": "Numeric line-coverage gate (coverage.yml). threshold = blocking floor; excluded = paths carved out of the measured surface (UI is bucket-E/screenshot-tested, not ctest-testable). Graduated advisory->blocking 2026-06-04; first real measurement 67%, floor set at 65 with a raise-to-70 ramp (categories/test.md). See docs/plans/shipped/coverage-threshold-graduation.md.",
-    "threshold": 65,
+    "_doc": "Numeric line-coverage gate (coverage.yml). threshold = blocking floor; excluded = paths carved out of the measured surface (UI is bucket-E/screenshot-tested, not ctest-testable). Graduated advisory->blocking 2026-06-04; first real measurement 67%, floor set at 65 with a raise-to-70 ramp. Ramp COMPLETE 2026-07-14: backend-impl HTTP-fixture tests (JiraUserAndMeta/JiraIssueSearch/JiraIssueMutation) lifted the measured rate to 71%, floor raised 65->70 (categories/test.md; roadmap PR-14). See docs/plans/shipped/coverage-threshold-graduation.md.",
+    "threshold": 70,
     "ramp_target": 70,
     "excluded": ["Source/Core/src/Ui", "Source/Core/include/Ui"]
   },
