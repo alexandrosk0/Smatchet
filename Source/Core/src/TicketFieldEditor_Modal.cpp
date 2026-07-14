@@ -13,6 +13,8 @@
 #include "TicketFieldEditorLongTextPure.h"
 #include "TrackerFieldSchema.h"
 
+#include "Json/BoundedJsonParse.h"
+
 #include "Ui/SmatchetToast.h"
 #include "Ui/SmatchetUiSession.h"
 
@@ -67,6 +69,15 @@ struct ActiveLongTextEditorState {
     /// Pretty-printed original rich payload (ADF JSON re-indented, or raw HTML) for the read-only
     /// source pane. Computed once at Open; empty when there is nothing worth showing.
     std::string OriginalRichPretty;
+    /// Cached save-fidelity assessment for the current buffer revision. Recomputed (with a fresh
+    /// round-trip) by RefreshSaveFidelityCache whenever the buffer changes, so the acknowledgement
+    /// gate + on-save toast are authoritative in every preview mode — including EditOnly, where the
+    /// preview pane's round-trip never runs — and never inherit a stale result. Reset on Open.
+    std::string LastFidelityInput;
+    bool LastFidelityAssessed = false;
+    bool LastFidelityRequireAck = false;
+    bool LastFidelityLossPossible = false;
+    std::string LastFidelitySummary;
 
     static constexpr size_t kBufferSize = 64 * 1024;
     std::vector<char> Buffer;
@@ -139,9 +150,12 @@ std::string ComputeOriginalRichPretty(LongTextRichKind kind, const std::string& 
         return {};
     }
     if (kind == LongTextRichKind::Adf) {
-        nlohmann::json j = nlohmann::json::parse(rich, /*cb=*/nullptr, /*allow_exceptions=*/false);
+        // Route through the depth/node/byte-bounded parser (rich values are external, untrusted
+        // input): a deeply-nested payload would otherwise stack-overflow the recursive ~json DOM
+        // teardown. ParseBoundedOrDiscarded returns a discarded json on any failure.
+        const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(rich);
         if (j.is_discarded()) {
-            return rich; // malformed JSON — show the raw bytes rather than nothing.
+            return rich; // malformed / oversized — show the raw bytes rather than nothing.
         }
         return j.dump(2);
     }
@@ -414,6 +428,30 @@ void DrawLongTextPreviewPane(const LongTextModalCtx& ctx) {
     }
 }
 
+// Recompute + cache the save-fidelity assessment for the current buffer if it changed since the
+// last assessment. Runs a fresh round-trip so the acknowledgement gate and the on-save toast are
+// authoritative in every mode (EditOnly included, where the preview never runs) and never reuse a
+// stale result. Cheap on the idle path — a string-compare cache hit when the buffer is unchanged.
+void RefreshSaveFidelityCache() {
+    ActiveLongTextEditorState& st = s_ActiveLongTextState;
+    const char* buf = st.Buffer.data();
+    // Cache-hit fast path: compare the cached input against the buffer's C-string without
+    // materializing a fresh 64 KB std::string every frame (this runs each footer frame).
+    if (st.LastFidelityAssessed && st.LastFidelityInput == buf) {
+        return;
+    }
+    const std::string md(buf);
+    const RoundTripPreview rt = ComputeRoundTripPreview(st.RichKind, md);
+    const TicketFieldEditorLongTextPure::LongTextSaveFidelity f =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(st.RawMode, st.DroppedAdfNodeTypes, rt.Lossy,
+                                                                  st.SeedTruncated, rt.ConversionFailed);
+    st.LastFidelityInput = md;
+    st.LastFidelityAssessed = true;
+    st.LastFidelityRequireAck = f.RequireAck;
+    st.LastFidelityLossPossible = f.LossPossible;
+    st.LastFidelitySummary = f.ToastSummary;
+}
+
 // Commits the edited buffer (diffed against the seed to skip null edits) into pendingEdits, raises
 // a formatting-loss warning toast when the save may drop constructs, then closes the modal.
 void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
@@ -434,19 +472,15 @@ void CommitLongTextEdit(std::vector<PendingFieldEdit>& pendingEdits) {
         edit.OriginalRichValue = s_ActiveLongTextState.OriginalRichValue;
         pendingEdits.push_back(std::move(edit));
 
-        // Warn on save when the stored value may lose formatting. Recompute the round-trip fresh:
-        // LastRoundTripLossy is only maintained while the preview pane is visible, so an EditOnly
-        // save would otherwise miss typing-introduced loss.
-        const bool roundTripLossy =
-            ComputeRoundTripPreview(s_ActiveLongTextState.RichKind, newValue).Lossy;
-        const TicketFieldEditorLongTextPure::LongTextSaveFidelity fidelity =
-            TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-                s_ActiveLongTextState.RawMode, s_ActiveLongTextState.DroppedAdfNodeTypes, roundTripLossy,
-                s_ActiveLongTextState.SeedTruncated);
-        if (fidelity.LossPossible) {
+        // Warn on save when the stored value may lose formatting. RefreshSaveFidelityCache brings
+        // the assessment current for this exact buffer (the footer already refreshed it this frame,
+        // so this is normally a cache hit) — authoritative regardless of preview mode.
+        RefreshSaveFidelityCache();
+        if (s_ActiveLongTextState.LastFidelityLossPossible) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.longtext_lossy_title", "Saved with formatting loss"),
-                s_ActiveLongTextState.FieldLabel + ": " + fidelity.ToastSummary + ".", ToastType::Warning);
+                s_ActiveLongTextState.FieldLabel + ": " + s_ActiveLongTextState.LastFidelitySummary + ".",
+                ToastType::Warning);
         }
     }
     ImGui::CloseCurrentPopup();
@@ -468,20 +502,19 @@ void DrawLongTextFooter(const LongTextModalCtx& ctx, std::vector<PendingFieldEdi
     ImGui::TextDisabled("%s", footerHint);
 
     // Formatting-loss acknowledgement gate. When the save would drop constructs (truncation,
-    // dropped ADF nodes, or a lossy round-trip) require an explicit "I understand" tick before
-    // Save is enabled. Raw-HTML verbatim saves warn via toast but never gate here (RequireAck=false).
-    const TicketFieldEditorLongTextPure::LongTextSaveFidelity fidelity =
-        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-            s_ActiveLongTextState.RawMode, s_ActiveLongTextState.DroppedAdfNodeTypes,
-            s_ActiveLongTextState.LastRoundTripLossy, s_ActiveLongTextState.SeedTruncated);
-    const bool blockSave = fidelity.RequireAck && !s_ActiveLongTextState.LossAcknowledged;
-    if (fidelity.RequireAck) {
+    // dropped ADF nodes, a lossy round-trip, or a converter failure) require an explicit "I
+    // understand" tick before Save is enabled. RefreshSaveFidelityCache makes the assessment
+    // authoritative for the current buffer in every mode; raw-HTML verbatim saves warn via toast
+    // but never gate here (RequireAck=false).
+    RefreshSaveFidelityCache();
+    const bool blockSave = s_ActiveLongTextState.LastFidelityRequireAck && !s_ActiveLongTextState.LossAcknowledged;
+    if (s_ActiveLongTextState.LastFidelityRequireAck) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.7f, 0.2f, 1.0f));
         ImGui::Checkbox("I understand — save anyway (some formatting will be lost)",
                         &s_ActiveLongTextState.LossAcknowledged);
         ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered() && !fidelity.ToastSummary.empty()) {
-            ImGui::SetTooltip("%s", fidelity.ToastSummary.c_str());
+        if (ImGui::IsItemHovered() && !s_ActiveLongTextState.LastFidelitySummary.empty()) {
+            ImGui::SetTooltip("%s", s_ActiveLongTextState.LastFidelitySummary.c_str());
         }
     }
 
@@ -568,10 +601,15 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
     s_ActiveLongTextState.DroppedAdfNodeTypes.clear();
     s_ActiveLongTextState.LoadingMarkdown = false;
     s_ActiveLongTextState.LossAcknowledged = false;
-    // Pretty-print the original payload once for the read-only source pane. Independent of the
-    // seed path (sync/async) — the pane's visibility (raw / dropped-nodes) is decided per-frame.
-    s_ActiveLongTextState.OriginalRichPretty =
-        ComputeOriginalRichPretty(s_ActiveLongTextState.RichKind, currentRichValue);
+    s_ActiveLongTextState.OriginalRichPretty.clear();
+    // Reset the round-trip preview + save-fidelity caches so no assessment leaks in from the
+    // previously-edited document (both keyed on the buffer, which we are about to reseed).
+    s_ActiveLongTextState.LastRoundTripInput.clear();
+    s_ActiveLongTextState.LastRoundTripOutput.clear();
+    s_ActiveLongTextState.LastRoundTripLossy = false;
+    s_ActiveLongTextState.RoundTripPending = false;
+    s_ActiveLongTextState.LastFidelityInput.clear();
+    s_ActiveLongTextState.LastFidelityAssessed = false;
     ++s_ActiveLongTextState.LoadGen;
 
     // Large rich values are parsed on a worker to keep the UI thread responsive; small ones stay inline.
@@ -584,6 +622,9 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
             ComputeLongTextSeed(s_ActiveLongTextState.RichKind, currentRichValue, currentStrippedValue,
                                 s_ActiveLongTextState.DroppedAdfNodeTypes, s_ActiveLongTextState.RawMode);
         s_ActiveLongTextState.OriginalMarkdown = seed;
+        // Small payload — pretty-print the source pane inline (cheap; kept off the worker path).
+        s_ActiveLongTextState.OriginalRichPretty =
+            ComputeOriginalRichPretty(s_ActiveLongTextState.RichKind, currentRichValue);
         s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
         SeedLongTextBuffer(seed);
     } else {
@@ -602,8 +643,12 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
             std::vector<std::string> droppedNodes;
             bool rawMode = false;
             std::string seed = ComputeLongTextSeed(capturedKind, capturedRich, capturedStripped, droppedNodes, rawMode);
+            // Pretty-print the (potentially large) source pane here on the worker — parsing +
+            // dumping a >32 KB ADF payload must not run synchronously on the UI thread (Pillar 2).
+            std::string pretty = ComputeOriginalRichPretty(capturedKind, capturedRich);
             app.PostToMainThread([capturedGen, capturedIssueId, seed = std::move(seed),
-                                  droppedNodes = std::move(droppedNodes), rawMode]() mutable {
+                                  droppedNodes = std::move(droppedNodes), pretty = std::move(pretty),
+                                  rawMode]() mutable {
                 // Discard if user opened a different editor since dispatch — LoadGen increases monotonically.
                 if (!s_ActiveLongTextState.Active || s_ActiveLongTextState.LoadGen != capturedGen ||
                     s_ActiveLongTextState.IssueId != capturedIssueId) {
@@ -611,6 +656,7 @@ void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const Tr
                 }
                 s_ActiveLongTextState.OriginalMarkdown = seed;
                 s_ActiveLongTextState.DroppedAdfNodeTypes = std::move(droppedNodes);
+                s_ActiveLongTextState.OriginalRichPretty = std::move(pretty);
                 s_ActiveLongTextState.RawMode = rawMode;
                 s_ActiveLongTextState.Buffer.assign(ActiveLongTextEditorState::kBufferSize, '\0');
                 SeedLongTextBuffer(seed);

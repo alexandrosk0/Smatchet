@@ -52,6 +52,9 @@ std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich, 
 struct RoundTripPreview {
     std::string Rendered;
     bool Lossy = false;
+    /// True when the converter threw mid-round-trip (the save cannot be structurally validated).
+    /// Distinct from Lossy: a failed conversion is a stronger, ack-worthy signal than dropped nodes.
+    bool ConversionFailed = false;
 };
 
 /// Round-trips the in-progress Markdown buffer through the same converter the modal runs on save
@@ -105,14 +108,15 @@ struct LongTextSaveFidelity {
 };
 
 /// Assess long-text Save fidelity from the modal's signals:
+///   - `conversionFailed`     — the round-trip converter threw; the save cannot be validated.
 ///   - `seedTruncated`        — the document exceeded the edit buffer; the tail was never loaded.
 ///   - `droppedAdfNodeTypes`  — ADF node types AdfToMarkdown could not represent (dropped on save).
 ///   - `roundTripLossy`       — the Markdown→rich→Markdown round-trip changed the document.
 ///   - `rawMode`              — editing raw HTML that will be stored verbatim (best-effort).
-/// The first three imply definite loss and set RequireAck; rawMode only contributes a best-effort
+/// The first four imply definite loss and set RequireAck; rawMode only contributes a best-effort
 /// warning. Reasons are joined (in the above precedence) into ToastSummary. Pure — no UI access.
 LongTextSaveFidelity AssessLongTextSaveFidelity(bool rawMode, const std::vector<std::string>& droppedAdfNodeTypes,
-                                                bool roundTripLossy, bool seedTruncated);
+                                                bool roundTripLossy, bool seedTruncated, bool conversionFailed);
 
 } // namespace TicketFieldEditorLongTextPure
 

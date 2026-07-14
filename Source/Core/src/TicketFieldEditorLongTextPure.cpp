@@ -84,9 +84,11 @@ RoundTripPreview ComputeRoundTripPreview(LongTextRichKind kind, const std::strin
         }
     } catch (...) {
         // Converter blew up on the in-progress edit (rare; usually mid-token).
-        // Fall back to the raw buffer so the preview keeps updating.
+        // Fall back to the raw buffer so the preview keeps updating, but flag the failure so a
+        // save on genuinely unconvertible content is gated behind acknowledgement.
         result.Rendered = markdown;
         result.Lossy = false;
+        result.ConversionFailed = true;
     }
     return result;
 }
@@ -121,9 +123,13 @@ bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& sho
 }
 
 LongTextSaveFidelity AssessLongTextSaveFidelity(bool rawMode, const std::vector<std::string>& droppedAdfNodeTypes,
-                                                bool roundTripLossy, bool seedTruncated) {
+                                                bool roundTripLossy, bool seedTruncated, bool conversionFailed) {
     LongTextSaveFidelity out;
     std::vector<std::string> reasons;
+    if (conversionFailed) {
+        out.RequireAck = true;
+        reasons.push_back("the document could not be converted for saving (its formatting may not be preserved)");
+    }
     if (seedTruncated) {
         out.RequireAck = true;
         reasons.push_back("the document exceeds the editor buffer and the text beyond it was not loaded");

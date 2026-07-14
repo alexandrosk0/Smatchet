@@ -204,14 +204,16 @@ TEST_CASE("ShouldQueueLongTextEdit: a real edit still queues") {
 
 TEST_CASE("AssessLongTextSaveFidelity: clean save has no loss and no ack gate") {
     const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        /*rawMode=*/false, /*droppedAdfNodeTypes=*/{}, /*roundTripLossy=*/false, /*seedTruncated=*/false);
+        /*rawMode=*/false, /*droppedAdfNodeTypes=*/{}, /*roundTripLossy=*/false, /*seedTruncated=*/false,
+        /*conversionFailed=*/false);
     CHECK(f.LossPossible == false);
     CHECK(f.RequireAck == false);
     CHECK(f.ToastSummary.empty());
 }
 
 TEST_CASE("AssessLongTextSaveFidelity: truncation is a definite loss and gates Save") {
-    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {}, false, /*seedTruncated=*/true);
+    const auto f =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {}, false, /*seedTruncated=*/true, false);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("exceeds the editor buffer") != std::string::npos);
@@ -219,7 +221,7 @@ TEST_CASE("AssessLongTextSaveFidelity: truncation is a definite loss and gates S
 
 TEST_CASE("AssessLongTextSaveFidelity: dropped ADF nodes gate Save and list up to five") {
     const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        false, {"panel", "mention", "inlineCard"}, false, false);
+        false, {"panel", "mention", "inlineCard"}, false, false, false);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("panel") != std::string::npos);
@@ -229,7 +231,7 @@ TEST_CASE("AssessLongTextSaveFidelity: dropped ADF nodes gate Save and list up t
 
 TEST_CASE("AssessLongTextSaveFidelity: more than five dropped node types are elided with an ellipsis") {
     const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        false, {"a", "b", "c", "d", "e", "f", "g"}, false, false);
+        false, {"a", "b", "c", "d", "e", "f", "g"}, false, false, false);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("...") != std::string::npos);
     // The sixth+ node types are not spelled out.
@@ -237,14 +239,23 @@ TEST_CASE("AssessLongTextSaveFidelity: more than five dropped node types are eli
 }
 
 TEST_CASE("AssessLongTextSaveFidelity: a lossy round-trip gates Save") {
-    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {}, /*roundTripLossy=*/true, false);
+    const auto f =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {}, /*roundTripLossy=*/true, false, false);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == true);
     CHECK(f.ToastSummary.find("round-trip") != std::string::npos);
 }
 
+TEST_CASE("AssessLongTextSaveFidelity: a converter failure gates Save") {
+    const auto f =
+        TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(false, {}, false, false, /*conversionFailed=*/true);
+    CHECK(f.LossPossible == true);
+    CHECK(f.RequireAck == true);
+    CHECK(f.ToastSummary.find("could not be converted") != std::string::npos);
+}
+
 TEST_CASE("AssessLongTextSaveFidelity: raw HTML warns best-effort but does NOT gate Save") {
-    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(/*rawMode=*/true, {}, false, false);
+    const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(/*rawMode=*/true, {}, false, false, false);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == false);
     CHECK(f.ToastSummary.find("verbatim") != std::string::npos);
@@ -252,15 +263,17 @@ TEST_CASE("AssessLongTextSaveFidelity: raw HTML warns best-effort but does NOT g
 
 TEST_CASE("AssessLongTextSaveFidelity: multiple signals join in precedence order") {
     const auto f = TicketFieldEditorLongTextPure::AssessLongTextSaveFidelity(
-        /*rawMode=*/true, {"panel"}, /*roundTripLossy=*/true, /*seedTruncated=*/true);
+        /*rawMode=*/true, {"panel"}, /*roundTripLossy=*/true, /*seedTruncated=*/true, /*conversionFailed=*/true);
     CHECK(f.LossPossible == true);
     CHECK(f.RequireAck == true);
-    // Precedence: truncation, dropped nodes, round-trip, raw — separated by "; ".
+    // Precedence: conversion-failure, truncation, dropped nodes, round-trip, raw — separated by "; ".
+    const auto conv = f.ToastSummary.find("could not be converted");
     const auto trunc = f.ToastSummary.find("exceeds the editor buffer");
     const auto dropped = f.ToastSummary.find("panel");
     const auto rt = f.ToastSummary.find("round-trip");
     const auto raw = f.ToastSummary.find("verbatim");
-    CHECK(trunc != std::string::npos);
+    CHECK(conv != std::string::npos);
+    CHECK(conv < trunc);
     CHECK(trunc < dropped);
     CHECK(dropped < rt);
     CHECK(rt < raw);
