@@ -1,7 +1,7 @@
 # Lua recorded ImGui command list — v2 follow-ups
-<!-- index-summary: Stub tracking v2 follow-ups (extended recorder vocabulary, chrome buttons, auto-dirty relaxation). None scoped to ship yet. -->
+<!-- index-summary: Stub tracking v2 follow-ups. B1 (per-window predicates) + C1 (focus-aware InputText) graduated to active plans; A1/D1/A2/E1/F1 still open, B2 subsumed by B1. -->
 
-> **Status**: stub. Tracks the v2 follow-ups enumerated in [`lua-recorded-cmd-list.md`](lua-recorded-cmd-list.md) §Out-of-scope. Each item below has a short context block + open questions; none are scoped to ship yet. Flesh out into a separate `docs/plans/active/<slug>.md` when work starts on a specific item.
+> **Status**: stub. Tracks the v2 follow-ups enumerated in [`lua-recorded-cmd-list.md`](lua-recorded-cmd-list.md) §Out-of-scope. **B1** and **C1** have graduated to active plans ([per-window predicates](lua-window-dirty-predicates.md), [focus-aware InputText](lua-focus-aware-inputtext.md)); **B2** is subsumed by B1. The rest each have a short context block + open questions and are not scoped to ship yet. Flesh out into a separate `docs/plans/active/<slug>.md` when work starts on a specific item.
 
 ## Context
 
@@ -29,6 +29,8 @@ Currently every click marks the window dirty (auto-re-record next frame). For ch
 
 ### B1. Per-window dirty predicates
 
+> **Graduated** → [`docs/plans/lua-window-dirty-predicates.md`](lua-window-dirty-predicates.md) (active). Open questions below are resolved there (zero-arg hashable signature; predicate runs only on data-gen-bump frames, not per-frame).
+
 `luaWindowDataGen_` bumps invalidate **every** window. Most windows only care about a subset of state — a "ticket detail" window cares only about the focused ticket, a "global counts" window cares only about list size. Per-window predicate that the runner consults before deciding to dirty:
 
 ```lua
@@ -45,13 +47,15 @@ Runner stashes the predicate's last return value, bumps dirty only when the retu
 
 ### B2. `ui.register_window(name, { auto_invalidate = false }, fn)`
 
-Opt-out of `luaWindowDataGen_` auto-dirty (plan Q2 option d). Window only re-records on `ui.invalidate_window` or callback fire. For static config / info panels that don't display ticket data.
+> **Subsumed by B1** — resolved. `auto_invalidate=false` is the limit case of B1 with a constant-return predicate (`predicate = function() return "" end`): a predicate whose value never changes never re-records on a `luaWindowDataGen_` bump. The B1 plan ([`docs/plans/lua-window-dirty-predicates.md`](lua-window-dirty-predicates.md)) ships one mechanism, not two; do **not** implement B2 separately.
 
-**Open question:** does this stack with B1 (predicate)? `auto_invalidate=false` is the limit case of B1 with `predicate = function() return false end` — pick one mechanism, not both.
+Opt-out of `luaWindowDataGen_` auto-dirty (plan Q2 option d). Window only re-records on `ui.invalidate_window` or callback fire. For static config / info panels that don't display ticket data.
 
 ## C. Focused-cell semantics
 
 ### C1. Focus-aware InputText invalidation
+
+> **Graduated** → [`docs/plans/lua-focus-aware-inputtext.md`](lua-focus-aware-inputtext.md) (active). Both open questions below are resolved there (stamp the active cell key from inside replay via `IsItemActive`, so no `GetActiveID`→key reverse lookup is needed; focus-drop commits the draft before re-record).
 
 While a cached `InputText` cell has keyboard focus, a background sync that flips `rawValue` clobbers the in-progress edit. v1 documents this as a known limitation. Fix: when the cache-key comparison detects only `rawValue` changed AND the cell currently owns ImGui keyboard focus, skip re-record this frame. Defer until focus drops.
 
@@ -87,13 +91,13 @@ Currently `draw:button(label, on_click)` + chained `draw:on_deactivated(fn)` bot
 
 ## Triage
 
-Single-author priority (no work scheduled):
+Single-author priority:
 
-1. **B1 (per-window predicate)** — biggest correctness win for users with many windows; everything else is comfort.
-2. **C1 (focus-aware InputText)** — closes the only documented data-loss limitation.
+1. ~~**B1 (per-window predicate)**~~ — **graduated** to [`docs/plans/lua-window-dirty-predicates.md`](lua-window-dirty-predicates.md).
+2. ~~**C1 (focus-aware InputText)**~~ — **graduated** to [`docs/plans/lua-focus-aware-inputtext.md`](lua-focus-aware-inputtext.md).
 3. **A1 (recorder vocabulary expansion)** — unblocks scripted forms / dashboards. Pick the 2-3 widgets users actually ask for, not all six.
 4. **D1 (cadence timer)** — narrow utility; defer until a real need surfaces.
-5. **A2 / B2 / E1 / F1** — quality-of-life or speculative; do not pre-implement.
+5. **A2 / E1 / F1** — quality-of-life or speculative; do not pre-implement. (**B2** is subsumed by B1 — see above.)
 
 ## Out-of-scope (v3)
 
