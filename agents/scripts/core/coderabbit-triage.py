@@ -37,12 +37,14 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 # triage-rules-version: 4
-# Shared rules-version marker — MUST match agents/core/coderabbit-triage.md (the
-# end-of-CI sync doctest greps both files for this token and fails if they
-# disagree). Bump in BOTH whenever the login allow-list, override table, severity
+# Shared rules-version marker — MUST match agents/core/coderabbit-triage.md.
+# `coderabbit-triage.py selftest` greps both files for this token and fails if
+# they disagree (run in CI by tests/bats/coderabbit_triage.bats). Bump in BOTH
+# whenever the login allow-list, override table, severity
 # parse, or noise filter changes. v4 (bugbot-merge-gate): PR-bot login allow-list
 # {coderabbitai[bot], cursor[bot]} + Bugbot body-shape severity parse +
 # couldn't-run / usage-limit noise filter.
@@ -411,6 +413,73 @@ def cmd_post_comment(args: argparse.Namespace) -> int:
     return 2
 
 
+# ---------------------------------------------------------------------------
+# selftest — md<->py rules-version drift guard
+# (core-agent-prompts-03: implement the sync-check the docs advertise;
+#  core-scripts-python-03: give the .py a --selftest against the .md.)
+# ---------------------------------------------------------------------------
+_RULES_VERSION_RE = re.compile(r"triage-rules-version:\s*(\d+)")
+
+
+def _triage_md_path() -> Path:
+    # This script lives at agents/scripts/core/; the agent doc is at agents/core/.
+    return Path(__file__).resolve().parents[2] / "core" / "coderabbit-triage.md"
+
+
+def _extract_rules_version(text: str) -> int | None:
+    m = _RULES_VERSION_RE.search(text)
+    return int(m.group(1)) if m else None
+
+
+def cmd_selftest(args: argparse.Namespace) -> int:
+    """Drift-guard: the .md is source-of-truth for the rules, the .py is its
+    executable mirror, and both carry a `triage-rules-version:` marker that must
+    stay in lockstep. This is the end-of-CI sync check both files advertise —
+    exercised by tests/bats/coderabbit_triage.bats in the Agentic self-tests lane.
+    Also asserts the invariant-reject table is structurally sound. Exit 0 = OK,
+    1 = drift/integrity failure."""
+    errors: list[str] = []
+
+    py_marker = _extract_rules_version(Path(__file__).read_text(encoding="utf-8"))
+    if py_marker is None:
+        errors.append("coderabbit-triage.py: missing `# triage-rules-version:` marker")
+
+    md_path = _triage_md_path()
+    md_marker: int | None = None
+    if not md_path.is_file():
+        errors.append(f"coderabbit-triage.md not found at {md_path}")
+    else:
+        md_marker = _extract_rules_version(md_path.read_text(encoding="utf-8"))
+        if md_marker is None:
+            errors.append(f"{md_path.name}: missing `triage-rules-version:` marker")
+
+    if py_marker is not None and md_marker is not None and py_marker != md_marker:
+        errors.append(
+            f"rules-version DRIFT: coderabbit-triage.md={md_marker} vs "
+            f"coderabbit-triage.py={py_marker} — bump the marker in BOTH files in lockstep"
+        )
+
+    # Invariant-reject table integrity: non-empty, each a (compiled regex, reason).
+    if not INVARIANT_REJECTS:
+        errors.append("INVARIANT_REJECTS is empty — no invariant rules compiled")
+    for i, entry in enumerate(INVARIANT_REJECTS):
+        pattern, reason = entry
+        if not isinstance(pattern, re.Pattern):
+            errors.append(f"INVARIANT_REJECTS[{i}]: not a compiled regex")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"INVARIANT_REJECTS[{i}]: empty reason")
+
+    if errors:
+        for e in errors:
+            print(f"coderabbit-triage --selftest: FAIL — {e}", file=sys.stderr)
+        return 1
+    print(
+        f"coderabbit-triage --selftest: OK — rules-version={md_marker} "
+        f"(md<->py in sync), {len(INVARIANT_REJECTS)} invariant rules"
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="coderabbit-triage",
@@ -436,6 +505,12 @@ def build_parser() -> argparse.ArgumentParser:
             help="MERGE_WATCH_TRIAGE_BUDGET (default 3)",
         )
         sp.set_defaults(func=fn)
+    # selftest takes no positional args (md<->py drift + table integrity).
+    sp_self = sub.add_parser(
+        "selftest",
+        help="assert coderabbit-triage.md <-> .py rules-version sync + table integrity",
+    )
+    sp_self.set_defaults(func=cmd_selftest)
     return p
 
 
