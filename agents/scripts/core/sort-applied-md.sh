@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# scripts/dev/sort-applied-md.sh — restore "Latest first" ordering on applied.md
-# after a `merge=union` driver concatenation interleaves dates.
+# agents/scripts/core/sort-applied-md.sh — restore "Latest first" ordering on
+# applied.md after a `merge=union` driver concatenation interleaves dates.
 #
 # Companion to the `merge=union` driver in `.gitattributes` (per
 # docs/agent-rules/process-rules.md § Backlog-archive union merge). The driver
@@ -12,8 +12,8 @@
 #   - blank-line separators between entries
 #
 # Usage:
-#   bash scripts/dev/sort-applied-md.sh
-#   bash scripts/dev/sort-applied-md.sh --check    # exit 1 if reorder needed
+#   bash agents/scripts/core/sort-applied-md.sh
+#   bash agents/scripts/core/sort-applied-md.sh --check    # exit 1 if reorder needed
 #
 # Exit codes:
 #   0 — applied.md sorted (or already sorted in --check)
