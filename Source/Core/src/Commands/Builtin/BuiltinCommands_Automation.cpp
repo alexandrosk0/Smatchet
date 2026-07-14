@@ -179,6 +179,44 @@ void RegisterAutomationListGlobalsCommand(CommandRegistry& reg, IAppAutomation& 
     reg.Register(std::move(c));
 }
 
+// Shared builder for the two consent commands that take one required "script" arg and forward it
+// to a bool(IAppAutomation&, script, &err) action — collapses the approve/revoke boilerplate into
+// one skeleton (DRY) and returns the resultKey (e.g. "approved") on success.
+void RegisterLuaScriptConsentCommand(CommandRegistry& reg, IAppAutomation& app, const char* name, const char* desc,
+                                     const char* paramDesc, const char* resultKey,
+                                     bool (IAppAutomation::*action)(const std::string&, std::string&)) {
+    Command c = MakeCommand(name, desc, [&app, action, resultKey](const nlohmann::json& args, const CommandContext&) {
+        const std::string script = args.value("script", std::string());
+        if (script.empty()) {
+            return CommandResult::Failure(ErrorCode::MissingRequiredArg, "missing required 'script' parameter");
+        }
+        std::string err;
+        if (!(app.*action)(script, err)) {
+            return CommandResult::Failure(ErrorCode::ValidationError, err);
+        }
+        return CommandResult::Success(nlohmann::json{{resultKey, script}});
+    });
+    c.Idempotent = false;
+    c.AsyncSafe = true;
+    c.Params = {PString("script", paramDesc, true)};
+    reg.Register(std::move(c));
+}
+
+void RegisterLuaListApprovalsCommand(CommandRegistry& reg, IAppAutomation& app) {
+    Command c = MakeCommand("lua.list-script-approvals",
+                            "List the resolved paths of Lua scripts currently approved by the consent gate.",
+                            [&app](const nlohmann::json&, const CommandContext&) {
+                                const auto paths = app.ListApprovedLuaScriptPaths();
+                                nlohmann::json out;
+                                out["approved"] = paths;
+                                out["count"] = paths.size();
+                                return CommandResult::Success(std::move(out));
+                            });
+    c.Idempotent = true;
+    c.AsyncSafe = true;
+    reg.Register(std::move(c));
+}
+
 } // namespace
 
 void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app, IMainThreadPoster& poster) {
@@ -186,6 +224,16 @@ void RegisterAutomationCommands(CommandRegistry& reg, IAppAutomation& app, IMain
     RegisterAutomationRunFlatCommand(reg, app);
     RegisterAutomationReloadHooksCommand(reg, app, poster);
     RegisterAutomationListGlobalsCommand(reg, app);
+    RegisterLuaScriptConsentCommand(
+        reg, app, "lua.approve-script",
+        "Approve a Scripts/*.lua file at its CURRENT content so the consent gate permits it to run. Review "
+        "the script first — approval lets it drive the app's high-privilege Lua bindings. A later content "
+        "change re-blocks it until re-approved.",
+        "Scripts/*.lua basename to approve (e.g. 'SmatchetHooks.lua')", "approved", &IAppAutomation::ApproveLuaScript);
+    RegisterLuaScriptConsentCommand(reg, app, "lua.revoke-script",
+                                    "Revoke a Scripts/*.lua approval so the consent gate blocks it again on next run.",
+                                    "Scripts/*.lua basename to revoke", "revoked", &IAppAutomation::RevokeLuaScript);
+    RegisterLuaListApprovalsCommand(reg, app);
 }
 
 } // namespace cmd

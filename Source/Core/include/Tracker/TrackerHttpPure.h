@@ -60,6 +60,20 @@ bool IsLoopbackHost(const std::string& host);
 // (e.g. "http://corp-jira.example.com"). Pure: no I/O.
 bool ShouldUpgradeCleartextBase(const std::string& rawBase);
 
+// Parse an HTTP `Retry-After` header value in its delta-seconds form ("120") into
+// seconds. Returns -1 for anything else — the HTTP-date form, negatives, garbage, or
+// digit runs too long to be a real throttle window (the trackers we talk to — GitHub
+// secondary rate limits, Jira 429s — all emit delta-seconds). Pure: no clock, no cpr.
+long ParseRetryAfterSeconds(const std::string& value);
+
+// Retry delay for `attempt` (1-based): exponential backoff `baseMs * 2^(attempt-1)`
+// capped at `expCapMs`, raised to the server-requested `Retry-After` when one was
+// parsed (`retryAfterSec` >= 0) — itself capped at `honorCapMs` so a hostile or
+// misconfigured server can never pin a worker thread for minutes. `retryAfterSec` < 0
+// means "no header" and yields the plain backoff. Pure math; the caller polls its
+// cancel token while sleeping, so a longer honored delay stays shutdown-safe.
+long ComputeTrackerRetryDelayMs(int attempt, long baseMs, long expCapMs, long retryAfterSec, long honorCapMs);
+
 } // namespace TrackerHttpPure
 
 // Transport classification travels as the structured TrackerError kind assigned at each backend's

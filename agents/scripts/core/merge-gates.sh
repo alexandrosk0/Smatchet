@@ -1118,6 +1118,28 @@ poll_merge_gates() {
             "$ci_fail" "$ci_pend" "$ci_warn_downgraded" "$req_absent" \
             "$cr_state_print" "$cr_open" "$bb_state_print" "$bb_open" "$user" "$review_decision"
 
+        # merge-pipeline-04 residual: did CodeRabbit actually engage THIS head? A
+        # cr-out-of-band downgrade (even WITH a cr-disposition attestation) may only
+        # waive a CR gate that really ran — never a phantom one. Positive engagement
+        # signals: a real review verdict (APPROVED / COMMENTED / CHANGES_REQUESTED /
+        # a STALE prior-commit review), a CodeRabbit context on the head
+        # (cr_context_present, StatusContext OR CheckRun, any state), a SUCCESS
+        # StatusContext, an explicit terminal "Review skipped", a too-many-files
+        # size-skip, or a rate-limit skip (the case cr-out-of-band exists for). With
+        # NONE of these present, CR never ran and a disposition label alone must not
+        # dismiss the gate — otherwise a bogus attestation on a CR-untouched PR
+        # bypasses review entirely (the original merge-pipeline-04 hole, residual
+        # after PR-3 added the disposition requirement).
+        local cr_ran=false
+        case "$cr_state" in
+            APPROVED|COMMENTED|CHANGES_REQUESTED|STALE*) cr_ran=true ;;
+        esac
+        if [ "$cr_context_present" = 1 ] || [ "$cr_status_state" = "SUCCESS" ] \
+           || [ "$cr_review_skipped" = true ] || [ "$cr_rate_limited" = true ] \
+           || [ "$cr_size_skip_block" = true ]; then
+            cr_ran=true
+        fi
+
         # cr-out-of-band label: when present, downgrade a CR block to a WARN
         # (pass) — mirrors the tests/perf-out-of-band CI-downgrade pattern but
         # scoped to the CR gate ONLY. Covers both CR-gate signals: the state
@@ -1144,6 +1166,13 @@ poll_merge_gates() {
                 else
                     echo "WARN: cr-out-of-band present but NOT honoured — a cr-out-of-band downgrade also requires a 'cr-disposition:<reason>' label or PR-body marker recording why CR review was waived. Add one to merge past the CR block (${cr_state_print}). PR-3 cr-out-of-band-disposition-trail." >&2
                 fi
+            elif [ "$cr_ran" != true ]; then
+                # merge-pipeline-04 residual: disposition present, but CR never ran on
+                # this head (no review, no CR context, no SUCCESS status, no terminal
+                # "Review skipped", no size-skip, no rate-limit skip). A disposition
+                # cannot waive a review that never happened — the CR block STANDS
+                # (cr_pass stays false). Re-trigger '@coderabbitai review' or wait.
+                echo "WARN: cr-out-of-band + cr-disposition present but NOT honoured — CodeRabbit never ran on head ${head_sha:0:8} (no review / CR context / SUCCESS status / 'Review skipped' / rate-limit skip). A disposition cannot waive a review that never happened; re-trigger '@coderabbitai review' or wait for CR. merge-pipeline-04 cr-out-of-band-requires-cr-ran." >&2
             else
                 if [ "$cr_size_skip_block" = true ]; then
                     # Tailored message for the size-skip block — names the actual

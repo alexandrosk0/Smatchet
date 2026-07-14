@@ -342,6 +342,27 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
     cfg.MigratedQuickCreateHotkeyV1 = true;
 }
 
+// First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
+// LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
+void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.LuaScriptConsentInitialized = j.value("lua_script_consent_initialized", cfg.LuaScriptConsentInitialized);
+    cfg.LuaScriptConsentEnforced = j.value("lua_script_consent_enforced", cfg.LuaScriptConsentEnforced);
+    if (j.contains("approved_lua_scripts") && j["approved_lua_scripts"].is_array()) {
+        cfg.ApprovedLuaScripts.clear();
+        for (const auto& item : j["approved_lua_scripts"]) {
+            if (!item.is_object()) {
+                continue;
+            }
+            smatchet::lua_consent::LuaScriptApproval a;
+            a.Path = item.value("path", std::string());
+            a.Sha256 = item.value("sha256", std::string());
+            if (!a.Path.empty() && !a.Sha256.empty()) {
+                cfg.ApprovedLuaScripts.push_back(a);
+            }
+        }
+    }
+}
+
 // List + nested-object fields: mcp_export_fields, comment-template arrays, duration/worklog
 // suggestion lists, the three inherit-id lists, and the one-shot issuetype-inject migration.
 void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -691,6 +712,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         loadGroup("whisper fields", [&] { LoadWhisperFields(j, cfg); });
 #endif
         loadGroup("list fields", [&] { LoadListFields(j, cfg); });
+        loadGroup("lua consent fields", [&] { LoadLuaConsentFields(j, cfg); });
     }
 
     if (!hasSetupConfig && !j.contains("read_only_mode")) {

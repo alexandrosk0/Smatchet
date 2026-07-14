@@ -15,6 +15,7 @@
 //     payload. `mergeable == null` (GitHub still computing) → "computing".
 
 #include "CachedTicketTypes.h"
+#include "TrackerFieldSchema.h" // RemoteProject — the ListProjects row shape
 
 #include <nlohmann/json.hpp>
 
@@ -101,6 +102,15 @@ nlohmann::json MapGraphQlPullRequestNodeToRestPrShape(const nlohmann::json& node
 /// can log a summary count if needed.
 std::vector<CachedTicket> MapGraphQlNodesToTickets(const nlohmann::json& nodes, const std::string& owner,
                                                    const std::string& repo, bool includePullRequests);
+
+/// ListProjects mapper — one `GET /user/repos` page (JSON array of repository
+/// objects) appended to `out` as RemoteProject rows. GitHub's "project" for
+/// Smatchet's purposes is a repository: `key` carries `full_name`
+/// ("owner/repo" — the shape BuildCreatePayload requires in
+/// IssueDraft::ProjectKey), `displayName` mirrors it, `id` is the numeric repo
+/// id. Rows missing a usable `full_name` or a positive `id` are skipped
+/// (Pillar 3 — a malformed element never throws).
+void AppendGitHubReposAsRemoteProjects(const nlohmann::json& reposArray, std::vector<RemoteProject>& out);
 
 } // namespace github
 } // namespace smatchet

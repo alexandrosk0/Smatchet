@@ -122,18 +122,35 @@ watch_cli() {
 
 # ---------- cross-poll nudge/STALE persistence (registry-counter, mirrors cr_none_grace) ----------
 
-@test "_parse_gate_carry extracts nudge_head/stale_head/stale_streak; None when absent" {
+@test "_parse_gate_carry extracts nudge/stale/none head+streak; None when absent" {
     run python - <<'PY'
 import importlib.util, os, sys
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-got = m._parse_gate_carry("Poll 1/1 — CI: ...\nGATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5\n")
-assert got == {"nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5}, got
+# Full five-field GATE_CARRY line (merge-gates.sh emits none_head/none_streak too).
+got = m._parse_gate_carry(
+    "Poll 1/1 — CI: ...\n"
+    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7\n"
+)
+assert got == {
+    "nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5,
+    "none_head": "nnn", "none_streak": 7,
+}, got
 assert m._parse_gate_carry("no carry line here") is None
-g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0")
-assert g2 == {"nudged_head": "", "stale_head": "", "stale_streak": 0}, g2
+# Empty values -> zeros/blanks.
+g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0")
+assert g2 == {
+    "nudged_head": "", "stale_head": "", "stale_streak": 0,
+    "none_head": "", "none_streak": 0,
+}, g2
+# Legacy line without the none_* fields (older merge-gates.sh) -> none defaults.
+g3 = m._parse_gate_carry("GATE_CARRY nudge_head=a stale_head=b stale_streak=2")
+assert g3["none_head"] == "" and g3["none_streak"] == 0, g3
+# Non-numeric none_streak -> 0 (never raises).
+g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN")
+assert g4["none_streak"] == 0, g4
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -163,6 +180,57 @@ assert sel("Sanitizer (ASAN via MSVC) failed") == "ninja-msvc-asan"
 assert sel("AddressSanitizer: heap-buffer-overflow") == "ninja-msvc-asan"
 # Hard guard: a TSAN line must NEVER select an ASAN preset.
 assert "asan" not in sel("threadsanitizer failed"), "TSAN mapped to ASAN — bug reintroduced"
+print("OK")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK"* ]]
+}
+
+@test "_fetch_unresolved_cr_threads paginates all pages + fails closed on runaway (core-scripts-python-05)" {
+    run python - <<'PY'
+import importlib.util, os, sys
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+
+def th(tid, author="coderabbitai[bot]", resolved=False, outdated=False):
+    return {"id": tid, "isResolved": resolved, "isOutdated": outdated,
+            "comments": {"nodes": [{"author": {"login": author, "__typename": "Bot"}}]}}
+
+# Two pages: page 1 (hasNextPage) then page 2 (terminal). Non-CR / resolved /
+# outdated threads are filtered; a thread on page 2 (t4) proves pagination.
+pages = {
+    None: {"data": {"repository": {"pullRequest": {"headRefOid": "HEAD1",
+        "reviewThreads": {"pageInfo": {"hasNextPage": True, "endCursor": "CUR1"},
+            "nodes": [th("t1"), th("t2", author="human"), th("t3", resolved=True)]}}}}},
+    "CUR1": {"data": {"repository": {"pullRequest": {"headRefOid": "HEAD1",
+        "reviewThreads": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+            "nodes": [th("t4"), th("t5", outdated=True)]}}}}},
+}
+seen = []
+def fake(args, cwd=None, timeout=None):
+    after = None
+    for i, a in enumerate(args):
+        if a == "-f" and i + 1 < len(args) and args[i + 1].startswith("after="):
+            after = args[i + 1].split("=", 1)[1]
+    seen.append(after)
+    return pages[after]
+m._gh_json = fake
+head, tids = m._fetch_unresolved_cr_threads("o", "r", 1, "/tmp")
+assert head == "HEAD1", head
+assert tids == ["t1", "t4"], tids           # cross-page, CR-only, unresolved
+assert seen == [None, "CUR1"], seen         # page 1 no cursor, page 2 endCursor
+
+# Runaway (hasNextPage always true) must fail CLOSED, never silently truncate.
+m._gh_json = lambda a, cwd=None, timeout=None: {"data": {"repository": {"pullRequest": {
+    "headRefOid": "H", "reviewThreads": {"pageInfo": {"hasNextPage": True, "endCursor": "X"},
+        "nodes": [th("z")]}}}}}
+try:
+    m._fetch_unresolved_cr_threads("o", "r", 1, "/tmp")
+    raise AssertionError("expected RuntimeError on runaway pagination")
+except RuntimeError as e:
+    assert "refusing to truncate" in str(e), e
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -280,7 +348,7 @@ print('s2:', e2.get('merge_snapshot'))
     [ "$output" -eq 1 ]
 }
 
-@test "_bump_nudge_state persists nudged_head/stale_head/stale_streak into the registry entry" {
+@test "_bump_nudge_state persists nudge/stale/none head+streak into the registry entry" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
     # Single self-contained block: load the module, read the registered entry's
@@ -294,11 +362,18 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 entries = m._CLI.read_registry()
 assert entries, "no registry entries after register"
 clone = entries[0]["clone_path"]
-m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4)
+# Pass all five fields incl. the new none_head/none_streak (core-scripts-python-04).
+m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6)
 e = m._CLI.read_registry()[0]
 assert e["nudged_head"] == "headSHA999", e
 assert e["stale_head"] == "headSHA999", e
 assert e["stale_streak"] == 4, e
+assert e["none_head"] == "noneHEAD", e
+assert e["none_streak"] == 6, e
+# Backward-compat: the two none_* params default so an older call site still works.
+m._bump_nudge_state(999, clone, "h2", "h2", 1)
+e2 = m._CLI.read_registry()[0]
+assert e2["none_head"] == "" and e2["none_streak"] == 0, e2
 print("OK")
 PY
     [ "$status" -eq 0 ]

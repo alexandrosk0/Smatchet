@@ -348,10 +348,14 @@ def _poll_run_gates(owner: str, repo: str, pr: int, env: dict):
 
 
 def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
-    """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=…` line the
-    poller emits before its blocked `return 1`. Returns
-    {nudged_head, stale_head, stale_streak}, or None when absent (pass /
-    early-return — the caller carries the prior registry values forward)."""
+    """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=… none_head=…
+    none_streak=…` line the poller emits before its blocked `return 1`. Returns
+    {nudged_head, stale_head, stale_streak, none_head, none_streak}, or None when
+    absent (pass / early-return — the caller carries the prior registry values
+    forward). The none_head/none_streak fields carry the once-per-HEAD CR=NONE
+    @coderabbitai-review nudge counter (core-scripts-python-04); merge-gates.sh has
+    emitted them on GATE_CARRY since it re-seeds via MERGE_GATES_PRIOR_NONE_* but
+    the watcher previously dropped them, so the streak reset every cycle."""
     for ln in stdout.splitlines():
         if ln.startswith("GATE_CARRY "):
             fields: dict[str, str] = {}
@@ -362,10 +366,16 @@ def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
                 streak = int(fields.get("stale_streak", "0") or "0")
             except ValueError:
                 streak = 0
+            try:
+                none_streak = int(fields.get("none_streak", "0") or "0")
+            except ValueError:
+                none_streak = 0
             return {
                 "nudged_head": fields.get("nudge_head", ""),
                 "stale_head": fields.get("stale_head", ""),
                 "stale_streak": streak,
+                "none_head": fields.get("none_head", ""),
+                "none_streak": none_streak,
             }
     return None
 
@@ -527,6 +537,14 @@ def poll_one(
     env["MERGE_GATES_PRIOR_NUDGE_HEAD"] = str(entry.get("nudged_head", "") or "")
     env["MERGE_GATES_PRIOR_STALE_HEAD"] = str(entry.get("stale_head", "") or "")
     env["MERGE_GATES_PRIOR_STALE_STREAK"] = str(int(entry.get("stale_streak", 0) or 0))
+    # NONE-state carry (core-scripts-python-01): merge-gates.sh emits
+    # none_head/none_streak on GATE_CARRY and re-seeds them from
+    # MERGE_GATES_PRIOR_NONE_HEAD/STREAK so its once-per-HEAD CR=NONE
+    # @coderabbitai-review nudge survives the MERGE_GATES_MAX_POLLS=1 model. Without
+    # seeding these two (siblings of the nudge/stale trio above), the none-streak
+    # resets to 0 every cycle and the NONE_NUDGE_POLLS threshold is never reached.
+    env["MERGE_GATES_PRIOR_NONE_HEAD"] = str(entry.get("none_head", "") or "")
+    env["MERGE_GATES_PRIOR_NONE_STREAK"] = str(int(entry.get("none_streak", 0) or 0))
     # Per-invocation overrides (e.g. MERGE_GATES_CR_GRACE_POLLS=0 from the
     # CR-NONE grace-elapsed re-poll). update(), not setdefault(), so the
     # override wins over the daemon defaults above and the inherited env.
@@ -1724,14 +1742,22 @@ def _bump_cr_none_grace(
 
 
 def _bump_nudge_state(
-    pr: int, clone_path: str, nudged_head: str, stale_head: str, stale_streak: int
+    pr: int,
+    clone_path: str,
+    nudged_head: str,
+    stale_head: str,
+    stale_streak: int,
+    none_head: str = "",
+    none_streak: int = 0,
 ) -> None:
-    """Persist the cross-cycle CR-nudge guard + STALE streak in the registry.
+    """Persist the cross-cycle CR-nudge guard + STALE streak + CR=NONE streak.
 
     Mirrors `_bump_cr_none_grace`. `nudged_head` pins the once-per-HEAD
     @coderabbitai-review guard; `stale_head` / `stale_streak` carry the STALE
-    re-review counter. Both survive the MERGE_GATES_MAX_POLLS=1 single-poll model
-    that resets merge-gates.sh's in-process locals every cycle.
+    re-review counter; `none_head` / `none_streak` carry the CR=NONE nudge counter
+    (core-scripts-python-04). All survive the MERGE_GATES_MAX_POLLS=1 single-poll
+    model that resets merge-gates.sh's in-process locals every cycle — the five
+    fields are written together from the one GATE_CARRY line under a single lock.
     """
     with _CLI.registry_lock():
         entries = _CLI.read_registry()
@@ -1740,6 +1766,8 @@ def _bump_nudge_state(
                 e["nudged_head"] = nudged_head
                 e["stale_head"] = stale_head
                 e["stale_streak"] = stale_streak
+                e["none_head"] = none_head
+                e["none_streak"] = none_streak
                 break
         _CLI.write_registry(entries)
 
@@ -1854,16 +1882,22 @@ def maybe_pass_cr_none_grace(
 # recovery.md.
 
 _CR_THREADS_QUERY = (
-    "query($owner:String!,$repo:String!,$pr:Int!){"
+    "query($owner:String!,$repo:String!,$pr:Int!,$after:String){"
     "repository(owner:$owner,name:$repo){"
     "pullRequest(number:$pr){"
     "headRefOid "
-    "reviewThreads(first:100){pageInfo{hasNextPage} nodes{"
+    "reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{"
     "id isResolved isOutdated "
     "comments(first:1){nodes{author{login __typename}}}"
     "}}"
     "}}}"
 )
+
+# Safety cap on pagination pages (100 threads/page → 5000 threads). A PR with
+# more open review threads than this is pathological; refuse to silently
+# truncate (fail-closed via RuntimeError, which callers already handle by
+# skipping the resolve step + retrying next poll).
+_CR_THREADS_MAX_PAGES = 50
 
 
 def _fetch_unresolved_cr_threads(
@@ -1872,46 +1906,73 @@ def _fetch_unresolved_cr_threads(
     """Return (current_head_sha, [thread_id, ...]) for CR-authored,
     non-outdated, unresolved review threads on the PR.
 
-    Raises RuntimeError on gh / GraphQL failure. Callers fail-open: if we
-    can't enumerate threads, skip the resolve step and let the next poll
-    retry — never wedge the daemon loop on a transient gh hiccup.
+    Paginates through `reviewThreads` (100/page) honouring
+    `pageInfo.hasNextPage` — a PR with >100 review threads previously had
+    everything past the first page silently dropped, so an unresolved CR
+    thread beyond #100 was invisible to the resolve step (core-scripts-python-05).
+    Raises RuntimeError on gh / GraphQL failure OR if pagination exceeds
+    `_CR_THREADS_MAX_PAGES` (never truncate silently). Callers fail-open: if we
+    can't enumerate threads, skip the resolve step and let the next poll retry —
+    never wedge the daemon loop on a transient gh hiccup.
     """
-    data = _gh_json(
-        [
+    head_sha = ""
+    thread_ids: list[str] = []
+    after: str | None = None
+    for _page in range(_CR_THREADS_MAX_PAGES):
+        args = [
             "api", "graphql",
             "-f", f"query={_CR_THREADS_QUERY}",
             "-F", f"owner={owner}",
             "-F", f"repo={repo}",
             "-F", f"pr={pr}",
-        ],
-        cwd=clone_path,
-        timeout=30,
+        ]
+        # First page: omit `after` entirely so the nullable $after variable is
+        # null (GraphQL start-of-list). Later pages: pass the opaque endCursor as
+        # a RAW string field (-f, never -F — a cursor must never be type-inferred).
+        if after:
+            args += ["-f", f"after={after}"]
+        data = _gh_json(args, cwd=clone_path, timeout=30)
+        if not isinstance(data, dict):
+            raise RuntimeError("_fetch_unresolved_cr_threads: top-level not dict")
+        try:
+            pr_node = data["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError(f"_fetch_unresolved_cr_threads: missing PR node: {exc}")
+        # headRefOid is stable across pages; capture from the first response.
+        if not head_sha:
+            head_sha = pr_node.get("headRefOid", "") or ""
+        review_threads = pr_node.get("reviewThreads") or {}
+        for node in review_threads.get("nodes", []) or []:
+            if node.get("isResolved") or node.get("isOutdated"):
+                continue
+            comments = (node.get("comments") or {}).get("nodes") or []
+            # First-comment author drives bot-attribution. CR posts the thread-
+            # opening inline comment as `coderabbitai` / `coderabbitai[bot]`;
+            # human replies on the same thread don't shift authorship of the
+            # leading comment, so the filter is robust.
+            if not comments:
+                continue
+            author = (comments[0].get("author") or {}).get("login") or ""
+            if author.lower() not in {"coderabbitai", "coderabbitai[bot]"}:
+                continue
+            tid = node.get("id")
+            if tid:
+                thread_ids.append(tid)
+        page_info = review_threads.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            return head_sha, thread_ids
+        after = page_info.get("endCursor") or None
+        if not after:
+            # hasNextPage true but no cursor — malformed; stop rather than loop
+            # forever on the same page.
+            raise RuntimeError(
+                "_fetch_unresolved_cr_threads: hasNextPage without endCursor"
+            )
+    # Loop exhausted without a final page (hasNextPage still true).
+    raise RuntimeError(
+        f"_fetch_unresolved_cr_threads: exceeded {_CR_THREADS_MAX_PAGES} pages "
+        f"(>{_CR_THREADS_MAX_PAGES * 100} review threads) — refusing to truncate"
     )
-    if not isinstance(data, dict):
-        raise RuntimeError("_fetch_unresolved_cr_threads: top-level not dict")
-    try:
-        pr_node = data["data"]["repository"]["pullRequest"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"_fetch_unresolved_cr_threads: missing PR node: {exc}")
-    head_sha = pr_node.get("headRefOid", "") or ""
-    thread_ids: list[str] = []
-    for node in pr_node.get("reviewThreads", {}).get("nodes", []) or []:
-        if node.get("isResolved") or node.get("isOutdated"):
-            continue
-        comments = (node.get("comments") or {}).get("nodes") or []
-        # First-comment author drives bot-attribution. CR posts the thread-
-        # opening inline comment as `coderabbitai` / `coderabbitai[bot]`;
-        # human replies on the same thread don't shift authorship of the
-        # leading comment, so the filter is robust.
-        if not comments:
-            continue
-        author = (comments[0].get("author") or {}).get("login") or ""
-        if author.lower() not in {"coderabbitai", "coderabbitai[bot]"}:
-            continue
-        tid = node.get("id")
-        if tid:
-            thread_ids.append(tid)
-    return head_sha, thread_ids
 
 
 _RESOLVE_MUTATION = (
@@ -3078,6 +3139,8 @@ def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
             nudge_carry["nudged_head"],
             nudge_carry["stale_head"],
             nudge_carry["stale_streak"],
+            nudge_carry.get("none_head", ""),
+            nudge_carry.get("none_streak", 0),
         )
     # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
     # skipped/absent-review grace window has elapsed across real

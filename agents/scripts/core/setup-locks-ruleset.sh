@@ -40,11 +40,17 @@
 
 set -euo pipefail
 
-REPO="${REPO:-alexandrosk0/Smatchet}"
 RULESET_NAME="${RULESET_NAME:-plan-locks}"
 
 command -v gh >/dev/null 2>&1 || { echo "setup-locks-ruleset: gh CLI is required" >&2; exit 2; }
 gh auth status >/dev/null 2>&1 || { echo "setup-locks-ruleset: gh CLI not authenticated; run 'gh auth login' first" >&2; exit 1; }
+
+# Resolve the target repo dynamically (no hardcoded slug — core-scripts-bash-07).
+# $REPO overrides (test seam); else derive via gh. Fail LOUD if unresolvable —
+# this script creates/updates a ref ruleset, so a wrong repo is worse than a no-op.
+# shellcheck source=agents/scripts/core/lib/resolve-repo.sh
+. "$(dirname "$0")/lib/resolve-repo.sh"
+REPO="$(resolve_repo)" || { echo "setup-locks-ruleset: cannot resolve target repo (set REPO=owner/name, or run 'gh auth login' in this checkout)" >&2; exit 2; }
 
 # Build the ruleset body. Schema reference:
 # https://docs.github.com/en/rest/repos/rules

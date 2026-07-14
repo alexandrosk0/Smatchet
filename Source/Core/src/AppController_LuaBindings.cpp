@@ -93,7 +93,6 @@ std::string AsciiLowerCopy(std::string s) {
 
 namespace {
 
-
 // JSON <-> Lua marshalling moved to the shared Json/LuaJsonConvert.h leaf
 // (reached via AppController_LuaBindings_detail.h). The public JsonToLua /
 // LuaToJson are global-scope inline there; call sites below are unchanged.
@@ -400,6 +399,19 @@ void AppController::Impl::ReplayActiveSetupScripts(sol::state& state, sol::envir
         if (resolved.empty()) {
             continue;
         }
+        // Consent gate: re-verify on every replay (worker thread → non-interactive). A setup
+        // script whose content changed since approval is refused here even though it was in the
+        // active list, so a swapped Scripts/*.lua cannot ride the replay path.
+        std::string consentReason;
+        if (!app_.IsLuaScriptConsented(resolved, /*interactive=*/false, consentReason)) {
+            const std::string bare = "[LUA setup-bg] " + path + ": " + consentReason;
+            LuaLogInfoBind(std::string("[ERROR] ") + bare);
+            for (const auto& sink : app_.errorSinks_) {
+                sink(bare);
+            }
+            app_.scriptingWindowOpenRequested_.store(true);
+            continue;
+        }
         auto script = state.load_file(resolved);
         if (!script.valid()) {
             sol::error err = script;
@@ -469,7 +481,6 @@ void AppController::Impl::AutomationWorkerLoop() {
     automationWorkerExited_.store(true);
     automationJobCv_.notify_all();
 }
-
 
 // Automation count-hook tuning (security finding #13). The hook fires every kHookCountInterval
 // Lua instructions; kAutomationInstructionBudget caps a single automation job so a runaway pure-Lua
@@ -548,6 +559,11 @@ void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppCo
         logErr("[LUA auto] ", "invalid script path");
         return;
     }
+    std::string consentReason;
+    if (!app_.IsLuaScriptConsented(path, /*interactive=*/false, consentReason)) {
+        logErr("[LUA auto] ", consentReason);
+        return;
+    }
 
     sol::load_result script = state.load_file(path);
     if (!script.valid()) {
@@ -622,6 +638,11 @@ void AppController::Impl::RunAutomationFlatScript(sol::state& state, const AppCo
         logErr("[LUA run] ", "invalid script path");
         return;
     }
+    std::string consentReason;
+    if (!app_.IsLuaScriptConsented(path, /*interactive=*/false, consentReason)) {
+        logErr("[LUA run] ", consentReason);
+        return;
+    }
 
     sol::load_result script = state.load_file(path);
     if (!script.valid()) {
@@ -665,6 +686,16 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
         logErr("[LUA setup] ", "invalid script path");
         return;
     }
+    // Consent gate BEFORE registering the script as an active setup script — a blocked script
+    // must not enter activeSetupScripts_ (it would otherwise be retried on every worker job).
+    // UI-thread / user-triggered path → interactive, so the scripting window is surfaced.
+    {
+        std::string consentReason;
+        if (!IsLuaScriptConsented(path, /*interactive=*/true, consentReason)) {
+            logErr("[LUA setup] ", consentReason);
+            return;
+        }
+    }
 
     // activeSetupScripts_ is read by AutomationWorkerLoop on the worker thread — every mutation
     // must take automationJobMutex_ so the worker's snapshot copy sees a consistent vector.
@@ -707,4 +738,3 @@ void AppController::RunLuaSetupScript(const std::string& scriptPath) {
         LOG_TRACE("RunLuaSetupScript: ok path=%s", path.c_str());
     }
 }
-

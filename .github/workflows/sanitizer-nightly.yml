@@ -60,8 +60,12 @@ jobs:
       - name: Cache FetchContent _deps (clang-asan)
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          # FETCHCONTENT_BASE_DIR defaults to .fetchcontent-src (CMakeLists.txt:469),
+          # NOT build/ninja-clang-asan/_deps — the old path cached nothing and every
+          # nightly cold-fetched all deps (ci-workflows-04; same fix coverage.yml
+          # already applied at its line 145).
           path: |
-            build/ninja-clang-asan/_deps
+            .fetchcontent-src
           key: ${{ runner.os }}-fetchcontent-clang-asan-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
           restore-keys: |
             ${{ runner.os }}-fetchcontent-

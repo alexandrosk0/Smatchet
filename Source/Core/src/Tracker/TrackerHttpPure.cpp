@@ -123,6 +123,39 @@ bool ShouldUpgradeCleartextBase(const std::string& rawBase) {
     return !IsLoopbackHost(s);
 }
 
+long ParseRetryAfterSeconds(const std::string& value) {
+    const std::string s = Trimmed(value);
+    // Delta-seconds form only: 1-6 digits (999999 s ≈ 11.5 days is already far past any
+    // real throttle window; longer runs are garbage and would overflow smaller longs).
+    if (s.empty() || s.size() > 6) {
+        return -1;
+    }
+    for (char c : s) {
+        if (c < '0' || c > '9') {
+            return -1; // HTTP-date form or garbage — callers fall back to plain backoff
+        }
+    }
+    return std::stol(s);
+}
+
+long ComputeTrackerRetryDelayMs(int attempt, long baseMs, long expCapMs, long retryAfterSec, long honorCapMs) {
+    long delayMs = baseMs;
+    for (int i = 1; i < attempt; ++i) {
+        delayMs *= 2;
+        if (delayMs >= expCapMs) {
+            delayMs = expCapMs;
+            break;
+        }
+    }
+    if (retryAfterSec >= 0) {
+        long honoredMs = (retryAfterSec > honorCapMs / 1000) ? honorCapMs : retryAfterSec * 1000;
+        if (honoredMs > delayMs) {
+            delayMs = honoredMs;
+        }
+    }
+    return delayMs;
+}
+
 } // namespace TrackerHttpPure
 
 // IsTrackerTransportErrorText was deleted here in N12 slice 3 — see TrackerHttpPure.h.

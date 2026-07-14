@@ -39,6 +39,14 @@ on:
     # these, the only way to honour a just-applied label was an empty commit to
     # mint a fresh event (postmortems.md 2026-06-07 PR #966).
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  # Merge-queue readiness (mirrors coverage.yml / coverage-gate.yml / doc-validation.yml):
+  # when develop is behind a GitHub merge queue, required contexts run on the synthetic
+  # `merge_group` ref; a required context that never reports there deadlocks the queue
+  # forever (ci-workflows-03). The detect step below self-gates any non-pull_request
+  # event to perf=false so the heavy perf build skips and the required context still
+  # reports green (a skipped required job counts as success for branch protection); the
+  # queued commit's perf already passed at PR time.
+  merge_group:
 
 concurrency:
   group: perf-pr-fast-${{ github.ref }}
@@ -80,6 +88,16 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # Merge-queue self-gate (ci-workflows-03): on a non-pull_request event
+          # (merge_group), there is no base_ref to diff against — skip the heavy
+          # perf build and report the required context green (a skipped required
+          # job counts as success). The queued commit already passed perf at PR time.
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "Non-PR event (${{ github.event_name }}) — merge-queue readiness: skipping perf build, reporting green."
+            echo "perf=false" >> "$GITHUB_OUTPUT"
+            echo "android_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           # NO --depth: a shallow base-ref fetch re-shallows develop after the
           # fetch-depth:0 checkout and breaks merge-base for the three-dot diff
           # below (#1227(b)). Masked here (`2>/dev/null || true` + fail-safe

@@ -22,6 +22,7 @@
 
 #include "AiTypes.h"
 #include "KeybindingsConfig.h"
+#include "LuaScriptConsent.h" // LuaScriptApproval — pure, nlohmann-free (keeps this header light)
 #include "SmatchetDefaults.h"
 #include "SmatchetThemeIds.h"
 #include "SmatchetUiModeIds.h"
@@ -81,6 +82,10 @@ struct TrackerConfig {
     std::string GitHubBaseUrl; // e.g. https://api.github.com or https://<enterprise>/api/v3
     std::string GitHubOwner;   // e.g. "alexandrosk0"
     std::string GitHubRepo;    // e.g. "Smatchet"
+    // Projects v2 board number under GitHubOwner — the N in the board URL
+    // github.com/orgs/OWNER/projects/N. 0 = no board, which keeps every
+    // projects-v2 code path off (docs/plans/shipped/github-projects-v2-fields.md).
+    int GitHubProjectNumber = 0;
 
     // Linear-as-tracker configuration (Slice 1 of docs/plans/linear-tracker-backend.md).
     // GraphQL-only backend; personal API key is DPAPI-encrypted on Win32 (same code path as
@@ -238,6 +243,18 @@ struct TrackerConfig {
     // Quick comment templates for context menus and annotate analysis
     std::vector<CommentTemplate> QuickCommentTemplates = GetDefaultQuickCommentTemplates();
     std::vector<CommentTemplate> AnnotateCommentTemplates = GetDefaultAnnotateCommentTemplates();
+
+    // First-run Lua script consent gate. A Scripts/*.lua file may only be executed once the
+    // user has approved its exact content (path plus sha-256), so a teammate-shared or silently
+    // dropped script cannot run the app's high-privilege Lua bindings unseen on the next
+    // automation run, MCP invocation, or startup hook replay. ApprovedLuaScripts holds one
+    // fingerprint per path; a content change re-blocks until re-approved. LuaScriptConsentInitialized
+    // gates one-time seeding of scripts that already existed at upgrade time (so existing setups keep
+    // working — see AppController init). LuaScriptConsentEnforced is the operator kill-switch
+    // (default ON); it can also be forced off for a session via SMATCHET_LUA_CONSENT=off.
+    std::vector<smatchet::lua_consent::LuaScriptApproval> ApprovedLuaScripts;
+    bool LuaScriptConsentInitialized = false;
+    bool LuaScriptConsentEnforced = true;
 
     // Customizable icon toolbar rendered below the main menu bar. Per-tracker append
     // lists live in ViewWorkspaceState::ToolbarAppend. See ToolbarConfig.h.
