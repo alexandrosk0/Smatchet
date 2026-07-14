@@ -194,6 +194,35 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprin
     CHECK(rig.fieldDeps.DeferredNotifyCalls >= 1);
 }
 
+// The sprint + timetracking branch helpers migrated from `bool + outError` to VoidResult
+// (build-quality-velocity-hardening #21). These pin the migrated Err paths as they surface
+// back through the public SubmitFieldEdit bool + outError contract (via VoidResultToBool).
+TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch rejects clearing (empty values)") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+
+    std::string err;
+    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {}, err);
+
+    CHECK_FALSE(ok);
+    CHECK(err == "Clearing sprint is not supported by this action.");
+    CHECK(rig.fieldDeps.Fake()->AddIssueToSprintCallCount() == 0); // rejected before any backend call
+}
+
+TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch rejects clearing (empty estimate)") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+
+    std::string err;
+    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {}, err);
+
+    CHECK_FALSE(ok);
+    CHECK(err == "Clearing Jira timetracking estimates is not supported by this editor.");
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
+}
+
 // ---------------------------------------------------------------------------
 // (6) Timetracking branch — wraps the estimate into a `timetracking` payload.
 // ---------------------------------------------------------------------------
