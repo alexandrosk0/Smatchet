@@ -5,6 +5,7 @@
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "ProjectResolver.h"
+#include "Sync/JqlChangedSincePure.h"
 #include "StringUtil.h"
 #include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
@@ -220,6 +221,7 @@ struct PlaneIssuePageFetch {
 PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::string& workspaceSlug,
                                         const std::string& planeProjectId, const cpr::Header& headers, int pageSize,
                                         const std::string& listCursor, const std::string& sequenceIdInFilter,
+                                        const std::string& updatedAtGteFilter,
                                         const PlaneClient::CancelCallback& shouldCancel) {
     PlaneIssuePageFetch out;
     const std::string listBase =
@@ -234,6 +236,10 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     // the comma-separated list is transmitted safely. Empty ≡ no filter (full/early-exit sweep).
     if (!sequenceIdInFilter.empty()) {
         params.Add({"sequence_id__in", sequenceIdInFilter});
+    }
+    // ticket-change-monitor: server-side "changed since" window. Empty ≡ no filter (full sweep).
+    if (!updatedAtGteFilter.empty()) {
+        params.Add({"updated_at__gte", updatedAtGteFilter});
     }
 
     // Thread the sync worker's cancellation token into the retry loop so an abort during a
@@ -348,8 +354,8 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
                  const std::string& projectIdentifier, const cpr::Header& headers,
                  const std::vector<smatchet::plane::UserDisplayLookup>& userLookup,
                  const PlaneClient::BatchCallback& onBatch, const PlaneClient::CancelCallback& shouldCancel,
-                 const std::string& sequenceIdInFilter, std::unordered_map<std::string, std::string>& localKeyToId,
-                 TrackerIssueFetchSummary& summary) {
+                 const std::string& sequenceIdInFilter, const std::string& updatedAtGteFilter,
+                 std::unordered_map<std::string, std::string>& localKeyToId, TrackerIssueFetchSummary& summary) {
     PlanePageLoopResult result;
     const int pageSize = 100;
     // Hard cap on outer pagination to bound a misbehaving cursor that loops back to itself.
@@ -377,8 +383,9 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
         ++result.PageCount;
 
         // Phase 4: fetch + classify one page. Any hard failure carries a ready error string.
-        PlaneIssuePageFetch page = FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize,
-                                                       listCursor, sequenceIdInFilter, shouldCancel);
+        PlaneIssuePageFetch page =
+            FetchPlaneIssuePage(planeApi, workspaceSlug, planeProjectId, headers, pageSize, listCursor,
+                                sequenceIdInFilter, updatedAtGteFilter, shouldCancel);
         if (!page.Ok) {
             LOG_ERROR("PlaneClient::FetchIssuesStreamed %s", page.Error.c_str());
             summary.FetchError = page.Error;
@@ -459,11 +466,10 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamed(const BatchCallback& o
     return FetchIssuesStreamedImpl(onBatch, shouldCancel, configOverride, viewsOverride, std::string());
 }
 
-TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamedImpl(const BatchCallback& onBatch,
-                                                              const CancelCallback& shouldCancel,
-                                                              const TrackerConfig* configOverride,
-                                                              const ViewsStore* viewsOverride,
-                                                              const std::string& sequenceIdInFilter) {
+TrackerIssueFetchSummary
+PlaneClient::FetchIssuesStreamedImpl(const BatchCallback& onBatch, const CancelCallback& shouldCancel,
+                                     const TrackerConfig* configOverride, const ViewsStore* viewsOverride,
+                                     const std::string& sequenceIdInFilter, const std::string& updatedAtGteFilter) {
 
     TrackerIssueFetchSummary summary;
 
@@ -539,9 +545,9 @@ TrackerIssueFetchSummary PlaneClient::FetchIssuesStreamedImpl(const BatchCallbac
         const std::vector<smatchet::plane::UserDisplayLookup> userLookup = BuildPlaneUserLookups(localCachedUsers);
 
         // Phases 4-6: drive the cursor-paginated work-items fetch/map/stream loop.
-        PlanePageLoopResult loop =
-            RunPlanePageLoop(planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers,
-                             userLookup, filteredOnBatch, shouldCancel, sequenceIdInFilter, localKeyToId, summary);
+        PlanePageLoopResult loop = RunPlanePageLoop(
+            planeApi, cfg.PlaneWorkspaceSlug, planeProjectId, tempProjectIdentifier, headers, userLookup,
+            filteredOnBatch, shouldCancel, sequenceIdInFilter, updatedAtGteFilter, localKeyToId, summary);
         if (loop.HardFailed) {
             return summary;
         }
@@ -645,6 +651,7 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
 
     TrackerIssueFetchSummary summary =
         FetchIssuesStreamedImpl(onBatch, shouldCancel, &cfg, nullptr, sequenceIdInFilter);
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity errtail; owner=tracker-backend; revisit=2026-12-31)
     if (!summary.FetchError.empty()) {
         // The summary now carries the kind classified at the page-fetch site (item 12); fall back
         // to Unknown only for a legacy path that did not classify.
@@ -654,6 +661,37 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
         return FetchResult::Err(TrackerErrorUnknown(summary.FetchError));
     }
     return FetchResult::Ok(std::move(outTickets));
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+PlaneClient::FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
+                                     const std::vector<std::string>& /*salientFields*/) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    // Lightweight change probe: reuse the streaming fetch but add Plane's native `updated_at__gte`
+    // list filter so the server returns only work-items touched inside the window — an idle poll
+    // comes back near-empty instead of downloading the whole view.
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity window; owner=tracker-backend; revisit=2026-12-31)
+    const std::int64_t nowUnix =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::string sinceIso = smatchet::IsoSinceFromWindow(nowUnix, static_cast<std::int64_t>(window.count()));
+
+    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity collect; owner=tracker-backend; revisit=2026-12-31)
+    std::vector<CachedTicket> results;
+    auto onBatch = [&](std::vector<CachedTicket>&& batch) {
+        results.insert(results.end(), std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+    };
+    auto shouldCancel = []() { return false; };
+    TrackerIssueFetchSummary summary =
+        FetchIssuesStreamedImpl(onBatch, shouldCancel, &cfg, &views, std::string(), sinceIso);
+    if (!summary.FetchError.empty()) {
+        return FetchResult::Err(summary.Error.IsOk() ? TrackerErrorUnknown(summary.FetchError) : summary.Error);
+    }
+    // A capped (warned) or incomplete walk is not an authoritative changed-since snapshot — refuse
+    // it so the membership reconcile never acts on a truncated view (mirrors the default impl).
+    if (!summary.FullSyncCompleted || !summary.Warning.empty()) {
+        return FetchResult::Err(TrackerErrorUnknown("changed-since probe returned a partial/warned fetch"));
+    }
+    return FetchResult::Ok(std::move(results));
 }
 
 std::string PlaneClient::ExtractProjectFromQuery(const std::string& query) const {

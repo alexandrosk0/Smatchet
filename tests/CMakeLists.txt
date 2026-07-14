@@ -1155,7 +1155,7 @@ add_executable(SmatchetTests
     Core/TrackerRedirectNoFollow.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
-    # ticket-change-monitor S1a (docs/plans/active/ticket-change-monitor.md) — three
+    # ticket-change-monitor S1a (docs/plans/ticket-change-monitor.md) — three
     # backend-agnostic pure helpers behind the per-pane change monitor, each unit-tested
     # bucket-A with no backend / pane / toast manager. CachedTicketTypes.h-only (no
     # cpr/SQLite/ImGui), so the doctest rig links the two .cpp directly:

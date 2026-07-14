@@ -680,6 +680,11 @@ struct UiDrawSession {
     std::string paneDeferredActionPaneId;
     PaneDeferredActionKind paneDeferredActionKind = PaneDeferredActionKind::None;
     std::string focusedPaneId;
+    /// ticket-change-monitor: one-shot "scroll this ticket into view" latch. Set by
+    /// FocusTicketInGrid (a Notification Center row click) alongside a focus reassignment to the
+    /// owning pane; drained by drawActiveProjectGridRows on the focused pane when the matching row
+    /// resolves, which pixel-scrolls to it and clears the latch. Empty = no pending focus.
+    std::string pendingFocusIssueId;
     bool gridPanesLoaded = false;
     /// Debounced smatchet_panes.json save latch (mirrors prefsDirty).
     bool gridPanesDirty = false;

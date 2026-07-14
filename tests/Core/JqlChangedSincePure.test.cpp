@@ -8,6 +8,7 @@
 
 #include "doctest/doctest.h"
 
+#include <chrono>
 #include <string>
 
 using smatchet::IsoSinceFromWindow;
@@ -82,4 +83,35 @@ TEST_CASE("IsoSinceFromWindow: negative window treated as zero, never goes negat
 TEST_CASE("IsoSinceFromWindow: crosses a day boundary backward") {
     // 2026-06-20T00:30:00Z == 1781915400; minus 3600s -> 2026-06-19T23:30:00Z.
     CHECK(IsoSinceFromWindow(1781915400, 3600) == "2026-06-19T23:30:00Z");
+}
+
+// ---- ChangedSinceWindowMinutes (ticket-change-monitor deferred slice) ------------------------
+// The whole-minute lookback the concrete Jira `FetchIssuesChangedSince` override feeds into
+// WrapJqlChangedWithin. Rounds UP so a sub-minute remainder never drops a change; clamps to >= 1.
+
+TEST_CASE("ChangedSinceWindowMinutes: exact minutes pass through") {
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(60)) == 1);
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(180)) == 3);
+}
+
+TEST_CASE("ChangedSinceWindowMinutes: sub-minute remainder rounds up (never drops a change)") {
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(61)) == 2);
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(121)) == 3);
+    // AppController's default 120s interval + 60s margin = 180s window -> a clean 3m.
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(179)) == 3);
+}
+
+TEST_CASE("ChangedSinceWindowMinutes: sub-minute / zero / negative windows clamp to 1") {
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(30)) == 1);
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(1)) == 1);
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(0)) == 1);
+    CHECK(smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(-5)) == 1);
+}
+
+TEST_CASE("ChangedSinceWindowMinutes composes into the Jira change-window JQL the probe sends") {
+    // End-to-end composition the concrete FetchIssuesChangedSince override performs: a view JQL +
+    // a 180s window becomes the exact server-side "updated >= -3m" narrowing.
+    const int minutes = smatchet::ChangedSinceWindowMinutes(std::chrono::seconds(180));
+    CHECK(WrapJqlChangedWithin("project = ABC ORDER BY created DESC", minutes) ==
+          "(project = ABC) AND updated >= -3m ORDER BY created DESC");
 }

@@ -37,9 +37,29 @@ std::string ChangeBatchSignature(const std::vector<smatchet::TicketChangeSummary
     return sig;
 }
 
+// UI-thread-only focus handler, registered by the UI layer at init. File-static so the row-action
+// lambda below (created here) can reference it even though this TU has no g_ui / AppController.
+TicketChangeFocusHandler& FocusHandlerRef() {
+    static TicketChangeFocusHandler s_handler;
+    return s_handler;
+}
+
+// The issue the Notification Center row should focus for a change batch: the first change that is
+// not a Deletion (a deleted ticket has no grid row to focus). Empty if every change is a Deletion.
+std::string PrimaryFocusableId(const std::vector<smatchet::TicketChangeSummary>& changes) {
+    for (std::size_t i = 0; i < changes.size(); ++i) {
+        if (changes[i].kind != smatchet::TicketChangeKind::Deleted && !changes[i].issueId.empty()) {
+            return changes[i].issueId;
+        }
+    }
+    return std::string();
+}
+
 } // namespace
 
-void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& changes) {
+void SetTicketChangeFocusHandler(TicketChangeFocusHandler handler) { FocusHandlerRef() = std::move(handler); }
+
+void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& changes, const std::string& paneId) {
     if (changes.empty()) {
         return;
     }
@@ -56,6 +76,19 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
     if (body.empty()) {
         return;
     }
-    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.tickets", "Tickets"), body, ToastType::Info,
-                                          5000);
+    // Bind a row action that focuses the primary changed ticket in its pane when the Notification
+    // Center row is clicked (item 11). Only when there is a focusable (non-deleted) target and the
+    // pane is known; otherwise fall through to the plain 4-arg Push and the row stays informational.
+    const std::string focusId = PrimaryFocusableId(changes);
+    const std::string title = SmatchetLocalization::T("toast.tickets", "Tickets");
+    if (!focusId.empty() && !paneId.empty()) {
+        SmatchetToastManager::Instance().Push(title, body, ToastType::Info, 5000, [paneId, focusId]() {
+            const TicketChangeFocusHandler& h = FocusHandlerRef();
+            if (h) {
+                h(paneId, focusId);
+            }
+        });
+        return;
+    }
+    SmatchetToastManager::Instance().Push(title, body, ToastType::Info, 5000);
 }

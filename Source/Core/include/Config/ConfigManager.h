@@ -531,7 +531,7 @@ struct TrackerConfig {
     // sections). Normalized to one of the two at load.
     std::string VcsFeedLayout = "unified";
 
-    // --- Ticket-change monitor (docs/plans/active/ticket-change-monitor.md) ---
+    // --- Ticket-change monitor (docs/plans/ticket-change-monitor.md) ---
     // Periodically poll the backend for salient changes to the open panes' tracked
     // tickets and raise an in-app toast. On by default; opt-out here.
     bool TicketChangeMonitorEnabled = true;

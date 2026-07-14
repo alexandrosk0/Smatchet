@@ -175,6 +175,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`plan-lock-enforcement`](shipped/plan-lock-enforcement.md) | 2026-06-19 | Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer) |
 | [`perf-interactive-grid-stress`](shipped/perf-interactive-grid-stress.md) | 2026-06-20 | Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe) |
 | [`self-improvement-pr-review-exemption`](shipped/self-improvement-pr-review-exemption.md) | 2026-06-20 | Plan — Exempt pure self-improvement doc PRs from CR / Bugbot review + heavy tests |
+| [`ticket-change-monitor`](shipped/ticket-change-monitor.md) | 2026-06-20 | Plan — Lightweight ticket-change monitor (notify on remote changes) |
 | [`cpp-security-hardening`](shipped/cpp-security-hardening.md) | 2026-06-27 | Plan — C++ security hardening (audit remediation) |
 | [`spawn-mcp-auth`](shipped/spawn-mcp-auth.md) | 2026-06-27 | Plan — spawn MCP auth handshake unblock + product fix |
 | [`cpp-code-audit-remediation`](shipped/cpp-code-audit-remediation.md) | 2026-07-02 | Plan — C++ code audit remediation (CPP_CODE_AUDIT.md) |

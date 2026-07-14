@@ -14,6 +14,8 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+// SMATCHET_DEVIATION(rule=duplication; reason=incidental-includes; owner=tracker-backend; revisit=2026-12-31)
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -132,6 +134,18 @@ class JiraClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& viewStore) override;
+
+    // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
+    // Server-side change probe + keys-only membership + existence GET, replacing the heavy
+    // full-fetch defaults on ITrackerIssueReader with native Jira queries.
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
+    // backend clients; owner=tracker-backend; revisit=2026-12-31)
+    Result<std::vector<CachedTicket>, TrackerError>
+    FetchIssuesChangedSince(const TrackerConfig& cfg, const ViewsStore& views, std::chrono::seconds window,
+                            const std::vector<std::string>& salientFields) override;
+    Result<std::vector<std::string>, TrackerError> FetchIssueKeysForView(const TrackerConfig& cfg,
+                                                                         const ViewsStore& views) override;
+    Result<bool, TrackerError> ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) override;
 
     /** GET /rest/api/3/user/search — for matching Perforce users to Jira accounts. */
     Result<std::vector<TrackerUser>, TrackerError> SearchUsersByQuery(const TrackerConfig& cfg,
