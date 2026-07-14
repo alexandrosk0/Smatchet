@@ -22,6 +22,11 @@
 constexpr int kTrackerHttpDefaultMaxAttempts = 3;
 constexpr long kTrackerHttpBaseRetryDelayMs = 250;
 constexpr long kTrackerHttpMaxRetryDelayMs = 4000;
+/// Ceiling on honouring a server-sent `Retry-After` between attempts. GitHub's secondary
+/// rate limits routinely ask for ~60 s — waiting that long on a sync worker is worse than
+/// failing over to the offline queue, so the honored delay is capped here; the backoff
+/// sleep polls the cancel token throughout either way.
+constexpr long kTrackerHttpMaxRetryAfterHonorMs = 30000;
 
 /// Paired result: typed classification + the raw cpr::Response so callers can still parse the
 /// body. `Response.text` is always populated (empty on transport failure). On success,
@@ -36,8 +41,11 @@ struct TrackerHttpResult {
 
 /// Classify a cpr::Response into TrackerError. Maps HTTP status via TrackerErrorFromHttpStatus
 /// (so 401/403 = Auth, 404 = NotFound, 429 = RateLimited, 5xx = ServerError, other 4xx =
-/// InvalidRequest, status<=0 = Transport). The detail string is the upstream body if non-empty,
-/// otherwise the cpr error message, otherwise a generic "HTTP <code>" string.
+/// InvalidRequest, status<=0 = Transport). Exception: a 403 carrying a `Retry-After` header is
+/// a throttle, not an auth failure (GitHub secondary rate limits / abuse detection respond
+/// this way), so it classifies RateLimited — retryable, and an offline-queueable transient for
+/// the field-edit chain instead of a hard credential error. The detail string is the upstream
+/// body if non-empty, otherwise the cpr error message, otherwise a generic "HTTP <code>" string.
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 
 /// Classify a reachability-probe response into a TrackerReachabilityProbeResult, shared by every
