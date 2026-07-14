@@ -60,8 +60,6 @@ Lives in `agents/core/perf-gatekeeper.md` — the canonical agent file is the si
 - K baselines missing
 ```
 
-End with `## Self-improvement` per AGENTS.md self-improvement loop.
-
 ## Delegates
 
 - Regression confirmed → `perf-detective`.

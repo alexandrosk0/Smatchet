@@ -17,7 +17,7 @@
 #   - clang-format, clang-tidy,    — lint hooks
 #     cppcheck
 #   - flock                        — lint-cpp-drain.sh queue serialisation
-#   - bats                         — tests/bats/*.bats (merge-gates regression suite)
+#   - bats                         — tests/bats/*.bats (all agentic suites)
 #   - git                          — table stakes
 #
 # Exit 0 when every REQUIRED tool resolves. Exit 1 on any missing required tool.
@@ -63,7 +63,7 @@ TOOLS=(
     "clang-tidy${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra"
     "cppcheck${SEP}REQUIRED${SEP}MSYS2: pacman -S mingw-w64-ucrt-x86_64-cppcheck"
     "flock${SEP}REQUIRED${SEP}Linux/macOS: usually built-in. MSYS2: pacman -S util-linux"
-    "bats${SEP}REQUIRED${SEP}Any platform: npm i -g bats (preferred — resolves on the bash-tool PATH) | MSYS2: pacman -S bats | macOS: brew install bats-core — runs tests/bats/*.bats (merge-gates regression suite)"
+    "bats${SEP}REQUIRED${SEP}Any platform: npm i -g bats (preferred — resolves on the bash-tool PATH) | MSYS2: pacman -S bats | macOS: brew install bats-core — runs tests/bats/*.bats (all agentic suites)"
     "OpenCppCoverage${SEP}OPTIONAL${SEP}Coverage gates only — choco install opencppcoverage (Windows admin shell)"
 )
 
