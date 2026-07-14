@@ -32,7 +32,15 @@ case "${1:-}" in
 esac
 
 ACTIVE_DIR="${PLAN_ACTIVE_DIR:-docs/plans/active}"
-REPO="${REPO:-alexandrosk0/Smatchet}"
+
+# Resolve the target repo dynamically (no hardcoded slug — core-scripts-bash-07).
+# $REPO overrides (test seam); else derive via gh. The PRIMARY scan is a
+# filesystem check (Status marker in active/ plans) that needs no repo, so an
+# unresolved slug does NOT block — it only disables the optional gh consistency
+# note (GH_OK gates on a non-empty REPO below).
+# shellcheck source=agents/scripts/core/lib/resolve-repo.sh
+. agents/scripts/core/lib/resolve-repo.sh
+REPO="$(resolve_repo || true)"
 
 # is_shipped_marker <file> — true if the plan's Status header VALUE is `shipped`.
 # Keys on the value immediately after `Status:` so a live plan whose prose merely
@@ -53,7 +61,7 @@ cited_prs() {
 }
 
 GH_OK=0
-if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+if [ -n "$REPO" ] && command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
     GH_OK=1
 fi
 
