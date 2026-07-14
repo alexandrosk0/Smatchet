@@ -22,6 +22,7 @@
 #include "ConfigManager.h"
 #include "Interfaces/IAppAttachments.h"
 #include "Interfaces/IAppAutomation.h"
+#include "Interfaces/IAppFields.h"
 #include "Interfaces/IAppMeta.h"
 #include "Interfaces/IAppOfflineQueue.h"
 #include "Interfaces/IAppSync.h"
@@ -288,6 +289,52 @@ struct FakeAutomation : IAppAutomation {
     void RunFlatScriptAsync(const std::string& scriptPath) override { LastFlatScript = scriptPath; }
     void RunLuaSetupScript(const std::string& scriptPath) override { LastSetupScript = scriptPath; }
     std::vector<std::string> GetLuaGlobalActionNames() const override { return {"alpha", "beta"}; }
+};
+
+struct FakeFields : IAppFields {
+    std::vector<TrackerField> Fields;
+    std::string CatalogError;
+    bool RefreshOk = true;
+    int RefreshCalls = 0;
+    bool IconFound = false;
+    std::string IconTarget;
+    mutable std::string LastIconFieldId;
+    mutable std::string LastIconValue;
+
+    FakeFields() {
+        TrackerField prio;
+        prio.Id = "priority";
+        prio.Name = "Priority";
+        prio.Type = "priority";
+        TrackerField summary;
+        summary.Id = "summary";
+        summary.Name = "Summary";
+        summary.Type = "string";
+        Fields = {prio, summary};
+    }
+    const std::vector<TrackerField>& GetAvailableFields() const override { return Fields; }
+    const TrackerField* FindFieldById(const std::string& fieldId) const override {
+        for (const TrackerField& f : Fields) {
+            if (f.Id == fieldId) {
+                return &f;
+            }
+        }
+        return nullptr;
+    }
+    bool RefreshFieldCatalog(const TrackerConfig&) override {
+        ++RefreshCalls;
+        return RefreshOk;
+    }
+    const std::string& GetFieldCatalogError() const override { return CatalogError; }
+    bool TryGetFieldIconMapTarget(const std::string& fieldId, const TrackerField*, const std::string& rawValue,
+                                  std::string& outPathOrUrl) const override {
+        LastIconFieldId = fieldId;
+        LastIconValue = rawValue;
+        if (IconFound) {
+            outPathOrUrl = IconTarget;
+        }
+        return IconFound;
+    }
 };
 
 // The doctest rig is single-threaded, so "already on the UI thread" is the truthful
@@ -810,5 +857,75 @@ TEST_CASE("config.* — allowlist gate, dry-run preview, and persisted round-tri
         CHECK((*r.Data)["action"] == "status");
         CHECK(r.Data->contains("enabled"));
         CHECK(r.Data->contains("intervalSec"));
+    }
+}
+
+TEST_CASE("fields.* — catalog listing/pagination, get lookup, refresh plumbing, icon resolution") {
+    smatchet_tests::TestEnvGuard env; // fields.refresh_catalog reads ConfigManager::Load()
+    FakeFields fields;
+    CommandRegistry reg;
+    smatchet::cmd::RegisterFieldsCommands(reg, fields);
+    const CommandContext ctx = AutomationCtx();
+
+    {
+        // list_available projects id/name/type and honours the pagination window.
+        const CommandResult r = reg.Dispatch("fields.list_available", {}, ctx);
+        REQUIRE(r.Ok);
+        REQUIRE((*r.Data)["items"].size() == 2);
+        CHECK((*r.Data)["items"][0]["id"] == "priority");
+        CHECK((*r.Data)["items"][0]["type"] == "priority");
+        CHECK((*r.Data)["items"][1]["name"] == "Summary");
+
+        const CommandResult paged = reg.Dispatch("fields.list_available", {{"limit", 1}, {"offset", 1}}, ctx);
+        REQUIRE(paged.Ok);
+        REQUIRE((*paged.Data)["items"].size() == 1);
+        CHECK((*paged.Data)["items"][0]["id"] == "summary");
+    }
+    {
+        // get resolves a known id; an unknown id is a NotFound failure, not an empty ok.
+        const CommandResult hit = reg.Dispatch("fields.get", {{"id", "priority"}}, ctx);
+        REQUIRE(hit.Ok);
+        CHECK((*hit.Data)["name"] == "Priority");
+
+        const CommandResult miss = reg.Dispatch("fields.get", {{"id", "ghost"}}, ctx);
+        REQUIRE_FALSE(miss.Ok);
+        CHECK(miss.Error.Code == ErrorCode::NotFound);
+    }
+    {
+        // refresh_catalog forwards to the facet and reports ok + the live field count.
+        fields.RefreshOk = true;
+        const CommandResult r = reg.Dispatch("fields.refresh_catalog", {}, ctx);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["ok"] == true);
+        CHECK((*r.Data)["fieldCount"] == 2);
+        CHECK(fields.RefreshCalls == 1);
+
+        // A failed refresh surfaces the facet's catalog error string.
+        fields.RefreshOk = false;
+        fields.CatalogError = "backend unreachable";
+        const CommandResult bad = reg.Dispatch("fields.refresh_catalog", {}, ctx);
+        REQUIRE(bad.Ok); // the command succeeds; the failure rides in the payload
+        CHECK((*bad.Data)["ok"] == false);
+        CHECK((*bad.Data)["error"] == "backend unreachable");
+    }
+    {
+        // icon_for passes the field+value pair through and echoes the resolved target.
+        fields.IconFound = true;
+        fields.IconTarget = "/icons/prio-high.png";
+        const CommandResult r = reg.Dispatch("fields.icon_for", {{"field", "priority"}, {"value", "High"}}, ctx);
+        REQUIRE(r.Ok);
+        CHECK((*r.Data)["found"] == true);
+        CHECK((*r.Data)["pathOrUrl"] == "/icons/prio-high.png");
+        CHECK((*r.Data)["field"] == "priority");
+        CHECK((*r.Data)["value"] == "High");
+        CHECK(fields.LastIconFieldId == "priority");
+        CHECK(fields.LastIconValue == "High");
+
+        // A miss yields found=false with an empty path (never the stale target).
+        fields.IconFound = false;
+        const CommandResult miss = reg.Dispatch("fields.icon_for", {{"field", "summary"}, {"value", "x"}}, ctx);
+        REQUIRE(miss.Ok);
+        CHECK((*miss.Data)["found"] == false);
+        CHECK((*miss.Data)["pathOrUrl"] == "");
     }
 }

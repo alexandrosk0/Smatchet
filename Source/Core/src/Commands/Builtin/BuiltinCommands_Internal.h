@@ -30,6 +30,7 @@ class IAppAutomation;
 class IAppTicketData;
 class IAppTicketMutations;
 class IAppSync;
+class IAppFields;
 
 namespace smatchet {
 namespace cmd {
@@ -75,7 +76,7 @@ void RegisterTicketsCommands(CommandRegistry& reg, IAppTicketData& app);
 void RegisterTicketMutationCommands(CommandRegistry& reg, IAppTicketMutations& app);
 void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster);
 void RegisterSyncCommands(CommandRegistry& reg, IAppSync& app);
-void RegisterFieldsCommands(CommandRegistry& reg, AppController& app);
+void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app);
 void RegisterUsersCommands(CommandRegistry& reg, IAppUsers& app);
 void RegisterOfflineCommands(CommandRegistry& reg, IAppOfflineQueue& app);
 void RegisterScenarioCommands(CommandRegistry& reg, IAppScenarios& app, IMainThreadPoster& poster);

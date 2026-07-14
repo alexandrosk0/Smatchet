@@ -5,10 +5,10 @@
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
 
-#include "AppController.h"
-#include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Interfaces/IAppFields.h"
+#include <nlohmann/json.hpp>
 #include "ConfigManager.h"
-#include "TrackerFieldSchema.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 #include <string>
 #include <utility>
@@ -22,7 +22,7 @@ using builtin_detail::PaginateJsonArray;
 using builtin_detail::PInt;
 using builtin_detail::PString;
 
-void RegisterFieldsCommands(CommandRegistry& reg, AppController& app) {
+void RegisterFieldsCommands(CommandRegistry& reg, IAppFields& app) {
     {
         Command c = MakeCommand("fields.list_available", "List tracker fields from the local catalog.",
                                 [&app](const nlohmann::json& args, const CommandContext&) {
