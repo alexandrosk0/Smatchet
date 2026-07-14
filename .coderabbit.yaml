@@ -156,7 +156,11 @@ reviews:
         `capability-tags`. The optional `harness-hints.<harness>:` blocks
         (e.g. `harness-hints.claude:`) are INTENTIONAL per-harness routing
         metadata (model selection, MCP tool lists) — harnesses ignore unknown
-        blocks, so do NOT flag them as unknown/unsupported keys.
+        blocks, so do NOT flag them as unknown/unsupported keys. The top-level
+        `model:` key is likewise INTENTIONAL — it mirrors
+        `harness-hints.claude-code.model` (the Claude Code native routing
+        wire; parity enforced by `test-agent-contract.sh` check 15) — do NOT
+        flag it as redundant with the hint or suggest removing either copy.
     - path: 'docs/plans/**'
       instructions: |
         Plan docs live in THREE tiers — `docs/plans/active/<slug>.md` (in

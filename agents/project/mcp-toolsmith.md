@@ -2,6 +2,7 @@
 name: mcp-toolsmith
 description: Work in `Source/Plugins/Mcp/`, `SmatchetMcpServerUi`, `McpServerStatus` — MCP wire protocol, tool schema design (JSON-RPC), server lifecycle, REST envelope shape. Also for exposing existing commands over MCP and editing their JSON schemas.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

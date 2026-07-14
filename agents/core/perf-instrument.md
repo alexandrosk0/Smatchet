@@ -2,6 +2,7 @@
 name: perf-instrument
 description: Add or remove `SMATCHET_UI_PERF_SCOPE("perf_temp:...")` markers per a spec provided by `perf-detective` or `spike-hunter`. Encodes the overhead rules (string-literal scope names, no nesting in million-call loops, one outer scope always safe, mandatory `perf_temp:` prefix, header include check). Use for inserting instrumentation or stripping all `perf_temp:` markers after a perf round. Helper-dispatched by perf-detective / spike-hunter — not directly user-routed on a bare perf/slow keyword.
 complexity: low
+model: haiku
 read-only: false
 capabilities:
   - semantic-code-search

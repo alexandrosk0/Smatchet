@@ -18,6 +18,8 @@
 #  13. V10.1 — agents/core/debug-detective.md contains literal "reproducer-first contract" (slice 10).
 #  14. Every agent prompt references the `## Self-improvement` output-contract section
 #      (mention counts — not a literal trailing heading; agent-size-reduction.md § Deviations).
+#  15. Top-level `model:` frontmatter key exists and equals harness-hints.claude-code.model
+#      (the Claude Code native model-routing wire; delegation.md § Model tiering).
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
@@ -48,7 +50,7 @@ agent_files() {
 # -------------------------------------------------------------------------
 # 1. Implementer agents — 3 required headings.
 # -------------------------------------------------------------------------
-echo "[1/14] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
+echo "[1/15] Implementer required headings (## Files changed / ## Smoke-test result / ## Manual residue)"
 IMPLEMENTERS=(tracker-backend grid-engine offline-sync command-system lua-binder mcp-toolsmith p4-annotate unreal-bridge mechanic ui-host)
 for a in "${IMPLEMENTERS[@]}"; do
   f="$(agent_path "$a")"
@@ -63,7 +65,7 @@ done
 # 2. Maintenance agents — 4 required headings.
 # -------------------------------------------------------------------------
 echo
-echo "[2/14] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
+echo "[2/15] Maintenance required headings (## Pre-flight / ## Mutations applied / ## Regression gate / ## Residue requiring user action)"
 MAINTENANCE=(build-doctor test-author git-janitor p4-janitor)
 for a in "${MAINTENANCE[@]}"; do
   f="$(agent_path "$a")"
@@ -82,7 +84,7 @@ done
 # declared in a discoverable place the agent points to" — satisfied by either.
 # -------------------------------------------------------------------------
 echo
-echo "[3/14] Diagnostic read-edit required headings (debug-detective + debug-instrument skill)"
+echo "[3/15] Diagnostic read-edit required headings (debug-detective + debug-instrument skill)"
 DD_REQUIRED=("## Hypotheses" "## Evidence" "## Cause" "## Files changed (temp-debug)" "## Cleanup" "## Handoff")
 DD_AGENT="$(agent_path debug-detective)"
 DD_SKILL="agents/_shared/skills/debug-instrument/SKILL.md"
@@ -99,7 +101,7 @@ if [[ $miss -eq 0 ]]; then check_pass "debug-detective 6/6"; else check_fail "de
 # 4. Every agent has ## Outcome: mandate text.
 # -------------------------------------------------------------------------
 echo
-echo "[4/14] ## Outcome: mandate present in every agent prompt (README excluded)"
+echo "[4/15] ## Outcome: mandate present in every agent prompt (README excluded)"
 miss_outcome=()
 total_agents=0
 for f in $(agent_files); do
@@ -124,7 +126,7 @@ fi
 #    substring check). Version (`· vN`) is asserted by check 10.
 # -------------------------------------------------------------------------
 echo
-echo "[5/14] Banner ↔ frontmatter identity (name · model/effort · read-scope)"
+echo "[5/15] Banner ↔ frontmatter identity (name · model/effort · read-scope)"
 banner_mismatch=()
 for f in $(agent_files); do
   base=$(basename "$f")
@@ -155,7 +157,7 @@ fi
 # 6. "$(agent_path architect)" does NOT contain a git commit self-directive.
 # -------------------------------------------------------------------------
 echo
-echo "[6/14] architect.md emit-only (no self-commit directive)"
+echo "[6/15] architect.md emit-only (no self-commit directive)"
 if grep -qE '^[^>`]*Commit immediately with ' "$(agent_path architect)"; then
   check_fail "architect.md still instructs the agent to commit"
 else
@@ -167,7 +169,7 @@ fi
 #    per H9 from docs/reference/agentic-infrastructure-2026-05-23.md).
 # -------------------------------------------------------------------------
 echo
-echo "[7/14] docs/agent-rules/delegation.md output-contract table has 6 class rows"
+echo "[7/15] docs/agent-rules/delegation.md output-contract table has 6 class rows"
 # Table lives in docs/agent-rules/delegation.md § Agent output contract since
 # AGENTS.md L192-422 was extracted into the new file. AGENTS.md still carries
 # a redirect stub naming the subsection.
@@ -186,7 +188,7 @@ fi
 # passes without a rewrite. A future architect.md rewrite that uses literal
 # `## Goal` headings will also pass.
 echo
-echo "[7b/14] architect.md emits Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff)"
+echo "[7b/15] architect.md emits Design-class sections (Goal / Affected components / Interface contracts / Risks / Implementation handoff)"
 design_miss=0
 for h in "Goal" "Affected components" "Interface contracts" "Risks" "Implementation handoff"; do
   if ! grep -qE "^(## $h|[0-9]+\. \*\*$h\*\*)" "$(agent_path architect)"; then
@@ -204,7 +206,7 @@ fi
 # 8. _infer_outcome unit tests pass.
 # -------------------------------------------------------------------------
 echo
-echo "[8/14] agents/_shared/token-tracking/tests/test_infer_outcome.py"
+echo "[8/15] agents/_shared/token-tracking/tests/test_infer_outcome.py"
 if python agents/_shared/token-tracking/tests/test_infer_outcome.py; then
   check_pass "_infer_outcome unit tests"
 else
@@ -222,7 +224,7 @@ fi
 # don't propagate; the live Claude Code SubagentStop hook runs the stale copy.
 # Catch the drift at PR time before the misclassification ships.
 echo
-echo "[9/14] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
+echo "[9/15] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
 canonical=agents/_shared/token-tracking/agent-token-log.py
 hook_copy=.claude/hooks/agent-token-log.py
 if [[ ! -f "$hook_copy" ]]; then
@@ -244,7 +246,7 @@ fi
 # kept in lockstep (the agent-versioning rule in
 # docs/agent-rules/delegation.md § Agent versioning).
 echo
-echo "[10/14] Frontmatter version ↔ banner version match"
+echo "[10/15] Frontmatter version ↔ banner version match"
 version_mismatch=()
 for f in $(agent_files); do
   base=$(basename "$f")
@@ -274,7 +276,7 @@ fi
 # Skills with no sibling agent (`grill-with-docs`, `scratchpad-recall`)
 # still require their own `version:` field for telemetry parity (eval M9).
 echo
-echo "[11/14] Skill ↔ agent SKILL.md parity (version + triggers)"
+echo "[11/15] Skill ↔ agent SKILL.md parity (version + triggers)"
 skill_drift=()
 for skill_md in agents/_shared/skills/*/SKILL.md; do
   skill_name=$(basename "$(dirname "$skill_md")")
@@ -315,7 +317,7 @@ fi
 #     must come with a sibling `cfg.P4RunOverride` consult or this gate trips.
 # -------------------------------------------------------------------------
 echo
-echo "[12/14] V3.3 — Source/Core/src/P4Annotate.cpp has exactly one SubprocessCapture::Run call site"
+echo "[12/15] V3.3 — Source/Core/src/P4Annotate.cpp has exactly one SubprocessCapture::Run call site"
 p4annotate_src=Source/Core/src/P4Annotate.cpp
 if [[ ! -f "$p4annotate_src" ]]; then
   check_fail "V3.3: $p4annotate_src missing"
@@ -335,7 +337,7 @@ fi
 #     rewrites don't silently soften the contract. Same shape as check 7b.
 # -------------------------------------------------------------------------
 echo
-echo "[13/14] V10.1 — agents/core/debug-detective.md contains literal 'reproducer-first contract'"
+echo "[13/15] V10.1 — agents/core/debug-detective.md contains literal 'reproducer-first contract'"
 if grep -qF "reproducer-first contract" "$(agent_path debug-detective)"; then
   check_pass "V10.1: 'reproducer-first contract' phrase present"
 else
@@ -353,7 +355,7 @@ fi
 #     § Deviations). README excluded, like check 4.
 # -------------------------------------------------------------------------
 echo
-echo "[14/14] ## Self-improvement contract referenced in every agent prompt (README excluded)"
+echo "[14/15] ## Self-improvement contract referenced in every agent prompt (README excluded)"
 miss_selfimp=()
 total_si=0
 for f in $(agent_files); do
@@ -367,6 +369,35 @@ if [[ ${#miss_selfimp[@]} -eq 0 ]]; then
 else
   for m in "${miss_selfimp[@]}"; do echo "    missing: $m"; done
   check_fail "${#miss_selfimp[@]} agents missing ## Self-improvement reference"
+fi
+
+# -------------------------------------------------------------------------
+# 15. Top-level `model:` key ↔ harness-hints.claude-code.model parity.
+#     The top-level key is the Claude Code wire (native subagent model
+#     routing); the harness-hints value feeds pi/codex + the banner (check 5).
+#     Both must exist and agree — delegation.md § Model tiering is the change
+#     procedure (edit both keys + banner together).
+# -------------------------------------------------------------------------
+echo
+echo "[15/15] Top-level model: ↔ harness-hints.claude-code.model parity"
+model_mismatch=()
+for f in $(agent_files); do
+  base=$(basename "$f")
+  [[ "$base" == "README.md" ]] && continue
+  hint_model=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    model:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  [[ -z "$hint_model" ]] && continue  # Agent has no claude-code hint; skip.
+  top_model=$(grep -m1 -E "^model:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  if [[ -z "$top_model" ]]; then
+    model_mismatch+=("$base: has harness-hints model '$hint_model' but no top-level model: key")
+  elif [[ "$top_model" != "$hint_model" ]]; then
+    model_mismatch+=("$base: top-level model '$top_model' != harness-hints model '$hint_model'")
+  fi
+done
+if [[ ${#model_mismatch[@]} -eq 0 ]]; then
+  check_pass "all top-level model: keys match harness-hints.claude-code.model"
+else
+  for m in "${model_mismatch[@]}"; do echo "    $m"; done
+  check_fail "${#model_mismatch[@]} model-key mismatches"
 fi
 
 # -------------------------------------------------------------------------

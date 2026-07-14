@@ -2,6 +2,7 @@
 name: build-doctor
 description: CMake preset failures, MSVC/Clang toolchain issues, lld vs link.exe errors, LTO publish-build problems, FetchContent mismatches, `SmatchetPackageUnrealLibs_DX12` packaging, clang-tidy / clang-format drift, CI breaks. Invoke whenever a build fails or a preset misbehaves.
 complexity: high
+model: opus
 read-only: false
 capabilities:
   - semantic-code-search

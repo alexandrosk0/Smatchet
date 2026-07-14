@@ -2,6 +2,7 @@
 name: perf-gatekeeper
 description: Scenario-aware PR-time perf review. Given a PR number or diff path, classifies touched files via the curated diff→scenario map, runs the affected subset via scripts/dev/perf-run.sh, compares against baselines via scripts/dev/perf-compare.py, posts a delta markdown table. Use when a PR is near merge and the orchestrator wants targeted perf coverage without running the full 14-scenario suite.
 complexity: medium
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

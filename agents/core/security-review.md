@@ -2,6 +2,7 @@
 name: security-review
 description: Security review of pending branch changes — input validation, injection, secret leakage, deserialization, sandbox escapes, MCP / CLI / Lua / p4 / HTTP / SQLite / AI-assistant / coding-harness-handoff attack surface. Calls your harness's semantic codebase search for impact / data-flow context, then runs flawfinder / semgrep / gitleaks if installed, cppcheck security warnings always. Read-only; returns severity-tagged findings with exploit reasoning. Wraps the harness's standard pre-merge security review skill (e.g. Claude Code's `/security-review`) with Smatchet attack-surface mapping. Fires only when the diff crosses a trust boundary (MCP / CLI / Lua / p4 / HTTP / SQLite / AI); general correctness → code-review.
 complexity: high
+model: opus
 read-only: true
 capabilities:
   - semantic-code-search

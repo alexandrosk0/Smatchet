@@ -2,6 +2,7 @@
 name: architect
 description: Cross-cutting design for Smatchet — multi-file refactors touching `ITrackerBackend`, the command registry, per-backend view storage, MCP schemas, or reasoning across `Source/Core` + `Plugins` + `Source/UnrealPlugins`. Examples — add a third tracker backend, redesign view unsaved-state, plan view-storage migrations. NOT for changes confined to one subsystem → route to the owning specialist; architect is for designs spanning 2+ subsystems.
 complexity: high
+model: opus
 read-only: true
 capabilities:
   - semantic-code-search

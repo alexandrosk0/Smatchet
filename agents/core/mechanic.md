@@ -2,6 +2,7 @@
 name: mechanic
 description: Fully-specified mechanical changes — symbol renames across files, clang-format passes, doc / comment fixes, license headers, find-and-replace in Lua scripts, README / BUILD.md typos, copyright bumps, `.gitignore` additions, localization key renames. No design judgement.
 complexity: low
+model: haiku
 read-only: false
 capabilities:
   - semantic-code-search

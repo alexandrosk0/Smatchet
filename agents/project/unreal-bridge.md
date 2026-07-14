@@ -2,6 +2,7 @@
 name: unreal-bridge
 description: Dual-target divergence between standalone (GLFW / OpenGL) and Unreal (DX12) — `SmatchetCore_DX12`, `Source/UnrealPlugins/SmatchetImGuiPlugin`, `SMATCHET_EMBEDDED_IN_UNREAL`, DX12 vs GL abstraction points, library packaging into the `.uplugin`, header-pollution issues. Invoke when a DX12 build fails, when a `Source/Core/` change must compile in both worlds, or when packaging output is wrong.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

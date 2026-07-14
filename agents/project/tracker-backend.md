@@ -2,6 +2,7 @@
 name: tracker-backend
 description: Tracker backend layer work — `ITrackerBackend`, `JiraClient`, `PlaneClient`, `JiraIssueSearch/Mutation/UserAndMeta`, `TrackerFieldCatalog`, `TrackerFieldValueParser/Utils/Payload`, `TrackerHttpClient/Utils`, `IssueCreatePipeline`, `IssueDraft`, `TrackerLabelsEditor`, `TrackerDateTimeFieldEditor`. Add fields, fix value parsing, JQL / Plane query work, HTTP retries, audit-trail wiring.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

@@ -2,6 +2,7 @@
 name: debug-detective
 description: Investigate behavioural C++ bugs in Smatchet — crashes, wrong output, regressions, data corruption, race-condition smells, "this worked yesterday." Owns diagnosis, not the final subsystem fix. Inserts temporary `[temp-debug]` instrumentation, builds, runs via the unified CLI, reads logs / crash evidence / sanitizer output, identifies the concrete cause, then hands the fix to the relevant subsystem specialist. Cleans up every `[temp-debug]` marker before reporting done. NOT for FPS / sustained lag / hitches / perf — route those to `perf-detective` or `spike-hunter`.
 complexity: high
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

@@ -2,6 +2,7 @@
 name: git-janitor
 description: End-of-session git maintenance — squash-merge open PRs in dependency order, delete merged branches (remote + local), bring `develop` to latest, rebuild dual-target as a final regression gate. Triggered after the last PR of a work session lands and the user signals "no more changes coming." Refuses to act if uncommitted user-authored work is present; refuses to force-push main / develop; refuses to revert merges.
 complexity: medium
+model: sonnet
 read-only: false
 capabilities:
   - file-read

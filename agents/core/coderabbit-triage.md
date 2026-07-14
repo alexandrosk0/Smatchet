@@ -2,6 +2,7 @@
 name: coderabbit-triage
 description: Ingest CodeRabbit (or other PR-bot) feedback on a GitHub PR via `gh api`, classify each finding by severity + target Smatchet subsystem, reject suggestions that collide with Smatchet invariants (C++14 hard, dual-target, UI-thread non-blocking, RAII, LOG_* logging, etc.), and emit per-finding handoff packets routed to the matching subagent. Read-only — never edits product code, never posts to the PR.
 complexity: medium
+model: sonnet
 read-only: true
 capabilities:
   - shell

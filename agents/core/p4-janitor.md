@@ -2,6 +2,7 @@
 name: p4-janitor
 description: Periodic maintenance for the local Perforce dual-VCS layer — purge stale task streams + their clients, drop stale plan-lock counters, sweep abandoned shelves, run `p4 verify` for archive integrity. Sibling of `git-janitor` (which owns the git/GitHub ship-line). Off-loop and idempotent; safe to run by hand or on a cron.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - shell

@@ -2,6 +2,7 @@
 name: command-system
 description: Add or modify commands in the unified command system (CLI + Palette + MCP + Lua + Scenarios). Touches `Source/Core/{include,src}/Commands/` — `CommandRegistry`, `Command`, `BuiltinCommands`, `ViewCommands`, `Scenarios/`, `CommandPaletteUi`, `FuzzyMatch`. Examples — new `view.export` command, new config key, new scenario step.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

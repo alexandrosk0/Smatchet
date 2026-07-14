@@ -2,6 +2,7 @@
 name: perf-detective
 description: Steady-state performance investigations — sustained frame hitches, low FPS, slow grid scrolling, slow JQL autocomplete, slow startup, high RAM, high CPU. Triggers on optimize / profile / FPS / lag / hitch / slow. Owns the hypothesis → diagnose → validate loop. Delegates instrumentation to `perf-instrument` and CLI measurement to `perf-measure` — the orchestrator routes between the three. NOT intermittent hitches / p99 outliers → spike-hunter.
 complexity: high
+model: opus
 read-only: true
 capabilities:
   - semantic-code-search

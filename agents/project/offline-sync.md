@@ -2,6 +2,7 @@
 name: offline-sync
 description: SQLite cache, offline-queue replay, audit trail — `LocalCacheManager`, `OfflineQueueService`, `SmatchetOfflineQueueUi`, `TicketSyncService`, `BackendAuditTrail`, `FieldEditAuditSource`. Use for cache schema additions, pending-create / pending-field-edit replay, dead-letter handling, sync diff resolution, audit-log entries.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

@@ -2,6 +2,7 @@
 name: test-rig
 description: Pure-logic unit tests for `Source/Core/` helpers via doctest + CTest. Owns `tests/CMakeLists.txt`, `tests/test_main.cpp`, every `tests/Core/<Unit>.test.cpp`, the `SMATCHET_BUILD_TESTS` option, and the `ninja-test-msvc` preset. Add tests for new pure functions, expand coverage on already-tested units, fix flaky / wrong assertions. Refuses UI / HTTP / SQLite / ImGui / cpr surfaces — those belong to integration tests or bucket-E (ImGui Test Engine).
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

@@ -2,6 +2,7 @@
 name: p4-annotate
 description: Perforce annotate integration — `P4Annotate`, `P4ErrorUtil`, `AnnotateAnalysisUi`, `CppSyntaxHighlight`, `CallstackParser`. Covers `p4 annotate` / `p4 describe` invocation, annotate parsing, syntax-highlighted annotate views, stack-frame symbolication via `PathRemaps`, Jira-comment export of annotate.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search
