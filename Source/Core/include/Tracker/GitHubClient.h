@@ -2,6 +2,7 @@
 #define SMATCHET_GITHUB_CLIENT_H
 
 #include "GitHubClientHelpers.h"
+#include "GitHubProjectsV2Pure.h" // ProjectV2Catalog — the per-client projects-v2 cache below
 #include "ITrackerActivity.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
@@ -13,8 +14,12 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <map>
+#include <mutex>
 #include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 // GitHubClient — third tracker backend
 // (docs/plans/shipped/github-tracker-backend.md). Tracker-only — does NOT implement
@@ -148,6 +153,26 @@ class GitHubClient : public ITrackerBackend,
     /// probe async, and the UI thread).
     smatchet::github::GitHubRequestAuth ResolveAuth(const TrackerConfig* configOverride) const;
 
+    /// Projects v2 catalog for the configured owner + project number
+    /// (docs/plans/shipped/github-projects-v2-fields.md). Fetched once per client and
+    /// re-fetched when the config anchor changes; consumed by FetchFieldCatalog (column
+    /// list), the fetch enrichment (value join), FetchIssueEditMeta (editability map —
+    /// the editmeta cache is default-deny for ids it has never seen), and the
+    /// UpdateIssueFields projects-v2 write path. Const because read paths call it; the
+    /// cache is `mutable` under its own mutex (sync worker + UI thread + mutation paths
+    /// all reach it). Returns Err when the project is unreachable/unknown — callers on
+    /// read paths degrade with a warning; the write path surfaces the error.
+    Result<smatchet::github::ProjectV2Catalog, TrackerError>
+    EnsureProjectV2Catalog(const smatchet::github::GitHubRequestAuth& auth, const std::string& owner,
+                           int projectNumber) const;
+
+    /// Fetch the configured board's per-item field values for one sync (catalog ensure +
+    /// paginated items walk), keyed by ticket key. Never fails the sync: any error
+    /// degrades to an appended `*outWarning` and an empty map. Worker-thread only.
+    std::map<std::string, std::vector<std::pair<std::string, std::string>>>
+    FetchProjectV2ValuesForSync(const smatchet::github::GitHubRequestAuth& auth, const TrackerConfig& cfg,
+                                std::string* outWarning) const;
+
     std::string baseUrl_; // ctor snapshot fallback for the base URL only (issue #979)
     std::string pat_;     // ctor snapshot, log-visibility only; never used for requests (issue #979)
     mutable std::atomic<std::size_t> lastLoggedPatBytes_; // rotation-visibility log dedup (issue #979)
@@ -155,6 +180,13 @@ class GitHubClient : public ITrackerBackend,
     // Cancel flag for the in-flight FetchUserActivity run — checked inside the
     // page loop, raised by ClearUserActivity from any thread.
     std::atomic<bool> activityCancel_{false};
+
+    // Projects v2 catalog cache (see EnsureProjectV2Catalog). Guarded by pv2Mutex_.
+    mutable std::mutex pv2Mutex_;
+    mutable smatchet::github::ProjectV2Catalog pv2Catalog_;
+    mutable bool pv2CatalogLoaded_ = false;
+    mutable std::string pv2CatalogOwner_; // cache key: owner + number the cache was fetched for
+    mutable int pv2CatalogNumber_ = 0;
 };
 
 #endif // SMATCHET_GITHUB_CLIENT_H

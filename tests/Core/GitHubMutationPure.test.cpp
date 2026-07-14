@@ -135,6 +135,31 @@ TEST_CASE("BuildGitHubIssueUpdatePlan — rejects unknown ids and empty payloads
     }
 }
 
+TEST_CASE("BuildGitHubIssueUpdatePlan — pv2.* ids collect into ProjectV2Edits") {
+    SUBCASE("catalog-built payload (fieldId + value) becomes one edit, PATCH body stays empty") {
+        const auto r = BuildGitHubIssueUpdatePlan(nlohmann::json{
+            {"pv2.priority",
+             nlohmann::json{{"fieldId", "PVTSSF_sel"}, {"value", nlohmann::json{{"singleSelectOptionId", "opt1"}}}}}});
+        REQUIRE(r);
+        CHECK(r.value().PatchBody.empty());
+        REQUIRE(r.value().ProjectV2Edits.size() == 1);
+        CHECK(r.value().ProjectV2Edits[0].FieldNodeId == "PVTSSF_sel");
+        CHECK(r.value().ProjectV2Edits[0].Value == nlohmann::json{{"singleSelectOptionId", "opt1"}});
+    }
+    SUBCASE("a missing value key defaults to null (the clear-mutation route)") {
+        const auto r =
+            BuildGitHubIssueUpdatePlan(nlohmann::json{{"pv2.notes", nlohmann::json{{"fieldId", "PVTF_text"}}}});
+        REQUIRE(r);
+        REQUIRE(r.value().ProjectV2Edits.size() == 1);
+        CHECK(r.value().ProjectV2Edits[0].Value.is_null());
+    }
+    SUBCASE("a bare string (offline-queue verbatim fallback) rejects with a pointer at the grid") {
+        const auto r = BuildGitHubIssueUpdatePlan(nlohmann::json{{"pv2.priority", "High"}});
+        REQUIRE_FALSE(r);
+        CHECK(r.error().find("re-apply the edit") != std::string::npos);
+    }
+}
+
 TEST_CASE("FindGitHubMilestoneNumberByTitle — exact-title match over one page") {
     const nlohmann::json page = nlohmann::json::array({
         nlohmann::json{{"number", 1}, {"title", "v0.9"}},

@@ -81,6 +81,10 @@ struct TrackerConfig {
     std::string GitHubBaseUrl; // e.g. https://api.github.com or https://<enterprise>/api/v3
     std::string GitHubOwner;   // e.g. "alexandrosk0"
     std::string GitHubRepo;    // e.g. "Smatchet"
+    // Projects v2 board number under GitHubOwner — the N in the board URL
+    // github.com/orgs/OWNER/projects/N. 0 = no board, which keeps every
+    // projects-v2 code path off (docs/plans/shipped/github-projects-v2-fields.md).
+    int GitHubProjectNumber = 0;
 
     // Linear-as-tracker configuration (Slice 1 of docs/plans/linear-tracker-backend.md).
     // GraphQL-only backend; personal API key is DPAPI-encrypted on Win32 (same code path as

@@ -877,6 +877,10 @@ add_executable(SmatchetTests
     # (SplitCommaSeparatedTrimmed) + StringUtil are already linked in this rig.
     Core/GitHubMutationPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubMutationPure.cpp"
+    # github-projects-v2-fields.md — pure GraphQL documents + catalog/items/item-id
+    # parsers + grid-string→ProjectV2FieldValue builder + name slugifier. cpr-free.
+    Core/GitHubProjectsV2Pure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubProjectsV2Pure.cpp"
     # linear-tracker-backend.md Slice 1 — pure GraphQL/parse helpers.
     Core/LinearClientHelpers.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearClientHelpers.cpp"
@@ -1301,6 +1305,12 @@ add_executable(SmatchetTests
     # with the loopback config saved (JiraIssueMutationHttp precedent); the pure
     # plan builder (GitHubMutationPure.cpp) is linked above.
     Core/GitHubIssueMutationHttp.test.cpp
+    # github-projects-v2-fields.md — the projects-v2 GraphQL shell (catalog / items /
+    # item-id / field-value mutations) GitHubClient.cpp now links against. Its pure
+    # seam (GitHubProjectsV2Pure.cpp) is linked above; the loopback fixture routes
+    # /graphql POSTs by request-body content.
+    Core/GitHubProjectsV2Http.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubProjectsV2.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubIssueSearch.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClient.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubActivityFeed.cpp"

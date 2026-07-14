@@ -216,6 +216,7 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     CopyStringToBuffer(d.githubPatBuf, d.cfg.GitHubPat);
     CopyStringToBuffer(d.githubOwnerBuf, d.cfg.GitHubOwner);
     CopyStringToBuffer(d.githubRepoBuf, d.cfg.GitHubRepo);
+    d.githubProjectNumber = d.cfg.GitHubProjectNumber;
     CopyStringToBuffer(d.linearApiKeyBuf, d.cfg.LinearApiKey);
     CopyStringToBuffer(d.linearBaseUrlBuf, d.cfg.LinearBaseUrl.empty() ? std::string("https://api.linear.app/graphql")
                                                                        : d.cfg.LinearBaseUrl);
@@ -371,6 +372,16 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
                                    "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues "
                                    "from github.com/<owner>/<repo>. Leave both empty for cross-repo "
                                    "/search/issues.");
+        ImGui::InputInt("Project number", &d.githubProjectNumber);
+        if (d.githubProjectNumber < 0) {
+            d.githubProjectNumber = 0; // no negative board numbers; 0 keeps the feature off
+        }
+        ImGui::SetItemTooltip("Projects v2 board number under Owner; 0 disables project fields.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.github_project.help",
+                                   "The N in github.com/orgs/<owner>/projects/N (or /users/<owner>/projects/N). "
+                                   "When set, that board's custom fields appear as editable grid columns for "
+                                   "issues on the board. 0 turns the feature off.");
         ImGui::Spacing();
         ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
                          sizeof(d.newIssueInheritFieldsGitHubBuf));
@@ -539,6 +550,7 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.GitHubPat = d.githubPatBuf;
     cfg.GitHubOwner = d.githubOwnerBuf;
     cfg.GitHubRepo = d.githubRepoBuf;
+    cfg.GitHubProjectNumber = d.githubProjectNumber < 0 ? 0 : d.githubProjectNumber;
     cfg.LinearApiKey = d.linearApiKeyBuf;
     cfg.LinearBaseUrl = d.linearBaseUrlBuf;
     cfg.LinearTeamKey = d.linearTeamKeyBuf;
@@ -638,9 +650,10 @@ bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
            d.cfg.PlaneUrl != d.planeUrlBuf || d.cfg.PlaneWorkspaceSlug != d.planeWorkspaceBuf ||
            d.cfg.PlaneApiKey != d.planeApiKeyBuf || githubBaseSaved != d.githubBaseUrlBuf ||
            d.cfg.GitHubPat != d.githubPatBuf || d.cfg.GitHubOwner != d.githubOwnerBuf ||
-           d.cfg.GitHubRepo != d.githubRepoBuf || d.cfg.LinearApiKey != d.linearApiKeyBuf ||
-           linearBaseSaved != d.linearBaseUrlBuf || d.cfg.LinearTeamKey != d.linearTeamKeyBuf ||
-           d.cfg.LinearTeamId != d.linearTeamIdBuf || d.cfg.LinearWorkspaceUrl != d.linearWorkspaceUrlBuf;
+           d.cfg.GitHubRepo != d.githubRepoBuf || d.cfg.GitHubProjectNumber != d.githubProjectNumber ||
+           d.cfg.LinearApiKey != d.linearApiKeyBuf || linearBaseSaved != d.linearBaseUrlBuf ||
+           d.cfg.LinearTeamKey != d.linearTeamKeyBuf || d.cfg.LinearTeamId != d.linearTeamIdBuf ||
+           d.cfg.LinearWorkspaceUrl != d.linearWorkspaceUrlBuf;
 }
 
 } // namespace
