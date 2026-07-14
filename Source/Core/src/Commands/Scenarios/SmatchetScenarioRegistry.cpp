@@ -28,6 +28,11 @@ extern std::unique_ptr<smatchet::cmd::IScenario> MakeDockGapSentinelScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeCommandPaletteFuzzyScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeCodeSyntaxColoringScenario();
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeThemeSwitchRoundtripScenario();
+// User Info window bucket-C goldens — 2x2 matrix (desktop/narrow x unified/separate).
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoDesktopUnifiedScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoDesktopSeparateScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoNarrowUnifiedScenario();
+extern std::unique_ptr<smatchet::cmd::IScenario> MakeUserInfoNarrowSeparateScenario();
 #if defined(SMATCHET_WITH_AI)
 extern std::unique_ptr<smatchet::cmd::IScenario> MakeAiChatHistoryRenderScenario();
 #endif
@@ -90,6 +95,16 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     // colour bug on SmatchetDark <-> NortonCommander <-> SmatchetDark. See
     // Source/Core/include/Commands/Scenarios/ThemeSwitchRoundtripScenario.h.
     runner.RegisterFactory("theme-switch-roundtrip", []() { return ::MakeThemeSwitchRoundtripScenario(); });
+    // User Info window bucket-C goldens — the responsive layout (desktop vs the
+    // narrow breakpoint) crossed with the unified/separate VcsFeedLayout. Each
+    // drives the real dockable User Info window to a deterministic empty-feed
+    // steady state, then triggers debug.window.screenshot for the bash driver to
+    // diff against tests/golden/user-info-<variant>.png. Closes PR-10's deferred
+    // bucket-C blocker (docs/plans/shipped/user-info-window.md).
+    runner.RegisterFactory("user-info-desktop-unified", []() { return ::MakeUserInfoDesktopUnifiedScenario(); });
+    runner.RegisterFactory("user-info-desktop-separate", []() { return ::MakeUserInfoDesktopSeparateScenario(); });
+    runner.RegisterFactory("user-info-narrow-unified", []() { return ::MakeUserInfoNarrowUnifiedScenario(); });
+    runner.RegisterFactory("user-info-narrow-separate", []() { return ::MakeUserInfoNarrowSeparateScenario(); });
 #if defined(SMATCHET_WITH_AI)
     // Phase 6.7 of ai-chat-claude-desktop-parity. Seeds N mock messages into
     // g_ui.assistantHistory, runs N frames so the new DrawHistoryArea /

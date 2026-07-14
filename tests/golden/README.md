@@ -14,6 +14,10 @@ prior clone should be deleted and rebootstrapped.
 | `dock-gap-sentinel.png` | `dock-gap-sentinel` | Standalone main window after dock-builder settle. Regression on any dock-gap leak, shell-chrome shift, theme retune. |
 | `command-palette-fuzzy.png` | `command-palette-fuzzy` | Command palette modal opened with the `scenario.` substring filter pre-applied. Regression on palette placement, fuzzy-match highlight, modal chrome. |
 | `code-syntax-coloring.png` | `code-syntax-coloring` | Multi-language code blocks (C++ / Python / Lua / Bash / JSON / Plain) rendered via `CodeColorView::DrawColoredCodeBlock`. Regression on per-language keyword/string/comment/number/identifier colouring, the theme syntax palette, or the language-badge layout. |
+| `user-info-desktop-unified.png` | `user-info-desktop-unified` | Dockable User Info window at a desktop (1920px) framebuffer with `cfg.VcsFeedLayout="unified"`. Deterministic empty-feed steady state (empty email → instant p4 fail; GitHub config cleared → instant git fail; activity/groups compiled out under the headless spawn). Regression on the wide single-line VCS-row layout, the identity block, or the unified-feed header + radios. |
+| `user-info-desktop-separate.png` | `user-info-desktop-separate` | As above at desktop width but `cfg.VcsFeedLayout="separate"` — the Perforce / Git feeds render as two independent collapsible sub-headers. Regression on the separate-layout sub-header split. |
+| `user-info-narrow-unified.png` | `user-info-narrow-unified` | User Info window at a narrow (480px) framebuffer so the docked bottom-panel content region drops below `kNarrowLayoutWidthPx` (600) → the stacked two-line narrow-row path. `unified` layout. Regression on the responsive narrow-layout branch. |
+| `user-info-narrow-separate.png` | `user-info-narrow-separate` | Narrow framebuffer + `separate` layout — narrow stacked rows under the split Perforce / Git sub-headers. Regression on the narrow × separate combination. |
 
 ## Bootstrap protocol
 

@@ -52,6 +52,9 @@ std::string ComputeLongTextSeed(LongTextRichKind kind, const std::string& rich, 
 struct RoundTripPreview {
     std::string Rendered;
     bool Lossy = false;
+    /// True when the converter threw mid-round-trip (the save cannot be structurally validated).
+    /// Distinct from Lossy: a failed conversion is a stronger, ack-worthy signal than dropped nodes.
+    bool ConversionFailed = false;
 };
 
 /// Round-trips the in-progress Markdown buffer through the same converter the modal runs on save
@@ -88,6 +91,32 @@ LongTextSeedPlan PlanSeedCopy(const std::string& seed, std::size_t bufferCapacit
 /// `shownSeed` (the LongTextSeedPlan::Shown actually loaded, NOT the untruncated original).
 /// A no-op Save on a truncated seed must never PUT — CPP_CODE_AUDIT.md #1.
 bool ShouldQueueLongTextEdit(const std::string& newValue, const std::string& shownSeed);
+
+/// Verdict on whether saving the long-text buffer may lose or best-effort the stored value,
+/// aggregated from the modal's four fidelity signals so the warn/acknowledge policy is
+/// unit-tested and identical across surfaces.
+struct LongTextSaveFidelity {
+    /// True when Save may drop constructs or store best-effort (drives the on-save warning toast).
+    bool LossPossible = false;
+    /// True when the modal should gate Save behind an explicit "I understand" acknowledgement.
+    /// Set only for definite structural loss (truncation, dropped ADF nodes, a detected lossy
+    /// round-trip) — NOT for raw-HTML verbatim saves, which warn but never block.
+    bool RequireAck = false;
+    /// One-line, human-readable summary of every applicable reason (empty when LossPossible is
+    /// false). Suitable for the toast message and the acknowledgement tooltip.
+    std::string ToastSummary;
+};
+
+/// Assess long-text Save fidelity from the modal's signals:
+///   - `conversionFailed`     — the round-trip converter threw; the save cannot be validated.
+///   - `seedTruncated`        — the document exceeded the edit buffer; the tail was never loaded.
+///   - `droppedAdfNodeTypes`  — ADF node types AdfToMarkdown could not represent (dropped on save).
+///   - `roundTripLossy`       — the Markdown→rich→Markdown round-trip changed the document.
+///   - `rawMode`              — editing raw HTML that will be stored verbatim (best-effort).
+/// The first four imply definite loss and set RequireAck; rawMode only contributes a best-effort
+/// warning. Reasons are joined (in the above precedence) into ToastSummary. Pure — no UI access.
+LongTextSaveFidelity AssessLongTextSaveFidelity(bool rawMode, const std::vector<std::string>& droppedAdfNodeTypes,
+                                                bool roundTripLossy, bool seedTruncated, bool conversionFailed);
 
 } // namespace TicketFieldEditorLongTextPure
 

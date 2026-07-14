@@ -1,5 +1,7 @@
 # Repeatable Pillar 1 + Pillar 2 performance review — Smatchet
 
+> **Retirement note (2026-07, HP-07):** the Slice-2 `docs/harness/claude-code/hooks/lint-cpp-pillar2.sh` thin shim described below was **retired** — `lint-cpp-drain.sh` now calls the canonical `scripts/dev/pillar2-scan.sh` directly (see `lint-cpp-drain.sh` § pillar-2 pass), so the wrapper was never copied by `setup-harness.sh` nor sourced by the drain. The historical Slice-2 text is preserved as-written; treat every mention of `lint-cpp-pillar2.sh` below as removed. The live Pillar-2 surfaces are `scripts/dev/pillar2-scan.sh` (canonical), the `Pillar 2 scanner` CI lane (`.github/workflows/pillar2-scan.yml`), and the inline call in `lint-cpp-drain.sh`.
+
 ## Context
 
 This session's PR #311 → PR #313 round-trip exposed that Smatchet's UX Pillar 1 (sustained 144 Hz, 6.94 ms frame budget) and Pillar 2 (no synchronous I/O on the UI thread; visible cue within 100 ms) are **enforced reactively, not proactively**. PR #311 shipped 5 markdown-rendering slices with zero perf consideration; the user observed FPS drops post-merge; `perf-detective` ran a reactive investigation; PR #313 followed with five optimisations (~93 % reduction on the rich-render hot path). Total agent-time cost: ~3 h + a full follow-up PR + reactive user feedback round-trips.

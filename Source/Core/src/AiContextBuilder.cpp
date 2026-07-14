@@ -287,7 +287,7 @@ std::vector<AiContextBlock> BuildAll(const Inputs& in) {
                 // ReadRecentEvents returns JSON objects; serialise back to strings so the
                 // builder stays free of UI / SQLite / dispatcher coupling. Cap is also
                 // applied inside BuildAuditTrailBody.
-                std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(kAuditCap, nullptr);
+                std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(kAuditCap).value_or({});
                 std::vector<std::string> lines;
                 lines.reserve(events.size());
                 std::transform(events.begin(), events.end(), std::back_inserter(lines),

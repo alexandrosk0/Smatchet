@@ -226,9 +226,9 @@ TEST_CASE("BackendAuditTrail: file IO surface (begin/result + failure error stri
 
         REQUIRE(WaitForOperationLines(opId, 2) >= 2);
 
-        std::string err;
-        auto events = ReadRecentEvents(500, &err);
-        CHECK(err.empty());
+        const auto readResult = ReadRecentEvents(500);
+        CHECK(readResult.has_value());
+        const std::vector<nlohmann::json> events = readResult.value_or({});
 
         bool sawBegin = false;
         bool sawResult = false;
@@ -253,7 +253,7 @@ TEST_CASE("BackendAuditTrail: file IO surface (begin/result + failure error stri
 
         REQUIRE(WaitForOperationLines(opId, 1) >= 1);
 
-        auto events = ReadRecentEvents(500);
+        const std::vector<nlohmann::json> events = ReadRecentEvents(500).value_or({});
         const auto it = std::find_if(events.begin(), events.end(), [&](const nlohmann::json& e) {
             return e.value("operation_id", std::string()) == opId;
         });

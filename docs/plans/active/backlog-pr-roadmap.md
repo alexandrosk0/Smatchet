@@ -78,6 +78,9 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Members | Status |
 |---|---|---|
+| PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | shipped #1518 (case-8 self-activation = follow-up) |
+| PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | shipped — last member `user-info-window-bucket-e-coverage` in #1850 (bucket-E 6/6 + 4 approved goldens; behaviours 3/4 fixture-gated residue backlogged) |
+| PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | deferred — screenshot baselines need golden-image approval (user) |
 | PR-9 Bucket-E harness fixes *(unblocks PR-10/11)* | `bucket-e-uitestscenario-no-live-local-cache`, `bucket-e-failures-blind-stdout`, `faketrackerclient-fetch-queue-auto-sticky`, `bucket-e-ci-fixture-env-export`, `fakep4runner-spawn-fail-vs-timeout` | shipped #1518 (case-8 self-activation follow-up shipped — `SMATCHET_UITEST_WITH_LOCAL_CACHE`) |
 | PR-10 Bucket-E: grid / views / UI | `multigrid-slice3-lifecycle-bucket-e`, `data-dependent-windows-bucket-e-render`, `grid-description-tooltip-bucket-e`, `views-editor-field-selection-bucket-e`, `user-info-window-bucket-e-coverage`, `keybindings-editor-rebind-bucketE-residue`, `help-marker-hover-fallback-bucket-e` | shipped 6/7 (#1793/#1790/#1810/#1794/#1795 + description-tooltip) — **residue: `user-info-window-bucket-e-coverage` (open)** |
 | PR-11 Bucket-E: AI chat | `ai-chat-bucket-e-coverage` | shipped #1796/#1799/#1821 (all 5 scenarios) |
@@ -248,6 +251,7 @@ Per `AGENTS.md` § Project rules — this is a pure-docs roadmap; no build/test 
 ## Implementation log
 *(populated as PR groups land — bullet per shipped member: `#N · PR-<k> <slug> shipped`)*
 - `#1854` · PR-14 `backend-impl-coverage-recovery` + `raise-core-coverage-67-to-70` shipped (2026-07-14) — 49 JiraClient HTTP-fixture doctest cases (JiraUserAndMeta / JiraIssueSearch / JiraIssueMutation comment+worklog) lifted measured line coverage 67%→71% (OpenCppCoverage), clearing the ramp target with headroom. Blocking floor raised 65→70 in `project.config.json` + `coverage.yml`. The `coverage-out-of-band` label is kept (serves the #939-class structural-expansion escape, not just the ramp).
+- `#1850` · PR-10 `user-info-window-bucket-e-coverage` shipped (2026-07-14) — the last unshipped PR-10 member. bucket-E TU (`tests/ui/user_info_window.test.cpp`, 6/6): open/Escape/Close lifecycle, close-edge `ClearPaneUserActivity` once, `VcsFeedLayout` toggle + persistence, ~400px narrow layout, Identity+Vcs sections. bucket-C: 4 `user-info-*` screenshot goldens (desktop/narrow × unified/separate), human-approved, L∞=0 self-diff. Residue (backlogged, not faked): behaviours 3 (load-button-disabled) + 4 (one-shot group fetch) need an activity-capable `FakeTrackerClient` seam — filed `2026-07-14-user-info-window-bucket-e-activity-fixture-gap`; the 3 legacy goldens' fresh-run non-determinism filed `2026-07-14-bucket-c-goldens-need-config-isolation`.
 
 - 2026-06-20 campaign · PR-1..9, 12, 13a, 15, 16, 17, 20, 22, 23 shipped (#1502-1518).
 - Post-campaign follow-ups (verified 2026-07-14 re-sweep):

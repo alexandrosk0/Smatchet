@@ -274,20 +274,17 @@ static bool SmatchetAddOneUtcCalendarDay(int y, int m, int d, int& oy, int& om, 
     return true;
 }
 
-bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month, int day,
-                                             std::string& outChangelist, std::string& outError) {
-    outChangelist.clear();
-    outError.clear();
+Result<std::string> P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, int year, int month,
+                                                            int day) {
+    using R = Result<std::string>;
     if (year < 1970 || year > 3000 || month < 1 || month > 12 || day < 1 || day > 31) {
-        outError = "invalid calendar date";
-        return false;
+        return R::Err("invalid calendar date");
     }
     int ey = 0;
     int em = 0;
     int ed = 0;
     if (!SmatchetAddOneUtcCalendarDay(year, month, day, ey, em, ed)) {
-        outError = "date range arithmetic failed";
-        return false;
+        return R::Err("date range arithmetic failed");
     }
     char start[32];
     char endEx[32];
@@ -300,33 +297,26 @@ bool P4FirstSubmittedChangelistOnCalendarDay(const AnnotateAnalysisConfig& cfg, 
     std::string out;
     std::string err;
     if (!P4RunCommand(cfg, args, code, out, err)) {
-        outError = "failed to run p4";
-        return false;
+        return R::Err("failed to run p4");
     }
     if (code != 0) {
-        outError = FormatP4CommandError("p4 changes failed", code, err);
-        return false;
+        return R::Err(FormatP4CommandError("p4 changes failed", code, err));
     }
     if (out.find_first_not_of(" \t\r\n") == std::string::npos) {
-        outError = "no submitted changelists on that calendar day (or no visibility to //...@)";
-        return false;
+        return R::Err("no submitted changelists on that calendar day (or no visibility to //...@)");
     }
     const P4LineAnnotate parsed = ParseLatestChangeFromChangesOutput(out, err);
     if (parsed.Changelist.empty()) {
-        outError = parsed.Error.empty() ? "could not parse p4 changes output" : parsed.Error;
-        return false;
+        return R::Err(parsed.Error.empty() ? "could not parse p4 changes output" : parsed.Error);
     }
-    outChangelist = parsed.Changelist;
-    return true;
+    return R::Ok(parsed.Changelist);
 }
 
-bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User, int maxN,
-                      std::vector<P4ChangeSummary>& outChanges, std::string& outError) {
-    outChanges.clear();
-    outError.clear();
+Result<std::vector<P4ChangeSummary>> P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4User,
+                                                      int maxN) {
+    using R = Result<std::vector<P4ChangeSummary>>;
     if (p4User.empty()) {
-        outError = "empty p4 user";
-        return false;
+        return R::Err("empty p4 user");
     }
     const int capped = maxN > 0 ? maxN : 1;
     const std::vector<std::string> args = {"changes", "-u", p4User, "-m", std::to_string(capped), "-s", "submitted"};
@@ -334,16 +324,14 @@ bool P4ChangesForUser(const AnnotateAnalysisConfig& cfg, const std::string& p4Us
     std::string out;
     std::string err;
     if (!P4RunCommand(cfg, args, code, out, err)) {
-        outError = "failed to run p4";
-        return false;
+        return R::Err("failed to run p4");
     }
     if (code != 0) {
-        outError = FormatP4CommandError("p4 changes failed", code, err);
-        return false;
+        return R::Err(FormatP4CommandError("p4 changes failed", code, err));
     }
-    outChanges = P4AnnotateParse::ParseChangesForUserOutput(out);
-    LOG_DEBUG("P4ChangesForUser: user=%s max=%d parsed=%zu", p4User.c_str(), capped, outChanges.size());
-    return true;
+    std::vector<P4ChangeSummary> changes = P4AnnotateParse::ParseChangesForUserOutput(out);
+    LOG_DEBUG("P4ChangesForUser: user=%s max=%d parsed=%zu", p4User.c_str(), capped, changes.size());
+    return R::Ok(std::move(changes));
 }
 
 std::string P4UserForEmail(const AnnotateAnalysisConfig& cfg, const std::string& email) {

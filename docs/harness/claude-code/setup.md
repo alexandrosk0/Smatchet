@@ -12,19 +12,40 @@ Idempotent. Run it after every clone and any time the canonical templates change
 
 ## What the script generates
 
+Links (junction on Windows, symlink on Unix) point at the in-repo source so an
+edit to the canonical file is picked up with no re-run; copies are snapshotted
+and re-copied only when the canonical template differs (a user-modified copy is
+left alone with a `skip-copy`).
+
 | Path under `.claude/` | Kind | Source |
 |---|---|---|
 | `CLAUDE.md` | copy | `docs/harness/claude-code/CLAUDE.md.tmpl` |
 | `settings.json` | copy | `docs/harness/claude-code/settings.json.tmpl` |
 | `hooks/lint-cpp.sh` | copy | `docs/harness/claude-code/hooks/lint-cpp.sh` |
+| `hooks/lint-cpp-common.sh` | copy | `docs/harness/claude-code/hooks/lint-cpp-common.sh` |
+| `hooks/lint-cpp-drain.sh` | copy | `docs/harness/claude-code/hooks/lint-cpp-drain.sh` |
+| `hooks/lint-catch-all.py` | copy | `docs/harness/claude-code/hooks/lint-catch-all.py` |
+| `hooks/lint-portable-purity.sh` | copy | `docs/harness/claude-code/hooks/lint-portable-purity.sh` |
 | `hooks/lint-syntax-both.py` | copy | `docs/harness/claude-code/hooks/lint-syntax-both.py` |
+| `hooks/clear-tree-dirty.sh` | copy | `docs/harness/claude-code/hooks/clear-tree-dirty.sh` |
+| `hooks/pre-ship-stop-gate.sh` | copy | `docs/harness/claude-code/hooks/pre-ship-stop-gate.sh` |
 | `hooks/autoregister-pr.sh` | copy | `docs/harness/claude-code/hooks/autoregister-pr.sh` |
-| `agents/` | dir link | `agents/` (junction on Windows, symlink on Unix) |
-| `skills/grill-with-docs/` | dir link | `agents/_shared/skills/grill-with-docs/` |
-| `skills/scratchpad-recall/` | dir link | `agents/_shared/skills/scratchpad-recall/` |
+| `hooks/capture-intent.sh` | copy | `docs/harness/claude-code/hooks/capture-intent.sh` |
+| `hooks/guard-head-drift.sh` | copy | `docs/harness/claude-code/hooks/guard-head-drift.sh` |
+| `hooks/guard-plan-lock.sh` | copy | `docs/harness/claude-code/hooks/guard-plan-lock.sh` |
+| `hooks/guard-shared-tree.sh` | copy | `docs/harness/claude-code/hooks/guard-shared-tree.sh` |
+| `hooks/resync-head-baseline.sh` | copy | `docs/harness/claude-code/hooks/resync-head-baseline.sh` |
+| `agents/<name>.md` | file links | every `agents/core/*.md` + `agents/project/*.md` |
+| `skills/<name>/` | dir link (per skill) | every `agents/_shared/skills/<name>/` (auto-enumerated) |
+| `workflows/<name>.js` | file link | every `agents/_shared/workflows/*.js` + `agents/project/workflows/*.js` |
 | `skills/agent-tokens/SKILL.md` | file link | `agents/_shared/token-tracking/SKILL.md` |
 | `hooks/agent-token-log.py` | file link | `agents/_shared/token-tracking/agent-token-log.py` |
 | `hooks/agents-statusline.py` | file link | `agents/_shared/token-tracking/agents-statusline.py` |
+| `hooks/skill-load-log.py` | file link | `agents/_shared/token-tracking/skill-load-log.py` |
+
+The script also generates in-tree subsystem `CLAUDE.md` shims beside each
+subsystem-leaf `AGENTS.md` (so Claude Code auto-loads the leaf doc when you edit
+that subsystem) — those live in the source tree, not under `.claude/`.
 
 ## Why links (not copies) for agents + shared skills
 

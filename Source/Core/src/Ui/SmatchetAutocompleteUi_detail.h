@@ -5,6 +5,11 @@
 // the JQL/query-autocomplete InputText callback's Up/Down arrow index walk and
 // Enter/Tab commit decision, as plain integer math needing no ImGui context, so
 // the callback stays under the branch cap and the math is bucket-A testable.
+// The caret-sentinel string helper below shares the same contract: a plain
+// std::string transform, no ImGui. (Value-quoting lives in the shared
+// tracker_query_suggest helpers; this TU calls those directly.)
+
+#include <string>
 
 namespace SmatchetAutocompleteDetail {
 
@@ -43,6 +48,11 @@ struct AcpCommitDecision {
 // wantsApplyFromEnter. With no items, selected resets to -1 and Enter sets
 // wantsApplyFromEnter.
 AcpCommitDecision ResolveAcpCommit(int n, int selected, bool enterDown, bool tabDown);
+
+// Strip the \x7F caret-anchor sentinel from @p text in place (JQL function
+// suggestions like `membersOf("\x7F")` mark where the caret should land on
+// insert). Returns the byte offset the sentinel occupied, or -1 if absent.
+int StripCaretAnchorSentinel(std::string& text);
 
 } // namespace SmatchetAutocompleteDetail
 

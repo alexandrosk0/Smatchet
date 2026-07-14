@@ -615,7 +615,7 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     // ADF / long-text fields (Jira description/environment, Plane description, custom textarea/wiki-renderer
     // fields) are too constrained by the inline 512-byte single-line InputText. Route them through the modal
     // editor singleton: the cell stays in display mode, the modal owns the lifecycle. v1: plain-text round-trip.
-    // v2 (see RICH_TEXT_EDITING_V2_PLAN.md) layers Markdown <-> ADF/HTML fidelity on top.
+    // v2 (see docs/plans/rich-text-editing-v2-remaining.md) layers Markdown <-> ADF/HTML fidelity on top.
     if (TrackerFieldPayload::FieldUsesAdfDocument(field)) {
         if (state.IsEditingField(ticket.id, field.Id)) {
             if (state.EditJustStarted) {

@@ -614,7 +614,7 @@ bool BuildAdfScalar(const TrackerField& field, const std::string& scalarValue, n
     // The long-text modal editor produces Markdown for ADF fields (description, environment,
     // textarea / wiki-renderer customfields). MarkdownToAdf preserves headings, lists, code
     // blocks, links, and inline emphasis. Plain-text input still works (no Markdown features =
-    // a single paragraph). See RICH_TEXT_EDITING_V2_PLAN.md.
+    // a single paragraph). See docs/plans/rich-text-editing-v2-remaining.md.
     outValue = MarkdownConvert::MarkdownToAdf(scalarValue);
     return true;
 }
@@ -702,6 +702,22 @@ Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<s
         return Result<nlohmann::json>::Err(std::move(outError));
     }
     return Result<nlohmann::json>::Ok(std::move(outValue));
+}
+
+nlohmann::json AdfCommentBodyFromMarkdown(const std::string& markdown) {
+    // Same Markdown→ADF conversion as the grid long-text editor (BuildAdfScalar) so a Jira comment
+    // keeps headings, lists, code, links, and inline emphasis instead of a flat plain paragraph.
+    nlohmann::json doc = MarkdownConvert::MarkdownToAdf(markdown);
+    const bool hasContent = doc.is_object() && doc.contains("content") && doc["content"].is_array() &&
+                            !doc["content"].empty();
+    if (hasContent) {
+        return doc;
+    }
+    // Empty / whitespace-only input converts to an empty document; Jira rejects an ADF `doc` with
+    // empty content, so emit a single empty paragraph — the minimal valid, non-empty body.
+    return nlohmann::json{{"type", "doc"},
+                          {"version", 1},
+                          {"content", nlohmann::json::array({nlohmann::json{{"type", "paragraph"}}})}};
 }
 
 } // namespace TrackerFieldPayloadPure

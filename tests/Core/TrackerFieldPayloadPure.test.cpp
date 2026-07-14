@@ -695,3 +695,34 @@ TEST_CASE("ResolveDisplayValueForSubmittedSelection: label resolution") {
         CHECK(ResolveDisplayValueForSubmittedSelection(c, "Bug") == "Bug");
     }
 }
+
+TEST_CASE("AdfCommentBodyFromMarkdown: plain text becomes a single paragraph") {
+    const json doc = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown("hello world");
+    CHECK(doc["type"] == "doc");
+    CHECK(doc["version"] == 1);
+    REQUIRE(doc["content"].is_array());
+    REQUIRE(doc["content"].size() == 1);
+    CHECK(doc["content"][0]["type"] == "paragraph");
+    CHECK(doc["content"][0]["content"][0]["text"] == "hello world");
+}
+
+TEST_CASE("AdfCommentBodyFromMarkdown: Markdown formatting is preserved (fidelity vs plain paragraph)") {
+    const json doc = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown("**bold** and *em*");
+    const json& marks = doc["content"][0]["content"][0]["marks"];
+    REQUIRE(marks.is_array());
+    CHECK(marks[0]["type"] == "strong");
+
+    const json list = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown("- a\n- b");
+    CHECK(list["content"][0]["type"] == "bulletList");
+}
+
+TEST_CASE("AdfCommentBodyFromMarkdown: empty / whitespace input yields a valid non-empty ADF doc") {
+    // Jira rejects an ADF doc with empty content — the helper must always emit at least one node.
+    for (const std::string& in : {std::string(""), std::string("   "), std::string("\n\t ")}) {
+        const json doc = TrackerFieldPayloadPure::AdfCommentBodyFromMarkdown(in);
+        CHECK(doc["type"] == "doc");
+        REQUIRE(doc["content"].is_array());
+        REQUIRE(doc["content"].size() >= 1);
+        CHECK(doc["content"][0]["type"] == "paragraph");
+    }
+}

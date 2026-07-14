@@ -10,7 +10,9 @@
 #      `<N>s`) comment.
 #
 # Harness-agnostic — pure bash. Invoked by:
-#   - .claude/hooks/lint-cpp-pillar2.sh (Claude Code wrapper; per-file batch)
+#   - .claude/hooks/lint-cpp-drain.sh (Claude Code deferred-lint drain, per-chunk
+#     batch — calls this scanner directly; the old lint-cpp-pillar2.sh shim was
+#     retired once the drain inlined the call)
 #   - bash scripts/dev/test-all.sh (auto-enrolled scan over changed files)
 #   - manual: `bash scripts/dev/pillar2-scan.sh <file.cpp|file.h>...`
 #

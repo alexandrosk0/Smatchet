@@ -675,9 +675,8 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
                                                   outFieldsPayloadJson, outError);
 }
 
-bool AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result,
-                                         std::string& outError) {
-    return fieldEdit_->ApplyFieldEditResult(issueId, result, outError);
+VoidResult AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
+    return fieldEdit_->ApplyFieldEditResult(issueId, result);
 }
 bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                                        std::string& outError) const {

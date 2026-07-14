@@ -108,6 +108,28 @@
     "discovery_mode": "flat-symlink",
     "supported": ["claude-code", "codex", "cursor", "pi"]
   },
+  "environments": {
+    "_doc": "Declared per-environment capability tiers (AGENTIC_INFRA_AUDIT.md finding C3 / Proposal P5). `scripts/dev/doctor.sh --tier <name>` (or env SMATCHET_DOCTOR_TIER) reports a required toolchain check whose tool is ABSENT and not in that tier's `expects` list as an informational `[n/a]` skip instead of a RED `[FAIL]` — so an agent knows what it genuinely cannot self-validate in this environment rather than discovering it mid-loop, feeding the cannot-validate -> escalate invariant (AI_POLICY.md § Escalate). Check ids match doctor.sh's toolchain checks: cmake ninja git compiler link.exe python. Omitting --tier keeps the legacy every-check-required behaviour (default_tier).",
+    "default_tier": "windows-dev",
+    "tiers": {
+      "windows-dev": {
+        "description": "Full Windows dev box — the whole build + test + lint matrix is runnable.",
+        "expects": ["cmake", "ninja", "git", "compiler", "link.exe", "python"]
+      },
+      "linux-container": {
+        "description": "Remote Linux container (Claude Code on the web). No MSVC toolchain and no bats/gh/doctest rig; the self-validatable surface is lint + doc gates + posix-core-check + TSan + fuzzers. cannot-validate -> escalate.",
+        "expects": ["cmake", "ninja", "git", "python"]
+      },
+      "ci-windows": {
+        "description": "GitHub Actions windows runner — full MSVC build + test matrix.",
+        "expects": ["cmake", "ninja", "git", "compiler", "link.exe", "python"]
+      },
+      "ci-ubuntu": {
+        "description": "GitHub Actions ubuntu runner — Linux clang lanes (posix-core-check, sanitizers, mobile NDK).",
+        "expects": ["cmake", "ninja", "git", "python"]
+      }
+    }
+  },
   "guards": {
     "doc_validation": [
       "test-plan-index",

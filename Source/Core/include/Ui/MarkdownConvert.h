@@ -11,7 +11,7 @@
 
 /// Markdown <-> Atlassian Document Format (ADF) and Markdown <-> HTML conversion for the
 /// rich-text editing pipeline. Backs the long-text modal editor used by Jira description /
-/// environment fields (ADF) and Plane description (HTML). See RICH_TEXT_EDITING_V2_PLAN.md
+/// environment fields (ADF) and Plane description (HTML). See docs/plans/rich-text-editing-v2-remaining.md
 /// for the broader v2 design and the supported subset of constructs.
 namespace MarkdownConvert {
 

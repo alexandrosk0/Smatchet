@@ -42,9 +42,8 @@ template <typename T> class Optional {
     // engaged/disengaged branches, so an unconditional noexcept would std::terminate
     // if T's move throws (DR31). Advertise noexcept only when T's move cannot throw,
     // matching the common (nothrow) case; a throwing-move T propagates normally.
-    Optional& operator=(Optional other)
-        noexcept(std::is_nothrow_move_constructible<T>::value &&
-                 std::is_nothrow_move_assignable<T>::value) {
+    Optional& operator=(Optional other) noexcept(std::is_nothrow_move_constructible<T>::value &&
+                                                 std::is_nothrow_move_assignable<T>::value) {
         swap(other);
         return *this;
     }
@@ -160,8 +159,7 @@ template <typename T, typename E = std::string> class Result {
         // Result types), leaving storage destroyed yet ok_ set → the next ~Result double-destroys
         // unconstructed storage = UB (#1017). Instead: build the copy in a local FIRST (a throw
         // there leaves *this untouched), then Destroy() and commit via a noexcept move.
-        static_assert(std::is_nothrow_move_constructible<T>::value &&
-                          std::is_nothrow_move_constructible<E>::value,
+        static_assert(std::is_nothrow_move_constructible<T>::value && std::is_nothrow_move_constructible<E>::value,
                       "Result copy-assignment commits via a noexcept move; T and E must be "
                       "nothrow-move-constructible (vector/string/json/TrackerError all are).");
         if (this != &other) {
@@ -298,3 +296,19 @@ template <typename T, typename E = std::string> class Result {
     // throwing move/commit. Guards Destroy() against destroying raw storage.
     bool valueless_;
 };
+
+// Unit / VoidResult — the no-payload Result shape for operations that
+// succeed-or-fail with nothing to return (the `bool + std::string& outError`
+// pattern). C++14-hard (no std::variant) makes a clean `Result<void>` partial
+// specialisation more trouble than it's worth, so "no payload" is modelled as an
+// empty `Unit` value instead: `VoidResult` is just `Result<Unit>`. Use `VoidOk()`
+// on success and `VoidResult::Err(reason)` on failure, then branch on
+// `has_value()` / read `error()` exactly like any other Result. `Unit` is empty,
+// trivially-copyable and nothrow-movable, so it satisfies Result's
+// nothrow-move requirement with zero storage overhead.
+struct Unit {};
+
+using VoidResult = Result<Unit>;
+
+// Convenience: a success VoidResult without spelling `VoidResult::Ok(Unit{})`.
+inline VoidResult VoidOk() { return VoidResult::Ok(Unit{}); }

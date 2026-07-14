@@ -88,10 +88,12 @@ static std::string AuditJsonDump(const nlohmann::json& j) {
 /** Runs on worker thread. */
 AuditDisplayCachePayload BuildAuditDisplayCachePayload() {
     AuditDisplayCachePayload p;
-    std::string err;
-    std::vector<nlohmann::json> events = BackendAuditTrail::ReadRecentEvents(1000, &err);
-    p.ReadError = std::move(err);
-    p.Events = std::move(events);
+    Result<std::vector<nlohmann::json>> readResult = BackendAuditTrail::ReadRecentEvents(1000);
+    if (readResult.has_value()) {
+        p.Events = std::move(readResult.value());
+    } else {
+        p.ReadError = std::move(readResult.error());
+    }
     const std::size_t n = p.Events.size();
     p.FullJson.reserve(n);
     p.DataJson.reserve(n);
