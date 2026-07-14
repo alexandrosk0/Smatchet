@@ -246,7 +246,7 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   path) not yet greenlit — plan stays active
   (`docs/plans/active/slice-g-db-corruption.md`).
 - 2026-07-14 — **Slice F substantially shipped** (status reconcile; work landed under
-  [`mutation-smoke-gate.md`](mutation-smoke-gate.md), not this roadmap's row). The
+  `docs/plans/mutation-smoke-gate.md`, not this roadmap's row). The
   mutation-smoke half of Gap 4 is built: harness + seed corpus (Phases 1–2), advisory
   nightly wiring, and the 2026-07-13 Phase-3 corpus expansion to 38 mutants covering
   all 20 dedicated-test TUs (33/33 killed). Remaining under F: the advisory→blocking
@@ -254,7 +254,7 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   catalog was not pursued.
 - 2026-07-14 — **Slice I done** (status reconcile). Agent-eval Phase 0 (judge
   calibration) shipped via #1507 — see
-  [`subagent-eval-agentic-coverage.md`](subagent-eval-agentic-coverage.md) § Status;
+  `docs/plans/subagent-eval-agentic-coverage.md` § Status;
   that plan's Phases 1–4 continue as its own scope, outside this roadmap's Slice-I row.
 
 ## Deviations

@@ -25,7 +25,7 @@ Tracked outside this plan; this section consolidates pointers so future agents d
 
 ### Open architectural decisions
 
-- **`SMATCHET_WHISPER_LOCAL_BACKEND` default flip (OFF → ON?)** — **RESOLVED (default is ON)**: the `option()` in `CMakeLists.txt` now defaults `ON` (~1.37 MB static delta accepted), so the locked "local default, cloud fallback" UX holds without a build-time opt-in. *(Original entry, kept for history: backlog/agent-self-improvement/infra.md (2026-05-18, P2) posed three resolution paths — flip default ON, runtime-loaded DLL, or downgrade the UX decision.)*
+- **`SMATCHET_WHISPER_LOCAL_BACKEND` default flip (OFF → ON?)** — **RESOLVED (default is ON where Whisper builds at all)**: the `option()` in `CMakeLists.txt` now defaults `ON` (~1.37 MB static delta accepted), so the locked "local default, cloud fallback" UX holds without a build-time opt-in on Standalone. DX12/Unreal builds are unaffected — they ship without Whisper entirely (`SMATCHET_WITH_WHISPER` OFF for DX12, see § Subsystem placement), so no local backend exists there regardless of this sub-option. *(Original entry, kept for history: backlog/agent-self-improvement/infra.md (2026-05-18, P2) posed three resolution paths — flip default ON, runtime-loaded DLL, or downgrade the UX decision.)*
 
 ### Open code gaps
 
