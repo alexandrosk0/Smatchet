@@ -25,11 +25,11 @@ Tracked outside this plan; this section consolidates pointers so future agents d
 
 ### Open architectural decisions
 
-- **`SMATCHET_WHISPER_LOCAL_BACKEND` default flip (OFF → ON?)** — backlog/agent-self-improvement/infra.md (2026-05-18, P2). Current default OFF means user's "local default, cloud fallback" UX requires a build-time opt-in for the actual local backend. Three resolution paths: flip default ON (accept binary growth), refactor to runtime-loaded DLL, or downgrade the locked UX decision to "cloud default, local available via rebuild". Decision cost: 30 min binary-size measurement + decision.
+- **`SMATCHET_WHISPER_LOCAL_BACKEND` default flip (OFF → ON?)** — **RESOLVED (default is ON)**: the `option()` in `CMakeLists.txt` now defaults `ON` (~1.37 MB static delta accepted), so the locked "local default, cloud fallback" UX holds without a build-time opt-in. *(Original entry, kept for history: backlog/agent-self-improvement/infra.md (2026-05-18, P2) posed three resolution paths — flip default ON, runtime-loaded DLL, or downgrade the UX decision.)*
 
 ### Open code gaps
 
-- **`AppController_LuaBindings.cpp:1816` raw `ImGui::InputText`** — backlog/agent-self-improvement/process.md (2026-05-18, P3). The sol2 binding that lets Lua scripts spawn dynamic InputText widgets bypasses the `SmatchetLocalizedImGui` wrapper, so Lua-authored widgets don't pick up dictation. Built-in surfaces unaffected. Fix: explicit `g_dictationRouter.RegisterInputText` adjacent to the raw call. ~1 h.
+- **Lua-authored `InputText` widgets bypass the dictation router** — backlog/agent-self-improvement/process.md (2026-05-18, P3). **Still open (2026-07-14; cited location stale)**: the original citation `AppController_LuaBindings.cpp:1816` predates the file's god-split — the Lua binding now lives at `AppController_LuaBindings.cpp` (`"input_text"` → `LuaDrawList::InputText`, ~line 238). The gap itself is unchanged: no `RegisterInputText` call exists anywhere in `Source/`, so Lua-spawned InputText widgets don't pick up dictation (built-in surfaces unaffected). Fix: route the `LuaDrawList::InputText` draw path through the `SmatchetLocalizedImGui` wrapper / `g_dictationRouter.RegisterInputText`. ~1 h.
 
 ### Bucket-E manual gaps (no ImGui Test Engine wiring yet)
 
