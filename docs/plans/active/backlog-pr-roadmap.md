@@ -105,7 +105,7 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 | PR-18 Pink-clear dock-gap scan | `pink-clear-dock-gap-scan` | ui-host | shipped — `DockGapSentinelScenario` magenta clear + `bucket_lane_launch_smoke.bats` zero-pink assertion |
 | PR-19 DX12 backbuffer readback screenshot | `dx12-backbuffer-readback-screenshot-diff` | unreal-bridge | **open** (re-verified 2026-07-14: no readback path present) — needs Unreal/DX12 build environment (visual) |
 | PR-20 Tracker redirect no-follow regression | `tracker-redirect-no-follow-regression-test` | tracker-backend / security | shipped #1517 |
-| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | **open** (re-verified 2026-07-14: `resolvePaneCatalog`/`ChoosePaneCatalogSource` absent) — grid behavior change (visual validation) |
+| PR-21 Per-pane catalog value-read routing | `per-pane-catalog-value-read-routing` | grid-engine | shipped #1856 — per-context catalog population + `resolvePaneCatalog`/`ChoosePaneCatalogSource` re-landed; dual-target+LIGHT+lint PASS; visual validation pending. Residue: backend `ResolveDisplayValue` per-pane routing (follow-up) |
 | PR-22 Portable-layer + daemon hardening | `de-smatchetify-portable-layer`, `daemon-loop-per-iteration-backstop-audit` | build-doctor / agentic-infra | shipped #1514 (bounded de-smatchetify) |
 | PR-23 Subagent-eval calibration | `subagent-eval-calibration` | agentic-infra | shipped #1507 |
 
@@ -246,6 +246,7 @@ Per `AGENTS.md` § Project rules — this is a pure-docs roadmap; no build/test 
 
 ## Implementation log
 *(populated as PR groups land — bullet per shipped member: `#N · PR-<k> <slug> shipped`)*
+- `#1856` · PR-21 `per-pane-catalog-value-read-routing` shipped (2026-07-14) — per-context catalog population (`populatePaneCatalogAfterSync_` fetches the pane's own backend catalog off-thread into `GridLiveContext::fieldCatalog`, generation-guarded per #1457/#975/#1081, revision-bump invalidation) + read routing re-landed (`ChoosePaneCatalogSource` + `resolvePaneCatalog`, per-pane index cached on `GridPane`, never per cell), desktop + mobile. Dual-target + LIGHT + lint PASS. Residue: backend `Reader().ResolveDisplayValue` per-pane routing (follow-up). Visual validation of multi-pane cross-backend grids pending.
 
 - 2026-06-20 campaign · PR-1..9, 12, 13a, 15, 16, 17, 20, 22, 23 shipped (#1502-1518).
 - Post-campaign follow-ups (verified 2026-07-14 re-sweep):
