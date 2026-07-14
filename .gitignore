@@ -143,3 +143,6 @@ Source/Core/src/**/CLAUDE.md
 
 # LocalCacheManager corruption-test droppings (SmatchetTests run from the repo root)
 smatchet_lcm_*.db.corrupt-*
+
+# OpenCppCoverage / coverage.sh output (generated, never committed)
+coverage/

@@ -6,7 +6,7 @@ name: Coverage
 # workflow artifact.
 #
 # BLOCKING (graduated 2026-06-04 via docs/plans/shipped/coverage-threshold-graduation.md):
-# continue-on-error: false + --threshold 65. The number is the data-chosen
+# continue-on-error: false + --threshold 70. The number is the data-chosen
 # FLOOR — the first real measurement on the Ui-excluded Source/Core surface was
 # 67% (after issue #833 fixed OCC's substring-not-regex --sources bug that had
 # made the gate measure 0 lines), so the gate graduates at a stable floor below
@@ -79,7 +79,7 @@ jobs:
       # retired `pull_request.paths` allow-list (more inclusive = fail-safe: worst
       # case the coverage build runs when it strictly needn't and passes). It must
       # NEVER fake-green: when any coverage-relevant path changed, run=true and the
-      # full --threshold 65 gate runs unchanged. Non-PR events (merge_group)
+      # full --threshold 70 gate runs unchanged. Non-PR events (merge_group)
       # always run=true so the required context reports on the queued merge.
       - name: Detect coverage-relevant changes
         id: detect
@@ -173,7 +173,7 @@ jobs:
         if: always() && steps.detect.outputs.run == 'true'
         run: sccache --show-stats
 
-      - name: Capture coverage (blocking; --threshold 65)
+      - name: Capture coverage (blocking; --threshold 70)
         if: steps.detect.outputs.run == 'true'
         shell: bash
         env:
@@ -186,11 +186,11 @@ jobs:
         run: |
           oob=$(printf '%s' "${PR_LABELS:-[]}" | python -c "import json,sys; d=json.load(sys.stdin) or []; print(int(any(l.get('name')=='coverage-out-of-band' for l in d)))")
           if [ "$oob" = "1" ]; then
-            if ! bash scripts/dev/coverage.sh --xml-only --threshold 65; then
+            if ! bash scripts/dev/coverage.sh --xml-only --threshold 70; then
               echo "::warning::line coverage below threshold — downgraded to WARN by the coverage-out-of-band label. Queue the coverage-recovery follow-up before removing the label."
             fi
           else
-            bash scripts/dev/coverage.sh --xml-only --threshold 65
+            bash scripts/dev/coverage.sh --xml-only --threshold 70
           fi
 
       # Per-file >=90% floor on the NAMED high-risk units (SSRF endpoint sanitizer,
