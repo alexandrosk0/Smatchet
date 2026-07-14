@@ -57,7 +57,15 @@ if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "fuzzer")
     return()
 endif()
 
-if(UNIX AND DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
+# SMATCHET_CORE_TEST_SUBSET (finding C3 / Proposal P6): build the SAME curated
+# ImGui-free Core unit-test subset WITHOUT a sanitizer — the fast runnable unit
+# signal for a linux-container environment (preset ninja-test-linux), where the
+# MSVC test presets + the ImGui doctest rig are [n/a]. smatchet_apply_sanitizers()
+# is a no-op when SMATCHET_SANITIZER is off (cmake/Sanitizers.cmake), so this one
+# block serves both the nightly TSan lane and the plain per-PR test lane, and the
+# subset can never silently diverge between them.
+option(SMATCHET_CORE_TEST_SUBSET "Build only the curated ImGui-free Core unit-test subset (SmatchetTsanTests target), no sanitizer" OFF)
+if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan") OR SMATCHET_CORE_TEST_SUBSET))
     add_executable(SmatchetTsanTests
         test_main.cpp
         # --- Pure-logic units (no threads) — prove the subset compiles + links
