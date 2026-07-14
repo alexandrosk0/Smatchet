@@ -39,6 +39,15 @@ if [ ! -t 0 ]; then
     fi
 fi
 
+# Surface a still-unknown session id (hooks-session-lifecycle-06): neither
+# CLAUDE_SESSION_ID nor a stdin `session_id` was found, so the banner + archive
+# filenames below carry `_Session: unknown` — an anonymous session that the
+# scratchpad-recall / session-tree tooling can't key on. WARN instead of writing
+# it silently; the hook still proceeds (non-blocking).
+if [ "$SESSION_ID" = "unknown" ]; then
+    echo "clear-session-context: WARN — no session id (CLAUDE_SESSION_ID unset and no 'session_id' on stdin); writing '_Session: unknown' (session-tree / scratchpad-recall can't key on this session)." >&2
+fi
+
 TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Archive prior scratchpad when it has at least one `## ` heading

@@ -101,6 +101,14 @@ else
     nope "perf-instrument SKILL.md missing under .claude/skills/"
 fi
 
+# HP-02: lint-cpp-common.sh invokes .claude/hooks/lint-catch-all.py, so setup
+# must deploy it (previously never copied → the catch-all lint silently no-op'd).
+if [[ -e ".claude/hooks/lint-catch-all.py" ]]; then
+    ok "lint-catch-all.py deployed to .claude/hooks/ (HP-02)"
+else
+    nope "lint-catch-all.py missing from .claude/hooks/ — HP-02 regression (lint-cpp-common invokes it)"
+fi
+
 # -------------------------------------------------------------------- Test 2
 note "Test 2 — existing skills still linked (no regression)"
 for existing in grill-with-docs scratchpad-recall agent-tokens; do
@@ -229,6 +237,20 @@ PY
         ok "sync is idempotent (2nd run no-op)"
     else
         nope "sync not idempotent — 2nd run changed the file"
+    fi
+    # hooks-session-lifecycle-03: --check reports deployed hooks with no template
+    # counterpart. The deployed fixture carries `echo t7-user-hook` (not in the
+    # template), so --check must surface it (read-only — leaves the file untouched).
+    T7_CHECK="$(bash "$T7_SYNC" --check "$T7_TMPL" "$T7_DEP" 2>&1 || true)"
+    if [[ "$T7_CHECK" == *"t7-user-hook"* && "$T7_CHECK" == *"NO template counterpart"* ]]; then
+        ok "sync --check flags a deployed hook absent from the template (hooks-session-lifecycle-03)"
+    else
+        nope "sync --check did not flag the template-absent deployed hook: $T7_CHECK"
+    fi
+    if [[ "$(cat "$T7_DEP")" == "$T7_AFTER" ]]; then
+        ok "sync --check is read-only (deployed file unchanged)"
+    else
+        nope "sync --check mutated the deployed file"
     fi
     rm -rf "$T7_DIR"
 fi
