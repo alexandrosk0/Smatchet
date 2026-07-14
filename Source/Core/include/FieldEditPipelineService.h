@@ -70,7 +70,7 @@ class FieldEditPipelineService {
 
     /// Apply a successful FieldEditResult (from SubmitFieldEditNetworkOnly or an offline replay) to
     /// the local cache + grid model. UI thread.
-    bool ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result, std::string& outError);
+    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
 
   private:
     /// Shared context for the three SubmitFieldEdit branch helpers. Holds references only —
