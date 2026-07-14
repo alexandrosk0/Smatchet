@@ -77,7 +77,10 @@ TEST_CASE("IsTransientBusyCode and IsRebuildableCorruptCode are mutually exclusi
     const int codes[] = {SQLITE_BUSY,    SQLITE_LOCKED,   SQLITE_PROTOCOL, SQLITE_NOTADB,
                          SQLITE_CORRUPT, SQLITE_CANTOPEN, SQLITE_IOERR,    SQLITE_OK};
     for (int c : codes) {
-        CHECK_FALSE(IsTransientBusyCode(c) && IsRebuildableCorruptCode(c));
+        // Extra parens: doctest cannot decompose a raw `&&` inside CHECK_FALSE (it static-asserts
+        // "Expression Too Complex"), so hand it a single pre-evaluated bool.
+        const bool bothTrue = IsTransientBusyCode(c) && IsRebuildableCorruptCode(c);
+        CHECK_FALSE(bothTrue);
     }
 }
 
