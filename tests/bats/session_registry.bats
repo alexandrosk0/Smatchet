@@ -212,3 +212,16 @@ run_banner() {
     echo "$output" | grep -qE '^1\.\.[0-9]+'
     ! echo "$output" | grep -qE '^not ok'
 }
+
+@test "banner: WARNs before the degraded PPID fallback when session-registry-lib.sh is missing (hooks-session-lifecycle-04)" {
+    # Copy the banner ALONE into an isolated dir (no sibling lib) with a PROJ that
+    # also lacks agents/scripts/core/session-registry-lib.sh — both lookups miss,
+    # so the degraded $PPID-liveness fallback fires. It must WARN first, not
+    # silently degrade.
+    local isodir="$SANDBOX/nolib"
+    mkdir -p "$isodir"
+    cp "$BANNER" "$isodir/session-tree-banner.sh"
+    run bash -c "jq -cn '{session_id:\"s1\"}' | CLAUDE_PROJECT_DIR='$isodir' bash '$isodir/session-tree-banner.sh' 2>&1 1>/dev/null"
+    [[ "$output" == *"WARN"* ]]
+    [[ "$output" == *"session-registry-lib.sh not found"* ]]
+}

@@ -32,6 +32,12 @@ if [ -f "$_sr_lib" ]; then
   # shellcheck source=agents/scripts/core/session-registry-lib.sh
   . "$_sr_lib"
 else
+  # Degraded fallback: session-registry-lib.sh is missing, so real-pid liveness is
+  # unavailable and sr_session_pid collapses to $PPID (which is 1 under the
+  # SessionStart hook's detached parent — the exact case that made liveness
+  # useless, see the header). Surface it (hooks-session-lifecycle-04) instead of
+  # silently degrading; the banner still runs (non-blocking).
+  echo "session-tree-banner: WARN — session-registry-lib.sh not found at '$_sr_lib'; falling back to \$PPID liveness (degraded — sibling-session counts may be wrong). Re-run setup-harness.sh to restore the lib." >&2
   sr_session_pid() { printf '%s' "$PPID"; }
   sr_prune_dead_stale() { :; }
   sr_count_live_siblings() { printf '0'; }
