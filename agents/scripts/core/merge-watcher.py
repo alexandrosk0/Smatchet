@@ -1882,16 +1882,22 @@ def maybe_pass_cr_none_grace(
 # recovery.md.
 
 _CR_THREADS_QUERY = (
-    "query($owner:String!,$repo:String!,$pr:Int!){"
+    "query($owner:String!,$repo:String!,$pr:Int!,$after:String){"
     "repository(owner:$owner,name:$repo){"
     "pullRequest(number:$pr){"
     "headRefOid "
-    "reviewThreads(first:100){pageInfo{hasNextPage} nodes{"
+    "reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor} nodes{"
     "id isResolved isOutdated "
     "comments(first:1){nodes{author{login __typename}}}"
     "}}"
     "}}}"
 )
+
+# Safety cap on pagination pages (100 threads/page → 5000 threads). A PR with
+# more open review threads than this is pathological; refuse to silently
+# truncate (fail-closed via RuntimeError, which callers already handle by
+# skipping the resolve step + retrying next poll).
+_CR_THREADS_MAX_PAGES = 50
 
 
 def _fetch_unresolved_cr_threads(
@@ -1900,46 +1906,73 @@ def _fetch_unresolved_cr_threads(
     """Return (current_head_sha, [thread_id, ...]) for CR-authored,
     non-outdated, unresolved review threads on the PR.
 
-    Raises RuntimeError on gh / GraphQL failure. Callers fail-open: if we
-    can't enumerate threads, skip the resolve step and let the next poll
-    retry — never wedge the daemon loop on a transient gh hiccup.
+    Paginates through `reviewThreads` (100/page) honouring
+    `pageInfo.hasNextPage` — a PR with >100 review threads previously had
+    everything past the first page silently dropped, so an unresolved CR
+    thread beyond #100 was invisible to the resolve step (core-scripts-python-05).
+    Raises RuntimeError on gh / GraphQL failure OR if pagination exceeds
+    `_CR_THREADS_MAX_PAGES` (never truncate silently). Callers fail-open: if we
+    can't enumerate threads, skip the resolve step and let the next poll retry —
+    never wedge the daemon loop on a transient gh hiccup.
     """
-    data = _gh_json(
-        [
+    head_sha = ""
+    thread_ids: list[str] = []
+    after: str | None = None
+    for _page in range(_CR_THREADS_MAX_PAGES):
+        args = [
             "api", "graphql",
             "-f", f"query={_CR_THREADS_QUERY}",
             "-F", f"owner={owner}",
             "-F", f"repo={repo}",
             "-F", f"pr={pr}",
-        ],
-        cwd=clone_path,
-        timeout=30,
+        ]
+        # First page: omit `after` entirely so the nullable $after variable is
+        # null (GraphQL start-of-list). Later pages: pass the opaque endCursor as
+        # a RAW string field (-f, never -F — a cursor must never be type-inferred).
+        if after:
+            args += ["-f", f"after={after}"]
+        data = _gh_json(args, cwd=clone_path, timeout=30)
+        if not isinstance(data, dict):
+            raise RuntimeError("_fetch_unresolved_cr_threads: top-level not dict")
+        try:
+            pr_node = data["data"]["repository"]["pullRequest"]
+        except (KeyError, TypeError) as exc:
+            raise RuntimeError(f"_fetch_unresolved_cr_threads: missing PR node: {exc}")
+        # headRefOid is stable across pages; capture from the first response.
+        if not head_sha:
+            head_sha = pr_node.get("headRefOid", "") or ""
+        review_threads = pr_node.get("reviewThreads") or {}
+        for node in review_threads.get("nodes", []) or []:
+            if node.get("isResolved") or node.get("isOutdated"):
+                continue
+            comments = (node.get("comments") or {}).get("nodes") or []
+            # First-comment author drives bot-attribution. CR posts the thread-
+            # opening inline comment as `coderabbitai` / `coderabbitai[bot]`;
+            # human replies on the same thread don't shift authorship of the
+            # leading comment, so the filter is robust.
+            if not comments:
+                continue
+            author = (comments[0].get("author") or {}).get("login") or ""
+            if author.lower() not in {"coderabbitai", "coderabbitai[bot]"}:
+                continue
+            tid = node.get("id")
+            if tid:
+                thread_ids.append(tid)
+        page_info = review_threads.get("pageInfo") or {}
+        if not page_info.get("hasNextPage"):
+            return head_sha, thread_ids
+        after = page_info.get("endCursor") or None
+        if not after:
+            # hasNextPage true but no cursor — malformed; stop rather than loop
+            # forever on the same page.
+            raise RuntimeError(
+                "_fetch_unresolved_cr_threads: hasNextPage without endCursor"
+            )
+    # Loop exhausted without a final page (hasNextPage still true).
+    raise RuntimeError(
+        f"_fetch_unresolved_cr_threads: exceeded {_CR_THREADS_MAX_PAGES} pages "
+        f"(>{_CR_THREADS_MAX_PAGES * 100} review threads) — refusing to truncate"
     )
-    if not isinstance(data, dict):
-        raise RuntimeError("_fetch_unresolved_cr_threads: top-level not dict")
-    try:
-        pr_node = data["data"]["repository"]["pullRequest"]
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError(f"_fetch_unresolved_cr_threads: missing PR node: {exc}")
-    head_sha = pr_node.get("headRefOid", "") or ""
-    thread_ids: list[str] = []
-    for node in pr_node.get("reviewThreads", {}).get("nodes", []) or []:
-        if node.get("isResolved") or node.get("isOutdated"):
-            continue
-        comments = (node.get("comments") or {}).get("nodes") or []
-        # First-comment author drives bot-attribution. CR posts the thread-
-        # opening inline comment as `coderabbitai` / `coderabbitai[bot]`;
-        # human replies on the same thread don't shift authorship of the
-        # leading comment, so the filter is robust.
-        if not comments:
-            continue
-        author = (comments[0].get("author") or {}).get("login") or ""
-        if author.lower() not in {"coderabbitai", "coderabbitai[bot]"}:
-            continue
-        tid = node.get("id")
-        if tid:
-            thread_ids.append(tid)
-    return head_sha, thread_ids
 
 
 _RESOLVE_MUTATION = (
