@@ -99,6 +99,12 @@ STUB
 @test "sentinel records exact passed/failed counts" {
     write_stub_exe dead
     run bash "$DRIVER"
-    # 3 registered scenarios, all FAIL on missing envelope -> failed=3.
-    grep -q '^status=broken passed=0 failed=3' "$SMATCHET_LANE_STATUS_FILE"
+    # Every registered scenario FAILs on the missing envelope, so the sentinel
+    # must record passed=0 and failed==<scenario count>. Derive the expected
+    # count from the driver's own SCENARIOS=( ... ) registry rather than pinning
+    # a literal (the count grew 3 -> 7 as scenarios were added and the old
+    # literal silently rotted); this asserts the exact-count contract drift-proof.
+    n="$(awk '/^SCENARIOS=\(/{f=1;next} f&&/^\)/{exit} f&&NF{c++} END{print c+0}' "$DRIVER")"
+    [ "$n" -gt 0 ]
+    grep -q "^status=broken passed=0 failed=${n}\$" "$SMATCHET_LANE_STATUS_FILE"
 }

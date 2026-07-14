@@ -103,7 +103,7 @@ Already shipped / tracked — do not redo:
 - MCP attachment-proxy SSRF + userinfo (#1342; SSRF deferred) — this plan adds only the URL-*length* cap.
 - Image-dimension caps (#1363 / #1225); tracker-mapper crash-safety (#1344); Lua sandbox + coroutine-hook (#1345).
 - libFuzzer harness + the six byte-parser drivers (#1301 / #1307) — reused, not rebuilt.
-- DB-corruption hardening — active `docs/plans/slice-g-db-corruption.md`.
+- DB-corruption hardening — `docs/plans/shipped/slice-g-db-corruption.md`.
 
 ## Implementation log
 
