@@ -7,6 +7,7 @@
 // TrackerHttpFaults.test.cpp.
 
 #include "TrackerHttpClient.h"
+#include "TrackerHttpPure.h"
 
 #include <doctest/doctest.h>
 
@@ -23,6 +24,14 @@ TrackerHttpResult ResultFromStatus(int status, const std::string& text = "") {
     cpr::Response resp;
     resp.status_code = status;
     resp.text = text;
+    return ClassifyTrackerResponse(resp);
+}
+
+// Same, with a `Retry-After` response header (the GitHub secondary-rate-limit shape).
+TrackerHttpResult ResultFromStatusWithRetryAfter(int status, const std::string& retryAfter) {
+    cpr::Response resp;
+    resp.status_code = status;
+    resp.header["Retry-After"] = retryAfter;
     return ClassifyTrackerResponse(resp);
 }
 
@@ -44,6 +53,79 @@ TEST_CASE("ClassifyTrackerResponse maps HTTP status to TrackerErrorKind") {
     CHECK(ResultFromStatus(400).Error.Kind == TrackerErrorKind::InvalidRequest);
     CHECK(ResultFromStatus(422).Error.Kind == TrackerErrorKind::InvalidRequest);
     CHECK(ResultFromStatus(0).Error.Kind == TrackerErrorKind::Transport);
+}
+
+TEST_CASE("ClassifyTrackerResponse — 403 + Retry-After is a throttle, not an auth failure") {
+    // GitHub's secondary rate limits / abuse detection answer 403 with a Retry-After
+    // header; those must classify retryable (RateLimited) so the field-edit chain treats
+    // them as an offline-queueable transient rather than a hard credential error.
+    SUBCASE("403 with Retry-After → RateLimited (retryable)") {
+        const TrackerHttpResult r = ResultFromStatusWithRetryAfter(403, "30");
+        CHECK(r.Error.Kind == TrackerErrorKind::RateLimited);
+        CHECK(r.Error.IsRetryable());
+    }
+    SUBCASE("header lookup is case-insensitive (cpr::Header contract)") {
+        cpr::Response resp;
+        resp.status_code = 403;
+        resp.header["retry-after"] = "5";
+        CHECK(ClassifyTrackerResponse(resp).Error.Kind == TrackerErrorKind::RateLimited);
+    }
+    SUBCASE("403 with an unparseable Retry-After (HTTP-date form) stays Auth") {
+        const TrackerHttpResult r = ResultFromStatusWithRetryAfter(403, "Wed, 21 Oct 2026 07:28:00 GMT");
+        CHECK(r.Error.Kind == TrackerErrorKind::Auth);
+    }
+    SUBCASE("plain 403 without the header stays Auth (real scope/credential failures)") {
+        CHECK(ResultFromStatus(403).Error.Kind == TrackerErrorKind::Auth);
+    }
+    SUBCASE("401 with Retry-After stays Auth — only 403 wears the throttle disguise") {
+        CHECK(ResultFromStatusWithRetryAfter(401, "30").Error.Kind == TrackerErrorKind::Auth);
+    }
+}
+
+TEST_CASE("ParseRetryAfterSeconds — delta-seconds form only") {
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("120") == 120);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds(" 60 ") == 60);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("0") == 0);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("") == -1);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("Wed, 21 Oct 2026 07:28:00 GMT") == -1);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("-5") == -1);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("12.5") == -1);
+    CHECK(TrackerHttpPure::ParseRetryAfterSeconds("9999999") == -1); // > 6 digits = garbage
+}
+
+TEST_CASE("ComputeTrackerRetryDelayMs — backoff raised to a capped Retry-After") {
+    constexpr long kBase = 250;
+    constexpr long kExpCap = 4000;
+    constexpr long kHonorCap = 30000;
+    SUBCASE("no header (-1) → plain exponential backoff, capped") {
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(1, kBase, kExpCap, -1, kHonorCap) == 250);
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(2, kBase, kExpCap, -1, kHonorCap) == 500);
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(3, kBase, kExpCap, -1, kHonorCap) == 1000);
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(9, kBase, kExpCap, -1, kHonorCap) == 4000);
+    }
+    SUBCASE("Retry-After above the backoff wins") {
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(1, kBase, kExpCap, 2, kHonorCap) == 2000);
+    }
+    SUBCASE("Retry-After below the backoff never shortens it") {
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(9, kBase, kExpCap, 1, kHonorCap) == 4000);
+    }
+    SUBCASE("hostile Retry-After is capped at the honor ceiling") {
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(1, kBase, kExpCap, 999999, kHonorCap) == kHonorCap);
+    }
+    SUBCASE("Retry-After: 0 (retry now) falls back to the backoff floor") {
+        CHECK(TrackerHttpPure::ComputeTrackerRetryDelayMs(1, kBase, kExpCap, 0, kHonorCap) == 250);
+    }
+}
+
+TEST_CASE("TrackerHttpRequestWithRetry retries a 403-with-Retry-After like any throttle") {
+    int calls = 0;
+    const TrackerHttpResult r = TrackerHttpRequestWithRetry([&calls]() {
+        ++calls;
+        // Retry-After: 0 keeps the honored delay at the plain backoff so the test doesn't sleep.
+        return calls == 1 ? ResultFromStatusWithRetryAfter(403, "0") : ResultFromStatus(200);
+    });
+    CHECK(r.IsOk());
+    CHECK(calls == 2); // the throttle-shaped 403 retried; a plain 403 would have been single-shot.
 }
 
 TEST_CASE("ClassifyTrackerResponse builds a detail string and preserves the raw response") {

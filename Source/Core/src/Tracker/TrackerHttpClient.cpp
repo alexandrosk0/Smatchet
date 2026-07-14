@@ -1,10 +1,25 @@
 #include "TrackerHttpClient.h"
 
 #include "Logger.h"
+#include "TrackerHttpPure.h"
 
 #include <algorithm>
 #include <chrono>
 #include <thread>
+
+namespace {
+
+// Server-requested retry delay from the response's `Retry-After` header, in seconds.
+// -1 when the header is absent or unparseable (cpr::Header compares case-insensitively).
+long RetryAfterSecondsFrom(const cpr::Response& response) {
+    const cpr::Header::const_iterator it = response.header.find("Retry-After");
+    if (it == response.header.end()) {
+        return -1;
+    }
+    return TrackerHttpPure::ParseRetryAfterSeconds(it->second);
+}
+
+} // namespace
 
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
     TrackerHttpResult out;
@@ -24,6 +39,15 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
         } else {
             detail = "Unknown network error";
         }
+    }
+
+    // A 403 carrying `Retry-After` is a throttle wearing an auth status code — GitHub's
+    // secondary rate limits and abuse detection respond exactly this way. Classify it as
+    // rate-limited, which is retryable and an offline-queueable transient, instead of a
+    // hard auth failure. A plain 403 without the header stays an auth failure.
+    if (status == 403 && RetryAfterSecondsFrom(response) >= 0) {
+        out.Error = TrackerErrorRateLimited(std::move(detail), status);
+        return out;
     }
 
     out.Error = TrackerErrorFromHttpStatus(status, std::move(detail));
@@ -89,15 +113,14 @@ TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpRes
             return result;
         }
 
-        // Exponential backoff: 250, 500, 1000, 2000, 4000 ms (capped). Cheap clamp via std::min.
-        long delayMs = kTrackerHttpBaseRetryDelayMs;
-        for (int i = 1; i < attempt; ++i) {
-            delayMs *= 2;
-            if (delayMs >= kTrackerHttpMaxRetryDelayMs) {
-                delayMs = kTrackerHttpMaxRetryDelayMs;
-                break;
-            }
-        }
+        // Exponential backoff (250, 500, 1000, … capped at 4000 ms), raised to the
+        // server-requested `Retry-After` when the response carried one — itself capped
+        // (kTrackerHttpMaxRetryAfterHonorMs) so a hostile value can't pin the worker; the
+        // sleep below polls the cancel token throughout, so a longer honored delay stays
+        // shutdown-safe.
+        const long delayMs = TrackerHttpPure::ComputeTrackerRetryDelayMs(
+            attempt, kTrackerHttpBaseRetryDelayMs, kTrackerHttpMaxRetryDelayMs, RetryAfterSecondsFrom(result.Response),
+            kTrackerHttpMaxRetryAfterHonorMs);
 
         LOG_DEBUG("TrackerHttpClient: %s on attempt %d/%d (status %d); retrying after %ld ms",
                   ToString(result.Error.Kind), attempt, maxAttempts, result.Status(), delayMs);
@@ -107,8 +130,8 @@ TrackerHttpResult TrackerHttpRequestWithRetry(const std::function<TrackerHttpRes
         long waited = 0;
         while (waited < delayMs) {
             if (cancelled && cancelled()) {
-                result.Error = TrackerErrorCancelled("Cancelled during backoff before attempt " +
-                                                    std::to_string(attempt + 1));
+                result.Error =
+                    TrackerErrorCancelled("Cancelled during backoff before attempt " + std::to_string(attempt + 1));
                 return result;
             }
             const long step = (std::min)(kPollIntervalMs, delayMs - waited);
