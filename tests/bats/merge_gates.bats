@@ -1180,10 +1180,13 @@ set_fixture() {
     rm -f "$f"
 }
 
-@test "cr-out-of-band downgrades NONE-within-grace block (CR installed) -> pass with WARN" {
-    # CR installed, NONE, within grace → normally blocks (NONE+pending). The
-    # label downgrades the CR condition so the gate passes immediately without
-    # waiting for the grace window.
+@test "cr-out-of-band + cr-disposition on a NONE-within-grace block where CR NEVER RAN still BLOCKS (merge-pipeline-04 residual)" {
+    # CR installed, NONE, within grace, and — crucially — the fixture carries NO
+    # CodeRabbit context on the head (no review, no StatusContext, no CheckRun): CR
+    # has NOT run. Previously cr-out-of-band + cr-disposition downgraded this to a
+    # pass — the merge-pipeline-04 hole (a disposition attestation could wave through
+    # a PR CodeRabbit never touched). Now the downgrade additionally requires
+    # evidence CR actually ran, so the CR block STANDS.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.labels" \
@@ -1193,10 +1196,35 @@ set_fixture() {
     export MERGE_GATES_STALE_REREVIEW_POLLS=0
     set_fixture "$f"
     run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"NOT honoured"* ]]
+    [[ "$output" == *"never ran"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+}
+
+@test "cr-out-of-band + cr-disposition IS honoured once CR has run (SUCCESS StatusContext) on an otherwise-NONE block" {
+    # Same NONE-within-grace shape, but now CodeRabbit HAS engaged the head: a
+    # CodeRabbit StatusContext SUCCESS is present. cr_ran=true, so the disposition
+    # downgrade is honoured and the gate passes — proving the residual guard gates
+    # on CR-engagement evidence, not on cr_state alone.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:acked"}]}')"
+    local f2
+    f2="$(fixture_override "$f" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename": "CheckRun", "name": "build", "conclusion": "SUCCESS", "status": "COMPLETED", "isRequired": true},{"__typename": "StatusContext", "context": "ci/standalone", "state": "SUCCESS", "isRequired": true},{"__typename": "StatusContext", "context": "CodeRabbit", "state": "SUCCESS", "isRequired": false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STALE_REREVIEW_POLLS=0
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" == *"cr-out-of-band + cr-disposition label downgraded CR block"* ]]
-    rm -f "$f"
+    [[ "$output" == *"cr-out-of-band + cr-disposition"* ]]
+    rm -f "$f" "$f2"
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
 }
 
