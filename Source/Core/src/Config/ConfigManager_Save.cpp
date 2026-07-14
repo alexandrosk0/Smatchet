@@ -158,6 +158,17 @@ void ConfigManager::Save(const TrackerConfig& config) {
 #endif
     j["mcp_export_fields"] = config.McpExportFields;
     j["quick_comment_templates"] = config.QuickCommentTemplates;
+    // Lua script consent gate. Serialized by hand (path + sha-256 objects) so the pure
+    // LuaScriptConsent.h stays nlohmann-free.
+    {
+        nlohmann::json approvals = nlohmann::json::array();
+        for (const auto& a : config.ApprovedLuaScripts) {
+            approvals.push_back(nlohmann::json{{"path", a.Path}, {"sha256", a.Sha256}});
+        }
+        j["approved_lua_scripts"] = approvals;
+    }
+    j["lua_script_consent_initialized"] = config.LuaScriptConsentInitialized;
+    j["lua_script_consent_enforced"] = config.LuaScriptConsentEnforced;
     j["toolbar"] = config.Toolbar;
     j["keybindings"] = config.Keybindings;
     j["migrated_bugreport_hotkey_v1"] = config.MigratedBugReportHotkeyV1;

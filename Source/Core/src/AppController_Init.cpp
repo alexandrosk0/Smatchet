@@ -684,6 +684,12 @@ void AppController::InitPlugins(const std::string& activeTrackerType) {
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
 
+    // One-time trust-on-adoption seed BEFORE the first hook run: on the first launch after the
+    // consent gate ships, the scripts already in the user's Scripts/ dir are fingerprinted as
+    // approved so an existing SmatchetHooks.lua keeps loading. Everything dropped in afterwards
+    // must be explicitly approved. No-op on every subsequent launch.
+    SeedLuaScriptConsentIfNeeded();
+
     RunLuaSetupScript("SmatchetHooks.lua");
 
     impl_->automationWorker_ = std::thread(&AppController::Impl::AutomationWorkerLoop, impl_.get());

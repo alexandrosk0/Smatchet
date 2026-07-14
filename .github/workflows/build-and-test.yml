@@ -821,6 +821,155 @@ jobs:
           path: out/arm64-installer/assets/*windows-arm64-setup.exe
           if-no-files-found: ignore
 
+  windows-x64-installer:
+    name: Windows x64 installer smoke
+    needs: changes
+    # Build the x64 Inno installer (release_github.ps1 -> ninja-publish-msvc LTO
+    # publish + iscc with the default x64 arch) and smoke it (silent install +
+    # launch under DX12/WARP). Closes the release gap where only the (dormant,
+    # runner-gated) ARM64 installer was CI-validated while the x64 installer that
+    # most users get was validated only by the manual INSTALLER_SMOKE_TEST.md.
+    #
+    # POST-MERGE BACKSTOP (push to develop + workflow_dispatch only, never on
+    # pull_request or in merge_group): an LTO publish build is ~20-30 min, so
+    # running it per-PR / per-merge would inflate wall-clock and risk wedging the
+    # merge queue on a flake. Instead it runs on every develop update, and a red
+    # is triaged as develop breakage (same model as the ARM64 legs above). Unlike
+    # those, it needs NO runner variable — windows-2022 is always available. Run
+    # it on a topic branch before merging via the Actions "Run workflow" button.
+    if: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.code == 'true' && needs.changes.outputs.android_only != 'true' }}
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (msvc-x64-installer)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}\.sccache
+          # Dedicated namespace — the ninja-publish-msvc (LTO) preset's objects
+          # differ from the ninja-iter-msvc build job's, so it keeps its own cache.
+          key: ${{ runner.os }}-sccache-msvc-x64-installer-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-x64-installer-
+
+      - name: Cache FetchContent _deps (msvc-x64-installer)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        shell: bash
+        env:
+          FA_TAG: "6.7.2"
+          FA_SHA256: "af19d135d3a935b3ebfbd80320716ffe1202052c5f68dc2c5f1abc57005ac605"
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
+               "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+               -o assets/fonts/fa-solid-900.ttf
+          echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
+
+      - name: Install Inno Setup 6 (ISCC.exe)
+        shell: pwsh
+        run: |
+          # release_github.ps1 requires Inno Setup's ISCC.exe to compile the installer.
+          choco install innosetup -y --no-progress
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+
+      - name: Build x64 installer (release_github.ps1)
+        shell: pwsh
+        run: |
+          # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI) — an
+          # unsigned local bundle is fine for a packaging smoke; -Publish would be
+          # refused without -Sign per the signing-enforcement policy anyway. Default
+          # arch is x64 (ninja-publish-msvc). Skip everything but the standalone +
+          # installer: -SkipUnreal (no UE in CI), -SkipLightStandalone, -SkipSourceZip,
+          # -SkipFabBundle. -AllowDirty: the Font Awesome fetch dirties the worktree.
+          ./scripts/publish/release_github.ps1 `
+            -Tag x64-installer-smoke -AllowDirty `
+            -SkipUnreal -SkipLightStandalone -SkipSourceZip -SkipFabBundle `
+            -OutDir out/x64-installer
+
+      - name: Silent-install + launch smoke (DX12/WARP)
+        shell: pwsh
+        env:
+          SMATCHET_RENDERER: "dx12"
+          SMATCHET_SPAWN_READY_MS: "30000"
+        run: |
+          # x64 installer basename is Smatchet-<tag>-windows-setup.exe (empty arch token).
+          $setup = Get-ChildItem -Recurse -Path out/x64-installer -Filter '*windows-setup.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $setup) { Write-Error "x64 installer .exe not produced under out/x64-installer."; exit 1 }
+          Write-Host "Installing $($setup.FullName) /VERYSILENT ..."
+          $p = Start-Process -FilePath $setup.FullName -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Write-Error "Silent install failed (exit $($p.ExitCode))."; exit 1 }
+          # DefaultDirName={localappdata}\Programs\Smatchet, PrivilegesRequired=lowest
+          # (SmatchetStandalone.iss) — no admin needed in CI.
+          $exe = Join-Path $env:LOCALAPPDATA 'Programs\Smatchet\Smatchet.exe'
+          if (-not (Test-Path $exe)) { Write-Error "Installed exe missing: $exe"; exit 1 }
+          Write-Host "Launch smoke: $exe cmd app.version --spawn --yes (SMATCHET_RENDERER=dx12)"
+          # Hang watchdog: cap the spawned launch at 60s so a hung spawn fails fast
+          # instead of burning the job timeout. The Start-Job child inherits this
+          # step's env, so SMATCHET_RENDERER=dx12 applies to the spawned exe.
+          $job = Start-Job -ScriptBlock {
+            param($exePath)
+            & $exePath cmd app.version --spawn --yes 2>&1 | Out-String
+          } -ArgumentList $exe
+          if (-not (Wait-Job -Job $job -Timeout 60)) {
+            Stop-Job -Job $job -Force; Remove-Job -Job $job -Force
+            Write-Error "Installed x64 exe smoke timed out after 60s (hang watchdog)."
+            exit 1
+          }
+          $out = Receive-Job -Job $job
+          Remove-Job -Job $job
+          Write-Host $out
+          if ($out -notmatch '"ok"\s*:\s*true') { Write-Error "Installed x64 exe launch smoke failed."; exit 1 }
+          Write-Host "x64 installer smoke OK — installed + launched the standalone build."
+
+      - name: Verify uninstall registration + user-data path
+        shell: pwsh
+        run: |
+          # The installer must register an uninstaller; INSTALLER_SMOKE_TEST.md
+          # checks this by hand. Assert the per-user uninstall key exists.
+          $found = $false
+          $roots = @(
+            'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+            'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+          )
+          foreach ($root in $roots) {
+            if (-not (Test-Path $root)) { continue }
+            $hit = Get-ChildItem $root | ForEach-Object { Get-ItemProperty $_.PSPath } |
+              Where-Object { $_.DisplayName -match 'Smatchet' }
+            if ($hit) { $found = $true; Write-Host "uninstall entry: $($hit.DisplayName) @ $($hit.UninstallString)" }
+          }
+          if (-not $found) { Write-Error "No Smatchet uninstall registration found after install."; exit 1 }
+
+      - name: Upload x64 installer (for inspection)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smatchet-x64-installer-${{ github.run_id }}
+          path: out/x64-installer/assets/*windows-setup.exe
+          if-no-files-found: ignore
+
   windows-msvc-light:
     name: Windows + MSVC (Smatchet light — AI/Whisper/MCP off)
     needs: changes

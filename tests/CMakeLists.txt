@@ -541,6 +541,31 @@ add_executable(SmatchetTests
     # Auto-update installer Authenticode launch policy (header-inline pure seam; the Win32
     # WinVerifyTrust caller lives in AttachmentAppUpdateService.cpp, linked below).
     Core/UpdateInstallerSignaturePolicy.test.cpp
+    # Header-only SHA-256 (Sha256.h) pinned to NIST vectors — content digest behind the Lua
+    # script consent gate. No production TU to link.
+    Core/Sha256.test.cpp
+    # Lua script consent gate — pure decision core (LuaScriptConsent.h): fingerprint +
+    # approve/block + kill-switch. Header-only; the AppController-side I/O + wiring is exercised
+    # by the Windows build, not this doctest rig.
+    Core/LuaScriptConsent.test.cpp
+    # --- Test-coverage backlog installment: previously-untested pure Core TUs -----------------
+    # NavigationHistory — back/forward JQL stack (dedup, forward-truncate, 200-entry cap).
+    Core/NavigationHistory.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/NavigationHistory.cpp"
+    # EngineHostContext — Unreal host-context snapshot seam (128 KiB cap, monotonic revision).
+    # Pulls Logger (already linked into this target).
+    Core/EngineHostContext.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/EngineHostContext.cpp"
+    # SmatchetViewVisibility — ViewSlot -> cfg.Show* flag mapping. Uses TrackerConfig only
+    # (ConfigManager.cpp already linked).
+    Core/SmatchetViewVisibility.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetViewVisibility.cpp"
+    # LuaAutomationHost — plugin log-sink fan-out hub (std::function only).
+    Core/LuaAutomationHost.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/LuaAutomationHost.cpp"
+    # SmatchetInputModifierBridge — plugin ctrl/shift modifier flags (atomics).
+    Core/SmatchetInputModifierBridge.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/SmatchetInputModifierBridge.cpp"
     Core/MainThreadDispatchShutdown.test.cpp
     Core/TrackerPostTimeoutClassify.test.cpp
     Core/Tracker2xxErrorGuard.test.cpp
