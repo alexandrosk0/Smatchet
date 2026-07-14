@@ -51,7 +51,7 @@ Smatchet binaries for the syntax-highlighted code view and ticket field editors)
 
 License: **MIT**
 
-```
+```text
 Copyright (c) 2017 BalazsJako
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -85,7 +85,7 @@ License: **dual-licensed — MIT OR Public Domain (Unlicense), at your option**.
 dual-license text is retained at the bottom of each vendored header; Smatchet
 redistributes under ALTERNATIVE A (MIT):
 
-```
+```text
 Copyright (c) 2017 Sean Barrett
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of

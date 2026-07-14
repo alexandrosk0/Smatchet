@@ -793,6 +793,9 @@ void McpPlugin::RegisterSseRoute() {
                                                             impl->bind_host == SmatchetDefaults::Mcp::kBindLocalhost);
         if (!corsOrigin.empty()) {
             res.set_header("Access-Control-Allow-Origin", corsOrigin);
+            // The grant varies by request Origin; without Vary a cache could serve one
+            // origin's grant to another.
+            res.set_header("Vary", "Origin");
         }
 
         std::string endpoint = "/mcp/messages";
