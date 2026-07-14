@@ -255,6 +255,25 @@ smatchet_add_fuzz_target(fuzz_locale_format_guard
         "${_fuzz_core}/include"
     CORPUS locale_format_guard)
 
+# --- command-input-hardening (shared bounded-JSON ingress) -------------------
+
+# smatchet::json_safe::ParseBounded / ParseBoundedOrDiscarded — the single
+# depth/node/byte-bounded parse every attacker-controlled JSON ingress routes
+# through (Lua decode_json, MCP REST/JSON-RPC POST, Lua-MCP-tool params, and the
+# command-arg `ParamType::Json` coercion + `config.set` value parse added by the
+# command-input-hardening plan). Its Pillar-3 contract: no throw escapes, and a
+# depth-bomb is rejected BEFORE nlohmann builds a deep DOM that overflows on
+# recursive teardown. Header-only closure (BoundedJsonParse.h + nlohmann) — no
+# first-party .cpp; links only the nlohmann interface lib.
+smatchet_add_fuzz_target(fuzz_bounded_json
+    SOURCES
+        fuzz_bounded_json.cpp
+    INCLUDES
+        "${_fuzz_core}/include"
+    LIBS
+        nlohmann_json::nlohmann_json
+    CORPUS bounded_json)
+
 # --- hand-rolled-parser fuzz gap (CPP_CODE_AUDIT.md #3/#17/#19) --------------
 
 # TicketGridDurationSortPure::ParseDurationToSecondsForSort — the UI-thread sort comparator's

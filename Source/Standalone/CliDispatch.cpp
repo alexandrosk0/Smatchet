@@ -2,6 +2,7 @@
 #include "CliCommandRunner_Internal.h"
 
 #include "CliArgCoercion.h"
+#include "CliResultFileRead.h"
 #include "StandaloneAppBootstrap.h"
 
 #include "Commands/Command.h"
@@ -273,16 +274,12 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         return kExitTimeout;
     }
 
-    // Read the result file and build an envelope around it.
-#ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4996) // fopen: cross-platform — fopen_s is MSVC-only
-#endif
-    std::FILE* f = std::fopen(outPath.c_str(), "rb");
-#ifdef _MSC_VER
-#pragma warning(pop)
-#endif
-    if (!f) {
+    // Read the result file and build an envelope around it. Bounded read via the shared leaf
+    // (command-input-hardening Phase 1.3): a corrupt/oversized result file must not balloon parent
+    // memory before ParseBounded's 4 MiB cap rejects it.
+    std::string content;
+    switch (smatchet::cli::ReadResultFileBounded(outPath, 4u * 1024u * 1024u, content)) {
+    case smatchet::cli::ResultFileReadStatus::OpenFailed: {
         nlohmann::json errEnv;
         errEnv["ok"] = false;
         errEnv["command"] = commandName;
@@ -291,13 +288,19 @@ int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std
         PostAppQuitBestEffort(cli);
         return kExitHandler;
     }
-
-    std::string content;
-    char buf[4096];
-    size_t n;
-    while ((n = std::fread(buf, 1, sizeof(buf), f)) > 0)
-        content.append(buf, n);
-    std::fclose(f);
+    case smatchet::cli::ResultFileReadStatus::TooLarge: {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = commandName;
+        errEnv["error"] = {{"code", "handler-error"},
+                           {"message", "--spawn: result file too large (> 4 MiB): " + outPath}};
+        EmitErrorToStderr(errEnv);
+        PostAppQuitBestEffort(cli);
+        return kExitHandler;
+    }
+    case smatchet::cli::ResultFileReadStatus::Ok:
+        break;
+    }
     try {
         std::string parseErr;
         nlohmann::json fileData = smatchet::json_safe::ParseBounded(content, parseErr);
