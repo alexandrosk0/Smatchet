@@ -186,3 +186,68 @@ _mk_repo() {
     [[ "$output" != *"agent-too-long"* ]]
     [[ "$output" == *"WARN"* ]]
 }
+
+# ---------- --prune-stale-baseline (core-scripts-python-08) ----------
+# SMATCHET_AGENTSIZE_BASELINE points the read/write at a throwaway file so the
+# real committed baseline is never touched. scan_head() runs against the CWD
+# repo, so a ghost path absent from an EMPTY throwaway repo reads as stale.
+
+# Write a baseline-md snapshot listing one entry ($1 = path, default a ghost).
+_mk_baseline() {
+    local out="$1" entry="${2:-agents/core/ghost-nonexistent.md}"
+    cat > "$out" <<EOF
+# Agent-prompt / AGENTS.md size — grandfathered baseline
+
+## agent-too-long (1 entries, cap 250 lines agent-prompt / 150 lines AGENTS.md)
+- \`$entry\` · 999 lines (cap 250, agent-prompt)
+
+## Totals
+- oversized agent files grandfathered: 1
+EOF
+}
+
+@test "--prune-stale-baseline flags a stale (deleted) entry and exits 1" {
+    cd "$BATS_TEST_TMPDIR"; git init -q .
+    bl="$BATS_TEST_TMPDIR/baseline.md"; _mk_baseline "$bl"
+    SMATCHET_AGENTSIZE_BASELINE="$bl" run "$PY" "$AUD" --prune-stale-baseline
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"stale-baseline"* ]]
+    [[ "$output" == *"agents/core/ghost-nonexistent.md"* ]]
+    [[ "$output" == *"deleted"* ]]
+}
+
+@test "--prune-stale-baseline --fix rewrites the snapshot (ghost dropped) and exits 0" {
+    cd "$BATS_TEST_TMPDIR"; git init -q .
+    bl="$BATS_TEST_TMPDIR/baseline_fix.md"; _mk_baseline "$bl"
+    SMATCHET_AGENTSIZE_BASELINE="$bl" run "$PY" "$AUD" --prune-stale-baseline --fix
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rewritten"* ]]
+    run grep -c "ghost-nonexistent" "$bl"
+    [ "$output" -eq 0 ]
+    # A re-run is now clean.
+    SMATCHET_AGENTSIZE_BASELINE="$bl" run "$PY" "$AUD" --prune-stale-baseline
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no stale grandfather entries"* ]]
+}
+
+@test "--prune-stale-baseline is clean when the entry is still over-cap in the tree" {
+    repo="$BATS_TEST_TMPDIR/current"; git init -q "$repo"
+    git -C "$repo" config user.email t@t.t; git -C "$repo" config user.name t
+    mkdir -p "$repo/agents/core"
+    i=0; while [ "$i" -lt 300 ]; do echo "line $i" >> "$repo/agents/core/Big.md"; i=$((i+1)); done
+    git -C "$repo" add -A && git -C "$repo" commit -qm base
+    bl="$repo/baseline.md"; _mk_baseline "$bl" "agents/core/Big.md"
+    cd "$repo"
+    SMATCHET_AGENTSIZE_BASELINE="$bl" run "$PY" "$AUD" --prune-stale-baseline
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"no stale grandfather entries"* ]]
+}
+
+@test "--selftest WARNs (but still passes) on a stale baseline entry" {
+    cd "$BATS_TEST_TMPDIR"; git init -q .
+    bl="$BATS_TEST_TMPDIR/baseline_st.md"; _mk_baseline "$bl"
+    SMATCHET_AGENTSIZE_BASELINE="$bl" run "$PY" "$AUD" --selftest
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN stale baseline entry"* ]]
+    [[ "$output" == *"in sync"* ]]
+}
