@@ -80,7 +80,7 @@ This roadmap doc only (`docs/plans/active/backlog-pr-roadmap.md`). Each PR group
 
 | PR | Members | Owner | Status |
 |---|---|---|---|
-| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | deferred — coverage-65→70 flip needs measured headroom; tests not added this campaign |
+| PR-14 Raise core coverage 65→70 | `raise-core-coverage-67-to-70`, `backend-impl-coverage-recovery` | test-rig | shipped #1854 — 49 JiraClient HTTP-fixture tests lifted measured line coverage 67%→71%; threshold flipped 65→70 (measured headroom) |
 | PR-15 CMake / CI robustness | `cmake4-fresh-configure-drops-ehsc`, `fetchcontent-cache-path-drift`, `advisory-ci-step-level-template`, `ubsan-merged-without-executing-validation` | build-doctor | shipped #1516 |
 | PR-16 Worktree / session-registry + branch-edit guards | `session-registry-liveness-followups`, `edit-on-merged-pr-branch-reverts-develop`, `campaign-sibling-prs-edit-shared-plan-doc-thrash`, `decomposition-prs-serial-conflict-shared-files` | git-janitor | shipped #1512 |
 | PR-17 Ship-loop discipline rules (docs) | `not-started-status-verified-against-merged-code`, `review-before-commit-hardening`, `adversarial-rca-before-coding`, `security-review-plan-time-trust-boundary`, `ship-time-issue-elevation-check`, `exe-auto-launch-diff-trigger`, `ci-config-slice-dup-preflight` | docs | shipped #1508 |
@@ -233,6 +233,7 @@ Per `AGENTS.md` § Project rules — this is a pure-docs roadmap; no build/test 
 
 ## Implementation log
 *(populated as PR groups land — bullet per shipped member: `#N · PR-<k> <slug> shipped`)*
+- `#1854` · PR-14 `backend-impl-coverage-recovery` + `raise-core-coverage-67-to-70` shipped (2026-07-14) — 49 JiraClient HTTP-fixture doctest cases (JiraUserAndMeta / JiraIssueSearch / JiraIssueMutation comment+worklog) lifted measured line coverage 67%→71% (OpenCppCoverage), clearing the ramp target with headroom. Blocking floor raised 65→70 in `project.config.json` + `coverage.yml`. The `coverage-out-of-band` label is kept (serves the #939-class structural-expansion escape, not just the ramp).
 
 ## Deviations from plan
 *(populated as the roadmap is revised — regrouping, reprioritisation, new entries from future sweeps)*
