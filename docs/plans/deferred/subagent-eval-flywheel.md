@@ -2,7 +2,7 @@
 
 > **Slug**: `subagent-eval-flywheel` (matches this file's basename without `.md`).
 >
-> **Status**: `deferred` — superseded by docs/plans/subagent-eval-agentic-coverage.md (design folded into its Phase 2 via #978); no flywheel deliverables shipped independently.
+> **Status**: `deferred` — superseded by docs/plans/subagent-eval-agentic-coverage.md (design folded into its Phase 2 via #978); the auto-harvester deliverables remain unbuilt. **Partial (2026-07-14):** the *postmortem→eval hook* (AGENTIC_INFRA_AUDIT.md Proposal P8) shipped separately — the `gate-escape-postmortem` skill now authors an eval candidate case (human-promoted, same curation gate) whenever a gate escape's miss was agent-reviewable. That grows the corpus from real misses without the trace-harvester below.
 >
 > **Scope clarifier**: evaluates the **development agents** (`agents/*.md`), same as the parent plan. This plan adds **automatic golden-case growth** ("production traces become eval datasets").
 >
