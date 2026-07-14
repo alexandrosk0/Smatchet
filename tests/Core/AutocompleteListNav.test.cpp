@@ -13,12 +13,9 @@ namespace {
 
 using SmatchetAutocompleteDetail::AcpCommitDecision;
 using SmatchetAutocompleteDetail::AcpHistoryNav;
-using SmatchetAutocompleteDetail::InsertTokenForUserAccountId;
-using SmatchetAutocompleteDetail::QuotedJqlStyle;
 using SmatchetAutocompleteDetail::ResolveAcpCommit;
 using SmatchetAutocompleteDetail::ResolveAcpHistoryNav;
 using SmatchetAutocompleteDetail::StripCaretAnchorSentinel;
-using SmatchetAutocompleteDetail::ValueNeedsQuotesForId;
 
 } // namespace
 
@@ -113,37 +110,6 @@ TEST_CASE("ResolveAcpCommit empty list no Enter is inert") {
     CHECK(d.selected == -1);
     CHECK_FALSE(d.queueApply);
     CHECK_FALSE(d.wantsApplyFromEnter);
-}
-
-TEST_CASE("ValueNeedsQuotesForId — unreserved-set ids stay bare, everything else quotes") {
-    // Empty always needs quotes.
-    CHECK(ValueNeedsQuotesForId(""));
-    // The unreserved set [A-Za-z0-9_.-] is quote-free.
-    CHECK_FALSE(ValueNeedsQuotesForId("account-id_1.2"));
-    CHECK_FALSE(ValueNeedsQuotesForId("ABC123"));
-    // A space (or any char outside the set) forces quoting.
-    CHECK(ValueNeedsQuotesForId("has space"));
-    CHECK(ValueNeedsQuotesForId("a:b"));
-    // A bare `"` or `\` also forces quoting (they need escaping).
-    CHECK(ValueNeedsQuotesForId("a\"b"));
-    CHECK(ValueNeedsQuotesForId("a\\b"));
-}
-
-TEST_CASE("QuotedJqlStyle — wraps in quotes and backslash-escapes \" and \\") {
-    CHECK(QuotedJqlStyle("plain") == "\"plain\"");
-    CHECK(QuotedJqlStyle("has space") == "\"has space\"");
-    CHECK(QuotedJqlStyle("a\"b") == "\"a\\\"b\"");
-    CHECK(QuotedJqlStyle("a\\b") == "\"a\\\\b\"");
-    CHECK(QuotedJqlStyle("") == "\"\"");
-}
-
-TEST_CASE("InsertTokenForUserAccountId — bare when safe, quoted otherwise") {
-    // A quote-safe account id inserts verbatim.
-    CHECK(InsertTokenForUserAccountId("5b10ac8d82e05b22cc7d4ef5") == "5b10ac8d82e05b22cc7d4ef5");
-    // A display-name-style id with a space is quoted.
-    CHECK(InsertTokenForUserAccountId("Jane Doe") == "\"Jane Doe\"");
-    // An id carrying a quote is quoted with the inner quote escaped.
-    CHECK(InsertTokenForUserAccountId("a\"b") == "\"a\\\"b\"");
 }
 
 TEST_CASE("StripCaretAnchorSentinel — removes the \\x7F marker and returns its offset") {

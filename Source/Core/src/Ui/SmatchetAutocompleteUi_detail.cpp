@@ -4,7 +4,6 @@
 #include "SmatchetAutocompleteUi_detail.h"
 
 #include <algorithm>
-#include <cctype>
 #include <string>
 
 namespace SmatchetAutocompleteDetail {
@@ -53,37 +52,6 @@ AcpCommitDecision ResolveAcpCommit(int n, int selected, bool enterDown, bool tab
         }
     }
     return out;
-}
-
-bool ValueNeedsQuotesForId(const std::string& s) {
-    if (s.empty()) {
-        return true;
-    }
-    return std::any_of(s.begin(), s.end(), [](unsigned char ch) {
-        const bool ok = std::isalnum(ch) != 0 || ch == '_' || ch == '.' || ch == '-';
-        return !ok || ch == '"' || ch == '\\';
-    });
-}
-
-std::string QuotedJqlStyle(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() + 4);
-    out.push_back('"');
-    for (unsigned char c : s) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(static_cast<char>(c));
-    }
-    out.push_back('"');
-    return out;
-}
-
-std::string InsertTokenForUserAccountId(const std::string& accountId) {
-    if (ValueNeedsQuotesForId(accountId)) {
-        return QuotedJqlStyle(accountId);
-    }
-    return accountId;
 }
 
 int StripCaretAnchorSentinel(std::string& text) {

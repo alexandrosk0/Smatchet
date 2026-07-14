@@ -5,6 +5,7 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
+#include "Tracker/TrackerQuerySuggestCommon.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "imgui.h"
@@ -325,7 +326,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
                     if (u.AccountId.empty()) {
                         continue;
                     }
-                    const std::string ins = SmatchetAutocompleteDetail::InsertTokenForUserAccountId(u.AccountId);
+                    const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);
                     if (!seen.insert(ins).second) {
                         continue;
                     }

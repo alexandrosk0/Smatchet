@@ -5,8 +5,9 @@
 // the JQL/query-autocomplete InputText callback's Up/Down arrow index walk and
 // Enter/Tab commit decision, as plain integer math needing no ImGui context, so
 // the callback stays under the branch cap and the math is bucket-A testable.
-// The JQL value-quoting + caret-sentinel string helpers below share the same
-// contract: plain std::string transforms, no ImGui.
+// The caret-sentinel string helper below shares the same contract: a plain
+// std::string transform, no ImGui. (Value-quoting lives in the shared
+// tracker_query_suggest helpers; this TU calls those directly.)
 
 #include <string>
 
@@ -47,19 +48,6 @@ struct AcpCommitDecision {
 // wantsApplyFromEnter. With no items, selected resets to -1 and Enter sets
 // wantsApplyFromEnter.
 AcpCommitDecision ResolveAcpCommit(int n, int selected, bool enterDown, bool tabDown);
-
-// True when @p s cannot appear bare in a JQL value position and must be quoted:
-// it is empty, or holds any character outside the unreserved set
-// [A-Za-z0-9_.-], or holds a `"`/`\` (which need escaping even though a bare
-// value could never contain them). Mirrors the InputText insert-token logic.
-bool ValueNeedsQuotesForId(const std::string& s);
-
-// Wrap @p s in double quotes, backslash-escaping embedded `"` and `\`, JQL-style.
-std::string QuotedJqlStyle(const std::string& s);
-
-// The token inserted for a user account id: the bare id when it is quote-safe,
-// otherwise its QuotedJqlStyle form.
-std::string InsertTokenForUserAccountId(const std::string& accountId);
 
 // Strip the \x7F caret-anchor sentinel from @p text in place (JQL function
 // suggestions like `membersOf("\x7F")` mark where the caret should land on
