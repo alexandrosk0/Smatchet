@@ -121,7 +121,7 @@ Effects:
 
 **Use sparingly.** `+l` defeats merging — by design. Reserve for files where concurrent edits cause demonstrable conflicts (e.g. large generated files, single-writer config). For most C++ source, git-style merge-on-conflict is the right model.
 
-**Hook**: `docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` (this PR) is an opt-in `PreToolUse:Edit` hook for Claude Code that warns when the Edit tool is about to modify a file currently locked by another client. The hook is a **warning, not a hard block** — agents can ignore for emergency fixes. Off by default; opt in via `setup-harness.sh` adding the junction into `.claude/hooks/`.
+**Hook**: `docs/harness/claude-code/hooks/pretool-edit-p4-lock-check.sh` is a `PreToolUse:Edit|Write|MultiEdit` hook for Claude Code that warns when the Edit tool is about to modify a file currently locked by another client. The hook is a **warning, not a hard block** — agents can ignore for emergency fixes. It is **always deployed** by `setup-harness.sh` and registered in `settings.json.tmpl`, but **self-gates on `SMATCHET_AGENT_VCS=p4`**: it exits 0 immediately in the default git mode, so it only does work when the session opts into p4. Upgrade warning → block with `SMATCHET_P4_LOCK_HOOK_BLOCK=1`.
 
 ## Shelf vs stash
 
