@@ -1,6 +1,6 @@
 ---
 name: gate-escape-postmortem
-description: Run a blameless postmortem on a gate escape — something that shipped to develop that a gate should have caught (a non-SUCCESS check at merge, an override label, a Revert, an overdue deviation, or a named post-merge bug). Identify the escaped class, do blameless root-cause, name the concrete PREVENTING GATE (mandatory — the entry cannot close without it), file that gate as a normal self-improvement category entry, and append to docs/self-improvement/postmortems.md. Use when the postmortem-owed SessionStart nudge fires, or the user says "postmortem", "gate escape", "why did this ship", "post-merge bug". Escalate deep C++ root-cause to debug-detective. Read-write — edits the ledger + a category entry.
+description: Run a blameless postmortem on a gate escape — something that shipped to develop that a gate should have caught (a non-SUCCESS check at merge, an override label, a Revert, an overdue deviation, or a named post-merge bug). Identify the escaped class, do blameless root-cause, name the concrete PREVENTING GATE (mandatory — the entry cannot close without it), author a subagent-eval case when the miss was agent-reviewable, file that gate as a normal self-improvement category entry, and append to docs/self-improvement/postmortems.md. Use when the postmortem-owed SessionStart nudge fires, or the user says "postmortem", "gate escape", "why did this ship", "post-merge bug". Escalate deep C++ root-cause to debug-detective. Read-write — edits the ledger + a category entry.
 version: 1
 ---
 
@@ -37,17 +37,32 @@ triage) is the **applier**. No second system.
    map to cover X". A legitimate, correct override closes with
    `### Preventing gate: none — override legitimate (<reason>)` — itself a
    recorded decision. **An entry cannot close without this field.**
-4. **File the gate into the existing loop.** Write the preventing-gate action as
+4. **Author the eval case (when agent-reviewable) — mandatory field.** If the
+   escaped class is one a *reviewer agent* could have caught (a code smell, a
+   logic bug, or a policy violation that `code-review` / `coderabbit-triage` /
+   a review agent scores — as opposed to a pure CI-config, infra, or
+   missing-required-context gap), the RCA **is** an eval-case spec: the missed
+   defect is the input, "a competent reviewer flags `<X>`" is the reference
+   outcome. Add it as a candidate case for the subagent-eval corpus
+   ([`subagent-eval-agentic-coverage.md`](../../../../docs/plans/active/subagent-eval-agentic-coverage.md)),
+   **suggestion-only** — a human attaches the reference outcome + promotes it;
+   never auto-promoted (same curation gate as the harvest flywheel,
+   [`subagent-eval-flywheel.md`](../../../../docs/plans/deferred/subagent-eval-flywheel.md)).
+   Not every escape qualifies; when the gate hole is not agent-reviewable,
+   record `### Eval case: none — not agent-reviewable (<reason>)`. This closes
+   the postmortem→eval flywheel at the exact point the harness demonstrably
+   missed a defect. **An entry cannot close without this field.**
+5. **File the gate into the existing loop.** Write the preventing-gate action as
    a new one-entry-per-file note at `docs/self-improvement/categories/<cat>/<YYYY-MM-DD>-<slug>.md`
    for the matching `<cat>` in `{tooling,process,test,infra,security}` (existing
    format + priority + threshold; one entry per file — see `AGENT_SELF_IMPROVEMENT.md`
    § Format) — so the established apply-loop applies it. Do NOT auto-apply the gate
    here; suggestion-only.
-5. **Append to the ledger.** Add one entry to `docs/self-improvement/postmortems.md`
-   (newest first) in the shape its header documents, with `### Filed as` linking
-   the category entry from step 4. Reference every escaped `PR #N` so
-   `postmortem-owed.sh` dedupes them.
-6. **Ship PR-only.** The ledger + category edits are docs → a normal PR (never a
+6. **Append to the ledger.** Add one entry to `docs/self-improvement/postmortems.md`
+   (newest first) in the shape its header documents — including the `### Eval case`
+   field from step 4 — with `### Filed as` linking the category entry from step 5.
+   Reference every escaped `PR #N` so `postmortem-owed.sh` dedupes them.
+7. **Ship PR-only.** The ledger + category edits are docs → a normal PR (never a
    direct push to develop).
 
 ## Out of scope
