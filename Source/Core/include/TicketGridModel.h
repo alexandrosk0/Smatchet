@@ -1,17 +1,13 @@
 #pragma once
 
 #include "ConfigManager.h"
+#include "TicketGridSortPure.h" // CompareFieldValuesForSort / IsTrackerDateOrDateTimeField / IsAttachmentFieldId
 #include "TrackerFieldSchema.h"
 
 #include <string>
 #include <unordered_map>
 #include <vector>
 
-int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fieldMeta, const std::string& aVal,
-                              const std::string& bVal, int sortDirection);
-
-bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field);
-bool IsAttachmentFieldId(const std::string& fieldId);
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
                                             const std::string& currentValue, const std::string& dateFormatOption = {},
                                             int thresholdDays = 0);

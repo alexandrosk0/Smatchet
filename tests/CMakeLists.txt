@@ -679,6 +679,10 @@ add_executable(SmatchetTests
     # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
     # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
     Core/TicketGridDurationSortPure.test.cpp
+    # Grid column sort comparator + date/attachment field classifiers, lifted out of
+    # TicketGridModel.cpp (whose render-plan/column-builder code pulls the ImGui-coupled grid
+    # draw headers). ImGui-free after the split, so tests link it without those deps.
+    Core/TicketGridSortPure.test.cpp
     # Update-check release-tag parser lifted from AttachmentAppUpdateService.cpp (CPP_CODE_AUDIT.md
     # #17) — cpr-free pure seam so it links + fuzzes without the update service's HTTP deps.
     Core/SemanticVersionPure.test.cpp
@@ -1112,6 +1116,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridSortPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SemanticVersionPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"

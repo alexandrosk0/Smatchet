@@ -243,7 +243,7 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   (#1352) made the ctor survive it (pre-open `PRAGMA schema_version` probe → quarantine
   `.corrupt-*` + `-wal`/`-shm` sidecars → rebuild fresh), flipping the Phase-1 cases to
   expect graceful rebuild. **Phase 3 / G2** (`SQLITE_BUSY` contention + config open
-  path) not yet greenlit — plan stays active
+  path) not yet greenlit — see the plan at
   (`docs/plans/shipped/slice-g-db-corruption.md`).
   (`docs/plans/shipped/slice-g-db-corruption.md`).
 - 2026-07-14 — **Slice F substantially shipped** (status reconcile; work landed under
