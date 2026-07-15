@@ -70,9 +70,16 @@ jobs:
       - name: Resolve release parameters
         id: params
         shell: pwsh
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_PUBLISH: ${{ github.event.inputs.publish }}
+          INPUT_SIGN: ${{ github.event.inputs.sign }}
+          INPUT_DRAFT: ${{ github.event.inputs.draft }}
+          INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
         run: |
-          $tag = "${{ github.event.inputs.tag }}"
-          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          $tag = $env:INPUT_TAG
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $env:REF_NAME }
           if ([string]::IsNullOrWhiteSpace($tag)) {
             Write-Error "No tag resolved — pass 'tag' on workflow_dispatch or trigger via a tag push."
             exit 1
@@ -80,10 +87,10 @@ jobs:
           # workflow_dispatch inputs arrive as strings; a tag push has no
           # inputs context at all, so default every switch to its tag-push
           # behavior (publish+sign, not draft/prerelease) when unset.
-          $publish = "${{ github.event.inputs.publish }}" -ne 'false'
-          $sign = "${{ github.event.inputs.sign }}" -ne 'false'
-          $draft = "${{ github.event.inputs.draft }}" -eq 'true'
-          $prerelease = "${{ github.event.inputs.prerelease }}" -eq 'true'
+          $publish = $env:INPUT_PUBLISH -ne 'false'
+          $sign = $env:INPUT_SIGN -ne 'false'
+          $draft = $env:INPUT_DRAFT -eq 'true'
+          $prerelease = $env:INPUT_PRERELEASE -eq 'true'
           if ($publish -and -not $sign) {
             Write-Error "publish=true requires sign=true (SIGNING.md: unsigned public releases are refused)."
             exit 1
@@ -155,17 +162,22 @@ jobs:
         env:
           SMATCHET_SIGN_PFX_PASSWORD: ${{ secrets.SMATCHET_SIGN_PFX_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
+          PARAM_TAG: ${{ steps.params.outputs.tag }}
+          PARAM_SIGN: ${{ steps.params.outputs.sign }}
+          PARAM_PUBLISH: ${{ steps.params.outputs.publish }}
+          PARAM_DRAFT: ${{ steps.params.outputs.draft }}
+          PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
         run: |
           $releaseArgs = @(
-            "-Tag", "${{ steps.params.outputs.tag }}",
+            "-Tag", $env:PARAM_TAG,
             "-SkipUnreal", "-SkipFabBundle",
             "-OutDir", "out/release"
           )
-          if ("${{ steps.params.outputs.sign }}" -eq "true") { $releaseArgs += "-Sign" }
-          if ("${{ steps.params.outputs.publish }}" -eq "true") {
+          if ($env:PARAM_SIGN -eq "true") { $releaseArgs += "-Sign" }
+          if ($env:PARAM_PUBLISH -eq "true") {
             $releaseArgs += "-Publish"
-            if ("${{ steps.params.outputs.draft }}" -eq "true") { $releaseArgs += "-Draft" }
-            if ("${{ steps.params.outputs.prerelease }}" -eq "true") { $releaseArgs += "-Prerelease" }
+            if ($env:PARAM_DRAFT -eq "true") { $releaseArgs += "-Draft" }
+            if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs += "-Prerelease" }
           }
           Write-Host "release_github.ps1 $($releaseArgs -join ' ')"
           ./scripts/publish/release_github.ps1 @releaseArgs
