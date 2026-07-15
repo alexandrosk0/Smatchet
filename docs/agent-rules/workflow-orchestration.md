@@ -93,7 +93,7 @@ from the purity scan); `setup-harness.sh` links that dir into the same
 
 | Workflow | Home | Shape | Use |
 |---|---|---|---|
-| `pre-merge-review` | `_shared` | parallel-barrier `code-review` + `security-review` → judge `agent()` (schema-forced) → one ranked deduped verdict | pre-merge review of a PR / local branch diff. `args = {pr: N}` / `{base: 'origin/develop'}` / no-arg = local diff vs `origin/develop` |
+| `pre-merge-review` | `_shared` | parallel-barrier `code-review` + `security-review` → judge `agent()` (schema-forced) → one ranked deduped verdict + advisory verifier scores | pre-merge review of a PR / local branch diff. `args = {pr: N}` / `{base: 'origin/develop'}` / no-arg = local diff vs `origin/develop` |
 | `subsystem-invariant-audit` | `_shared` | discover leaf-AGENTS.md zones at runtime (delegated to a discovery agent — the JS runtime has no shell) → one read-only `code-review` agent per zone vs ONLY that leaf rules → aggregate into one ranked drift report | drift audit of each subsystem against its own leaf-AGENTS.md invariants. `args = {}` (all zones) / `{zones: [...]}` (named dirs). Portable: zero project literal in the `.js` |
 | `historical-review-sweep` | `project` | fan-out: one `code-review` agent per merged PR over its survivor digest (`historical-review-survivors.sh`) → severity-tagged findings, aggregated | historical code-review of a merged-PR batch. `args = [<PR numbers>]` (real JSON array, required). Pairs with the `historical-code-review` skill + ledger |
 

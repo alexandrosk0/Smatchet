@@ -19,6 +19,7 @@ Plan: [`../plans/shipped/subagent-eval-harness.md`](../plans/shipped/subagent-ev
 | Curated cases (`code-review`, 3-5) | `tests/agent-eval/code-review/*.json` |
 | Schema validator (stdlib, test-only) | `tests/agent-eval/validate_schema.py` |
 | Tests | `tests/bats/agent_eval_score.bats`, `tests/bats/agent_eval_run.bats`, `tests/bats/agent_eval_calibrate.bats` |
+| Verifier sidecar (advisory aggregation) | [`verifier-sidecar.md`](verifier-sidecar.md), `scripts/dev/verifier-sidecar.py` |
 
 ## The advisory gate
 
@@ -90,3 +91,9 @@ python scripts/dev/agent-eval-score.py "$BASE" "$HEAD" \
 Drop a `tests/agent-eval/code-review/<caseId>.json` conforming to `case-schema.json` (the bats suite validates every case). Record enough to reconstruct the run: `repoRef`, `baseBranch`, `files`/`diff`, `toolPosture`, the exact `delegationPacket`, the scored `dimensions`, and the `referenceOutcome`. The current cases are **real and reproducible** — each is anchored to a historical commit (`repoRef` = the buggy parent of a real `fix(` commit), with `referenceOutcome` = the ground truth the fix established. Mine new ones the same way (`git log --grep='^fix(' --oneline`, diff the fix, take the parent as the buggy state); the flywheel will later auto-harvest them from live traces.
 
 Coverage beyond `code-review` is added only after the MVP proves the gate catches a real prompt regression.
+
+## LLM-as-a-Verifier sidecar
+
+The verifier sidecar is the next advisory layer above per-agent evals: instead of only scoring one prompt against a frozen case, it scores live agent outputs and candidate decisions with decomposed continuous criteria, repeated samples, uncertainty, and hard-veto propagation. Its contract and operating rules live in [`verifier-sidecar.md`](verifier-sidecar.md).
+
+Keep the boundary the same as this page: malformed artifacts can fail, but quality judgments stay advisory until judge-vs-human calibration proves they are safe to promote.
