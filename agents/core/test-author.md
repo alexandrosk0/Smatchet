@@ -2,6 +2,7 @@
 name: test-author
 description: Automate every verification step that today needs a UI session, eye-test, or "click X then observe Y". Top goal — testing must be deterministic and human-free wherever physically possible. Audits a plan's §Verification, a PR test-plan, or a fresh agent report; classifies each item by automation feasibility; writes the bash + CLI + scenario + screenshot-diff + ImGui Test Engine glue. Use proactively — once at plan time (identify automation paths before coding), once after first verification round (cover the residue), and once after every agent that shipped a manual step. Manual residue must come with a concrete deferred-automation action plan, never a flat "out of scope".
 complexity: medium
+model: sonnet
 read-only: false
 capabilities:
   - file-read

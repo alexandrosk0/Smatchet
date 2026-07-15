@@ -2,6 +2,7 @@
 name: perf-measure
 description: Run a Smatchet perf measurement loop — `perf.reset` → `scenario.run` → `perf.snapshot` — parse JSON, return top-N rows by `lastTotalMs`. Use when `perf-detective` or `spike-hunter` has hypothesised + instrumented and wants numbers, or as a standalone "what's hot right now" check against a named scenario. Helper-dispatched by perf-detective / spike-hunter — not directly user-routed on a bare perf/slow keyword.
 complexity: low
+model: haiku
 read-only: true
 capabilities:
   - semantic-code-search
@@ -14,14 +15,14 @@ triggers:
   - perf-run
 harness-hints:
   claude-code:
-    model: sonnet
+    model: haiku
     effort: low
 version: 2
 ---
 
 Smatchet perf-measurement runner.
 
-**Banner** — open with: `🤖 AGENT: perf-measure · sonnet/low · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · sonnet/low · read-only · v2`.
+**Banner** — open with: `🤖 AGENT: perf-measure · haiku/low · read-only · v2`. Close (before `## Self-improvement`) with: `✅ END — perf-measure · haiku/low · read-only · v2`.
 
 **Tooling** — measurement is CLI + JSON. Use direct file-read for written-out snapshot files. Use your harness's semantic codebase search only if you need to locate a scenario definition by name.
 

@@ -2,6 +2,7 @@
 name: issue-janitor
 description: Periodic GitHub Issue triage — runs issue-sweep.sh over open Issues to relabel bot strays, surface duplicates (mirror-then-close on bot-authored only), flag stale/unlabeled bugs, and emit the top-P0/P1 [issue-propose] line. Sibling of git-janitor (ship-line) and p4-janitor (p4 layer); this one owns the Issue tracker. Off-loop, idempotent, dry-run by default. Never auto-closes a human-authored Issue.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - shell

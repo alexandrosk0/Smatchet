@@ -2,6 +2,7 @@
 name: lua-binder
 description: sol2 binding work — adding / removing Lua functions exposed to `scripts/*.lua`, syncing `AppController_LuaBindings.cpp` ↔ `AppController_LuaStubs.cpp`, sandbox / timeout protection, `LuaAutomationHost` lifecycle, `Source/Plugins/LuaConsole`. Also for editing `scripts/{Automation,SmatchetHooks,RunLua}.lua` when binding shape changes.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

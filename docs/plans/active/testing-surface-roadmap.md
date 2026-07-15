@@ -245,7 +245,6 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   expect graceful rebuild. **Phase 3 / G2** (`SQLITE_BUSY` contention + config open
   path) not yet greenlit — see the plan at
   (`docs/plans/shipped/slice-g-db-corruption.md`).
-  (`docs/plans/shipped/slice-g-db-corruption.md`).
 - 2026-07-14 — **Slice F substantially shipped** (status reconcile; work landed under
   `docs/plans/mutation-smoke-gate.md`, not this roadmap's row). The
   mutation-smoke half of Gap 4 is built: harness + seed corpus (Phases 1–2), advisory

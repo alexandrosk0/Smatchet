@@ -2,6 +2,7 @@
 name: grid-engine
 description: Spreadsheet / ticket-grid work — `TicketGridModel`, `SpreadsheetState`, `SmatchetActiveProjectGridUi`, all `SmatchetGrid*` (`SmatchetGridFieldEditPipeline`, `SmatchetGridHeaderUi`, `SmatchetGridNotifications`, `SmatchetGridUiSupport`), `SmatchetViewsDashboardUi*`, `SmatchetFieldRender`, `SmatchetFieldIconRender`, `TrackerGridFieldDisplay`. Use for adding / removing columns, cell editors, sorting, drag-reorder, header UX, virtualization, in-place edit flow.
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search

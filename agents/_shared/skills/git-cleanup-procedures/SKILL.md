@@ -132,12 +132,55 @@ gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
 ```
 
 - **Step 1** verify merge state via the poll-until-stable helper (require `MERGEABLE`+`CLEAN`).
-- **Step 3** run merge gates (`MERGE_GATES_FLIP_READY=true poll_merge_gates "$OWNER" "$REPO" "$N"`) — the rc-handling (0 pass / 1-3 ask-user / 4 closed / 5 pagination / `*` HALT) is the agent's reasoning, not a recipe.
+- **Step 3** run merge gates — the rc-handling decision mapping (0 pass / 1-3 ask-user / 4 closed / 5 pagination / `*` HALT) is the agent's reasoning; the executable case block is below.
 - **Step 7** append to plan revision if the PR shipped a slice (`- <sha-short> · <PR-title>` under `## Implementation log`; commit `docs(plan): log <slug> #<N>` on a fresh branch + PR, or batch).
 - **Step 8** re-check the next PR's mergeability (merging A may flip B to `CONFLICTING`).
 - **Step 9** post-merge backlog sweep (apply threshold-met `docs/self-improvement/` entries; one small PR each).
 - **Step 10** verification-automation handoff check (flag manual-verification language for `test-author`).
 - **Step 10.5** orphan-scenario sweep (below).
+
+## Merge-gates rc-handling (executable form)
+
+The verbatim step-3 case block. The decision mapping it implements lives in the agent (git-janitor § Standard cleanup loop step 3) — keep the two in lockstep when either changes:
+
+```bash
+if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
+    # Authorized merge → flip draft→ready at poll start (ADR 0006 amendment).
+    MERGE_GATES_FLIP_READY=true poll_merge_gates "$OWNER" "$REPO" "$N"
+    rc=$?
+    case "$rc" in
+        0) ;;                                                        # gates passed
+        1|2|3)
+            choice=$(ask_user_question "Gates blocked (code=$rc)." \
+                       "Skip gates and merge anyway" \
+                       "Keep waiting (double MAX_POLLS, reset timer)" \
+                       "Abandon")
+            case "$choice" in
+                "Skip gates and merge anyway") echo "WARN: user skipped gates: code=$rc" >&2 ;;
+                "Keep waiting"*) MERGE_GATES_MAX_POLLS=$((MERGE_GATES_MAX_POLLS*2)) \
+                                MERGE_GATES_FLIP_READY=true \
+                                poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
+                *) exit 1 ;;
+            esac
+            ;;
+        4) ask_user_question "PR no longer mergeable (CLOSED/MERGED)." "Abandon"; exit 1 ;;
+        5)
+            choice=$(ask_user_question "Pagination overflow — manual review required." \
+                       "Abandon (manual review)" \
+                       "Skip and merge anyway (acknowledge risk)")
+            case "$choice" in
+                "Skip and merge anyway"*) echo "WARN: user skipped gates: code=5 (pagination)" >&2 ;;
+                *) exit 1 ;;
+            esac
+            ;;
+        *)
+            # Defensive catch-all. poll_merge_gates returns 0-5 today; any unexpected rc
+            # must HALT — never silently fall through to auto-merge.
+            echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2; exit 1
+            ;;
+    esac
+fi
+```
 
 ## Protected-branch guards — run before ANY branch delete
 

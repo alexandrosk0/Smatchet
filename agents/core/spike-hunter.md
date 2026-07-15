@@ -2,6 +2,7 @@
 name: spike-hunter
 description: Hunt intermittent UI-thread stalls — occasional frame hitches, rare 100+ ms freezes, unpredictable pauses, "the app sometimes hangs for a second". Different from `perf-detective` (which targets sustained hot paths from frame averages); `spike-hunter` looks at p99 / max outliers, blocking calls reaching the UI thread, lock contention, async join points.
 complexity: high
+model: opus
 read-only: true
 capabilities:
   - semantic-code-search

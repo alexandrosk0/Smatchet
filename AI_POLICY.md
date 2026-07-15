@@ -91,6 +91,11 @@ Advisory (never blocks — the WARN-first ramp every gate here starts on);
 graduation to blocking is a deliberate future decision (`--blocking` exists).
 The ceiling is the human's number: tune or disable (0) in config.
 
+The second cost lever is **per-agent model tiering**
+([`delegation.md § Model tiering`](docs/agent-rules/delegation.md)): each
+agent pins a `model:` tier (opus / sonnet / haiku) matched to its task class
+instead of inheriting the session model.
+
 ## Scope of this charter
 
 Governs the **autonomous agents' relationship to human control** on this

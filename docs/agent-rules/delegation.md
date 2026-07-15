@@ -361,3 +361,9 @@ Delegation (the fresh-context lever above) is also how the orchestrator stays wi
 ## Complexity rationale
 
 `high` is reserved for one-shot-or-lose decisions (design, build root cause, perf root cause, security review). `medium` covers careful reading-and-flagging where mistakes are recoverable (`code-review`). Subsystem specialists run `low` because the invariants are stated up-front in their prompts — they apply patterns, they don't derive them. `mechanic` is `low` because pattern application doesn't benefit from deeper thinking and the diff is verifiable at a glance.
+
+## Model tiering
+
+Every agent pins its model via a top-level `model:` frontmatter key — the wire Claude Code natively routes on — so delegations stop silently inheriting the (opus-class) session model. The ladder: **opus** = one-shot-or-lose diagnosis / design / review (`architect`, `build-doctor`, `code-review`, `security-review`, `perf-detective`, `spike-hunter`); **sonnet** = recoverable careful work plus every code-emitting implementer (subsystem specialists stay ≥ sonnet — they write product C++); **haiku** = fully-specified mechanical, read-only-or-trivially-verifiable loops (`mechanic`, `perf-instrument`, `perf-measure`). Opus agents are **pinned, not `inherit`** — a sonnet session must not silently downgrade a merge-gating review.
+
+**Double-key invariant:** the top-level `model:` must equal `harness-hints.claude-code.model` — the former is what Claude Code executes, the latter feeds the pi/codex generators and the banner identity line. To retier an agent, edit **both keys and the banner together**; `test-agent-contract.sh` check 15 (parity) and check 5 (banner) enforce the lockstep.

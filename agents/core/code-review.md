@@ -2,6 +2,7 @@
 name: code-review
 description: Code review of pending branch changes, a specific PR, or a specific file — correctness, code quality, Smatchet invariants. Calls your harness's semantic codebase search for impact / memory / context, then runs cppcheck / clang-tidy / clang-format over the whole diff (not just the most recent edit) and flags new findings. Read-only; returns a severity-tagged punch list. Wraps the harness's standard pre-merge review skill (e.g. Claude Code's `/review`) with Smatchet-specific checks. Use proactively before opening a PR or merging. Security-sensitive trust-boundary diffs also route to security-review.
 complexity: high
+model: opus
 read-only: true
 capabilities:
   - semantic-code-search

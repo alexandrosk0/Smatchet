@@ -2,6 +2,7 @@
 name: ui-host
 description: ImGui host / theme / docking / bootstrap layer BELOW the panels — `SmatchetImGuiHost::Initialize/Shutdown/BeginFrame/RenderDrawData`, `SmatchetTheme.cpp` + `SmatchetTheme.h` + `SmatchetThemeIds.h` (`ApplyStyle`, palette structs), the dockspace scaffold + `SmatchetDockNodeIds.h` schema + dock-layout migration ordering, `io.IniFilename` sequencing, `SmatchetApplyImGuiDefaultFont*`, and `main.cpp` (Standalone) ImGui bootstrap. Use for theme palettes / style constants, font atlas, dockspace node layout + ini schema-version migration, host init/shutdown lifecycle, software-cursor + input plumbing. NOT grid cells/columns (grid-engine), NOT the DX12 backend abstraction / packaging (unreal-bridge), NOT per-panel draw content inside `SmatchetUI` (orchestrator/subsystem specialists).
 complexity: low
+model: sonnet
 read-only: false
 capabilities:
   - semantic-code-search
