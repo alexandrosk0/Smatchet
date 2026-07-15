@@ -77,6 +77,28 @@ You can also override settings directly on the command line:
   -TimestampUrl 'http://timestamp.digicert.com'
 ```
 
+## CI (GitHub Actions)
+
+`.github/workflows/release.yml` runs `release_github.ps1 -Sign -Publish` on
+every `v*.*.*` tag push. It reads the certificate from two repository
+secrets instead of a file on disk:
+
+- `SMATCHET_SIGN_PFX_BASE64` — the signing PFX, base64-encoded:
+
+  ```powershell
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\secure\smatchet-signing.pfx')) |
+    Set-Clipboard
+  ```
+
+  Paste the clipboard contents as the secret value.
+
+- `SMATCHET_SIGN_PFX_PASSWORD` — the PFX passphrase.
+
+The workflow decodes the secret to a temp file for the duration of the job
+and deletes it in an `always()` cleanup step. To dry-run the pipeline
+without publishing (e.g. to validate a cert rotation), dispatch the workflow
+manually with `publish=false`.
+
 ## Notes
 
 - The release script requires exactly one certificate selector: `-SigningCertificatePath`, `-SigningCertificateThumbprint`, or `-SigningCertificateSubject`.
