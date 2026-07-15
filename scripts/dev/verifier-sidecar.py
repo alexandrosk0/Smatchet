@@ -97,9 +97,11 @@ GRANULARITY = 20
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:GRANULARITY]
 # letter value: A -> G (best), T -> 1 (worst).
 _LETTER_VALUE: Dict[str, float] = {ch: float(GRANULARITY - i) for i, ch in enumerate(_LETTERS)}
-# progress mapping is the same scale read the other way: A -> 0.0, T -> 1.0.
+# progress mapping is the same 1..G raw scale read the other way: A -> 1 (0%
+# progress), T -> G (100%). score_of()/fine_grained_reward() then normalise
+# (v-1)/(G-1) to A -> 0.0, T -> 1.0 — the raw values must live on 1..G, not 0..1.
 _LETTER_PROGRESS: Dict[str, float] = {
-    ch: (i / (GRANULARITY - 1)) for i, ch in enumerate(_LETTERS)
+    ch: float(i + 1) for i, ch in enumerate(_LETTERS)
 }
 
 # Criterion weights. The paper weights criteria uniformly; we default to a
@@ -134,10 +136,10 @@ def load_json(path: str) -> Any:
     try:
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
-        raise VerifierError(f"file not found: {path}")
+    except FileNotFoundError as exc:
+        raise VerifierError(f"file not found: {path}") from exc
     except json.JSONDecodeError as exc:
-        raise VerifierError(f"malformed JSON in {path}: {exc}")
+        raise VerifierError(f"malformed JSON in {path}: {exc}") from exc
 
 
 def clamp01(value: Any, field: str) -> float:
@@ -148,6 +150,17 @@ def clamp01(value: Any, field: str) -> float:
     if math.isnan(v) or math.isinf(v):
         raise VerifierError(f"{field} must be finite")
     return max(0.0, min(1.0, v))
+
+
+def safe_int(value: Any, field: str, default: int) -> int:
+    """int() an optional config value, re-raising a bad conversion as a
+    VerifierError so malformed input follows the exit-2 contract, not a traceback."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise VerifierError(f"{field} must be an integer") from exc
 
 
 def mean(values: Sequence[float]) -> float:
@@ -205,16 +218,27 @@ def fine_grained_reward(
     if not isinstance(logprobs, dict) or not logprobs:
         raise VerifierError("logprobs must be a non-empty object")
 
-    # exp() the logprobs, keep only valid score tokens, renormalise over them.
+    # Parse + validate first: reject NaN/inf so a bad token can never propagate a
+    # NaN through the reward and emit invalid JSON instead of the exit-2 error.
+    parsed: List[Tuple[str, float]] = []
+    for token, lp in logprobs.items():
+        try:
+            value = float(lp)
+        except (TypeError, ValueError) as exc:
+            raise VerifierError(f"logprob for {token!r} is not numeric") from exc
+        if not math.isfinite(value):
+            raise VerifierError(f"logprob for {token!r} is not finite")
+        parsed.append((str(token), value))
+
+    # exp() after subtracting the max logprob (softmax-stable — proportions are
+    # unchanged, but a large positive logprob can no longer overflow).
+    max_lp = max(lp for _, lp in parsed)
     weighted: List[Tuple[float, float]] = []  # (prob, normalised_value in [0,1])
     valid_prob = 0.0
     total_prob = 0.0
     lo, hi = 1.0, float(GRANULARITY)
-    for token, lp in logprobs.items():
-        try:
-            p = math.exp(float(lp))
-        except (TypeError, ValueError, OverflowError):
-            raise VerifierError(f"logprob for {token!r} is not a finite number")
+    for token, lp in parsed:
+        p = math.exp(lp - max_lp)
         total_prob += p
         v = _valid_token_value(token, mapping)
         if v is None:
@@ -273,8 +297,10 @@ def sample_overall(
         total_w += w
         weighted += w * r
         var_acc += (w ** 2) * var
+    # Every present criterion weighted zero ⇒ no signal; silently returning 0.0
+    # would mask a good candidate as a block. Surface it instead.
     if total_w <= 0:
-        return 0.0, 0.0
+        raise VerifierError("sample criteria carry zero total weight")
     return weighted / total_w, var_acc / (total_w ** 2)
 
 
@@ -330,7 +356,12 @@ def aggregate_candidate(
         within_var.append(var)
         if "confidence" in raw:
             confidence_values.append(clamp01(raw["confidence"], "confidence"))
-        if bool(raw.get("hard_veto")):
+        # Require an actual JSON boolean: bool("false") is True, so coercing an
+        # arbitrary value would let a typo silently flip a safety-critical veto.
+        veto = raw.get("hard_veto", False)
+        if not isinstance(veto, bool):
+            raise VerifierError(f"{candidate['id']} sample {index} hard_veto must be boolean")
+        if veto:
             hard_veto = True
             reason = raw.get("veto_reason")
             if isinstance(reason, str) and reason.strip():
@@ -463,18 +494,22 @@ def pivot_tournament(
     if n < 2:
         return {"ring_pairs": [], "pivots": [], "pivot_pairs": [], "expected_comparisons": 0}
 
-    k = max(1, min(pivots, n - 1))
-    rng = random.Random(seed)
+    rng = random.Random(seed)  # seeded: reproducible tournament order, not crypto
     order = ids[:]
     rng.shuffle(order)
     ring = [{"a": order[i], "b": order[(i + 1) % n]} for i in range(n)]
 
-    # Pivots: top-k by aggregated overall (the ring supplies this in a live run;
-    # here we reuse the already-aggregated scores). Vetoed candidates never pivot.
-    ranked = sorted(
-        candidates, key=lambda c: (not c["hard_veto"], c["overall_score"]), reverse=True
+    # Pivots: top scorers among NON-vetoed candidates only (a vetoed candidate is
+    # already losing; spending pivot budget on it contradicts hard-veto
+    # propagation). k is clamped to how many safe candidates actually exist — 0
+    # when every candidate is vetoed.
+    safe = sorted(
+        (c for c in candidates if not c["hard_veto"]),
+        key=lambda c: c["overall_score"],
+        reverse=True,
     )
-    pivot_ids = [c["id"] for c in ranked[:k]]
+    k = min(max(pivots, 0), len(safe))
+    pivot_ids = [c["id"] for c in safe[:k]]
     pivot_set = set(pivot_ids)
 
     pivot_pairs: List[Dict[str, str]] = []
@@ -523,9 +558,9 @@ def track_progress(blob: Any) -> Dict[str, Any]:
     raw_steps = blob.get("steps")
     if not isinstance(raw_steps, list) or not raw_steps:
         raise VerifierError("steps must be a non-empty array")
-    min_steps = int(blob.get("min_steps", 4))
+    min_steps = safe_int(blob.get("min_steps"), "min_steps", 4)
     abandon_floor = clamp01(blob.get("abandon_floor", 0.10), "abandon_floor")
-    window = max(2, int(blob.get("window", 3)))
+    window = max(2, safe_int(blob.get("window"), "window", 3))
 
     curve = [score_of(s, f"steps[{i}]", _LETTER_PROGRESS)[0] for i, s in enumerate(raw_steps)]
 
@@ -578,13 +613,20 @@ def normalise_candidates(blob: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw, list) or not raw:
         raise VerifierError("candidates must be a non-empty array")
     out: List[Dict[str, Any]] = []
+    seen_ids: set = set()
     for i, candidate in enumerate(raw):
         if not isinstance(candidate, dict):
             raise VerifierError(f"candidate {i} is not an object")
         samples = candidate.get("samples")
         if not isinstance(samples, list) or not samples:
             raise VerifierError(f"candidate {candidate.get('id', i)!r} has no samples")
-        out.append({"id": str(candidate.get("id", f"candidate-{i+1}")), "samples": samples})
+        cid = str(candidate.get("id", f"candidate-{i+1}"))
+        # Duplicate IDs make ranking / tournament pairs ambiguous and let an
+        # id-keyed consumer silently drop candidates — reject them up front.
+        if cid in seen_ids:
+            raise VerifierError(f"duplicate candidate id {cid!r}")
+        seen_ids.add(cid)
+        out.append({"id": cid, "samples": samples})
     return out
 
 
@@ -593,9 +635,16 @@ def resolve_weights(blob: Any) -> Dict[str, float]:
     if isinstance(blob, dict) and isinstance(blob.get("weights"), dict):
         for key, value in blob["weights"].items():
             try:
-                weights[str(key)] = float(value)
-            except (TypeError, ValueError):
-                raise VerifierError(f"weight for {key!r} must be numeric")
+                w = float(value)
+            except (TypeError, ValueError) as exc:
+                raise VerifierError(f"weight for {key!r} must be numeric") from exc
+            # Non-finite or negative weights corrupt the weighted mean; an all-zero
+            # override would silently collapse every score to 0.0.
+            if not math.isfinite(w) or w < 0.0:
+                raise VerifierError(f"weight for {key!r} must be finite and non-negative")
+            weights[str(key)] = w
+    if sum(weights.values()) <= 0.0:
+        raise VerifierError("total criterion weight must be positive")
     return weights
 
 
@@ -606,8 +655,8 @@ def aggregate(blob: Any) -> Dict[str, Any]:
     if isinstance(blob, dict):
         if "target_sem" in blob:
             target_sem = clamp01(blob["target_sem"], "target_sem")
-        pivots = int(blob.get("pivots", 2))
-        seed = int(blob.get("seed", 0))
+        pivots = safe_int(blob.get("pivots"), "pivots", 2)
+        seed = safe_int(blob.get("seed"), "seed", 0)
 
     candidates = [aggregate_candidate(c, weights, target_sem) for c in normalise_candidates(blob)]
     ranking = bradley_terry(candidates) if len(candidates) > 1 else []
@@ -681,6 +730,20 @@ def selftest() -> None:
     assert tour["expected_comparisons"] == 3 + 2 * (3 - 2) + 1, tour  # N=3,k=2 -> 6
     assert len(tour["ring_pairs"]) == 3
 
+    # (4b) vetoed candidates never become pivots; all-vetoed ⇒ zero pivots.
+    all_veto = aggregate({"candidates": [
+        {"id": "v1", "samples": [{"criteria": {"security": 0.2}, "hard_veto": True}]},
+        {"id": "v2", "samples": [{"criteria": {"security": 0.1}, "hard_veto": True}]},
+    ]})
+    assert all_veto["pivot_tournament"]["pivots"] == [], all_veto["pivot_tournament"]
+    # With one safe + two vetoed, only the safe candidate can pivot.
+    one_safe = aggregate({"candidates": [
+        {"id": "ok", "samples": [{"criteria": {"security": 0.9}}]},
+        {"id": "v1", "samples": [{"criteria": {"security": 0.2}, "hard_veto": True}]},
+        {"id": "v2", "samples": [{"criteria": {"security": 0.1}, "hard_veto": True}]},
+    ]})
+    assert one_safe["pivot_tournament"]["pivots"] == ["ok"], one_safe["pivot_tournament"]
+
     # (5) progress tracking: a rising curve is "rising", no early stop.
     rising = track_progress({"steps": [0.1, 0.3, 0.5, 0.7, 0.9]})
     assert rising["overall_trend"] == "rising", rising
@@ -688,11 +751,22 @@ def selftest() -> None:
     # A stuck-low curve past min_steps recommends abandonment.
     stuck = track_progress({"steps": [0.05, 0.04, 0.03, 0.05, 0.02], "min_steps": 4})
     assert stuck["early_stop_recommended"] is True, stuck
+    # (5b) letter/logprob steps map on the A=0% .. T=100% progress scale.
+    letters = track_progress({"steps": ["A", "J", "T"]})
+    assert letters["curve"][0] == 0.0, letters          # A -> 0% progress
+    assert letters["curve"][-1] == 1.0, letters         # T -> 100% progress
+    lp_prog = track_progress({"steps": [{"logprobs": {"T": math.log(0.9), "S": math.log(0.1)}}]})
+    assert lp_prog["curve"][0] > 0.9, lp_prog           # peaked near T -> high progress
 
     # (6) malformed inputs must FAIL (selftest: asserts-failure).
     for bad in (
         {"candidates": [{"id": "bad", "samples": []}]},          # empty samples
         {"candidates": [{"id": "x", "samples": [{"confidence": 0.5}]}]},  # no score
+        {"candidates": [{"id": "d", "samples": [{"overall_score": 0.9}]},  # duplicate id
+                        {"id": "d", "samples": [{"overall_score": 0.5}]}]},
+        {"samples": [{"overall_score": 0.9, "hard_veto": "false"}]},  # non-bool veto
+        {"pivots": "two", "samples": [{"overall_score": 0.9}]},   # non-int option
+        {"weights": {"security": -1.0}, "samples": [{"criteria": {"security": 0.9}}]},  # bad weight
     ):
         try:
             aggregate(bad)
@@ -700,12 +774,15 @@ def selftest() -> None:
             pass
         else:
             raise AssertionError(f"expected VerifierError for {bad!r}")
-    try:
-        fine_grained_reward({"zzz": math.log(1.0)})              # no valid tokens
-    except VerifierError:
-        pass
-    else:
-        raise AssertionError("expected VerifierError for token-less distribution")
+    for bad_lp in ({"zzz": math.log(1.0)},                        # no valid tokens
+                   {"A": float("nan")},                          # non-finite logprob
+                   {"A": float("inf")}):
+        try:
+            fine_grained_reward(bad_lp)
+        except VerifierError:
+            pass
+        else:
+            raise AssertionError(f"expected VerifierError for {bad_lp!r}")
 
 
 # --- CLI -------------------------------------------------------------------

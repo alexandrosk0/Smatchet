@@ -85,7 +85,7 @@ const VERDICT = {
     verification: {
       type: 'object',
       additionalProperties: false,
-      required: ['overall_score', 'uncertainty', 'hard_veto', 'criteria'],
+      required: ['overall_score', 'confidence', 'hard_veto', 'criteria'],
       properties: {
         overall_score: {
           type: 'number',
@@ -93,11 +93,11 @@ const VERDICT = {
           maximum: 1,
           description: 'continuous verifier score; 1 means clearly safe/useful, 0 means clearly unsafe or wrong',
         },
-        uncertainty: {
+        confidence: {
           type: 'number',
           minimum: 0,
           maximum: 1,
-          description: 'confidence spread / ambiguity estimate; 1 means too uncertain to trust',
+          description: 'confidence in this verdict; 1 means highly confident, 0 means a guess. The verifier-sidecar aggregator derives uncertainty from confidence + sample spread',
         },
         hard_veto: {
           type: 'boolean',
@@ -130,7 +130,6 @@ const VERDICT = {
             },
           },
         },
-        repeated_evaluations_recommended: { type: 'integer', minimum: 1 },
       },
     },
   },
@@ -171,7 +170,7 @@ const judgePrompt =
   'Also act as an LLM-as-a-Verifier sidecar: decompose the verdict into continuous ' +
   '[0,1] criteria scores for task_satisfaction, correctness, evidence_quality, ' +
   'regression_risk, security, project_invariants, scope_discipline, and ' +
-  'verification_completeness. Return an overall_score and uncertainty. If a real ' +
+  'verification_completeness. Return an overall_score and a confidence in [0,1]. If a real ' +
   'security issue, deterministic gate failure, or project invariant breach is present, set ' +
   'hard_veto=true; do not average that away with good scores elsewhere. The verifier is ' +
   'advisory and never overrules deterministic merge gates.\n\n' +

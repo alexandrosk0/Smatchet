@@ -30,15 +30,23 @@ fi
 OUT="$(bats --tap "$BATS_FILE" 2>&1)"
 RC=$?
 echo "$OUT"
-PASSED=$(printf '%s\n' "$OUT" | grep -cE '^ok [0-9]+' || true)
+OK=$(printf '%s\n' "$OUT" | grep -cE '^ok [0-9]+' || true)
 FAILED=$(printf '%s\n' "$OUT" | grep -cE '^not ok [0-9]+' || true)
-echo "Passed: ${PASSED}  Failed: ${FAILED}"
+SKIPPED=$(printf '%s\n' "$OUT" | grep -ciE '^ok [0-9]+.*# skip' || true)
+PASSED=$((OK - SKIPPED))                       # genuinely-run passes, skips excluded
+echo "Passed: ${PASSED}  Failed: ${FAILED}  Skipped: ${SKIPPED}"
 # Zero-run floor (fail-open shape Z): a bats suite that parses to ZERO tests
-# (vanished file / TAP parse error) leaves PASSED=FAILED=0 and would exit green.
-if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+# (vanished file / TAP parse error) leaves OK=FAILED=0 and would exit green.
+if [ "$OK" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
     echo "$(basename "$0" .sh): FAIL - the bats suite ran ZERO tests (vanished / unparsed)." >&2
     echo "Passed: 0  Failed: 1"
     exit 1
+fi
+# All-skipped floor: a suite where every test skipped (e.g. no python) ran no real
+# assertion — treat it as a missing prerequisite (exit 2), never a green pass.
+if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ] && [ "$SKIPPED" -gt 0 ]; then
+    echo "$(basename "$0" .sh): SKIPPED - every test skipped (missing prerequisite)." >&2
+    exit 2
 fi
 if [ "$FAILED" -gt 0 ] || [ "$RC" -ne 0 ]; then exit 1; fi
 exit 0
