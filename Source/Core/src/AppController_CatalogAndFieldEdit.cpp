@@ -624,15 +624,13 @@ bool AppController::CanEditFieldForIssue(const std::string& issueId, const std::
     return editMeta_->CanEditFieldForIssue(issueId, fieldId, fieldMeta, issueTypeKeyOverride);
 }
 
-bool AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
-                                              const std::string* issueTypeKeyOverride,
-                                              const TrackerConfig* configSnapshot) {
-    return editMeta_->EnsureIssueEditMetaLoaded(issueId, outError, issueTypeKeyOverride, configSnapshot);
+VoidResult AppController::EnsureIssueEditMetaLoaded(const std::string& issueId, const std::string* issueTypeKeyOverride,
+                                                    const TrackerConfig* configSnapshot) {
+    return editMeta_->EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOverride, configSnapshot);
 }
 
-bool AppController::RefreshIssueEditMeta(const std::string& issueId, std::string* outError,
-                                         const std::string* issueTypeKeyOverride) {
-    return editMeta_->RefreshIssueEditMeta(issueId, outError, issueTypeKeyOverride);
+VoidResult AppController::RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride) {
+    return editMeta_->RefreshIssueEditMeta(issueId, issueTypeKeyOverride);
 }
 
 void AppController::InvalidateIssueEditMeta(const std::string& issueId) { editMeta_->InvalidateIssueEditMeta(issueId); }

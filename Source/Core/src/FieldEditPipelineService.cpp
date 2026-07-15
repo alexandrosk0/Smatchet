@@ -122,7 +122,7 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
     if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        editMeta_.EnsureIssueEditMetaLoaded(issueId, nullptr, issueTypeKeyOpt);
+        editMeta_.EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOpt);
     }
     if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
@@ -316,7 +316,7 @@ VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEdi
     const std::string& fieldEditAuditOp = ctx.fieldEditAuditOp;
     const char* const fieldEditAuditSource = ctx.fieldEditAuditSource;
 
-    editMeta_.EnsureIssueEditMetaLoaded(issueId, nullptr);
+    editMeta_.EnsureIssueEditMetaLoaded(issueId);
 
     if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
@@ -345,7 +345,7 @@ VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEdi
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outError, 400)) {
         didRetryAfter400 = true;
-        editMeta_.RefreshIssueEditMeta(issueId, nullptr);
+        editMeta_.RefreshIssueEditMeta(issueId);
         if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field)) {
             outError = "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";
             LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked after editmeta refresh issue=%s field=%s",
@@ -564,7 +564,7 @@ bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::stri
     bool didRetryAfter400 = false;
     if (!updateOk && ErrorTextContainsHttpStatus(outResult.Error, 400)) {
         didRetryAfter400 = true;
-        editMeta_.RefreshIssueEditMeta(issueId, nullptr, issueTypeKeyOpt);
+        editMeta_.RefreshIssueEditMeta(issueId, issueTypeKeyOpt);
         if (!editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
             outResult.Error =
                 "Field cannot be edited for this issue (Jira edit metadata refreshed after validation failure).";

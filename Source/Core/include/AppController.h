@@ -984,18 +984,15 @@ class AppController : public IAppThreading,
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
     // Editmeta-cache delegators — forward to `editMeta_` (EditMetaCacheService, god-object
-    // decomposition Phase 1). Signatures preserved verbatim from the pre-extraction surface.
-    /**
-     * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
-     *        for issuetype (safe for background threads that captured the key on the UI thread).
-     * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
-     *        or loaded before InitLua to avoid parsing smatchet_config.json after Lua init in release builds).
-     */
-    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
-                                   const std::string* issueTypeKeyOverride = nullptr,
-                                   const TrackerConfig* configSnapshot = nullptr);
-    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
-                              const std::string* issueTypeKeyOverride = nullptr);
+    // decomposition Phase 1). Signatures preserved verbatim from the pre-extraction surface; see
+    // EditMetaCacheService.h for the issueTypeKeyOverride / configSnapshot contract and the
+    // VoidResult (Ok / Err) semantics.
+    // SMATCHET_DEVIATION(rule=duplication): this delegator block MUST mirror EditMetaCacheService.h's
+    // public signatures verbatim (that is the god-object-decomposition contract — the public surface
+    // is unchanged by the extraction); abstracting across the two would defeat the mirror's purpose.
+    VoidResult EnsureIssueEditMetaLoaded(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr,
+                                         const TrackerConfig* configSnapshot = nullptr);
+    VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
