@@ -10,6 +10,8 @@
 // SMATCHET_WITH_LUA_AUTOMATION is off), so the facet is unconditional. Rank-0 leaf: only
 // std string/vector cross the boundary.
 
+#include "SmatchetResult.h" // VoidResult (Lua-script consent gate — #21 AppController public-API flip)
+
 #include <string>
 #include <vector>
 
@@ -25,9 +27,9 @@ class IAppAutomation {
 
     // First-run Lua script consent gate (LuaScriptConsent.h). Approve/revoke a Scripts/*.lua
     // basename at its current content so it may (or may not) execute; list the currently-approved
-    // resolved paths. Returns false + outError on failure. Present with or without the Lua build.
-    virtual bool ApproveLuaScript(const std::string& scriptName, std::string& outError) = 0;
-    virtual bool RevokeLuaScript(const std::string& scriptName, std::string& outError) = 0;
+    // resolved paths. VoidResult: Err(reason) on failure. Present with or without the Lua build.
+    virtual VoidResult ApproveLuaScript(const std::string& scriptName) = 0;
+    virtual VoidResult RevokeLuaScript(const std::string& scriptName) = 0;
     virtual std::vector<std::string> ListApprovedLuaScriptPaths() const = 0;
 };
 

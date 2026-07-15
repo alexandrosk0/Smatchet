@@ -499,11 +499,11 @@ class AppController : public IAppThreading,
     /// so subsequent runs are permitted (until the content changes). Returns false with outError
     /// on an invalid name / unreadable file. Deliberate user action (CLI / console / palette).
     /// IAppAutomation facet override.
-    bool ApproveLuaScript(const std::string& scriptName, std::string& outError) override;
+    VoidResult ApproveLuaScript(const std::string& scriptName) override;
 
     /// Revoke any approval for a Scripts/*.lua basename, so its next run is blocked again.
     /// IAppAutomation facet override.
-    bool RevokeLuaScript(const std::string& scriptName, std::string& outError) override;
+    VoidResult RevokeLuaScript(const std::string& scriptName) override;
 
     /// Resolved paths of every currently-approved Lua script. IAppAutomation facet override.
     std::vector<std::string> ListApprovedLuaScriptPaths() const override;

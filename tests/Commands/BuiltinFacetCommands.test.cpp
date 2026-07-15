@@ -289,13 +289,13 @@ struct FakeAutomation : IAppAutomation {
     void RunFlatScriptAsync(const std::string& scriptPath) override { LastFlatScript = scriptPath; }
     void RunLuaSetupScript(const std::string& scriptPath) override { LastSetupScript = scriptPath; }
     std::vector<std::string> GetLuaGlobalActionNames() const override { return {"alpha", "beta"}; }
-    bool ApproveLuaScript(const std::string& scriptName, std::string&) override {
+    VoidResult ApproveLuaScript(const std::string& scriptName) override {
         LastApprovedScript = scriptName;
-        return true;
+        return VoidOk();
     }
-    bool RevokeLuaScript(const std::string& scriptName, std::string&) override {
+    VoidResult RevokeLuaScript(const std::string& scriptName) override {
         LastRevokedScript = scriptName;
-        return true;
+        return VoidOk();
     }
     std::vector<std::string> ListApprovedLuaScriptPaths() const override { return ApprovedPaths; }
     std::string LastApprovedScript;
@@ -746,6 +746,24 @@ TEST_CASE("automation.* — id extraction shapes, empty-script guard, inline rel
         REQUIRE(r.Ok);
         CHECK((*r.Data)["count"] == 2);
         CHECK((*r.Data)["actions"][1] == "beta");
+    }
+    {
+        // lua.approve-script / lua.revoke-script route through the VoidResult member-fn-pointer
+        // helper (RegisterLuaScriptConsentCommand) after the #21 AppController public-API flip:
+        // the success path reaches the fake, and the empty-script guard fails before dispatch.
+        const CommandResult ok = reg.Dispatch("lua.approve-script", {{"script", "Hooks.lua"}}, ctx);
+        REQUIRE(ok.Ok);
+        CHECK((*ok.Data)["approved"] == "Hooks.lua");
+        CHECK(autom.LastApprovedScript == "Hooks.lua");
+
+        const CommandResult rev = reg.Dispatch("lua.revoke-script", {{"script", "Hooks.lua"}}, ctx);
+        REQUIRE(rev.Ok);
+        CHECK((*rev.Data)["revoked"] == "Hooks.lua");
+        CHECK(autom.LastRevokedScript == "Hooks.lua");
+
+        const CommandResult empty = reg.Dispatch("lua.approve-script", {{"script", ""}}, ctx);
+        REQUIRE_FALSE(empty.Ok);
+        CHECK(empty.Error.Code == ErrorCode::MissingRequiredArg);
     }
 }
 

@@ -184,15 +184,15 @@ void RegisterAutomationListGlobalsCommand(CommandRegistry& reg, IAppAutomation& 
 // one skeleton (DRY) and returns the resultKey (e.g. "approved") on success.
 void RegisterLuaScriptConsentCommand(CommandRegistry& reg, IAppAutomation& app, const char* name, const char* desc,
                                      const char* paramDesc, const char* resultKey,
-                                     bool (IAppAutomation::*action)(const std::string&, std::string&)) {
+                                     VoidResult (IAppAutomation::*action)(const std::string&)) {
     Command c = MakeCommand(name, desc, [&app, action, resultKey](const nlohmann::json& args, const CommandContext&) {
         const std::string script = args.value("script", std::string());
         if (script.empty()) {
             return CommandResult::Failure(ErrorCode::MissingRequiredArg, "missing required 'script' parameter");
         }
-        std::string err;
-        if (!(app.*action)(script, err)) {
-            return CommandResult::Failure(ErrorCode::ValidationError, err);
+        const VoidResult r = (app.*action)(script);
+        if (!r.has_value()) {
+            return CommandResult::Failure(ErrorCode::ValidationError, r.error());
         }
         return CommandResult::Success(nlohmann::json{{resultKey, script}});
     });
