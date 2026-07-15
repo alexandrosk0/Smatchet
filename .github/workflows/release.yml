@@ -1,0 +1,187 @@
+name: Release
+
+# Publishes a signed Windows release (standalone + light standalone + Inno
+# installer + source zip) to GitHub Releases whenever a `v*.*.*` tag is
+# pushed, driving scripts/publish/release_github.ps1 — previously a
+# maintainer-only, local-Windows-only script (see scripts/publish/SIGNING.md,
+# scripts/publish/INSTALLER_SMOKE_TEST.md). The Windows-x64-installer-smoke
+# job in build-and-test.yml already builds+installs this pipeline UNSIGNED on
+# every develop push; this workflow is the signed, published counterpart that
+# only runs against an actual release tag.
+#
+# Skips the Unreal plugin package and Fab bundle (-SkipUnreal -SkipFabBundle):
+# both require an Unreal Engine install that hosted runners don't have. Ship
+# those manually per scripts/publish/INSTALL_UNREAL_PLUGIN.md until UE tooling
+# lands in CI.
+#
+# release_github.ps1 refuses to -Publish a tag that doesn't match the
+# CMakeLists.txt SmatchetApp VERSION (Convert-SmatchetVersionToTag) — bump the
+# version with scripts/publish/sync_release_version.ps1 and commit it BEFORE
+# tagging, or this workflow fails fast instead of publishing a mismatched
+# release.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (defaults to the triggering ref for a tag push; required for manual runs)"
+        required: false
+        default: ""
+      publish:
+        description: "Publish to GitHub Releases (false = build + sign only, upload artifacts for inspection)"
+        type: boolean
+        required: false
+        default: true
+      sign:
+        description: "Sign the standalone + installer (SIGNING.md). Publishing requires this unless you know what you're doing."
+        type: boolean
+        required: false
+        default: true
+      draft:
+        description: "Create the GitHub release as a draft"
+        type: boolean
+        required: false
+        default: false
+      prerelease:
+        description: "Mark the GitHub release as a prerelease"
+        type: boolean
+        required: false
+        default: false
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, and publish Windows release
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - name: Resolve release parameters
+        id: params
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.tag }}"
+          if ([string]::IsNullOrWhiteSpace($tag)) { $tag = "${{ github.ref_name }}" }
+          if ([string]::IsNullOrWhiteSpace($tag)) {
+            Write-Error "No tag resolved — pass 'tag' on workflow_dispatch or trigger via a tag push."
+            exit 1
+          }
+          # workflow_dispatch inputs arrive as strings; a tag push has no
+          # inputs context at all, so default every switch to its tag-push
+          # behavior (publish+sign, not draft/prerelease) when unset.
+          $publish = "${{ github.event.inputs.publish }}" -ne 'false'
+          $sign = "${{ github.event.inputs.sign }}" -ne 'false'
+          $draft = "${{ github.event.inputs.draft }}" -eq 'true'
+          $prerelease = "${{ github.event.inputs.prerelease }}" -eq 'true'
+          if ($publish -and -not $sign) {
+            Write-Error "publish=true requires sign=true (SIGNING.md: unsigned public releases are refused)."
+            exit 1
+          }
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "publish=$($publish.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "sign=$($sign.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "draft=$($draft.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "prerelease=$($prerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          Write-Host "tag=$tag publish=$publish sign=$sign draft=$draft prerelease=$prerelease"
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ steps.params.outputs.tag }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Setup sccache (object cache)
+        uses: mozilla-actions/sccache-action@9e7fa8a12102821edf02ca5dbea1acd0f89a2696 # v0.0.10
+
+      - name: Cache sccache objects (msvc-x64-release)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ github.workspace }}\.sccache
+          key: ${{ runner.os }}-sccache-msvc-x64-release-${{ steps.params.outputs.tag }}
+          restore-keys: |
+            ${{ runner.os }}-sccache-msvc-x64-release-
+            ${{ runner.os }}-sccache-msvc-x64-installer-
+
+      - name: Cache FetchContent _deps (msvc-x64-release)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .fetchcontent-src
+          key: ${{ runner.os }}-fetchcontent-msvc-${{ hashFiles('CMakeLists.txt', '**/CMakeLists.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-fetchcontent-
+
+      - name: Fetch Font Awesome 6 Solid TTF (pinned + checksum-verified)
+        uses: ./.github/actions/fetch-fontawesome
+
+      - name: Install Inno Setup 6 (ISCC.exe)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+
+      - name: Decode signing certificate
+        if: ${{ steps.params.outputs.sign == 'true' }}
+        shell: pwsh
+        env:
+          SMATCHET_SIGN_PFX_BASE64: ${{ secrets.SMATCHET_SIGN_PFX_BASE64 }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:SMATCHET_SIGN_PFX_BASE64)) {
+            Write-Error "sign=true but the SMATCHET_SIGN_PFX_BASE64 repository secret is not set. See scripts/publish/SIGNING.md — base64-encode the signing PFX into that secret, and the passphrase into SMATCHET_SIGN_PFX_PASSWORD."
+            exit 1
+          }
+          $pfxPath = Join-Path $env:RUNNER_TEMP "smatchet-signing.pfx"
+          [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:SMATCHET_SIGN_PFX_BASE64))
+          "SMATCHET_SIGN_PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
+
+      - name: Build release bundle (release_github.ps1)
+        shell: pwsh
+        env:
+          SMATCHET_SIGN_PFX_PASSWORD: ${{ secrets.SMATCHET_SIGN_PFX_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseArgs = @(
+            "-Tag", "${{ steps.params.outputs.tag }}",
+            "-SkipUnreal", "-SkipFabBundle",
+            "-OutDir", "out/release"
+          )
+          if ("${{ steps.params.outputs.sign }}" -eq "true") { $releaseArgs += "-Sign" }
+          if ("${{ steps.params.outputs.publish }}" -eq "true") {
+            $releaseArgs += "-Publish"
+            if ("${{ steps.params.outputs.draft }}" -eq "true") { $releaseArgs += "-Draft" }
+            if ("${{ steps.params.outputs.prerelease }}" -eq "true") { $releaseArgs += "-Prerelease" }
+          }
+          Write-Host "release_github.ps1 $($releaseArgs -join ' ')"
+          ./scripts/publish/release_github.ps1 @releaseArgs
+
+      - name: Remove decoded signing certificate
+        if: always()
+        shell: pwsh
+        run: |
+          if ($env:SMATCHET_SIGN_PFX_PATH -and (Test-Path -LiteralPath $env:SMATCHET_SIGN_PFX_PATH)) {
+            Remove-Item -LiteralPath $env:SMATCHET_SIGN_PFX_PATH -Force
+          }
+
+      - name: Upload release assets (for inspection)
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: smatchet-release-${{ steps.params.outputs.tag }}
+          path: out/release/assets/*
+          if-no-files-found: warn
