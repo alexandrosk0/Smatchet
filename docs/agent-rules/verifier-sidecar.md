@@ -2,7 +2,7 @@
 
 Plan: [`../plans/llm-verifier-sidecar.md`](../plans/llm-verifier-sidecar.md).
 
-Smatchet can use an LLM-as-a-Verifier pattern, but only as an **advisory signal** until it is calibrated. The verifier scores agent outputs, candidate plans, review findings, or fixes; deterministic gates still own merge authority.
+The agentic layer can use an LLM-as-a-Verifier pattern, but only as an **advisory signal** until it is calibrated. The verifier scores agent outputs, candidate plans, review findings, or fixes; deterministic gates still own merge authority.
 
 The design re-derives the useful ideas from the public *LLM-as-a-Verifier: A General-Purpose Verification Framework* (fine-grained logprob reward, repeated-evaluation uncertainty, Bradley-Terry ranking, probabilistic pivot tournament, progress tracking) rather than porting its code, and improves on them for a governance context. `scripts/dev/verifier-sidecar.py` is a pure-stdlib, provider-agnostic reimplementation — it consumes verifier output as data and never calls a model.
 
@@ -24,7 +24,7 @@ The default criteria are:
 | `evidence_quality` | Claims cite concrete files, diffs, logs, tests, or tool output. |
 | `regression_risk` | Low likelihood of breaking adjacent behavior. |
 | `security` | No new trust-boundary, secret, injection, deserialization, or sandbox risk. |
-| `project_invariants` | Respects Smatchet rules such as C++14, gates, plans, and quality pillars. |
+| `project_invariants` | Respects the project's rules such as C++14, gates, plans, and quality pillars. |
 | `scope_discipline` | Avoids unrelated rewrites and authority expansion. |
 | `verification_completeness` | Validation is proportional to risk and has no silent manual residue. |
 
