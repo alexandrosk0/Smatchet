@@ -59,7 +59,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue treats `status` as always 
     // Even with a loaded map that omits/denies status, status is special-cased true (Jira
     // applies status via transitions, not editmeta) — this short-circuits before any map read.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     CHECK(svc.CanEditFieldForIssue("ABC-1", "status"));
     CHECK(svc.CanEditFieldForIssue("ABC-1", "Status")); // case-folded fieldKey == "status"
 }
@@ -70,7 +70,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue force-allows priority/comp
     // Loaded editmeta lists only summary — Jira often omits priority (Epics) and components
     // (cross-project / filter-id views) while PUT still accepts them: force-editable carve-out.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
 
     CHECK(svc.CanEditFieldForIssue("ABC-1", "priority"));
     CHECK(svc.CanEditFieldForIssue("ABC-1", "components"));
@@ -84,7 +84,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue returns true for sprint + 
 
     SUBCASE("editable timetracking estimate short-circuits before any map read") {
         deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}}); // omits timeoriginalestimate
-        REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+        REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
         CHECK(svc.CanEditFieldForIssue("ABC-1", "timeoriginalestimate"));
         CHECK(svc.CanEditFieldForIssue("ABC-1", "timeestimate"));
     }
@@ -96,7 +96,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue returns true for sprint + 
         sprint.Family = TrackerFieldFamily::Sprint;
         deps.AvailableFieldsImpl.push_back(sprint);
         deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}}); // omits the sprint field
-        REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+        REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
         CHECK(svc.CanEditFieldForIssue("ABC-1", "customfield_10020"));
     }
 }
@@ -106,7 +106,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue denies an absent field onc
     EditMetaCacheService svc(deps);
     // Loaded map explicitly allows summary, denies description, and omits labels.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"description", false}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
 
     CHECK(svc.CanEditFieldForIssue("ABC-1", "summary"));           // present + true
     CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "description")); // present + false
@@ -123,7 +123,7 @@ TEST_CASE("EditMetaCacheService::CanEditFieldForIssue falls back to the issuetyp
     // Load the issuetype-level cache by loading a sibling issue of the same type, then prune the
     // per-issue entry so only the type-level cache remains.
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"description", false}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     svc.InvalidateIssueEditMeta("ABC-1"); // drop per-issue; type-level "bug" survives
 
     CHECK(svc.CanEditFieldForIssue("ABC-1", "summary"));           // from type map
@@ -142,10 +142,8 @@ TEST_CASE("EditMetaCacheService::EnsureIssueEditMetaLoaded marks loaded + arms d
     EditMetaCacheService svc(deps);
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", false}});
 
-    std::string err = "stale";
-    const bool ok = svc.EnsureIssueEditMetaLoaded("ABC-1", &err);
-    CHECK(ok);
-    CHECK(err.empty());                   // outError cleared on success
+    const VoidResult r = svc.EnsureIssueEditMetaLoaded("ABC-1");
+    CHECK(r.has_value());                 // Ok on success
     CHECK(deps.DeferredNotifyCalls == 1); // success counts as a reachable-backend signal
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
 
@@ -153,20 +151,19 @@ TEST_CASE("EditMetaCacheService::EnsureIssueEditMetaLoaded marks loaded + arms d
     CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
 
     // Second call is a cache hit — no refetch, no extra notify.
-    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
     CHECK(deps.DeferredNotifyCalls == 1);
 }
 
-TEST_CASE("EditMetaCacheService::EnsureIssueEditMetaLoaded on fetch failure stays optimistic + reports outError") {
+TEST_CASE("EditMetaCacheService::EnsureIssueEditMetaLoaded on fetch failure stays optimistic + reports Err") {
     FakeEditMetaDeps deps;
     EditMetaCacheService svc(deps);
     deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503: backend unreachable");
 
-    std::string err;
-    const bool ok = svc.EnsureIssueEditMetaLoaded("ABC-1", &err);
-    CHECK_FALSE(ok);
-    CHECK(err == "HTTP 503: backend unreachable");
+    const VoidResult r = svc.EnsureIssueEditMetaLoaded("ABC-1");
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error() == "HTTP 503: backend unreachable");
     CHECK(deps.DeferredNotifyCalls == 0); // a failed fetch is NOT a reachable-backend signal
 
     // The empty-but-loaded bug regression: a failed fetch must leave the issue optimistic, not
@@ -176,9 +173,7 @@ TEST_CASE("EditMetaCacheService::EnsureIssueEditMetaLoaded on fetch failure stay
 
     // A later successful retry flips it to loaded + arms notify.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}});
-    std::string err2 = "stale";
-    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1", &err2));
-    CHECK(err2.empty());
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     CHECK(deps.DeferredNotifyCalls == 1);
 }
 
@@ -193,15 +188,13 @@ TEST_CASE("EditMetaCacheService::RefreshIssueEditMeta invalidates the cached ent
 
     // First load: labels denied.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", false}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
     CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
 
     // Backend now allows labels — Refresh must drop the stale entry and refetch.
     deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}, {"labels", true}});
-    std::string err;
-    CHECK(svc.RefreshIssueEditMeta("ABC-1", &err));
-    CHECK(err.empty());
+    CHECK(svc.RefreshIssueEditMeta("ABC-1").has_value());
     CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u); // a genuine refetch happened
     CHECK(svc.CanEditFieldForIssue("ABC-1", "labels"));      // new value reflected
 }
@@ -218,8 +211,8 @@ TEST_CASE("EditMetaCacheService::PruneEditMetaCacheToActiveTickets drops absent 
 
     // Load both — denying labels so the cached state is observable post-prune.
     deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("KEEP-1"));
-    REQUIRE(svc.EnsureIssueEditMetaLoaded("DROP-1"));
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("KEEP-1").has_value());
+    REQUIRE(svc.EnsureIssueEditMetaLoaded("DROP-1").has_value());
     CHECK_FALSE(svc.CanEditFieldForIssue("KEEP-1", "labels"));
     CHECK_FALSE(svc.CanEditFieldForIssue("DROP-1", "labels"));
 

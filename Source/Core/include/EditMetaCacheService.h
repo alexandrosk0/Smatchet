@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "Config/ConfigManager.h" // for TrackerConfig (by-value parameters + ConfigManager::Load)
+#include "SmatchetResult.h"       // VoidResult (editmeta load/refresh — #21 outError → Result flip)
 
 class IEditMetaDeps;
 class ITrackerBackend;
@@ -53,16 +54,16 @@ class EditMetaCacheService {
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
     /**
+     * VoidResult: Ok on success (or optimistic no-op — no backend / empty issueId / cache hit);
+     * Err(reason) when the editmeta fetch fails (the issue stays optimistic regardless — see impl).
      * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
      *        for issuetype (safe for background threads that captured the key on the UI thread).
      * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
      *        or loaded before InitLua to avoid parsing smatchet_config.json after Lua init in release builds).
      */
-    bool EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError = nullptr,
-                                   const std::string* issueTypeKeyOverride = nullptr,
-                                   const TrackerConfig* configSnapshot = nullptr);
-    bool RefreshIssueEditMeta(const std::string& issueId, std::string* outError = nullptr,
-                              const std::string* issueTypeKeyOverride = nullptr);
+    VoidResult EnsureIssueEditMetaLoaded(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr,
+                                         const TrackerConfig* configSnapshot = nullptr);
+    VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside

@@ -119,8 +119,9 @@ void EditMetaCacheService::WarmIssueTypeEditMetaWorker(
         if (deps_.IsShuttingDown()) {
             break;
         }
-        std::string ignored;
-        EnsureIssueEditMetaLoaded(pair.second, &ignored, nullptr, &trackerCfgForWorker);
+        // Fire-and-forget warmup: an editmeta fetch failure here is intentionally ignored (the
+        // issue stays optimistic) — discard the VoidResult.
+        EnsureIssueEditMetaLoaded(pair.second, nullptr, &trackerCfgForWorker);
     }
 
     ITrackerFieldCatalog* catalog = backend ? backend->FieldCatalog() : nullptr;
@@ -234,21 +235,18 @@ bool EditMetaCacheService::CanEditFieldForIssue(const std::string& issueId, cons
     return fieldIt->second;
 }
 
-bool EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& issueId, std::string* outError,
-                                                     const std::string* issueTypeKeyOverride,
-                                                     const TrackerConfig* configSnapshot) {
+VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& issueId,
+                                                           const std::string* issueTypeKeyOverride,
+                                                           const TrackerConfig* configSnapshot) {
     std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    if (outError) {
-        outError->clear();
-    }
     if (!backend || issueId.empty()) {
-        return true;
+        return VoidOk();
     }
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         const auto it = issueEditMeta_.find(issueId);
         if (it != issueEditMeta_.end() && it->second.loaded) {
-            return true;
+            return VoidOk();
         }
     }
     std::string issueTypeKey;
@@ -262,7 +260,7 @@ bool EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& issueId,
         const auto typeIt = issueTypeEditMeta_.find(issueTypeKey);
         if (typeIt != issueTypeEditMeta_.end() && typeIt->second.loaded) {
             issueEditMeta_[issueId] = typeIt->second;
-            return true;
+            return VoidOk();
         }
     }
 
@@ -297,17 +295,14 @@ bool EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& issueId,
 
     if (!ok) {
         LOG_WARN("EditMetaCacheService: editmeta fetch failed issue=%s err=%s", issueId.c_str(), fetchError.c_str());
-        if (outError) {
-            *outError = fetchError;
-        }
-    } else {
-        deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
+        return VoidResult::Err(fetchError);
     }
-    return ok;
+    deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
+    return VoidOk();
 }
 
-bool EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId, std::string* outError,
-                                                const std::string* issueTypeKeyOverride) {
+VoidResult EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId,
+                                                      const std::string* issueTypeKeyOverride) {
     std::string issueTypeKey;
     if (issueTypeKeyOverride && !issueTypeKeyOverride->empty()) {
         issueTypeKey = *issueTypeKeyOverride;
@@ -319,7 +314,7 @@ bool EditMetaCacheService::RefreshIssueEditMeta(const std::string& issueId, std:
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         issueTypeEditMeta_.erase(issueTypeKey);
     }
-    return EnsureIssueEditMetaLoaded(issueId, outError, &issueTypeKey);
+    return EnsureIssueEditMetaLoaded(issueId, &issueTypeKey);
 }
 
 void EditMetaCacheService::InvalidateIssueEditMeta(const std::string& issueId) {
@@ -383,8 +378,8 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
 
     const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
     deps_.LaunchBackgroundTask([this, issueId, warmupTrackerCfg]() {
-        std::string ignored;
-        EnsureIssueEditMetaLoaded(issueId, &ignored, nullptr, &warmupTrackerCfg);
+        // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
+        EnsureIssueEditMetaLoaded(issueId, nullptr, &warmupTrackerCfg);
         {
             std::lock_guard<std::mutex> lock(editMetaMutex_);
             issueEditMetaWarmupInFlight_.erase(issueId);
