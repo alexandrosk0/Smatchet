@@ -87,7 +87,7 @@ Promotion is gated on all of `min_samples` / `max_brier` / `max_ece` / `min_auc`
 
 The end-to-end loop:
 
-```
+```sh
 python scripts/dev/verifier-produce.py job.json --record trace.json \
   | python scripts/dev/verifier-sidecar.py aggregate - > scores.json
 # label the candidates by ground-truth outcome, then:
