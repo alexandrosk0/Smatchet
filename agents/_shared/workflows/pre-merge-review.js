@@ -3,9 +3,9 @@
 // Parallel-barrier `code-review` + `security-review` (both read-only → zero
 // write-set collision, no worktree, no lock) → a judge stage (plain `agent()`,
 // default model, schema-forced) collapsing the two severity-tagged punch-lists
-// into ONE ranked, deduped verdict. Concurrency 2 (under the Opus cap). Touches
-// no files; never reaches the gated ship-loop tail (the orchestrator acts on the
-// verdict). See docs/agent-rules/workflow-orchestration.md.
+// into ONE ranked, deduped verdict plus advisory verifier scores. Concurrency 2
+// (under the Opus cap). Touches no files; never reaches the gated ship-loop tail
+// (the orchestrator acts on the verdict). See docs/agent-rules/workflow-orchestration.md.
 //
 // Discovery: linked into the gitignored .claude/workflows/ by setup-harness.sh,
 // then run as  Workflow({ name: 'pre-merge-review', args: <see below> }).
@@ -21,7 +21,7 @@ export const meta = {
   description: 'Parallel code-review + security-review of a PR or local diff, synthesized into one ranked deduped pre-merge verdict',
   phases: [
     { title: 'Review', detail: 'code-review + security-review in parallel (read-only, zero collision)' },
-    { title: 'Judge', detail: 'collapse both punch-lists into one ranked, deduped verdict' },
+    { title: 'Judge', detail: 'collapse both punch-lists into one ranked, deduped verdict + verifier scores' },
   ],
 }
 
@@ -56,11 +56,13 @@ const FINDINGS = {
   },
 }
 
-// The judge's collapsed output — one ranked, deduped verdict + a merge call.
+// The judge's collapsed output — one ranked, deduped verdict + a merge call +
+// advisory verifier scores. The categorical merge_recommendation stays present
+// for existing callers; verification carries the continuous signal.
 const VERDICT = {
   type: 'object',
   additionalProperties: false,
-  required: ['summary', 'ranked_findings', 'merge_recommendation'],
+  required: ['summary', 'ranked_findings', 'merge_recommendation', 'verification'],
   properties: {
     summary: { type: 'string', description: 'one-paragraph overall assessment' },
     ranked_findings: {
@@ -80,6 +82,56 @@ const VERDICT = {
       },
     },
     merge_recommendation: { type: 'string', enum: ['block', 'fix-then-merge', 'merge'] },
+    verification: {
+      type: 'object',
+      additionalProperties: false,
+      required: ['overall_score', 'confidence', 'hard_veto', 'criteria'],
+      properties: {
+        overall_score: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1,
+          description: 'continuous verifier score; 1 means clearly safe/useful, 0 means clearly unsafe or wrong',
+        },
+        confidence: {
+          type: 'number',
+          minimum: 0,
+          maximum: 1,
+          description: 'confidence in this verdict; 1 means highly confident, 0 means a guess. The verifier-sidecar aggregator derives uncertainty from confidence + sample spread',
+        },
+        hard_veto: {
+          type: 'boolean',
+          description: 'true when security, deterministic-gate, or project-invariant evidence must not be averaged away',
+        },
+        veto_reason: { type: 'string' },
+        criteria: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['key', 'score', 'confidence', 'rationale'],
+            properties: {
+              key: {
+                type: 'string',
+                enum: [
+                  'task_satisfaction',
+                  'correctness',
+                  'evidence_quality',
+                  'regression_risk',
+                  'security',
+                  'project_invariants',
+                  'scope_discipline',
+                  'verification_completeness',
+                ],
+              },
+              score: { type: 'number', minimum: 0, maximum: 1 },
+              confidence: { type: 'number', minimum: 0, maximum: 1 },
+              rationale: { type: 'string' },
+            },
+          },
+        },
+      },
+    },
   },
 }
 
@@ -115,6 +167,13 @@ const judgePrompt =
   'first); (3) set merge_recommendation = "block" if any CRITICAL/HIGH is real, "fix-then-merge" ' +
   'for MEDIUM/LOW only, "merge" if genuinely clean. Be skeptical — drop a finding that is a ' +
   'false positive and say so in the summary.\n\n' +
+  'Also act as an LLM-as-a-Verifier sidecar: decompose the verdict into continuous ' +
+  '[0,1] criteria scores for task_satisfaction, correctness, evidence_quality, ' +
+  'regression_risk, security, project_invariants, scope_discipline, and ' +
+  'verification_completeness. Return an overall_score and a confidence in [0,1]. If a real ' +
+  'security issue, deterministic gate failure, or project invariant breach is present, set ' +
+  'hard_veto=true; do not average that away with good scores elsewhere. The verifier is ' +
+  'advisory and never overrules deterministic merge gates.\n\n' +
   'code-review punch list:\n' + JSON.stringify(punchLists[0]) + '\n\n' +
   'security-review punch list:\n' + JSON.stringify(punchLists[1] || { findings: [] })
 
