@@ -63,7 +63,7 @@ N/A — the diff does not touch `Source/Core/`.
 
 ## Out of scope (flagged, not designed)
 
-- Live provider integration — the helper *aggregates* score-token logprobs (the reward/uncertainty math is implemented) but does not call a provider or extract logprobs itself; wiring a real backend to feed it is a follow-up.
+- ~~Live provider integration~~ — **landed** as `scripts/dev/verifier-produce.py`: drives an OpenAI-compatible endpoint with constrained single-token A-T scoring, extracts `top_logprobs`, and emits the sidecar's aggregate input (scalar-mode fallback for logprob-less backends). Replay-transport tested (no network). Remaining follow-up: point it at a live self-hosted verifier model and record calibration traces.
 - Executing the pivot-tournament schedule inside workflows — the helper *emits* the ring + pivot comparison schedule; a workflow that runs those comparisons and closes the loop is a follow-up.
 - Dense RL rewards for autonomous fix loops — not appropriate before calibration and trace coverage.
 

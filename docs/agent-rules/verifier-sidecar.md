@@ -37,6 +37,25 @@ A single discrete label throws away the model's own uncertainty. When the backen
 
 Both fold into the aggregate `uncertainty`. Scalars are still accepted for backends without logprobs; the two mix freely within one candidate.
 
+## Producing the logprobs — `verifier-produce.py`
+
+`scripts/dev/verifier-produce.py` is the **model-calling half**: it drives a real LLM and emits exactly the JSON `verifier-sidecar.py aggregate` consumes. It is pure-stdlib (`urllib`, no SDK) and provider-agnostic through an OpenAI-compatible `/chat/completions` endpoint.
+
+The technique is **constrained single-token scoring**: for each criterion it asks the model to answer with exactly one letter `A`(best)…`T`(worst), then reads `top_logprobs` at that one position. A confident model concentrates mass on one letter; a torn model spreads it — and that spread becomes the sidecar's `variance`/`uncertainty`. One criterion = one call = one rubric, so the logprobs stay interpretable; the candidate text is framed as untrusted evidence, never instructions.
+
+Two modes:
+
+- `logprobs` (default) — needs a backend that returns token logprobs (**vLLM / SGLang / OpenAI-compatible / Vertex-Gemini**). Emits `{"logprobs": {...}}` per criterion.
+- `scalar` — the fallback for backends **without** logprobs (e.g. the Anthropic Messages API today): parse the single emitted letter/number into a point score.
+
+Config via `VERIFIER_BASE_URL` / `VERIFIER_MODEL` / `VERIFIER_API_KEY` (or flags). Repeated evaluations run the first sample at temperature 0 (the mode) and resamples hotter so `K` draws actually explore. Because calls scale as candidates × criteria × repeats, use the sidecar's pivot-tournament schedule to spend the repeat budget only on the pivots. Pipe the two halves together:
+
+```
+python scripts/dev/verifier-produce.py job.json | python scripts/dev/verifier-sidecar.py aggregate -
+```
+
+`--responses <file>` replays recorded chat-completion bodies in call order, so the producer is testable with **no network** (the bats suite and `--selftest` use this).
+
 ## Where it runs first
 
 `agents/_shared/workflows/pre-merge-review.js` asks its judge to emit a verifier object next to the existing `merge_recommendation`. Existing consumers keep reading the categorical recommendation; newer consumers use the continuous signal for triage and calibration.

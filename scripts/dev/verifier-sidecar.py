@@ -30,11 +30,12 @@
 #   * Hard-veto propagation: security / deterministic-gate / invariant breaches
 #     are NOT averaged away by good scores elsewhere (governance addition).
 #
-# Usage:
+# Usage (any input path may be '-' to read stdin, e.g. piped from verifier-produce.py):
 #   python scripts/dev/verifier-sidecar.py samples.json          # aggregate (default)
 #   python scripts/dev/verifier-sidecar.py aggregate samples.json
 #   python scripts/dev/verifier-sidecar.py reward logprobs.json  # one fine-grained reward
 #   python scripts/dev/verifier-sidecar.py track steps.json      # progress curve
+#   python scripts/dev/verifier-produce.py job.json | python scripts/dev/verifier-sidecar.py aggregate -
 #   python scripts/dev/verifier-sidecar.py --selftest
 #
 # selftest: asserts-failure
@@ -134,6 +135,11 @@ class VerifierError(ValueError):
 
 def load_json(path: str) -> Any:
     try:
+        if path == "-":                       # read stdin (pipe from verifier-produce.py)
+            # Decode the raw buffer as UTF-8 explicitly — sys.stdin.read() uses the
+            # platform default (cp1252 on Windows) and would choke on the producer's
+            # UTF-8 output.
+            return json.loads(sys.stdin.buffer.read().decode("utf-8"))
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError as exc:
