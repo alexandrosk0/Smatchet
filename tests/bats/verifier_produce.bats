@@ -61,9 +61,9 @@ PY
 @test "produce (replay) emits sidecar-shaped criteria logprobs" {
     run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/responses.json"
     [ "$status" -eq 0 ]
-    "$PY" - <<PY
-import json
-d = json.loads('''$output''')
+    OUTPUT="$output" "$PY" - <<'PY'
+import json, os
+d = json.loads(os.environ["OUTPUT"])
 ids = [c["id"] for c in d["candidates"]]
 assert ids == ["fix-a", "fix-b"], ids
 crit = d["candidates"][0]["samples"][0]["criteria"]
@@ -74,11 +74,11 @@ PY
 }
 
 @test "producer output pipes into the sidecar over stdin" {
-    run bash -c "'$PY' '$PRODUCE' '$WORK/job.json' --responses '$WORK/responses.json' | '$PY' '$SIDECAR' aggregate -"
+    run bash -c '"$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/responses.json" | "$PY" "$SIDECAR" aggregate -'
     [ "$status" -eq 0 ]
-    "$PY" - <<PY
-import json
-d = json.loads('''$output''')
+    OUTPUT="$output" "$PY" - <<'PY'
+import json, os
+d = json.loads(os.environ["OUTPUT"])
 by = {c["id"]: c for c in d["candidates"]}
 # fix-a scored high (A/B), fix-b low (R/D) -> fix-a leads and is not blocked.
 assert by["fix-a"]["overall_score"] > by["fix-b"]["overall_score"], d
@@ -90,9 +90,9 @@ PY
     printf '[{"choices":[{"message":{"content":"A"}}]},{"choices":[{"message":{"content":"F"}}]},{"choices":[{"message":{"content":"T"}}]},{"choices":[{"message":{"content":"C"}}]}]' > "$WORK/scalar.json"
     run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/scalar.json" --mode scalar
     [ "$status" -eq 0 ]
-    "$PY" - <<PY
-import json
-d = json.loads('''$output''')
+    OUTPUT="$output" "$PY" - <<'PY'
+import json, os
+d = json.loads(os.environ["OUTPUT"])
 sc = d["candidates"][0]["samples"][0]["criteria"]
 assert sc["security"] == 1.0, sc
 assert isinstance(sc["correctness"], float), sc

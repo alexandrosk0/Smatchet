@@ -136,7 +136,10 @@ class VerifierError(ValueError):
 def load_json(path: str) -> Any:
     try:
         if path == "-":                       # read stdin (pipe from verifier-produce.py)
-            return json.loads(sys.stdin.read())
+            # Decode the raw buffer as UTF-8 explicitly — sys.stdin.read() uses the
+            # platform default (cp1252 on Windows) and would choke on the producer's
+            # UTF-8 output.
+            return json.loads(sys.stdin.buffer.read().decode("utf-8"))
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
     except FileNotFoundError as exc:

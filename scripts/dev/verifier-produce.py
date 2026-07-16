@@ -198,6 +198,8 @@ class HttpTransport(Transport):
     """POST to {base_url}/chat/completions on an OpenAI-compatible endpoint."""
 
     def __init__(self, base_url: str, api_key: str, timeout: int = _TIMEOUT_S) -> None:
+        if not base_url.startswith(("http://", "https://")):
+            raise ProduceError(f"refusing non-HTTP verifier endpoint: {base_url!r}")
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.timeout = timeout
@@ -420,7 +422,13 @@ def main(argv: List[str]) -> int:
         model = args.model or os.environ.get("VERIFIER_MODEL")
         if not model and not args.responses:
             raise ProduceError("no model: set --model / VERIFIER_MODEL")
-        raw = sys.stdin.read() if args.job == "-" else open(args.job, "r", encoding="utf-8").read()
+        # Decode stdin from the raw buffer as UTF-8 (the platform default is
+        # cp1252 on Windows and would choke on non-ASCII job text).
+        if args.job == "-":
+            raw = sys.stdin.buffer.read().decode("utf-8")
+        else:
+            with open(args.job, "r", encoding="utf-8") as f:
+                raw = f.read()
         try:
             job = json.loads(raw)
         except json.JSONDecodeError as exc:
