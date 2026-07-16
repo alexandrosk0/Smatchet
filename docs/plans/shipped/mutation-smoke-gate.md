@@ -2,7 +2,7 @@
 
 > **Slug**: `mutation-smoke-gate` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — **Phases 1 + 2 shipped** (harness + seed corpus; advisory nightly wiring + bats + local mirror, per the owner's decisions 2026-07-10: **advisory nightly → graduate to blocking after clean runs**, **80% floor**). **Phase 3 (corpus expansion to the full dedicated-test TU set) shipped 2026-07-13** — 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs in the TSan rig, every entry live-validated in-container (full sweep: 33/33 killed, 0 mis-ruled equivalents, 100% adjusted kill rate; see § Implementation log). Phase 4 (blocking graduation after clean nightly runs) remains — the gate is `continue-on-error` until then, so it can never block a nightly.
+> **Status**: `shipped` (2026-07-16) — **all 4 phases complete.** Phases 1 + 2 (harness + seed corpus; advisory nightly wiring + bats + local mirror, owner's decisions 2026-07-10: **advisory nightly → graduate to blocking after clean runs**, **80% floor**). Phase 3 (corpus expansion to the full dedicated-test TU set) shipped 2026-07-13 — 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs. **Phase 4 (blocking graduation) shipped 2026-07-16** — after 3 consecutive clean advisory nightly runs (2026-07-14 `1d78092`, 07-15 `2966edc7`, 07-16 `3704139`, each 33/33 killed @ 100% adjusted kill rate, 0 mis-ruled equivalents), `continue-on-error` was removed from the `tsan-linux-nightly.yml` mutation-smoke step so a sub-floor survivor now reds the nightly. See § Implementation log.
 >
 > **Roadmap**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **F** (Gap 4, "Mutation-smoke / coverage-delta gate"). **Precursor**: [`MUTATION_PILOT.md`](../../../MUTATION_PILOT.md) (2026-07-05). **Originating backlog**: `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md`.
 
@@ -87,6 +87,7 @@ Phase 1 (this PR), all run locally in-container:
   - **1 mutant rejected as flaky** (honesty rule — no silent caps): a `ConfigSaveWorker` drain-loop dirty-flag mutant (CSW-02) classified KILLED or SURVIVED depending on worker-thread timing (3 SURVIVED / 2 KILLED over 5 runs) — a nondeterministic oracle has no place in a nightly gate; dropped. `CSW-01` (post-Stop synchronous-save path, synchronous assertion, 5/5 deterministic) keeps the TU scored.
   - **1 candidate skipped as out-of-oracle**: `GridLiveContext.h` `everVisible` default — consumed only by AppController (Windows-rig territory), so a survivor here would be a false gap (pilot LCM-06 class), and a permanently-unfixable `survived` entry can never graduate. Not added.
   - Final gated sweep: **killed=33 survived=0 build_fail=0, equivalents 5 checked / 0 mis-ruled, adjusted kill rate 100% (floor 80%)**, tree clean throughout.
+- 2026-07-16 · Phase 4 — **blocking graduation.** After the Phase-3 corpus merged (#1818), three consecutive advisory nightly runs came back clean, verified at the step-log level (`continue-on-error` neutralises the step conclusion, so the `mutation-smoke: OK.` line is the authority, not the green check): 07-14 run `29313605417` (`1d78092`), 07-15 run `29396606994` (`2966edc7`), 07-16 run `29479599609` (`3704139`) — each **killed=33 survived=0, 5/5 equivalents surviving, 0 mis-ruled, 100% adjusted kill rate**. Removed `continue-on-error: true` from the `tsan-linux-nightly.yml` mutation-smoke step and dropped "advisory" from its name/comment, so a sub-floor survivor now reds the nightly. This closes Slice F's mutation-smoke half; the coverage-delta half stays out of scope (§ Out of scope).
 
 ## Deviations from plan
 
@@ -105,4 +106,4 @@ Phase 1 (this PR), all run locally in-container:
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
-- On the slice completing (Phase 4 blocking graduation), flip `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md` → `applied`, archive to `applied.md`, and move this plan to `docs/plans/shipped/`.
+- **Done in this PR (2026-07-16, Phase 4):** flipped `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md` → `applied` (archived into `applied.md`) and moved this plan to `docs/plans/shipped/`.
