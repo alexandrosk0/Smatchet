@@ -89,7 +89,7 @@ jobs:
 
       - name: Mutation-smoke gate (assertion strength, Slice F)
         # BLOCKING: reuses the configured+built ninja-tsan-linux tree to run the
-        # assertion-strength sweep (docs/plans/shipped/mutation-smoke-gate.md).
+        # assertion-strength sweep (docs/plans/mutation-smoke-gate.md).
         # Nightly + manual only (not the paths-scoped PR trigger) per the plan's
         # cadence decision. Graduated from advisory to blocking (Phase 4) after 3
         # consecutive clean advisory nightly runs (2026-07-14/15/16, all 33/33
