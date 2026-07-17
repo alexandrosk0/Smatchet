@@ -96,6 +96,19 @@ python scripts/dev/verifier-calibrate.py --scores scores.json --labels labels.js
 
 `trace.json` is the replayable evidence of that run; accumulate traces + labels and the calibration report is what justifies flipping any part of the verifier from advisory to blocking.
 
+### Smoke-testing the live path
+
+`scripts/dev/verifier-endpoint.py` is a dependency-free, OpenAI-compatible `/chat/completions` server that serves **deterministic canned responses**, so the whole loop can run over real HTTP with no model, API key, or GPU:
+
+```sh
+python scripts/dev/verifier-endpoint.py --port 8900 &
+VERIFIER_BASE_URL=http://127.0.0.1:8900 \
+  python scripts/dev/verifier-produce.py job.json --model stub \
+  | python scripts/dev/verifier-sidecar.py aggregate -
+```
+
+Each answer is a hash of the request shaped into a plausible single-token A-T distribution, so it exercises both producer modes (logprobs and scalar) and gives the sidecar real spread — but it is **not a model** and its scores carry no judgement, so it proves the *wiring*, not calibration quality. `--fixed A` pins every answer (handy for a known-score smoke test); with no `--port` it binds an ephemeral port and prints `endpoint: http://…` for a caller to capture. For the fine-grained logprobs path against a real self-hosted model, point `VERIFIER_BASE_URL` at a logprob-capable backend (vLLM / SGLang) instead.
+
 ## Operating rules
 
 1. **Gate, do not trust.** A high verifier score never overrules CI, sanitizer, lint, CodeRabbit, Bugbot, user comments, merge-gates, or explicit human authority.
