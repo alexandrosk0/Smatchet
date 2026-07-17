@@ -960,6 +960,47 @@ void McpPlugin::HandleJsonRpcToolsCall(const std::string& remote, const nlohmann
     }
 }
 
+nlohmann::json McpPlugin::BuildToolCatalogJson() const {
+    nlohmann::json toolList = nlohmann::json::array();
+
+    // Unified Command System — canonical command catalog. Legacy names
+    // `list_active_tickets` / `search_active_tickets` are aliases on the matching
+    // registry commands, so they route through tools/call without a duplicate entry.
+    const auto registryCommands = impl_->app->Commands().All();
+    std::transform(registryCommands.begin(), registryCommands.end(), std::back_inserter(toolList), [](const auto& c) {
+        return nlohmann::json{{"name", c.Name}, {"description", c.Summary}, {"inputSchema", c.BuildJsonSchema()}};
+    });
+
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    if (impl_->allow_lua_execution) {
+        toolList.push_back(BuildRunLuaToolEntry());
+    }
+    const auto tools = impl_->app->GetLuaBindingHost()->GetLuaMcpTools();
+    std::transform(tools.begin(), tools.end(), std::back_inserter(toolList), [](const auto& t) {
+        return nlohmann::json{{"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
+    });
+#endif
+    return toolList;
+}
+
+void McpPlugin::HandleJsonRpcResourcesRead(const nlohmann::json& params, nlohmann::json& jres) {
+    const std::string uri = params.value("uri", std::string());
+    if (uri == "smatchet://commands") {
+        // The command catalog is generated in-process (no shipped-binary
+        // filesystem dependency) — serialize the SAME array tools/list returns.
+        nlohmann::json entry;
+        entry["uri"] = uri;
+        entry["mimeType"] = "application/json";
+        entry["text"] = BuildToolCatalogJson().dump();
+        nlohmann::json contents = nlohmann::json::array();
+        contents.push_back(entry);
+        jres["result"]["contents"] = contents;
+    } else {
+        jres["error"] = {{"code", -32602},
+                         {"message", std::string("Unknown resource URI: ") + TruncateOneLine(uri, 120)}};
+    }
+}
+
 void McpPlugin::RegisterJsonRpcRoutes() {
     // Streamable HTTP clients (e.g. Cursor) POST JSON-RPC to the same URL as the SSE endpoint; legacy clients
     // POST to /mcp/messages after reading the endpoint event from GET /mcp/sse.
@@ -1005,41 +1046,42 @@ void McpPlugin::RegisterJsonRpcRoutes() {
                 if (negotiatedProtocol.empty()) {
                     negotiatedProtocol = "2024-11-05";
                 }
-                jres["result"] = {{"protocolVersion", negotiatedProtocol},
-                                  {"capabilities", {{"tools", nlohmann::json::object()}}},
-                                  {"serverInfo", {{"name", "Smatchet"}, {"version", "1.2"}}}};
+                jres["result"] = {
+                    {"protocolVersion", negotiatedProtocol},
+                    {"capabilities", {{"tools", nlohmann::json::object()}, {"resources", nlohmann::json::object()}}},
+                    {"serverInfo", {{"name", "Smatchet"}, {"version", "1.2"}}}};
                 AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC initialize ok remote=") + req.remote_addr +
                                                       " protocol=" + TruncateOneLine(negotiatedProtocol, 64));
             } else if (method == "tools/list") {
-                nlohmann::json toolList = nlohmann::json::array();
-
-                // Unified Command System — canonical command catalog. Legacy names
-                // `list_active_tickets` / `search_active_tickets` are aliases on the
-                // matching registry commands, so they continue to route through
-                // tools/call without needing a duplicate tools/list entry.
-                const auto registryCommands = impl_->app->Commands().All();
-                std::transform(
-                    registryCommands.begin(), registryCommands.end(), std::back_inserter(toolList), [](const auto& c) {
-                        return nlohmann::json{
-                            {"name", c.Name}, {"description", c.Summary}, {"inputSchema", c.BuildJsonSchema()}};
-                    });
-
-#if defined(SMATCHET_WITH_LUA_AUTOMATION)
-                if (impl_->allow_lua_execution) {
-                    toolList.push_back(BuildRunLuaToolEntry());
-                }
-                const auto tools = impl_->app->GetLuaBindingHost()->GetLuaMcpTools();
-                std::transform(tools.begin(), tools.end(), std::back_inserter(toolList), [](const auto& t) {
-                    return nlohmann::json{
-                        {"name", t.name}, {"description", t.description}, {"inputSchema", t.parametersSchema}};
-                });
-#endif
+                const nlohmann::json toolList = BuildToolCatalogJson();
                 jres["result"] = {{"tools", toolList}};
                 AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC tools/list ok remote=") + req.remote_addr +
                                                       " tools=" + std::to_string(toolList.size()));
             } else if (method == "tools/call") {
                 const auto params = jreq.value("params", nlohmann::json::object());
                 HandleJsonRpcToolsCall(req.remote_addr, params, jres);
+            } else if (method == "resources/list") {
+                // In-process resources only (P2): the command catalog is the one
+                // resource always available in a shipped binary; dev-repo docs are
+                // NOT on disk beside the app, so they are deliberately not exposed.
+                nlohmann::json resource;
+                resource["uri"] = "smatchet://commands";
+                resource["name"] = "Smatchet command catalog";
+                resource["description"] =
+                    "The full Smatchet command registry (same catalog as tools/list) as a JSON array of "
+                    "{name, description, inputSchema}. Read it to orient before calling tools/call.";
+                resource["mimeType"] = "application/json";
+                nlohmann::json resourceList = nlohmann::json::array();
+                resourceList.push_back(resource);
+                jres["result"]["resources"] = resourceList;
+                AppendMcpActivityLine(impl_->app,
+                                      std::string("MCP: JSON-RPC resources/list ok remote=") + req.remote_addr);
+            } else if (method == "resources/read") {
+                const auto params = jreq.value("params", nlohmann::json::object());
+                HandleJsonRpcResourcesRead(params, jres);
+                AppendMcpActivityLine(impl_->app,
+                                      std::string("MCP: JSON-RPC resources/read remote=") + req.remote_addr +
+                                          " uri=" + TruncateOneLine(params.value("uri", std::string()), 120));
             } else {
                 jres["error"] = {{"code", -32601}, {"message", "Method not found"}};
                 AppendMcpActivityLine(impl_->app, std::string("MCP: JSON-RPC FAIL remote=") + req.remote_addr +

@@ -99,6 +99,18 @@ class McpPlugin : public IPlugin {
     /// JSON-RPC `tools/call` `run_lua` arm: execute (or reject) a Lua snippet/script into `jres`.
     void HandleJsonRpcRunLua(const nlohmann::json& params, const std::string& rpcRemote, nlohmann::json& jres);
 
+    /// The canonical tool/command catalog as a JSON array of {name, description,
+    /// inputSchema} — the single source shared by `tools/list` and the
+    /// `smatchet://commands` resource (`resources/read`) so the two can never
+    /// drift. Includes the Lua tool entries when Lua automation is compiled in.
+    nlohmann::json BuildToolCatalogJson() const;
+
+    /// JSON-RPC `resources/read` arm: serve the in-process `smatchet://commands`
+    /// resource (the command catalog) into `jres`, or a -32602 for an unknown
+    /// URI. Resources are in-process only (no shipped-binary filesystem
+    /// dependency) — AGENTIC_INFRA_AUDIT.md Proposal P2.
+    void HandleJsonRpcResourcesRead(const nlohmann::json& params, nlohmann::json& jres);
+
     int port_;
     struct Impl;
     std::unique_ptr<Impl> impl_;
