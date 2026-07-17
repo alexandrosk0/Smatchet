@@ -22,7 +22,7 @@
 
 #include "CachedTicketTypes.h" // POD: no SQLite, no HTTP, no ImGui
 #include "Commands/CommandRegistry.h"
-#include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — #21 outError → Result flip)
+#include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — outError → Result flip)
 #include "TrackerFieldSchema.h" // TrackerField — POD
 
 // Narrow app facets carried by the command context (declared in

@@ -17,7 +17,7 @@
 
 #include "CachedTicketTypes.h" // CachedTicket (rank-0) — snapshot element
 #include "CancelToken.h"       // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
-#include "SmatchetResult.h"    // VoidResult (SubmitFieldEdit — #21 outError → Result flip)
+#include "SmatchetResult.h"    // VoidResult (SubmitFieldEdit — outError → Result flip)
 
 #include <cstdint>
 #include <future>
