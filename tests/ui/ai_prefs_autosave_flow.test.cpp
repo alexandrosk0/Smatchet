@@ -27,9 +27,11 @@
 //      asserting the "Verified" result line. No frame-budget poll, no host
 //      coupling — only the AppController-availability skip guard remains.
 //   3. VerifyOnSave_CancelOnClose_ShortCircuits (SECONDARY, informational) —
-//      kicks off the probe per V2 then closes Preferences mid-flight; asserts
-//      the in-flight flag clears and the result line stays empty per the
-//      cancel atom short-circuit. Skip-with-log on host-coupling failure.
+//      kicks off the probe per V2, sets the cancel atom, then deterministically
+//      joins the worker post-back and Drains the dispatcher (same hard-sync as V2,
+//      never a frame-budget yield) before closing Preferences; asserts the result
+//      line stays at the initial "Testing..." (type 0) per the cancel short-circuit.
+//      Skip-with-log on host-coupling failure.
 
 #if defined(SMATCHET_BUILD_UI_TESTS) && defined(SMATCHET_WITH_AI)
 
@@ -262,11 +264,10 @@ void RegisterVerifyOnSaveTestConnectionVariant(ImGuiTestEngine* engine) {
         // for the synchronous stub, so a healthy run never approaches it and it
         // cannot reintroduce the flake the old 240-yield poll had.
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (app->mainThreadDispatcher.QueueLen() == 0 &&
-               std::chrono::steady_clock::now() < deadline) {
+        while (app->mainThreadDispatcher.QueueLen() == 0 && std::chrono::steady_clock::now() < deadline) {
             std::this_thread::yield();
         }
-        IM_CHECK(app->mainThreadDispatcher.QueueLen() > 0);  // worker posted back
+        IM_CHECK(app->mainThreadDispatcher.QueueLen() > 0); // worker posted back
         app->mainThreadDispatcher.Drain();
 
         AiClientFactory::SetTestOverride(nullptr);
@@ -297,9 +298,25 @@ void RegisterVerifyOnSaveCancelOnCloseVariant(ImGuiTestEngine* engine) {
         g_ui.assistantPrefsTestCancel->store(true, std::memory_order_release);
         g_stubRelease.store(true, std::memory_order_release);
 
-        for (int i = 0; i < 240; ++i) {
-            ctx->Yield();
+        // Deterministic completion — the same hard synchronization the sibling
+        // VerifyOnSave_TestConnection variant uses (lines above), NOT a frame-budget
+        // yield loop. The background task ALWAYS posts PublishProbeResult back
+        // (AiPrefsTestConnection.cpp:143-147) even when cancelled — the cancel atom
+        // only short-circuits INSIDE PublishProbeResult (AiPrefsTestConnection.cpp:91-93).
+        // The old 240-`ctx->Yield()` loop returned WITHOUT waiting for that post or
+        // draining it: the worker could still be inside RunProbe (reading the factory
+        // override) when SetTestOverride(nullptr) cleared it below, and the queued
+        // callback outlived the test — a teardown race that abort()s the whole
+        // bucket-E child under llvmpipe software-GL timing (a dead-harness parse-miss,
+        // not a real per-test failure). Block on the post event, then Drain so nothing
+        // is left in flight to race at teardown. The 5s deadline is a SAFETY bound (the
+        // gated stub posts within ~1 ms of the release store above), never a frame budget.
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (app->mainThreadDispatcher.QueueLen() == 0 && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::yield();
         }
+        IM_CHECK(app->mainThreadDispatcher.QueueLen() > 0); // worker posted back (even when cancelled)
+        app->mainThreadDispatcher.Drain();                  // runs PublishProbeResult (cancel short-circuits)
 
         AiClientFactory::SetTestOverride(nullptr);
         g_ui.showPreferences = false;
