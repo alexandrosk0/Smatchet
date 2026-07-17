@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-mutation-smoke.sh — local/CI mirror for the mutation-smoke harness+corpus
-# (docs/plans/active/mutation-smoke-gate.md). Auto-enrolled by test-all.sh via the
+# (docs/plans/mutation-smoke-gate.md). Auto-enrolled by test-all.sh via the
 # test-*.sh glob and by the Agentic self-tests lane. Validates the harness WITHOUT
 # a TSan build: corpus JSON validity, `--list`, and (on a clean tree) the
 # `--dry-run` apply/revert mechanics + tree-clean invariant. The real
