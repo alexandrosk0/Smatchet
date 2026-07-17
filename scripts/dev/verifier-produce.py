@@ -46,6 +46,8 @@
 #   python scripts/dev/verifier-produce.py job.json --responses recorded.json  # offline replay
 #   python scripts/dev/verifier-produce.py job.json --record trace.json         # tee a live run's
 #                                                    # responses to a replayable calibration trace
+#   python scripts/dev/verifier-produce.py job.json --strict                    # fail on a backend
+#                                                    # that returns degenerate (placeholder) logprobs
 #   python scripts/dev/verifier-produce.py --selftest
 #
 # selftest: asserts-failure
@@ -256,9 +258,26 @@ class RecordingTransport(Transport):
 
 # --- scoring ---------------------------------------------------------------
 
+_DEGENERATE_LOGPROB = -100.0  # real logprobs sit well above this; placeholders
+                              # like -9999 (seen from some backends) fall below.
+
+
+def is_degenerate(dist: Dict[str, float]) -> bool:
+    """A logprob distribution carries no usable signal when it has fewer than two
+    tokens, only one distinct value, or every non-top token is a placeholder far
+    below any real logprob — the pattern some backends emit instead of scoring."""
+    if len(dist) < 2:
+        return True
+    values = sorted(dist.values(), reverse=True)
+    if len({round(v, 6) for v in values}) < 2:
+        return True
+    return all(v <= _DEGENERATE_LOGPROB for v in values[1:])
+
+
 def score_criterion(
     transport: Transport, model: str, problem: str, candidate_text: str,
     criterion: str, rubric: str, mode: str, temperature: float,
+    strict: bool = False,
 ) -> Any:
     body: Dict[str, Any] = {
         "model": model,
@@ -271,11 +290,18 @@ def score_criterion(
         body["top_logprobs"] = GRANULARITY
     response = transport.call(body)
     if mode == "logprobs":
-        return {"logprobs": extract_logprobs(response)}
+        dist = extract_logprobs(response)
+        if strict and is_degenerate(dist):
+            raise ProduceError(
+                f"backend returned degenerate logprobs for criterion {criterion!r} "
+                f"(no usable distribution: {dist}); rerun with --mode scalar"
+            )
+        return {"logprobs": dist}
     return extract_scalar(response)
 
 
-def produce(job: Any, transport: Transport, model: str, mode: str) -> Dict[str, Any]:
+def produce(job: Any, transport: Transport, model: str, mode: str,
+            strict: bool = False) -> Dict[str, Any]:
     if not isinstance(job, dict):
         raise ProduceError("job must be a JSON object")
     problem = str(job.get("problem", "")).strip()
@@ -315,7 +341,7 @@ def produce(job: Any, transport: Transport, model: str, mode: str) -> Dict[str, 
             for name in criteria:
                 crit_scores[name] = score_criterion(
                     transport, model, problem, text, name, DEFAULT_CRITERIA[name],
-                    mode, temperature,
+                    mode, temperature, strict,
                 )
             samples.append({"criteria": crit_scores})
         out_candidates.append({"id": cid, "samples": samples})
@@ -382,6 +408,24 @@ def selftest() -> None:
     out_replay = produce(job, ReplayTransport(rec.recorded), model="stub", mode="logprobs")
     assert out_replay == out_rec, (out_replay, out_rec)
 
+    # (3c) degenerate-logprobs detection + --strict. A real distribution passes;
+    #      a single token, a flat distribution, and -9999 placeholders are caught.
+    assert not is_degenerate({"A": math.log(0.85), "B": math.log(0.15)}), "real dist flagged"
+    assert is_degenerate({"A": 0.0}), "single token not flagged"
+    assert is_degenerate({"A": -1.0, "B": -1.0}), "flat dist not flagged"
+    assert is_degenerate({"A": 0.0, "B": -9999.0, "C": -9999.0}), "placeholders not flagged"
+    degen = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [{
+        "token": "A", "logprob": 0.0, "top_logprobs": [
+            {"token": "A", "logprob": 0.0}, {"token": "B", "logprob": -9999.0}]}]}}]}
+    # non-strict tolerates it (best-effort); strict rejects it.
+    assert produce(job, ReplayTransport([degen, degen]), "stub", "logprobs")  # tolerated
+    try:
+        produce(job, ReplayTransport([degen, degen]), "stub", "logprobs", strict=True)
+    except ProduceError:
+        pass
+    else:
+        raise AssertionError("--strict must reject degenerate logprobs")
+
     # (4) malformed inputs / responses must FAIL (selftest: asserts-failure).
     bad_cases = [
         lambda: produce({"candidates": []}, replay, "stub", "logprobs"),          # no problem
@@ -438,6 +482,9 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--record", default=None,
                         help="Write the raw model responses to this file (a --responses-compatible "
                              "replay trace for offline re-runs and calibration).")
+    parser.add_argument("--strict", action="store_true",
+                        help="In logprobs mode, fail if the backend returns a degenerate "
+                             "distribution (e.g. -9999 placeholders) instead of scoring garbage.")
     parser.add_argument("--selftest", action="store_true", help="Run the deterministic self-test.")
     args = parser.parse_args(argv)
 
@@ -464,10 +511,15 @@ def main(argv: List[str]) -> int:
             raise ProduceError(f"malformed job JSON: {exc}") from exc
         transport = build_transport(args)
         recorder = RecordingTransport(transport) if args.record else None
-        out = produce(job, recorder or transport, model=model or "stub", mode=args.mode)
-        if recorder is not None:
-            with open(args.record, "w", encoding="utf-8") as f:
-                json.dump(recorder.recorded, f, indent=2)
+        try:
+            out = produce(job, recorder or transport, model=model or "stub",
+                          mode=args.mode, strict=args.strict)
+        finally:
+            # Flush whatever was recorded even if --strict aborted mid-run, so the
+            # offending trace is inspectable.
+            if recorder is not None:
+                with open(args.record, "w", encoding="utf-8") as f:
+                    json.dump(recorder.recorded, f, indent=2)
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
     except (AssertionError, ProduceError, FileNotFoundError) as exc:

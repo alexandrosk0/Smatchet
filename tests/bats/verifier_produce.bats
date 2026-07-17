@@ -12,6 +12,7 @@
 #     with per-criterion {logprobs};
 #   * the output pipes straight into verifier-sidecar.py aggregate - (stdin);
 #   * scalar mode emits plain floats;
+#   * --strict rejects a degenerate (placeholder) logprob distribution;
 #   * malformed input / missing backend fail with exit 2.
 # Docs: docs/agent-rules/verifier-sidecar.md.
 #
@@ -97,6 +98,26 @@ sc = d["candidates"][0]["samples"][0]["criteria"]
 assert sc["security"] == 1.0, sc
 assert isinstance(sc["correctness"], float), sc
 PY
+}
+
+@test "--strict rejects degenerate logprobs and still flushes the trace" {
+    # Four -9999 placeholder distributions (the pattern some backends emit) — one
+    # per call so the non-strict run can complete all 4.
+    "$PY" - "$WORK/degen.json" <<'PY'
+import json, sys
+d = {"choices":[{"message":{"content":"A"},"logprobs":{"content":[{
+    "token":"A","logprob":0.0,
+    "top_logprobs":[{"token":"A","logprob":0.0},{"token":"B","logprob":-9999.0}]}]}}]}
+json.dump([d, d, d, d], open(sys.argv[1], "w"))
+PY
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/degen.json" --strict --record "$WORK/degen-trace.json"
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"degenerate logprobs"* ]]
+    # --record flushed the offending trace even though the run aborted.
+    [ -s "$WORK/degen-trace.json" ]
+    # Without --strict the same responses are tolerated (best-effort).
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/degen.json"
+    [ "$status" -eq 0 ]
 }
 
 @test "malformed job fails with exit 2" {
