@@ -96,11 +96,9 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit regular success applies opt
     rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
 
     const TrackerField field = MakeTextField("summary");
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", field, {"new summary"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", field, {"new summary"});
 
-    CHECK(ok);
-    CHECK(err.empty());
+    CHECK(r.has_value());
     REQUIRE(rig.fieldDeps.UpdatedTickets.size() == 1);
     CHECK(rig.fieldDeps.UpdatedTickets.front().GetFieldValue("summary") == "new summary");
     CHECK(rig.fieldDeps.DeferredNotifyCalls >= 1);
@@ -124,11 +122,10 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked by read-only mode")
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new"});
 
-    CHECK_FALSE(ok);
-    CHECK(err.find("Read-only") != std::string::npos);
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error().find("Read-only") != std::string::npos);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
     CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
 }
@@ -143,11 +140,10 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit blocked when editmeta denie
     // Loaded editmeta that explicitly DENIES summary.
     rig.editMetaDeps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", false}});
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new"});
 
-    CHECK_FALSE(ok);
-    CHECK(err.find("edit metadata") != std::string::npos);
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error().find("edit metadata") != std::string::npos);
     CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
 }
@@ -165,10 +161,9 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit retries after a 400 once ed
     // editmeta allows summary throughout (the regular branch's pre-check + the post-400 re-check).
     rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new summary"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeTextField("summary"), {"new summary"});
 
-    CHECK(ok);
+    CHECK(r.has_value());
     CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 2); // initial + retry
     REQUIRE(rig.fieldDeps.UpdatedTickets.size() == 1);
     CHECK(rig.fieldDeps.UpdatedTickets.front().GetFieldValue("summary") == "new summary");
@@ -183,10 +178,9 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprin
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.fieldDeps.Fake()->SetDefaultAddIssueToSprintResult(true);
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {"42"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {"42"});
 
-    CHECK(ok);
+    CHECK(r.has_value());
     CHECK(rig.fieldDeps.Fake()->AddIssueToSprintCallCount() == 1);
     CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0); // sprint path never PUTs fields
     REQUIRE(rig.fieldDeps.UpdatedTickets.size() == 1);
@@ -196,17 +190,17 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch adds to sprin
 
 // The sprint + timetracking branch helpers migrated from `bool + outError` to VoidResult
 // (build-quality-velocity-hardening #21). These pin the migrated Err paths as they surface
-// back through the public SubmitFieldEdit bool + outError contract (via VoidResultToBool).
+// back through the public SubmitFieldEdit VoidResult contract (#21 AppController flip — the public
+// API is now VoidResult too, so the branch helpers' Err propagates directly, no bool adapter).
 TEST_CASE("FieldEditPipelineService::SubmitFieldEdit sprint branch rejects clearing (empty values)") {
     OfflineQueueTestEnvGuard env;
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeSprintField(), {});
 
-    CHECK_FALSE(ok);
-    CHECK(err == "Clearing sprint is not supported by this action.");
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error() == "Clearing sprint is not supported by this action.");
     CHECK(rig.fieldDeps.Fake()->AddIssueToSprintCallCount() == 0); // rejected before any backend call
 }
 
@@ -215,11 +209,10 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch rejects
     Rig rig;
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {});
 
-    CHECK_FALSE(ok);
-    CHECK(err == "Clearing Jira timetracking estimates is not supported by this editor.");
+    CHECK_FALSE(r.has_value());
+    CHECK(r.error() == "Clearing Jira timetracking estimates is not supported by this editor.");
     CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
 }
 
@@ -232,10 +225,9 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEdit timetracking branch writes 
     rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
     rig.fieldDeps.Fake()->SetDefaultUpdateIssueFieldsResult(true);
 
-    std::string err;
-    const bool ok = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {"3d"}, err);
+    const VoidResult r = rig.svc.SubmitFieldEdit("ABC-1", MakeTimetrackingField(), {"3d"});
 
-    CHECK(ok);
+    CHECK(r.has_value());
     REQUIRE(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 1);
     const auto& call = rig.fieldDeps.Fake()->UpdateIssueFieldsCalls().front();
     REQUIRE(call.Fields.contains("timetracking"));

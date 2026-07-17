@@ -57,10 +57,9 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& a
                 return CommandResult::Failure(ErrorCode::NotFound, "Field '" + field + "' not found in catalog.",
                                               "Run fields.refresh_catalog first.");
             }
-            std::string err;
-            const bool ok = app.SubmitFieldEdit(id, *fieldMeta, {value}, err);
-            if (!ok) {
-                return CommandResult::Failure(ErrorCode::BackendError, "Field edit failed: " + err,
+            const VoidResult r = app.SubmitFieldEdit(id, *fieldMeta, {value});
+            if (!r.has_value()) {
+                return CommandResult::Failure(ErrorCode::BackendError, "Field edit failed: " + r.error(),
                                               "Check tracker connectivity.");
             }
             return CommandResult::Success({{"ok", true}});
@@ -154,10 +153,9 @@ static void RegisterTransitionCommand(CommandRegistry& reg, IAppTicketMutations&
                             return CommandResult::Failure(ErrorCode::NotFound, "Status field not found in catalog.",
                                                           "Run fields.refresh_catalog first.");
                         }
-                        std::string err;
-                        const bool ok = app.SubmitFieldEdit(id, *statusField, {toStatus}, err);
-                        if (!ok) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Transition failed: " + err);
+                        const VoidResult r = app.SubmitFieldEdit(id, *statusField, {toStatus});
+                        if (!r.has_value()) {
+                            return CommandResult::Failure(ErrorCode::BackendError, "Transition failed: " + r.error());
                         }
                         return CommandResult::Success({{"ok", true}});
                     });
@@ -172,33 +170,31 @@ static void RegisterTransitionCommand(CommandRegistry& reg, IAppTicketMutations&
 }
 
 static void RegisterSetFieldsCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c =
-        MakeCommand("ticket.set_fields", "Update multiple fields on a ticket in one call.",
-                    [&app](const nlohmann::json& args, const CommandContext& ctx) {
-                        const std::string id = args.value("id", std::string());
-                        const nlohmann::json fieldsMap = args.value("fields", nlohmann::json::object());
-                        if (!fieldsMap.is_object()) {
-                            return CommandResult::Failure(ErrorCode::ValidationError,
-                                                          "'fields' must be a JSON object of {fieldId: value}.");
-                        }
-                        if (ctx.DryRun) {
-                            return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"fields", fieldsMap}}}});
-                        }
-                        nlohmann::json results = nlohmann::json::object();
-                        for (const auto& kv : fieldsMap.items()) {
-                            const TrackerField* f = app.FindFieldById(kv.key());
-                            if (!f) {
-                                results[kv.key()] = {{"ok", false}, {"error", "field not found"}};
-                                continue;
-                            }
-                            std::string val =
-                                kv.value().is_string() ? kv.value().get<std::string>() : kv.value().dump();
-                            std::string err;
-                            const bool ok = app.SubmitFieldEdit(id, *f, {val}, err);
-                            results[kv.key()] = {{"ok", ok}, {"error", err}};
-                        }
-                        return CommandResult::Success({{"results", results}});
-                    });
+    Command c = MakeCommand(
+        "ticket.set_fields", "Update multiple fields on a ticket in one call.",
+        [&app](const nlohmann::json& args, const CommandContext& ctx) {
+            const std::string id = args.value("id", std::string());
+            const nlohmann::json fieldsMap = args.value("fields", nlohmann::json::object());
+            if (!fieldsMap.is_object()) {
+                return CommandResult::Failure(ErrorCode::ValidationError,
+                                              "'fields' must be a JSON object of {fieldId: value}.");
+            }
+            if (ctx.DryRun) {
+                return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"fields", fieldsMap}}}});
+            }
+            nlohmann::json results = nlohmann::json::object();
+            for (const auto& kv : fieldsMap.items()) {
+                const TrackerField* f = app.FindFieldById(kv.key());
+                if (!f) {
+                    results[kv.key()] = {{"ok", false}, {"error", "field not found"}};
+                    continue;
+                }
+                std::string val = kv.value().is_string() ? kv.value().get<std::string>() : kv.value().dump();
+                const VoidResult r = app.SubmitFieldEdit(id, *f, {val});
+                results[kv.key()] = {{"ok", r.has_value()}, {"error", r.has_value() ? std::string() : r.error()}};
+            }
+            return CommandResult::Success({{"results", results}});
+        });
     c.Destructive = true;
     c.Idempotent = false;
     c.DryRunSupported = true;

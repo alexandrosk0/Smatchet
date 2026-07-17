@@ -648,9 +648,9 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) { editMet
 // TryBuildFieldEditPayloadForNetwork (all service-private now). `fieldEdit_` is constructed eagerly
 // in Initialize, so it is non-null for every call after startup.
 
-bool AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                    const std::vector<std::string>& rawValues, std::string& outError) {
-    return fieldEdit_->SubmitFieldEdit(issueId, field, rawValues, outError);
+VoidResult AppController::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                          const std::vector<std::string>& rawValues) {
+    return fieldEdit_->SubmitFieldEdit(issueId, field, rawValues);
 }
 
 bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,

@@ -238,14 +238,11 @@ struct FakeMutations : IAppTicketMutations {
     const TrackerField* FindFieldById(const std::string& fieldId) const override {
         return fieldId == "status" ? &StatusField : nullptr;
     }
-    bool SubmitFieldEdit(const std::string& issueId, const TrackerField&, const std::vector<std::string>& rawValues,
-                         std::string& outError) override {
+    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField&,
+                               const std::vector<std::string>& rawValues) override {
         LastEditIssue = issueId;
         LastEditValues = rawValues;
-        if (!SubmitOk) {
-            outError = "edit rejected";
-        }
-        return SubmitOk;
+        return SubmitOk ? VoidOk() : VoidResult::Err("edit rejected");
     }
     bool AddIssueCommentPlain(const std::string&, const std::string&, std::string& outError) override {
         if (!CommentOk) {

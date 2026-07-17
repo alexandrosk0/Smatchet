@@ -28,16 +28,6 @@
 
 namespace {
 
-// Adapt a branch helper's VoidResult back onto the public SubmitFieldEdit's bool + outError
-// contract (the public API stays unchanged; only the private branch helpers migrated to
-// VoidResult — build-quality-velocity-hardening #21).
-bool VoidResultToBool(const VoidResult& r, std::string& outError) {
-    if (!r.has_value()) {
-        outError = r.error();
-    }
-    return r.has_value();
-}
-
 // COPIED (internal linkage) from AppController_CatalogAndFieldEdit.cpp — also copied in
 // EditMetaCacheService.cpp. Anonymous-namespace internal linkage in each TU → no ODR clash.
 bool IsSprintField(const TrackerField& field) {
@@ -413,32 +403,28 @@ VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEdi
     return VoidOk();
 }
 
-bool FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                               const std::vector<std::string>& rawValues, std::string& outError) {
+VoidResult FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                                     const std::vector<std::string>& rawValues) {
     std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked by read-only mode issue=%s field=%s",
                  issueId.c_str(), field.Id.c_str());
-        return false;
+        return VoidResult::Err("Read-only mode is enabled in Preferences.");
     }
     if (!backend || !deps_.HasCache()) {
-        outError = "Backend or cache is not initialized.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit skipped issue=%s field=%s: %s", issueId.c_str(),
-                 field.Id.c_str(), outError.c_str());
-        return false;
+                 field.Id.c_str(), "Backend or cache is not initialized.");
+        return VoidResult::Err("Backend or cache is not initialized.");
     }
     if (issueId.empty()) {
-        outError = "Issue id is empty.";
-        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(), outError.c_str());
-        return false;
+        LOG_WARN("FieldEditPipelineService::SubmitFieldEdit skipped field=%s: %s", field.Id.c_str(),
+                 "Issue id is empty.");
+        return VoidResult::Err("Issue id is empty.");
     }
 
     ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
-        outError = "Tracker backend does not support issue mutations.";
-        return false;
+        return VoidResult::Err("Tracker backend does not support issue mutations.");
     }
 
     const std::string fieldEditAuditOp = BackendAuditTrail::MakeOperationId("field-edit");
@@ -457,21 +443,20 @@ bool FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId, const
         issueId, field, rawValues, values, mutations, backend, ticketsSnap, fieldEditAuditOp, fieldEditAuditSource};
 
     if (IsSprintField(field)) {
-        return VoidResultToBool(SubmitFieldEditSprint(ctx), outError);
+        return SubmitFieldEditSprint(ctx);
     }
 
     if (IsNonEditableTimetrackingFieldId(field.Id)) {
-        outError = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEdit blocked non-editable timetracking issue=%s field=%s",
                  issueId.c_str(), field.Id.c_str());
-        return false;
+        return VoidResult::Err("This Jira time field is derived or worklog-backed and cannot be edited directly.");
     }
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        return VoidResultToBool(SubmitFieldEditTimetracking(ctx), outError);
+        return SubmitFieldEditTimetracking(ctx);
     }
 
-    return VoidResultToBool(SubmitFieldEditRegular(ctx), outError);
+    return SubmitFieldEditRegular(ctx);
 }
 
 bool FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,

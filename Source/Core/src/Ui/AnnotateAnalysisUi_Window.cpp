@@ -829,8 +829,9 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
             const std::string capturedAccountId = State().assignAccountId;
             const TrackerField fieldCopy = *f;
             app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy]() {
-                std::string err;
-                const bool ok = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
+                const VoidResult r = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
+                const bool ok = r.has_value();
+                const std::string err = ok ? std::string() : r.error();
                 app.PostToMainThread([ok, err, capturedIssueKey]() {
                     if (!HasLiveStateInstance()) {
                         return;
@@ -965,7 +966,11 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
             const AnnotateRow capturedRow = State().assignRow;
             app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
                 std::string err;
-                const bool assigned = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId}, err);
+                const VoidResult assignResult = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
+                const bool assigned = assignResult.has_value();
+                if (!assigned) {
+                    err = assignResult.error();
+                }
                 bool commented = false;
                 if (assigned) {
                     commented = app.AddIssueCommentAnnotateContext(

@@ -75,13 +75,12 @@ std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket
     if (!fieldMeta) {
         return {false, "Field not found in tracker catalog: " + fieldId};
     }
-    std::string err;
     std::vector<std::string> vals;
     if (!val.empty()) {
         vals.push_back(val);
     }
-    const bool ok = host->SubmitFieldEdit(t.id, *fieldMeta, vals, err);
-    return {ok, err};
+    const VoidResult r = host->SubmitFieldEdit(t.id, *fieldMeta, vals);
+    return {r.has_value(), r.has_value() ? std::string() : r.error()};
 }
 
 std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t, const std::string& statusName) {
@@ -95,9 +94,8 @@ std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTick
     if (!statusField) {
         return {false, "Tracker 'status' field meta not found"};
     }
-    std::string err;
-    const bool ok = host->SubmitFieldEdit(t.id, *statusField, {statusName}, err);
-    return {ok, err};
+    const VoidResult r = host->SubmitFieldEdit(t.id, *statusField, {statusName});
+    return {r.has_value(), r.has_value() ? std::string() : r.error()};
 }
 
 void LuaLogInfoGlue(sol::this_state L, std::string msg) {
