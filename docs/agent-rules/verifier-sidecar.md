@@ -109,6 +109,25 @@ VERIFIER_BASE_URL=http://127.0.0.1:8900 \
 
 Each answer is a hash of the request shaped into a plausible single-token A-T distribution, so it exercises both producer modes (logprobs and scalar) and gives the sidecar real spread — but it is **not a model** and its scores carry no judgement, so it proves the *wiring*, not calibration quality. `--fixed A` pins every answer (handy for a known-score smoke test); with no `--port` it binds an ephemeral port and prints `endpoint: http://…` for a caller to capture. For the fine-grained logprobs path against a real self-hosted model, point `VERIFIER_BASE_URL` at a logprob-capable backend (vLLM / SGLang) instead.
 
+### Using DeepSeek
+
+DeepSeek's API is OpenAI-compatible, so the producer talks to it unchanged — it is just configuration:
+
+```sh
+export VERIFIER_BASE_URL=https://api.deepseek.com   # the producer appends /chat/completions
+export VERIFIER_MODEL=deepseek-chat                 # V3 — supports logprobs + top_logprobs (≤ 20)
+export VERIFIER_API_KEY=sk-...                       # your DeepSeek key (never commit it)
+
+python scripts/dev/verifier-produce.py job.json --record trace.json --strict \
+  | python scripts/dev/verifier-sidecar.py aggregate -
+```
+
+- **`deepseek-chat` (V3)** is the logprobs-capable model — use the default logprobs mode. `top_logprobs` maxes out at 20, exactly the producer's A-T granularity.
+- **`deepseek-reasoner` (R1)** does **not** support `logprobs` or `temperature`; run it with `--mode scalar`.
+- **`--strict`** guards against a backend that returns *degenerate* logprobs — some DeepSeek versions have been reported to emit placeholder values (e.g. `-9999`) instead of a real distribution. With `--strict` the run fails loudly (`--record` still flushes the offending trace) instead of silently scoring garbage; drop to `--mode scalar` if that happens (the single-letter answer is still clean).
+
+Everything downstream (`--record` → `verifier-calibrate.py`) is identical to any other backend.
+
 ## Operating rules
 
 1. **Gate, do not trust.** A high verifier score never overrules CI, sanitizer, lint, CodeRabbit, Bugbot, user comments, merge-gates, or explicit human authority.
