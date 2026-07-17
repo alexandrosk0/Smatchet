@@ -180,7 +180,17 @@ reviews:
         `<!-- BEGIN auto-plan-index -->` / `<!-- END auto-plan-index -->`
         markers — do NOT suggest hand-editing rows there; a summary change
         goes in an `<!-- index-summary: ... -->` comment inside the plan file
-        and is regenerated with `test-plan-index.sh --fix`.
+        and is regenerated with `test-plan-index.sh --fix`. The links in those
+        generated rows are REAL relative filesystem paths (e.g.
+        `shipped/<slug>.md` relative to `docs/plans/`, emitted by the
+        generator's `os.path.relpath`) and are intentionally TIER-QUALIFIED so
+        they resolve to the actual file when clicked — the tier-less
+        cross-reference rule above applies ONLY to hand-written prose refs, NOT
+        to the generated INDEX table. Do NOT flag an `active/` / `shipped/` /
+        `deferred/` segment in an INDEX row as "tier coupling" and do NOT
+        suggest making an INDEX link tier-less; that would break the link
+        (there is no `docs/plans/<slug>.md` file — the file lives under a tier
+        dir).
 
   ## CodeRabbit's static-analysis tools are mostly redundant with the
   ## deferred-lint pipeline (cppcheck + clang-tidy + clang-format run on
