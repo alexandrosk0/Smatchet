@@ -54,7 +54,7 @@ Config via `VERIFIER_BASE_URL` / `VERIFIER_MODEL` / `VERIFIER_API_KEY` (or flags
 python scripts/dev/verifier-produce.py job.json | python scripts/dev/verifier-sidecar.py aggregate -
 ```
 
-`--responses <file>` replays recorded chat-completion bodies in call order, so the producer is testable with **no network** (the bats suite and `--selftest` use this).
+`--responses <file>` replays recorded chat-completion bodies in call order, so the producer is testable with **no network** (the bats suite and `--selftest` use this). `--record <file>` does the reverse on a live run: it tees every model response to a `--responses`-compatible file, so a real run captures a replayable trace for offline re-runs and for calibration.
 
 ## Where it runs first
 
@@ -73,6 +73,28 @@ python scripts/dev/verifier-produce.py job.json | python scripts/dev/verifier-si
 For best-of-N over competing candidates the helper fits **Bradley-Terry strengths** (iterative MLE over a soft-win matrix `p = sigmoid(scale·(Rᵢ−Rⱼ))`), so a win over a strong candidate counts more than one over a weak candidate; a `hard_veto` sinks a candidate below every clean one regardless of score.
 
 For larger pools, compare through a **probabilistic pivot tournament** rather than all-pairs review. The helper emits the schedule a harness executes: a random-order ring pass (each candidate gets a first comparison slot, cancelling slot bias), top-k pivot selection, and the pivot rounds — `N + k(N−k) + C(k,2)` comparisons, i.e. `O(Nk)` instead of `O(N²)`.
+
+## Calibration — advisory vs blocking
+
+`scripts/dev/verifier-calibrate.py` decides whether the verifier is trustworthy enough to promote from advisory to blocking, the same judge-vs-human posture as `agent-eval-calibrate.py` but with the metrics that fit a probabilistic forecaster. It reads a calibration set that pairs each verifier `overall_score` with a ground-truth `outcome` (1 = the candidate really was good/correct/safe, 0 = not) and reports:
+
+- **Brier score** — `mean((score − outcome)²)`, the proper score for a probability forecast;
+- **ECE** (Expected Calibration Error) — bin the scores; per bin, the gap between mean predicted score and the empirical outcome rate. "When it says 0.8, does it happen 80% of the time?";
+- **AUC** — does it rank real-good above real-bad at all?;
+- **hard-veto precision / recall** — do vetoes land on genuinely bad candidates, and catch them?
+
+Promotion is gated on all of `min_samples` / `max_brier` / `max_ece` / `min_auc`; until every threshold holds the report says `stay-advisory`. It stays a **report** (exit 0) — promotion is a human decision it informs; `--gate` makes "not yet eligible" a hard exit 1 for a CI job guarding a future blocking switch.
+
+The end-to-end loop:
+
+```sh
+python scripts/dev/verifier-produce.py job.json --record trace.json \
+  | python scripts/dev/verifier-sidecar.py aggregate - > scores.json
+# label the candidates by ground-truth outcome, then:
+python scripts/dev/verifier-calibrate.py --scores scores.json --labels labels.json
+```
+
+`trace.json` is the replayable evidence of that run; accumulate traces + labels and the calibration report is what justifies flipping any part of the verifier from advisory to blocking.
 
 ## Operating rules
 

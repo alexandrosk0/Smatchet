@@ -43,7 +43,9 @@
 # Usage:
 #   python scripts/dev/verifier-produce.py job.json
 #   python scripts/dev/verifier-produce.py job.json --mode scalar
-#   python scripts/dev/verifier-produce.py job.json --responses recorded.json  # offline
+#   python scripts/dev/verifier-produce.py job.json --responses recorded.json  # offline replay
+#   python scripts/dev/verifier-produce.py job.json --record trace.json         # tee a live run's
+#                                                    # responses to a replayable calibration trace
 #   python scripts/dev/verifier-produce.py --selftest
 #
 # selftest: asserts-failure
@@ -237,6 +239,21 @@ class ReplayTransport(Transport):
         return resp
 
 
+class RecordingTransport(Transport):
+    """Tees every response from an inner transport into `recorded` (a
+    --responses-compatible array), so a live run captures a replayable trace for
+    offline re-runs and calibration."""
+
+    def __init__(self, inner: Transport) -> None:
+        self.inner = inner
+        self.recorded: List[Dict[str, Any]] = []
+
+    def call(self, body: Dict[str, Any]) -> Dict[str, Any]:
+        resp = self.inner.call(body)
+        self.recorded.append(resp)
+        return resp
+
+
 # --- scoring ---------------------------------------------------------------
 
 def score_criterion(
@@ -356,6 +373,15 @@ def selftest() -> None:
     sc = out2["candidates"][0]["samples"][0]["criteria"]
     assert sc["security"] == 1.0 and 0.0 < sc["correctness"] < 1.0, sc
 
+    # (3b) RecordingTransport tees a --responses-compatible trace, and the trace
+    #      re-runs identically through ReplayTransport (record ⇄ replay round-trip).
+    rec = RecordingTransport(ReplayTransport(
+        [_fake_logprob_response("A", "B"), _fake_logprob_response("B", "A")]))
+    out_rec = produce(job, rec, model="stub", mode="logprobs")
+    assert len(rec.recorded) == 2, rec.recorded
+    out_replay = produce(job, ReplayTransport(rec.recorded), model="stub", mode="logprobs")
+    assert out_replay == out_rec, (out_replay, out_rec)
+
     # (4) malformed inputs / responses must FAIL (selftest: asserts-failure).
     bad_cases = [
         lambda: produce({"candidates": []}, replay, "stub", "logprobs"),          # no problem
@@ -409,6 +435,9 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--base-url", default=None, help="OpenAI-compatible base URL (or VERIFIER_BASE_URL).")
     parser.add_argument("--api-key", default=None, help="Bearer token (or VERIFIER_API_KEY).")
     parser.add_argument("--responses", default=None, help="Recorded responses JSON (offline replay).")
+    parser.add_argument("--record", default=None,
+                        help="Write the raw model responses to this file (a --responses-compatible "
+                             "replay trace for offline re-runs and calibration).")
     parser.add_argument("--selftest", action="store_true", help="Run the deterministic self-test.")
     args = parser.parse_args(argv)
 
@@ -434,7 +463,11 @@ def main(argv: List[str]) -> int:
         except json.JSONDecodeError as exc:
             raise ProduceError(f"malformed job JSON: {exc}") from exc
         transport = build_transport(args)
-        out = produce(job, transport, model=model or "stub", mode=args.mode)
+        recorder = RecordingTransport(transport) if args.record else None
+        out = produce(job, recorder or transport, model=model or "stub", mode=args.mode)
+        if recorder is not None:
+            with open(args.record, "w", encoding="utf-8") as f:
+                json.dump(recorder.recorded, f, indent=2)
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
     except (AssertionError, ProduceError, FileNotFoundError) as exc:
