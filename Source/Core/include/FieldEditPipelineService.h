@@ -45,8 +45,8 @@ class FieldEditPipelineService {
     /// Online field-edit entry point (used by the Lua binding + legacy callers). Submits to the
     /// backend and applies an optimistic local-cache update on success. Branches sprint /
     /// timetracking / regular. Signature preserved verbatim — the Lua forwarder depends on it.
-    bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError);
+    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                               const std::vector<std::string>& rawValues);
 
     /// Network-only field edit (no local-cache write) — the grid pipeline calls this on a worker,
     /// then applies the result on the UI thread via ApplyFieldEditResult.

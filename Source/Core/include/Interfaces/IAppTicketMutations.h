@@ -17,6 +17,7 @@
 
 #include "CachedTicketTypes.h" // CachedTicket (rank-0) — snapshot element
 #include "CancelToken.h"       // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
+#include "SmatchetResult.h"    // VoidResult (SubmitFieldEdit — outError → Result flip)
 
 #include <cstdint>
 #include <future>
@@ -33,8 +34,8 @@ class IAppTicketMutations {
     virtual ~IAppTicketMutations() = default;
 
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
-    virtual bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                 const std::vector<std::string>& rawValues, std::string& outError) = 0;
+    virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                       const std::vector<std::string>& rawValues) = 0;
     virtual bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
                                       std::string& outError) = 0;
     virtual bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent,

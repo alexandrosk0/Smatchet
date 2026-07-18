@@ -958,8 +958,8 @@ class AppController : public IAppThreading,
     // (SubmitFieldEdit's especially — the Lua forwarder + BuiltinCommands depend on it).
     // ApplyFieldUpdateWithEditMetaRetry + SubmitSprint/TimetrackingFieldEditNetworkOnly had no
     // external callers and are now service-private (not re-exposed here).
-    bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError) override;
+    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                               const std::vector<std::string>& rawValues) override;
     // clang-format off
     // SMATCHET_DEVIATION(rule=duplication; reason=these field-edit delegator declarations are BY DESIGN a verbatim signature mirror of FieldEditPipelineService's SubmitFieldEdit/SubmitFieldEditNetworkOnly (the god-object decomposition Phase 2 forwarders — "Signature preserved verbatim" on both sides); the pre-existing structural clone only crossed the delta-scanner threshold because adding `override` to SubmitFieldEdit (fan-in Phase 5) re-hashed the token window; owner=orchestrator; revisit=if the delegators are ever removed or the service signatures diverge)
     // clang-format on

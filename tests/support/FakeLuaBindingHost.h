@@ -87,9 +87,9 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     /// `FindFieldById` resolves via this map. Missing -> nullptr.
     std::unordered_map<std::string, TrackerField> FieldsById;
 
-    /// `SubmitFieldEdit` returns this verbatim. Tests can override per-case.
+    /// `SubmitFieldEdit` returns `VoidOk()` when true, `VoidResult::Err(SubmitFieldEditError)` when false.
     bool SubmitFieldEditReturn = true;
-    /// `SubmitFieldEdit` sets `outError` to this when it returns. Default empty.
+    /// The `Err` reason `SubmitFieldEdit` carries when `SubmitFieldEditReturn` is false. Default empty.
     std::string SubmitFieldEditError;
 
     /// `LuaCreateIssueBind` populates the returned sol::object with this table
@@ -148,15 +148,14 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         return (it != FieldsById.end()) ? &it->second : nullptr;
     }
 
-    bool SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                         const std::vector<std::string>& rawValues, std::string& outError) override {
+    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                               const std::vector<std::string>& rawValues) override {
         FieldEditCall rec;
         rec.IssueId = issueId;
         rec.FieldId = field.Id;
         rec.Values = rawValues;
         SubmitFieldEditCalls.push_back(std::move(rec));
-        outError = SubmitFieldEditError;
-        return SubmitFieldEditReturn;
+        return SubmitFieldEditReturn ? VoidOk() : VoidResult::Err(SubmitFieldEditError);
     }
 
     std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override {

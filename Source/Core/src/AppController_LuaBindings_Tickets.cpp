@@ -203,9 +203,9 @@ const TrackerField* AppController::Impl::FindFieldById(const std::string& fieldI
     return app_.FindFieldById(fieldId);
 }
 
-bool AppController::Impl::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                          const std::vector<std::string>& rawValues, std::string& outError) {
-    return app_.SubmitFieldEdit(issueId, field, rawValues, outError);
+VoidResult AppController::Impl::SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
+                                                const std::vector<std::string>& rawValues) {
+    return app_.SubmitFieldEdit(issueId, field, rawValues);
 }
 
 std::tuple<sol::object, std::string> AppController::Impl::LuaGetTicketBind(sol::state_view sv,
@@ -349,4 +349,3 @@ std::tuple<sol::object, std::string> AppController::Impl::LuaCreateIssueBind(sol
     }
     return {result, std::string()};
 }
-
