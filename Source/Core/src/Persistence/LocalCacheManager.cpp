@@ -29,8 +29,8 @@ void QuarantinePath(const std::string& from, const std::string& to) {
     }
     fs::rename(from, to, ec);
     if (ec) {
-        LOG_WARN("LocalCacheManager: could not quarantine '%s' -> '%s': %s",
-                 from.c_str(), to.c_str(), ec.message().c_str());
+        LOG_WARN("LocalCacheManager: could not quarantine '%s' -> '%s': %s", from.c_str(), to.c_str(),
+                 ec.message().c_str());
     }
 }
 
@@ -149,11 +149,50 @@ void InitTicketsV2Schema(SQLite::Database& db) {
             "PRIMARY KEY(backend_key, ticket_id, field_key))");
 }
 
+// Run a write transaction with the SAME bounded backoff-and-retry the ctor uses for schema-init
+// (Slice-G Phase 3 / G2): a SECOND connection writing the shared cache concurrently can surface a
+// transient BUSY/LOCKED that busy_timeout does NOT absorb (a WAL snapshot / write-lock conflict is
+// returned immediately, without waiting). Left unretried, that BUSY propagated out of SaveTicket as
+// an uncaught throw — the write half of the "never-crash under contention" contract (Quality Pillar
+// 3). On a transient code the SQLite::Transaction's dtor rolls the attempt back before the next one
+// begins; ticket writes are idempotent upserts, so replay is safe. Non-transient errors and an
+// exhausted budget propagate unchanged. Retry policy is the shared, unit-tested pure predicate
+// (IsTransientBusyCode + BusyRetryBackoffMs), identical to the InitSchema loop.
+//
+// `stmtMutex` is taken PER ATTEMPT, wrapping the whole BEGIN…writeRows…COMMIT (both the cached
+// prepared statements and the single-connection transaction are instance-serialized — SQLite
+// forbids a nested transaction on one connection). It is released on scope exit BEFORE the backoff
+// sleep, so a contending writer's retry never holds the mutex while sleeping and starves other
+// statement executions on this instance. Templated on the write body (no std::function
+// type-erasure; the closure inlines).
+template <typename WriteFn>
+void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const char* opName, WriteFn&& writeRows) {
+    constexpr int kMaxWriteAttempts = 5;
+    for (int attempt = 0;; ++attempt) {
+        try {
+            std::lock_guard<std::mutex> lock(stmtMutex); // released on unwind BEFORE the sleep below
+            SQLite::Transaction transaction(db);
+            writeRows();
+            transaction.commit();
+            return;
+        } catch (const SQLite::Exception& ex) {
+            if (smatchet::IsTransientBusyCode(ex.getErrorCode()) && (attempt + 1) < kMaxWriteAttempts) {
+                const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
+                LOG_WARN("LocalCacheManager::%s contended (%s); retry %d/%d after %d ms", opName, ex.what(),
+                         attempt + 2, kMaxWriteAttempts, backoffMs);
+                std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
+                continue;
+            }
+            LOG_ERROR("LocalCacheManager::%s failed err=%s", opName, ex.what());
+            throw;
+        }
+    }
+}
+
 } // namespace
 
 LocalCacheManager::LocalCacheManager(const std::string& dbPath)
-    : dbPath_(dbPath),
-      db(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
+    : dbPath_(dbPath), db(dbPath_, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE | SQLite::OPEN_FULLMUTEX) {
     LOG_INFO("LocalCacheManager: opening db path=%s", dbPath_.c_str());
     ApplyWalPragmas();
     // Schema-init is where a corrupt on-disk file OR live write-contention first surfaces (the
@@ -181,8 +220,8 @@ LocalCacheManager::LocalCacheManager(const std::string& dbPath)
             }
             if (smatchet::ShouldRetryBusyInit(code, attempt, kMaxInitAttempts)) {
                 const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
-                LOG_WARN("LocalCacheManager: schema-init contended (%s); retry %d/%d after %d ms",
-                         ex.what(), attempt + 2, kMaxInitAttempts, backoffMs);
+                LOG_WARN("LocalCacheManager: schema-init contended (%s); retry %d/%d after %d ms", ex.what(),
+                         attempt + 2, kMaxInitAttempts, backoffMs);
                 std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
                 continue;
             }
@@ -370,15 +409,9 @@ void LocalCacheManager::writeTicketRows_(const std::string& backendKey, const Ca
 }
 
 void LocalCacheManager::SaveTicket(const std::string& backendKey, const CachedTicket& ticket) {
-    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
-    try {
-        SQLite::Transaction transaction(db);
-        writeTicketRows_(backendKey, ticket);
-        transaction.commit();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("LocalCacheManager::SaveTicket failed ticket=%s err=%s", ticket.id.c_str(), ex.what());
-        throw;
-    }
+    // stmtMutex_ (cached-prepared-statement slots) is taken per-attempt INSIDE the retry helper so it
+    // is not held across the backoff sleep.
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicket", [&] { writeTicketRows_(backendKey, ticket); });
 }
 
 // Phase 3(a) of docs/plans/shipped/memory-budget-and-lifetime-hardening.md: persist a whole slice
@@ -389,17 +422,12 @@ void LocalCacheManager::SaveTickets(const std::string& backendKey, const std::ve
     if (tickets.empty()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(stmtMutex_);
-    try {
-        SQLite::Transaction transaction(db);
+    // stmtMutex_ taken per-attempt inside the retry helper (not held across the backoff sleep).
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTickets", [&] {
         for (const auto& ticket : tickets) {
             writeTicketRows_(backendKey, ticket);
         }
-        transaction.commit();
-    } catch (const std::exception& ex) {
-        LOG_ERROR("LocalCacheManager::SaveTickets failed (%zu tickets) err=%s", tickets.size(), ex.what());
-        throw;
-    }
+    });
 }
 
 bool LocalCacheManager::TryGetTicket(const std::string& backendKey, const std::string& ticketId, CachedTicket& out) {
@@ -1058,10 +1086,10 @@ void LocalCacheManager::MarkFieldEditConflict(std::int64_t id, const std::string
 
 void LocalCacheManager::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedPayloadJson) {
     try {
-        SQLite::Statement upd(
-            db, "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
-                "original_rich_value = NULL, original_value = NULL, has_original_value = 0, "
-                "fields_payload_json = ? WHERE id = ?");
+        SQLite::Statement upd(db,
+                              "UPDATE pending_field_edits SET has_merge_conflict = 0, conflict_context_json = NULL, "
+                              "original_rich_value = NULL, original_value = NULL, has_original_value = 0, "
+                              "fields_payload_json = ? WHERE id = ?");
         upd.bind(1, resolvedPayloadJson);
         upd.bind(2, id);
         upd.exec();
