@@ -24,7 +24,6 @@ namespace collab {
 /// Preflight for a collaboration call, returned as a VoidResult so a delegator can surface the
 /// message verbatim. `requireWritable` is true for MUTATIONS (AddIssueWatcher, AddWorklog, comment
 /// posts) — those are blocked in read-only mode; a read-only fetch passes false and skips that gate.
-///
 /// Ordering is load-bearing: read-only is reported BEFORE a missing backend, so a read-only user
 /// who triggers a mutation sees the actionable "disable read-only mode" message rather than a
 /// transient "backend not initialized" that depends on connection timing. Backend-present is
