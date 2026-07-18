@@ -12,6 +12,7 @@
 
 #include <sqlite3.h> // SQLITE_NOTADB / SQLITE_CORRUPT result-code constants (no link needed)
 
+#include <cstring>
 #include <ctime>
 #include <string>
 
@@ -60,6 +61,21 @@ inline bool IsTransientBusyCode(int sqliteErrorCode) {
 /// without forcing real lock contention (which a doctest can only flakily reproduce).
 inline bool ShouldRetryBusyInit(int sqliteErrorCode, int attempt, int maxAttempts) {
     return IsTransientBusyCode(sqliteErrorCode) && (attempt + 1) < maxAttempts;
+}
+
+// --- Concurrent additive-migration race (guarded ADD COLUMN check-then-act) ---
+
+/// True when a failed `ADD COLUMN` is the benign concurrent-migration race: two initializers open
+/// the same on-disk cache, both read the column as absent past the `table_info` guard, and the
+/// loser's ALTER fails with SQLite's "duplicate column name" text. It carries no dedicated result
+/// code (a plain SQLITE_ERROR), so matching the message is unavoidable — pinned + unit-tested here
+/// rather than inlined. Post-state is what the migration wanted, so callers absorb it instead of
+/// retrying or propagating. A null message is "not the race" (propagate).
+inline bool IsDuplicateColumnRace(int sqliteErrorCode, const char* message) {
+    if (sqliteErrorCode != SQLITE_ERROR || message == nullptr) {
+        return false;
+    }
+    return std::strstr(message, "duplicate column name") != nullptr;
 }
 
 /// Backoff (ms) before the next schema-init retry — a capped exponential from a small base

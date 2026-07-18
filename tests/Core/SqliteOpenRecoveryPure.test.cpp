@@ -14,6 +14,7 @@
 #include <sqlite3.h>
 
 using smatchet::BusyRetryBackoffMs;
+using smatchet::IsDuplicateColumnRace;
 using smatchet::IsRebuildableCorruptCode;
 using smatchet::IsTransientBusyCode;
 using smatchet::MakeCorruptQuarantineSuffix;
@@ -98,16 +99,52 @@ TEST_CASE("ShouldRetryBusyInit: never retries a non-transient code regardless of
     CHECK_FALSE(ShouldRetryBusyInit(SQLITE_OK, 0, 5));
 }
 
+// --- Concurrent additive-migration race (guarded ADD COLUMN check-then-act) ---
+
+TEST_CASE("IsDuplicateColumnRace: SQLITE_ERROR with the duplicate-column message is the benign race") {
+    // The loser of a concurrent guarded ADD COLUMN sees exactly this — SQLITE_ERROR (no dedicated
+    // code) carrying SQLite's "duplicate column name: <col>" text. Its post-state is what the
+    // migration wanted, so it is absorbed, not propagated.
+    CHECK(IsDuplicateColumnRace(SQLITE_ERROR, "duplicate column name: has_merge_conflict"));
+    CHECK(IsDuplicateColumnRace(SQLITE_ERROR, "duplicate column name"));
+}
+
+TEST_CASE("IsDuplicateColumnRace: a different SQLITE_ERROR message is NOT the race (must propagate)") {
+    // Any other SQLITE_ERROR (a genuine SQL/typo bug) must surface, not be silently swallowed.
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_ERROR, "no such table: pending_field_edits"));
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_ERROR, "near \"ALTERx\": syntax error"));
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_ERROR, ""));
+}
+
+TEST_CASE("IsDuplicateColumnRace: non-SQLITE_ERROR codes and a null message are NOT the race") {
+    // A transient BUSY is handled by the retry loop, not here; corruption is rebuilt. Only a plain
+    // SQLITE_ERROR carries the duplicate-column text — nothing else may match.
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_BUSY, "duplicate column name: x"));
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_CORRUPT, "duplicate column name: x"));
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_OK, "duplicate column name: x"));
+    CHECK_FALSE(IsDuplicateColumnRace(SQLITE_ERROR, nullptr));
+}
+
+TEST_CASE("IsDuplicateColumnRace is disjoint from the transient-busy and corruption axes") {
+    // The three classification axes must not overlap: a code is at most one of transient / corrupt /
+    // duplicate-column-race, so the ctor's branch order is not load-bearing.
+    const bool raceIsTransient =
+        IsDuplicateColumnRace(SQLITE_ERROR, "duplicate column name") && IsTransientBusyCode(SQLITE_ERROR);
+    const bool raceIsCorrupt =
+        IsDuplicateColumnRace(SQLITE_ERROR, "duplicate column name") && IsRebuildableCorruptCode(SQLITE_ERROR);
+    CHECK_FALSE(raceIsTransient);
+    CHECK_FALSE(raceIsCorrupt);
+}
+
 TEST_CASE("BusyRetryBackoffMs: capped exponential with a sub-half-second total budget") {
     CHECK(BusyRetryBackoffMs(-1) == 25); // negative clamps to attempt 0
     CHECK(BusyRetryBackoffMs(0) == 25);
     CHECK(BusyRetryBackoffMs(1) == 50);
     CHECK(BusyRetryBackoffMs(2) == 100);
     CHECK(BusyRetryBackoffMs(3) == 200);
-    CHECK(BusyRetryBackoffMs(4) == 400); // cap reached
+    CHECK(BusyRetryBackoffMs(4) == 400);  // cap reached
     CHECK(BusyRetryBackoffMs(99) == 400); // stays capped
     // The 4 backoffs across a 5-attempt budget stay well under the multi-second busy_timeout
     // wall — a human-imperceptible startup hiccup, not a hang.
-    CHECK(BusyRetryBackoffMs(0) + BusyRetryBackoffMs(1) + BusyRetryBackoffMs(2) + BusyRetryBackoffMs(3) ==
-          375);
+    CHECK(BusyRetryBackoffMs(0) + BusyRetryBackoffMs(1) + BusyRetryBackoffMs(2) + BusyRetryBackoffMs(3) == 375);
 }
