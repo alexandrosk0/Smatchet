@@ -50,11 +50,11 @@ class FieldEditPipelineService {
 
     /// Network-only field edit (no local-cache write) — the grid pipeline calls this on a worker,
     /// then applies the result on the UI thread via ApplyFieldEditResult.
-    bool SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                    const std::vector<std::string>& rawValues,
-                                    const std::string& originalEstimateSnapshot,
-                                    const std::string& remainingEstimateSnapshot,
-                                    const std::string& issueTypeKeySnapshot, FieldEditResult& outResult);
+    FieldEditResult SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                               const std::vector<std::string>& rawValues,
+                                               const std::string& originalEstimateSnapshot,
+                                               const std::string& remainingEstimateSnapshot,
+                                               const std::string& issueTypeKeySnapshot);
 
     /**
      * Build the Jira fields payload + optimistic display map without calling the network.

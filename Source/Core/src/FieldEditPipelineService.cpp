@@ -459,35 +459,38 @@ VoidResult FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId,
     return SubmitFieldEditRegular(ctx);
 }
 
-bool FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                                          const std::vector<std::string>& rawValues,
-                                                          const std::string& originalEstimateSnapshot,
-                                                          const std::string& remainingEstimateSnapshot,
-                                                          const std::string& issueTypeKeySnapshot,
-                                                          FieldEditResult& outResult) {
+FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& issueId,
+                                                                     const TrackerField& field,
+                                                                     const std::vector<std::string>& rawValues,
+                                                                     const std::string& originalEstimateSnapshot,
+                                                                     const std::string& remainingEstimateSnapshot,
+                                                                     const std::string& issueTypeKeySnapshot) {
     std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
-    outResult = FieldEditResult{};
+    // The FieldEditResult IS the outcome (its `Ok` flag replaces the old redundant bool return): on
+    // failure it still carries Error + ErrorTransient, which the grid pipeline reads to decide the
+    // offline-queue fallback. The branch helpers write into it by reference.
+    FieldEditResult result;
     LOG_TRACE("SubmitFieldEditNetworkOnly: source=%s issue=%s field=%s raw_values=%zu", FieldEditAuditSource::Current(),
               issueId.c_str(), field.Id.c_str(), rawValues.size());
     if (ConfigManager::Load().ReadOnlyMode) {
-        outResult.Error = "Read-only mode is enabled in Preferences.";
+        result.Error = "Read-only mode is enabled in Preferences.";
         LOG_WARN("FieldEditPipelineService::SubmitFieldEditNetworkOnly blocked by read-only mode issue=%s field=%s",
                  issueId.c_str(), field.Id.c_str());
-        return false;
+        return result;
     }
     if (issueId.empty()) {
-        outResult.Error = "Issue id is empty.";
-        return false;
+        result.Error = "Issue id is empty.";
+        return result;
     }
 
     if (!backend) {
-        outResult.Error = "No tracker backend initialized.";
-        return false;
+        result.Error = "No tracker backend initialized.";
+        return result;
     }
     ITrackerIssueMutations* const mutations = backend->Mutations();
     if (!mutations) {
-        outResult.Error = "Tracker backend does not support issue mutations.";
-        return false;
+        result.Error = "Tracker backend does not support issue mutations.";
+        return result;
     }
     std::vector<std::string> values;
     values.reserve(rawValues.size());
@@ -496,24 +499,23 @@ bool FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& iss
 
     if (IsSprintField(field)) {
         bool handled = false;
-        const bool ok = SubmitSprintFieldEditNetworkOnly(issueId, field, values, *mutations, outResult, handled);
+        SubmitSprintFieldEditNetworkOnly(issueId, field, values, *mutations, result, handled);
         if (handled) {
-            return ok;
+            return result;
         }
     }
 
     if (IsNonEditableTimetrackingFieldId(field.Id)) {
-        outResult.Error = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
-        return false;
+        result.Error = "This Jira time field is derived or worklog-backed and cannot be edited directly.";
+        return result;
     }
 
     if (IsEditableTimetrackingEstimateFieldId(field.Id)) {
         bool handled = false;
-        const bool ok =
-            SubmitTimetrackingFieldEditNetworkOnly(issueId, field, values, originalEstimateSnapshot,
-                                                   remainingEstimateSnapshot, *mutations, outResult, handled);
+        SubmitTimetrackingFieldEditNetworkOnly(issueId, field, values, originalEstimateSnapshot,
+                                               remainingEstimateSnapshot, *mutations, result, handled);
         if (handled) {
-            return ok;
+            return result;
         }
     }
 
@@ -523,18 +525,18 @@ bool FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::string& iss
     std::unordered_map<std::string, std::string> displayValues;
     if (!TryBuildFieldEditPayloadForNetwork(issueId, field, rawValues, originalEstimateSnapshot,
                                             remainingEstimateSnapshot, issueTypeKeySnapshot, fieldsPayload,
-                                            displayValues, outResult.Error)) {
-        return false;
+                                            displayValues, result.Error)) {
+        return result;
     }
 
-    if (!ApplyFieldUpdateWithEditMetaRetry(issueId, field, fieldsPayload, issueTypeKeyOpt, *mutations, outResult)) {
-        return false;
+    if (!ApplyFieldUpdateWithEditMetaRetry(issueId, field, fieldsPayload, issueTypeKeyOpt, *mutations, result)) {
+        return result;
     }
 
-    outResult.Ok = true;
-    outResult.UpdatedDisplayValues = std::move(displayValues);
+    result.Ok = true;
+    result.UpdatedDisplayValues = std::move(displayValues);
     deps_.RequestDeferredLiveTrackerBackendSuccessNotify();
-    return true;
+    return result;
 }
 
 bool FieldEditPipelineService::ApplyFieldUpdateWithEditMetaRetry(const std::string& issueId, const TrackerField& field,

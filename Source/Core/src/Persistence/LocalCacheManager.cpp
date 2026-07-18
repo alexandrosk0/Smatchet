@@ -46,6 +46,31 @@ bool SqliteTableHasColumn(const SQLite::Database& db, const char* table, const c
     return false;
 }
 
+/// Additive column migration that is safe under concurrent schema-init from a second connection.
+/// The `table_info` guard is the fast path — an already-migrated cache runs no ALTER and throws no
+/// exception. The catch closes the check-then-act TOCTOU window: two initializers opening the same
+/// on-disk cache can both read the column as absent, and the loser's ALTER then fails with
+/// "duplicate column name". That specific race is idempotent (the column the loser wanted now
+/// exists), so it is swallowed; every other failure propagates untouched. `col`/`columnDef` are
+/// fixed literals at all call sites (no user input reaches the SQL). Fixes the second contention
+/// flake mode (schema-init race) that write-path busy-retry (#1894) did not cover.
+void AddColumnIfMissing(SQLite::Database& db, const char* table, const char* col, const char* columnDef) {
+    if (SqliteTableHasColumn(db, table, col)) {
+        return;
+    }
+    const std::string sql = std::string("ALTER TABLE ") + table + " ADD COLUMN " + col + " " + columnDef;
+    try {
+        db.exec(sql);
+    } catch (const SQLite::Exception& ex) {
+        if (smatchet::IsDuplicateColumnRace(ex.getErrorCode(), ex.what())) {
+            LOG_WARN("LocalCacheManager: concurrent schema-init added %s.%s first (%s); continuing", table, col,
+                     ex.what());
+            return;
+        }
+        throw;
+    }
+}
+
 // Creates / migrates the offline field-edit queue tables: `pending_field_edits` plus its
 // dead-letter twin. Extracted from the constructor so the schema-init body stays under the
 // function-size cap. All migrations are additive — CREATE IF NOT EXISTS plus guarded ADD COLUMN —
@@ -63,30 +88,18 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
             "attempts INTEGER NOT NULL DEFAULT 0, "
             "last_error TEXT, "
             "created_at INTEGER NOT NULL)");
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "original_rich_value")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_rich_value TEXT");
-    }
+    AddColumnIfMissing(db, "pending_field_edits", "original_rich_value", "TEXT");
     // ADR-0016: additive scalar conflict base (display value). Twin of original_rich_value.
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "original_value")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN original_value TEXT");
-    }
+    AddColumnIfMissing(db, "pending_field_edits", "original_value", "TEXT");
     // ADR-0016: presence flag for the scalar base — distinguishes a genuinely BLANK captured base
     // ("" but present) from a legacy/no-base row, so a blank-field edit is still conflict-checked
     // instead of silently last-write-wins. Legacy rows default 0 (no base → last-write-wins).
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "has_original_value")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_original_value INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "has_merge_conflict")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN has_merge_conflict INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "conflict_context_json")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN conflict_context_json TEXT");
-    }
+    AddColumnIfMissing(db, "pending_field_edits", "has_original_value", "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing(db, "pending_field_edits", "has_merge_conflict", "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing(db, "pending_field_edits", "conflict_context_json", "TEXT");
     // Multi-grid Slice 1c (ADR-0018 decision 4): additive backend namespace for queue rows.
     // Legacy rows land as '' and are backfilled once by RunOneTimePendingQueueBackendKeyStamp.
-    if (!SqliteTableHasColumn(db, "pending_field_edits", "backend_key")) {
-        db.exec("ALTER TABLE pending_field_edits ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
-    }
+    AddColumnIfMissing(db, "pending_field_edits", "backend_key", "TEXT NOT NULL DEFAULT ''");
     db.exec("CREATE TABLE IF NOT EXISTS pending_field_edits_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
@@ -102,25 +115,15 @@ void InitFieldEditQueueSchema(SQLite::Database& db) {
             "created_at INTEGER NOT NULL, "
             "archived_at INTEGER NOT NULL, "
             "terminal_reason TEXT NOT NULL)");
-    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "original_rich_value")) {
-        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_rich_value TEXT");
-    }
+    AddColumnIfMissing(db, "pending_field_edits_dead", "original_rich_value", "TEXT");
     // ADR-0016: additive scalar conflict base twin on the dead-letter table.
-    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "original_value")) {
-        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN original_value TEXT");
-    }
+    AddColumnIfMissing(db, "pending_field_edits_dead", "original_value", "TEXT");
     // ADR-0016: presence-flag twin on the dead-letter table (mirrors pending_field_edits).
-    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "has_original_value")) {
-        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN has_original_value INTEGER NOT NULL DEFAULT 0");
-    }
-    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "archived_at")) {
-        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
-    }
+    AddColumnIfMissing(db, "pending_field_edits_dead", "has_original_value", "INTEGER NOT NULL DEFAULT 0");
+    AddColumnIfMissing(db, "pending_field_edits_dead", "archived_at", "INTEGER NOT NULL DEFAULT 0");
     // Multi-grid Slice 1c: backend-namespace twin on the dead-letter table (carried over on
     // archive so the UI can attribute the row and a restore re-queues under the same backend).
-    if (!SqliteTableHasColumn(db, "pending_field_edits_dead", "backend_key")) {
-        db.exec("ALTER TABLE pending_field_edits_dead ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
-    }
+    AddColumnIfMissing(db, "pending_field_edits_dead", "backend_key", "TEXT NOT NULL DEFAULT ''");
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_field_edits_dead_archived_at "
             "ON pending_field_edits_dead(archived_at DESC)");
 }
@@ -295,9 +298,7 @@ void LocalCacheManager::InitSchema() {
             "created_at INTEGER NOT NULL)");
     // Multi-grid Slice 1c (ADR-0018 decision 4): additive backend namespace for queue rows.
     // Legacy rows land as '' and are backfilled once by RunOneTimePendingQueueBackendKeyStamp.
-    if (!SqliteTableHasColumn(db, "pending_creates", "backend_key")) {
-        db.exec("ALTER TABLE pending_creates ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
-    }
+    AddColumnIfMissing(db, "pending_creates", "backend_key", "TEXT NOT NULL DEFAULT ''");
     db.exec("CREATE TABLE IF NOT EXISTS pending_creates_dead ("
             "dead_id INTEGER PRIMARY KEY AUTOINCREMENT, "
             "original_id INTEGER NOT NULL, "
@@ -309,14 +310,11 @@ void LocalCacheManager::InitSchema() {
             "archived_at INTEGER NOT NULL, "
             "terminal_reason TEXT NOT NULL)");
     // Legacy DBs may predate `archived_at`; CREATE IF NOT EXISTS leaves an old table unchanged.
-    // Use PRAGMA table_info so we never issue a duplicate ADD COLUMN (SQLiteCpp throws on duplicate).
-    if (!SqliteTableHasColumn(db, "pending_creates_dead", "archived_at")) {
-        db.exec("ALTER TABLE pending_creates_dead ADD COLUMN archived_at INTEGER NOT NULL DEFAULT 0");
-    }
+    // AddColumnIfMissing guards with PRAGMA table_info (no duplicate ADD COLUMN) and absorbs a
+    // concurrent initializer winning the same migration.
+    AddColumnIfMissing(db, "pending_creates_dead", "archived_at", "INTEGER NOT NULL DEFAULT 0");
     // Multi-grid Slice 1c: backend-namespace twin on the dead-letter table.
-    if (!SqliteTableHasColumn(db, "pending_creates_dead", "backend_key")) {
-        db.exec("ALTER TABLE pending_creates_dead ADD COLUMN backend_key TEXT NOT NULL DEFAULT ''");
-    }
+    AddColumnIfMissing(db, "pending_creates_dead", "backend_key", "TEXT NOT NULL DEFAULT ''");
     db.exec("CREATE INDEX IF NOT EXISTS idx_pending_creates_dead_archived_at "
             "ON pending_creates_dead(archived_at DESC)");
     db.exec("CREATE TABLE IF NOT EXISTS cache_meta ("
