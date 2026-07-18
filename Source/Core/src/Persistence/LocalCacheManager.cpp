@@ -11,7 +11,6 @@
 #include <cstring>
 #include <ctime>
 #include <exception>
-#include <functional> // std::function — type-erased write body for the busy-retry wrapper (G2 write path)
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -159,10 +158,19 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 // begins; ticket writes are idempotent upserts, so replay is safe. Non-transient errors and an
 // exhausted budget propagate unchanged. Retry policy is the shared, unit-tested pure predicate
 // (IsTransientBusyCode + BusyRetryBackoffMs), identical to the InitSchema loop.
-void RunWriteTxnWithBusyRetry(SQLite::Database& db, const char* opName, const std::function<void()>& writeRows) {
+//
+// `stmtMutex` is taken PER ATTEMPT, wrapping the whole BEGIN…writeRows…COMMIT (both the cached
+// prepared statements and the single-connection transaction are instance-serialized — SQLite
+// forbids a nested transaction on one connection). It is released on scope exit BEFORE the backoff
+// sleep, so a contending writer's retry never holds the mutex while sleeping and starves other
+// statement executions on this instance. Templated on the write body (no std::function
+// type-erasure; the closure inlines).
+template <typename WriteFn>
+void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const char* opName, WriteFn&& writeRows) {
     constexpr int kMaxWriteAttempts = 5;
     for (int attempt = 0;; ++attempt) {
         try {
+            std::lock_guard<std::mutex> lock(stmtMutex); // released on unwind BEFORE the sleep below
             SQLite::Transaction transaction(db);
             writeRows();
             transaction.commit();
@@ -401,8 +409,9 @@ void LocalCacheManager::writeTicketRows_(const std::string& backendKey, const Ca
 }
 
 void LocalCacheManager::SaveTicket(const std::string& backendKey, const CachedTicket& ticket) {
-    std::lock_guard<std::mutex> lock(stmtMutex_); // protects the cached-prepared-statement slots
-    RunWriteTxnWithBusyRetry(db, "SaveTicket", [&] { writeTicketRows_(backendKey, ticket); });
+    // stmtMutex_ (cached-prepared-statement slots) is taken per-attempt INSIDE the retry helper so it
+    // is not held across the backoff sleep.
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTicket", [&] { writeTicketRows_(backendKey, ticket); });
 }
 
 // Phase 3(a) of docs/plans/shipped/memory-budget-and-lifetime-hardening.md: persist a whole slice
@@ -413,8 +422,8 @@ void LocalCacheManager::SaveTickets(const std::string& backendKey, const std::ve
     if (tickets.empty()) {
         return;
     }
-    std::lock_guard<std::mutex> lock(stmtMutex_);
-    RunWriteTxnWithBusyRetry(db, "SaveTickets", [&] {
+    // stmtMutex_ taken per-attempt inside the retry helper (not held across the backoff sleep).
+    RunWriteTxnWithBusyRetry(db, stmtMutex_, "SaveTickets", [&] {
         for (const auto& ticket : tickets) {
             writeTicketRows_(backendKey, ticket);
         }
