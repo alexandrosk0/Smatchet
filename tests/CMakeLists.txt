@@ -611,6 +611,12 @@ add_executable(SmatchetTests
     # (Source/Core/include/Persistence/SqliteOpenRecoveryPure.h); pins the transient
     # SQLITE_BUSY/CANTOPEN/IOERR codes the file-backed corruption test cannot force. No .cpp to link.
     Core/SqliteOpenRecoveryPure.test.cpp
+    # Pure collaboration preflight + TrackerError→VoidResult mapping shared by the AppController
+    # collaboration delegators (Source/Core/include/Tracker/CollaborationPreconditionPure.h). Pins
+    # the guard ordering + user-facing strings the pending #21 bool→VoidResult flip must preserve;
+    # AppController.cpp is not in the rig, so this header-only seam is the only place to verify it.
+    # No .cpp to link.
+    Core/CollaborationPreconditionPure.test.cpp
     # Multi-grid Slice 1c (ADR-0018) — pending-queue backend_key: ADD-COLUMN migration
     # idempotence on a pre-1c fixture DB, one-time stamp migration, backend-scoped replay
     # matching (A-rows replay, B-rows stay queued), dead-letter key carry + restore. Links
