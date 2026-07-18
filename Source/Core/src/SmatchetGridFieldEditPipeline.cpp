@@ -140,8 +140,9 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit
     FieldEditCommitResult result;
     result.CommitKind = FieldEditCommitResult::Kind::Failed;
 
-    if (app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
-                                       remainingEstimateSnapshot, issueTypeKeyForNetwork, result.ApplyResult)) {
+    result.ApplyResult = app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
+                                                        remainingEstimateSnapshot, issueTypeKeyForNetwork);
+    if (result.ApplyResult.Ok) {
         result.Ok = true;
         result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
         result.Error.clear();

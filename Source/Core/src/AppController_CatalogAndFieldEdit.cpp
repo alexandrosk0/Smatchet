@@ -653,13 +653,13 @@ VoidResult AppController::SubmitFieldEdit(const std::string& issueId, const Trac
     return fieldEdit_->SubmitFieldEdit(issueId, field, rawValues);
 }
 
-bool AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                               const std::vector<std::string>& rawValues,
-                                               const std::string& originalEstimateSnapshot,
-                                               const std::string& remainingEstimateSnapshot,
-                                               const std::string& issueTypeKeySnapshot, FieldEditResult& outResult) {
+FieldEditResult AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
+                                                          const std::vector<std::string>& rawValues,
+                                                          const std::string& originalEstimateSnapshot,
+                                                          const std::string& remainingEstimateSnapshot,
+                                                          const std::string& issueTypeKeySnapshot) {
     return fieldEdit_->SubmitFieldEditNetworkOnly(issueId, field, rawValues, originalEstimateSnapshot,
-                                                  remainingEstimateSnapshot, issueTypeKeySnapshot, outResult);
+                                                  remainingEstimateSnapshot, issueTypeKeySnapshot);
 }
 
 bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,

@@ -255,21 +255,21 @@ TEST_CASE("FieldEditPipelineService::SubmitFieldEditNetworkOnly classifies Error
 
     SUBCASE("a retryable kind (5xx) marks the result transient even with bland text") {
         rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(TrackerErrorServer("backend said no"));
-        FieldEditResult r;
-        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "", r));
+        const FieldEditResult r = rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "");
+        CHECK_FALSE(r.Ok);
         CHECK(r.ErrorTransient);
         CHECK(r.Error == "backend said no");
     }
     SUBCASE("a non-retryable kind stays non-transient even with transport-shaped text") {
         rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(
             TrackerErrorInvalidRequest("Connection timeout while validating payload"));
-        FieldEditResult r;
-        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "", r));
+        const FieldEditResult r = rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"v"}, "", "", "");
+        CHECK_FALSE(r.Ok);
         CHECK_FALSE(r.ErrorTransient);
     }
     SUBCASE("local validation failures default to non-transient") {
-        FieldEditResult r;
-        CHECK_FALSE(rig.svc.SubmitFieldEditNetworkOnly("", field, {"v"}, "", "", "", r));
+        const FieldEditResult r = rig.svc.SubmitFieldEditNetworkOnly("", field, {"v"}, "", "", "");
+        CHECK_FALSE(r.Ok);
         CHECK_FALSE(r.ErrorTransient);
     }
 }
@@ -285,9 +285,7 @@ TEST_CASE("FieldEditPipelineService offline-fallback prepare contract for a queu
 
     // Step 1: the network-only path fails on a transport error.
     rig.fieldDeps.Fake()->SetDefaultUpdateIssueFieldsResult(false, "Could not resolve host (transport)");
-    FieldEditResult netResult;
-    const bool netOk = rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"new summary"}, "", "", "", netResult);
-    CHECK_FALSE(netOk);
+    const FieldEditResult netResult = rig.svc.SubmitFieldEditNetworkOnly("ABC-1", field, {"new summary"}, "", "", "");
     CHECK_FALSE(netResult.Ok);
 
     // Step 2: the field is offline-queueable (Text family, not sprint/timetracking).
