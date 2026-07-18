@@ -86,3 +86,60 @@ TEST_CASE("LocalCacheManager: a stampede of concurrent opens on one path all con
     LocalCacheManager reader(tmp.Path());
     CHECK(reader.GetAllTicketIds(kBk).size() == static_cast<std::size_t>(kThreads));
 }
+
+// G2 write-path retry: opens are retry-protected, but the WRITE half of "never-crash under
+// contention" needs the same guard — a second connection committing concurrently can surface an
+// immediate BUSY/LOCKED (a WAL snapshot / write-lock conflict busy_timeout does NOT absorb). Each
+// thread persists SEVERAL tickets, so the connections genuinely race the write lock repeatedly;
+// with SaveTicket wrapped in the bounded backoff-and-retry, none may throw and every row must land.
+// Modest fan-out (4×4) keeps this reliable on the flaky lane while still forcing real write contention.
+TEST_CASE("LocalCacheManager: concurrent writers each persisting several tickets never throw "
+          "(Pillar-3 write-path retry under contention)" *
+          doctest::test_suite("[high-risk]")) {
+    TempDbFile tmp("smatchet_lcm_write_contention_");
+
+    constexpr int kThreads = 4;
+    constexpr int kWritesPerThread = 4;
+    std::atomic<bool> start{false};
+    std::atomic<int> succeeded{0};
+    std::vector<std::string> failures(kThreads);
+    std::vector<std::thread> workers;
+    workers.reserve(kThreads);
+
+    for (int i = 0; i < kThreads; ++i) {
+        workers.emplace_back([&, i]() {
+            while (!start.load(std::memory_order_acquire)) {
+                std::this_thread::yield();
+            }
+            try {
+                LocalCacheManager mgr(tmp.Path());
+                for (int w = 0; w < kWritesPerThread; ++w) {
+                    CachedTicket t;
+                    t.id = "T-" + std::to_string(i) + "-" + std::to_string(w);
+                    t.fieldValues["summary"] = "row";
+                    mgr.SaveTicket(kBk, t); // must absorb a transient write-lock BUSY, never throw
+                }
+                succeeded.fetch_add(1, std::memory_order_relaxed);
+            } catch (const std::exception& ex) {
+                failures[i] = ex.what();
+            } catch (...) {
+                failures[i] = "non-std exception";
+            }
+        });
+    }
+
+    start.store(true, std::memory_order_release);
+    for (auto& w : workers) {
+        w.join();
+    }
+
+    for (int i = 0; i < kThreads; ++i) {
+        INFO("writer ", i, " failure: ", failures[i]);
+        CHECK(failures[i].empty());
+    }
+    CHECK(succeeded.load() == kThreads);
+
+    // Every namespaced write from every thread landed — kThreads * kWritesPerThread distinct rows.
+    LocalCacheManager reader(tmp.Path());
+    CHECK(reader.GetAllTicketIds(kBk).size() == static_cast<std::size_t>(kThreads * kWritesPerThread));
+}
