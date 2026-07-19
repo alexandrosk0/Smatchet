@@ -20,6 +20,7 @@
 #include "BackendAuditTrail.h"
 #include "FieldEditAuditSource.h"
 #include "ConfigManager.h"
+#include "Tracker/CollaborationPreconditionPure.h" // shared, unit-tested collaboration preflight + error map
 #include "FieldCatalogCache.h"
 #include "ITrackerActivity.h"
 #include "JiraClient.h"
@@ -712,29 +713,26 @@ bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& ou
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::AddIssueWatcher blocked by read-only mode issue=%s", issueKey.c_str());
-        return false;
-    }
-    if (!backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
-    }
-    if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
+    // Shared, unit-tested preflight (read-only → backend → collaboration-capability, in that order).
+    const VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
+        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
+        backend && backend->Collaboration());
+    if (!pre.has_value()) {
+        outError = pre.error();
+        LOG_WARN("AppController::AddIssueWatcher preflight blocked issue=%s err=%s", issueKey.c_str(),
+                 outError.c_str());
         return false;
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const TrackerError addWatcherErr = backend->Collaboration()->AddIssueWatcher(cfg, issueKey);
-    const bool ok = addWatcherErr.IsOk();
-    if (!ok) {
-        outError = addWatcherErr.Detail;
+    const VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(addWatcherErr);
+    if (!outcome.has_value()) {
+        outError = outcome.error();
         LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+        return false;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return true;
 }
 
 bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
