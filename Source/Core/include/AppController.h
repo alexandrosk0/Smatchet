@@ -1002,7 +1002,10 @@ class AppController : public IAppThreading,
     bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
                             std::string& outError) const override;
 
-    bool AddIssueWatcher(const std::string& issueKey, std::string& outError);
+    // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
+    // method — no IApp* interface mirror. Guard ordering + strings are pinned by the pure seam in
+    // Tracker/CollaborationPreconditionPure.h (CollaborationPreconditionPure.test.cpp).
+    VoidResult AddIssueWatcher(const std::string& issueKey);
 
     // defaults for outVoteCount / outHasVoted / outVotersInResponse live on IAppUsers::FetchIssueVotes
     bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
