@@ -938,40 +938,35 @@ bool AppController::SubmitWorklog(const std::string& issueId, const std::string&
     return ok;
 }
 
-bool AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
-                                                   const std::string& functionName, const std::string& filePath,
-                                                   const int lineNumber, const std::string& changelist,
-                                                   const std::string& date, const bool approximated,
-                                                   const std::string& codeSnippet, std::string& outError) {
+VoidResult AppController::AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
+                                                         const std::string& functionName, const std::string& filePath,
+                                                         const int lineNumber, const std::string& changelist,
+                                                         const std::string& date, const bool approximated,
+                                                         const std::string& codeSnippet) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::AddIssueCommentAnnotateContext blocked by read-only mode issue=%s", issueKey.c_str());
-        return false;
-    }
-    if (!backend) {
-        outError = "Jira backend is not initialized.";
-        return false;
-    }
-    if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+    // Shared, unit-tested preflight; the "Jira backend is not initialized." wording is this call
+    // site's historical text, passed to stay behaviour-preserving through the flip.
+    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
+        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
+        backend && backend->Collaboration(), "Jira backend is not initialized.");
+    if (!pre.has_value()) {
+        LOG_WARN("AppController::AddIssueCommentAnnotateContext preflight blocked issue=%s err=%s", issueKey.c_str(),
+                 pre.error().c_str());
+        return pre;
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const TrackerError annotateErr = backend->Collaboration()->AddIssueCommentAnnotateContext(
         cfg, issueKey, p4User, functionName, filePath, lineNumber, changelist, date, approximated, codeSnippet);
-    const bool ok = annotateErr.IsOk();
-    if (!ok) {
-        outError = annotateErr.Detail;
+    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(annotateErr);
+    if (!outcome.has_value()) {
         LOG_ERROR("AppController::AddIssueCommentAnnotateContext failed issue=%s err=%s", issueKey.c_str(),
-                  outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+                  outcome.error().c_str());
+        return outcome;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return VoidOk();
 }
 
 bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,

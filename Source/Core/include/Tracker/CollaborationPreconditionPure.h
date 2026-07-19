@@ -29,13 +29,18 @@ namespace collab {
 /// transient "backend not initialized" that depends on connection timing. Backend-present is
 /// checked before collaboration-capability because `hasCollaboration` is only meaningful once a
 /// backend exists (the caller computes it as backend && backend->Collaboration()).
-inline VoidResult ClassifyCollaborationPrecondition(bool readOnlyMode, bool requireWritable, bool hasBackend,
-                                                    bool hasCollaboration) {
+/// `backendAbsentMessage` defaults to the tracker-agnostic text but is overridable because some
+/// delegators historically surfaced a differently-worded "backend not initialized" string
+/// (e.g. "Jira backend is not initialized."); passing it preserves each call site's exact wording
+/// so the flip onto this seam stays behaviour-preserving.
+inline VoidResult
+ClassifyCollaborationPrecondition(bool readOnlyMode, bool requireWritable, bool hasBackend, bool hasCollaboration,
+                                  const std::string& backendAbsentMessage = "Tracker backend is not initialized.") {
     if (requireWritable && readOnlyMode) {
         return VoidResult::Err(std::string("Read-only mode is enabled in Preferences."));
     }
     if (!hasBackend) {
-        return VoidResult::Err(std::string("Tracker backend is not initialized."));
+        return VoidResult::Err(backendAbsentMessage);
     }
     if (!hasCollaboration) {
         return VoidResult::Err(std::string("Tracker backend does not support collaboration features."));

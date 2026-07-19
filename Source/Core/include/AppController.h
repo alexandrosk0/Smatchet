@@ -1035,10 +1035,13 @@ class AppController : public IAppThreading,
                        const std::string& adjustEstimate, const std::string& workDescription,
                        const std::string& startedDate, std::string& outError) override;
 
-    bool AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
-                                        const std::string& functionName, const std::string& filePath, int lineNumber,
-                                        const std::string& changelist, const std::string& date, bool approximated,
-                                        const std::string& codeSnippet, std::string& outError);
+    // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
+    // method — no IApp* interface mirror. Preflight ordering + strings are the pure seam in
+    // Tracker/CollaborationPreconditionPure.h (CollaborationPreconditionPure.test.cpp).
+    VoidResult AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
+                                              const std::string& functionName, const std::string& filePath,
+                                              int lineNumber, const std::string& changelist, const std::string& date,
+                                              bool approximated, const std::string& codeSnippet);
 
     bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
                              std::string& outError) const;
