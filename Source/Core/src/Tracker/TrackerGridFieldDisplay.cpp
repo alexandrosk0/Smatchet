@@ -230,8 +230,8 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
             async.watchSelfInProgress = true;
             async.watchSelfError.clear();
             async.watchSelfFuture = std::async(std::launch::async, [&app, issueKey]() {
-                std::string err;
-                return app.AddIssueWatcher(issueKey, err) ? std::string() : err;
+                const VoidResult r = app.AddIssueWatcher(issueKey);
+                return r.has_value() ? std::string() : r.error();
             });
         }
         if (watchBusy) {

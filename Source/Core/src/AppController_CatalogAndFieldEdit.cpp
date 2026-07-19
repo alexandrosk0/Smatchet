@@ -708,31 +708,28 @@ bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<
     return ok;
 }
 
-bool AppController::AddIssueWatcher(const std::string& issueKey, std::string& outError) {
+VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outError.clear();
     // Shared, unit-tested preflight (read-only → backend → collaboration-capability, in that order).
     const VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
         ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
         backend && backend->Collaboration());
     if (!pre.has_value()) {
-        outError = pre.error();
         LOG_WARN("AppController::AddIssueWatcher preflight blocked issue=%s err=%s", issueKey.c_str(),
-                 outError.c_str());
-        return false;
+                 pre.error().c_str());
+        return pre;
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const TrackerError addWatcherErr = backend->Collaboration()->AddIssueWatcher(cfg, issueKey);
     const VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(addWatcherErr);
     if (!outcome.has_value()) {
-        outError = outcome.error();
-        LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-        return false;
+        LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outcome.error().c_str());
+        return outcome;
     }
     requestDeferredLiveTrackerBackendSuccessNotify_();
-    return true;
+    return VoidOk();
 }
 
 bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
