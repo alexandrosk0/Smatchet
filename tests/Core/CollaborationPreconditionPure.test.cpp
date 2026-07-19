@@ -50,6 +50,26 @@ TEST_CASE("ClassifyCollaborationPrecondition: a missing backend is reported when
     CHECK(r.error() == "Tracker backend is not initialized.");
 }
 
+TEST_CASE("ClassifyCollaborationPrecondition: a caller-supplied backend-absent message overrides the default") {
+    // Some delegators historically worded this "Jira backend is not initialized."; passing the
+    // message keeps their exact user-facing text when they flip onto this seam.
+    const VoidResult r = ClassifyCollaborationPrecondition(/*readOnlyMode=*/false, /*requireWritable=*/true,
+                                                           /*hasBackend=*/false, /*hasCollaboration=*/false,
+                                                           "Jira backend is not initialized.");
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error() == "Jira backend is not initialized.");
+}
+
+TEST_CASE("ClassifyCollaborationPrecondition: the custom backend-absent message does not leak past the backend gate") {
+    // A read-only mutation must still report read-only even when a custom backend-absent message is
+    // supplied — the override only replaces the backend-missing branch, not the ordering.
+    const VoidResult r = ClassifyCollaborationPrecondition(/*readOnlyMode=*/true, /*requireWritable=*/true,
+                                                           /*hasBackend=*/false, /*hasCollaboration=*/false,
+                                                           "Jira backend is not initialized.");
+    REQUIRE_FALSE(r.has_value());
+    CHECK(r.error() == "Read-only mode is enabled in Preferences.");
+}
+
 TEST_CASE("ClassifyCollaborationPrecondition: backend present but no collaboration capability") {
     const VoidResult r = ClassifyCollaborationPrecondition(/*readOnlyMode=*/false, /*requireWritable=*/true,
                                                            /*hasBackend=*/true, /*hasCollaboration=*/false);

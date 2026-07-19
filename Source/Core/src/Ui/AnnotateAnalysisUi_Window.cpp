@@ -865,11 +865,12 @@ void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, boo
         const std::string capturedIssueKey = selectedJiraIssueKey;
         const AnnotateRow capturedRow = State().assignRow;
         app.LaunchBackgroundTask([&app, capturedIssueKey, capturedRow]() {
-            std::string err;
-            const bool ok = app.AddIssueCommentAnnotateContext(
+            const VoidResult r = app.AddIssueCommentAnnotateContext(
                 capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
                 capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
-                capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
+                capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet);
+            const bool ok = r.has_value();
+            const std::string err = ok ? std::string() : r.error();
             app.PostToMainThread([ok, err, capturedIssueKey]() {
                 if (!HasLiveStateInstance()) {
                     return;
@@ -973,10 +974,14 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
                 }
                 bool commented = false;
                 if (assigned) {
-                    commented = app.AddIssueCommentAnnotateContext(
+                    const VoidResult cr = app.AddIssueCommentAnnotateContext(
                         capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
                         capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
-                        capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet, err);
+                        capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet);
+                    commented = cr.has_value();
+                    if (!commented) {
+                        err = cr.error();
+                    }
                 }
                 const bool ok = assigned && commented;
                 app.PostToMainThread([ok, err, capturedIssueKey]() {
