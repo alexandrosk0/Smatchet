@@ -713,7 +713,7 @@ VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     // Shared, unit-tested preflight (read-only → backend → collaboration-capability, in that order).
-    const VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
+    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
         ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
         backend && backend->Collaboration());
     if (!pre.has_value()) {
@@ -723,7 +723,7 @@ VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const TrackerError addWatcherErr = backend->Collaboration()->AddIssueWatcher(cfg, issueKey);
-    const VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(addWatcherErr);
+    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(addWatcherErr);
     if (!outcome.has_value()) {
         LOG_ERROR("AppController::AddIssueWatcher failed issue=%s err=%s", issueKey.c_str(), outcome.error().c_str());
         return outcome;
