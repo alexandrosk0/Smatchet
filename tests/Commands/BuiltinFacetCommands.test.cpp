@@ -244,11 +244,8 @@ struct FakeMutations : IAppTicketMutations {
         LastEditValues = rawValues;
         return SubmitOk ? VoidOk() : VoidResult::Err("edit rejected");
     }
-    bool AddIssueCommentPlain(const std::string&, const std::string&, std::string& outError) override {
-        if (!CommentOk) {
-            outError = "comment rejected";
-        }
-        return CommentOk;
+    VoidResult AddIssueCommentPlain(const std::string&, const std::string&) override {
+        return CommentOk ? VoidOk() : VoidResult::Err("comment rejected");
     }
     bool SubmitWorklog(const std::string&, const std::string& timeSpent, const std::string&, const std::string&,
                        const std::string&, const std::string&, std::string& outError) override {

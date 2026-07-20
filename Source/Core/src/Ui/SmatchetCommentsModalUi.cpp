@@ -164,8 +164,9 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
                                               SmatchetLocalization::T("comments.posting", "Posting comment..."),
                                               ToastType::Info);
         app.LaunchBackgroundTask([appPtr, capturedIssueId, body, gen]() {
-            std::string err;
-            const bool ok = appPtr->AddIssueCommentPlain(capturedIssueId, body, err);
+            const VoidResult r = appPtr->AddIssueCommentPlain(capturedIssueId, body);
+            const bool ok = r.has_value();
+            const std::string err = ok ? std::string() : r.error();
             appPtr->PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
                 if (ok) {
                     SmatchetToastManager::Instance().Push(

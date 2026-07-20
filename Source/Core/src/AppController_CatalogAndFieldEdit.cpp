@@ -815,35 +815,30 @@ bool AppController::SearchUsersByQuery(const std::string& query, std::vector<Tra
     return ok;
 }
 
-bool AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
-                                         std::string& outError) {
+VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outError.clear();
-    if (ConfigManager::Load().ReadOnlyMode) {
-        outError = "Read-only mode is enabled in Preferences.";
-        LOG_WARN("AppController::AddIssueCommentPlain blocked by read-only mode issue=%s", issueKey.c_str());
-        return false;
-    }
-    if (!backend) {
-        outError = "Jira backend is not initialized.";
-        return false;
-    }
-    if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+    // Shared, unit-tested preflight; the "Jira backend is not initialized." wording is this call
+    // site's historical text, passed to stay behaviour-preserving through the flip.
+    VoidResult pre = smatchet::collab::ClassifyCollaborationPrecondition(
+        ConfigManager::Load().ReadOnlyMode, /*requireWritable=*/true, static_cast<bool>(backend),
+        backend && backend->Collaboration(), "Jira backend is not initialized.");
+    if (!pre.has_value()) {
+        LOG_WARN("AppController::AddIssueCommentPlain preflight blocked issue=%s err=%s", issueKey.c_str(),
+                 pre.error().c_str());
+        return pre;
     }
     const TrackerConfig cfg = ConfigManager::Load();
     const TrackerError commentErr = backend->Collaboration()->AddIssueCommentPlain(cfg, issueKey, plainText);
-    const bool ok = commentErr.IsOk();
-    if (!ok) {
-        outError = commentErr.Detail;
-        LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+    VoidResult outcome = smatchet::collab::CollaborationErrorToVoidResult(commentErr);
+    if (!outcome.has_value()) {
+        LOG_ERROR("AppController::AddIssueCommentPlain failed issue=%s err=%s", issueKey.c_str(),
+                  outcome.error().c_str());
+        return outcome;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return VoidOk();
 }
 
 bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,

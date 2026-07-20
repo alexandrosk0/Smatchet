@@ -76,17 +76,17 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& a
 }
 
 static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c = MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
-                            [&app](const nlohmann::json& args, const CommandContext&) {
-                                const std::string id = args.value("id", std::string());
-                                const std::string body = args.value("body", std::string());
-                                std::string err;
-                                const bool ok = app.AddIssueCommentPlain(id, body, err);
-                                if (!ok) {
-                                    return CommandResult::Failure(ErrorCode::BackendError, "Comment failed: " + err);
-                                }
-                                return CommandResult::Success({{"ok", true}});
-                            });
+    Command c =
+        MakeCommand("ticket.add_comment", "Post a plain-text comment on a ticket.",
+                    [&app](const nlohmann::json& args, const CommandContext&) {
+                        const std::string id = args.value("id", std::string());
+                        const std::string body = args.value("body", std::string());
+                        const VoidResult r = app.AddIssueCommentPlain(id, body);
+                        if (!r.has_value()) {
+                            return CommandResult::Failure(ErrorCode::BackendError, "Comment failed: " + r.error());
+                        }
+                        return CommandResult::Success({{"ok", true}});
+                    });
     c.Destructive = true;
     c.Idempotent = false;
     c.Params = {
