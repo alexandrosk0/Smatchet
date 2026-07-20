@@ -123,6 +123,9 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations&
                         }
                         return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
                     });
+    // Destructive-from-automation (CLI/MCP/Lua) audit logging is centralized in
+    // CommandRegistry::Dispatch (snapshot.Destructive && IsAutomationSource) — handlers do not log
+    // it per-command (that would double-log).
     c.Destructive = true;
     c.Idempotent = false;
     {
