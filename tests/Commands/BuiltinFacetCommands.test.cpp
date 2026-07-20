@@ -247,13 +247,10 @@ struct FakeMutations : IAppTicketMutations {
     VoidResult AddIssueCommentPlain(const std::string&, const std::string&) override {
         return CommentOk ? VoidOk() : VoidResult::Err("comment rejected");
     }
-    bool SubmitWorklog(const std::string&, const std::string& timeSpent, const std::string&, const std::string&,
-                       const std::string&, const std::string&, std::string& outError) override {
+    VoidResult SubmitWorklog(const std::string&, const std::string& timeSpent, const std::string&, const std::string&,
+                             const std::string&, const std::string&) override {
         LastWorklogTimeSpent = timeSpent;
-        if (!WorklogOk) {
-            outError = "worklog rejected";
-        }
-        return WorklogOk;
+        return WorklogOk ? VoidOk() : VoidResult::Err("worklog rejected");
     }
     std::int64_t QueueCreateOffline(const IssueDraft&) override { return QueuedId; }
     std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken) override {

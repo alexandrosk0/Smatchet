@@ -1064,14 +1064,14 @@ void HandleWorklogSave(AppController& app) {
         return;
     }
     std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
-    std::string outErr;
-    if (app.SubmitWorklog(s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent,
-                          s_ActiveWorklogState.TimeRemaining, adjEst, s_ActiveWorklogState.WorkDescription,
-                          s_ActiveWorklogState.DateStarted, outErr)) {
+    const VoidResult worklogResult = app.SubmitWorklog(
+        s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent, s_ActiveWorklogState.TimeRemaining, adjEst,
+        s_ActiveWorklogState.WorkDescription, s_ActiveWorklogState.DateStarted);
+    if (worklogResult.has_value()) {
         ImGui::CloseCurrentPopup();
         s_ActiveWorklogState.Initialized = false;
     } else {
-        s_ActiveWorklogState.ErrorMsg = "Failed: " + outErr;
+        s_ActiveWorklogState.ErrorMsg = "Failed: " + worklogResult.error();
     }
 }
 

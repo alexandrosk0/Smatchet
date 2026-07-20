@@ -1030,9 +1030,9 @@ class AppController : public IAppThreading,
     /// icon-only backends (cell value empty) and when the count is unchanged.
     void UpdateCachedCommentCount(const std::string& issueId, int newCount);
 
-    bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
-                       const std::string& adjustEstimate, const std::string& workDescription,
-                       const std::string& startedDate, std::string& outError) override;
+    VoidResult SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
+                             const std::string& adjustEstimate, const std::string& workDescription,
+                             const std::string& startedDate) override;
 
     // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
     // method — no IApp* interface mirror. Preflight ordering + strings are the pure seam in

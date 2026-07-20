@@ -38,10 +38,10 @@ class IAppTicketMutations {
                                        const std::vector<std::string>& rawValues) = 0;
     // Returns VoidResult: has_value() on success; error() carries the user-facing message.
     virtual VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) = 0;
-    virtual bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
-                               const std::string& timeRemaining, const std::string& adjustEstimate,
-                               const std::string& workDescription, const std::string& startedDate,
-                               std::string& outError) = 0;
+    // Returns VoidResult: has_value() on success; error() carries the user-facing message.
+    virtual VoidResult SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
+                                     const std::string& timeRemaining, const std::string& adjustEstimate,
+                                     const std::string& workDescription, const std::string& startedDate) = 0;
     virtual std::int64_t QueueCreateOffline(const IssueDraft& draft) = 0;
     // CancelToken default mirrored on the AppController override too: concrete-typed callers
     // (AppController_LuaBindings, SmatchetNewIssueDraftUi) use the 1-arg form via static binding.
