@@ -915,8 +915,9 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                 const std::string commentBody = BuildAnnotateQuickCommentTemplate(
                     selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.AnnotateCommentTemplates);
                 app.LaunchBackgroundTask([&app, capturedIssueKey, capturedTitle, commentBody]() {
-                    std::string err;
-                    const bool ok = app.AddIssueCommentPlain(capturedIssueKey, commentBody, err);
+                    const VoidResult r = app.AddIssueCommentPlain(capturedIssueKey, commentBody);
+                    const bool ok = r.has_value();
+                    const std::string err = ok ? std::string() : r.error();
                     app.PostToMainThread([ok, err, capturedTitle]() {
                         if (!HasLiveStateInstance()) {
                             return;

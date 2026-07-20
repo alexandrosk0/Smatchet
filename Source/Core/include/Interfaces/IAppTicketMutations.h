@@ -36,8 +36,8 @@ class IAppTicketMutations {
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
     virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                        const std::vector<std::string>& rawValues) = 0;
-    virtual bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
-                                      std::string& outError) = 0;
+    // Returns VoidResult: has_value() on success; error() carries the user-facing message.
+    virtual VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) = 0;
     virtual bool SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
                                const std::string& timeRemaining, const std::string& adjustEstimate,
                                const std::string& workDescription, const std::string& startedDate,

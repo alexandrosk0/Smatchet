@@ -1014,8 +1014,7 @@ class AppController : public IAppThreading,
     bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
                             std::string& outError) const override;
 
-    bool AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText,
-                              std::string& outError) override;
+    VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) override;
 
     /// issue-comments PR-A — off-UI read wrapper around
     /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
