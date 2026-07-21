@@ -60,9 +60,10 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     AppController* appPtr = &app;
     const std::string capturedIssueId = issueId;
     app.LaunchBackgroundTask([appPtr, capturedIssueId, gen]() {
-        std::vector<TrackerIssueComment> comments;
-        std::string err;
-        const bool ok = appPtr->FetchIssueComments(capturedIssueId, comments, err);
+        Result<std::vector<TrackerIssueComment>> r = appPtr->FetchIssueComments(capturedIssueId);
+        const bool ok = r.has_value();
+        std::vector<TrackerIssueComment> comments = ok ? std::move(r.value()) : std::vector<TrackerIssueComment>{};
+        std::string err = ok ? std::string{} : r.error();
         appPtr->PostToMainThread([appPtr, gen, capturedIssueId, ok, comments = std::move(comments), err]() mutable {
             if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
                                                           s_CommentsState.IssueId, capturedIssueId)) {
