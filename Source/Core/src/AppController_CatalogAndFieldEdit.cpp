@@ -841,30 +841,26 @@ VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, cons
     return VoidOk();
 }
 
-bool AppController::FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
-                                       std::string& outError) {
+Result<std::vector<TrackerIssueComment>> AppController::FetchIssueComments(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outComments.clear();
-    outError.clear();
     if (!backend) {
-        outError = "Jira backend is not initialized.";
-        return false;
+        return CommentsResult::Err("Jira backend is not initialized.");
     }
     if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+        return CommentsResult::Err("Tracker backend does not support collaboration features.");
     }
-    auto r = backend->Collaboration()->FetchIssueComments(issueKey);
-    if (r) {
-        outComments = std::move(r.value());
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-        return true;
+    CommentsResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerIssueComment>>(
+        backend->Collaboration()->FetchIssueComments(issueKey));
+    if (!outcome.has_value()) {
+        LOG_ERROR("AppController::FetchIssueComments failed issue=%s err=%s", issueKey.c_str(),
+                  outcome.error().c_str());
+        return outcome;
     }
-    outError = r.error().Detail;
-    LOG_ERROR("AppController::FetchIssueComments failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    return false;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
 void AppController::UpdateCachedCommentCount(const std::string& issueId, int newCount) {
@@ -958,36 +954,27 @@ VoidResult AppController::AddIssueCommentAnnotateContext(const std::string& issu
     return VoidOk();
 }
 
-bool AppController::FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
-                                        std::string& outError) const {
+Result<std::vector<std::string>> AppController::FetchUserGroupNames(const std::string& accountId) const {
+    using GroupNamesResult = Result<std::vector<std::string>>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outGroupNames.clear();
-    outError.clear();
     if (!backend) {
-        outError = "Jira backend is not initialized.";
-        return false;
+        return GroupNamesResult::Err("Jira backend is not initialized.");
     }
     if (!backend->Activity()) {
-        outError = "Tracker backend does not support activity features.";
-        return false;
+        return GroupNamesResult::Err("Tracker backend does not support activity features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto groupsResult = backend->Activity()->FetchUserGroupNames(cfg, accountId);
-    const bool ok = static_cast<bool>(groupsResult);
-    if (ok) {
-        outGroupNames = std::move(groupsResult.value());
-    } else {
-        outError = groupsResult.error().Detail;
-    }
-    if (!ok) {
+    GroupNamesResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<std::string>>(
+        backend->Activity()->FetchUserGroupNames(cfg, accountId));
+    if (!outcome.has_value()) {
         LOG_ERROR("AppController::FetchUserGroupNames failed account=%s err=%s", TruncateForLog(accountId, 40).c_str(),
-                  outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+                  outcome.error().c_str());
+        return outcome;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
 bool AppController::PaneSupportsActivity(const std::string& paneId) const {
@@ -1046,10 +1033,9 @@ void AppController::ClearPaneUserActivity(const std::string& paneId) const {
     }
 }
 
-bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::string& groupName,
-                                          std::vector<TrackerUser>& outMembers, std::string& outError) {
-    outMembers.clear();
-    outError.clear();
+Result<std::vector<TrackerUser>> AppController::FetchPaneGroupMembers(const std::string& paneId,
+                                                                      const std::string& groupName) {
+    using MembersResult = Result<std::vector<TrackerUser>>;
     std::shared_ptr<ITrackerBackend> backend;
     {
         // Issue #1457: this runs on a User Info std::async worker, so snapshot the context pointer
@@ -1069,30 +1055,26 @@ bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::
             std::unordered_map<std::string, std::vector<TrackerUser>>::const_iterator hit =
                 ctx->groupRoster.MembersByGroup.find(groupName);
             if (hit != ctx->groupRoster.MembersByGroup.end()) {
-                outMembers = hit->second;
-                return true;
+                return MembersResult::Ok(
+                    hit->second); // cache hit — no HTTP, no success-notify (matches prior early-return)
             }
         }
         backend = std::atomic_load(&ctx->Backend);
     }
     if (!backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
+        return MembersResult::Err("Tracker backend is not initialized.");
     }
     if (!backend->Activity()) {
-        outError = "Tracker backend does not support activity features.";
-        return false;
+        return MembersResult::Err("Tracker backend does not support activity features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto membersResult = backend->Activity()->FetchGroupMembers(cfg, groupName);
-    const bool ok = static_cast<bool>(membersResult);
-    if (ok) {
-        outMembers = std::move(membersResult.value());
+    MembersResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(
+        backend->Activity()->FetchGroupMembers(cfg, groupName));
+    if (outcome.has_value()) {
         requestDeferredLiveTrackerBackendSuccessNotify_();
     } else {
-        outError = membersResult.error().Detail;
         LOG_ERROR("AppController::FetchPaneGroupMembers failed pane=%s group=%s err=%s", paneId.c_str(),
-                  TruncateForLog(groupName, 40).c_str(), outError.c_str());
+                  TruncateForLog(groupName, 40).c_str(), outcome.error().c_str());
     }
     // Re-resolve for the write-back — the context may have been retired during the fetch.
     // Exact-id only: caching a fallback pane's roster into the focused context would mix
@@ -1108,12 +1090,12 @@ bool AppController::FetchPaneGroupMembers(const std::string& paneId, const std::
     }
     if (ctx) {
         std::lock_guard<std::mutex> lock(ctx->groupRoster.rosterMutex_);
-        if (ok) {
-            ctx->groupRoster.MembersByGroup[groupName] = outMembers;
+        if (outcome.has_value()) {
+            ctx->groupRoster.MembersByGroup[groupName] = outcome.value();
             ctx->groupRoster.LastGroupRosterError.clear();
         } else {
-            ctx->groupRoster.LastGroupRosterError = outError;
+            ctx->groupRoster.LastGroupRosterError = outcome.error();
         }
     }
-    return ok;
+    return outcome;
 }

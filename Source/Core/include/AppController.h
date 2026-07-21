@@ -1018,11 +1018,10 @@ class AppController : public IAppThreading,
 
     /// issue-comments PR-A — off-UI read wrapper around
     /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
-    /// returns the backend-agnostic comment list in `outComments`. No read-only
-    /// guard (pure read). false + `outError` on no backend / no collaboration
-    /// support / backend error.
-    bool FetchIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment>& outComments,
-                            std::string& outError);
+    /// returns the backend-agnostic comment list on success. No read-only guard
+    /// (pure read). `error()` carries the user-facing message on no backend / no
+    /// collaboration support / backend error.
+    Result<std::vector<TrackerIssueComment>> FetchIssueComments(const std::string& issueKey);
 
     /// issue-comments fix (#1291) — push a freshly-observed comment count into the
     /// cached ticket so the grid Comments column updates after a post, without a
@@ -1042,8 +1041,9 @@ class AppController : public IAppThreading,
                                               int lineNumber, const std::string& changelist, const std::string& date,
                                               bool approximated, const std::string& codeSnippet);
 
-    bool FetchUserGroupNames(const std::string& accountId, std::vector<std::string>& outGroupNames,
-                             std::string& outError) const;
+    /// Group names for `accountId` via the focused backend's ITrackerActivity. `error()` carries the
+    /// user-facing message on no backend / no activity support / backend error. Off-UI (blocks on HTTP).
+    Result<std::vector<std::string>> FetchUserGroupNames(const std::string& accountId) const;
 
     // --- Per-pane activity delegators (user-info-window Slice 3, plan item 15) ----------
     // The User Info window opens FROM a grid pane: each delegator resolves THAT pane's
@@ -1066,9 +1066,9 @@ class AppController : public IAppThreading,
     void ClearPaneUserActivity(const std::string& paneId) const;
 
     /// Group-member lookup through the pane context's lazy GridContextGroupRoster cache
-    /// (hit = no HTTP; miss = ITrackerActivity::FetchGroupMembers, then cached).
-    bool FetchPaneGroupMembers(const std::string& paneId, const std::string& groupName,
-                               std::vector<TrackerUser>& outMembers, std::string& outError);
+    /// (hit = no HTTP; miss = ITrackerActivity::FetchGroupMembers, then cached). `error()`
+    /// carries the user-facing message on no backend / no activity support / backend error.
+    Result<std::vector<TrackerUser>> FetchPaneGroupMembers(const std::string& paneId, const std::string& groupName);
 
   private:
     // DR6: shared_ptr (not unique_ptr) so off-UI-thread workers (Lua automation / MCP pool,

@@ -58,5 +58,18 @@ inline VoidResult CollaborationErrorToVoidResult(const TrackerError& err) {
     return VoidResult::Err(err.Detail);
 }
 
+/// Read-side sibling of CollaborationErrorToVoidResult: maps a payload-bearing backend call
+/// (`Result<T, TrackerError>`) onto the AppController-facing `Result<T>` — Ok passes the payload
+/// through by move; an error surfaces `err.Detail`, exactly as the old `bool + outError` read
+/// contract set `outError = err.Detail`. The read delegators (FetchIssueComments / FetchUserGroupNames /
+/// FetchPaneGroupMembers / …) keep their divergent backend/capability guards inline (Collaboration()
+/// vs Activity(), no read-only gate), so only this error mapper is shared.
+template <typename T> inline Result<T> CollaborationResultToResult(Result<T, TrackerError>&& backendResult) {
+    if (backendResult.has_value()) {
+        return Result<T>::Ok(std::move(backendResult.value()));
+    }
+    return Result<T>::Err(backendResult.error().Detail);
+}
+
 } // namespace collab
 } // namespace smatchet

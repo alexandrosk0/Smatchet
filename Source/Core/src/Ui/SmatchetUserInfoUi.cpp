@@ -254,9 +254,11 @@ void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
         if (cancel.IsCancelled()) {
             return p;
         }
-        std::string err;
-        if (!appPtr->FetchUserGroupNames(accountId, p.Names, err)) {
-            p.Error = err.empty() ? "Group lookup failed." : err;
+        Result<std::vector<std::string>> r = appPtr->FetchUserGroupNames(accountId);
+        if (r.has_value()) {
+            p.Names = std::move(r.value());
+        } else {
+            p.Error = r.error().empty() ? "Group lookup failed." : r.error();
         }
         return p;
     });
@@ -280,9 +282,11 @@ void SmatchetUserInfoUi::launchMembersFetch(AppController& app, const std::strin
         if (cancel.IsCancelled()) {
             return p;
         }
-        std::string err;
-        if (!appPtr->FetchPaneGroupMembers(paneId, groupName, p.Members, err)) {
-            p.Error = err.empty() ? "Member lookup failed." : err;
+        Result<std::vector<TrackerUser>> r = appPtr->FetchPaneGroupMembers(paneId, groupName);
+        if (r.has_value()) {
+            p.Members = std::move(r.value());
+        } else {
+            p.Error = r.error().empty() ? "Member lookup failed." : r.error();
         }
         return p;
     });

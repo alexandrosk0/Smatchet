@@ -262,7 +262,12 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
         std::vector<std::string> groups;
         std::string gerr;
         if (!bestAccountId.empty()) {
-            appMut.FetchUserGroupNames(bestAccountId, groups, gerr);
+            Result<std::vector<std::string>> r = appMut.FetchUserGroupNames(bestAccountId);
+            if (r.has_value()) {
+                groups = std::move(r.value());
+            } else {
+                gerr = r.error();
+            }
         }
         const bool found = searchOk && !users.empty();
         appMut.PostToMainThread([capturedUser, found, bestDisplayName, bestEmail, groups, qerr, gerr]() {
