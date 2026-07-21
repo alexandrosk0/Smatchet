@@ -1052,10 +1052,10 @@ class AppController : public IAppThreading,
 
     /// Recent tracker activity for `accountId` via the pane's ITrackerActivity (see that
     /// header for the dayFrom/dayTo/projectScope and `progress` contracts).
-    bool FetchPaneUserActivity(const std::string& paneId, const std::string& accountId, const std::string& dayFrom,
-                               const std::string& dayTo, const std::string& projectScope,
-                               TrackerActivityProgress& progress, std::vector<TrackerActivityEntry>& outEntries,
-                               std::string& outError) const;
+    Result<std::vector<TrackerActivityEntry>>
+    FetchPaneUserActivity(const std::string& paneId, const std::string& accountId, const std::string& dayFrom,
+                          const std::string& dayTo, const std::string& projectScope,
+                          TrackerActivityProgress& progress) const;
 
     /// Cancel the pane's in-flight FetchPaneUserActivity (safe from any thread; no-op
     /// when the pane has no activity role).

@@ -938,10 +938,11 @@ bool AppController::PaneSupportsActivity(const std::string& paneId) const {
     return backend && backend->Activity() != nullptr;
 }
 
-bool AppController::FetchPaneUserActivity(const std::string& paneId, const std::string& accountId,
-                                          const std::string& dayFrom, const std::string& dayTo,
-                                          const std::string& projectScope, TrackerActivityProgress& progress,
-                                          std::vector<TrackerActivityEntry>& outEntries, std::string& outError) const {
+Result<std::vector<TrackerActivityEntry>>
+AppController::FetchPaneUserActivity(const std::string& paneId, const std::string& accountId,
+                                     const std::string& dayFrom, const std::string& dayTo,
+                                     const std::string& projectScope, TrackerActivityProgress& progress) const {
+    using ActivityResult = Result<std::vector<TrackerActivityEntry>>;
     // Issue #1457: this runs on the User Info activity std::async worker, so resolve the context
     // under the map mutex (exact-id, fallback to the permanent focused context) and latch the
     // backend shared_ptr inside the critical section. The latch (ADR-0012) is the only thing
@@ -953,29 +954,24 @@ bool AppController::FetchPaneUserActivity(const std::string& paneId, const std::
         const GridLiveContext* ctx = (it != gridContexts_.end()) ? it->second.get() : focusedContextPtr_.load();
         backend = std::atomic_load(&ctx->Backend);
     }
-    outEntries.clear();
-    outError.clear();
     if (!backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
+        return ActivityResult::Err("Tracker backend is not initialized.");
     }
     if (!backend->Activity()) {
-        outError = "Tracker backend does not support activity features.";
-        return false;
+        return ActivityResult::Err("Tracker backend does not support activity features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto activityResult =
-        backend->Activity()->FetchUserActivity(cfg, accountId, dayFrom, dayTo, projectScope, progress);
-    const bool ok = static_cast<bool>(activityResult);
-    if (ok) {
-        outEntries = std::move(activityResult.value());
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-    } else {
-        outError = activityResult.error().Detail;
+    // progress stays a reference param — the worker streams live progress into it during the
+    // multi-second fetch; only the entries payload + error fold into the Result.
+    ActivityResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerActivityEntry>>(
+        backend->Activity()->FetchUserActivity(cfg, accountId, dayFrom, dayTo, projectScope, progress));
+    if (!outcome.has_value()) {
         LOG_ERROR("AppController::FetchPaneUserActivity failed pane=%s account=%s err=%s", paneId.c_str(),
-                  TruncateForLog(accountId, 40).c_str(), outError.c_str());
+                  TruncateForLog(accountId, 40).c_str(), outcome.error().c_str());
+        return outcome;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
 void AppController::ClearPaneUserActivity(const std::string& paneId) const {
