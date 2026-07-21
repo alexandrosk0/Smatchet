@@ -97,32 +97,35 @@ static void RegisterAddCommentCommand(CommandRegistry& reg, IAppTicketMutations&
 }
 
 static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c = MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
-                            [&app](const nlohmann::json& args, const CommandContext&) {
-                                const int seconds = args.value("seconds", 0);
-                                const std::string id = args.value("id", std::string());
-                                const std::string comment = args.value("comment", std::string());
-                                const std::string started = args.value("started", std::string());
-                                // timeSpent format: "1h 30m" — build from seconds.
-                                const int h = seconds / 3600;
-                                const int m = (seconds % 3600) / 60;
-                                const int s = seconds % 60;
-                                char timeSpent[64] = {};
-                                if (h > 0 && m > 0)
-                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dh %dm", h, m);
-                                else if (h > 0)
-                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dh", h);
-                                else if (m > 0)
-                                    std::snprintf(timeSpent, sizeof(timeSpent), "%dm", m);
-                                else
-                                    std::snprintf(timeSpent, sizeof(timeSpent), "%ds", s);
-                                std::string err;
-                                const bool ok = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started, err);
-                                if (!ok) {
-                                    return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + err);
-                                }
-                                return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
-                            });
+    Command c =
+        MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
+                    [&app](const nlohmann::json& args, const CommandContext&) {
+                        const int seconds = args.value("seconds", 0);
+                        const std::string id = args.value("id", std::string());
+                        const std::string comment = args.value("comment", std::string());
+                        const std::string started = args.value("started", std::string());
+                        // timeSpent format: "1h 30m" — build from seconds.
+                        const int h = seconds / 3600;
+                        const int m = (seconds % 3600) / 60;
+                        const int s = seconds % 60;
+                        char timeSpent[64] = {};
+                        if (h > 0 && m > 0)
+                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh %dm", h, m);
+                        else if (h > 0)
+                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh", h);
+                        else if (m > 0)
+                            std::snprintf(timeSpent, sizeof(timeSpent), "%dm", m);
+                        else
+                            std::snprintf(timeSpent, sizeof(timeSpent), "%ds", s);
+                        const VoidResult r = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started);
+                        if (!r.has_value()) {
+                            return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + r.error());
+                        }
+                        return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
+                    });
+    // Destructive-from-automation (CLI/MCP/Lua) audit logging is centralized in
+    // CommandRegistry::Dispatch (snapshot.Destructive && IsAutomationSource) — handlers do not log
+    // it per-command (that would double-log).
     c.Destructive = true;
     c.Idempotent = false;
     {
