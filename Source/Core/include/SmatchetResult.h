@@ -312,3 +312,17 @@ using VoidResult = Result<Unit>;
 
 // Convenience: a success VoidResult without spelling `VoidResult::Ok(Unit{})`.
 inline VoidResult VoidOk() { return VoidResult::Ok(Unit{}); }
+
+// Unpack a Result<T> into the "async worker → main-thread post-back" capture shape the UI
+// workers share: set `ok`, MOVE the payload into `value` on success, or copy the message into
+// `err` on failure. The other branch's out-param is left untouched, so pre-seed `value`/`err`
+// to empty/default before calling. Consolidates the has_value()/value()/error() unpack so the
+// idiom lives in one place instead of being copy-pasted across worker lambdas (DRY Pillar 5).
+template <typename T> inline void UnpackResult(Result<T>&& r, bool& ok, T& value, std::string& err) {
+    ok = r.has_value();
+    if (ok) {
+        value = std::move(r.value());
+    } else {
+        err = r.error();
+    }
+}

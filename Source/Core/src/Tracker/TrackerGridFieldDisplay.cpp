@@ -197,14 +197,13 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
         async.watchersLoadedError.clear();
         async.watchersFuture = std::async(std::launch::async, [&app, issueKey]() {
             WatchersLoadResult r;
-            std::string err;
-            std::vector<TrackerUser> watchers;
-            if (app.FetchIssueWatchers(issueKey, watchers, err)) {
-                r.Watchers = watchers;
+            Result<std::vector<TrackerUser>> res = app.FetchIssueWatchers(issueKey);
+            if (res.has_value()) {
+                r.Watchers = std::move(res.value());
                 r.Ok = true;
             } else {
                 r.Ok = false;
-                r.Error = std::move(err);
+                r.Error = res.error();
             }
             return r;
         });
@@ -283,14 +282,17 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
         async.votesLoadedVotersArrayInResponse = false;
         async.votesFuture = std::async(std::launch::async, [&app, issueKey]() {
             VotesLoadResult r;
-            std::string err;
-            std::vector<TrackerUser> voters;
-            if (app.FetchIssueVotes(issueKey, voters, err, &r.VoteCount, &r.HasVoted, &r.VotersArrayInResponse)) {
-                r.Voters = voters;
+            Result<TrackerIssueVotes> res = app.FetchIssueVotes(issueKey);
+            if (res.has_value()) {
+                const TrackerIssueVotes& v = res.value();
+                r.Voters = v.Voters;
+                r.VoteCount = v.VoteCount;
+                r.HasVoted = v.HasVoted;
+                r.VotersArrayInResponse = v.VotersArrayInResponse;
                 r.Ok = true;
             } else {
                 r.Ok = false;
-                r.Error = std::move(err);
+                r.Error = res.error();
             }
             return r;
         });
