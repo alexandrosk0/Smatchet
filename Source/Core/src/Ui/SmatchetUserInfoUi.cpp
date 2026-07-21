@@ -229,10 +229,12 @@ void SmatchetUserInfoUi::launchActivityFetch(AppController& app) {
             if (cancel.IsCancelled()) {
                 return p;
             }
-            std::string err;
-            if (!appPtr->FetchPaneUserActivity(paneId, accountId, dayFrom, dayTo, std::string(), *progress, p.Entries,
-                                               err)) {
-                p.Error = err.empty() ? "Activity fetch failed." : err;
+            Result<std::vector<TrackerActivityEntry>> r =
+                appPtr->FetchPaneUserActivity(paneId, accountId, dayFrom, dayTo, std::string(), *progress);
+            if (r.has_value()) {
+                p.Entries = std::move(r.value());
+            } else {
+                p.Error = r.error().empty() ? "Activity fetch failed." : r.error();
             }
             return p;
         });
