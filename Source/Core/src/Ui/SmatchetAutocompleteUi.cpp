@@ -374,7 +374,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
     st.jqlAcpUserSearchFireAt = 0.0;
     st.jqlAcpUserSearchFuture = std::async(std::launch::async, [&userSearch, capturedQ]() {
         JqlEditorState::JqlUserSearchResult r;
-        r.Ok = userSearch.SearchUsersByQuery(capturedQ, r.Users, r.Error);
+        UnpackResult(userSearch.SearchUsersByQuery(capturedQ), r.Ok, r.Users, r.Error);
         return r;
     });
 }

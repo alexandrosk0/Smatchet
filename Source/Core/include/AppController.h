@@ -999,20 +999,16 @@ class AppController : public IAppThreading,
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
-    bool FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
-                            std::string& outError) const override;
+    Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
 
     // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
     // method — no IApp* interface mirror. Guard ordering + strings are pinned by the pure seam in
     // Tracker/CollaborationPreconditionPure.h (CollaborationPreconditionPure.test.cpp).
     VoidResult AddIssueWatcher(const std::string& issueKey);
 
-    // defaults for outVoteCount / outHasVoted / outVotersInResponse live on IAppUsers::FetchIssueVotes
-    bool FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters, std::string& outError,
-                         int* outVoteCount, bool* outHasVoted, bool* outVotersInResponse) const override;
+    Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
 
-    bool SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
-                            std::string& outError) const override;
+    Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
 
     VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) override;
 

@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 // Wrong-state access (value() on disengaged / error() on ok) is a two-stage
 // Pillar-3 contract in SmatchetResult.h: assert() in DEBUG, then throw
@@ -283,4 +284,26 @@ TEST_CASE("VoidResult: copy and move preserve the ok/err state") {
 TEST_CASE("VoidResult: reading error() on a success VoidResult is the wrong-state contract") {
     const VoidResult r = VoidOk();
     SMATCHET_CHECK_WRONGSTATE_THROWS(r.error(), std::logic_error);
+}
+
+TEST_CASE("UnpackResult: Ok moves the payload, sets ok=true, and leaves err untouched") {
+    bool ok = false;
+    std::vector<int> value;
+    std::string err = "sentinel";
+    UnpackResult(Result<std::vector<int>>::Ok(std::vector<int>{1, 2, 3}), ok, value, err);
+    CHECK(ok);
+    REQUIRE(value.size() == 3);
+    CHECK(value[0] == 1);
+    CHECK(err == "sentinel"); // success branch never writes err
+}
+
+TEST_CASE("UnpackResult: Err sets ok=false, copies the message, and leaves value untouched") {
+    bool ok = true;
+    std::vector<int> value{7};
+    std::string err;
+    UnpackResult(Result<std::vector<int>>::Err("boom"), ok, value, err);
+    CHECK_FALSE(ok);
+    CHECK(err == "boom");
+    REQUIRE(value.size() == 1); // failure branch never touches value
+    CHECK(value[0] == 7);
 }

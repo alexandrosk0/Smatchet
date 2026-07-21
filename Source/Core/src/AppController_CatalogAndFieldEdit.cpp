@@ -677,35 +677,27 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
 VoidResult AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
     return fieldEdit_->ApplyFieldEditResult(issueId, result);
 }
-bool AppController::FetchIssueWatchers(const std::string& issueKey, std::vector<TrackerUser>& outWatchers,
-                                       std::string& outError) const {
+Result<std::vector<TrackerUser>> AppController::FetchIssueWatchers(const std::string& issueKey) const {
+    using WatchersResult = Result<std::vector<TrackerUser>>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outWatchers.clear();
-    outError.clear();
     if (!backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
+        return WatchersResult::Err("Tracker backend is not initialized.");
     }
     if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+        return WatchersResult::Err("Tracker backend does not support collaboration features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto watchersResult = backend->Collaboration()->FetchIssueWatchers(cfg, issueKey);
-    const bool ok = static_cast<bool>(watchersResult);
-    if (ok) {
-        outWatchers = std::move(watchersResult.value());
-    } else {
-        outError = watchersResult.error().Detail;
+    WatchersResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(
+        backend->Collaboration()->FetchIssueWatchers(cfg, issueKey));
+    if (!outcome.has_value()) {
+        LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(),
+                  outcome.error().c_str());
+        return outcome;
     }
-    if (!ok) {
-        LOG_ERROR("AppController::FetchIssueWatchers failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-    }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
 VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
@@ -732,87 +724,49 @@ VoidResult AppController::AddIssueWatcher(const std::string& issueKey) {
     return VoidOk();
 }
 
-bool AppController::FetchIssueVotes(const std::string& issueKey, std::vector<TrackerUser>& outVoters,
-                                    std::string& outError, int* outVoteCount, bool* outHasVoted,
-                                    bool* outVotersInResponse) const {
+Result<TrackerIssueVotes> AppController::FetchIssueVotes(const std::string& issueKey) const {
+    using VotesResult = Result<TrackerIssueVotes>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outVoters.clear();
-    outError.clear();
-    if (outVoteCount) {
-        *outVoteCount = 0;
-    }
-    if (outHasVoted) {
-        *outHasVoted = false;
-    }
-    if (outVotersInResponse) {
-        *outVotersInResponse = false;
-    }
     if (!backend) {
-        outError = "Tracker backend is not initialized.";
-        return false;
+        return VotesResult::Err("Tracker backend is not initialized.");
     }
     if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+        return VotesResult::Err("Tracker backend does not support collaboration features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto votesResult = backend->Collaboration()->FetchIssueVotes(cfg, issueKey);
-    const bool ok = static_cast<bool>(votesResult);
-    if (ok) {
-        const TrackerIssueVotes& votes = votesResult.value();
-        outVoters = votes.Voters;
-        if (outVoteCount) {
-            *outVoteCount = votes.VoteCount;
-        }
-        if (outHasVoted) {
-            *outHasVoted = votes.HasVoted;
-        }
-        if (outVotersInResponse) {
-            *outVotersInResponse = votes.VotersArrayInResponse;
-        }
-    } else {
-        outError = votesResult.error().Detail;
+    VotesResult outcome = smatchet::collab::CollaborationResultToResult<TrackerIssueVotes>(
+        backend->Collaboration()->FetchIssueVotes(cfg, issueKey));
+    if (!outcome.has_value()) {
+        LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outcome.error().c_str());
+        return outcome;
     }
-    if (!ok) {
-        LOG_ERROR("AppController::FetchIssueVotes failed issue=%s err=%s", issueKey.c_str(), outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
-    }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
-bool AppController::SearchUsersByQuery(const std::string& query, std::vector<TrackerUser>& outUsers,
-                                       std::string& outError) const {
+Result<std::vector<TrackerUser>> AppController::SearchUsersByQuery(const std::string& query) const {
+    using UsersResult = Result<std::vector<TrackerUser>>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    outUsers.clear();
-    outError.clear();
     if (!backend) {
-        outError = "Jira backend is not initialized.";
-        return false;
+        return UsersResult::Err("Jira backend is not initialized.");
     }
     if (!backend->Collaboration()) {
-        outError = "Tracker backend does not support collaboration features.";
-        return false;
+        return UsersResult::Err("Tracker backend does not support collaboration features.");
     }
     const TrackerConfig cfg = ConfigManager::Load();
-    auto usersResult = backend->Collaboration()->SearchUsersByQuery(cfg, query);
-    const bool ok = static_cast<bool>(usersResult);
-    if (ok) {
-        outUsers = std::move(usersResult.value());
-    } else {
-        outError = usersResult.error().Detail;
-    }
-    if (!ok) {
+    UsersResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(
+        backend->Collaboration()->SearchUsersByQuery(cfg, query));
+    if (!outcome.has_value()) {
         LOG_ERROR("AppController::SearchUsersByQuery failed query=%s err=%s", TruncateForLog(query, 120).c_str(),
-                  outError.c_str());
-    } else {
-        requestDeferredLiveTrackerBackendSuccessNotify_();
+                  outcome.error().c_str());
+        return outcome;
     }
-    return ok;
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
 }
 
 VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) {

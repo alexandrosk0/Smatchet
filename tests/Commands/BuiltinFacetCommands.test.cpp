@@ -20,6 +20,7 @@
 #include "Commands/IMainThreadPoster.h"
 
 #include "ConfigManager.h"
+#include "ITrackerCollaboration.h" // TrackerIssueVotes — FakeUsers::FetchIssueVotes returns Result<TrackerIssueVotes>
 #include "Interfaces/IAppAttachments.h"
 #include "Interfaces/IAppAutomation.h"
 #include "Interfaces/IAppFields.h"
@@ -71,45 +72,40 @@ struct FakeTicketData : IAppTicketData {
 
 struct FakeUsers : IAppUsers {
     bool Fail = false;
-    bool FetchIssueWatchers(const std::string&, std::vector<TrackerUser>& outWatchers,
-                            std::string& outError) const override {
+    Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string&) const override {
         if (Fail) {
-            outError = "watchers boom";
-            return false;
+            return Result<std::vector<TrackerUser>>::Err("watchers boom");
         }
         TrackerUser u;
         u.AccountId = "w1";
         u.DisplayName = "Watcher One";
-        outWatchers.push_back(u);
-        return true;
+        std::vector<TrackerUser> out;
+        out.push_back(u);
+        return Result<std::vector<TrackerUser>>::Ok(std::move(out));
     }
-    bool FetchIssueVotes(const std::string&, std::vector<TrackerUser>& outVoters, std::string& outError,
-                         int* outVoteCount, bool*, bool*) const override {
+    Result<TrackerIssueVotes> FetchIssueVotes(const std::string&) const override {
         if (Fail) {
-            outError = "votes boom";
-            return false;
+            return Result<TrackerIssueVotes>::Err("votes boom");
         }
         TrackerUser u;
         u.AccountId = "v1";
         u.DisplayName = "Voter One";
-        outVoters.push_back(u);
-        if (outVoteCount) {
-            *outVoteCount = 3;
-        }
-        return true;
+        TrackerIssueVotes votes;
+        votes.Voters.push_back(u);
+        votes.VoteCount = 3;
+        return Result<TrackerIssueVotes>::Ok(std::move(votes));
     }
-    bool SearchUsersByQuery(const std::string&, std::vector<TrackerUser>& outUsers,
-                            std::string& outError) const override {
+    Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string&) const override {
         if (Fail) {
-            outError = "search boom";
-            return false;
+            return Result<std::vector<TrackerUser>>::Err("search boom");
         }
         TrackerUser u;
         u.AccountId = "s1";
         u.DisplayName = "Search Hit";
         u.EmailAddress = "hit@example.com";
-        outUsers.push_back(u);
-        return true;
+        std::vector<TrackerUser> out;
+        out.push_back(u);
+        return Result<std::vector<TrackerUser>>::Ok(std::move(out));
     }
 };
 

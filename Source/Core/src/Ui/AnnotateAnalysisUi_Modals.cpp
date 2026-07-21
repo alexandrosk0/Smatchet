@@ -47,11 +47,12 @@ bool ResolveP4UserForAssign(const AppController& app, const std::string& p4User,
         err = "No Perforce user.";
         return false;
     }
-    std::vector<TrackerUser> users;
-    if (!app.SearchUsersByQuery(p4User, users, err)) {
+    Result<std::vector<TrackerUser>> usersResult = app.SearchUsersByQuery(p4User);
+    if (!usersResult.has_value()) {
+        err = usersResult.error();
         return false;
     }
-    return AnnotateUiPure::PickJiraAccountForP4User(users, p4User, accountId, err);
+    return AnnotateUiPure::PickJiraAccountForP4User(usersResult.value(), p4User, accountId, err);
 }
 
 std::string BuildAiExport() {
@@ -247,7 +248,8 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
     appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
         std::vector<TrackerUser> users;
         std::string qerr;
-        const bool searchOk = appMut.SearchUsersByQuery(capturedUser, users, qerr);
+        bool searchOk = false;
+        UnpackResult(appMut.SearchUsersByQuery(capturedUser), searchOk, users, qerr);
         std::string bestDisplayName;
         std::string bestEmail;
         std::string bestAccountId;
@@ -315,7 +317,8 @@ void PrepareAssignModal(const AppController& app, const AnnotateRow& row, const 
     appMut.LaunchBackgroundTask([&appMut, capturedUser]() {
         std::vector<TrackerUser> users;
         std::string err;
-        const bool searchOk = appMut.SearchUsersByQuery(capturedUser, users, err);
+        bool searchOk = false;
+        UnpackResult(appMut.SearchUsersByQuery(capturedUser), searchOk, users, err);
         std::string accountId;
         std::string resolveErr;
         bool hasJiraAccount = false;
