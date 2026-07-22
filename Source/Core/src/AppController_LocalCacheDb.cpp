@@ -121,7 +121,7 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     if (!removeResult.has_value()) {
         try {
             auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-            std::atomic_store(&Cache, fresh);
+            std::atomic_store(&Cache, std::move(fresh));
         } catch (const std::exception& ex) {
             return VoidResult::Err(removeResult.error() + " Failed to reopen database: " + ex.what());
         }
@@ -130,7 +130,7 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
 
     try {
         auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-        std::atomic_store(&Cache, fresh);
+        std::atomic_store(&Cache, std::move(fresh));
     } catch (const std::exception& ex) {
         return VoidResult::Err(std::string("Failed to open new database: ") + ex.what());
     }

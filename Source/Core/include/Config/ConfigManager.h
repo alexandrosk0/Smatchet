@@ -760,7 +760,7 @@ class ConfigManager {
                                                   StoragePreference defaultIfMissing);
 
     /** Write the explicit preference. Takes effect on next launch — paths are resolved
-     *  at startup. Returns true on success; on failure `outError` is populated. */
+     *  at startup. `VoidOk()` on success; `VoidResult::Err(msg)` on a write failure. */
     static VoidResult SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref);
 
     /** Returns true iff the user has made an explicit choice (marker file exists). */
