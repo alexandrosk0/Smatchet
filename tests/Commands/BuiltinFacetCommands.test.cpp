@@ -120,10 +120,9 @@ struct FakeSync : IAppSync {
     TrackerIssueFetchPack Pack;
 
     void SyncWithBackend(const TrackerConfig*, const ViewsStore*) override { ++SyncCalls; }
-    bool RecreateLocalCacheDatabase(std::string& outError) override {
+    VoidResult RecreateLocalCacheDatabase() override {
         ++RecreateCalls;
-        outError = RecreateError;
-        return RecreateError.empty();
+        return RecreateError.empty() ? VoidOk() : VoidResult::Err(RecreateError);
     }
     void RefreshLocalData() override { ++RefreshCalls; }
     TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig*, const ViewsStore*) override { return Pack; }

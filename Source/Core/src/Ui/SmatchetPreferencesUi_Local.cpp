@@ -146,8 +146,8 @@ void DrawLocalDataRecreateDbSection(SmatchetUI& ui, AppController& app, UiDrawSe
             ImGui::CloseCurrentPopup();
         }
         if (deleteClicked) {
-            std::string err;
-            if (app.RecreateLocalCacheDatabase(err)) {
+            const VoidResult recreated = app.RecreateLocalCacheDatabase();
+            if (recreated.has_value()) {
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.success", "Success")),
                     std::string(SmatchetLocalization::T("toast.local_db_recreated",
@@ -160,7 +160,7 @@ void DrawLocalDataRecreateDbSection(SmatchetUI& ui, AppController& app, UiDrawSe
                                                              "Could not recreate the local database.");
                 SmatchetToastManager::Instance().Push(
                     std::string(SmatchetLocalization::T("toast.local_db_error_title", "Local database")),
-                    err.empty() ? std::string(detail) : err, ToastType::Error, 6000);
+                    recreated.error().empty() ? std::string(detail) : recreated.error(), ToastType::Error, 6000);
             }
         }
         ImGui::EndPopup();
@@ -207,8 +207,8 @@ void DrawLocalDataStorageSection(AppController& app) {
     if (ImGui::Combo("Storage mode", &prefIndex, items, IM_ARRAYSIZE(items))) {
         const ConfigManager::StoragePreference chosen =
             (prefIndex == 0) ? ConfigManager::StoragePreference::Portable : ConfigManager::StoragePreference::Shared;
-        std::string err;
-        if (ConfigManager::SetStoragePreference(runtimeAssetDir, chosen, err)) {
+        const VoidResult stored = ConfigManager::SetStoragePreference(runtimeAssetDir, chosen);
+        if (stored.has_value()) {
             s_storageModeChanged = true;
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.storage", "Storage"),
@@ -223,9 +223,10 @@ void DrawLocalDataStorageSection(AppController& app) {
         } else {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.storage", "Storage"),
-                err.empty() ? std::string(SmatchetLocalization::T("prefs.storage.marker_write_failed",
-                                                                  "Could not write storage-mode marker file."))
-                            : err,
+                stored.error().empty()
+                    ? std::string(SmatchetLocalization::T("prefs.storage.marker_write_failed",
+                                                          "Could not write storage-mode marker file."))
+                    : stored.error(),
                 ToastType::Error, 6000);
         }
     }
