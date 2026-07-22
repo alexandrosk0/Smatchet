@@ -658,25 +658,21 @@ ConfigManager::StoragePreference ConfigManager::GetStoragePreference(const std::
     return defaultIfMissing;
 }
 
-bool ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref,
-                                         std::string& outError) {
-    outError.clear();
+VoidResult ConfigManager::SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref) {
     const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);
     EnsureParentDirectoryForFile(path);
     std::ofstream file(path, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
-        outError = "Could not write storage-mode marker file: " + path;
-        return false;
+        return VoidResult::Err("Could not write storage-mode marker file: " + path);
     }
     file << (pref == StoragePreference::Portable ? "portable" : "shared") << '\n'
          << "# Smatchet storage-mode marker. Authoritative across launches. Change via\n"
          << "# Preferences -> Local data, or by editing the first non-comment line.\n";
     file.flush();
     if (file.fail()) {
-        outError = "Marker write failed (flush): " + path;
-        return false;
+        return VoidResult::Err("Marker write failed (flush): " + path);
     }
-    return true;
+    return VoidOk();
 }
 
 std::string ConfigManager::GetPlatformSharedUserDataDirectory() {

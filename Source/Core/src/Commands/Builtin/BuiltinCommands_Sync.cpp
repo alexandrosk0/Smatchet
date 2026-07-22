@@ -51,13 +51,12 @@ void RegisterSyncFullCommand(CommandRegistry& reg, IAppSync& app) {
                             if (ctx.DryRun) {
                                 return CommandResult::Success({{"wouldDo", "wipe local cache + full re-fetch"}});
                             }
-                            std::string err;
-                            app.RecreateLocalCacheDatabase(err);
+                            const VoidResult recreated = app.RecreateLocalCacheDatabase();
                             app.SyncWithBackend();
                             nlohmann::json out;
                             out["triggered"] = true;
-                            if (!err.empty())
-                                out["warning"] = err;
+                            if (!recreated.has_value())
+                                out["warning"] = recreated.error();
                             return CommandResult::Success(std::move(out));
                         });
         c.Destructive = true;

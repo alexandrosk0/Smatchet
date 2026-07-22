@@ -29,15 +29,14 @@
 
 namespace {
 
-bool RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, std::string& outError) {
+VoidResult RemoveLocalCacheDbFiles(const std::string& dbPathUtf8) {
     namespace fs = ghc::filesystem;
     std::error_code ec;
     fs::path p(dbPathUtf8);
     if (!p.is_absolute()) {
         p = fs::absolute(p, ec);
         if (ec) {
-            outError = "Could not resolve database path: " + ec.message();
-            return false;
+            return VoidResult::Err("Could not resolve database path: " + ec.message());
         }
     }
     const std::string stem = p.string();
@@ -49,11 +48,10 @@ bool RemoveLocalCacheDbFiles(const std::string& dbPathUtf8, std::string& outErro
         }
         fs::remove(f, ec);
         if (ec) {
-            outError = "Could not remove " + f.string() + ": " + ec.message();
-            return false;
+            return VoidResult::Err("Could not remove " + f.string() + ": " + ec.message());
         }
     }
-    return true;
+    return VoidOk();
 }
 
 } // namespace
@@ -74,15 +72,12 @@ std::string AppController::GetResolvedLocalCacheDbPath() const {
     return p.string();
 }
 
-bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
-    outError.clear();
+VoidResult AppController::RecreateLocalCacheDatabase() {
     if (localCacheDbPath_.empty()) {
-        outError = "Local cache database path is not set.";
-        return false;
+        return VoidResult::Err("Local cache database path is not set.");
     }
     if (shuttingDown_.load()) {
-        outError = "Application is shutting down.";
-        return false;
+        return VoidResult::Err("Application is shutting down.");
     }
 
     // hasPendingSyncRequest_ was removed by the TicketSyncService Phase 1C extraction
@@ -122,25 +117,22 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
     // teardown. Mirrors the ADR-0012 Backend atomic-swap pattern (GridLiveContext::Backend).
     std::atomic_store(&Cache, std::shared_ptr<LocalCacheManager>());
 
-    std::string removeErr;
-    if (!RemoveLocalCacheDbFiles(localCacheDbPath_, removeErr)) {
+    VoidResult removeResult = RemoveLocalCacheDbFiles(localCacheDbPath_);
+    if (!removeResult.has_value()) {
         try {
             auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-            std::atomic_store(&Cache, fresh);
+            std::atomic_store(&Cache, std::move(fresh));
         } catch (const std::exception& ex) {
-            outError = removeErr + " Failed to reopen database: " + ex.what();
-            return false;
+            return VoidResult::Err(removeResult.error() + " Failed to reopen database: " + ex.what());
         }
-        outError = removeErr;
-        return false;
+        return removeResult;
     }
 
     try {
         auto fresh = std::make_shared<LocalCacheManager>(localCacheDbPath_);
-        std::atomic_store(&Cache, fresh);
+        std::atomic_store(&Cache, std::move(fresh));
     } catch (const std::exception& ex) {
-        outError = std::string("Failed to open new database: ") + ex.what();
-        return false;
+        return VoidResult::Err(std::string("Failed to open new database: ") + ex.what());
     }
 
     try {
@@ -162,7 +154,7 @@ bool AppController::RecreateLocalCacheDatabase(std::string& outError) {
         offlineQueue_->legacyPendingStartupBanner_.clear();
     }
     RefreshLocalData();
-    return true;
+    return VoidOk();
 }
 
 bool AppController::EnsureLocalCacheForUiTest() {

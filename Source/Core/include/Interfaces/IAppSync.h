@@ -15,13 +15,14 @@
 // Pillar-1 exclusion protects. GetFieldCatalogError is header-inlined but its only callers are
 // command TUs (never a draw loop), so its vtable slot is likewise off the hot path.
 
-#include "Sync/SyncTypes.h"           // TrackerIssueFetchPack (rank-0)
-#include "Types/ConnectivityTypes.h"  // TrackerConnectivityState (rank-0)
+#include "SmatchetResult.h"          // VoidResult (RecreateLocalCacheDatabase)
+#include "Sync/SyncTypes.h"          // TrackerIssueFetchPack (rank-0)
+#include "Types/ConnectivityTypes.h" // TrackerConnectivityState (rank-0)
 
 #include <string>
 
-struct TrackerConfig;  // pointer param — fwd-decl (concrete callers hold the full definition)
-struct ViewsStore;     // pointer param — fwd-decl
+struct TrackerConfig; // pointer param — fwd-decl (concrete callers hold the full definition)
+struct ViewsStore;    // pointer param — fwd-decl
 
 class IAppSync {
   public:
@@ -29,7 +30,7 @@ class IAppSync {
 
     virtual void SyncWithBackend(const TrackerConfig* configOverride = nullptr,
                                  const ViewsStore* viewsOverride = nullptr) = 0;
-    virtual bool RecreateLocalCacheDatabase(std::string& outError) = 0;
+    virtual VoidResult RecreateLocalCacheDatabase() = 0;
     virtual void RefreshLocalData() = 0;
     virtual TrackerIssueFetchPack FetchIssuesForActiveView(const TrackerConfig* configOverride = nullptr,
                                                            const ViewsStore* viewsOverride = nullptr) = 0;

@@ -24,6 +24,7 @@
 #include "KeybindingsConfig.h"
 #include "LuaScriptConsent.h" // LuaScriptApproval — pure, nlohmann-free (keeps this header light)
 #include "SmatchetDefaults.h"
+#include "SmatchetResult.h" // VoidResult (SetStoragePreference)
 #include "SmatchetThemeIds.h"
 #include "SmatchetUiModeIds.h"
 #include "ToolbarConfig.h"
@@ -759,8 +760,8 @@ class ConfigManager {
                                                   StoragePreference defaultIfMissing);
 
     /** Write the explicit preference. Takes effect on next launch — paths are resolved
-     *  at startup. Returns true on success; on failure `outError` is populated. */
-    static bool SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref, std::string& outError);
+     *  at startup. `VoidOk()` on success; `VoidResult::Err(msg)` on a write failure. */
+    static VoidResult SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref);
 
     /** Returns true iff the user has made an explicit choice (marker file exists). */
     static bool HasExplicitStoragePreference(const std::string& runtimeAssetDir);

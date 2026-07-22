@@ -301,7 +301,7 @@ class AppController : public IAppThreading,
      * clears in-memory tickets, and resets streaming sync state. On success, call `SyncWithBackend`
      * to refill from the tracker.
      */
-    bool RecreateLocalCacheDatabase(std::string& outError) override;
+    VoidResult RecreateLocalCacheDatabase() override;
 
     /// Bucket-E (ImGui Test Engine) opt-in: ensure a live LocalCacheManager + the
     /// owned offline-queue service exist so test scenarios that exercise the
