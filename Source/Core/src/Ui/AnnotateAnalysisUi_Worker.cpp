@@ -178,7 +178,12 @@ void EnsureDetailLoading(size_t idx, const AnnotateAnalysisConfig& cfg, const st
     LOG_DEBUG("Annotate detail: async load start idx=%zu path=%s", idx, path.c_str());
     std::future<DetailPack> fut = std::async(std::launch::async, [cfg, path, atCl]() {
         DetailPack p;
-        p.Lines = P4AnnotateFile(cfg, path, atCl, p.Error);
+        Result<std::vector<P4AnnotatedLine>> annotated = P4AnnotateFile(cfg, path, atCl);
+        if (annotated.has_value()) {
+            p.Lines = std::move(annotated.value());
+        } else {
+            p.Error = std::move(annotated.error());
+        }
         for (auto& ln : p.Lines) {
             if (!ln.Changelist.empty()) {
                 P4ChangelistDetails d = P4ClPreview::Cache().GetOrFetch(cfg, ln.Changelist);

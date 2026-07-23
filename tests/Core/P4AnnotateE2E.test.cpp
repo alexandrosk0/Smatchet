@@ -33,9 +33,9 @@ TEST_CASE("P4AnnotateFile: happy path returns one P4AnnotatedLine per source lin
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
-    std::string err;
-    std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/foo.cpp", "", err);
-    CHECK(err.empty());
+    Result<std::vector<P4AnnotatedLine>> result = P4AnnotateFile(cfg, "//depot/foo.cpp", "");
+    REQUIRE(result.has_value());
+    const std::vector<P4AnnotatedLine>& rows = result.value();
     REQUIRE(rows.size() == 3u);
     CHECK(rows[0].SourceLine == 1);
     CHECK(rows[0].Changelist == "12345");
@@ -52,20 +52,18 @@ TEST_CASE("P4AnnotateFile: empty file produces empty row vector with no error") 
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
-    std::string err;
-    std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/empty.cpp", "", err);
-    CHECK(err.empty());
-    CHECK(rows.empty());
+    Result<std::vector<P4AnnotatedLine>> result = P4AnnotateFile(cfg, "//depot/empty.cpp", "");
+    REQUIRE(result.has_value());
+    CHECK(result.value().empty());
 }
 
 TEST_CASE("P4AnnotateFile: non-zero p4 exit surfaces error and empty rows") {
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
-    std::string err;
-    std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/missing.cpp", "", err);
-    CHECK_FALSE(err.empty());
-    CHECK(rows.empty());
+    Result<std::vector<P4AnnotatedLine>> result = P4AnnotateFile(cfg, "//depot/missing.cpp", "");
+    CHECK_FALSE(result.has_value());
+    CHECK_FALSE(result.error().empty());
 }
 
 TEST_CASE("P4AnnotateFile: stdout-capped fixture still parses available lines") {
@@ -74,9 +72,9 @@ TEST_CASE("P4AnnotateFile: stdout-capped fixture still parses available lines") 
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
-    std::string err;
-    std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/capped.cpp", "", err);
-    CHECK(err.empty());
+    Result<std::vector<P4AnnotatedLine>> result = P4AnnotateFile(cfg, "//depot/capped.cpp", "");
+    REQUIRE(result.has_value());
+    const std::vector<P4AnnotatedLine>& rows = result.value();
     REQUIRE(rows.size() == 1u);
     CHECK(rows[0].Changelist == "12348");
     CHECK(rows[0].User == "dave");
@@ -86,10 +84,9 @@ TEST_CASE("P4AnnotateFile: timeout (override returns false) surfaces failed-to-r
     smatchet_tests::FakeP4Runner runner;
     AnnotateAnalysisConfig cfg = MakeCfgFromFixture(runner, "annotate_happy.json");
 
-    std::string err;
-    std::vector<P4AnnotatedLine> rows = P4AnnotateFile(cfg, "//depot/timeout.cpp", "", err);
-    CHECK_FALSE(err.empty());
-    CHECK(rows.empty());
+    Result<std::vector<P4AnnotatedLine>> result = P4AnnotateFile(cfg, "//depot/timeout.cpp", "");
+    CHECK_FALSE(result.has_value());
+    CHECK_FALSE(result.error().empty());
 }
 
 // The fake distinguishes a TIMEOUT (process launched, watchdog killed it: exit 124)

@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "SmatchetFieldIconRender_detail.h"
 #include "SmatchetImageTextureCache.h"
+#include "SmatchetResult.h" // Result<std::vector<unsigned char>> / UnpackResult (HttpGetBinary)
 #include "StringUtil.h"
 #include "TicketGridModel.h"
 #include "TrackerFieldValueUtils.h"
@@ -89,25 +90,19 @@ bool EnsureFieldIconsCacheDir(std::string& outDir, std::string& outError) {
     return true;
 }
 
-bool HttpGetBinary(const std::string& url, std::vector<unsigned char>& out, std::string& outError) {
-    out.clear();
-    outError.clear();
-    /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — sole caller (line 348) inside app.LaunchBackgroundTask lambda.
+Result<std::vector<unsigned char>> HttpGetBinary(const std::string& url) {
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~3000ms — sole caller inside an app.LaunchBackgroundTask lambda.
     cpr::Response r = cpr::Get(cpr::Url{url}, cpr::Timeout{3000});
     if (r.error.code != cpr::ErrorCode::OK) {
-        outError = r.error.message;
-        return false;
+        return Result<std::vector<unsigned char>>::Err(r.error.message);
     }
     if (r.status_code < 200 || r.status_code >= 300) {
-        outError = "HTTP status " + std::to_string(r.status_code);
-        return false;
+        return Result<std::vector<unsigned char>>::Err("HTTP status " + std::to_string(r.status_code));
     }
     if (r.text.size() > 512u * 1024u) {
-        outError = "Response too large.";
-        return false;
+        return Result<std::vector<unsigned char>>::Err("Response too large.");
     }
-    out.assign(r.text.begin(), r.text.end());
-    return true;
+    return Result<std::vector<unsigned char>>::Ok(std::vector<unsigned char>(r.text.begin(), r.text.end()));
 }
 
 // In-flight URL fetch set. Suppresses re-issue of identical HTTP requests across many frames
@@ -314,7 +309,8 @@ bool LoadOrFetchUrlImage(AppController& app, const std::string& url, SmatchetLoa
     app.LaunchBackgroundTask([&app, capturedUrl, capturedDiskPath, capturedUrlKey]() {
         std::vector<unsigned char> bytes;
         std::string fetchError;
-        const bool fetchOk = HttpGetBinary(capturedUrl, bytes, fetchError);
+        bool fetchOk = false;
+        UnpackResult(HttpGetBinary(capturedUrl), fetchOk, bytes, fetchError);
         if (fetchOk) {
             std::ofstream ofs(capturedDiskPath.c_str(), std::ios::binary | std::ios::trunc);
             if (ofs) {

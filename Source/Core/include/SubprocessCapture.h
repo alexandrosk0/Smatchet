@@ -18,6 +18,8 @@
 #include <utility>
 #include <vector>
 
+#include "SmatchetResult.h" // Result<CaptureResult> (Run)
+
 namespace SubprocessCapture {
 
 struct CaptureResult {
@@ -79,9 +81,10 @@ struct CaptureOptions {
     std::function<void(const std::string&)> onStdoutLine;
 };
 
-/// Run a subprocess, capturing stdout / stderr. Returns true on a
-/// successful spawn (regardless of the child's exit code); false on a
-/// spawn failure with the OS-level reason in `outError`.
-bool Run(const CaptureOptions& opts, CaptureResult& out, std::string& outError);
+/// Run a subprocess, capturing stdout / stderr. `Ok(CaptureResult)` on a
+/// successful spawn (regardless of the child's exit code — a non-zero child
+/// exit is still success, with the code in `CaptureResult::exitCode`);
+/// `Err(reason)` on a spawn failure with the OS-level reason.
+Result<CaptureResult> Run(const CaptureOptions& opts);
 
 } // namespace SubprocessCapture

@@ -738,13 +738,13 @@ bool RunPosix(const CaptureOptions& opts, CaptureResult& out, std::string& outEr
 
 } // namespace
 
-bool Run(const CaptureOptions& opts, CaptureResult& out, std::string& outError) {
-    out = CaptureResult();
-    outError.clear();
+Result<CaptureResult> Run(const CaptureOptions& opts) {
     if (opts.argv0.empty()) {
-        outError = "empty argv0";
-        return false;
+        return Result<CaptureResult>::Err("empty argv0");
     }
+    CaptureResult out;
+    std::string outError;
+    bool ran = false;
     // CPP_CODE_AUDIT.md #26: a zero timeout budget with no cancel token can never
     // be interrupted; apply the safety-net fallback for that one combination only
     // (see the constant's doc comment).
@@ -752,16 +752,21 @@ bool Run(const CaptureOptions& opts, CaptureResult& out, std::string& outError) 
         CaptureOptions guarded = opts;
         guarded.timeoutMs = kFallbackTimeoutMsWhenUnguarded;
 #ifdef _WIN32
-        return RunWindows(guarded, out, outError);
+        ran = RunWindows(guarded, out, outError);
 #else
-        return RunPosix(guarded, out, outError);
+        ran = RunPosix(guarded, out, outError);
+#endif
+    } else {
+#ifdef _WIN32
+        ran = RunWindows(opts, out, outError);
+#else
+        ran = RunPosix(opts, out, outError);
 #endif
     }
-#ifdef _WIN32
-    return RunWindows(opts, out, outError);
-#else
-    return RunPosix(opts, out, outError);
-#endif
+    if (!ran) {
+        return Result<CaptureResult>::Err(std::move(outError));
+    }
+    return Result<CaptureResult>::Ok(std::move(out));
 }
 
 } // namespace SubprocessCapture
