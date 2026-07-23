@@ -225,8 +225,9 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
             d.appUpdateActionStatus =
                 SmatchetLocalization::T("updates.downloading_installer", "Downloading installer...");
             app.LaunchBackgroundTask([&app, downloadUrl, assetName, cancelFlag]() {
-                std::string err;
-                const bool ok = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, err, cancelFlag);
+                const VoidResult r = app.DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, cancelFlag);
+                const bool ok = r.has_value();
+                std::string err = ok ? std::string{} : r.error();
                 app.PostToMainThread([ok, err]() {
                     g_ui.installerDownloadInFlight = false;
                     g_ui.installerDownloadCancel.reset();

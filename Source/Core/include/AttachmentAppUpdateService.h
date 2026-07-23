@@ -26,6 +26,7 @@
 #include <string>
 #include <vector>
 
+#include "SmatchetResult.h"        // VoidResult (DownloadAndLaunchInstallerUpdate)
 #include "Types/AppUpdateTypes.h"  // AppUpdateInfo
 #include "Types/AttachmentTypes.h" // AttachmentDescriptor
 
@@ -74,12 +75,11 @@ class AttachmentAppUpdateService {
     /// everything except a bad digest, see smatchet::app_update::ShouldLaunchDownloadedInstaller),
     /// then launch it via ShellExecute and request app quit. Blocking — callers dispatch this on a
     /// worker thread. The optional cancelFlag is polled inside the cpr write callback; when set the
-    /// download aborts cleanly, the partial file is removed, and the method returns false with
-    /// outError == "Download cancelled." Windows-only; other platforms return false with an
-    /// unsupported-platform message.
-    bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
-                                          std::string& outError,
-                                          std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
+    /// download aborts cleanly, the partial file is removed, and the method returns
+    /// `VoidResult::Err("Download cancelled.")`. `VoidOk()` on a launched installer. Windows-only;
+    /// other platforms return `Err` with an unsupported-platform message.
+    VoidResult DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
+                                                std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
   private:
     IAttachmentAppUpdateDeps& deps_;
