@@ -212,6 +212,7 @@ Result<DownloadedAttachment> DownloadAttachmentToLocalFile(const std::string& ur
     ofs.write(bodyAccum.data(), static_cast<std::streamsize>(bodyAccum.size()));
     if (!ofs.good()) {
         ofs.close();
+        std::remove(filePath.c_str()); // don't leak the partially-written temp file on write failure
         return Result<DownloadedAttachment>::Err("Failed to write downloaded attachment bytes.");
     }
     ofs.close();
