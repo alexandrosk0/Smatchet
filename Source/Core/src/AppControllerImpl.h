@@ -96,12 +96,12 @@ struct AppController::Impl {
     bool aiPromptInFlight_ = false;
     bool aiPromptConsentShown_ = false;
 
-    /// Gate the next `ai.prompt` turn. Returns true (and marks the turn
-    /// in-flight) when the call is allowed; returns false + sets `outError`
+    /// Gate the next `ai.prompt` turn. Returns `VoidOk()` (and marks the turn
+    /// in-flight) when the call is allowed; returns `VoidResult::Err(reason)`
     /// when rejected (re-entrant or spaced too close). Fires the one-time
     /// consent toast on the first allowed call this session. Must be paired
     /// with `EndLuaAiPromptTurn()` once the submit has been issued.
-    bool TryBeginLuaAiPromptTurn(std::string& outError);
+    VoidResult TryBeginLuaAiPromptTurn();
     /// Clear the in-flight flag once the `ai.prompt` submit has been issued
     /// (Submit() hands off to the worker thread, so the C++ glue's synchronous
     /// work is done — the 5 s spacing rule then guards the next call).

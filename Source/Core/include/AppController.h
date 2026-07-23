@@ -462,10 +462,9 @@ class AppController : public IAppThreading,
     /// Downloads + launches the installer. Blocking — callers must dispatch this on a worker
     /// thread via `LaunchBackgroundTask`. The optional `cancelFlag` is polled inside the cpr
     /// write callback; when set to `true` the download aborts cleanly and the partial file is
-    /// removed. On cancel returns `false` with `outError == "Download cancelled."`.
-    bool DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
-                                          std::string& outError,
-                                          std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
+    /// removed. On cancel returns `VoidResult::Err("Download cancelled.")`; `VoidOk()` on launch.
+    VoidResult DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
+                                                std::shared_ptr<std::atomic<bool>> cancelFlag = {}) const;
 
     /// Opens the libraries + registers the binding surface on the member `lua` state.
     /// InitLuaCore / InitLuaUi / PrepareFreshLuaState / ReplayActiveSetupScripts moved onto

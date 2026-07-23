@@ -443,10 +443,9 @@ AppUpdateInfo AppController::CheckForAppUpdate(bool includePrerelease) const {
     return attachmentAppUpdate_->CheckForAppUpdate(includePrerelease);
 }
 
-bool AppController::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
-                                                     std::string& outError,
-                                                     std::shared_ptr<std::atomic<bool>> cancelFlag) const {
-    return attachmentAppUpdate_->DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, outError, cancelFlag);
+VoidResult AppController::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl, const std::string& assetName,
+                                                           std::shared_ptr<std::atomic<bool>> cancelFlag) const {
+    return attachmentAppUpdate_->DownloadAndLaunchInstallerUpdate(downloadUrl, assetName, cancelFlag);
 }
 
 bool AppController::IsOnUiThread() const {

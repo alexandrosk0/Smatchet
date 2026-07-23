@@ -139,9 +139,9 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
     // fire the one-time consent toast on the first accepted call. luaL_error
     // raises a Lua error (caught by the protected call) rather than blocking the
     // UI thread — no sleep/spin.
-    std::string gateError;
-    if (!app->TryBeginLuaAiPromptTurn(gateError)) {
-        luaL_error(L, "%s", gateError.c_str());
+    const VoidResult gate = app->TryBeginLuaAiPromptTurn();
+    if (!gate.has_value()) {
+        luaL_error(L, "%s", gate.error().c_str());
         return;
     }
     // Release the in-flight slot on EVERY exit path. AddAiContext / LuaTableToAiContextBlock /
@@ -176,7 +176,7 @@ void LuaAiPromptGlue(sol::this_state L, const std::string& prompt, sol::optional
 
 } // namespace smatchet_lua_init_detail
 
-bool AppController::Impl::TryBeginLuaAiPromptTurn(std::string& outError) {
+VoidResult AppController::Impl::TryBeginLuaAiPromptTurn() {
     std::lock_guard<std::mutex> lk(aiPromptGateMutex_);
     const std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now();
     const std::int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
@@ -186,12 +186,10 @@ bool AppController::Impl::TryBeginLuaAiPromptTurn(std::string& outError) {
     const smatchet::ai::AiPromptGateDecision decision =
         smatchet::ai::DecideAiPromptGate(aiPromptInFlight_, aiPromptEverCalled_, lastMs, nowMs);
     if (decision == smatchet::ai::AiPromptGateDecision::RejectReentrant) {
-        outError = "ai.prompt rejected: a previous prompt is still in flight (re-entrant call blocked)";
-        return false;
+        return VoidResult::Err("ai.prompt rejected: a previous prompt is still in flight (re-entrant call blocked)");
     }
     if (decision == smatchet::ai::AiPromptGateDecision::RejectTooSoon) {
-        outError = "ai.prompt rejected: rate limit — wait at least 5 s between prompts";
-        return false;
+        return VoidResult::Err("ai.prompt rejected: rate limit — wait at least 5 s between prompts");
     }
 
     // Accepted — claim the in-flight slot + stamp the timestamp under the lock.
@@ -220,7 +218,7 @@ bool AppController::Impl::TryBeginLuaAiPromptTurn(std::string& outError) {
             ToastType::Warning, 8000);
         LOG_INFO("[LUA] ai.prompt invoked from Lua for the first time this session (provider=%s)", provider.c_str());
     }
-    return true;
+    return VoidOk();
 }
 
 void AppController::Impl::EndLuaAiPromptTurn() {

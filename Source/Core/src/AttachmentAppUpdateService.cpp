@@ -616,20 +616,16 @@ AppUpdateInfo AttachmentAppUpdateService::CheckForAppUpdate(bool includePrerelea
     return out;
 }
 
-bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::string& downloadUrl,
-                                                                  const std::string& assetName, std::string& outError,
-                                                                  std::shared_ptr<std::atomic<bool>> cancelFlag) const {
-    outError.clear();
+VoidResult AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(
+    const std::string& downloadUrl, const std::string& assetName, std::shared_ptr<std::atomic<bool>> cancelFlag) const {
     if (downloadUrl.empty()) {
-        outError = "Missing installer download URL.";
-        return false;
+        return VoidResult::Err("Missing installer download URL.");
     }
 #if defined(_WIN32)
     char tempPathBuf[MAX_PATH] = {};
     const DWORD tempPathLen = GetTempPathA(static_cast<DWORD>(sizeof(tempPathBuf)), tempPathBuf);
     if (tempPathLen == 0 || tempPathLen >= sizeof(tempPathBuf)) {
-        outError = "Failed to resolve temp directory.";
-        return false;
+        return VoidResult::Err("Failed to resolve temp directory.");
     }
 
     const std::string rawFilename = assetName.empty() ? FileNameFromUrl(downloadUrl) : assetName;
@@ -640,8 +636,7 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
     const std::string localPath = std::string(tempPathBuf) + filename;
     std::ofstream ofs(localPath, std::ios::binary | std::ios::trunc);
     if (!ofs.is_open()) {
-        outError = "Failed to create installer download file: " + localPath;
-        return false;
+        return VoidResult::Err("Failed to create installer download file: " + localPath);
     }
 
     cpr::Header headers{{"Accept", "application/octet-stream"}, {"User-Agent", "SmatchetUpdater/" + GetAppVersion()}};
@@ -660,18 +655,17 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
     ofs.close();
     if (cancelled) {
         std::remove(localPath.c_str());
-        outError = "Download cancelled.";
-        return false;
+        return VoidResult::Err("Download cancelled.");
     }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
         std::remove(localPath.c_str());
-        outError = "Failed to download installer.";
+        std::string msg = "Failed to download installer.";
         if (!resp.error.message.empty()) {
-            outError += " " + resp.error.message;
+            msg += " " + resp.error.message;
         } else if (resp.status_code > 0) {
-            outError += " HTTP " + std::to_string(resp.status_code);
+            msg += " HTTP " + std::to_string(resp.status_code);
         }
-        return false;
+        return VoidResult::Err(msg);
     }
 
     // GitHub HTTPS authenticates the transport, not the artifact: a compromised release asset (or
@@ -685,8 +679,7 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
         std::remove(localPath.c_str());
         LOG_ERROR("DownloadAndLaunchInstallerUpdate: refusing unverified installer status=0x%08lx asset=%s",
                   static_cast<unsigned long>(trustStatus), TruncateForLog(filename, 200).c_str());
-        outError = trustError;
-        return false;
+        return VoidResult::Err(trustError);
     }
     if (trustStatus != smatchet::app_update::kInstallerTrustOk) {
         LOG_WARN("DownloadAndLaunchInstallerUpdate: SMATCHET_UPDATE_ALLOW_UNSIGNED override active — launching "
@@ -696,17 +689,15 @@ bool AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate(const std::str
 
     const HINSTANCE openResult = ShellExecuteA(nullptr, "open", localPath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     if (reinterpret_cast<intptr_t>(openResult) <= 32) {
-        outError = "Failed to launch downloaded installer.";
-        return false;
+        return VoidResult::Err("Failed to launch downloaded installer.");
     }
 
     deps_.RequestAppQuit();
-    return true;
+    return VoidOk();
 #else
     (void)assetName;
     (void)downloadUrl;
     (void)cancelFlag;
-    outError = "Installer updates are currently supported only on Windows.";
-    return false;
+    return VoidResult::Err("Installer updates are currently supported only on Windows.");
 #endif
 }
