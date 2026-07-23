@@ -36,10 +36,9 @@ TEST_SUITE("SubprocessCapture::Run") {
         SubprocessCapture::CaptureOptions opts;
         opts.argv0 = HelperPath("subproc_helper_exit");
         opts.args.push_back("0");
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        REQUIRE(SubprocessCapture::Run(opts, out, err));
-        CHECK(err.empty());
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.exitCode == 0);
         CHECK_FALSE(out.timedOut);
         CHECK_FALSE(out.cancelled);
@@ -49,9 +48,9 @@ TEST_SUITE("SubprocessCapture::Run") {
         SubprocessCapture::CaptureOptions opts;
         opts.argv0 = HelperPath("subproc_helper_exit");
         opts.args.push_back("7");
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        REQUIRE(SubprocessCapture::Run(opts, out, err));
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.exitCode == 7);
     }
 
@@ -60,9 +59,9 @@ TEST_SUITE("SubprocessCapture::Run") {
         opts.argv0 = HelperPath("subproc_helper_sleep");
         opts.args.push_back("50");
         opts.timeoutMs = 5000;
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        REQUIRE(SubprocessCapture::Run(opts, out, err));
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.exitCode == 0);
         CHECK_FALSE(out.timedOut);
         CHECK(out.durationMs >= 40);
@@ -73,9 +72,9 @@ TEST_SUITE("SubprocessCapture::Run") {
         opts.argv0 = HelperPath("subproc_helper_sleep");
         opts.args.push_back("5000");
         opts.timeoutMs = 200;
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        REQUIRE(SubprocessCapture::Run(opts, out, err));
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.timedOut);
         // Allow generous slack on overburdened CI runners; the killed
         // child should still be reaped well under the original 5 s
@@ -94,9 +93,9 @@ TEST_SUITE("SubprocessCapture::Run") {
         opts.args.push_back("100000");
         opts.stdoutByteCap = 1024;
         opts.timeoutMs = 10000;
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        REQUIRE(SubprocessCapture::Run(opts, out, err));
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.exitCode == 0);
         CHECK(out.stdoutCapped);
         // Cap byte budget (1024) was applied; the truncation suffix
@@ -117,11 +116,10 @@ TEST_SUITE("SubprocessCapture::Run") {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             token->store(true);
         });
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        const bool ran = SubprocessCapture::Run(opts, out, err);
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
         flipper.join();
-        REQUIRE(ran);
+        REQUIRE(r.has_value());
+        const SubprocessCapture::CaptureResult& out = r.value();
         CHECK(out.cancelled);
 #if defined(__SANITIZE_ADDRESS__)
         CHECK(out.durationMs < 20000); // ASAN ~3-10x wall-clock overhead; budget loosened (#1215 pattern)
@@ -130,21 +128,19 @@ TEST_SUITE("SubprocessCapture::Run") {
 #endif
     }
 
-    TEST_CASE("spawn failure surfaces in outError") {
+    TEST_CASE("spawn failure surfaces as Err") {
         SubprocessCapture::CaptureOptions opts;
         opts.argv0 = "smatchet_definitely_nonexistent_binary_xyz_h1";
-        SubprocessCapture::CaptureResult out;
-        std::string err;
-        const bool ran = SubprocessCapture::Run(opts, out, err);
+        Result<SubprocessCapture::CaptureResult> r = SubprocessCapture::Run(opts);
         // On Windows, CreateProcessW fails up-front for a missing exe;
         // on POSIX, the parent's `Run()` succeeds at fork() and the
         // child's execvp() fails → exit 127. Either contract is
-        // acceptable so long as the failure is observable in the
-        // CaptureResult (non-zero exit on POSIX, ran=false on Win32).
-        if (ran) {
-            CHECK(out.exitCode == 127);
+        // acceptable so long as the failure is observable (non-zero
+        // exit on POSIX Ok, or an Err on Win32).
+        if (r.has_value()) {
+            CHECK(r.value().exitCode == 127);
         } else {
-            CHECK_FALSE(err.empty());
+            CHECK_FALSE(r.error().empty());
         }
     }
 }

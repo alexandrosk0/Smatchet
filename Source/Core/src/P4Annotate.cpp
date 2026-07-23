@@ -62,13 +62,12 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
     // pre-lift kP4CaptureBytesMax behaviour for both stdout and stderr.
     opts.stdoutByteCap = kP4CaptureBytesMax;
     opts.stderrByteCap = kP4CaptureBytesMax;
-    SubprocessCapture::CaptureResult cap;
-    std::string spawnError;
-    const bool ran = SubprocessCapture::Run(opts, cap, spawnError);
-    if (!ran) {
-        LOG_ERROR("P4: spawn failed after %lld ms: %s", static_cast<long long>(cap.durationMs), spawnError.c_str());
+    Result<SubprocessCapture::CaptureResult> capResult = SubprocessCapture::Run(opts);
+    if (!capResult.has_value()) {
+        LOG_ERROR("P4: spawn failed: %s", capResult.error().c_str());
         return false;
     }
+    SubprocessCapture::CaptureResult cap = std::move(capResult.value());
     outExitCode = cap.exitCode;
     outStdout = std::move(cap.stdoutText);
     outStderr = std::move(cap.stderrText);
@@ -186,14 +185,12 @@ P4LineAnnotate P4AnnotateLine(const AnnotateAnalysisConfig& cfg, const std::stri
     return result;
 }
 
-std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
-                                            const std::string& atChangelist, std::string& outError) {
+Result<std::vector<P4AnnotatedLine>> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
+                                                    const std::string& atChangelist) {
     std::vector<P4AnnotatedLine> rows;
-    outError.clear();
     if (depotOrPath.empty()) {
-        outError = "empty path";
         LOG_WARN("P4AnnotateFile: empty depot path");
-        return rows;
+        return Result<std::vector<P4AnnotatedLine>>::Err("empty path");
     }
     std::string pathArg = depotOrPath;
     if (!atChangelist.empty() && pathArg.find('@') == std::string::npos && pathArg.find('#') == std::string::npos) {
@@ -206,15 +203,14 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, c
     std::string out;
     std::string err;
     if (!P4RunCommand(cfg, args, code, out, err)) {
-        outError = "failed to run p4";
         LOG_WARN("P4AnnotateFile: failed to spawn p4 pathArg=%s", pathArg.c_str());
-        return rows;
+        return Result<std::vector<P4AnnotatedLine>>::Err("failed to run p4");
     }
     if (code != 0) {
-        outError = FormatP4CommandError("p4 annotate failed", code, err);
+        std::string annotateError = FormatP4CommandError("p4 annotate failed", code, err);
         LOG_WARN("P4AnnotateFile: annotate failed exit=%d pathArg=%s err=%s", code, pathArg.c_str(),
-                 TruncateForLog(outError, kP4LogMaxStderr).c_str());
-        return rows;
+                 TruncateForLog(annotateError, kP4LogMaxStderr).c_str());
+        return Result<std::vector<P4AnnotatedLine>>::Err(std::move(annotateError));
     }
 
     const std::vector<std::string> lines = SplitLines(out);
@@ -236,7 +232,7 @@ std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, c
         }
         rows.push_back(std::move(row));
     }
-    return rows;
+    return Result<std::vector<P4AnnotatedLine>>::Ok(std::move(rows));
 }
 
 /** Advance (y,m,d) by one day in UTC (exclusive end date for Perforce `//...@start,end` ranges). */

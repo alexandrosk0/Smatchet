@@ -122,30 +122,31 @@ bool LaunchCommandNoShell(const char* exe, const std::string& arg) {
 }
 #endif
 
-bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& filename, const std::string& mimeType,
-                                   std::string& outFilePath, std::string& outMime, std::string& outError) {
-    outFilePath.clear();
-    outMime.clear();
-    outError.clear();
+// The local temp file + resolved mime produced by a successful attachment download. The two
+// values are only ever meaningful together (both set on success, neither on failure), so they
+// collapse into one Result payload instead of the former pair of out-params.
+struct DownloadedAttachment {
+    std::string filePath;
+    std::string mime;
+};
+
+Result<DownloadedAttachment> DownloadAttachmentToLocalFile(const std::string& url, const std::string& filename,
+                                                           const std::string& mimeType) {
     if (url.empty()) {
-        outError = "Attachment URL is empty.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Attachment URL is empty.");
     }
 
     TrackerConfig cfg = ConfigManager::Load();
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
-        outError = "Missing Jira credentials/domain.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Missing Jira credentials/domain.");
     }
     if (url.rfind("https://", 0) != 0) {
-        outError = "Attachment URL must use HTTPS.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Attachment URL must use HTTPS.");
     }
     const std::string jiraDomain = NormalizeDomain(cfg.Domain);
     const std::string targetHost = ExtractHostFromUrl(url);
     if (!IsAllowedJiraAttachmentHost(targetHost, jiraDomain)) {
-        outError = "Attachment host is not allowlisted.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Attachment host is not allowlisted.");
     }
 
     cpr::Header headers{{"Accept", "*/*"},
@@ -153,6 +154,10 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
                         {"User-Agent", "Smatchet/1.0 Attachment-Downloader"}};
     cpr::Redirect redirect(true, false);
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=capped cpr::WriteCallback body-writer is deliberately
+    // inlined per download site so each cap and error string stays local and tunable, per ADR-0015,
+    // rather than folded into a shared helper — twin of the marked sites at :513 and the Tracker
+    // attachment proxy in McpPlugin.cpp; owner=security-audit; revisit=2026-09-30)
     constexpr size_t kMaxAttachmentDownloadBytes = 50u * 1024u * 1024u;
     bool sizeExceeded = false;
     std::string bodyAccum;
@@ -168,8 +173,7 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     const auto resp =
         cpr::Get(cpr::Url{url}, headers, redirect, writeCb, cpr::ConnectTimeout{5000}, cpr::Timeout{120000});
     if (sizeExceeded) {
-        outError = "Attachment exceeds max allowed size.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Attachment exceeds max allowed size.");
     }
     // cpr followed redirects (Redirect(true,false)) but only the INITIAL url was allowlisted above.
     // A tracker 30x to an internal host would otherwise be fetched and written to a local file
@@ -178,47 +182,42 @@ bool DownloadAttachmentToLocalFile(const std::string& url, const std::string& fi
     const std::string finalHost = ExtractHostFromUrl(resp.url.str());
     if (finalHost.empty() || !IsAllowedJiraAttachmentHost(finalHost, jiraDomain)) {
         // Fail closed: an unparseable/empty effective host is as suspect as a non-allowlisted one.
-        outError = "Attachment redirected to a non-allowlisted host.";
-        return false;
+        return Result<DownloadedAttachment>::Err("Attachment redirected to a non-allowlisted host.");
     }
     if (resp.error.code != cpr::ErrorCode::OK || resp.status_code < 200 || resp.status_code >= 300) {
-        outError = "Download failed: HTTP " + std::to_string(static_cast<int>(resp.status_code));
-        return false;
+        return Result<DownloadedAttachment>::Err("Download failed: HTTP " +
+                                                 std::to_string(static_cast<int>(resp.status_code)));
     }
 
-    outMime = mimeType;
+    std::string mime = mimeType;
     try {
         auto it = resp.header.find("Content-Type");
         if (it != resp.header.end() && !it->second.empty()) {
-            outMime = it->second;
+            mime = it->second;
         }
     } catch (...) {
         LOG_DEBUG("DownloadAttachmentToLocalFile: response header parse failed; using provided mime type.");
     }
-    if (outMime.empty()) {
-        outMime = "application/octet-stream";
+    if (mime.empty()) {
+        mime = "application/octet-stream";
     }
 
-    const std::string extension = ExtensionFromMime(outMime);
-    outFilePath = MakeUniqueTempFilePath(filename, extension);
-    std::ofstream ofs(outFilePath, std::ios::binary);
+    const std::string extension = ExtensionFromMime(mime);
+    const std::string filePath = MakeUniqueTempFilePath(filename, extension);
+    std::ofstream ofs(filePath, std::ios::binary);
     if (!ofs.is_open()) {
-        outError = "Failed to open local temp file.";
-        outFilePath.clear();
-        return false;
+        return Result<DownloadedAttachment>::Err("Failed to open local temp file.");
     }
 
     ofs.write(bodyAccum.data(), static_cast<std::streamsize>(bodyAccum.size()));
     if (!ofs.good()) {
-        outError = "Failed to write downloaded attachment bytes.";
         ofs.close();
-        outFilePath.clear();
-        return false;
+        return Result<DownloadedAttachment>::Err("Failed to write downloaded attachment bytes.");
     }
     ofs.close();
-    LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s", bodyAccum.size(), outMime.c_str(),
-             outFilePath.c_str());
-    return true;
+    LOG_INFO("DownloadAttachmentToLocalFile: downloaded %zu bytes mime=%s path=%s", bodyAccum.size(), mime.c_str(),
+             filePath.c_str());
+    return Result<DownloadedAttachment>::Ok(DownloadedAttachment{filePath, mime});
 }
 
 std::string GetTempDir() {
@@ -373,14 +372,14 @@ void AttachmentAppUpdateService::OpenAttachment(const std::string& url, const st
         return;
     }
 
-    std::string outFilePath;
-    std::string outMime;
-    std::string outError;
-    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, outError)) {
-        LOG_WARN("OpenAttachment: %s; falling back to URL open.", outError.c_str());
+    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    if (!downloaded.has_value()) {
+        LOG_WARN("OpenAttachment: %s; falling back to URL open.", downloaded.error().c_str());
         deps_.OpenUrl(url);
         return;
     }
+    const std::string& outFilePath = downloaded.value().filePath;
+    const std::string& outMime = downloaded.value().mime;
     if (deps_.Host().AttachmentViewer) {
         LOG_INFO("OpenAttachment: dispatching to host attachment viewer.");
         deps_.Host().AttachmentViewer(outFilePath, outMime, filename);
@@ -414,18 +413,17 @@ bool AttachmentAppUpdateService::OpenAttachmentInSystemViewer(const std::string&
         setError("Attachment has no URL.");
         return false;
     }
-    std::string outFilePath;
-    std::string outMime;
-    std::string downloadError;
-    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, downloadError)) {
-        LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", downloadError.c_str());
-        setError(downloadError);
+    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    if (!downloaded.has_value()) {
+        LOG_WARN("OpenAttachmentInSystemViewer: %s; falling back to URL open.", downloaded.error().c_str());
+        setError(downloaded.error());
         if (outFellBackToUrl != nullptr) {
             *outFellBackToUrl = true;
         }
         deps_.OpenUrl(url);
         return false;
     }
+    const std::string& outFilePath = downloaded.value().filePath;
     bool launchOk = false;
 #if defined(_WIN32)
     const HINSTANCE shellResult = ShellExecuteA(nullptr, "open", outFilePath.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
@@ -463,13 +461,13 @@ bool AttachmentAppUpdateService::DownloadAttachmentForPreview(const std::string&
         return fail(!deps_.Host().AttachmentPreview ? std::string("Preview handler is unavailable.")
                                                     : std::string("Attachment is not a supported image type."));
     }
-    std::string outFilePath;
-    std::string outMime;
-    std::string downloadError;
-    if (!DownloadAttachmentToLocalFile(url, filename, mimeType, outFilePath, outMime, downloadError)) {
-        LOG_WARN("DownloadAttachmentForPreview: %s", downloadError.c_str());
-        return fail(downloadError);
+    Result<DownloadedAttachment> downloaded = DownloadAttachmentToLocalFile(url, filename, mimeType);
+    if (!downloaded.has_value()) {
+        LOG_WARN("DownloadAttachmentForPreview: %s", downloaded.error().c_str());
+        return fail(downloaded.error());
     }
+    const std::string& outFilePath = downloaded.value().filePath;
+    const std::string& outMime = downloaded.value().mime;
     if (!deps_.Host().AttachmentPreview(outFilePath, outMime, filename, url)) {
         LOG_WARN("DownloadAttachmentForPreview: preview handler rejected file=%s mime=%s", filename.c_str(),
                  outMime.c_str());

@@ -59,9 +59,13 @@ bool P4RunCommand(const AnnotateAnalysisConfig& cfg, const std::vector<std::stri
 P4LineAnnotate P4AnnotateLine(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath, int oneBasedLine,
                               const std::string& atChangelist);
 
-/** Full file annotate for detail view (1-based line indices in output). */
-std::vector<P4AnnotatedLine> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
-                                            const std::string& atChangelist, std::string& outError);
+/**
+ * Full file annotate for detail view (1-based line indices in output).
+ * Ok(rows) on success — an empty vector is a valid success (empty file);
+ * Err(reason) on an empty path, spawn failure, or non-zero p4 exit.
+ */
+Result<std::vector<P4AnnotatedLine>> P4AnnotateFile(const AnnotateAnalysisConfig& cfg, const std::string& depotOrPath,
+                                                    const std::string& atChangelist);
 
 /**
  * Oldest submitted changelist whose submit time falls on [year/month/day, next day),
