@@ -189,7 +189,7 @@ jobs:
         # still hard-gated by the required test-plan-index check (validate mode);
         # losing auto-fix on a broken PAT only means the author re-syncs by hand.
         continue-on-error: true
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
@@ -206,7 +206,7 @@ jobs:
           echo "::warning::INDEX autosync skipped — credentialed checkout could not authenticate (PLAN_INDEX_PAT absent/expired). This advisory auto-fixer is a no-op here; INDEX correctness stays hard-gated by the required test-plan-index check. Restore the PAT (see job header) to re-enable auto-fix."
       - name: Set up Python
         if: steps.shipped.outputs.changed == 'true' && steps.checkout.outcome == 'success'
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
       - name: Regenerate INDEX + commit if drifted
@@ -274,12 +274,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.11'
 

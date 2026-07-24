@@ -36,7 +36,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout (full history — fetch-depth:0 is load-bearing)
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
         with:
           # A shallow checkout breaks merge-base -> an EMPTY changed set -> the
           # hard net silently blocks nothing (the dead-net failure class). 0 is
