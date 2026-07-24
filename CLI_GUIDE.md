@@ -448,7 +448,7 @@ Applied by the app at startup. All are stable API — renaming is a breaking cha
 | Variable | Maps to | Notes |
 |---|---|---|
 | `SMATCHET_TRACKER_TOKEN` | `cfg.ApiToken` (Jira) / `cfg.PlaneApiKey` (Plane) / `cfg.GitHubPat` (GitHub) / `cfg.LinearApiKey` (Linear) | Never pass as argv — always use env |
-| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) / `cfg.GitHubBaseUrl` (GitHub) / `cfg.LinearBaseUrl` (Linear) | Tracker origin URL; routed by `trackerType` (case-insensitive) |
+| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) / `cfg.GitHubBaseUrl` (GitHub) / `cfg.LinearBaseUrl` (Linear) | Tracker origin URL, **except Linear** — that one is the full GraphQL POST endpoint (`https://api.linear.app/graphql`), used verbatim with no path appended, so an origin-only value fails. Routed by `trackerType` (case-insensitive) |
 | `SMATCHET_LOG_LEVEL` | `cfg.LogMinLevel` | `trace`/`debug`/`info`/`warn`/`error` |
 | `SMATCHET_USER_DATA` | `ConfigManager::GetUserDataDirectory()` | Applied before first `Load()`; redirects config, DB, views, recents |
 | `SMATCHET_MCP_PORT` | `cfg.McpPort` | Override MCP listen port |
