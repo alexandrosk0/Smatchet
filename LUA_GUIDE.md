@@ -143,7 +143,7 @@ Global Smatchet application commands.
 | :--- | :--- |
 | `smatchet.get_ticket(id)` | Fetches a `Ticket` object by its Jira key from the local cache. Returns `(ticket, error_msg)`. |
 | `smatchet.get_active_tickets()` | Returns a Lua table (array) of all `Ticket` objects currently loaded in Smatchet's active project grid. |
-| `smatchet.create_issue(spec)` | Creates one issue on the **active** tracker (Jira or Plane) or queues an offline create. See below. |
+| `smatchet.create_issue(spec)` | Creates one issue on the **active** tracker (Jira, Plane, GitHub, or Linear) or queues an offline create. See below. |
 
 **`smatchet.create_issue(spec)`** — `spec` is a Lua table:
 
@@ -164,7 +164,7 @@ Legacy shape for examples that use `tracker.get_type()` / `tracker.create_issue(
 
 | Function | Description |
 | :--- | :--- |
-| `tracker.get_type()` | Returns the configured backend type string (e.g. `Jira`, `Plane`), trimmed. |
+| `tracker.get_type()` | Returns the configured backend type string (`Jira`, `Plane`, `GitHub`, or `Linear`), trimmed. |
 | `tracker.create_issue(fields)` | Same draft/create path as `smatchet.create_issue`. Returns **`(issue_key, err)`**: on success `issue_key ~= ""` and `err == ""`; on failure `issue_key == ""` and `err` explains the error (including pre-flight failures). |
 
 ### `commands` Module
