@@ -414,7 +414,7 @@ Keys that require a plugin or app restart to take effect are noted.
 | `jqlQuery` | string | `assignee=currentUser()` | JQL for next sync |
 | `domain` | string | — | Tracker domain/URL *(reconnect required)* |
 | `email` | string | — | Tracker email *(reconnect required)* |
-| `trackerType` | string | `Jira` | `Jira` or `Plane` *(restart required)* |
+| `trackerType` | string | `Jira` | `Jira`, `Plane`, `GitHub`, or `Linear` *(restart required)* |
 | `planeUrl` | string | — | Plane API origin *(reconnect required)* |
 | `planeWorkspaceSlug` | string | — | Plane workspace slug *(reconnect required)* |
 | `mcpEnabled` | bool | `false` | Start MCP plugin *(plugin restart required)* |
@@ -423,6 +423,8 @@ Keys that require a plugin or app restart to take effect are noted.
 | `mcpAllowLuaExecution` | bool | `false` | Allow `run_lua` in MCP *(plugin restart required)* |
 
 **Credentials are not in this table** — pass them via environment variables (see below).
+
+**Only Jira and Plane have per-backend `config.set` keys.** GitHub (`github_owner`, `github_repo`, `github_base_url`) and Linear (`linear_team_key`, `linear_team_id`, `linear_base_url`, `linear_workspace_url`) settings are edited in **Preferences → Tracker** or directly in `smatchet_config.json`; `trackerType` plus the shared `SMATCHET_TRACKER_*` env vars below still route to whichever backend is active.
 
 > **Project is now per-operation.** Pass `--projectKey` on `ticket.create` (already required); for views and grids, the project is inferred from the view's JQL or chosen via the in-app picker. The legacy `config set project_key …` / `config set plane_project_id …` commands were removed in this release. `config.get_all` still returns `projectKey = ""` / `planeProjectId = ""` for one release so existing scripts don't break on the field access.
 
@@ -445,14 +447,14 @@ Applied by the app at startup. All are stable API — renaming is a breaking cha
 
 | Variable | Maps to | Notes |
 |---|---|---|
-| `SMATCHET_TRACKER_TOKEN` | `cfg.ApiToken` (Jira) / `cfg.PlaneApiKey` (Plane) | Never pass as argv — always use env |
-| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) | Tracker origin URL |
+| `SMATCHET_TRACKER_TOKEN` | `cfg.ApiToken` (Jira) / `cfg.PlaneApiKey` (Plane) / `cfg.GitHubPat` (GitHub) / `cfg.LinearApiKey` (Linear) | Never pass as argv — always use env |
+| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) / `cfg.GitHubBaseUrl` (GitHub) / `cfg.LinearBaseUrl` (Linear) | Tracker origin URL, **except Linear** — that one is the full GraphQL POST endpoint (`https://api.linear.app/graphql`), used verbatim with no path appended, so an origin-only value fails. Routed by `trackerType` (case-insensitive) |
 | `SMATCHET_LOG_LEVEL` | `cfg.LogMinLevel` | `trace`/`debug`/`info`/`warn`/`error` |
 | `SMATCHET_USER_DATA` | `ConfigManager::GetUserDataDirectory()` | Applied before first `Load()`; redirects config, DB, views, recents |
 | `SMATCHET_MCP_PORT` | `cfg.McpPort` | Override MCP listen port |
 | `SMATCHET_MCP_ALLOW_REMOTE` | `cfg.McpAllowRemote` | `true`/`1` to bind all interfaces |
 | `SMATCHET_DB_PATH` | `cfg.DbPath` | Override SQLite database path |
-| `SMATCHET_BACKEND_TYPE` / `SMATCHET_TRACKER_TYPE` | `cfg.TrackerType` | `Jira` or `Plane` |
+| `SMATCHET_BACKEND_TYPE` / `SMATCHET_TRACKER_TYPE` | `cfg.TrackerType` | `Jira`, `Plane`, `GitHub`, or `Linear` |
 | `SMATCHET_MCP_HOST` | CLI endpoint discovery only | Override host for CLI → app connection |
 | `SMATCHET_SPAWN_TIMEOUT_MS` | CLI `--timeout` default | `0` = no cap (default) |
 

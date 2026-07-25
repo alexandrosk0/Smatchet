@@ -2,7 +2,7 @@
 
 [![Build and test](https://github.com/alexandrosk0/Smatchet/actions/workflows/build-and-test.yml/badge.svg?branch=develop)](https://github.com/alexandrosk0/Smatchet/actions/workflows/build-and-test.yml)
 
-Smatchet is a high-performance, engine-agnostic productivity tool and issue-tracking client. It provides a unified interface for project management, Perforce source control analysis, and AI assistance — all built using C++14 and Dear ImGui. Smatchet supports **multiple tracker backends** (Jira, Plane.so, and GitHub Issues) through a clean, backend-agnostic architecture (`ITrackerBackend`), and can run as a standalone desktop application or embedded directly into Unreal Engine.
+Smatchet is a high-performance, engine-agnostic productivity tool and issue-tracking client. It provides a unified interface for project management, Perforce source control analysis, and AI assistance — all built using C++14 and Dear ImGui. Smatchet supports **multiple tracker backends** (Jira, Plane.so, GitHub Issues, and Linear) through a clean, backend-agnostic architecture (`ITrackerBackend`), and can run as a standalone desktop application or embedded directly into Unreal Engine.
 
 ## Download & Install
 
@@ -16,7 +16,7 @@ Prebuilt binaries are published on the [GitHub Releases page](https://github.com
 | `Smatchet-<tag>-unreal-plugin.zip` | The Unreal Engine editor plugin — see the [plugin install guide](scripts/publish/INSTALL_UNREAL_PLUGIN.md). |
 | `Smatchet-<tag>-source.zip` | Source archive of the tagged revision. |
 
-**Quickstart:** install (or unzip) and launch, then open **Settings → Preferences → Tracker** to pick your backend (Jira, Plane.so, or GitHub Issues) and enter its URL and API credentials. Your data stays local: issues and field catalogs are cached in a local SQLite database, and on Windows API tokens are stored DPAPI-encrypted in your user profile.
+**Quickstart:** install (or unzip) and launch, then open **Settings → Preferences → Tracker** to pick your backend (Jira, Plane.so, GitHub Issues, or Linear) and enter its URL and API credentials. Linear is the exception to "URL and credentials": its **Base URL** is prefilled with the GraphQL endpoint `https://api.linear.app/graphql`, so you supply a personal **API Key** (Linear → Settings → API) plus the **Team Key** that prefixes your issues (e.g. `ENG`); the **Team** UUID and **Workspace URL** fields are optional (the team UUID is resolved from the Team Key when left empty). Your data stays local: issues and field catalogs are cached in a local SQLite database, and on Windows API tokens are stored DPAPI-encrypted in your user profile.
 
 ### Platform support
 
@@ -27,7 +27,7 @@ Prebuilt binaries are published on the [GitHub Releases page](https://github.com
 
 ## Features
 
-- **Multi-Backend Tracker Support**: Seamlessly switch between **Jira** (Atlassian Cloud), **Plane.so**, and **GitHub Issues** from the Preferences panel. Each backend is a concrete implementation of the backend-agnostic `ITrackerBackend` interface (`JiraClient`, `PlaneClient`, `GitHubClient`); views, field catalogs, and issue data are kept separate per backend.
+- **Multi-Backend Tracker Support**: Seamlessly switch between **Jira** (Atlassian Cloud), **Plane.so**, **GitHub Issues**, and **Linear** (GraphQL, personal API key) from the Preferences panel. Each backend is a concrete implementation of the backend-agnostic `ITrackerBackend` interface (`JiraClient`, `PlaneClient`, `GitHubClient`, `LinearClient`); views, field catalogs, and issue data are kept separate per backend. Linear implements five of the six backend role interfaces (read, connectivity, field catalog, mutations, collaboration) but not `ITrackerActivity`, so the user-activity feed is unavailable on Linear; its collaboration surface is posting a plain-text comment only — comment *reading* is not implemented, unlike the other three backends ([plan](docs/plans/linear-tracker-backend.md) § Non-goals).
 - **Full Issue Management**: Search, view, create, and edit issues. Supports offline drafting, custom fields, inline field editing, bulk import/export, and per-backend "new issue inherit" field configuration.
 - **Perforce Annotate**: Native P4 integration for fast file annotation directly within the UI, complete with syntax highlighting.
 - **Fast Local Caching**: Uses SQLite to cache field catalogs, user metadata, and recent issues locally for near-instant load times and offline capabilities.
@@ -177,7 +177,7 @@ When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX
 
 Smatchet is split into an engine-agnostic core library, a thin standalone host, optional plugins, and an Unreal bridge. The core compiles for **two render targets** from the same sources — `SmatchetStandalone` (GLFW + OpenGL3) and `SmatchetCore_DX12` (DX12, for embedding in Unreal) — so core headers carry no direct graphics-API dependencies.
 
-* **`Source/Core/`**: The heart of the application — the backend-agnostic tracker interface (`ITrackerBackend`), concrete backends (`JiraClient`, `PlaneClient`, `GitHubClient`), local cache/sync, the unified command registry, and all ImGui UI definitions. Source is organized by subsystem under `Source/Core/src/<ctx>/`:
+* **`Source/Core/`**: The heart of the application — the backend-agnostic tracker interface (`ITrackerBackend`), concrete backends (`JiraClient`, `PlaneClient`, `GitHubClient`, `LinearClient`), local cache/sync, the unified command registry, and all ImGui UI definitions. Source is organized by subsystem under `Source/Core/src/<ctx>/`:
   * **`Tracker/`** — the `ITrackerBackend` interface, concrete backends, field catalog, and HTTP plumbing.
   * **`Sync/`** — offline queue replay, ticket sync, and the backend audit trail.
   * **`Persistence/`** — the SQLite `LocalCacheManager` (field catalogs, user metadata, recent issues).
