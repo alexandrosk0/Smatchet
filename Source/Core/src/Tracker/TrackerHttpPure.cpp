@@ -12,14 +12,20 @@ namespace TrackerHttpPure {
 namespace {
 
 // Trim surrounding whitespace. C++14, ASCII-only.
-//
-// The marker below sits INSIDE the body on purpose: the DRY gate matches a maximal normalized
-// token run, and this clone's run starts mid-body rather than at the signature, so a marker
-// above the function would not be the "nearest non-blank line above the clone" the gate looks
-// at (dup_audit._suppressed).
 std::string Trimmed(const std::string& in) {
     std::size_t b = 0;
-    // SMATCHET_DEVIATION(rule=duplication; reason=this body is byte-identical to smatchet::linear::Trim in LinearQueryFromJql.cpp and near-identical to Core's TrimCopyAsciiWhitespace — but Core's trims only {space,\t,\n,\r} while this uses std::isspace (also \v,\f), so folding it in would NARROW the trim on a host-allowlisting input, a behaviour change out of scope for a dead-code + small-helper sweep. Pre-existing: the two trims were already identical; deleting this TU's ToLower (now the shared ToLowerAsciiCopy) merely removed the divergence that had kept the maximal run under MIN_CLONE_TOKENS. The TrimCopyAsciiWhitespace clone family is deferred to a follow-up burn-down driven by small_helper_audit.py's first real run; owner=build-doctor; revisit=2026-12-31)
+    // Kept duplicated rather than folded onto Core's TrimCopyAsciiWhitespace: that helper trims only
+    // {space,\t,\n,\r} while this uses std::isspace (also \v,\f), so folding would NARROW the trim on a
+    // host-allowlisting input (HostFromBase) — a behaviour change out of scope for a dead-code sweep.
+    // This body is byte-identical to smatchet::linear::Trim, and ALREADY was: deleting this TU's ToLower
+    // (now the shared ToLowerAsciiCopy) merely removed the divergence that had kept the maximal token run
+    // under MIN_CLONE_TOKENS. The TrimCopyAsciiWhitespace clone family is deferred to a follow-up
+    // burn-down driven by small_helper_audit.py's first real run (gate-blind-spot-sweep § Out of scope).
+    //
+    // The marker MUST stay the last line before `std::size_t e` and MUST stay on one line: the gate
+    // matches a maximal token run that starts mid-body, and dup_audit._suppressed reads the nearest
+    // non-blank line above that start. Wrapping it would push `rule=duplication` off that line.
+    // SMATCHET_DEVIATION(rule=duplication; reason=see above; owner=build-doctor; revisit=2026-12-31)
     std::size_t e = in.size();
     while (b < e && std::isspace(static_cast<unsigned char>(in[b]))) {
         ++b;

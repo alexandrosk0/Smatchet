@@ -37,7 +37,8 @@ std::string ResolveColumnKey(const std::string& header, const std::vector<Tracke
         return "__existing_issue_key__";
     }
 
-    auto idIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return ToLowerAsciiCopy(f.Id) == low; });
+    auto idIt =
+        std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return ToLowerAsciiCopy(f.Id) == low; });
     if (idIt != catalog.end())
         return idIt->Id;
 
