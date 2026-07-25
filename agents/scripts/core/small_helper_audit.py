@@ -34,6 +34,11 @@ Verdict model — ADVISORY (WARN-first), mirroring the DRY gate's pre-graduation
 Accepted blind spots (floor, not ceiling):
   * Out-of-line MEMBER definitions (`Foo::Bar(...) {`) are skipped — the plan scopes this to free
     helpers, and a member's body is bound to its class's state.
+  * A free function returning a RAW POINTER (`char* Foo(...)`) is skipped: the token immediately
+    before the name is `*`, which `_NOT_A_DECLARATOR_PREFIX` treats as "not a declarator" so a
+    multiplication expression like `a * Foo(b)` is not mis-read as a definition. Reference returns
+    (`int& Foo(...)`) are unaffected — `&` is deliberately absent from that set. Under-counts only,
+    never over-counts, which is the safe direction for an advisory census.
   * A helper re-rolled with a genuinely different body (e.g. an explicit `'A'..'Z'` branch instead
     of `std::tolower`) does NOT group with the std::tolower family. That is correct: they are not
     the same function, and merging them would be a behaviour change, not a de-duplication.
@@ -475,6 +480,19 @@ def run_selftest():
     if extract_helpers(big, "G.cpp"):
         fail("a body at/above MIN_CLONE_TOKENS was claimed by the sub-floor audit "
              "(it overlaps the DRY gate)")
+        miss = 1
+
+    # --- the documented pointer-return blind spot is real, and reference returns are NOT ---
+    # Pins § Accepted blind spots: `*` before the name is treated as multiplication, `&` is not.
+    # If a future tightening of _NOT_A_DECLARATOR_PREFIX starts extracting pointer returns, this
+    # fires and the docstring gets updated with it instead of silently going stale.
+    ptr = "char* PtrRet(const std::string& a) { %s return nullptr; }\n" % ("Step(a); " * 8)
+    if extract_helpers(ptr, "P.cpp"):
+        fail("a pointer-returning free function was extracted — § Accepted blind spots is now stale")
+        miss = 1
+    ref = "int& RefRet(const std::string& a) { %s static int x; return x; }\n" % ("Step(a); " * 8)
+    if not extract_helpers(ref, "R.cpp"):
+        fail("a reference-returning free function was skipped — `&` must NOT be a non-declarator")
         miss = 1
 
     # --- a tiny getter is below the band and must not be reported ---

@@ -167,9 +167,10 @@ print('src:', is_active_md('Source/Core/foo.md'))
     done
 }
 
-@test "--baseline writes a grandfather file and --all then passes on the real repo" {
-    # --all must be usable as a gate: without the baseline, widening the target
-    # set would have meant burning down 14 unrelated pre-existing links first.
+@test "--all passes on the real repo using the committed baseline" {
+    # --all must be usable as a gate: without the baseline, widening the target set
+    # would have meant burning down the pre-existing links first. The --baseline
+    # WRITE path is exercised by the round-trip test below, not here.
     run bash "$LINT" --all
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed:"* ]]

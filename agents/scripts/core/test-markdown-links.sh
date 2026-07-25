@@ -33,8 +33,11 @@
 #   --all   — repo-wide scan of every actively-maintained markdown, minus the
 #             entries grandfathered in docs/high-integrity/markdown-link-baseline.md.
 #             The baseline exists so --all is usable as a gate at all: widening
-#             the target set (rule 5) would otherwise have meant burning down 14
-#             unrelated pre-existing dangling links first. Entries are keyed by
+#             the target set (rule 5) would otherwise have meant burning down the
+#             pre-existing dangling links first. Note the two counts differ and
+#             both are correct: the baseline holds 9 distinct `file::href` KEYS,
+#             which `--all` reports as 14 line-level OCCURRENCES (one file repeats
+#             three hrefs across eight lines). Entries are keyed by
 #             `file::href`, not by line number, so unrelated edits above a
 #             grandfathered link do not un-grandfather it.
 #   --baseline — regenerate that baseline from the current tree, then commit it.
