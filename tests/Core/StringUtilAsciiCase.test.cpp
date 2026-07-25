@@ -2,17 +2,17 @@
 
 #include "StringUtil.h"
 
-// ToLowerAsciiCopy / ToUpperAsciiCopy (inline in StringUtil.h) are the ASCII-case
-// helpers that gate-blind-spot-sweep Slice 2 folded NINE re-rolled per-TU copies onto
-// (Logger, SmatchetLocalization, IssueTableSerializer, TrackerHttpPure,
-// ModelDownloadPolicy, PlaneFieldCatalogPure, plus forwarders in
-// AppController_LuaBindings, BuiltinCommands_Helpers and McpJsonRpcPure).
+// ToLowerAsciiCopy / ToUpperAsciiCopy (inline in StringUtil.h) are the single ASCII-case
+// helpers for the whole tree. NINE translation units depend on them: Logger,
+// SmatchetLocalization, IssueTableSerializer, TrackerHttpPure, ModelDownloadPolicy and
+// PlaneFieldCatalogPure call them directly, and AppController_LuaBindings,
+// BuiltinCommands_Helpers and McpJsonRpcPure forward their own published names here.
 //
-// That consolidation is exactly why these need direct coverage: before it, a
-// regression in any one copy broke one TU. Now a regression here breaks nine at
-// once — including two security-adjacent callers (McpJsonRpcPure's origin/host
-// allow-listing and ModelDownloadPolicy's download-domain check), which compare
-// LOWERCASED hosts. Header-only, so there is no production .cpp to link.
+// That fan-in is why these need direct coverage: a regression in this one body breaks
+// all nine call sites at once — including two security-adjacent ones that compare
+// LOWERCASED hosts (McpJsonRpcPure's origin/host allow-listing and
+// ModelDownloadPolicy's download-domain check). Header-only, so there is no
+// production .cpp to link.
 //
 // The `unsigned char` cast inside both helpers is the load-bearing detail: passing a
 // negative `char` (any byte >= 0x80 on a signed-char platform) straight to
@@ -55,8 +55,8 @@ TEST_CASE("ToLowerAsciiCopy — ASCII letters fold, everything else is preserved
 }
 
 TEST_CASE("ToUpperAsciiCopy — the upper-case twin behaves symmetrically") {
-    // Added by Slice 2 for PlaneFieldCatalogPure's property_type normalisation, which
-    // compares against upper-case literals ("TEXT", "DATETIME", ...).
+    // Consumed by PlaneFieldCatalogPure's property_type normalisation, which compares
+    // the folded result against upper-case literals ("TEXT", "DATETIME", ...).
     SUBCASE("lower-case ASCII folds") {
         CHECK(ToUpperAsciiCopy("HeLLo World") == "HELLO WORLD");
         CHECK(ToUpperAsciiCopy("abcdefghijklmnopqrstuvwxyz") == "ABCDEFGHIJKLMNOPQRSTUVWXYZ");
@@ -86,12 +86,12 @@ TEST_CASE("ToUpperAsciiCopy — the upper-case twin behaves symmetrically") {
 }
 
 TEST_CASE("ToLowerAsciiCopy — the per-TU bodies it replaced are behaviour-identical") {
-    // Slice 2 folded nine copies onto one helper. Eight were the same std::tolower
-    // body; BuiltinCommands_Helpers' was the odd one out — an explicit 'A'..'Z'
-    // branch. The two agree for every byte under the "C" locale, which is the only
-    // locale this process ever has (nothing in the tree calls std::setlocale). This
-    // asserts that equivalence across the whole byte range rather than trusting it,
-    // so the substitution is pinned rather than merely argued.
+    // Of the nine call sites now routed through this helper, eight always used this
+    // std::tolower body; BuiltinCommands_Helpers instead used an explicit 'A'..'Z'
+    // branch. The two forms agree for every byte under the "C" locale, which is the
+    // only locale this process ever has (nothing in the tree calls std::setlocale) —
+    // so routing that one through here is behaviour-preserving. This asserts the
+    // equivalence across the whole byte range rather than trusting the argument.
     auto explicitAsciiLower = [](std::string s) {
         for (char& c : s) {
             if (c >= 'A' && c <= 'Z') {
