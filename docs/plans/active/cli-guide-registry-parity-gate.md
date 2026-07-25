@@ -17,7 +17,7 @@ Six are `debug.*` and arguably intentional. But `ui.zoom.*`, `grid.clear_selecti
 
 The drift is structural, not an oversight: the repo auto-generates and CI-gates the shipped-plan index (`test-plan-index.sh` fails on drift), gates subsystem leaf docs, doc anchors, and markdown links — but `grep -rn CLI_GUIDE .github/workflows/ agents/scripts/ scripts/` returns **nothing**. Nothing has ever checked this file against the registry.
 
-**Intended outcome**: after this lands, a `MakeCommand` registration that never reaches `CLI_GUIDE.md` fails CI, and the 12-command backlog is either documented or explicitly classified as internal.
+**Intended outcome**: after this lands, a **literal `MakeCommand("<name>"` registration** that never reaches `CLI_GUIDE.md` fails CI, and the 12-command backlog is either documented or explicitly classified as internal. The guarantee is deliberately scoped to *statically discoverable* registrations — commands registered from data (`view.toggle.*`, `pane.*`, the scenario family) are **not** covered and can still drift undocumented; see § Risks for why, and § Out of scope for the follow-up that would close it. Do not read this gate as "CI catches every undocumented command."
 
 ## Approach
 
@@ -29,7 +29,20 @@ Commands legitimately absent from the user guide get an **explicit allow-list wi
 
 ## Files to modify
 
-1. `agents/scripts/core/test-cli-guide-parity.sh` (NEW) — the gate. Modes mirroring `test-plan-index.sh`: default `--check` (fail on drift, list both directions), `--fix` (append a stub row per missing command to the right category table), `--selftest` (plant a fake registration, assert it is flagged — required by `test-gate-selftests.sh`).
+1. `agents/scripts/core/test-cli-guide-parity.sh` (NEW) — the gate. Modes mirroring `test-plan-index.sh`.
+
+   **`--check` exit contract (the two directions are NOT symmetric):**
+   - *Registered-but-undocumented* → **exit 1** (fatal). This is the drift the gate exists to stop.
+   - *Documented-but-unregistered* → **WARN, exit 0**. Never fatal, because a dynamically-registered name (`view.toggle.*`, `pane.*`) is legitimately documented yet invisible to the static scan, so failing here would punish correct docs.
+   - Both are always *reported*; only the first changes the exit code. The `--selftest` must assert **both** paths explicitly — a planted fake registration exits 1, a planted doc-only row exits 0 with a WARN line — so the asymmetry can't silently invert later.
+
+   **`--fix` insertion contract (deterministic, fails closed):**
+   - Category is the command name's prefix before the first `.` (`ui.zoom.in` → `ui`; `grid.clear_selection` → `grid`).
+   - That category must map to a known `### <category>` heading in `CLI_GUIDE.md` § Command catalogue via an explicit table in the script. An **unknown category is a hard error (exit 2), never an invented section** — `--fix` must not silently manufacture document structure.
+   - Creating a genuinely new category (`ui`, `grid` — neither exists today) is a **deliberate one-time human edit** in step 7, which also adds the § Contents anchor. After that the mapping table knows them and `--fix` can append rows.
+   - Rows append to the end of the category's existing table, preserving column count.
+
+   `--selftest` (plant a fake registration, assert it is flagged — required by `test-gate-selftests.sh`) additionally covers the unknown-category exit-2 path.
 2. `agents/scripts/core/cli_guide_parity.py` (NEW) — the extractor + differ. Scan `Source/Core/src/Commands/**/*.cpp` for `MakeCommand("<name>"`; parse `CLI_GUIDE.md`'s catalogue tables for `` | `<name>` `` cells; report **both** directions (registered-but-undocumented **and** documented-but-unregistered — the second catches a command deleted from code while its doc row rots).
 3. `agents/scripts/core/cli-guide-internal-allowlist.txt` (NEW) — one `<name>  # <reason>` per line for commands intentionally absent from the user guide. Seeded with the six `debug.*` entries.
 4. `agents/scripts/core/test-cli-guide-parity-bats.sh` + `tests/bats/cli_guide_parity.bats` (NEW) — `test-orphan-bats.sh` requires every bats suite to carry a `test-*.sh` wrapper.
@@ -77,7 +90,8 @@ N/A — the diff touches no `Source/Core/` production code. The only `Source/` i
 - **Bash-driver scenario / screenshot / sanitizer**: N/A.
 - **Build gate**: N/A — no compiled source touched. (Stated explicitly rather than omitted, per the template's forcing function.)
 - **Gate self-verification**: `bash agents/scripts/core/test-cli-guide-parity.sh --selftest` must fail on a planted registration; `--check` must read zero after step 7; `test-gate-selftests.sh --check` must count the new script; `test-orphan-bats.sh --check` must find the bats wrapper.
-- **Round-trip**: run `--fix` on a deliberately-reverted `CLI_GUIDE.md`, confirm the regenerated rows pass `md_lint.py --all` and `test-doc-anchors.sh`.
+- **Round-trip**: run `--fix` on a deliberately-reverted `CLI_GUIDE.md`, confirm the regenerated rows pass `md_lint.py --all` and `test-doc-anchors.sh`. Additionally assert the **fail-closed** path: a planted registration in an unknown category (e.g. `zzz.something`) makes `--fix` exit 2 without touching the file, rather than inventing a `### zzz` section.
+- **Exit-path coverage**: assert both `--check` directions explicitly — planted registered-but-undocumented → exit 1; planted documented-but-unregistered → exit 0 with a WARN line. Pinning both stops a later refactor from quietly making the reverse direction fatal.
 - **Doc validation (blocks plan-doc PRs)**: the canonical `scripts/dev/test-docs.sh` suite green.
 - **Plan stress-test — `grill-with-docs`**: **not yet run** — owed before implementation starts.
 - **Manual residue**: none. The one judgement call (is `ui_test.run` user-facing or internal?) is resolved at step 7, not deferred.

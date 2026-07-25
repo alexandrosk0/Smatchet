@@ -31,6 +31,20 @@ Introduce a single pure parser with an **explicit tri-state outcome** — `Parse
 - **Sort** maps `Unparseable` to a stable sentinel ordered consistently (all unparseable values compare equal to each other and sort to one end), so garbage stays deterministic — the property the infinite-loop fix was protecting — without fabricating a magnitude.
 - **Edit** maps `Unparseable` to the existing validation error, unchanged.
 
+**`Empty` is a third, distinct sort bucket — not a synonym for zero.** `TicketGridSortPure.cpp:118-134` already short-circuits empty cell values *before* reaching the duration comparator (empty sorts to one end by `sortDirection`), so the comparator must never see `Empty` from that path. It can still arrive from an all-whitespace value, so the adapter maps `Empty` to the **same** side as the grid's empty handling — not to `0`, which would sort a blank cell alongside a genuine `"0m"`. Ordering, ascending: `Parsed` by value < `Empty` < `Unparseable`. Pin all three buckets and their pairwise ordering in tests.
+
+### The parser contract (pin these; the adapters must not each invent them)
+
+The three outcomes are exhaustive and the grammar is closed:
+
+- **Bare integer** → seconds (`"3600"` → 3600). A **leading `-` is accepted** and yields a negative `Parsed` — the sort path needs it to order a negative remaining-estimate sensibly, and the edit adapter rejects it downstream via its existing `sVal <= 0` check rather than at parse time. (Today the two paths disagree here: sort accepts `-60`, edit's `allDigits` test rejects it. Making sign a *parser*-level accept + *caller*-level policy is what removes the divergence.)
+- **Unit tokens** `w/d/h/m`, case-insensitive, in any order, optionally space-separated (`"3h 30m"`, `"3h30m"`).
+- **Decimal values are accepted on unit tokens** (`"2.5h"` → 9000). Exactly one `.`, at least one digit on each side. A second `.` in one token (`"1.2.3h"`) → `Unparseable`. A decimal on a **bare** number (`"1.5"`, no unit) → `Unparseable`; bare means integer seconds only, so there is no fractional-second rounding question to answer.
+- **Fractional seconds round half-up to the nearest whole second** (`"0.25m"` → 15; `"1.005h"` → 3618). Computed in `long long` after scaling, never in floating point, so no `0.1+0.2` drift.
+- **A valid prefix followed by junk is `Unparseable`, not a partial total.** `"3h 30m left"` → `Unparseable` (today it yields 10804 — the trailing `left` adds 4 fabricated seconds). This is the single biggest behaviour change and the reason the old add-one-second recovery rule dies.
+- **Empty / whitespace-only** → `Empty`.
+- Overflow **saturates** at the shared ceiling and stays `Parsed` (a saturated value is still an orderable magnitude); it never becomes `Unparseable`.
+
 Decimal support is a **product decision the plan takes deliberately**: accept `2.5h` and compute `9000`. Jira's own time-tracking accepts decimal durations, so a tracker-returned `timeSpent` can legitimately contain one, and today the grid mis-sorts it. Rejecting decimals outright is the defensible alternative (it matches the current field hint) but leaves real Jira data unsortable, so acceptance wins. The field hint stays as-is — it documents the *recommended* form, not the only accepted one.
 
 The infinite-loop guard is preserved structurally rather than by the add-one-second trick: the scan loop advances `pos` unconditionally on every iteration, and a token that fails to yield a unit sets `Unparseable` and stops rather than accumulating.
@@ -42,7 +56,7 @@ The infinite-loop guard is preserved structurally rather than by the add-one-sec
 2. `Source/Core/src/DurationParsePure.cpp` (NEW) — the implementation: trim, whole-integer fast path, then unit-by-unit scan with decimal support and unconditional `pos` advance. Carries the saturation logic (see reuse below).
 3. `Source/Core/src/TicketGridDurationSortPure.cpp:121-141` (MOD) — `ParseDurationToSecondsForSort` becomes a thin adapter over the shared parser mapping `Unparseable` → sentinel; `CompareTimeTrackingValues` keeps its signature so `TicketGridSortPure.cpp:140` is untouched.
 4. `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:750-827` (MOD) — `ParseWorkDurationToSeconds` becomes a thin adapter mapping `Unparseable`/`Empty` → `0`, preserving its current contract for every caller.
-5. `tests/Core/DurationParsePure.test.cpp` (NEW) — the behavioural spec: decimals, multi-unit, saturation, unparseable classification, and the **cross-path agreement property** (for every fixture, sort and edit derive from the same seconds).
+5. `tests/Core/DurationParsePure.test.cpp` (NEW) — the behavioural spec: decimals, multi-unit, saturation, three-way outcome classification, and the **cross-path agreement property**, correctly scoped: *for every fixture the parser classifies `Parsed`, the sort and edit adapters derive the **same seconds***. It cannot be "every fixture" — the adapters deliberately diverge on `Unparseable` (sentinel vs. validation error) and on sign (sort orders `-60`; edit rejects it at the `sVal <= 0` policy check). Agreement is a property of the shared **parse**, not of the adapters' policies, and the test must say so or it will be unsatisfiable by construction.
 6. `tests/Core/TicketGridDurationSortPure.test.cpp:40,43-47` (MOD) — re-pin the changed expectations. `"2.5h"` becomes `9000`. The garbage cases (`"a b c" == 3`, `"..." == 3`, `"~" == 1`, `"(2h)" == 1 + 2*3600 + 1`) change to the sentinel; **each re-pinned line gets a comment naming why**, so the next reader does not read the new numbers as arbitrary.
 7. `tests/Core/TrackerFieldValueParser.test.cpp:44` (MOD) — `"1.5h"` moves from `0` to `5400`. Note this *widens* what the worklog dialog accepts; that is the intended product change.
 8. `tests/fuzz/fuzz_duration_parse.cpp:18` (MOD) — retarget at the shared parser so the fuzz lane covers the new decimal + sentinel paths.
@@ -99,7 +113,15 @@ Diff touches `Source/Core/` — declaring each:
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `tests/Core/DurationParsePure.test.cpp` is the primary gate — decimals (`2.5h == 9000`, `0.5h == 1800`), multi-unit, mixed decimal + multi-unit, bare seconds, saturation at both ceilings, unparseable classification (`"a b c"`, `"~"`, `"..."`, `"3h 30m left"`), empty/whitespace, and a **property test** asserting sort and edit agree on every fixture. Existing `TicketGridDurationSortPure` / `TrackerFieldValueParser` suites stay green modulo the re-pinned lines.
+- **Bucket A (pure-logic ctest, `test-rig`)**: `tests/Core/DurationParsePure.test.cpp` is the primary gate. Fixtures must cover every clause of § The parser contract:
+  - decimals (`"2.5h"` → 9000, `"0.5h"` → 1800), multi-unit (`"3h 30m"`, `"3h30m"`), mixed decimal + multi-unit (`"1.5h 30m"`)
+  - rounding (`"0.25m"` → 15, `"1.005h"` → 3618), and that it is integer-scaled, not floating point
+  - rejects: second decimal point (`"1.2.3h"`), decimal on a bare number (`"1.5"`), valid-prefix-plus-junk (`"3h 30m left"`), pure garbage (`"a b c"`, `"~"`, `"..."`)
+  - signed bare seconds (`"-60"` → `Parsed(-60)`, **not** `Unparseable`)
+  - three-way outcome classification and the `Parsed < Empty < Unparseable` sort ordering, pairwise
+  - saturation at the reconciled ceiling stays `Parsed`, never flips to `Unparseable`
+  - the **scoped** cross-path property: over `Parsed` fixtures only, both adapters derive identical seconds
+  Existing `TicketGridDurationSortPure` / `TrackerFieldValueParser` suites stay green modulo the re-pinned lines.
 - **Bucket E (ImGui Test Engine)**: N/A — no new UI surface. The grid sort is already covered by existing bucket-E grid scenarios; a red there would catch a comparator contract break.
 - **Fuzz**: `tests/fuzz/fuzz_duration_parse.cpp` retargeted; the `fuzz-smoke.yml` lane must stay green (it is the guard against a re-introduced infinite loop).
 - **Bash-driver scenario / screenshot / sanitizer**: nightly ASan/UBSan covers the new TU — UBSan specifically guards the signed-overflow path the saturation logic exists to prevent.

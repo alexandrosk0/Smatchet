@@ -79,20 +79,24 @@ N/A — this plan adds detectors and deletes dead code; it moves no bodies betwe
 
 ## UX Pillar callouts
 
-- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: no impact — slices 1/2/3 are CI-only tooling. Slice 1b deletes never-executed code, so no hot path changes. Slice 2's call-site migrations are behaviour-identical (same `std::transform` body, now via one inline function).
-- **Pillar 2 (UI-thread never blocks > 100 ms)**: no impact — no I/O or threading touched.
-- **Pillar 3 (never crash)**: net positive. Deleting `GetLanguage()` removes an unlocked read of mutex-protected state (a live data race by signature, TSan-detectable if it ever gained a caller). Deleting `Save{Duration,Comment}*` removes a lost-update trap. Slice 2 is behaviour-preserving; ASan/UBSan nightly covers the migrated TUs.
-- **Pillar 4 (accessibility)**: no impact — no user-facing UI change.
+**This plan's own diff is docs-only and has zero pillar impact.** The callouts below are *forecasts for the slice implementation PRs*, recorded here so each slice inherits them instead of re-deriving them. Slices 1, 3 and 4 add tooling and docs only; **slices 1b and 2 do change `Source/Core/` production code** (deletions and call-site migrations respectively).
+
+- **Pillar 1 (perf, 144 Hz / 6.94 ms steady-state)**: expected no regression. Slice 1b deletes code with no reachable caller, so no hot path changes. Slice 2's migrations are behaviour-identical (the same `std::transform` body, reached through one inline function), so at worst neutral and possibly a marginal win from a single inlinable definition.
+- **Pillar 2 (UI-thread never blocks > 100 ms)**: expected no impact — no slice touches I/O or threading.
+- **Pillar 3 (never crash)**: expected net positive. Deleting `GetLanguage()` removes an unlocked read of mutex-protected state (a data race by signature, TSan-detectable the moment it gained a caller). Deleting `Save{Duration,Comment}*` removes a lost-update trap. Slice 2 is behaviour-preserving; the ASan/UBSan nightly covers the migrated TUs.
+- **Pillar 4 (accessibility)**: expected no impact — no user-facing UI change in any slice.
 
 ## Perf-review-system gates
 
-Diff touches `Source/Core/` (slices 1b + 2), so declaring each:
+**For this plan's docs-only diff: N/A on all five** — no `Source/Core/` file is touched here.
 
-1. **PR-fast CI** — N/A as a *regression* risk: slice 1b deletes uncalled code and slice 2 substitutes an identical inline body. No scenario maps to a changed hot path. If the coverage gate flags the deletions, that is expected — see § Risks.
-2. **Pillar 2 static scanner** — N/A: no new sync I/O reachable from `ImGui::*`.
-3. **Dispatcher drain** — N/A: `MainThreadDispatcher::Drain()` untouched.
-4. **Visible-cue bucket-E harness** — N/A: no new sync stall > 100 ms.
-5. **Marker inventory** — N/A: no `SMATCHET_UI_PERF_SCOPE` markers added.
+Forecast for the implementation PRs, so each slice inherits the declaration (slices 1b and 2 will need to restate it against their actual diff):
+
+1. **PR-fast CI** — expected N/A as a *regression* risk: slice 1b deletes uncalled code, slice 2 substitutes an identical inline body. No scenario maps to a changed hot path. The coverage gate may register a delta from slice 1b's deletions — expected and directional (removing zero-coverage lines should *raise* the percentage); see § Risks.
+2. **Pillar 2 static scanner** — expected N/A: no new sync I/O reachable from `ImGui::*`.
+3. **Dispatcher drain** — expected N/A: `MainThreadDispatcher::Drain()` untouched.
+4. **Visible-cue bucket-E harness** — expected N/A: no new sync stall > 100 ms.
+5. **Marker inventory** — expected N/A: no `SMATCHET_UI_PERF_SCOPE` markers added.
 
 ## Risks / non-goals
 
