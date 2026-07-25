@@ -102,18 +102,6 @@ std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std
     return legacyFallback;
 }
 
-std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, const ITrackerConnectivity* client,
-                                             const std::string& activeViewQuery, const std::string& legacyFallback) {
-    const bool isPlane = (client != nullptr && client->GetTrackerType() == "Plane");
-    if (!isPlane && !parentTicketId.empty()) {
-        const std::string prefix = ExtractIssueKeyPrefix(parentTicketId);
-        if (!prefix.empty()) {
-            return prefix;
-        }
-    }
-    return ResolveProjectForDraft(client, activeViewQuery, std::string(), legacyFallback);
-}
-
 std::string ResolvePlaneOperationProject(ITrackerConnectivity* client, const std::string& viewQuery,
                                          const std::string& cfgQuery) {
     if (client == nullptr || client->GetTrackerType() != "Plane") {

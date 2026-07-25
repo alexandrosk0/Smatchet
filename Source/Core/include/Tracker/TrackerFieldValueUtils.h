@@ -19,11 +19,14 @@ bool IsTimeDurationField(const std::string& fieldId);
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId);
 bool IsNonEditableTimetrackingFieldId(const std::string& fieldId);
 
+// Read-only accessors by design — there is deliberately no Save* counterpart. The shipped write
+// path is the Preferences panel mutating `d.cfg` directly + MarkPrefsDirty
+// (SmatchetPreferencesUi_Templates.cpp); the Save* helpers deleted here read-modify-wrote the WHOLE
+// TrackerConfig, so wiring them back would reintroduce a lost-update race against that path (and
+// the sync ConfigManager::Save on the render thread that historical-review finding #732 removed).
+// gate-blind-spot-sweep Slice 1b.
 std::vector<std::string> LoadDurationSuggestions();
-void SaveDurationSuggestions(const std::vector<std::string>& list);
-
 std::vector<std::string> LoadCommentTemplates();
-void SaveCommentTemplates(const std::vector<std::string>& list);
 
 } // namespace TrackerFieldValueUtils
 

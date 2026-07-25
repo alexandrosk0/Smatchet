@@ -61,14 +61,6 @@ inline bool ContainsCaseInsensitive(const std::string& haystack, const std::stri
     return it != haystack.end();
 }
 
-/** Case-insensitive string equality. */
-inline bool EqualsCaseInsensitive(const std::string& a, const std::string& b) {
-    if (a.size() != b.size())
-        return false;
-    return std::equal(a.begin(), a.end(), b.begin(),
-                      [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
-}
-
 /** Natural Jira issue key comparison: "PROJ-2" < "PROJ-10" (lexicographic prefix, then numeric suffix). */
 inline bool CompareIssueKeyNatural(const std::string& a, const std::string& b) {
     auto split = [](const std::string& s) -> std::pair<std::string, long long> {

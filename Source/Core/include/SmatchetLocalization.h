@@ -13,7 +13,11 @@ struct LanguageInfo {
 const std::vector<LanguageInfo>& AvailableLanguages();
 std::string NormalizeLanguageCode(const std::string& code);
 void SetLanguage(const std::string& code);
-const std::string& GetLanguage();
+// No GetLanguage() accessor by design: the language string is mutated by SetLanguage under
+// LocalizationMutex(), so a `const std::string&` getter would hand callers a reference into
+// mutex-protected state and race with the next SetLanguage. The previous one did exactly that and
+// had zero callers, so it was deleted rather than fixed (gate-blind-spot-sweep Slice 1b). A future
+// caller must return BY VALUE under the lock, like every other accessor in this file.
 
 const char* T(const char* key, const char* englishFallback);
 const char* TranslateSource(const char* englishSource);

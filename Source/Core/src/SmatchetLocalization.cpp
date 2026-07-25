@@ -1468,8 +1468,6 @@ void SetLanguage(const std::string& code) {
     LoadOverridesLocked(normalized);
 }
 
-const std::string& GetLanguage() { return CurrentLanguageRef(); }
-
 const char* T(const char* key, const char* englishFallback) {
     if (!key || key[0] == '\0') {
         return englishFallback ? englishFallback : "";
