@@ -27,6 +27,11 @@ inline std::string ToLowerAsciiCopy(std::string s) {
     return s;
 }
 
+inline std::string ToUpperAsciiCopy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return s;
+}
+
 inline std::string JoinStrings(const std::vector<std::string>& items, const std::string& separator) {
     std::string out;
     for (size_t i = 0; i < items.size(); ++i) {

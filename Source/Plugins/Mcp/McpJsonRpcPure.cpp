@@ -1,12 +1,14 @@
 #include "McpJsonRpcPure.h"
 
 #include "SmatchetDefaults.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <sstream>
+#include <utility> // std::move (ToLowerAscii forwarder)
 
 namespace smatchet {
 namespace mcp {
@@ -14,16 +16,14 @@ namespace pure {
 
 namespace detail {
 
-// SMATCHET_DEVIATION(rule=duplication; reason=the ASCII-lower-then-trim pair is a
-// SMATCHET_DEVIATION ubiquitous idiom repeated across subsystems and pre-dates this
-// SMATCHET_DEVIATION anon-ns to detail promotion, so folding it into a shared
-// SMATCHET_DEVIATION Core StringUtil helper is out of scope for the testability work;
-// owner=build-doctor; revisit=2026-12-31)
-std::string ToLowerAscii(std::string value) {
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return value;
-}
+// The duplication deviation that used to sit here is RETIRED (gate-blind-spot-sweep Slice 2):
+// the body now delegates to the shared Core helper instead of re-rolling it, which was the
+// deviation's whole subject. The NAME stays a published seam — declared in McpJsonRpcPure.h and
+// unit-tested directly by tests/Plugins/Mcp/McpDispatch.test.cpp — so this is a forwarder, not a
+// deletion. Purity pre-check: StringUtil.h is header-only and stdlib-only, so it adds no link
+// dependency to this deliberately dependency-light *Pure TU (which already includes the Core
+// header SmatchetDefaults.h, so Source/Core/include is on this TU's path in every rig).
+std::string ToLowerAscii(std::string value) { return ToLowerAsciiCopy(std::move(value)); }
 
 std::string TrimAsciiWhitespace(const std::string& value) {
     size_t begin = 0;

@@ -1,6 +1,7 @@
 #include "Logger.h"
 
 #include "Privacy/TextRedaction.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -11,12 +12,6 @@
 #include <mutex>
 #include <vector>
 
-namespace {
-std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
-} // namespace
 
 // Out-of-line definition required for ODR-use under C++14 (e.g. when passed by
 // reference to std::chrono::milliseconds() in an unoptimized translation unit).
@@ -33,7 +28,7 @@ Logger::~Logger() {
 }
 
 LogLevel Logger::ParseLogLevelString(const std::string& s, LogLevel fallback) {
-    const std::string k = ToLowerAscii(s);
+    const std::string k = ToLowerAsciiCopy(s);
     if (k == "trace") {
         return LogLevel::Trace;
     }

@@ -1,5 +1,7 @@
 #include "ModelDownloadPolicy.h"
 
+#include "StringUtil.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -8,11 +10,6 @@ namespace whisper {
 namespace policy {
 
 namespace {
-
-std::string ToLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 
 // Suffix match on a dotted-domain boundary: `host` equals `suffix` OR ends with
 // `"." + suffix`. Rejects `evilhuggingface.co` against `huggingface.co`.
@@ -50,20 +47,20 @@ std::string ExtractHost(const std::string& url) {
     if (colon != std::string::npos && rest.find(']') == std::string::npos) {
         rest = rest.substr(0, colon);
     }
-    return ToLower(rest);
+    return ToLowerAsciiCopy(rest);
 }
 
 bool IsAllowedModelHost(const std::string& host) {
     if (host.empty()) {
         return false;
     }
-    const std::string h = ToLower(host);
+    const std::string h = ToLowerAsciiCopy(host);
     return HostMatchesDomain(h, "huggingface.co") || HostMatchesDomain(h, "hf.co");
 }
 
 bool IsAllowedModelUrl(const std::string& url) {
     // https-only: a redirect that downgrades to cleartext is refused.
-    if (ToLower(url).compare(0, 8, "https://") != 0) {
+    if (ToLowerAsciiCopy(url).compare(0, 8, "https://") != 0) {
         return false;
     }
     return IsAllowedModelHost(ExtractHost(url));

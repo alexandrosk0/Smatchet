@@ -3,6 +3,7 @@
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetLocalizationFormatGuard.h"
+#include "StringUtil.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1330,11 +1331,6 @@ const std::unordered_map<std::string, const TranslationEntry*>& EntriesByEnglish
     return map;
 }
 
-std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
-
 std::string TrimAscii(std::string s) {
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\n' || s.front() == '\r')) {
         s.erase(s.begin());
@@ -1454,7 +1450,7 @@ const std::vector<LanguageInfo>& AvailableLanguages() {
 }
 
 std::string NormalizeLanguageCode(const std::string& code) {
-    const std::string normalized = ToLowerAscii(TrimAscii(code));
+    const std::string normalized = ToLowerAsciiCopy(TrimAscii(code));
     if (normalized == "fr" || normalized == "fr-fr" || normalized == "fr_fr") {
         return "fr-FR";
     }

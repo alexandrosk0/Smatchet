@@ -3,6 +3,8 @@
 
 #include "BuiltinCommands_Internal.h"
 
+#include "StringUtil.h"
+
 #include <algorithm>
 #include <cstdlib>
 #include <string>
@@ -57,11 +59,16 @@ nlohmann::json PaginateJsonArray(const nlohmann::json& items, int limit, int off
     return out;
 }
 
-std::string ToLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](char c) -> char { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c + ('a' - 'A')) : c; });
-    return s;
-}
+// Forwards to the shared Core helper (gate-blind-spot-sweep Slice 2). The NAME stays: it is
+// declared in BuiltinCommands_Internal.h and pulled in by BuiltinCommands_{Debug,Tickets}.cpp
+// via `using builtin_detail::ToLowerAscii;`.
+//
+// Behaviour note — this body was the odd one out: an explicit `'A'..'Z'` branch rather than
+// std::tolower. The two agree exactly under the "C" locale, which is the only locale this
+// process ever has (nothing in the tree calls std::setlocale), so the substitution is
+// behaviour-identical for every input. Should that ever change, this forwarder is the single
+// place to reinstate the locale-independent branch.
+std::string ToLowerAscii(std::string s) { return ToLowerAsciiCopy(std::move(s)); }
 
 std::string CategoryFromName(const std::string& name) {
     const auto dot = name.find('.');
