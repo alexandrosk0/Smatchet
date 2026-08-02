@@ -99,6 +99,23 @@ and deletes it in an `always()` cleanup step. To dry-run the pipeline
 without publishing (e.g. to validate a cert rotation), dispatch the workflow
 manually with `publish=false`.
 
+### Bootstrap: publishing before a certificate exists
+
+A tag push always requires signing. If you need to publish a release before
+obtaining a code-signing certificate, dispatch the workflow manually with
+`sign=false`, `publish=true`, **and** `allow_unsigned_publish=true` — all three
+are required, so an unsigned publish can never happen by accident.
+
+Understand what you are shipping:
+
+- users get a Windows SmartScreen warning on every download and install
+- **the in-app updater will refuse the unsigned installer** — it runs
+  `WinVerifyTrust` and will not launch a build whose signature does not chain to
+  a trusted root, so clients cannot auto-update *to* an unsigned release
+
+Treat this as a one-time bootstrap (e.g. to establish a download page) and mark
+the release as a prerelease. Sign every subsequent release.
+
 ## Notes
 
 - The release script requires exactly one certificate selector: `-SigningCertificatePath`, `-SigningCertificateThumbprint`, or `-SigningCertificateSubject`.
