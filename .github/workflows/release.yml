@@ -183,21 +183,29 @@ jobs:
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
           PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
         run: |
-          $releaseArgs = @(
-            "-Tag", $env:PARAM_TAG,
-            "-SkipUnreal", "-SkipFabBundle",
-            "-OutDir", "out/release"
-          )
-          if ($env:PARAM_SIGN -eq "true") { $releaseArgs += "-Sign" }
+          # Hashtable splat, NOT array splat: array splatting (@("-Tag", $val, ...))
+          # does NOT parse "-Flag" tokens as parameter names — it binds every
+          # element positionally, in parameter-declaration order. That silently
+          # mis-bound $Tag="-Tag", $Notes="-SkipUnreal", $NotesFile="-SkipFabBundle"
+          # (both truthy -> "Use either -Notes or -NotesFile, not both."), while
+          # $OutDir kept its default. Hashtable splat (@{ Name = Value }) maps keys
+          # to parameter names correctly, including switches via boolean values.
+          $releaseArgs = @{
+            Tag = $env:PARAM_TAG
+            SkipUnreal = $true
+            SkipFabBundle = $true
+            OutDir = "out/release"
+          }
+          if ($env:PARAM_SIGN -eq "true") { $releaseArgs["Sign"] = $true }
           if ($env:PARAM_PUBLISH -eq "true") {
-            $releaseArgs += "-Publish"
+            $releaseArgs["Publish"] = $true
             # release_github.ps1 independently refuses -Publish without -Sign;
             # forward the same knowing override the workflow already gated on.
-            if ($env:PARAM_ALLOW_UNSIGNED -eq "true") { $releaseArgs += "-AllowUnsignedPublish" }
-            if ($env:PARAM_DRAFT -eq "true") { $releaseArgs += "-Draft" }
-            if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs += "-Prerelease" }
+            if ($env:PARAM_ALLOW_UNSIGNED -eq "true") { $releaseArgs["AllowUnsignedPublish"] = $true }
+            if ($env:PARAM_DRAFT -eq "true") { $releaseArgs["Draft"] = $true }
+            if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs["Prerelease"] = $true }
           }
-          Write-Host "release_github.ps1 $($releaseArgs -join ' ')"
+          Write-Host "release_github.ps1 $(($releaseArgs.GetEnumerator() | ForEach-Object { if ($_.Value -eq $true) { \"-$($_.Key)\" } else { \"-$($_.Key) $($_.Value)\" } }) -join ' ')"
           ./scripts/publish/release_github.ps1 @releaseArgs
 
       - name: Remove decoded signing certificate
