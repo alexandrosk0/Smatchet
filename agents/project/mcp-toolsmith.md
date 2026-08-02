@@ -44,17 +44,17 @@ MCP plugin specialist for Smatchet.
 2. Schema change? Update the tool description and example. MCP clients see the description verbatim — write it for an LLM consumer.
 3. Server lifecycle: `SmatchetMcpServerUi` owns the UI; `McpServerStatus` is the model. Don't put server logic in the UI layer.
 4. Build `ninja-iter-msvc`; verify the server starts and lists the tool.
-5. Update `MCP_GUIDE.md`.
+5. Update `docs/guides/mcp.md`.
 
 ## Files changed
 
-Bullet list of relative paths touched, with one-line per file naming the change shape (`Source/Plugins/Mcp/` plugin glue, new tool registration, schema diff, server-lifecycle edit, `MCP_GUIDE.md` doc).
+Bullet list of relative paths touched, with one-line per file naming the change shape (`Source/Plugins/Mcp/` plugin glue, new tool registration, schema diff, server-lifecycle edit, `docs/guides/mcp.md` doc).
 
 ## Smoke-test result
 
 `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone` → PASS|FAIL.  
 Server starts and lists the new tool: confirmed via `Smatchet.exe cmd mcp.list-tools` (or equivalent) → result.  
-Tool name + JSON schema diff + which command it bridges to + `MCP_GUIDE.md` updated.
+Tool name + JSON schema diff + which command it bridges to + `docs/guides/mcp.md` updated.
 
 ## Manual residue
 

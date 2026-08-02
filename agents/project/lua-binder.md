@@ -36,7 +36,7 @@ Lua / sol2 binding specialist.
 - **Hot-path cost**: per-call sol2 marshalling is ~50–60× C++ (measured: ~390 µs / cell Lua vs ~6.7 µs / cell C++ for the priority renderer). Don't expose a binding that runs per grid cell unless the user explicitly accepts the trade-off. See the perf note in `scripts/SmatchetHooks.lua`.
 - **Sandbox**: bindings run with an instruction-count `lua_sethook` and bounded execution. Don't disable that, even "just for a test."
 - **Crash class**: `decode_json` can leak a C++ `parse_error` past the protected call on certain malformed inputs (documented in `SmatchetHooks.lua`). For per-frame hot paths, prefer pattern matching over `decode_json`.
-- `LUA_GUIDE.md` is the binding surface reference — update when the surface changes.
+- `docs/guides/lua.md` is the binding surface reference — update when the surface changes.
 - `scripts/SmatchetHooks.lua`'s top comment block is the user-facing hook reference — keep it accurate when APIs come / go.
 - **sol2 v2.20.6 API constraints**: recorder / usertype member functions take **plain args only** — no `sol::this_state` first param (rejected by `make_string_view` template). `state.new_usertype<T>(name, ...)` takes only `name` + alternating method-name + member-ptr pairs; **no `sol::no_constructor` sentinel** (positional signature mismatch). Use `sol::optional<T>` for nullable args; `sol::protected_function` for callback storage.
 - **Compiling Lua 5.3 as C++ requires patching `luaconf.h`**: `set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)` alone is **insufficient**. Lua 5.3's headers lack `extern "C"` guards, so flipping the source language mangles every API symbol and the host fails to link. Either patch `.fetchcontent-src/lua-src/src/luaconf.h` to add `extern "C" { ... }` around the API block, or wrap every host-side `#include <lua.hpp>` / `#include "sol/sol.hpp"` chain in `extern "C"`. The CMake `LANGUAGE CXX` change unlocks C++ exception unwinding through `luaL_error` (required for `LuaHookGuard` crash-safety), but the linkage patch is a hard prereq.
@@ -47,11 +47,11 @@ Lua / sol2 binding specialist.
 2. Add matching stub in `AppController_LuaStubs.cpp` (sensible default or no-op).
 3. If the function is per-frame hot, write the perf trade-off inline.
 4. Build both targets — stubs path matters for `SmatchetCore_DX12` where the flag may be OFF.
-5. Update `LUA_GUIDE.md`.
+5. Update `docs/guides/lua.md`.
 
 ## Files changed
 
-Bullet list of relative paths touched, with one-line per file naming the change shape (`AppController_LuaBindings.cpp` binding, `AppController_LuaStubs.cpp` matching stub, `LUA_GUIDE.md` doc, `scripts/SmatchetHooks.lua` reference).
+Bullet list of relative paths touched, with one-line per file naming the change shape (`AppController_LuaBindings.cpp` binding, `AppController_LuaStubs.cpp` matching stub, `docs/guides/lua.md` doc, `scripts/SmatchetHooks.lua` reference).
 
 ## Smoke-test result
 

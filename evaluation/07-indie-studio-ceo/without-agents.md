@@ -20,7 +20,7 @@ The product is genuinely impressive in scope and code quality signals (≈160K L
 
 I evaluated Smatchet purely as a **business/tooling adoption decision**, not as an engineering audit (I am not an engineer; any code-quality claim below should be spot-verified by our tech lead before it influences money).
 
-**Evidence I used:** `README.md` (value prop, feature list), `LICENSE` (MIT), `THIRD_PARTY_LICENSES.md`, `BUILD.md` (adoption cost), `CLI_GUIDE.md` / `LUA_GUIDE.md` / `MCP_GUIDE.md`, `docs/guides/**`, the `Source/**` product surface (tracker backends, Perforce, Unreal plugin, mobile, AI), `SECURITY_AUDIT.md` summary, CI workflow list, and git history (`git shortlog -sn`, commit cadence, tags/branches).
+**Evidence I used:** `README.md` (value prop, feature list), `LICENSE` (MIT), `THIRD_PARTY_LICENSES.md`, `BUILD.md` (adoption cost), `docs/guides/cli.md` / `docs/guides/lua.md` / `docs/guides/mcp.md`, `docs/guides/**`, the `Source/**` product surface (tracker backends, Perforce, Unreal plugin, mobile, AI), `SECURITY_AUDIT.md` summary, CI workflow list, and git history (`git shortlog -sn`, commit cadence, tags/branches).
 
 **Deliberately ignored** (per evaluation scope — the "without agents.md" pass): `AGENTS.md`, the `agents/` directory, `AI_POLICY.md`, `docs/agent-rules/**`, `docs/harness/**`, `docs/self-improvement/**`, `docs/agent-eval/**`, `.coderabbit.yaml`, `.cursor/`. I judged the *product*, not the meta-layer governing how it is built. Note: that agentic governance layer is itself a large part of the repo, which has a maturity implication I flag in §6.
 

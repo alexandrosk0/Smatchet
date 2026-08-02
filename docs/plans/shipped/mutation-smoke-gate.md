@@ -4,7 +4,7 @@
 >
 > **Status**: `shipped` (2026-07-16) — **all 4 phases complete.** Phases 1 + 2 (harness + seed corpus; advisory nightly wiring + bats + local mirror, owner's decisions 2026-07-10: **advisory nightly → graduate to blocking after clean runs**, **80% floor**). Phase 3 (corpus expansion to the full dedicated-test TU set) shipped 2026-07-13 — 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs. **Phase 4 (blocking graduation) shipped 2026-07-16** — after 3 consecutive clean advisory nightly runs (2026-07-14 `1d78092`, 07-15 `2966edc7`, 07-16 `3704139`, each 33/33 killed @ 100% adjusted kill rate, 0 mis-ruled equivalents), `continue-on-error` was removed from the `tsan-linux-nightly.yml` mutation-smoke step so a sub-floor survivor now reds the nightly. See § Implementation log.
 >
-> **Roadmap**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **F** (Gap 4, "Mutation-smoke / coverage-delta gate"). **Precursor**: [`MUTATION_PILOT.md`](../../../MUTATION_PILOT.md) (2026-07-05). **Originating backlog**: `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md`.
+> **Roadmap**: [`testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice **F** (Gap 4, "Mutation-smoke / coverage-delta gate"). **Precursor**: [`MUTATION_PILOT.md`](../../audits/MUTATION_PILOT.md) (2026-07-05). **Originating backlog**: `docs/self-improvement/categories/tooling/2026-07-05-mutation-harness-slice-f.md`.
 
 ## Context
 

@@ -1,3 +1,4 @@
+<!-- tier: project -->
 # Smatchet CLI Guide
 
 The Smatchet CLI exposes the full [unified Command System](docs/plans/command-system-plan.md) from the shell. It connects to a running Smatchet instance over its MCP HTTP endpoint and dispatches any registered command — the same catalog that feeds the in-app Command Palette (Ctrl+Shift+P), MCP tools, and Lua automation.
@@ -518,12 +519,12 @@ Smatchet.exe cmd perf.dump --outPath=C:/tmp/perf-baseline.json
 Smatchet.exe cmd perf.snapshot --quiet | grep temp:   # → no output expected
 ```
 
-See [`docs/guides/perf-workflow.md`](docs/guides/perf-workflow.md) for the full profiling methodology.
+See [`docs/guides/perf-workflow.md`](perf-workflow.md) for the full profiling methodology.
 
 ---
 
 ## See also
 
-- [MCP Guide](MCP_GUIDE.md) — using Smatchet as an MCP server for AI agents
-- [Lua Scripting Guide](LUA_GUIDE.md) — `commands.invoke()` from Lua
-- [Build Guide](BUILD.md) — building the standalone executable
+- [MCP Guide](mcp.md) — using Smatchet as an MCP server for AI agents
+- [Lua Scripting Guide](lua.md) — `commands.invoke()` from Lua
+- [Build Guide](../../BUILD.md) — building the standalone executable

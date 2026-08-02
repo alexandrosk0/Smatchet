@@ -39,7 +39,7 @@ I read the shipped product's code, not the docs alone. Primary files studied in 
 `Source/Core/include/IAiClient.h`, `Source/Core/include/AiTypes.h`,
 `Source/Core/src/AnthropicClient.cpp`, `Source/Core/src/AiSseParser.cpp`,
 `Source/Core/src/AppController_LuaBindings.cpp`, `Source/Core/src/AppController_LuaBindingsCore.cpp`,
-`Source/Core/src/AiContextBuilder.cpp`, plus `CLI_GUIDE.md`, `MCP_GUIDE.md`, `LUA_GUIDE.md`,
+`Source/Core/src/AiContextBuilder.cpp`, plus `docs/guides/cli.md`, `docs/guides/mcp.md`, `docs/guides/lua.md`,
 and the `SMATCHET_WITH_*` gating in `CMakeLists.txt`.
 
 **Per the pass constraint, I deliberately ignored the agentic-governance meta-layer**: root and
@@ -99,7 +99,7 @@ agent may transition but not delete"), no per-tool allow-listing per client.
 **What:** `CommandResult::ToWireJson` (`Command.cpp:75`) always emits `{ok, command, data?}` or
 `{ok:false, command, error:{code,message,hint,suggestions,details}}`. `ErrorCode` (`Command.h:51`)
 is a stable kebab-case enum mapped by `ErrorCodeString`, and the CLI maps these to stable exit
-codes (`CLI_GUIDE.md`: 2=unknown, 5=confirm-required, 6=not-connected, …).
+codes (`docs/guides/cli.md`: 2=unknown, 5=confirm-required, 6=not-connected, …).
 **Why interesting:** Agents get one parseable shape across every transport, with actionable
 `hint` and `suggestions` fields. MCP returns HTTP 200 even for logical errors, putting the
 envelope in `content[0].text` (`McpPlugin.cpp:537`) so callers parse rather than treat errors as
@@ -183,7 +183,7 @@ cap is a tidy, bounded context-injection design.
 **What:** `commands.invoke("name", {args})` (`AppController_LuaBindingsCore.cpp:188`) lets scripts
 call any registry command and get back `{ok, data, error}` — Lua is just another `CommandSource`,
 subject to the same confirm gate (`__confirm`, `:208`). Scripts can also `mcp.register_tool(...)`
-to publish *new* MCP tools (`MCP_GUIDE.md` §4), and `ai.prompt(...)` to invoke the assistant —
+to publish *new* MCP tools (`docs/guides/mcp.md` §4), and `ai.prompt(...)` to invoke the assistant —
 gated by a re-entrancy lock, a 5s rate limit, and a one-time-per-session consent toast naming the
 outbound provider (`AppController_LuaBindings.cpp:664-705`). The sandbox blocks `io`, `os.execute`,
 `load`/`loadstring`, `require`, `debug`, metatable escapes, and `string.dump`
@@ -219,7 +219,7 @@ is a convention, not per-command boilerplate. Back-compat is handled by an alias
   `Source::Mcp`, lifting `__confirm`/`__dry_run`/`__timeout_ms` out of the arguments object into
   the `CommandContext` (`McpPlugin.cpp:521-540`).
 - **Lua** does the identical lift from the args table (`AppController_LuaBindingsCore.cpp:198-210`).
-- **CLI** (per `CLI_GUIDE.md`) maps flags to context and the envelope to exit codes, and is itself
+- **CLI** (per `docs/guides/cli.md`) maps flags to context and the envelope to exit codes, and is itself
   just an MCP client over HTTP — there is no separate server process; the CLI attaches to the
   running app via `instance.json` discovery (`McpPlugin.cpp:265-296`).
 - **Palette** and **Unreal** are interactive UIs that set `ConfirmedDestructive` themselves.

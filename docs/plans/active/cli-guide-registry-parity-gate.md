@@ -1,4 +1,4 @@
-<!-- index-summary: gate CLI_GUIDE.md against the live command registry so a new command can't ship undocumented -->
+<!-- index-summary: gate docs/guides/cli.md against the live command registry so a new command can't ship undocumented -->
 # Plan — CLI_GUIDE ↔ command-registry parity gate
 
 > **Slug**: `cli-guide-registry-parity-gate` (matches this file's basename without `.md`).
@@ -7,17 +7,17 @@
 
 ## Context
 
-The Unified Command System is the repo's headline automation surface: one `MakeCommand({...})` registration feeds four frontends (shell CLI, Command Palette, MCP `tools/call`, Lua `commands.invoke()`), and [`CLI_GUIDE.md`](../../../CLI_GUIDE.md) is its user-facing catalogue — explicitly pitched in `README.md` as "Suitable for shell scripts and AI agents."
+The Unified Command System is the repo's headline automation surface: one `MakeCommand({...})` registration feeds four frontends (shell CLI, Command Palette, MCP `tools/call`, Lua `commands.invoke()`), and [`docs/guides/cli.md`](../../guides/cli.md) is its user-facing catalogue — explicitly pitched in `README.md` as "Suitable for shell scripts and AI agents."
 
-That catalogue has silently drifted. A sweep on 2026-07-24 found **12 of 57** registered commands absent from `CLI_GUIDE.md`:
+That catalogue has silently drifted. A sweep on 2026-07-24 found **12 of 57** registered commands absent from `docs/guides/cli.md`:
 
 `debug.crash`, `debug.dock.dump`, `debug.dock.reset`, `debug.lua_log_test`, `debug.window.resize`, `debug.window.screenshot`, `grid.clear_selection`, `ui.open_view`, `ui.zoom.in`, `ui.zoom.out`, `ui.zoom.reset`, `ui_test.run`
 
-Six are `debug.*` and arguably intentional. But `ui.zoom.*`, `grid.clear_selection`, and `ui.open_view` are ordinary user-facing surface, and an AI agent reading `CLI_GUIDE.md` as its tool catalogue simply cannot discover them.
+Six are `debug.*` and arguably intentional. But `ui.zoom.*`, `grid.clear_selection`, and `ui.open_view` are ordinary user-facing surface, and an AI agent reading `docs/guides/cli.md` as its tool catalogue simply cannot discover them.
 
 The drift is structural, not an oversight: the repo auto-generates and CI-gates the shipped-plan index (`test-plan-index.sh` fails on drift), gates subsystem leaf docs, doc anchors, and markdown links — but `grep -rn CLI_GUIDE .github/workflows/ agents/scripts/ scripts/` returns **nothing**. Nothing has ever checked this file against the registry.
 
-**Intended outcome**: after this lands, a **literal `MakeCommand("<name>"` registration** that never reaches `CLI_GUIDE.md` fails CI, and the 12-command backlog is either documented or explicitly classified as internal. The guarantee is deliberately scoped to *statically discoverable* registrations — commands registered from data (`view.toggle.*`, `pane.*`, the scenario family) are **not** covered and can still drift undocumented; see § Risks for why, and § Out of scope for the follow-up that would close it. Do not read this gate as "CI catches every undocumented command."
+**Intended outcome**: after this lands, a **literal `MakeCommand("<name>"` registration** that never reaches `docs/guides/cli.md` fails CI, and the 12-command backlog is either documented or explicitly classified as internal. The guarantee is deliberately scoped to *statically discoverable* registrations — commands registered from data (`view.toggle.*`, `pane.*`, the scenario family) are **not** covered and can still drift undocumented; see § Risks for why, and § Out of scope for the follow-up that would close it. Do not read this gate as "CI catches every undocumented command."
 
 ## Approach
 
@@ -38,18 +38,18 @@ Commands legitimately absent from the user guide get an **explicit allow-list wi
 
    **`--fix` insertion contract (deterministic, fails closed):**
    - Category is the command name's prefix before the first `.` (`ui.zoom.in` → `ui`; `grid.clear_selection` → `grid`).
-   - That category must map to a known `### <category>` heading in `CLI_GUIDE.md` § Command catalogue via an explicit table in the script. An **unknown category is a hard error (exit 2), never an invented section** — `--fix` must not silently manufacture document structure.
+   - That category must map to a known `### <category>` heading in `docs/guides/cli.md` § Command catalogue via an explicit table in the script. An **unknown category is a hard error (exit 2), never an invented section** — `--fix` must not silently manufacture document structure.
    - Creating a genuinely new category (`ui`, `grid` — neither exists today) is a **deliberate one-time human edit** in step 7, which also adds the § Contents anchor. After that the mapping table knows them and `--fix` can append rows.
    - Rows append to the end of the category's existing table, preserving column count.
 
    `--selftest` (plant a fake registration, assert it is flagged — required by `test-gate-selftests.sh`) additionally covers the unknown-category exit-2 path.
-2. `agents/scripts/core/cli_guide_parity.py` (NEW) — the extractor + differ. Scan `Source/Core/src/Commands/**/*.cpp` for `MakeCommand("<name>"`; parse `CLI_GUIDE.md`'s catalogue tables for `` | `<name>` `` cells; report **both** directions (registered-but-undocumented **and** documented-but-unregistered — the second catches a command deleted from code while its doc row rots).
+2. `agents/scripts/core/cli_guide_parity.py` (NEW) — the extractor + differ. Scan `Source/Core/src/Commands/**/*.cpp` for `MakeCommand("<name>"`; parse `docs/guides/cli.md`'s catalogue tables for `` | `<name>` `` cells; report **both** directions (registered-but-undocumented **and** documented-but-unregistered — the second catches a command deleted from code while its doc row rots).
 3. `agents/scripts/core/cli-guide-internal-allowlist.txt` (NEW) — one `<name>  # <reason>` per line for commands intentionally absent from the user guide. Seeded with the six `debug.*` entries.
 4. `agents/scripts/core/test-cli-guide-parity-bats.sh` + `tests/bats/cli_guide_parity.bats` (NEW) — `test-orphan-bats.sh` requires every bats suite to carry a `test-*.sh` wrapper.
 5. `.github/workflows/doc-validation.yml` (MOD) — register the gate alongside the other doc checks. Advisory-first for one cycle, then blocking (see § Risks).
 6. `scripts/dev/test-docs.sh` (MOD) — add to the canonical local mirror so `§ Verification`'s "run the doc suite" instruction actually covers it. Note the open `test.md` backlog item that this mirror is already stale vs `doc-validation.yml`; this plan must not widen that gap.
-7. `CLI_GUIDE.md` (MOD) — document the six genuinely user-facing commands: `ui.zoom.in` / `ui.zoom.out` / `ui.zoom.reset` (§ ui — new subsection; the doc has no `ui` category today), `ui.open_view`, `grid.clear_selection` (§ tickets or a new § grid), `ui_test.run` (decide: user-facing or allow-listed — it drives the bucket-E harness, so likely allow-listed with a pointer to the testing docs).
-8. `CLI_GUIDE.md` § Contents (MOD) — add any new category anchors so `test-doc-anchors.sh` stays green.
+7. `docs/guides/cli.md` (MOD) — document the six genuinely user-facing commands: `ui.zoom.in` / `ui.zoom.out` / `ui.zoom.reset` (§ ui — new subsection; the doc has no `ui` category today), `ui.open_view`, `grid.clear_selection` (§ tickets or a new § grid), `ui_test.run` (decide: user-facing or allow-listed — it drives the bucket-E harness, so likely allow-listed with a pointer to the testing docs).
+8. `docs/guides/cli.md` § Contents (MOD) — add any new category anchors so `test-doc-anchors.sh` stays green.
 
 ## Existing utilities reused
 
@@ -79,7 +79,7 @@ N/A — the diff touches no `Source/Core/` production code. The only `Source/` i
 - **Risk — feature-gated commands look undocumented on a Light build.** `ai.*` is absent from `commands.list` when `SMATCHET_WITH_AI=OFF` ([ADR-0010](../../adr/0010-light-profile-feature-gated-command-registry.md)), but the source literal is always present, so the static scan sees it regardless. This is actually the **desired** direction — the user guide should document the full surface — but the script header must say so, or someone will "fix" it into per-profile scanning.
 - **Risk — the allow-list becomes a dumping ground.** A `debug.*` prefix rule would be terser but would let any future `debug.`-prefixed user-facing command hide. *Mitigation*: entry-per-line with a mandatory reason column; the gate rejects an allow-list line without a `#` comment.
 - **Risk — flipping to blocking strands an in-flight PR.** *Mitigation*: advisory for one merge cycle, land the step-7 doc rows first, flip to blocking in a separate one-line PR once the gate reads zero.
-- **Non-goal — auto-generating the whole catalogue from the registry.** Tempting, but `CLI_GUIDE.md`'s value is its hand-written params/notes/examples per command; generating it would flatten that to a name list. The gate checks *presence*, not content.
+- **Non-goal — auto-generating the whole catalogue from the registry.** Tempting, but `docs/guides/cli.md`'s value is its hand-written params/notes/examples per command; generating it would flatten that to a name list. The gate checks *presence*, not content.
 - **Non-goal — validating params/flags against each `Command`'s schema.** A richer check (does the doc's param list match the registered schema?) is a plausible follow-up but multiplies the parsing surface; presence-only is the 80/20.
 - **Non-goal — fixing `scripts/dev/test-docs.sh`'s pre-existing staleness.** Tracked separately in `docs/self-improvement/categories/test.md`; this plan only avoids making it worse.
 
@@ -90,7 +90,7 @@ N/A — the diff touches no `Source/Core/` production code. The only `Source/` i
 - **Bash-driver scenario / screenshot / sanitizer**: N/A.
 - **Build gate**: N/A — no compiled source touched. (Stated explicitly rather than omitted, per the template's forcing function.)
 - **Gate self-verification**: `bash agents/scripts/core/test-cli-guide-parity.sh --selftest` must fail on a planted registration; `--check` must read zero after step 7; `test-gate-selftests.sh --check` must count the new script; `test-orphan-bats.sh --check` must find the bats wrapper.
-- **Round-trip**: run `--fix` on a deliberately-reverted `CLI_GUIDE.md`, confirm the regenerated rows pass `md_lint.py --all` and `test-doc-anchors.sh`. Additionally assert the **fail-closed** path: a planted registration in an unknown category (e.g. `zzz.something`) makes `--fix` exit 2 without touching the file, rather than inventing a `### zzz` section.
+- **Round-trip**: run `--fix` on a deliberately-reverted `docs/guides/cli.md`, confirm the regenerated rows pass `md_lint.py --all` and `test-doc-anchors.sh`. Additionally assert the **fail-closed** path: a planted registration in an unknown category (e.g. `zzz.something`) makes `--fix` exit 2 without touching the file, rather than inventing a `### zzz` section.
 - **Exit-path coverage**: assert both `--check` directions explicitly — planted registered-but-undocumented → exit 1; planted documented-but-unregistered → exit 0 with a WARN line. Pinning both stops a later refactor from quietly making the reverse direction fatal.
 - **Doc validation (blocks plan-doc PRs)**: the canonical `scripts/dev/test-docs.sh` suite green.
 - **Plan stress-test — `grill-with-docs`**: **not yet run** — owed before implementation starts.
@@ -101,8 +101,8 @@ N/A — the diff touches no `Source/Core/` production code. The only `Source/` i
 **Deferral residue-sweep**: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here.
 
 - **Param/schema-level doc validation** — presence-only here; follow-up plan if drift shows up in params rather than names.
-- **The same parity question for `LUA_GUIDE.md` and `MCP_GUIDE.md`** — both surface the same registry through different frontends and could drift identically. Not designed here; the gate is built so a second doc target is a config addition rather than a rewrite.
-- **`MCP_GUIDE.md` tool catalogue** — MCP exposes the registry via `tools/list`, already registry-driven in code (BACKLOG N9), so doc drift is lower-risk. No action.
+- **The same parity question for `docs/guides/lua.md` and `docs/guides/mcp.md`** — both surface the same registry through different frontends and could drift identically. Not designed here; the gate is built so a second doc target is a config addition rather than a rewrite.
+- **`docs/guides/mcp.md` tool catalogue** — MCP exposes the registry via `tools/list`, already registry-driven in code (BACKLOG N9), so doc drift is lower-risk. No action.
 
 ## Implementation log
 *(populated post-ship)*

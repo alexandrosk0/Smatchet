@@ -1,3 +1,4 @@
+<!-- tier: project -->
 # Smatchet MCP (Model Context Protocol) Guide
 
 Smatchet includes a built-in **Model Context Protocol (MCP)** server. This allows AI agents (like Claude Desktop, cursor, or custom IDE plugins) to connect directly to your running Smatchet instance to discover tools, search Jira tickets, and perform automated actions on your behalf.

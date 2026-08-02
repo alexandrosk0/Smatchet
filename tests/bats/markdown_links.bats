@@ -151,17 +151,34 @@ print('src:', is_active_md('Source/Core/foo.md'))
 
 # ---------- widened target set + baseline (gate-blind-spot-sweep Slice 3) ----------
 
-@test "the five top-level user-facing guides are IN the target set" {
+@test "the remaining root-level docs are IN the target set" {
     # Rule 5's target list and is_active_md()'s root-file tuple must agree — the
-    # header is the documented contract. CLI_GUIDE.md carried two dangling links
-    # for the entire time it sat outside the scan.
-    for f in CLI_GUIDE.md LUA_GUIDE.md MCP_GUIDE.md AI_POLICY.md CONTEXT-MAP.md; do
+    # header is the documented contract. cli.md carried two dangling links for the
+    # entire time it sat outside the scan, which is why this parity check exists.
+    for f in AGENTS.md BUILD.md README.md AI_POLICY.md CONTEXT-MAP.md; do
         grep -q "\"$f\"" "$LINT" || {
             echo "is_active_md() does not list $f" >&2
             return 1
         }
-        grep -q "$f" <(sed -n '1,40p' "$LINT") || {
+        grep -q "$f" <(sed -n '1,45p' "$LINT") || {
             echo "rule 5 header does not document $f" >&2
+            return 1
+        }
+    done
+}
+
+@test "the relocated guides and audit reports are covered via the docs/ branch" {
+    # The root-declutter move put the user-facing guides under docs/guides/ and the
+    # dated audit reports under docs/audits/, so they no longer need a root-file
+    # tuple entry — is_active_md() matches them on parts[0] == 'docs'. This asserts
+    # they really are under docs/ (a move back to the root without a matching tuple
+    # entry would silently drop them out of the scan, the exact Slice 3 regression).
+    for f in docs/guides/cli.md docs/guides/lua.md docs/guides/mcp.md \
+             docs/audits/SECURITY_AUDIT.md docs/audits/CPP_CODE_AUDIT.md \
+             docs/audits/AGENTIC_INFRA_AUDIT.md docs/audits/UX_DESIGN_CRITIQUE.md \
+             docs/audits/TEST_COVERAGE_GAP_MAP.md docs/audits/MUTATION_PILOT.md; do
+        [ -f "$REPO_ROOT/$f" ] || {
+            echo "$f is not where the docs/ branch of is_active_md() expects it" >&2
             return 1
         }
     done

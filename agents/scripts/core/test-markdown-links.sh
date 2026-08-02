@@ -15,13 +15,16 @@
 #   4. Image links (`![alt](path)`) are NOT checked — image assets vary by
 #      build state.
 #   5. Targets: docs/**/*.md, agents/**/*.md, and the top-level repo docs
-#      AGENTS.md, BUILD.md, README.md, CLI_GUIDE.md, LUA_GUIDE.md, MCP_GUIDE.md,
-#      AI_POLICY.md, CONTEXT-MAP.md (each if present). The five user-facing
-#      guides joined the set in gate-blind-spot-sweep Slice 3 — they were the
-#      only actively-maintained docs the gate could not see, and CLI_GUIDE.md
-#      carried two dangling links the whole time. KEEP IN SYNC with the
-#      is_active_md() root-file tuple below; this header is the documented
-#      contract, so a target added there must be added here too.
+#      AGENTS.md, BUILD.md, README.md, AI_POLICY.md, CONTEXT-MAP.md (each if
+#      present). The user-facing guides joined the set in gate-blind-spot-sweep
+#      Slice 3 — they were the only actively-maintained docs the gate could not
+#      see, and cli.md carried two dangling links the whole time. They are no
+#      longer named individually here: the root-declutter move relocated them to
+#      docs/guides/ and the dated audit reports to docs/audits/, so both groups
+#      are covered by the docs/** branch and cannot silently fall out of scope
+#      again. KEEP IN SYNC with the is_active_md() root-file tuple below; this
+#      header is the documented contract, so a target added there must be added
+#      here too.
 #   6. Links inside fenced code blocks (``` / ~~~) are skipped — illustrative
 #      example paths in a template are literal, not navigable links.
 #
@@ -249,11 +252,12 @@ def is_active_md(rel_path):
     rel = rel_path.replace(os.sep, "/")
     parts = rel.split("/")
     # Top-level repo docs. KEEP IN SYNC with rule 5 in this script's header —
-    # that header is the documented contract for what the gate covers. The five
-    # user-facing guides were added by gate-blind-spot-sweep Slice 3; before
-    # that they were the only actively-maintained markdown no gate could see.
-    if parts[0] in ("AGENTS.md", "BUILD.md", "README.md", "CLI_GUIDE.md",
-                    "LUA_GUIDE.md", "MCP_GUIDE.md", "AI_POLICY.md",
+    # that header is the documented contract for what the gate covers. The
+    # user-facing guides (docs/guides/) and the dated audit reports
+    # (docs/audits/) used to be listed here as root files; the root-declutter
+    # move put them under docs/, where the docs/** branch below already covers
+    # them — so they need no entry in this tuple.
+    if parts[0] in ("AGENTS.md", "BUILD.md", "README.md", "AI_POLICY.md",
                     "CONTEXT-MAP.md") and len(parts) == 1:
         return True
     if parts[0] not in ("docs", "agents"):

@@ -40,7 +40,7 @@ Command-system specialist.
 - If a command is gated by `SMATCHET_WITH_MCP` / `SMATCHET_WITH_LUA_AUTOMATION`, gate the registration. Stub side (`AppController_LuaStubs.cpp`) must still compile when the flag is OFF.
 - Scenarios (`Source/Core/{include,src}/Commands/Scenarios/`) are deterministic — no live HTTP. If the command makes a network call, exclude it from scenarios or stub the client.
 - User-facing command text goes through `SmatchetLocalization::T(key, englishFallback)` — not `Loc(...)`, `Translate(...)`, or ad-hoc wrappers.
-- User-facing commands are documented in `CLI_GUIDE.md`, `LUA_GUIDE.md`, and `MCP_GUIDE.md` — update the relevant one(s).
+- User-facing commands are documented in `docs/guides/cli.md`, `docs/guides/lua.md`, and `docs/guides/mcp.md` — update the relevant one(s).
 - **Don't run a batch `clang-format` pass at the end of a multi-file edit.** The `PostToolUse` hook in `.claude/settings.json` already formats every `.cpp` / `.h` you touched. A batch `clang-format` afterwards inflates the diff with reformat noise on unrelated lines.
 
 **Workflow:**

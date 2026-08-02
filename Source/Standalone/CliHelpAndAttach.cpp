@@ -167,7 +167,7 @@ void PrintCliHelp(std::FILE* out, const std::string& mcpHost, int mcpPort) {
     if (!TryAppendLiveCatalogToHelp(out, mcpHost, mcpPort)) {
         std::fprintf(out, // CLI stdout — product output, not logging
                      "\n(No running instance detected at %s:%d — start Smatchet with mcp_enabled\n"
-                     " to see the live command catalog here. See CLI_GUIDE.md for the full reference.)\n",
+                     " to see the live command catalog here. See docs/guides/cli.md for the full reference.)\n",
                      mcpHost.c_str(), mcpPort);
     }
 }

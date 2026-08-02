@@ -37,7 +37,7 @@ User decisions:
 - `Source_Core/src/AppController.cpp:356` (`~AppController` shutdown path that already calls `ClearLuaTicketContextGlue`) — verify shutdown order (see Risks + finding #1).
 - `CMakeLists.txt:333` — **required crash-safety change**: set `LANGUAGE CXX` on Lua sources so `luaL_error` uses C++ exceptions (see Crash-safety hardening § Lua build mode).
 - `scripts/SmatchetHooks.lua` — migrate examples.
-- `LUA_GUIDE.md` — replace binding docs.
+- `docs/guides/lua.md` — replace binding docs.
 
 ## Design
 
@@ -655,7 +655,7 @@ void AppController::LuaUiInvalidateFieldCacheBind(sol::optional<std::string> tic
 }
 ```
 
-Doc note in `LUA_GUIDE.md`: "If your `register_field_display_cached` provider reads Lua state beyond its 6 args (theme, user prefs, action-mutated tables), call `ui.invalidate_field_cache()` (or the targeted variants) after mutating that state."
+Doc note in `docs/guides/lua.md`: "If your `register_field_display_cached` provider reads Lua state beyond its 6 args (theme, user prefs, action-mutated tables), call `ui.invalidate_field_cache()` (or the targeted variants) after mutating that state."
 
 ### Explicit window invalidation
 
@@ -778,7 +778,7 @@ void AppController::ClearLuaTicketContextGlue() {
 | `AppController_LuaStubs.cpp:35-39` | (Q11) Delete `TryLuaFieldDisplay` stub. Add no-op stubs for **every** new method declared outside `#if SMATCHET_WITH_LUA_AUTOMATION` in `AppController.h`: `TryRenderCachedLuaField` (return `false`), `NotifyLuaTicketDataChanged` (empty), `LuaUiInvalidateWindowBind` (empty), `LuaUiInvalidateFieldCacheBind` (empty), `ReplayCmdList` if its decl ends up unconditional. Verify `DrawLuaWindows` stub still exists. Public methods needed by non-Lua call sites MUST be declared outside the guard so the stub build links. |
 | `TicketFieldEditor.cpp:834` | One-line dispatch swap. |
 | `scripts/SmatchetHooks.lua:5-24, :43, :46, :52-56, :59, :92, :191-201` | Replace legacy refs with cached binding + `draw:*` calls. Update `render_progress_json` to record `draw:progress_bar(...)`. Migrate `render_priority_cell` (matches user example). |
-| `LUA_GUIDE.md:27-30, :170` + window-API section | Replace with new signatures + recorder API table + `ui.invalidate_window` doc + migration note. |
+| `docs/guides/lua.md:27-30, :170` + window-API section | Replace with new signatures + recorder API table + `ui.invalidate_window` doc + migration note. |
 | `Source_Core/include/SmatchetFieldIconRender.h` (1 mention) | Comment-only doc fix if any reference exists. |
 | `CMakeLists.txt:333` | **Required for crash-safety** (Crash-safety hardening § Lua build mode). Add `set_source_files_properties(${LUA_SOURCES} PROPERTIES LANGUAGE CXX)` before `add_library(Smatchet_Lua_Internal ...)` so `luaL_error` uses C++ exceptions rather than `longjmp`. Without this, hostile Lua input causes resource leaks and potential sol2 corruption. |
 
@@ -1060,7 +1060,7 @@ Each item below is tracked in the [v2 stub plan](lua-recorded-cmd-list-v2.md) wi
 - `7216335 · feat(build): compile Lua 5.3 as C++ with extern "C" linkage` — `LANGUAGE CXX` on `LUA_SOURCES` + `luaconf.h` patched at configure time so `LUA_API` is `extern "C"` under `__cplusplus`, fixing symbol-name mismatch between Lua-as-C++ TUs and sol2's `lua.hpp` callers.
 - `daefdae · feat(lua): record-replay cell + window rendering via LuaDrawList` — recorder + replay + per-cell cache + in-frame window-op queue + imgui immediate-mode guard + sandboxed callback invocation.
 - `649bfa8 · feat(grid): dispatch grid cells through TryRenderCachedLuaField` — `TicketFieldEditor` swap; single-hook `NotifyLuaTicketDataChanged` in `RefreshLocalData`; coalesced bumps in `ApplyIssueFetchPack` + streaming-batch + stale-deletion + session-end flush.
-- `27b4b8a · docs(lua): migrate hook samples + guide to cached recorder API` — `SmatchetHooks.lua` + `LUA_GUIDE.md` migrated; example uses `string.match` instead of `decode_json` to dodge the per-cell parse cost + the documented `parse_error` escape.
+- `27b4b8a · docs(lua): migrate hook samples + guide to cached recorder API` — `SmatchetHooks.lua` + `docs/guides/lua.md` migrated; example uses `string.match` instead of `decode_json` to dodge the per-cell parse cost + the documented `parse_error` escape.
 
 ## Deviations from plan
 

@@ -85,7 +85,7 @@ Currently two separate RAII guards. If a third Lua entry point needs them, fold 
 
 ### F1. Button / InputText `{ exclusive = true }` opt — suppress double-fire
 
-Currently `draw:button(label, on_click)` + chained `draw:on_deactivated(fn)` both fire on the same frame (documented in `LUA_GUIDE.md` after the v1 round). If a real script ships and the double-fire surprises the author, add `{ exclusive = true }` to suppress the primary callback when `on_deactivated*` attached, or to suppress `on_deactivated*` when the primary fires same-frame.
+Currently `draw:button(label, on_click)` + chained `draw:on_deactivated(fn)` both fire on the same frame (documented in `docs/guides/lua.md` after the v1 round). If a real script ships and the double-fire surprises the author, add `{ exclusive = true }` to suppress the primary callback when `on_deactivated*` attached, or to suppress `on_deactivated*` when the primary fires same-frame.
 
 **Trigger:** wait for first real complaint. Premature otherwise.
 

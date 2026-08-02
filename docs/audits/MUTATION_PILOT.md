@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-05
 **Branch:** `claude/mutation-testing-pilot-0s8ez2`
-**Companions:** [`TEST_COVERAGE_GAP_MAP.md`](TEST_COVERAGE_GAP_MAP.md) (2026-07-02), [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`docs/plans/active/testing-surface-roadmap.md`](docs/plans/active/testing-surface-roadmap.md) (Slice **F**).
+**Companions:** [`TEST_COVERAGE_GAP_MAP.md`](TEST_COVERAGE_GAP_MAP.md) (2026-07-02), [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`docs/plans/active/testing-surface-roadmap.md`](../plans/active/testing-surface-roadmap.md) (Slice **F**).
 
 ## Why this pilot
 

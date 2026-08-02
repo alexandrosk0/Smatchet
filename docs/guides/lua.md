@@ -1,3 +1,4 @@
+<!-- tier: project -->
 # Smatchet Lua Scripting Guide
 
 Smatchet features a built-in Lua 5.3 runtime powered by `sol2`. This allows you to automate workflows across Jira tickets and customize how specific ticket fields are rendered in the Smatchet UI using Dear ImGui.

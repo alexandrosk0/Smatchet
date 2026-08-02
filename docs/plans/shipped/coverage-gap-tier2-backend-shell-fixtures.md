@@ -6,7 +6,7 @@
 
 ## Context
 
-[`TEST_COVERAGE_GAP_MAP.md`](../../../TEST_COVERAGE_GAP_MAP.md) Tier 2 covers the backend client HTTP
+[`TEST_COVERAGE_GAP_MAP.md`](../../audits/TEST_COVERAGE_GAP_MAP.md) Tier 2 covers the backend client HTTP
 shells (~3.4K LOC): the mapping/JQL-translation halves of every backend are well tested, but
 "pagination, retry/error classification, and request orchestration" are not. The map's prescription is
 one fixture test per shell, with `JiraIssueSearch.cpp` / `TrackerCatalogBuild.test.cpp` as the proven

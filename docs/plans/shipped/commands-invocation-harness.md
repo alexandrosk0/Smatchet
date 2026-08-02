@@ -6,7 +6,7 @@
 
 ## Context
 
-[`TEST_COVERAGE_GAP_MAP.md`](../../../TEST_COVERAGE_GAP_MAP.md) Tier 3: `Commands/` is a strict lint
+[`TEST_COVERAGE_GAP_MAP.md`](../../audits/TEST_COVERAGE_GAP_MAP.md) Tier 3: `Commands/` is a strict lint
 zone and the single registry feeding four frontends (CLI, palette, MCP, Lua), yet **no
 `Builtin/BuiltinCommands_*.cpp` handler TU is compiled into any test target** (24 TUs, ~4.6K LOC).
 The registry plumbing (`CommandRegistry`, `Command`, `FuzzyMatch`, `PaneCommands_detail`) is tested;

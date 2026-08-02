@@ -247,7 +247,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
   - `Source_Core/src/AppController_LuaStubs.cpp` (MOD — no-op stub parity for `ai.*` Lua-callable names so script-load works under `SMATCHET_WITH_LUA_AUTOMATION=0`)
   - `Source_Core/include/ConfigManager.h` (MOD — `kCurrentLayoutSchemaVersion` 5→6, single bump for the whole feature)
   - `README.md` (MOD — one feature bullet)
-  - `LUA_GUIDE.md` (MOD — one `ai.*` bullet + short example)
+  - `docs/guides/lua.md` (MOD — one `ai.*` bullet + short example)
   - `docs/self-improvement/categories/process.md` (MOD — latest-first P2 worktree-bootstrap entry)
   - `docs/plans/active/_plan-locks.md` (this entry + Phase D flip to shipped)
   - `docs/plans/shipped/ai-assistant-side-panel.md` (Implementation log + Deviations + Verification for Phase E — closes plan)

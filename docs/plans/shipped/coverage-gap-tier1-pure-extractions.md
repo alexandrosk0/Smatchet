@@ -6,7 +6,7 @@
 
 ## Context
 
-[`TEST_COVERAGE_GAP_MAP.md`](../../../TEST_COVERAGE_GAP_MAP.md) (merged #1594) ranks `TicketGridModel.cpp` and `TicketFieldEditor_Modal.cpp` as the top Tier-1 coverage gaps: both carry recently-remediated `CPP_CODE_AUDIT.md` defects (#3 duration-sort infinite loop, #1 long-text >64 KiB truncating write-back) whose fixes landed with **zero automated tests** — neither TU is compiled into any test target, so a regression would be invisible to the 65% aggregate floor and every other coverage gate. After this lands, the fixed logic is compiled into `SmatchetTests` behind pure seams and the two audit regressions are pinned by doctests.
+[`TEST_COVERAGE_GAP_MAP.md`](../../audits/TEST_COVERAGE_GAP_MAP.md) (merged #1594) ranks `TicketGridModel.cpp` and `TicketFieldEditor_Modal.cpp` as the top Tier-1 coverage gaps: both carry recently-remediated `CPP_CODE_AUDIT.md` defects (#3 duration-sort infinite loop, #1 long-text >64 KiB truncating write-back) whose fixes landed with **zero automated tests** — neither TU is compiled into any test target, so a regression would be invisible to the 65% aggregate floor and every other coverage gate. After this lands, the fixed logic is compiled into `SmatchetTests` behind pure seams and the two audit regressions are pinned by doctests.
 
 ## Approach
 

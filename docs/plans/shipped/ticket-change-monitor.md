@@ -100,7 +100,7 @@ Only **GitHub** is partial (timeline events cover state/assignee/label transitio
 17. `Source/Core/src/AppController.cpp` + `AppController.h` + `Source/Standalone/main.cpp` — `SetWindowFocused(bool)` / `windowFocused_` read by the gate; Standalone sets it from `glfwGetWindowAttrib(window, GLFW_FOCUSED)` (Android already has `hasFocus`; targets without a signal default to `true` → no regression).
 
 **Command surface (in scope, this PR)**
-18. `Source/Core/src/Commands/Builtin/BuiltinCommands_*.cpp` — register `tickets.monitor on|off|status` (reads/writes the pref + persists via `ConfigManager::Save`) and `notifications` (open the Notification Center); both surface across CLI / Palette / MCP / Lua via the unified registry. Add the `CLI_GUIDE.md` entries.
+18. `Source/Core/src/Commands/Builtin/BuiltinCommands_*.cpp` — register `tickets.monitor on|off|status` (reads/writes the pref + persists via `ConfigManager::Save`) and `notifications` (open the Notification Center); both surface across CLI / Palette / MCP / Lua via the unified registry. Add the `docs/guides/cli.md` entries.
 
 **Tests**
 19. `tests/Core/TicketChangeDiffPure.test.cpp`, `tests/Core/JqlChangedSincePure.test.cpp` (JQL `(X) AND updated >= -Nm` + ISO `since` formatting), a `ShouldPollForChanges` truth-table test, `tests/Core/TicketsMonitorCommand.test.cpp`, and a per-backend changed-since URL/JQL-composition test (via the existing fake fixtures); register in `tests/CMakeLists.txt`.
@@ -233,7 +233,7 @@ S3 is § Files-to-modify #13a + the `notifications` half of #18, built on the S2
 - `Source/Core/src/Ui/SmatchetUI.cpp` *(modified)* — in `drawSecondaryWindowsTail`: consume `ConsumeOpenCenterRequest()` (a clicked toast opens the center from any `Push` surface) → set the visibility flag → draw the window, wrapped in `SMATCHET_UI_PERF_SCOPE`.
 - `Source/Core/src/Ui/SmatchetUI_MainMenu.cpp` *(modified)* — a "Notifications" View-menu item.
 - `Source/Core/src/Commands/ViewToggleCommands.cpp` *(modified)* — the `notifications` command (show/hide/toggle) over the same visibility flag, surfaced across CLI / Palette / MCP / Lua via the unified registry.
-- `CLI_GUIDE.md` *(modified)* — `notifications` command row.
+- `docs/guides/cli.md` *(modified)* — `notifications` command row.
 - `tests/Core/NotificationCenterPure.test.cpp` *(new)* — bucket-A (7 cases): severity tags + HH:MM:SS formatting incl. pad / day-wrap / pre-epoch boundaries; registered in `tests/CMakeLists.txt`.
 - `tests/ui/notification_center.test.cpp` *(new)* — bucket-E: opens the center via the manager's open-center request (the toast-click path) and asserts the window renders its rows + *Clear all*, and that *Clear all* empties the ring; registered in `tests/ui/CMakeLists.txt` + `ui_tests_registry.cpp`.
 
