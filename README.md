@@ -202,5 +202,8 @@ This project is licensed under the [MIT License](LICENSE).
 
 ## Privacy
 
-Smatchet has no analytics and no background telemetry; your data stays on your
-machine unless you connect a service yourself. See the [Privacy Policy](PRIVACY.md).
+Smatchet has no analytics and no usage tracking; your data stays on your machine
+unless you connect a service yourself. The exceptions are the automatic startup
+update check against GitHub (disableable in Preferences) and bug reports, which
+you submit explicitly and which become public GitHub issues. See the
+[Privacy Policy](PRIVACY.md).
