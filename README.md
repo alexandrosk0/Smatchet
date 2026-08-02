@@ -49,6 +49,7 @@ Prebuilt binaries are published on the [GitHub Releases page](https://github.com
 - [CLI Guide](docs/guides/cli.md): Command-line interface for all 56+ registered commands — discovery, output flags, config overrides, environment variables, and composability examples. Suitable for shell scripts and AI agents.
 - [Lua Scripting Guide](docs/guides/lua.md): Complete reference for automating workflows and customizing the UI with Lua.
 - [MCP (Model Context Protocol) Guide](docs/guides/mcp.md): How to use Smatchet as an MCP server for AI agents.
+- [Privacy Policy](PRIVACY.md): What data Smatchet stores locally, which services it contacts, and what a submitted bug report contains.
 - [Windows Signing Guide](scripts/publish/SIGNING.md): How to sign the standalone app and installer during release packaging.
 - [Installer Smoke Test Guide](scripts/publish/INSTALLER_SMOKE_TEST.md): Repeatable release validation for installer, portable ZIP, Unreal plugin ZIP, and Fab bundle.
 
@@ -198,3 +199,11 @@ For deeper architecture and contribution rules, see [AGENTS.md](AGENTS.md) (the 
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+## Privacy
+
+Smatchet has no analytics and no usage tracking; your data stays on your machine
+unless you connect a service yourself. The exceptions are the automatic startup
+update check against GitHub (disableable in Preferences) and bug reports, which
+you submit explicitly and which become public GitHub issues. See the
+[Privacy Policy](PRIVACY.md).
