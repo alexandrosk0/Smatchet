@@ -184,6 +184,23 @@ print('src:', is_active_md('Source/Core/foo.md'))
     done
 }
 
+@test "the scanner actually walks docs/guides/ and docs/audits/, not just the file-existence check above" {
+    # The file-existence test above passes even if is_active_md() stops scanning
+    # docs/** entirely — it only proves the files are on disk, not that the scanner
+    # sees them. Exercise $LINT --all for real, on an isolated fixture (same
+    # copied-script idiom as the --all tests below), with a dangling link planted
+    # in each relocated directory, and assert both are actually flagged.
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" "$FIXTURE_DIR/docs/guides" "$FIXTURE_DIR/docs/audits"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    printf '# Guide\n\nSee [gone](./nope-guide.md).\n' > "$FIXTURE_DIR/docs/guides/cli.md"
+    printf '# Audit\n\nSee [gone](./nope-audit.md).\n' > "$FIXTURE_DIR/docs/audits/SECURITY_AUDIT.md"
+
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"docs/guides/cli.md"*"nope-guide.md"* ]]
+    [[ "$output" == *"docs/audits/SECURITY_AUDIT.md"*"nope-audit.md"* ]]
+}
+
 @test "--all passes on the real repo using the committed baseline" {
     # --all must be usable as a gate: without the baseline, widening the target set
     # would have meant burning down the pre-existing links first. The --baseline
