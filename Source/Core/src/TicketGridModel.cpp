@@ -132,10 +132,6 @@ bool RequiresAllowEditsCheck(TicketGridColumn::RenderPlan plan) {
 
 } // namespace
 
-TicketGridColumn::RenderPlan ResolveTicketGridRenderPlan(const std::string& fieldId, const TrackerField* field) {
-    return ResolveRenderPlan(fieldId, field);
-}
-
 std::string DisplayValueForTrackerDateField(const std::string& fieldId, const TrackerField* field,
                                             const std::string& currentValue, const std::string& dateFormatOption,
                                             int thresholdDays) {

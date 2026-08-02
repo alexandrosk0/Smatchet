@@ -303,21 +303,6 @@ Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey,
     return GetOrLoadFromMemory(cacheKey, buf.data(), buf.size());
 }
 
-void EvictCacheKey(const std::string& cacheKey) {
-    std::lock_guard<std::mutex> lock(g_mutex);
-    const auto it = g_map.find(cacheKey);
-    if (it == g_map.end()) {
-        return;
-    }
-    g_totalBytes -= EntryBytes(it->second.Width, it->second.Height);
-    QueueTextureDestroy(it->second.Texture);
-    g_map.erase(it);
-    const auto lit = std::find(g_lru.begin(), g_lru.end(), cacheKey);
-    if (lit != g_lru.end()) {
-        g_lru.erase(lit);
-    }
-}
-
 std::size_t IconCacheEntryCount() {
     std::lock_guard<std::mutex> lock(g_mutex);
     return g_map.size();

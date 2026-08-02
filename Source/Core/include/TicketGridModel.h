@@ -57,7 +57,3 @@ class TicketGridColumnsBuilder {
   public:
     static std::vector<TicketGridColumn> Build(const ViewDefinition& view, const TrackerFieldCatalogIndex& catalog);
 };
-
-/** Maps a catalog field to its grid edit-affordance. Exposed for deterministic unit tests; the
- *  columns builder is the production caller. `field` may be null (id-only / unknown column). */
-TicketGridColumn::RenderPlan ResolveTicketGridRenderPlan(const std::string& fieldId, const TrackerField* field);

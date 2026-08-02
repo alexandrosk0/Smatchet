@@ -14,8 +14,14 @@
 #   3. Anchor fragments (`#section`) are stripped before existence check.
 #   4. Image links (`![alt](path)`) are NOT checked — image assets vary by
 #      build state.
-#   5. Targets: docs/**/*.md, agents/**/*.md, AGENTS.md, BUILD.md, README.md
-#      (if present).
+#   5. Targets: docs/**/*.md, agents/**/*.md, and the top-level repo docs
+#      AGENTS.md, BUILD.md, README.md, CLI_GUIDE.md, LUA_GUIDE.md, MCP_GUIDE.md,
+#      AI_POLICY.md, CONTEXT-MAP.md (each if present). The five user-facing
+#      guides joined the set in gate-blind-spot-sweep Slice 3 — they were the
+#      only actively-maintained docs the gate could not see, and CLI_GUIDE.md
+#      carried two dangling links the whole time. KEEP IN SYNC with the
+#      is_active_md() root-file tuple below; this header is the documented
+#      contract, so a target added there must be added here too.
 #   6. Links inside fenced code blocks (``` / ~~~) are skipped — illustrative
 #      example paths in a template are literal, not navigable links.
 #
@@ -24,7 +30,20 @@
 # Modes:
 #   default — diff-scope: only check markdown files modified vs origin/develop.
 #             Grandfathers pre-existing broken refs; catches new regressions.
-#   --all   — repo-wide scan of every actively-maintained markdown.
+#   --all   — repo-wide scan of every actively-maintained markdown, minus the
+#             entries grandfathered in docs/high-integrity/markdown-link-baseline.md.
+#             The baseline exists so --all is usable as a gate at all: widening
+#             the target set (rule 5) would otherwise have meant burning down the
+#             pre-existing dangling links first. Note the two counts differ and
+#             both are correct: the baseline holds 9 distinct `file::href` KEYS,
+#             which `--all` reports as 14 line-level OCCURRENCES (one file repeats
+#             three hrefs across eight lines). Entries are keyed by
+#             `file::href`, not by line number, so unrelated edits above a
+#             grandfathered link do not un-grandfather it.
+#   --baseline — regenerate that baseline from the current tree, then commit it.
+#             The burn-down path the plain diff-scope mode never had: every
+#             --all run prints the remaining grandfathered count, and an entry
+#             that has been fixed is reported as stale.
 #   --merge-tree-warn — advisory (always exit 0): flag TIERED plan links
 #             (docs/plans/{active,shipped,deferred}/<slug>.md) in changed
 #             markdown that would 404 post-archive on CI though they pass the
@@ -82,14 +101,18 @@ if [ "${1:-}" = "--selftest" ]; then
     # detected; if the diff-scope skips untracked files this scan wrongly passes.
     # Re-invoke with no args -> the default diff-scope path (which now unions
     # untracked files). The new untracked file must drive a non-zero exit.
-    if "$0" >/dev/null 2>&1; then
+    # Re-invoked as `bash "$0"`, not `"$0"`: this script is tracked mode 100644
+    # (like most of agents/scripts/core), so executing it directly fails with
+    # "permission denied" on a POSIX checkout — which made BOTH assertions below
+    # read the same non-zero exit and reported the second one as a false failure.
+    if bash "$0" >/dev/null 2>&1; then
         echo "test-markdown-links --selftest: FAIL — untracked dangling link NOT detected (scope skipped untracked)" >&2
         fail=1
     fi
     rm -f "$bad"
     # A clean untracked markdown (no relative links) must PASS.
     printf '# selftest\n\nno relative links here\n' > "$good"
-    if ! "$0" >/dev/null 2>&1; then
+    if ! bash "$0" >/dev/null 2>&1; then
         echo "test-markdown-links --selftest: FAIL — clean untracked file wrongly flagged" >&2
         fail=1
     fi
@@ -179,11 +202,19 @@ PY
     exit 0
 fi
 
-# Diff-scope by default; --all overrides for whole-repo audit.
+# Diff-scope by default; --all overrides for whole-repo audit; --baseline
+# regenerates the grandfather file from a whole-repo audit (and never fails).
 SCOPE="diff"
-if [ "${1:-}" = "--all" ]; then
-    SCOPE="all"
-fi
+case "${1:-}" in
+    --all) SCOPE="all" ;;
+    --baseline) SCOPE="baseline" ;;
+    "") : ;;
+    *)
+        echo "test-markdown-links: unknown argument '$1'" >&2
+        echo "  usage: test-markdown-links.sh [--all|--baseline|--merge-tree-warn|--selftest]" >&2
+        exit 2
+        ;;
+esac
 export SCOPE
 
 "$PY" - <<'PY'
@@ -217,7 +248,13 @@ def is_active_md(rel_path):
     # os.walk output on Windows (os.sep == '\\').
     rel = rel_path.replace(os.sep, "/")
     parts = rel.split("/")
-    if parts[0] in ("AGENTS.md", "BUILD.md", "README.md") and len(parts) == 1:
+    # Top-level repo docs. KEEP IN SYNC with rule 5 in this script's header —
+    # that header is the documented contract for what the gate covers. The five
+    # user-facing guides were added by gate-blind-spot-sweep Slice 3; before
+    # that they were the only actively-maintained markdown no gate could see.
+    if parts[0] in ("AGENTS.md", "BUILD.md", "README.md", "CLI_GUIDE.md",
+                    "LUA_GUIDE.md", "MCP_GUIDE.md", "AI_POLICY.md",
+                    "CONTEXT-MAP.md") and len(parts) == 1:
         return True
     if parts[0] not in ("docs", "agents"):
         return False
@@ -225,6 +262,52 @@ def is_active_md(rel_path):
         if rel == p or rel.startswith(p + "/"):
             return False
     return True
+
+
+BASELINE_PATH = "docs/high-integrity/markdown-link-baseline.md"
+# Matches a rendered row `- `<src>` — `<href>` (resolves to `<target>`)`. Deliberately NOT
+# anchored at end-of-line: the trailing "(resolves to ...)" is human context, not part of the key.
+_BASELINE_ROW_RE = re.compile(r"^-\s+`([^`]+)`\s+—\s+`([^`]+)`")
+
+
+def read_baseline():
+    """Grandfathered `(source_md, href)` pairs. Keyed by href rather than line number so an
+    unrelated edit above a grandfathered link does not silently un-grandfather it. A missing
+    baseline is an EMPTY set — the honest answer for a fresh checkout, not an error."""
+    keys = set()
+    try:
+        with open(os.path.join(REPO_ROOT, BASELINE_PATH), encoding="utf-8") as fh:
+            for raw in fh:
+                m = _BASELINE_ROW_RE.match(raw.strip())
+                if m:
+                    keys.add((m.group(1), m.group(2)))
+    except OSError:
+        return set()
+    return keys
+
+
+def render_baseline(entries):
+    """entries: sorted list of (source_md, href, resolved_target)."""
+    out = [
+        "# Dangling markdown links — grandfathered baseline",
+        "",
+        "_Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-markdown-links.sh "
+        "--baseline` and commit._",
+        "_Scope: `--all` (repo-wide). The DEFAULT diff-scope mode does not consult this file — it "
+        "already grandfathers by scope, only ever checking markdown a change actually touches._",
+        "_Keyed by `source::href`, not by line number, so an edit above a grandfathered link does "
+        "not un-grandfather it. Burn these down and re-run `--baseline`; `--all` reports any entry "
+        "that is already fixed as stale._",
+        "",
+        "## dangling links (%d)" % len(entries),
+    ]
+    if entries:
+        for src, href, target in entries:
+            out.append("- `%s` — `%s` (resolves to `%s`)" % (src, href, target))
+    else:
+        out.append("- _(none — every relative link in every actively-maintained markdown resolves)_")
+    out += ["", "## Totals", "- dangling links grandfathered: %d" % len(entries), ""]
+    return "\n".join(out)
 
 
 TARGETS = []
@@ -333,20 +416,49 @@ for path in TARGETS:
                     target = os.path.normpath(os.path.join(src_dir, href_path))
                     if not os.path.exists(target) and not plan_tierless_resolves(target):
                         rel_src = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
-                        violations.append(
-                            f"{rel_src}:{lineno}: BROKEN_LINK: '{href}' "
-                            f"does not resolve (looked at {os.path.relpath(target, REPO_ROOT).replace(os.sep, '/')})"
-                        )
+                        rel_tgt = os.path.relpath(target, REPO_ROOT).replace(os.sep, "/")
+                        violations.append((rel_src, lineno, href, rel_tgt))
     except (OSError, UnicodeDecodeError) as exc:
         sys.stderr.write(f"WARN: could not read {path}: {exc}\n")
     checked += 1
 
-for v in violations:
-    print(v, file=sys.stderr)
+if SCOPE == "baseline":
+    entries = sorted({(src, href, tgt) for src, _lineno, href, tgt in violations})
+    out_path = os.path.join(REPO_ROOT, BASELINE_PATH)
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(render_baseline(entries) + "\n")
+    print(f"test-markdown-links: regenerated {BASELINE_PATH} "
+          f"({len(entries)} grandfathered link(s)) — review + commit it.")
+    print(f"Passed: 1  Failed: 0  (scanned {checked} markdown file(s))")
+    sys.exit(0)
 
-passed = checked - (1 if violations else 0)
-failed = 1 if violations else 0
+# --all consults the grandfather file so the target set could be widened without a
+# 14-item cleanup blocking the slice. Diff-scope does NOT: it already grandfathers by
+# scope (it only ever sees markdown a change actually touched), so consulting the
+# baseline there would double-grandfather and let a NEW break slip through on a file
+# that happens to carry an old one.
+baseline = read_baseline() if SCOPE == "all" else set()
+reportable = [v for v in violations if (v[0], v[2]) not in baseline]
+grandfathered = len(violations) - len(reportable)
+
+for src, lineno, href, tgt in reportable:
+    print(f"{src}:{lineno}: BROKEN_LINK: '{href}' does not resolve (looked at {tgt})",
+          file=sys.stderr)
+
+if SCOPE == "all":
+    stale = sorted(baseline - {(v[0], v[2]) for v in violations})
+    if grandfathered:
+        print(f"NOTE: {grandfathered} dangling link(s) grandfathered in {BASELINE_PATH} "
+              f"— burn down and re-run --baseline.", file=sys.stderr)
+    if stale:
+        print(f"NOTE: {len(stale)} baselined link(s) already fixed — re-run --baseline to shrink "
+              f"the grandfather set: " + ", ".join(f"{s}::{h}" for s, h in stale), file=sys.stderr)
+
+passed = checked - (1 if reportable else 0)
+failed = 1 if reportable else 0
 print(f"Passed: {passed}  Failed: {failed}  (scanned {checked} markdown file(s); "
-      f"{len(violations)} dangling link(s))")
-sys.exit(1 if violations else 0)
+      f"{len(reportable)} dangling link(s)"
+      + (f"; {grandfathered} grandfathered" if grandfathered else "") + ")")
+sys.exit(1 if reportable else 0)
 PY

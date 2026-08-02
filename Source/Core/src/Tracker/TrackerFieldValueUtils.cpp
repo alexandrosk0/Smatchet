@@ -121,20 +121,8 @@ std::vector<std::string> LoadDurationSuggestions() {
     return ConfigManager::Load().DurationSuggestions;
 }
 
-void SaveDurationSuggestions(const std::vector<std::string>& list) {
-    TrackerConfig cfg = ConfigManager::Load();
-    cfg.DurationSuggestions = list;
-    ConfigManager::Save(cfg);
-}
-
 std::vector<std::string> LoadCommentTemplates() {
     return ConfigManager::Load().WorkLogCommentTemplates;
-}
-
-void SaveCommentTemplates(const std::vector<std::string>& list) {
-    TrackerConfig cfg = ConfigManager::Load();
-    cfg.WorkLogCommentTemplates = list;
-    ConfigManager::Save(cfg);
 }
 
 bool IsTimeDurationField(const std::string& fieldId) {

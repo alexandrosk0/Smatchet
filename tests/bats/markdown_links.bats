@@ -149,6 +149,76 @@ print('src:', is_active_md('Source/Core/foo.md'))
     [[ "$output" == *"src: False"* ]]
 }
 
+# ---------- widened target set + baseline (gate-blind-spot-sweep Slice 3) ----------
+
+@test "the five top-level user-facing guides are IN the target set" {
+    # Rule 5's target list and is_active_md()'s root-file tuple must agree — the
+    # header is the documented contract. CLI_GUIDE.md carried two dangling links
+    # for the entire time it sat outside the scan.
+    for f in CLI_GUIDE.md LUA_GUIDE.md MCP_GUIDE.md AI_POLICY.md CONTEXT-MAP.md; do
+        grep -q "\"$f\"" "$LINT" || {
+            echo "is_active_md() does not list $f" >&2
+            return 1
+        }
+        grep -q "$f" <(sed -n '1,40p' "$LINT") || {
+            echo "rule 5 header does not document $f" >&2
+            return 1
+        }
+    done
+}
+
+@test "--all passes on the real repo using the committed baseline" {
+    # --all must be usable as a gate: without the baseline, widening the target set
+    # would have meant burning down the pre-existing links first. The --baseline
+    # WRITE path is exercised by the round-trip test below, not here.
+    run bash "$LINT" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Passed:"* ]]
+    [ -f "$REPO_ROOT/docs/high-integrity/markdown-link-baseline.md" ]
+}
+
+@test "--all grandfathers a baselined link but still FAILS on a new one" {
+    # End-to-end on the REAL script. It re-anchors with
+    # `cd "$(dirname "$0")/../../.."`, so the copy has to sit at the same depth
+    # inside the fixture for that to land on the fixture root instead of the repo.
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" "$FIXTURE_DIR/docs/high-integrity"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    printf '# a\n\n[old](missing-old.md)\n[new](missing-new.md)\n' > "$FIXTURE_DIR/docs/a.md"
+    {
+        printf '# Dangling markdown links — grandfathered baseline\n\n'
+        printf '## dangling links (1)\n'
+        printf -- '- `docs/a.md` — `missing-old.md` (resolves to `docs/missing-old.md`)\n'
+    } > "$FIXTURE_DIR/docs/high-integrity/markdown-link-baseline.md"
+
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"missing-new.md"* ]]
+    [[ "$output" != *"BROKEN_LINK: 'missing-old.md'"* ]]
+    [[ "$output" == *"1 grandfathered"* ]]
+}
+
+@test "the rendered baseline rows parse back (round-trip)" {
+    # Regression guard: the row regex was once anchored at end-of-line while the
+    # renderer appends "(resolves to ...)", so EVERY row failed to parse and --all
+    # grandfathered nothing — while the baseline file itself looked perfectly fine.
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" "$FIXTURE_DIR/docs"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    printf '# a\n\n[gone](missing-one.md)\n' > "$FIXTURE_DIR/docs/a.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --baseline
+    [ "$status" -eq 0 ]
+    [ -f "$FIXTURE_DIR/docs/high-integrity/markdown-link-baseline.md" ]
+    # Written by --baseline, read back by --all: the whole point of the round trip.
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"1 grandfathered"* ]]
+}
+
+@test "an unknown argument is an infra error (exit 2), not a silent full scan" {
+    run bash "$LINT" --definitely-not-a-mode
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"unknown argument"* ]]
+}
+
 # ---------- diff scope default (smoke) ----------
 
 @test "default mode runs without crash on the real repo (no diff = 0/0)" {

@@ -1,6 +1,7 @@
 #include "TrackerHttpPure.h"
 
 #include "AiErrorRedact.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -10,9 +11,21 @@ namespace TrackerHttpPure {
 
 namespace {
 
-// Lowercase + trim surrounding whitespace. C++14, ASCII-only.
+// Trim surrounding whitespace. C++14, ASCII-only.
 std::string Trimmed(const std::string& in) {
     std::size_t b = 0;
+    // Kept duplicated rather than folded onto Core's TrimCopyAsciiWhitespace: that helper trims only
+    // {space,\t,\n,\r} while this uses std::isspace (also \v,\f), so folding would NARROW the trim on a
+    // host-allowlisting input (HostFromBase) — a behaviour change out of scope for a dead-code sweep.
+    // This body is byte-identical to smatchet::linear::Trim, and ALREADY was: deleting this TU's ToLower
+    // (now the shared ToLowerAsciiCopy) merely removed the divergence that had kept the maximal token run
+    // under MIN_CLONE_TOKENS. The TrimCopyAsciiWhitespace clone family is deferred to a follow-up
+    // burn-down driven by small_helper_audit.py's first real run (gate-blind-spot-sweep § Out of scope).
+    //
+    // The marker MUST stay the last line before `std::size_t e` and MUST stay on one line: the gate
+    // matches a maximal token run that starts mid-body, and dup_audit._suppressed reads the nearest
+    // non-blank line above that start. Wrapping it would push `rule=duplication` off that line.
+    // SMATCHET_DEVIATION(rule=duplication; reason=see above; owner=build-doctor; revisit=2026-12-31)
     std::size_t e = in.size();
     while (b < e && std::isspace(static_cast<unsigned char>(in[b]))) {
         ++b;
@@ -21,11 +34,6 @@ std::string Trimmed(const std::string& in) {
         --e;
     }
     return in.substr(b, e - b);
-}
-
-std::string ToLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
 }
 
 // Strip scheme, userinfo, path/query, and an optional :port from a base URL, leaving the
@@ -46,7 +54,7 @@ std::string HostFromBase(const std::string& rawBase) {
     if (at != std::string::npos) {
         s = s.substr(at + 1);
     }
-    return ToLower(s);
+    return ToLowerAsciiCopy(s);
 }
 
 } // namespace
@@ -117,7 +125,7 @@ bool IsLoopbackHost(const std::string& host) {
 bool ShouldUpgradeCleartextBase(const std::string& rawBase) {
     const std::string s = Trimmed(rawBase);
     // Case-insensitive "http://" prefix check; https:// and anything else => no upgrade.
-    if (ToLower(s).compare(0, 7, "http://") != 0) {
+    if (ToLowerAsciiCopy(s).compare(0, 7, "http://") != 0) {
         return false;
     }
     return !IsLoopbackHost(s);

@@ -1,6 +1,7 @@
 #include "IssueTableSerializer.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,11 +13,6 @@
 #include <nlohmann/json.hpp>
 
 namespace IssueTableSerializer {
-
-std::string LowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 
 std::string Trim(const std::string& s) {
     size_t a = 0, b = s.size();
@@ -34,19 +30,20 @@ std::string ResolveColumnKey(const std::string& header, const std::vector<Tracke
     const std::string trimmed = Trim(header);
     if (trimmed.empty())
         return {};
-    const std::string low = LowerAscii(trimmed);
+    const std::string low = ToLowerAsciiCopy(trimmed);
 
     // Before catalog: issue key column maps to draft.ExistingIssueKey (update path), not a Jira field id.
     if (low == "key" || low == "issuekey" || low == "issue key") {
         return "__existing_issue_key__";
     }
 
-    auto idIt = std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return LowerAscii(f.Id) == low; });
+    auto idIt =
+        std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return ToLowerAsciiCopy(f.Id) == low; });
     if (idIt != catalog.end())
         return idIt->Id;
 
     auto nameIt =
-        std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return LowerAscii(f.Name) == low; });
+        std::find_if(catalog.begin(), catalog.end(), [&](const auto& f) { return ToLowerAsciiCopy(f.Name) == low; });
     if (nameIt != catalog.end())
         return nameIt->Id;
     if (low == "project" || low == "projectkey" || low == "project key")

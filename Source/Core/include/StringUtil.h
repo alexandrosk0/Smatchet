@@ -27,6 +27,11 @@ inline std::string ToLowerAsciiCopy(std::string s) {
     return s;
 }
 
+inline std::string ToUpperAsciiCopy(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return s;
+}
+
 inline std::string JoinStrings(const std::vector<std::string>& items, const std::string& separator) {
     std::string out;
     for (size_t i = 0; i < items.size(); ++i) {
@@ -59,14 +64,6 @@ inline bool ContainsCaseInsensitive(const std::string& haystack, const std::stri
         return std::tolower(static_cast<unsigned char>(ch1)) == std::tolower(static_cast<unsigned char>(ch2));
     });
     return it != haystack.end();
-}
-
-/** Case-insensitive string equality. */
-inline bool EqualsCaseInsensitive(const std::string& a, const std::string& b) {
-    if (a.size() != b.size())
-        return false;
-    return std::equal(a.begin(), a.end(), b.begin(),
-                      [](unsigned char c1, unsigned char c2) { return std::tolower(c1) == std::tolower(c2); });
 }
 
 /** Natural Jira issue key comparison: "PROJ-2" < "PROJ-10" (lexicographic prefix, then numeric suffix). */

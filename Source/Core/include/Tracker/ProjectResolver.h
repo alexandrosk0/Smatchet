@@ -44,18 +44,6 @@ IssueKeyMatch FindFirstIssueKeyInText(const std::string& text);
 std::string ResolveProjectForDraft(const ITrackerConnectivity* client, const std::string& activeViewQuery,
                                    const std::string& lastVisibleTicketId, const std::string& legacyFallback);
 
-/** OQ-6: when a draft is built from a known parent ticket (clone / child-of), the
- *  parent's own project — not the active view — should seed the picker. For Jira this is the
- *  parent's key prefix ("PARENT-12" -> "PARENT"). For Plane the parent has no key prefix, so
- *  this helper falls straight through to ResolveProjectForDraft.
- *
- *  Step order (Jira):
- *    1. parentTicketId key prefix
- *    2. ResolveProjectForDraft(client, activeViewQuery, "", legacyFallback)
- *  (Plane skips step 1.) */
-std::string ResolveProjectForDraftFromParent(const std::string& parentTicketId, const ITrackerConnectivity* client,
-                                             const std::string& activeViewQuery, const std::string& legacyFallback);
-
 /** Plane-only operation scope: active-view query, then cfg query, then sole-project auto-pick.
  *  Returns "" when the workspace has zero or multiple projects and no query carries project_id. */
 std::string ResolvePlaneOperationProject(ITrackerConnectivity* client, const std::string& viewQuery,

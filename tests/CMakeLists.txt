@@ -1291,6 +1291,12 @@ add_executable(SmatchetTests
     # CanonicalizeGridFieldId (inline in StringUtil.h) which
     # TicketGridColumnsBuilder::Build folds each saved view field id through.
     Core/GridFieldIdCanonical.test.cpp
+    # ASCII-case helpers ToLowerAsciiCopy / ToUpperAsciiCopy (inline in StringUtil.h).
+    # gate-blind-spot-sweep Slice 2 folded NINE re-rolled per-TU copies onto these, so a
+    # regression here now breaks nine TUs at once — including McpJsonRpcPure's origin/host
+    # allow-listing and ModelDownloadPolicy's download-domain check, both of which compare
+    # lowercased hosts. Header-only; no production .cpp to link.
+    Core/StringUtilAsciiCase.test.cpp
     # Function-size decomposition (PR A7-A8) — deterministic dispatch coverage for
     # FormatCompactJiraDateForDisplay (parse-failure passthrough + absolute_iso /
     # absolute_friendly). CompactDateFormat.cpp is already linked above (line ~233).

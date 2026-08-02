@@ -36,12 +36,26 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | `docs/guides/` | mixed (per-file `tier:`) | how-to docs (offline-builds, perf-workflow, caveman, agent-token-tracking) | `test-portable-purity` |
 | `docs/reference/` | project | dated snapshots / archived refs | — |
 | `docs/{CONTEXT.md,adr,perf,perforce,high-integrity}` | project | glossary, decisions, perf, p4, lint baseline | their own gates |
+| `/{SECURITY,CPP_CODE,AGENTIC_INFRA}_AUDIT.md`, `/UX_DESIGN_CRITIQUE.md`, `/TEST_COVERAGE_GAP_MAP.md`, `/MUTATION_PILOT.md` | project | **dated whole-tree audit reports** — one campaign each, `**Date:**` + `**Branch:**` + `**Scope:**` header, findings numbered and cited normatively from production comments (81 `CPP_CODE_AUDIT.md #N` / `SECURITY_AUDIT.md #N` citations in `Source/`) | `test-markdown-links` (link hygiene) · **no content/lifecycle guard** — deliberate, see below |
+| `/CLI_GUIDE.md`, `/LUA_GUIDE.md`, `/MCP_GUIDE.md`, `/AI_POLICY.md`, `/CONTEXT-MAP.md` | project | top-level user-facing guides | `test-markdown-links` (gate-blind-spot-sweep Slice 3) |
+| `backlog/` | project | pre-plan review queues (`BACKLOG_CODE_REVIEW.md`, `MANUAL_TEST_QUEUE.md`, `POST_P0_REVIEW.md`, `DEEP_REVIEW_*.md`) — findings not yet promoted to a plan or an ADR | `is-pure-docs-diff` / `merge-gates` treat it as docs · `issue-sweep` reads `elevate-to-issue:` lines · **no freshness guard** |
+
+**Why the audit reports have no content guard (explicit `—`, not an oversight).** They are *dated snapshots of a finished campaign*, not living documents: a report is correct as of its `**Date:**` header and is never edited to track the tree. So there is nothing for a freshness gate to assert — a stale report is the expected steady state, and the numbered findings must stay stable precisely because production comments cite them by number. What they are NOT is scratch files: deleting or renumbering one silently breaks 81 first-party code comments. Treat them as append-only-by-campaign, like `docs/adr/`.
 
 `CONTEXT.md` stays at `docs/` root (the one living-index hub). Generated/template files are `_`-prefixed (`_plan-locks.generated.md`) or carry a "do not edit" header.
 
 ## Naming
 
-Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/generated; SCREAMING_CASE reserved for append-target index/registry files (`CONTEXT.md`, `INDEX.md`, `AGENT_SELF_IMPROVEMENT.md`, `MARKER_INVENTORY.md`). Enforced for plans by `test-plan-naming`.
+Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/generated; SCREAMING_CASE reserved for append-target index/registry files (`CONTEXT.md`, `INDEX.md`, `AGENT_SELF_IMPROVEMENT.md`, `MARKER_INVENTORY.md`) **and for the repo-root dated audit reports** (below). Enforced for plans by `test-plan-naming`.
+
+**Where a NEW dated audit report goes: repo root, SCREAMING_CASE, one file per campaign.** Recorded here so the next audit follows a rule instead of precedent. Rationale — the existing six are cited by number from production comments and from each other's `**Companions:**` headers, so discoverability at the root is load-bearing; `docs/reference/` is for *superseded* snapshots, and moving a live report there would break those citations. Requirements for a new one:
+
+1. Root, `SCREAMING_CASE.md`, named for the *subject*, not the date (`SECURITY_AUDIT.md`, not `AUDIT_2026_06.md`) — a re-audit of the same subject **replaces** the file's body and bumps `**Date:**`; it does not add a second file.
+2. A header block with `**Date:**`, `**Branch:**`, `**Scope:**` (what was and was not read), and `**Companions:**` linking sibling reports, matching the six above.
+3. Findings **numbered** and stable, because production comments cite them as `<FILE>.md #N`. Renumbering is a breaking change.
+4. Add a taxonomy row above in the same PR — that is what this rule exists to make automatic.
+
+A dated snapshot that is *not* a numbered-findings audit (a one-off measurement, a superseded reference) still goes to `docs/reference/`; a how-to still goes to `docs/guides/`.
 
 ## Plan lifecycle
 
@@ -59,6 +73,8 @@ Lowercase-kebab for dirs and leaf-doc slugs; `_`-prefix reserved for templates/g
 - A reusable engineering-role agent → `agents/core/`; a subsystem-bound one → `agents/project/`.
 - A project value (path, preset, threshold, label) → `project.config.json` (never hardcode in a portable file).
 - A how-to → `docs/guides/` (+ a `tier:` marker); a dated snapshot → `docs/reference/`.
+- A whole-tree audit campaign with numbered findings → a repo-root `SCREAMING_CASE.md` (+ a taxonomy row) — see § Naming.
+- A review finding not yet worth a plan → `backlog/` (promote to `docs/plans/active/` or `docs/adr/` when it is).
 
 ## Enforcement guards (`doc-validation.yml`, cheap Ubuntu lane)
 

@@ -5,6 +5,7 @@
 #include "PlaneFieldCatalogPure.h"
 
 #include "PlaneJsonFieldPure.h"
+#include "StringUtil.h"
 
 #include <algorithm>
 #include <cctype>
@@ -16,11 +17,6 @@ namespace plane {
 namespace {
 
 using smatchet::plane_pure::JsonFieldToString;
-
-std::string ToUpperAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return s;
-}
 
 // Sub-extraction: classify a Plane property_type into the TrackerField type/family/flag tuple.
 // Pulled out of MapPlanePropertyToField so neither helper exceeds the 30-branch strict-zone cap.
@@ -99,7 +95,7 @@ bool MapPlanePropertyToField(const nlohmann::json& prop, TrackerField& out) {
     if (out.Name.empty()) {
         out.Name = out.Id;
     }
-    const std::string pt = ToUpperAscii(JsonFieldToString(prop, "property_type"));
+    const std::string pt = ToUpperAsciiCopy(JsonFieldToString(prop, "property_type"));
     out.IsCustom = true;
     out.ReadOnly = prop.value("is_readonly", false);
     if (prop.contains("is_required") && prop["is_required"].is_boolean()) {

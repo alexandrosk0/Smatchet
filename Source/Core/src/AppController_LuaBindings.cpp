@@ -31,6 +31,7 @@
 #include <mutex>
 #include <string>
 #include <tuple>
+#include <utility> // std::move (AsciiLowerCopy forwarder)
 #include <unordered_map>
 #include <vector>
 #include <unordered_set>
@@ -86,10 +87,10 @@ bool LuaTruthy(const sol::object& o) {
     return true;
 }
 
-std::string AsciiLowerCopy(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
+// Forwards to the shared Core helper (gate-blind-spot-sweep Slice 2) — the body used to be a
+// third copy of the same std::transform. The NAME stays: it is declared in
+// AppController_LuaBindings_detail.h and called from the _Tickets / _Ui / _Draw sibling TUs.
+std::string AsciiLowerCopy(std::string s) { return ToLowerAsciiCopy(std::move(s)); }
 
 namespace {
 
