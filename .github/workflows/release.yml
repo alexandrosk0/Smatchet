@@ -53,6 +53,11 @@ on:
         type: boolean
         required: false
         default: false
+      allow_unsigned_publish:
+        description: "DANGER: publish WITHOUT signing. Users get SmartScreen warnings and the in-app updater refuses unsigned installers. Only for a bootstrap release before a certificate exists."
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -77,6 +82,7 @@ jobs:
           INPUT_SIGN: ${{ github.event.inputs.sign }}
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
+          INPUT_ALLOW_UNSIGNED: ${{ github.event.inputs.allow_unsigned_publish }}
         run: |
           $tag = $env:INPUT_TAG
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $env:REF_NAME }
@@ -91,15 +97,23 @@ jobs:
           $sign = $env:INPUT_SIGN -ne 'false'
           $draft = $env:INPUT_DRAFT -eq 'true'
           $prerelease = $env:INPUT_PRERELEASE -eq 'true'
-          if ($publish -and -not $sign) {
-            Write-Error "publish=true requires sign=true (SIGNING.md: unsigned public releases are refused)."
+          # Unsigned publish is opt-in and manual-dispatch only: a tag push has
+          # no inputs context, so INPUT_ALLOW_UNSIGNED is empty there and the
+          # signed-publish requirement below still holds for every tag release.
+          $allowUnsigned = $env:INPUT_ALLOW_UNSIGNED -eq 'true'
+          if ($publish -and -not $sign -and -not $allowUnsigned) {
+            Write-Error "publish=true requires sign=true (SIGNING.md: unsigned public releases are refused). To knowingly ship an unsigned bootstrap release, also set allow_unsigned_publish=true."
             exit 1
+          }
+          if ($publish -and -not $sign) {
+            Write-Warning "Publishing UNSIGNED artifacts: users will see SmartScreen warnings and the in-app updater will REFUSE this installer."
           }
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "publish=$($publish.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "sign=$($sign.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "draft=$($draft.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "prerelease=$($prerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
+          "allow_unsigned=$($allowUnsigned.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           Write-Host "tag=$tag publish=$publish sign=$sign draft=$draft prerelease=$prerelease"
 
       - name: Checkout
@@ -167,6 +181,7 @@ jobs:
           PARAM_PUBLISH: ${{ steps.params.outputs.publish }}
           PARAM_DRAFT: ${{ steps.params.outputs.draft }}
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
+          PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
         run: |
           $releaseArgs = @(
             "-Tag", $env:PARAM_TAG,
@@ -176,6 +191,9 @@ jobs:
           if ($env:PARAM_SIGN -eq "true") { $releaseArgs += "-Sign" }
           if ($env:PARAM_PUBLISH -eq "true") {
             $releaseArgs += "-Publish"
+            # release_github.ps1 independently refuses -Publish without -Sign;
+            # forward the same knowing override the workflow already gated on.
+            if ($env:PARAM_ALLOW_UNSIGNED -eq "true") { $releaseArgs += "-AllowUnsignedPublish" }
             if ($env:PARAM_DRAFT -eq "true") { $releaseArgs += "-Draft" }
             if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs += "-Prerelease" }
           }
