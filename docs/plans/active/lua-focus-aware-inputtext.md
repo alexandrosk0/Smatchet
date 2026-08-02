@@ -34,7 +34,7 @@ The focus signal is read on frame N from the stamp written during frame N-1's re
    - `ReplayInputText` (`:415`) — after the `ImGui::InputText` call, `if (ctx.trackInputFocus && ImGui::IsItemActive()) ctx.app.MarkLuaInputCellActive(ctx.cbArg1, ctx.cbArg2);`.
    - `ReplayCmdList` (`:486`) — add a `bool trackInputFocus` parameter, forwarded into `ReplayCtx`. Cell call site (`:599`, `:643`) passes `true`; window call site (`DrawLuaWindows:1230`) passes `false`.
    - `TryRenderCachedLuaField` (`:591`) — in the `cit != end()` branch, when `!inputsMatch`, compute a `rawValueOnly` diff and consult the focus stamp; on match, `ReplayCmdList(entry.cmds, *this, lua, ticket.id, fieldId, entry.isReadOnly, /*trackInputFocus=*/true); return entry.handled;` (skip the record block entirely).
-4. `LUA_GUIDE.md` — update the `input_text` row / limitations note: in-progress edits are now preserved across background syncs; commit still fires on focus loss and picks up the synced baseline only after the edit ends.
+4. `docs/guides/lua.md` — update the `input_text` row / limitations note: in-progress edits are now preserved across background syncs; commit still fires on focus loss and picks up the synced baseline only after the edit ends.
 5. `docs/plans/lua-recorded-cmd-list-v2.md` — mark C1 graduated (link here).
 
 ## Design (gate condition)

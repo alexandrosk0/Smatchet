@@ -106,12 +106,12 @@ Today `cfg.PlaneProjectId` is the Plane analog of `cfg.ProjectKey`. It is remove
 | File | Change shape |
 |---|---|
 | `Source_Core/src/Commands/BuiltinCommands.cpp:1035` (`config.get_all`) | Drop `all["projectKey"] = cfg.ProjectKey`. |
-| `Source_Core/src/Commands/BuiltinCommands.cpp:1213,1218,1222,1247` (`ticket.create`) | `projectKey` is already a **required** param on `ticket.create` (CLI_GUIDE.md:250). No change to the schema — the command was already explicit. Remove the "falls back to `cfg.projectKey`" sentence in the description (it never actually fell back in code but the help text implies it). |
+| `Source_Core/src/Commands/BuiltinCommands.cpp:1213,1218,1222,1247` (`ticket.create`) | `projectKey` is already a **required** param on `ticket.create` (docs/guides/cli.md:250). No change to the schema — the command was already explicit. Remove the "falls back to `cfg.projectKey`" sentence in the description (it never actually fell back in code but the help text implies it). |
 | `Source_Core/src/Commands/BuiltinCommands.cpp:1380` (`{"projectKey", "project_key", ""}` config-set table) | Remove the row — config no longer has this field. |
 | `Source_Core/src/AppController_LuaBindings.cpp:254` (`projectkey` / `project_key` case in config setter) | Remove the case; emit a deprecation warning if called. |
 | `Plugins/Mcp/` | Confirm no MCP tool currently exposes `config.set project_key`. If `config.get` previously returned `projectKey`, drop the field from the response (wire-format break — call out in release notes). |
-| `CLI_GUIDE.md:378` | Remove the `projectKey` row from the config table. Add a note: "Project is per-operation; pass `--projectKey` on `ticket.create`, or it's inferred from the active view." |
-| `LUA_GUIDE.md` | Same removal. |
+| `docs/guides/cli.md:378` | Remove the `projectKey` row from the config table. Add a note: "Project is per-operation; pass `--projectKey` on `ticket.create`, or it's inferred from the active view." |
+| `docs/guides/lua.md` | Same removal. |
 
 ### 2.10 Bulk import / serializer
 
@@ -243,7 +243,7 @@ Each PR leaves the app shipping-green. Order:
 - Delete `TrackerConfig::ProjectKey` and `PlaneProjectId`.
 - Delete Preferences row + add "Recently used projects" listbox.
 - Drop `config.get_all` field, drop the `config.set` table row, drop the Lua case (with one-release deprecation warning).
-- `CLI_GUIDE.md` + `LUA_GUIDE.md` updates.
+- `docs/guides/cli.md` + `docs/guides/lua.md` updates.
 - Locale strings: `prefs.projectKey` marked deprecated, `prefs.recentProjects` added.
 - Full-verify build: `cmake --build --preset ninja-iter-msys2 --target SmatchetStandalone SmatchetCore_DX12`.
 
@@ -263,7 +263,7 @@ Files touching `ProjectKey` / `project_key` / `projectKey` today (26 hits, group
 - **Field catalog**: `FieldCatalogCache.{cpp:161,175,268}`, `TrackerFieldCatalog.cpp:108,117,322,332,342,344,371,382,484,605,614`, `TrackerFieldSchema.h:73` (DTO — stays).
 - **Bulk / serializer**: `IssueTableSerializer.{h:49, cpp:83,191,219,234,269,358,365,367,370}`, `SmatchetBulkTicketsUi.cpp:174,349`.
 - **Offline**: `OfflineQueueService.cpp:840`, `SmatchetOfflineQueueUi.cpp:181,182,231,232`.
-- **Commands / Lua / docs**: `BuiltinCommands.cpp:1035,1213,1218,1222,1247,1380`, `AppController_LuaBindings.cpp:254`, `CLI_GUIDE.md:250,261,378`, `LUA_GUIDE.md`.
+- **Commands / Lua / docs**: `BuiltinCommands.cpp:1035,1213,1218,1222,1247,1380`, `AppController_LuaBindings.cpp:254`, `docs/guides/cli.md:250,261,378`, `docs/guides/lua.md`.
 - **State carriers (no code change needed; values pass through)**: `NavigationHistory.h`, `SmatchetUiSession.h`, `AppController.h`.
 
 ---

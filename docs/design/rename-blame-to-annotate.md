@@ -55,7 +55,7 @@ regenerated `.understand-anything/` index. Split:
 - **Excluded — historical record**: `docs/design/archive/*`, `backlog/POST_P0_REVIEW.md`,
   `backlog/BACKLOG_CODE_REVIEW.md`, applied self-improvement logs — these describe past
   work as it was; rewriting them falsifies history. *(This exclusion is the one judgment
-  call — flag for veto. Active docs ARE updated: `CLI_GUIDE.md`, `AGENTS.md`/`delegation.md`,
+  call — flag for veto. Active docs ARE updated: `docs/guides/cli.md`, `AGENTS.md`/`delegation.md`,
   `docs/adr/0009-*` if it references the live feature.)*
 
 Root `CMakeLists.txt` has no Blame → core sources are globbed, so file renames need **no
@@ -125,7 +125,7 @@ root-CMake edit**. Only `tests/CMakeLists.txt` (5 hits) lists test files explici
    `agents/core/security-review.md`, `agents/README.md`; `scripts/dev/test-agent-contract.sh`
    (9 hits, asserts agent set). Re-run `bash scripts/setup-harness.sh claude-code` to refresh the
    `.claude/agents/` junction.
-8. **Active docs** — `CLI_GUIDE.md`, `AGENTS.md` if it names the feature, ADR 0009 only if
+8. **Active docs** — `docs/guides/cli.md`, `AGENTS.md` if it names the feature, ADR 0009 only if
    it describes the live feature (not the historical decision text).
 
 ## Phase-1 verification

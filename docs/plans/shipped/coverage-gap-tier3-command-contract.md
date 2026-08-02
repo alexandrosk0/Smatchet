@@ -6,7 +6,7 @@
 
 ## Context
 
-[`TEST_COVERAGE_GAP_MAP.md`](../../../TEST_COVERAGE_GAP_MAP.md) Tier 3: the 24 `Commands/` strict-zone TUs (4.6K LOC of `BuiltinCommands_*` registration + handlers feeding CLI, palette, MCP, and Lua) are compiled into no test target. Their handlers capture `AppController&` at registration, so the doctest rig cannot host them — the architecturally-correct harness runs inside the app. After this lands, every registered command's ParamSpec and the Dispatch guard contract (missing-required-arg / validation-error / confirm-required / unknown-command) are exercised end-to-end by a mutation-free scenario, wired into the auto-enrolled `test-all.sh` sweep.
+[`TEST_COVERAGE_GAP_MAP.md`](../../audits/TEST_COVERAGE_GAP_MAP.md) Tier 3: the 24 `Commands/` strict-zone TUs (4.6K LOC of `BuiltinCommands_*` registration + handlers feeding CLI, palette, MCP, and Lua) are compiled into no test target. Their handlers capture `AppController&` at registration, so the doctest rig cannot host them — the architecturally-correct harness runs inside the app. After this lands, every registered command's ParamSpec and the Dispatch guard contract (missing-required-arg / validation-error / confirm-required / unknown-command) are exercised end-to-end by a mutation-free scenario, wired into the auto-enrolled `test-all.sh` sweep.
 
 ## Approach
 

@@ -22,7 +22,7 @@ That tension — exceptional engineering rigor wrapped around extreme key-person
 
 All findings below are evidence-grounded from the repository at `/home/user/Smatchet`. I (with my tech lead) read or sampled:
 
-- **Product surface:** `README.md`, `CLI_GUIDE.md`, `MCP_GUIDE.md`, `LUA_GUIDE.md`, `BUILD.md`, `Source/` tree (685 first-party `.cpp/.h` files; standalone, Unreal plugin, mobile Android, core, plugins).
+- **Product surface:** `README.md`, `docs/guides/cli.md`, `docs/guides/mcp.md`, `docs/guides/lua.md`, `BUILD.md`, `Source/` tree (685 first-party `.cpp/.h` files; standalone, Unreal plugin, mobile Android, core, plugins).
 - **Governance meta-layer:** root `AGENTS.md` (28 KB rulebook), `AI_POLICY.md` (human-authority charter), the `agents/` tree (26 specialist agent prompts under `agents/core/` and `agents/project/`), `docs/agent-rules/**` (ship-loops, merge-gates, quality-pillars, delegation, process-rules), `docs/harness/**` (Claude Code / Codex / Cursor adapters), `docs/self-improvement/**` (255-entry postmortem ledger, self-improvement framework), `docs/agent-eval/**` (calibration/scoring policy for grading the agents themselves), `project.config.json`, `.coderabbit.yaml`, and all 27 CI workflows.
 - **Licensing & security:** `LICENSE` (MIT), `THIRD_PARTY_LICENSES.md`, `SECURITY_AUDIT.md` (79 KB).
 - **History:** `git shortlog -sn --all`, commit log, PR-number range.

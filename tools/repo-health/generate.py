@@ -86,8 +86,8 @@ def pct(n: int, d: int) -> int:
 # computed collectors  (tree -> numbers)
 # --------------------------------------------------------------------------- #
 def collect_coverage() -> dict:
-    """Parse the canonical headline out of TEST_COVERAGE_GAP_MAP.md."""
-    doc = read("TEST_COVERAGE_GAP_MAP.md")
+    """Parse the canonical headline out of docs/audits/TEST_COVERAGE_GAP_MAP.md."""
+    doc = read("docs/audits/TEST_COVERAGE_GAP_MAP.md")
     out = {}
     m = re.search(r"Core TUs compiled.*?\*\*\s*([\d,]+)\s*/\s*([\d,]+)\s*\((\d+)%\)", doc)
     if m:
@@ -99,8 +99,8 @@ def collect_coverage() -> dict:
 
 
 def collect_audit() -> dict:
-    """Parse the finding totals out of CPP_CODE_AUDIT.md's summary line."""
-    doc = read("CPP_CODE_AUDIT.md")
+    """Parse the finding totals out of docs/audits/CPP_CODE_AUDIT.md's summary line."""
+    doc = read("docs/audits/CPP_CODE_AUDIT.md")
     out = {}
     m = re.search(r"\*\*\s*(\d+)\s+findings\s*\*\*.*?High:\s*(\d+).*?Medium:\s*(\d+).*?Low:\s*(\d+)",
                   doc, re.IGNORECASE | re.DOTALL)

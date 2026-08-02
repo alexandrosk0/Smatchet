@@ -4,6 +4,7 @@
 **Branch:** `claude/app-design-ux-critique-0zh838`
 **Scope:** First-party desktop UI (`Source/Core/src/Ui/**`) of the standalone Dear ImGui client — application shell, issue grid + saved views, issue editing/creation, preferences/onboarding, feedback/notification systems, and power-user tools (AI assistant, command palette, Perforce annotate). Mobile shell and Unreal-embedded specifics are noted only where they contrast with the desktop app.
 **Method:** Static reading of the UI source (the app was not run). Every finding cites `file:line` and quotes the actual UI string where one exists. This is a **design/usability critique**, complementary to `CPP_CODE_AUDIT.md` (correctness) and `SECURITY_AUDIT.md` — it does not re-report defects covered there.
+**Companions:** [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) (2026-06-26).
 
 > **How to read severity.** High = a real user is likely to be blocked, lose work, or be confused on a common path. Med = friction or inconsistency that erodes trust/efficiency but has a workaround. Low = polish; worth doing but not urgent.
 
@@ -34,7 +35,7 @@ The primary workspace — the issue grid — renders an empty table when there a
 ### H2 — "Recently Used Views" menu shows raw internal command IDs to the user
 **Severity: High** · Evidence: `SmatchetUI_MainMenu.cpp:531` — `if (ImGui::MenuItem(cmdId.c_str()))` renders the command id verbatim, so the menu literally reads:
 
-```
+```text
 Recently Used Views
   view.toggle.views-dashboard
   view.toggle.backend-audit
@@ -261,8 +262,9 @@ Three patterns recur across the findings and are worth fixing at the root rather
 
 ### 8.7 Implementation status — 2026-07-13 (same day, all 39 findings)
 
-All pass-2 findings were implemented in one sweep on `claude/ux-design-critique-4vcftn`
+All pass-2 findings were addressed in one sweep on `claude/ux-design-critique-4vcftn`
 (verified per-cluster with the Linux `posix-core-check` compile of all UI TUs).
+One item — P2-M10's sub-tab jump (Fields Inputs) — is deferred; see its "Mostly done" row below.
 
 | Finding | Status | Notes |
 |---|---|---|

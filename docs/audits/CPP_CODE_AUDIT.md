@@ -9,7 +9,7 @@ This is a broad correctness/robustness/security audit, **complementary to** the 
 
 > ## ✅ Remediation status — REMEDIATED (verified 2026-07-05)
 >
-> **All 33 findings are resolved: 31 fixed in code and 2 accepted as documented latent risk (#21 dictation shadow-buffer, and the fork-safety half of #26). The last remaining perf sub-item folded under #33 — `CommandPaletteUi::rebuildFiltered` — was fixed 2026-07-05.** Remediation landed via **PR #1593** (Slices 1–4, commits `0aa6dc9`/`8c42543`/`af5536f`/`5276f79`/`8ad4860`) and **PR #1613** (`fefa11f`, the `#33f`/`#33g` missing includes), tracked in [`docs/plans/shipped/cpp-code-audit-remediation.md`](docs/plans/shipped/cpp-code-audit-remediation.md). Recurring finding-classes were subsequently turned into standing CI lint gates (PR #1605). Each finding was re-verified against the current source on 2026-07-05 (not against the commit messages).
+> **All 33 findings are resolved: 31 fixed in code and 2 accepted as documented latent risk (#21 dictation shadow-buffer, and the fork-safety half of #26). The last remaining perf sub-item folded under #33 — `CommandPaletteUi::rebuildFiltered` — was fixed 2026-07-05.** Remediation landed via **PR #1593** (Slices 1–4, commits `0aa6dc9`/`8c42543`/`af5536f`/`5276f79`/`8ad4860`) and **PR #1613** (`fefa11f`, the `#33f`/`#33g` missing includes), tracked in [`docs/plans/cpp-code-audit-remediation.md`](../plans/cpp-code-audit-remediation.md). Recurring finding-classes were subsequently turned into standing CI lint gates (PR #1605). Each finding was re-verified against the current source on 2026-07-05 (not against the commit messages).
 >
 > | Finding | Status | Finding | Status | Finding | Status |
 > |---|---|---|---|---|---|
@@ -27,7 +27,7 @@ This is a broad correctness/robustness/security audit, **complementary to** the 
 >
 > **Now closed:** finding #33's folded "Also latent" performance sub-item — `CommandPaletteUi::rebuildFiltered` used to call `app.Commands().All()` (which locks, deep-copies, and sorts the whole registry) once per recent inside the loop plus once more (up to 9× per rebuild). Fixed 2026-07-05 by snapshotting the table once at the top of the function and reusing it across both branches. The other 8 components of #33 (year-boundary offset, JQL quoted "order by", single-select combo clear, `PromptAi` turn-gen, `QuoteWinArgWidePure` empty arg, `EnsureAssetsBranch` guard, `<cstdlib>`/`<mach-o/dyld.h>` includes) were already fixed. **No findings remain open.**
 >
-> **Accepted as documented latent risk (2), not code-fixed:** #21 (all 4 registration sites use process-static buffers — unreachable today; the header documents the invariant) and the fork/exec async-signal-safety **half** of #26 (a prebuilt-argv/envp rewrite of the P4/Git spawn path was judged disproportionate for a Low finding; the *other* half — a zero-timeout `Run()` hang — is fixed with a safety-net timeout). See [`cpp-code-audit-remediation.md`](docs/plans/shipped/cpp-code-audit-remediation.md) § Deviations.
+> **Accepted as documented latent risk (2), not code-fixed:** #21 (all 4 registration sites use process-static buffers — unreachable today; the header documents the invariant) and the fork/exec async-signal-safety **half** of #26 (a prebuilt-argv/envp rewrite of the P4/Git spawn path was judged disproportionate for a Low finding; the *other* half — a zero-timeout `Run()` hang — is fixed with a safety-net timeout). See [`cpp-code-audit-remediation.md`](../plans/cpp-code-audit-remediation.md) § Deviations.
 
 ## Methodology
 

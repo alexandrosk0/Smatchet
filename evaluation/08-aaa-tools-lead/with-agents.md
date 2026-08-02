@@ -57,7 +57,7 @@ The honest read: the **annotate parser** is liftable as a starting point for a P
 
 ### 3.4 Extensibility — Lua/sol2, MCP, custom ImGui windows
 
-Three extension surfaces, all routed through the command registry: **Lua** (sol2, ~50 binding sites across `AppController_LuaBindings*.cpp`, with `LUA_GUIDE.md`), **MCP** (`Source/Plugins/Mcp`, JSON-RPC, with `MCP_GUIDE.md` — so the same commands an agent uses are scriptable by *external* agents), and custom ImGui windows. For TAs and tools-devs this is the right menu: script a pipeline check in Lua, expose it as an MCP tool for an agent, surface it in the palette. The feature-gating (`SMATCHET_WITH_*`) means a "light" build can ship without AI/MCP/Whisper, which matters for a locked-down studio deployment.
+Three extension surfaces, all routed through the command registry: **Lua** (sol2, ~50 binding sites across `AppController_LuaBindings*.cpp`, with `docs/guides/lua.md`), **MCP** (`Source/Plugins/Mcp`, JSON-RPC, with `docs/guides/mcp.md` — so the same commands an agent uses are scriptable by *external* agents), and custom ImGui windows. For TAs and tools-devs this is the right menu: script a pipeline check in Lua, expose it as an MCP tool for an agent, surface it in the palette. The feature-gating (`SMATCHET_WITH_*`) means a "light" build can ship without AI/MCP/Whisper, which matters for a locked-down studio deployment.
 
 ### 3.5 Multi-tracker backend abstraction — could we add ShotGrid?
 

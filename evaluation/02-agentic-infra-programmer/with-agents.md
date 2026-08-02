@@ -302,7 +302,7 @@ non-hook harnesses is spelled out.
 The product itself is agent-shaped, which makes the harness dogfood-able.
 
 - **Unified command registry** (`Command.h`, `CommandRegistry.h`,
-  `CLI_GUIDE.md`). One `Command` struct feeds **five front-ends — CLI, Palette
+  `docs/guides/cli.md`). One `Command` struct feeds **five front-ends — CLI, Palette
   (Ctrl+Shift+P), MCP, Lua `commands.invoke`, and the Unreal bridge**.
   `CommandRegistry` is a thread-safe `name→Command` map with alias table, fuzzy
   match, and a single `Dispatch` chokepoint that copies the handler under lock
@@ -315,7 +315,7 @@ The product itself is agent-shaped, which makes the harness dogfood-able.
   and CLI exit codes map 1:1 to error codes. A uniform `RequiresExplicitConfirm`
   guard blocks any unconfirmed destructive call **across all five sources** — a
   textbook single-chokepoint trust boundary.
-- **MCP server** (`Source/Plugins/Mcp/McpPlugin.cpp`, `MCP_GUIDE.md`). Runs
+- **MCP server** (`Source/Plugins/Mcp/McpPlugin.cpp`, `docs/guides/mcp.md`). Runs
   in-process (feature-gated, off by default), HTTP + SSE, speaking **both
   JSON-RPC and a REST tools-call shape**. Tools are not hand-registered:
   `tools/list` enumerates the *entire* command registry with each command's
@@ -326,7 +326,7 @@ The product itself is agent-shaped, which makes the harness dogfood-able.
   bounded JSON parse, destructive calls blocked with `confirm-required` unless
   `__confirm:true`, `__dry_run` preview, every call audit-logged.** The `run_lua`
   tool sits behind a separate dangerous opt-in.
-- **Lua automation** (`LUA_GUIDE.md`, sol2 + Lua 5.3). Scripts register cell
+- **Lua automation** (`docs/guides/lua.md`, sol2 + Lua 5.3). Scripts register cell
   renderers, ImGui windows, context-menu actions, MCP tools, and call
   `commands.invoke`. **The sandbox removes `os`/`io`/`package`/`require`/
   `dofile`/`load`** (no file/shell access) and enforces **instruction-limit

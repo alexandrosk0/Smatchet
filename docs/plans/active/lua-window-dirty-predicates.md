@@ -36,7 +36,7 @@ Resolving the stub's two open questions:
 4. `Source/Core/src/AppController_LuaBindings_detail.h:159` — update the `LuaUiRegisterWindowGlue` forward declaration to the new signature.
 5. `Source/Core/src/AppController_LuaBindings.cpp:254` — `ui.set_function("register_window", &...LuaUiRegisterWindowGlue)` is unchanged (sol binds the new signature by address); no edit unless the address-of overload needs disambiguation.
 6. `Source/Core/src/AppController_LuaBindingsCore.cpp:310` — the no-Lua `register_window` no-op is a generic `noop`; confirm it still swallows the extra arg (it does — generic sink). No behavioural change.
-7. `LUA_GUIDE.md:94` — document the options-table form and the predicate contract.
+7. `docs/guides/lua.md:94` — document the options-table form and the predicate contract.
 8. `scripts/SmatchetHooks.lua` — add one commented example window using `predicate = function() return smatchet.focused_ticket_id() end`.
 9. `docs/plans/lua-recorded-cmd-list-v2.md` — mark B1 as graduated (link here); drop B2 (subsumed).
 

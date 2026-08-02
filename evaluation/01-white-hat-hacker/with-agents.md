@@ -45,7 +45,7 @@ contingent on the prioritized recommendations in §8.
 `Source/Core/src/Ai*` (AI assistant + endpoint SSRF), `Source/Core/include/Json/BoundedJsonParse.h`,
 `Source/Core/src/SubprocessCapture*`.
 
-**In scope (governance):** root `AGENTS.md`, `AI_POLICY.md`, `MCP_GUIDE.md`, `LUA_GUIDE.md`,
+**In scope (governance):** root `AGENTS.md`, `AI_POLICY.md`, `docs/guides/mcp.md`, `docs/guides/lua.md`,
 `docs/agent-rules/{merge-gates,ship-loops,exception-handling-policy}.md`,
 `docs/self-improvement/postmortems.md`, `agents/scripts/core/merge-gates.sh`, `.coderabbit.yaml`,
 `project.config.json` § governance, the `.github/workflows/*` security suite, and `SECURITY_AUDIT.md`
@@ -53,7 +53,7 @@ contingent on the prioritized recommendations in §8.
 
 **Method:** direct read of code and governance docs; cross-checking each governance *claim* against
 the *code* it asserts (e.g. does `ParseBounded` actually wrap the MCP ingress? does the MCP token
-model match `MCP_GUIDE.md`?). Findings are marked **CONFIRMED** (read in source) vs **SUSPECTED**
+model match `docs/guides/mcp.md`?). Findings are marked **CONFIRMED** (read in source) vs **SUSPECTED**
 (inferred). No live exploitation. Severities are reviewer-assigned, not CVSS.
 
 ---

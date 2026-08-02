@@ -43,7 +43,7 @@ Residuals (Phase 2-3):
 
 5. `Source/Plugins/Mcp/McpPlugin.cpp:308` — cap the attachment-proxy `url` query-param length + reject control chars (HTTP 414/400).
 6. `Source/Core/src/Commands/CommandPaletteUi.cpp:108-110` — reset `selected_ = 0` when the filtered list empties.
-7. `LUA_GUIDE.md` — document the exact instruction budgets (100k console/MCP, 500M automation).
+7. `docs/guides/lua.md` — document the exact instruction budgets (100k console/MCP, 500M automation).
 
 Tests:
 
@@ -117,7 +117,7 @@ Already shipped / tracked — do not redo:
 ## Deviations from plan
 
 - **Test strategy** — the new bounds checks were extracted into pure headers / helpers (`ParamBoundsPure.h`, `CliArgCoercion`) and bucket-A tested directly rather than via registry-linked integration tests, mirroring `CommandSourceTrust.test.cpp` (the doctest rig deliberately keeps the registry + handlers out of its link closure).
-- **Phase 3 doc item already satisfied** — the Lua instruction budgets the plan asked to document are already in `LUA_GUIDE.md`, so no doc edit shipped.
+- **Phase 3 doc item already satisfied** — the Lua instruction budgets the plan asked to document are already in `docs/guides/lua.md`, so no doc edit shipped.
 - **Deferred items — now LANDED (2026-07-14, this PR), status flipped to `shipped`:**
   - **Phase 1.3 — CLI result-file size cap.** Done via the shared `CliResultFileRead.h` leaf (see § Implementation log). Scope note: the plan title said "response / `instance.json`"; `instance.json` was already capped (#1747), so this closed the remaining scenario-RESULT-file readers.
   - **`fuzz_command_args` driver.** Shipped as `fuzz_bounded_json` — the plan's own recommended first cut over the header-only `ParseBounded` (the shared depth-bomb parser the command-arg `Json` coercion routes through). The `Dispatch`-linked registry-closure driver stays a deferred follow-up (higher build cost, same crash-class already covered).
