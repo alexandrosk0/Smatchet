@@ -195,6 +195,10 @@ jobs:
             SkipUnreal = $true
             SkipFabBundle = $true
             OutDir = "out/release"
+            # Matches build-and-test.yml's "Windows x64 installer smoke" job:
+            # the Font Awesome fetch step dirties the worktree, so a clean
+            # release build off a fresh checkout still needs -AllowDirty.
+            AllowDirty = $true
           }
           if ($env:PARAM_SIGN -eq "true") { $releaseArgs["Sign"] = $true }
           if ($env:PARAM_PUBLISH -eq "true") {
