@@ -913,7 +913,35 @@ if ($Publish) {
     Write-Stage "Publishing assets to GitHub release"
     Push-Location $repoRoot
     try {
-        $releaseExists = (Invoke-ExitCode -FilePath $ghExe -Arguments @("release", "view", $effectiveTag, "--json", "url")) -eq 0
+        # `gh release view` exits non-zero for a missing release AND for auth,
+        # network, API, and permission failures alike, so a bare exit-code test
+        # would read a transient outage as "no release yet" and fall through to
+        # `release create` — silently bypassing the -Clobber guard below. Treat
+        # only a positively identified not-found as absent; anything else stops
+        # the publish rather than guessing at the repo's state.
+        $probeErrFile = Join-Path $OutDir "gh-release-probe.err"
+        $probeCode = 0
+        $probeErr = ""
+        try {
+            & $ghExe release view $effectiveTag --json url 2>$probeErrFile | Out-Null
+            $probeCode = $LASTEXITCODE
+            if (Test-Path -LiteralPath $probeErrFile) {
+                $probeErr = [string](Get-Content -Raw -LiteralPath $probeErrFile)
+            }
+        }
+        finally {
+            Remove-IfPresent -Path $probeErrFile
+        }
+
+        if ($probeCode -eq 0) {
+            $releaseExists = $true
+        }
+        elseif ($probeErr -match "(?i)release not found|HTTP 404") {
+            $releaseExists = $false
+        }
+        else {
+            throw "Could not determine whether release '$effectiveTag' already exists (gh exited $probeCode): $($probeErr.Trim())"
+        }
 
         if (-not $releaseExists) {
             $createArgs = New-Object System.Collections.Generic.List[string]
