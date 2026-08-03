@@ -340,3 +340,37 @@ line two	tabbed"
     [[ "$(capture_body)" == *"- p5"* ]]         # most recent kept
     [[ "$(capture_body)" != *"- p1"* ]]         # oldest dropped
 }
+
+# ----------------------------------------------------------------------------
+# Bot exemption — the `pr-intent-lint` job must keep skipping bot-authored PRs.
+# A Dependabot body is bot-generated (a hand-added `## Intent` is wiped by
+# `@dependabot recreate`), so without the exemption every bump is permanently
+# red and the only way through is pinning `intent-out-of-band` on all of them.
+# ----------------------------------------------------------------------------
+
+@test "doc-validation: pr-intent-lint exempts dependabot by login, not by user.type" {
+    wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
+    [ -f "$wf" ]
+    # Isolate the EXECUTABLE `if:` expression (not the surrounding job prefix —
+    # a `user.type` in a sibling key or a folded continuation must not be able to
+    # hide from these asserts). Slice the job block at job indent, take the `if:`
+    # key through to the next key at step indent, strip the block scalar marker,
+    # then flatten the folded value to one normalised line.
+    if_expr="$(
+        awk '/^  pr-intent-lint:/{f=1;next} f&&/^  [^ ]/{exit} f' "$wf" |
+        awk '/^    if:/{f=1; sub(/^    if:[[:space:]]*[>|]?[+-]?[[:space:]]*/,"");
+                        if ($0 != "") print; next}
+             f&&/^    [^ ]/{exit}
+             f{sub(/^[[:space:]]+/,""); print}' |
+        tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+    )"
+    [ -n "$if_expr" ]
+    # Runs on pull_request only, and exempts dependabot by login.
+    [[ "$if_expr" == *"github.event_name == 'pull_request'"* ]]
+    [[ "$if_expr" == *"github.event.pull_request.user.login != 'dependabot[bot]'"* ]]
+    # Login allow-list, deliberately not a blanket bot check: a future bot that
+    # opens *product* PRs must stay gated by default. Widening the allow-list is
+    # a conscious edit to BOTH the workflow and this assertion.
+    [[ "$if_expr" != *"user.type"* ]]
+    [[ "$if_expr" != *"user.login =="* ]]
+}
