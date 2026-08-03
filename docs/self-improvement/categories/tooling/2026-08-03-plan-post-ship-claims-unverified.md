@@ -7,7 +7,7 @@
     cause is a **name conflation**: the file did contain a `Use-Msys2Ucrt64Environment` call (an **MSYS2**
     UCRT64 env bootstrap) which #495 replaced with the retirement `throw` — that pre-existing env-setup
     call was read as "the bootstrap", so the row was closed as already-done rather than dropped. The
-    file's only `vswhere` use is `Get-VsWherePath` (:71-95), which locates **MSBuild.exe**, not vcvars.
+    file's only `vswhere` use is `Get-VsWherePath` (:71-83), which locates **MSBuild.exe**, not vcvars.
     Nothing contradicted the claim: § Verification (actual) lists `test-build-wrapper.ps1` 3/3 green, but
     all three cases test the msys2-retirement throw, the `Exe :`/`Time:` print, and the stale-sibling
     table — **none exercises an MSVC env bootstrap**, so a passing verification block is fully consistent
@@ -23,8 +23,10 @@
     (`already had|has|have|exists|existed|implemented|landed|shipped`, `was already`) MUST carry a
     verifiable citation — a markdown link or backticked ref with a `:<line>` suffix, or a `#<PR>` /
     commit-sha reference. Delta-gated vs `origin/develop` and baseline-grandfathered like every other
-    rule (measured: **22 such claims exist today across `plans/{shipped,active}`, 21 unanchored** — all
-    grandfathered; only NEW claims must anchor). Escape:
+    rule (measured 2026-08-03, claim pattern above + anchor pattern `:<line>` / `#<2+ digits>` /
+    7-40-char hex sha, scanning `## Deviations` / `## Implementation log` sections only:
+    **38 such claims across 30 files, 25 unanchored** — all grandfathered; only NEW claims must
+    anchor. The `--selftest` re-derives this baseline rather than hardcoding it). Escape:
     `SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=…; owner=…; revisit=…)` for claims about state
     outside the repo (e.g. `solo-merge-review-gate.md:91` cites GitHub branch-protection API state,
     which has no `file:line`). This does not prove a claim true — it forces the author to point at the
@@ -34,8 +36,8 @@
     detection belongs at doc-gate time, not at merge-nudge time.
   Cross-ref: `docs/plans/shipped/msvc-build-onboarding-hardening.md` (:82 impl-log, :85 the false
     § Deviations claim, § Verification (actual) 3/3 non-covering tests); `scripts/dev/local/build_standalone.ps1`
-    (:71-95 `Get-VsWherePath` → MSBuild only, zero vcvars); PR #493 (`a9058b96`, plan) / **PR #495**
-    (`da36b45f`, the escaping PR); `scripts/dev/with-msvc.ps1` :53-139 (where a real vcvars import DOES
+    (:71-83 `Get-VsWherePath` → MSBuild only, zero vcvars); PR #493 (`a9058b96`, plan) / **PR #495**
+    (`da36b45f`, the escaping PR); `scripts/dev/with-msvc.ps1` :39-139 (where a real vcvars import DOES
     live — the capability exists in the tree, just not in the file the plan named);
     `docs/plans/active/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
     premise); `docs/self-improvement/postmortems.md` (ledger entry).
