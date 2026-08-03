@@ -454,9 +454,21 @@ jobs:
   # `intent-out-of-band` label downgrades it for fresh-worktree / non-Claude-Code
   # fallback flows. The name must NOT contain "advisory" (the allow-list excludes
   # advisory-named checks).
+  #
+  # Bot-authored PRs are EXEMPT (the job skips, and merge-gates.sh maps SKIPPED →
+  # pass alongside SUCCESS/NEUTRAL): a Dependabot bump has no originating human
+  # ask to redact, and its body is bot-generated — a hand-added `## Intent` is
+  # wiped by `@dependabot recreate`. Without the exemption the only way to green
+  # a bump is pinning `intent-out-of-band` on every one, i.e. normalising an
+  # override into routine, which is what makes an override stop meaning
+  # anything. The exemption is an explicit login allow-list, NOT
+  # `user.type == 'Bot'`: a future bot that opens *product* PRs must stay gated
+  # by default. Guarded by tests/bats/capture_intent.bats.
   pr-intent-lint:
     name: Intent section
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:

@@ -340,3 +340,22 @@ line two	tabbed"
     [[ "$(capture_body)" == *"- p5"* ]]         # most recent kept
     [[ "$(capture_body)" != *"- p1"* ]]         # oldest dropped
 }
+
+# ----------------------------------------------------------------------------
+# Bot exemption — the `pr-intent-lint` job must keep skipping bot-authored PRs.
+# A Dependabot body is bot-generated (a hand-added `## Intent` is wiped by
+# `@dependabot recreate`), so without the exemption every bump is permanently
+# red and the only way through is pinning `intent-out-of-band` on all of them.
+# ----------------------------------------------------------------------------
+
+@test "doc-validation: pr-intent-lint exempts dependabot by login, not by user.type" {
+    wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
+    [ -f "$wf" ]
+    # The job's `if:` block: from `pr-intent-lint:` to the next key at job indent.
+    job_if="$(awk '/^  pr-intent-lint:/{f=1} f&&/^    runs-on:/{exit} f' "$wf")"
+    [ -n "$job_if" ]
+    [[ "$job_if" == *"pull_request.user.login != 'dependabot[bot]'"* ]]
+    # Login allow-list, deliberately not a blanket bot check: a future bot that
+    # opens *product* PRs must stay gated by default.
+    [[ "$job_if" != *"user.type"* ]]
+}
