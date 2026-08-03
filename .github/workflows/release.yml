@@ -206,7 +206,7 @@ jobs:
             if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs["Prerelease"] = $true }
           }
           $argsDisplay = ($releaseArgs.GetEnumerator() | ForEach-Object {
-            if ($_.Value -eq $true) { "-$($_.Key)" } else { "-$($_.Key) $($_.Value)" }
+            if ($_.Value -is [bool] -and $_.Value) { "-$($_.Key)" } else { "-$($_.Key) $($_.Value)" }
           }) -join ' '
           Write-Host "release_github.ps1 $argsDisplay"
           ./scripts/publish/release_github.ps1 @releaseArgs
