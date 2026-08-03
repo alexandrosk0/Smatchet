@@ -183,17 +183,42 @@ jobs:
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
           PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
         run: |
-          # Defensive re-fetch: a real -Publish dispatch against tag v0.6.7 hit
-          # "Tag 'v0.6.7' not found locally" inside release_github.ps1's
-          # Assert-CleanGitTree/-Publish tag-verify check, even though the
+          # Defensive re-fetch + verify: a real -Publish dispatch against tag
+          # v0.6.7 hit "Tag 'v0.6.7' not found locally" inside
+          # release_github.ps1's -Publish tag-verify check, even though the
           # Checkout step's own log confirms `git tag --list v0.6.7` resolved
-          # right after checkout. Root cause wasn't pinned down (nothing between
-          # checkout and this step should touch git refs), so force-refresh the
-          # tag ref immediately before use rather than trust the checkout's copy.
-          git fetch origin "+refs/tags/$($env:PARAM_TAG):refs/tags/$($env:PARAM_TAG)" --force
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to fetch tag '$($env:PARAM_TAG)' from origin before release."
-            exit 1
+          # right after checkout. Root cause wasn't pinned down, so
+          # force-refresh the tag ref before use rather than trust the
+          # checkout's copy. This only matters for -Publish (the only path in
+          # release_github.ps1 that checks the tag ref against HEAD), so skip
+          # it for publish=false dry runs — a transient fetch failure
+          # shouldn't abort a build that doesn't need it.
+          if ($env:PARAM_PUBLISH -eq "true") {
+            git fetch origin "+refs/tags/$($env:PARAM_TAG):refs/tags/$($env:PARAM_TAG)" --force
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "Failed to fetch tag '$($env:PARAM_TAG)' from origin before release."
+              exit 1
+            }
+            # `git fetch --force` updates the local tag ref but does NOT move
+            # HEAD or the checked-out working tree, so a re-fetch alone can't
+            # actually fix a checkout/tag mismatch — it can only mask it.
+            # Verify HEAD and the (peeled) tag commit agree before handing off
+            # to -Publish, and fail loudly instead of silently publishing
+            # against the wrong commit.
+            $headCommit = (git rev-parse HEAD).Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headCommit)) {
+              Write-Error "Could not resolve HEAD to a commit."
+              exit 1
+            }
+            $tagCommit = (git rev-parse "refs/tags/$($env:PARAM_TAG)^{commit}").Trim()
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
+              Write-Error "Could not resolve tag 'refs/tags/$($env:PARAM_TAG)' to a commit after fetch."
+              exit 1
+            }
+            if ($headCommit -ne $tagCommit) {
+              Write-Error "Checked-out HEAD ($headCommit) does not match tag '$($env:PARAM_TAG)' ($tagCommit) after re-fetch; refusing to publish against a possibly wrong commit."
+              exit 1
+            }
           }
           # Hashtable splat, NOT array splat: array splatting (@("-Tag", $val, ...))
           # does NOT parse "-Flag" tokens as parameter names — it binds every
