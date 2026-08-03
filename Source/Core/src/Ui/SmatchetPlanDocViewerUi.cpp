@@ -9,6 +9,7 @@
 
 #include "SmatchetPlanDocViewerUi.h"
 
+#include "AsyncLoadGatePure.h"
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
@@ -229,11 +230,8 @@ std::string SelectedPath(const ViewerState& s) {
 // A selection change made WHILE a read is running is not dropped: PollLoadResult re-kicks
 // after discarding the stale result.
 void StartLoadSelected(ViewerState& s) {
-    if (s.loadInFlight) {
-        return;
-    }
     const std::string path = SelectedPath(s);
-    if (path.empty() || path == s.loadedPath) {
+    if (!async_load::ShouldKickLoad(s.loadInFlight, path, s.loadedPath)) {
         return;
     }
     s.loadInFlight = true;
@@ -254,7 +252,7 @@ void PollLoadResult(ViewerState& s) {
     }
     LoadResult result = s.loadFuture.get();
     s.loadInFlight = false;
-    if (result.path != SelectedPath(s)) {
+    if (!async_load::ResultIsCurrent(result.path, SelectedPath(s))) {
         // Selection moved (or the index was rescanned) mid-read — drop this body and let
         // the caller's re-kick load whatever is selected now.
         StartLoadSelected(s);

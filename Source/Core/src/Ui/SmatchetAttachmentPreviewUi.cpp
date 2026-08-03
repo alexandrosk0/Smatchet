@@ -3,6 +3,7 @@
 #include "AppController.h"
 #include "Logger.h"
 #include "MemoryTelemetry.h"
+#include "AsyncLoadGatePure.h"
 #include "AttachmentPreviewLayoutPure.h"
 #include "ImageDimensionsPure.h"
 #include "SmatchetAttachmentPreviewUi.h"
@@ -593,8 +594,10 @@ static ImVec2 FitImageInsideSquare(int imageWidth, int imageHeight, float maxEdg
 // and its result gates both the card layout and the decode kick. Called per-frame from the
 // card-draw loop, so nothing is silently dropped.
 static void MaybeKickDimensionParse(AppController& app, AttachmentWindowEntry& entry) {
-    if (entry.DimensionParseInFlight || entry.DimensionParseDone || !entry.PreviewError.empty() || entry.Url.empty() ||
-        entry.LocalPath.empty() || !IsSupportedImageMime(entry.MimeType)) {
+    const bool keyEmpty = entry.Url.empty() || entry.LocalPath.empty();
+    if (!smatchet::async_load::ShouldKickOnce(entry.DimensionParseInFlight, entry.DimensionParseDone,
+                                              !entry.PreviewError.empty(), keyEmpty) ||
+        !IsSupportedImageMime(entry.MimeType)) {
         return;
     }
     const std::string localPath = entry.LocalPath;
@@ -615,7 +618,7 @@ static void MaybeKickDimensionParse(AppController& app, AttachmentWindowEntry& e
                 return; // entry gone (window reloaded) — nothing to apply
             }
             target->DimensionParseInFlight = false;
-            if (target->LocalPath != localPath) {
+            if (!smatchet::async_load::ResultIsCurrent(localPath, target->LocalPath)) {
                 // Re-downloaded to a different path while the read was in flight — drop this
                 // result and leave DimensionParseDone false so the next frame re-kicks.
                 return;

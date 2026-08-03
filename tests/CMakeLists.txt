@@ -1105,6 +1105,10 @@ add_executable(SmatchetTests
     # Comments-modal generation-token stale-guard (monotonic Gen across opens +
     # post-refetch supersession). Header-only pure helper, no production .cpp to link.
     Core/SmatchetCommentsModalGenPure.test.cpp
+    # Issue #1925 — kick / latch / staleness gates for the single-slot async loads that
+    # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
+    # Header-only pure helper, no production .cpp to link.
+    Core/AsyncLoadGatePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
