@@ -183,16 +183,16 @@ jobs:
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
           PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
         run: |
-          # Defensive re-fetch + verify: a real -Publish dispatch against tag
-          # v0.6.7 hit "Tag 'v0.6.7' not found locally" inside
-          # release_github.ps1's -Publish tag-verify check, even though the
-          # Checkout step's own log confirms `git tag --list v0.6.7` resolved
-          # right after checkout. Root cause wasn't pinned down, so
-          # force-refresh the tag ref before use rather than trust the
-          # checkout's copy. This only matters for -Publish (the only path in
-          # release_github.ps1 that checks the tag ref against HEAD), so skip
-          # it for publish=false dry runs — a transient fetch failure
-          # shouldn't abort a build that doesn't need it.
+          # Belt-and-braces tag guard for -Publish runs. The "Tag not found
+          # locally" failures this originally chased were NOT a missing ref:
+          # release_github.ps1's probes read Invoke-Checked's return value,
+          # which mixes the command's stdout in with the exit code, so the
+          # checks inverted whenever the tag actually existed (fixed in that
+          # script). Keeping an explicit HEAD-vs-tag check here is still worth
+          # it: `git fetch --force` refreshes a tag ref without moving HEAD, so
+          # this is the one place that can catch a checkout/tag mismatch before
+          # we publish artifacts built from the wrong commit. Only -Publish
+          # cares, so dry runs skip it rather than fail on a transient fetch.
           if ($env:PARAM_PUBLISH -eq "true") {
             git fetch origin "+refs/tags/$($env:PARAM_TAG):refs/tags/$($env:PARAM_TAG)" --force
             if ($LASTEXITCODE -ne 0) {

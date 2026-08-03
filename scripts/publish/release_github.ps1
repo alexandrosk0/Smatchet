@@ -84,6 +84,30 @@ function Invoke-Checked {
     return $exitCode
 }
 
+# Use this — never Invoke-Checked — when the caller needs the EXIT CODE.
+#
+# Invoke-Checked writes the child process's stdout to its own output stream and
+# then also returns $exitCode, so the caller receives an ARRAY of
+# @(<stdout lines>..., <exit code>) whenever the command prints anything.
+# Comparing that array with -eq/-ne then filters it element-wise instead of
+# testing the exit code, which silently inverts the result:
+#
+#   $c = Invoke-Checked git @("rev-parse","-q","--verify","refs/tags/v0.6.7")
+#   # tag EXISTS -> $c = @("<sha>", 0);  $c -ne 0 -> @("<sha>") -> truthy -> "not found"
+#   # tag EXISTS -> $c = @("<sha>", 0);  $c -eq 0 -> @(0)       -> falsy  -> "not found"
+#
+# i.e. every probe below reported the *opposite* of reality precisely because
+# the thing it was probing for existed. Returning only $LASTEXITCODE keeps the
+# comparison a scalar test.
+function Invoke-ExitCode {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $false)][string[]]$Arguments = @()
+    )
+    & $FilePath @Arguments | Out-Null
+    return $LASTEXITCODE
+}
+
 function New-CleanDirectory {
     param([Parameter(Mandatory = $true)][string]$Path)
     if ([string]::IsNullOrWhiteSpace($Path)) {
@@ -639,7 +663,7 @@ try {
         Invoke-Checked -FilePath $ghExe -Arguments @("auth", "status")
         Invoke-Checked -FilePath $ghExe -Arguments @("repo", "view")
 
-        $tagCheckCode = Invoke-Checked -FilePath $gitExe -Arguments @("rev-parse", "-q", "--verify", "refs/tags/$effectiveTag") -AllowFailure
+        $tagCheckCode = Invoke-ExitCode -FilePath $gitExe -Arguments @("rev-parse", "-q", "--verify", "refs/tags/$effectiveTag")
         if ($tagCheckCode -ne 0) {
             throw "Tag '$effectiveTag' not found locally. Create and push tag before publish."
         }
@@ -852,7 +876,7 @@ if (-not $SkipSourceZip) {
     )
     Push-Location $repoRoot
     try {
-        $tagExists = (Invoke-Checked -FilePath $gitExe -Arguments @("rev-parse", "-q", "--verify", "refs/tags/$effectiveTag") -AllowFailure)
+        $tagExists = (Invoke-ExitCode -FilePath $gitExe -Arguments @("rev-parse", "-q", "--verify", "refs/tags/$effectiveTag"))
         if ($tagExists -eq 0) {
             $sourceRef = "refs/tags/$effectiveTag"
         }
@@ -889,7 +913,7 @@ if ($Publish) {
     Write-Stage "Publishing assets to GitHub release"
     Push-Location $repoRoot
     try {
-        $releaseExists = (Invoke-Checked -FilePath $ghExe -Arguments @("release", "view", $effectiveTag, "--json", "url") -AllowFailure) -eq 0
+        $releaseExists = (Invoke-ExitCode -FilePath $ghExe -Arguments @("release", "view", $effectiveTag, "--json", "url")) -eq 0
 
         if (-not $releaseExists) {
             $createArgs = New-Object System.Collections.Generic.List[string]
