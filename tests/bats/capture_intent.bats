@@ -351,11 +351,26 @@ line two	tabbed"
 @test "doc-validation: pr-intent-lint exempts dependabot by login, not by user.type" {
     wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
     [ -f "$wf" ]
-    # The job's `if:` block: from `pr-intent-lint:` to the next key at job indent.
-    job_if="$(awk '/^  pr-intent-lint:/{f=1} f&&/^    runs-on:/{exit} f' "$wf")"
-    [ -n "$job_if" ]
-    [[ "$job_if" == *"pull_request.user.login != 'dependabot[bot]'"* ]]
+    # Isolate the EXECUTABLE `if:` expression (not the surrounding job prefix —
+    # a `user.type` in a sibling key or a folded continuation must not be able to
+    # hide from these asserts). Slice the job block at job indent, take the `if:`
+    # key through to the next key at step indent, strip the block scalar marker,
+    # then flatten the folded value to one normalised line.
+    if_expr="$(
+        awk '/^  pr-intent-lint:/{f=1;next} f&&/^  [^ ]/{exit} f' "$wf" |
+        awk '/^    if:/{f=1; sub(/^    if:[[:space:]]*[>|]?[+-]?[[:space:]]*/,"");
+                        if ($0 != "") print; next}
+             f&&/^    [^ ]/{exit}
+             f{sub(/^[[:space:]]+/,""); print}' |
+        tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+    )"
+    [ -n "$if_expr" ]
+    # Runs on pull_request only, and exempts dependabot by login.
+    [[ "$if_expr" == *"github.event_name == 'pull_request'"* ]]
+    [[ "$if_expr" == *"github.event.pull_request.user.login != 'dependabot[bot]'"* ]]
     # Login allow-list, deliberately not a blanket bot check: a future bot that
-    # opens *product* PRs must stay gated by default.
-    [[ "$job_if" != *"user.type"* ]]
+    # opens *product* PRs must stay gated by default. Widening the allow-list is
+    # a conscious edit to BOTH the workflow and this assertion.
+    [[ "$if_expr" != *"user.type"* ]]
+    [[ "$if_expr" != *"user.login =="* ]]
 }
