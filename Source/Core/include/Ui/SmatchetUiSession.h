@@ -94,6 +94,12 @@ struct AttachmentWindowEntry {
     /// thumbnail decode kick so a parse failure still suppresses the decode, preserving the
     /// ordering the old synchronous parse-then-kick had. Reset whenever `LocalPath` changes.
     bool DimensionParseDone = false;
+    /// Bumped every time a download re-assigns `LocalPath`. The parse worker captures it at kick
+    /// time and its post-back drops a result whose value moved. Comparing paths alone is not
+    /// enough: a re-download to the SAME path is invisible to that comparison, yet its bytes —
+    /// and so its dimensions — can differ, and the superseded result would latch
+    /// DimensionParseDone and block the re-parse.
+    unsigned int DimensionParseGeneration = 0;
 };
 
 struct PendingFieldEdit {

@@ -308,6 +308,11 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
     }
     const ScriptLoadResult result = scriptLoadFuture_.get();
     scriptLoadInFlight_ = false;
+    if (reloadNoticeName_ != selectedScriptName_) {
+        // The user moved off the script they asked to reload — its banner is moot. Checked
+        // before the branches below so a superseded reload cannot report against a later load.
+        reloadNoticeName_.clear();
+    }
     if (!queuedLoadName_.empty()) {
         const std::string next = queuedLoadName_;
         queuedLoadName_.clear();
@@ -320,6 +325,19 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
     luaEditor_.SetText(result.ok ? result.content : std::string("-- New file\n"));
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
+    if (!reloadNoticeName_.empty() && reloadNoticeName_ == result.name) {
+        // Only an explicit "Reload from disk" reports an outcome. A read failure is silent for
+        // every other path because the "-- New file" stub above is the intended result there
+        // (picking a name with no file on disk starts a new script) — but the user who pressed
+        // Reload asked about a file that is supposed to exist, so a failure is an error to them.
+        reloadNoticeName_.clear();
+        if (result.ok) {
+            g_ui.gridEditSuccess = "Reloaded " + result.name;
+            g_ui.gridEditError.clear();
+        } else {
+            g_ui.gridEditError = "Could not read " + result.name;
+        }
+    }
 }
 
 bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& outErr) {
@@ -387,6 +405,21 @@ void LuaConsolePlugin::DrawAutocompletePopup() {
         ImGui::TextDisabled("(no matches)");
     }
     ImGui::EndPopup();
+}
+
+LuaConsolePlugin::~LuaConsolePlugin() {
+    if (!scriptLoadFuture_.valid()) {
+        return;
+    }
+    // The member's own destructor would block here anyway (std::async shared state joins on
+    // destruction) — draining explicitly turns that into a wait we can explain. A script read is
+    // one bounded file slurp, so the grace period is generous; exceeding it means the path is
+    // slow/remote/AV-filtered, and the log line is what turns an unexplained teardown hang into a
+    // diagnosable one. The wait is not skippable: the task borrows nothing from `this`, but its
+    // shared state must be released before the future member goes away.
+    if (scriptLoadFuture_.wait_for(std::chrono::seconds(2)) != std::future_status::ready) {
+        LOG_WARN("LuaConsole: script read still running at plugin teardown; blocking until it completes");
+    }
 }
 
 void LuaConsolePlugin::OnEarlyInit(AppController& app) {
@@ -666,8 +699,14 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
     ImGui::SameLine();
     if (ImGui::Button("Reload from disk", ImVec2(130, 0))) {
         std::string e;
-        (void)StartLoadSelectedScriptIntoEditor(app, e);
-        g_ui.gridEditSuccess = "Reloaded " + curName;
+        if (StartLoadSelectedScriptIntoEditor(app, e)) {
+            // Nothing is reloaded yet — the read lands on a later frame and can still fail or be
+            // superseded. PollScriptLoad reports the outcome against this name.
+            reloadNoticeName_ = curName;
+            g_ui.gridEditError.clear();
+        } else {
+            g_ui.gridEditError = e;
+        }
     }
     if (scriptLoadInFlight_) {
         // Visible cue for the off-thread read (Pillar 2 cue contract — see Source/Core/src/Ui/AGENTS.md).

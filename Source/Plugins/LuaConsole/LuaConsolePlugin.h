@@ -9,6 +9,14 @@
 
 class LuaConsolePlugin : public IPlugin {
   public:
+    /// Drains an in-flight script read before the members go away. A std::async future's
+    /// destructor already blocks until its task completes, so tearing the plugin down mid-read
+    /// (hot-reload, shutdown) would stall the destroying thread with no explanation; draining
+    /// here makes that wait explicit, bounded in reporting, and diagnosable via LOG_WARN.
+    /// Detaching the task instead is not an option (`no-detach` is an absolute lint rule, and the
+    /// task's result feeds members that are being destroyed).
+    ~LuaConsolePlugin();
+
     const char* Id() const override { return "lua_console"; }
     void OnEarlyInit(AppController& app) override;
     void OnDraw(AppController& app) override;
@@ -47,6 +55,11 @@ class LuaConsolePlugin : public IPlugin {
     /// re-assigning `scriptLoadFuture_` inline — move-assigning over a live std::async future
     /// blocks the render thread until the old task's shared state is released.
     std::string queuedLoadName_;
+    /// Script name whose "Reload from disk" press is still waiting on its off-thread read; empty
+    /// when no reload is outstanding. Held by NAME, not a bool: the read lands frames later, so
+    /// the outcome banner must be reported by PollScriptLoad, and a selection change made in the
+    /// meantime must not mislabel an unrelated load as the user's reload.
+    std::string reloadNoticeName_;
 
     /// Clamped height for `BeginChild` (script pane) this frame.
     float luaAutomationScriptPaneHeightPx_ = 0.f;

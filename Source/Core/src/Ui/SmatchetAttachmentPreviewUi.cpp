@@ -585,6 +585,19 @@ static ImVec2 FitImageInsideSquare(int imageWidth, int imageHeight, float maxEdg
     return ImVec2(w, h);
 }
 
+// Locate an attachment card by its Url key, or null when the window was reloaded out from under
+// an in-flight task. Every async post-back below re-finds its entry this way instead of capturing
+// an AttachmentWindowEntry* at kick time: `attachmentWindowEntries` can be resized, reordered or
+// rebuilt between the kick and the completion, so a captured pointer would dangle (Pillar 3).
+static AttachmentWindowEntry* FindAttachmentWindowEntryByUrl(const std::string& urlKey) {
+    for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
+        if (e.Url == urlKey) {
+            return &e;
+        }
+    }
+    return nullptr;
+}
+
 // Pillar 2 (Issue #1925): run the bounded image-header read on the joined pool instead of inline
 // in the download-completion drain. Mirrors MaybeKickThumbnailDecode below — the worker captures
 // path + Url by value and the post-back re-finds the entry by Url in the process-global g_ui, so
@@ -603,24 +616,21 @@ static void MaybeKickDimensionParse(AppController& app, AttachmentWindowEntry& e
     const std::string localPath = entry.LocalPath;
     const std::string urlKey = entry.Url;
     const std::string mimeType = entry.MimeType;
+    const unsigned int generation = entry.DimensionParseGeneration;
     entry.DimensionParseInFlight = true;
-    app.LaunchBackgroundTask([&app, localPath, urlKey, mimeType]() {
+    app.LaunchBackgroundTask([&app, localPath, urlKey, mimeType, generation]() {
         const ParsedImageInfo info = ParseImageDimensions(localPath, mimeType);
-        app.PostToMainThread([urlKey, localPath, info]() {
-            AttachmentWindowEntry* target = nullptr;
-            for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
-                if (e.Url == urlKey) {
-                    target = &e;
-                    break;
-                }
-            }
+        app.PostToMainThread([urlKey, localPath, info, generation]() {
+            AttachmentWindowEntry* target = FindAttachmentWindowEntryByUrl(urlKey);
             if (target == nullptr) {
                 return; // entry gone (window reloaded) — nothing to apply
             }
             target->DimensionParseInFlight = false;
-            if (!smatchet::async_load::ResultIsCurrent(localPath, target->LocalPath)) {
-                // Re-downloaded to a different path while the read was in flight — drop this
-                // result and leave DimensionParseDone false so the next frame re-kicks.
+            if (generation != target->DimensionParseGeneration ||
+                !smatchet::async_load::ResultIsCurrent(localPath, target->LocalPath)) {
+                // Re-downloaded while the read was in flight — to a different path (the path
+                // check) or to the same path with different bytes (the generation check). Drop
+                // the result and leave DimensionParseDone false so the next frame re-kicks.
                 return;
             }
             target->DimensionParseDone = true;
@@ -690,13 +700,7 @@ static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& 
         const bool decoded = DecodeImageFileToRgba32(localPath, rgba, w, h, err, kMaxThumbnailDimension);
         app.PostToMainThread([urlKey, rgba = std::move(rgba), w, h, err, decoded]() mutable {
             smatchet::memtel::PendingThumbnailUploads().fetch_sub(1, std::memory_order_relaxed);
-            AttachmentWindowEntry* target = nullptr;
-            for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
-                if (e.Url == urlKey) {
-                    target = &e;
-                    break;
-                }
-            }
+            AttachmentWindowEntry* target = FindAttachmentWindowEntryByUrl(urlKey);
             if (target == nullptr) {
                 return; // entry gone (window reloaded) — nothing to upload
             }
@@ -792,8 +796,13 @@ static void ApplyAttachmentPreviewUpdates(UiDrawSession& d, const std::deque<Att
             entry.PreviewRequestIssued = true;
             // Issue #1925: a fresh LocalPath invalidates the parse latches so the per-frame
             // MaybeKickDimensionParse() in the card-draw loop re-reads the header off-thread.
-            // Kicked there rather than here for the same reason as the decode below.
+            // Kicked there rather than here for the same reason as the decode below. The
+            // generation bump is what retires a parse already in flight: DimensionParseInFlight
+            // cannot simply be cleared here (the old worker would still post back), and a
+            // re-download to the same path would otherwise let that stale result latch
+            // DimensionParseDone with the previous file's dimensions.
             entry.DimensionParseDone = false;
+            ++entry.DimensionParseGeneration;
             // S5: the off-thread thumbnail decode is kicked per-frame by MaybeKickThumbnailDecode()
             // in the card-draw loop below — not here — so a rate-limited (saturated) skip retries
             // on a later frame instead of this one-shot update dropping it silently.

@@ -377,7 +377,11 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     // Context per frame inside the render — the doc is one logical surface so
     // one Context per render is right.
     ImGui::BeginChild("##plan_doc_body", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
-    if (!s.body.empty()) {
+    // Draw the cached body only while it still describes the selection. `body` outlives a
+    // selection change until the worker's read lands, so an unguarded render would show the
+    // previous document's contents under the newly picked document's name; the pane goes blank
+    // behind the "Loading..." cue instead.
+    if (!s.body.empty() && async_load::ResultIsCurrent(s.loadedPath, SelectedPath(s))) {
         MarkdownPreviewRender::Options opts;
         opts.mode = MarkdownPreviewRender::Mode::Full;
         opts.clickableLinks = true;
