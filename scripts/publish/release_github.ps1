@@ -945,7 +945,11 @@ if ($Publish) {
 
         if (-not $releaseExists) {
             $createArgs = New-Object System.Collections.Generic.List[string]
-            $createArgs.AddRange(@("release", "create", $effectiveTag))
+            # [string[]] cast is required: a PowerShell array literal is always
+            # Object[], and List[string].AddRange won't coerce Object[] to
+            # IEnumerable[string] — it throws even when every element is a
+            # string. Never caught before because no publish reached this line.
+            $createArgs.AddRange([string[]]@("release", "create", $effectiveTag))
             foreach ($asset in $assetPaths) {
                 $createArgs.Add($asset)
             }
@@ -973,7 +977,8 @@ if ($Publish) {
                 throw "Release '$effectiveTag' already exists. Re-run with -Clobber to overwrite assets."
             }
             $uploadArgs = New-Object System.Collections.Generic.List[string]
-            $uploadArgs.AddRange(@("release", "upload", $effectiveTag))
+            # [string[]] cast required — see the AddRange note on the create path.
+            $uploadArgs.AddRange([string[]]@("release", "upload", $effectiveTag))
             foreach ($asset in $assetPaths) {
                 $uploadArgs.Add($asset)
             }
