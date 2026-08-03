@@ -21,7 +21,6 @@ namespace async_load {
 
 /// Kick gate for a cache-keyed load — the plan-doc viewer's document read, where the key
 /// is the selected file path and `loadedKey` is the path matching the cached body.
-///
 /// Kick iff nothing is already in flight, something is selected, and the cached payload is
 /// not already the selected key. The in-flight term is what keeps the single future slot
 /// safe: move-assigning over a live `std::async` future BLOCKS the render thread until the
@@ -40,7 +39,6 @@ inline bool ShouldKickLoad(bool inFlight, const std::string& targetKey, const st
 
 /// Latch gate for a one-shot per-key parse — the attachment preview's image-header read,
 /// which runs at most once per downloaded file rather than being re-driven by a selection.
-///
 /// `done` is the latch: it is set when a parse LANDS, success or failure, so a failed parse
 /// is not retried every frame (and keeps suppressing the thumbnail decode, preserving the
 /// ordering the old synchronous parse had). `hasError` short-circuits an entry that already
@@ -53,7 +51,6 @@ inline bool ShouldKickOnce(bool inFlight, bool done, bool hasError, bool keyEmpt
 /// still the live key. A mismatch means the selection moved (or the entry was re-downloaded
 /// to a different path) while the read was in flight, so the payload describes a file the
 /// UI is no longer showing and must be dropped.
-///
 /// An empty `resultKey` is never current, even against an empty `currentKey` — both kick
 /// gates above refuse an empty key, so an empty result key can only be a defaulted or
 /// corrupted payload, and "nothing selected" is not something to apply a body to.
