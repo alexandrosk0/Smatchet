@@ -39,6 +39,8 @@ Targets — all under `scripts/dev/`:
 
 All four `build_and_run_*.ps1` files are 10-line shims around `build_and_run.ps1` — collapse to one bash entry-point with `--preset` flag.
 
+Also in scope (added by `dev-onboarding-first-run-quickstart`): the **root `build.ps1`** — a thin dispatcher (preset auto-detect + `with-msvc.ps1` routing, zero build logic) that delegates to `build_and_run.ps1`. It ports to `build.sh` alongside its delegate, and its behaviour is pinned by `scripts/dev/local/test-build-wrapper.ps1` tests 4-7, which port with it.
+
 Existing bash patterns to reuse:
 - `scripts/dev/lint-cpp-common.sh` — MSYS2 PATH-prepend idempotency pattern (lines 75-82 of `scripts/dev/check-required-tools.sh`).
 - `scripts/dev/perf-run.sh` — argument parsing + cmake invocation idiom.

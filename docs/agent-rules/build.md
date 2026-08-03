@@ -2,6 +2,19 @@
 
 Trigger: **building** the project (configuring presets, the light build, the dual-target verify, or clearing the Unreal build). AGENTS.md § Project rules keeps a one-line build pointer here; this doc has the detail.
 
+## Entry point — `.\build.ps1` from the repo root
+
+The canonical build command **from an ordinary PowerShell** (no Developer Prompt, no vcvars) is:
+
+```
+.\build.ps1              # build + run   |   .\build.ps1 -BuildOnly
+.\build.ps1 -Preset ninja-debug-msvc -BuildOnly
+```
+
+`build.ps1` is a thin dispatcher with **zero build logic**: it picks a preset (explicit `-Preset` wins; otherwise `cl.exe` on PATH → `ninja-iter-msvc`, else `clang-cl.exe` → `ninja-iter-clang`, else `ninja-iter-msvc`), prints the reason, and delegates to `scripts/dev/local/build_and_run.ps1` — directly when `cl.exe` is already on PATH, otherwise through `scripts/dev/with-msvc.ps1`, which imports the pinned MSVC vcvars environment first. `with-msvc.ps1` exit 2 means "no usable VS install"; `build.ps1` maps that to winget install hints and propagates exit 2. It is covered by `scripts/dev/local/test-build-wrapper.ps1` (sandboxed stub delegates — no compiler, no configure).
+
+The raw `cmake --build --preset …` form below stays valid and is what CI runs; use it when you already have the MSVC environment, or wrap it (§ MSVC toolset env). **From the Bash tool, `build.ps1` is effectively uninvokable** for the same reason `with-msvc.ps1` is (`-ExecutionPolicy Bypass` is auto-denied by the command classifier) — bash agents use `scripts/dev/with-msvc-env.sh` instead.
+
 ## Presets + exe path
 
 `cmake --build --preset ninja-iter-msvc` (iter), `ninja-debug-msvc` (debug), `ninja-publish-msvc` (publish). Clang equivalents: `ninja-iter-clang`, `ninja-debug-clang`. Exe at `build/<preset>/Smatchet.exe` (the CMake target is `SmatchetStandalone` but `OUTPUT_NAME` ships as `Smatchet`).
@@ -36,7 +49,7 @@ Default when the task is NOT an AI/Whisper/MCP feature — faster, fewer moving 
 
 ## MSYS2 retired
 
-**Never propose MSYS2 for building the project** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`); the repo-owned PowerShell scripts (`scripts/dev/local/build_and_run.ps1` / `scripts/dev/local/build_standalone.ps1`) auto-bootstrap the MSVC env via `vswhere`→`vcvars64`, so no Developer Prompt or MSYS2 is required, and a `*-msys2` preset is rejected fast with that hint.
+**Never propose MSYS2 for building the project** — the `*-msys2` presets are **retired** (use `ninja-iter-msvc` or `ninja-iter-clang`), and `build_standalone.ps1` rejects one fast with that hint. No Developer Prompt or MSYS2 is required because the **root `build.ps1`** routes through `scripts/dev/with-msvc.ps1`, which is where the `vswhere`→`vcvars64` bootstrap actually lives (§ Entry point). The inner scripts do **not** bootstrap anything themselves: `build_and_run.ps1` and `build_standalone.ps1` assume the environment is already imported, and `build_standalone.ps1` now throws an actionable "run `.\build.ps1` from the repo root" error when a `*-msvc` / `*-clang` preset is requested without `cl.exe` on PATH, instead of letting CMake die on an opaque `CMAKE_CXX_COMPILER not set`.
 
 ## Dual-target verify
 
@@ -48,7 +61,7 @@ Build from bash through the wrapper — it sources `vcvars64` with the pinned to
 
 `bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
 
-(PowerShell equivalents: `scripts/dev/with-msvc.ps1`, `scripts/dev/local/build_and_run.ps1`.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
+(PowerShell equivalent: `scripts/dev/with-msvc.ps1 <command…>` for an ad-hoc command inside the MSVC env; to just build, use `.\build.ps1`, which wraps it — § Entry point.) Without a wrapper, a bare `cmake --build` from bash fails with `Cannot open include file: 'stdio.h'` (no `INCLUDE`).
 
 > **From the Bash tool, default to the `.sh` wrapper** (`with-msvc-env.sh`): the `.ps1` wrapper needs `-ExecutionPolicy Bypass`, which the harness command classifier auto-denies, so it is effectively uninvokable from Bash (tooling self-improvement `process.md:28`). **Shared-tree edit hygiene**: when a concurrent-session shared-tree warning has appeared this session, a sibling's `git reset`/`checkout` can clobber in-flight edits and desync the Read/Edit tool cache from disk — commit immediately after the first successful edit, and prefer an on-disk patch (`python`/`sed`) + `git diff` verification over trusting tool-cache state.
 

@@ -81,6 +81,8 @@ Missing override keys fall back to the built-in strings, and missing translation
 
 ## Building Smatchet
 
+> **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — clone, install prerequisites, run one command, see the app. This section is the fuller reference.
+
 Smatchet's build system uses CMake and is designed to require **zero manual dependency downloads**. All third-party libraries (ImGui, SQLiteCpp, cpr, nlohmann/json, etc.) are fetched and built automatically via `FetchContent`.
 
 ### Prerequisites
@@ -111,24 +113,38 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 
 ### Build Workflows
 
-**MSVC** — run from a VS Developer Command Prompt:
+**One command, ordinary PowerShell** — from the repo root:
+
+```powershell
+.\build.ps1                 # build + run
+.\build.ps1 -BuildOnly      # build only
+```
+
+`build.ps1` picks a preset for you (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
+`ninja-iter-clang`), prints which one and why, and imports the MSVC environment itself when it isn't
+already active — **no Visual Studio Developer Command Prompt required**. Pass `-Preset` to override:
+
+```powershell
+.\build.ps1 -Preset ninja-debug-msvc -BuildOnly
+```
+
+If no usable Visual Studio install is found it exits `2` with the winget commands to install one.
+
+> **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /
+> `*-msys2` presets are **retired** — use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl).
+> The repo-owned build scripts fail fast with that hint if a `*-msys2` preset is passed.
+
+#### Advanced — raw presets
+
+These are what CI runs, and what you want when the MSVC environment is already active (a VS
+Developer Command Prompt, or inside `scripts/dev/with-msvc.ps1` / `scripts/dev/with-msvc-env.sh`).
+
+**MSVC:**
 
 ```powershell
 cmake --preset ninja-iter-msvc
 cmake --build --preset ninja-iter-msvc
 ```
-
-**One-command build + run** — `build_and_run.ps1` (under `scripts/dev/local/`) drives `cmake --preset`
-+ `cmake --build` (and optionally runs/verifies) in one step. Run it from a VS Developer Command
-Prompt/PowerShell — like the raw presets, the `*-msvc` build needs `cl.exe` on `PATH`:
-
-```powershell
-scripts/dev/local/build_and_run.ps1 -Preset ninja-iter-msvc
-```
-
-> **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /
-> `*-msys2` presets are **retired** — use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl).
-> The repo-owned build scripts fail fast with that hint if a `*-msys2` preset is passed.
 
 **Clang/LLVM** — ensure `clang-cl` is on PATH:
 

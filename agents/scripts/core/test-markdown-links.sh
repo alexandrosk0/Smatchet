@@ -15,8 +15,11 @@
 #   4. Image links (`![alt](path)`) are NOT checked — image assets vary by
 #      build state.
 #   5. Targets: docs/**/*.md, agents/**/*.md, and the top-level repo docs
-#      AGENTS.md, BUILD.md, README.md, AI_POLICY.md, CONTEXT-MAP.md (each if
-#      present). The user-facing guides joined the set in gate-blind-spot-sweep
+#      AGENTS.md, BUILD.md, README.md, AI_POLICY.md, CONTEXT-MAP.md,
+#      QUICKSTART.md (each if present). QUICKSTART.md joined in
+#      dev-onboarding-first-run-quickstart slice 3 — it is the first-run entry
+#      doc and links out to BUILD.md, so a dangling link there is the highest-
+#      cost one in the tree. The user-facing guides joined the set in gate-blind-spot-sweep
 #      Slice 3 — they were the only actively-maintained docs the gate could not
 #      see, and cli.md carried two dangling links the whole time. They are no
 #      longer named individually here: the root-declutter move relocated them to
@@ -258,7 +261,7 @@ def is_active_md(rel_path):
     # move put them under docs/, where the docs/** branch below already covers
     # them — so they need no entry in this tuple.
     if parts[0] in ("AGENTS.md", "BUILD.md", "README.md", "AI_POLICY.md",
-                    "CONTEXT-MAP.md") and len(parts) == 1:
+                    "CONTEXT-MAP.md", "QUICKSTART.md") and len(parts) == 1:
         return True
     if parts[0] not in ("docs", "agents"):
         return False

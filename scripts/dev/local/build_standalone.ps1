@@ -102,84 +102,24 @@ function Test-VisualStudioBuildToolsAvailable {
     return $false
 }
 
-function Use-Msys2Ucrt64Environment {
-    $candidateRoots = New-Object System.Collections.Generic.List[string]
-
-    $prefix = $env:MSYSTEM_PREFIX
-    if (-not [string]::IsNullOrWhiteSpace($prefix)) {
-        $prefix = $prefix.TrimEnd('\', '/')
-        $gccFromPrefix = Join-Path ($prefix -replace '/', '\') "bin\gcc.exe"
-        if (Test-Path -LiteralPath $gccFromPrefix -PathType Leaf) {
-            $root = Split-Path -Parent (Split-Path -Parent $gccFromPrefix)
-            $env:MSYS2_ROOT = $root
-            $env:MSYSTEM_PREFIX = ($prefix -replace '\\', '/')
-            $env:Path = "$($env:MSYSTEM_PREFIX -replace '/', '\')\bin;$root\usr\bin;$env:Path"
-            $env:MSYSTEM = "UCRT64"
-            $env:CHERE_INVOKING = "1"
-            return
-        }
-    }
-
-    $gccCommand = Get-Command "gcc.exe" -ErrorAction SilentlyContinue
-    if ($gccCommand -and $gccCommand.Source -match '^(.*)[\\/]ucrt64[\\/]bin[\\/]gcc\.exe$') {
-        $root = [System.IO.Path]::GetFullPath($Matches[1])
-        $env:MSYS2_ROOT = $root
-        $env:MSYSTEM_PREFIX = (($root.TrimEnd('\', '/')) + "/ucrt64") -replace '\\', '/'
-        $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
-        $env:MSYSTEM = "UCRT64"
-        $env:CHERE_INVOKING = "1"
-        return
-    }
-
-    if (-not [string]::IsNullOrWhiteSpace($env:MSYS2_ROOT)) {
-        $candidateRoots.Add($env:MSYS2_ROOT.TrimEnd('\', '/'))
-    }
-
-    $registryKeys = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
-    foreach ($registryKey in $registryKeys) {
-        $entries = Get-ItemProperty $registryKey -ErrorAction SilentlyContinue |
-            Where-Object {
-                $displayNameProp = $_.PSObject.Properties["DisplayName"]
-                $installLocationProp = $_.PSObject.Properties["InstallLocation"]
-                $displayName = if ($displayNameProp) { $displayNameProp.Value } else { $null }
-                $installLocation = if ($installLocationProp) { $installLocationProp.Value } else { $null }
-                $displayName -eq "MSYS2" -and -not [string]::IsNullOrWhiteSpace($installLocation)
-            }
-        foreach ($entry in $entries) {
-            $candidateRoots.Add($entry.InstallLocation.TrimEnd('\', '/'))
-        }
-    }
-
-    foreach ($root in ($candidateRoots | Select-Object -Unique)) {
-        $gccFromRoot = Join-Path $root "ucrt64\bin\gcc.exe"
-        if (Test-Path -LiteralPath $gccFromRoot -PathType Leaf) {
-            $env:MSYS2_ROOT = $root
-            $env:MSYSTEM_PREFIX = (($root) + "/ucrt64") -replace '\\', '/'
-            $env:Path = "$root\ucrt64\bin;$root\usr\bin;$env:Path"
-            $env:MSYSTEM = "UCRT64"
-            $env:CHERE_INVOKING = "1"
-            return
-        }
-    }
-
-    throw "Unable to locate an MSYS2 UCRT64 toolchain. Set MSYS2_ROOT or MSYSTEM_PREFIX, or launch from a shell where UCRT64 gcc.exe is already on PATH."
-}
-
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 . (Join-Path $PSScriptRoot "..\..\common\SmatchetCMakeCommon.ps1")
 
 Assert-Command -Name "cmake" -InstallHint "Install CMake 3.24+ or run from a shell where CMake is available."
 
 if ($Preset -like "ninja*") {
-    Assert-Command -Name "ninja" -InstallHint "Install Ninja or launch from an MSYS2 UCRT64 shell where Ninja is available."
+    Assert-Command -Name "ninja" -InstallHint "Install Ninja (winget install Ninja-build.Ninja) or run .\build.ps1 from the repo root."
 }
 
 if ($Preset -like "*-msys2") {
     throw "$Preset is retired. Use ninja-iter-msvc for MSVC or ninja-iter-clang for clang-cl. MSYS2 is no longer required or proposed for building Smatchet."
+}
+
+# Fail fast with an actionable message instead of letting CMake die later on an opaque
+# "CMAKE_CXX_COMPILER not set". Both the -msvc and -clang presets need the MSVC environment
+# (clang-cl still resolves the Windows SDK through it), and cl.exe on PATH is its marker.
+if (($Preset -like "*-msvc" -or $Preset -like "*-clang") -and -not (Get-Command "cl.exe" -ErrorAction SilentlyContinue)) {
+    throw "$Preset needs the MSVC environment, but cl.exe is not on PATH. Run .\build.ps1 from the repo root (it imports the environment for you), or wrap this command in scripts\dev\with-msvc.ps1."
 }
 
 Push-Location $repoRoot

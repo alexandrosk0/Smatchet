@@ -1,5 +1,7 @@
 # Build
 
+> First build on this machine? [QUICKSTART.md](QUICKSTART.md) is the 5-minute path; this document is the reference.
+
 Smatchet uses CMake presets with **MSVC** and **Clang/LLVM** as equal-citizen primary toolchains.
 All supported shared presets live in `CMakePresets.json` so Cursor and CMake
 Tools see the same options.
@@ -70,7 +72,23 @@ Exits 0 when every required tool resolves; fails loudly with install hints for a
 
 ## Common Workflows
 
-**MSVC** — run from a VS Developer Command Prompt:
+**The one command** — from the repo root, in an ordinary PowerShell:
+
+```powershell
+.\build.ps1                                      # build + run
+.\build.ps1 -BuildOnly
+.\build.ps1 -Preset ninja-debug-msvc -BuildOnly
+```
+
+`build.ps1` auto-detects a preset (`cl.exe` → `ninja-iter-msvc`, else `clang-cl.exe` →
+`ninja-iter-clang`), prints its choice, and imports the MSVC environment via
+`scripts/dev/with-msvc.ps1` when `cl.exe` isn't already on `PATH` — so no VS Developer Command
+Prompt is needed. Exit `2` means no usable Visual Studio install; it prints the winget commands.
+
+Everything below is the **explicit-preset** form: what CI runs, and what to use when the MSVC
+environment is already active.
+
+**MSVC** — run from a VS Developer Command Prompt (or inside `scripts/dev/with-msvc.ps1`):
 
 ```powershell
 cmake --preset ninja-iter-msvc
@@ -105,7 +123,8 @@ cmake --preset ninja-iter-unreal-msvc
 cmake --build --preset ninja-iter-unreal-msvc
 ```
 
-Wrapper shortcuts are still available:
+`build.ps1` delegates to `scripts/dev/local/build_and_run.ps1`, which can also be called directly
+when the MSVC environment is already active (it does **not** import one itself):
 
 ```powershell
 .\scripts\dev\local\build_and_run.ps1
@@ -114,13 +133,17 @@ Wrapper shortcuts are still available:
 .\scripts\dev\local\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
 ```
 
+`scripts/dev/with-msvc.ps1 <command…>` remains the wrapper for running an **ad-hoc** command inside
+the MSVC environment (`with-msvc.ps1 cl /?`, `with-msvc.ps1 cmake --preset …`); `build.ps1` is the
+shortcut for the build case specifically.
+
 ### MSVC from bash (Git Bash)
 
 **MSYS2 is not required or recommended for building Smatchet.** The `ninja-iter-msys2`
 preset is retired. Use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl) instead.
 
-`build_and_run.ps1` handles `vcvars64` env for PowerShell sessions. The
-bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that picks
+`scripts/dev/with-msvc.ps1` handles the `vcvars64` env for PowerShell sessions (and `build.ps1`
+routes through it). The bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that picks
 the VS install carrying the pinned MSVC toolset (`build.msvc_toolset_pin` in
 `project.config.json`, overridable via `$SMATCHET_VCVARS_VER`) via `vswhere.exe`,
 sources `vcvars64.bat -vcvars_ver=<pin>` through a PowerShell-mediated cmd.exe

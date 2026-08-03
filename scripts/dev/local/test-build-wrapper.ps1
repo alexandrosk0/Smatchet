@@ -1,6 +1,7 @@
 <#.
-    Lightweight smoke tests for build_and_run.ps1 and run_standalone.ps1.
-    No actual CMake build is triggered — tests use fake exes and mock inputs.
+    Lightweight smoke tests for build.ps1, build_and_run.ps1 and run_standalone.ps1.
+    No actual CMake build is triggered — tests use fake exes and mock inputs, so
+    they run on any machine (and in CI) with no compiler installed.
 
     Tests covered:
       1. Passing -Preset ninja-iter-msys2 to build_standalone.ps1 exits with
@@ -8,6 +9,17 @@
       2. run_standalone.ps1 output includes exe path + timestamp for the
          selected exe.
       3. Stale sibling table is formatted correctly (>=2 existing siblings).
+      4. build.ps1 preset auto-detect table — one row per compiler-availability
+         branch (cl.exe / clang-cl.exe only / neither), asserting both the printed
+         preset and the printed routing reason.
+      5. build.ps1 explicit -Preset wins over auto-detect, and -Target / -BuildOnly /
+         -RunOnly / -Verify / -StandaloneArgs all bind by name in the delegate even
+         when routed through with-msvc.ps1's positional splat.
+      6. build.ps1 invokes build_and_run.ps1 directly (no with-msvc.ps1) when
+         cl.exe is already on PATH.
+      7. build.ps1 maps with-msvc.ps1's exit 2 to winget install hints and exits 2.
+      8. build_standalone.ps1 fails fast on a *-msvc preset with no cl.exe, before
+         reaching the cmake configure step.
 
     Exit codes:
       0 — all tests passed
@@ -166,6 +178,230 @@ Invoke-Test "run_standalone: stale sibling comparison table formatted correctly"
             Remove-Item -Recurse -Force -LiteralPath $d -ErrorAction SilentlyContinue
         }
     }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers for the build.ps1 dispatcher tests (4-7).
+#
+# build.ps1 resolves both delegates relative to $PSScriptRoot, so a sandbox holding
+# a copy of build.ps1 plus stub delegates exercises every dispatch branch with no
+# compiler, no CMake configure and no real vcvars import. Which branch is taken is
+# decided purely by what the child process finds on PATH.
+# ──────────────────────────────────────────────────────────────────────────────
+function New-BuildPs1Sandbox {
+    param(
+        [switch]$WithCl,
+        [switch]$WithClangCl
+    )
+    $sandbox = Join-Path $env:TEMP "smatchet-buildps1-$([System.IO.Path]::GetRandomFileName())"
+    New-Item -ItemType Directory -Path (Join-Path $sandbox "scripts\dev\local") -Force | Out-Null
+    New-Item -ItemType Directory -Path (Join-Path $sandbox "bin") -Force | Out-Null
+    Copy-Item -LiteralPath (Join-Path $repoRoot "build.ps1") -Destination (Join-Path $sandbox "build.ps1")
+
+    # Mirrors the real build_and_run.ps1 param block, and echoes what actually bound,
+    # so a forwarding regression shows up as a wrong value rather than a silent pass.
+    $buildAndRunStub = @(
+        'param(',
+        '    [string]$Preset = "",',
+        '    [string]$Target = "",',
+        '    [switch]$BuildOnly,',
+        '    [switch]$RunOnly,',
+        '    [switch]$Verify,',
+        '    [Parameter(ValueFromRemainingArguments = $true)][string[]]$StandaloneArgs = @()',
+        ')',
+        'Write-Host "STUB build_and_run: Preset=$Preset Target=$Target BuildOnly=$BuildOnly RunOnly=$RunOnly Verify=$Verify StandaloneArgs=$StandaloneArgs"',
+        'exit 0'
+    )
+    Set-Content -Encoding ASCII -Path (Join-Path $sandbox "scripts\dev\local\build_and_run.ps1") -Value $buildAndRunStub
+
+    # Mirrors with-msvc.ps1's real signature and its `& $exe @rest` tail (:135-139) --
+    # the positional splat is exactly what build.ps1 has to route around, so the stub
+    # reproduces it instead of shortcutting to a plain echo.
+    $withMsvcStub = @(
+        'param([Parameter(Mandatory = $true, ValueFromRemainingArguments = $true)][string[]]$Command)',
+        'Write-Host "STUB with-msvc: $Command"',
+        'if ($env:SMATCHET_TEST_WITHMSVC_EXIT) { exit [int]$env:SMATCHET_TEST_WITHMSVC_EXIT }',
+        '$exe = $Command[0]',
+        '$rest = @()',
+        'if ($Command.Count -gt 1) { $rest = $Command[1..($Command.Count - 1)] }',
+        '& $exe @rest',
+        'exit $LASTEXITCODE'
+    )
+    Set-Content -Encoding ASCII -Path (Join-Path $sandbox "scripts\dev\with-msvc.ps1") -Value $withMsvcStub
+
+    if ($WithCl)      { Set-Content -Encoding ASCII -Path (Join-Path $sandbox "bin\cl.exe")       -Value "@echo off`r`nexit 0" }
+    if ($WithClangCl) { Set-Content -Encoding ASCII -Path (Join-Path $sandbox "bin\clang-cl.exe") -Value "@echo off`r`nexit 0" }
+    return $sandbox
+}
+
+function Invoke-BuildPs1Sandbox {
+    param(
+        [Parameter(Mandatory = $true)][string]$Sandbox,
+        [string]$Arguments = "",
+        [string]$WithMsvcExit = ""
+    )
+    # powershell.exe lives in System32\WindowsPowerShell\v1.0 (NOT System32 itself), and
+    # build.ps1 shells out to it by name -- so that directory has to be on the child PATH.
+    # None of these supply cl.exe / clang-cl.exe, so the sandbox bin\ directory alone
+    # decides which compiler the dispatcher can see.
+    $childPath = "$Sandbox\bin;$env:SystemRoot\System32\WindowsPowerShell\v1.0;$env:SystemRoot\System32;$env:SystemRoot"
+    # `exit $LASTEXITCODE` at the top level of -Command is what makes build.ps1's own exit
+    # code the child process's exit code; a nested `& script.ps1` exit alone does not.
+    $script = "`$env:PATH = '$childPath'; " +
+              "`$env:SMATCHET_TEST_WITHMSVC_EXIT = '$WithMsvcExit'; " +
+              "& '$Sandbox\build.ps1' $Arguments 2>&1; " +
+              "exit `$LASTEXITCODE"
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    $output = powershell -NoProfile -ExecutionPolicy Bypass -Command $script 2>&1
+    $exitCode = $LASTEXITCODE
+    $ErrorActionPreference = $prevEap
+
+    return [pscustomobject]@{
+        Output   = (($output | ForEach-Object { "$_" }) -join "`n")
+        ExitCode = $exitCode
+    }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 4: build.ps1 preset auto-detect table, one row per compiler-availability branch.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build.ps1: preset auto-detect table (cl / clang-cl / neither)" {
+    $cases = @(
+        @{ Name = "cl.exe present";      Cl = $true;  ClangCl = $false; Preset = "ninja-iter-msvc";  Reason = "cl.exe already on PATH" },
+        @{ Name = "clang-cl only";       Cl = $false; ClangCl = $true;  Preset = "ninja-iter-clang"; Reason = "no cl.exe on PATH" },
+        @{ Name = "no compiler on PATH"; Cl = $false; ClangCl = $false; Preset = "ninja-iter-msvc";  Reason = "no cl.exe on PATH" }
+    )
+    foreach ($case in $cases) {
+        $sandbox = New-BuildPs1Sandbox -WithCl:$case.Cl -WithClangCl:$case.ClangCl
+        try {
+            $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments "-BuildOnly"
+            if ($Verbose) { Write-Host "  [$($case.Name)] exit=$($run.ExitCode)`n$($run.Output)" }
+
+            if ($run.Output -notmatch ("preset {0} \(auto-detected\)" -f [regex]::Escape($case.Preset))) {
+                throw "[$($case.Name)] expected 'preset $($case.Preset) (auto-detected)'. Got:`n$($run.Output)"
+            }
+            if ($run.Output -notmatch [regex]::Escape($case.Reason)) {
+                throw "[$($case.Name)] expected routing reason '$($case.Reason)'. Got:`n$($run.Output)"
+            }
+            if ($run.Output -notmatch ("Preset={0} " -f [regex]::Escape($case.Preset))) {
+                throw "[$($case.Name)] expected the preset to reach build_and_run.ps1 named-bound. Got:`n$($run.Output)"
+            }
+        }
+        finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
+    }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 5: explicit -Preset wins over auto-detect, and every switch forwards intact.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build.ps1: explicit -Preset overrides auto-detect and forwards switches" {
+    # No cl.exe, so this also proves named arguments survive the with-msvc splat.
+    $sandbox = New-BuildPs1Sandbox
+    try {
+        $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments "-Preset ninja-debug-msvc -BuildOnly -StandaloneArgs --version"
+        if ($Verbose) { Write-Host "  exit=$($run.ExitCode)`n$($run.Output)" }
+
+        if ($run.Output -notmatch "preset ninja-debug-msvc \(explicit -Preset overrides auto-detect\)") {
+            throw "Expected the explicit-preset reason line. Got:`n$($run.Output)"
+        }
+        if ($run.Output -match "auto-detected") {
+            throw "Explicit -Preset must not report auto-detection. Got:`n$($run.Output)"
+        }
+        if ($run.Output -notmatch "Preset=ninja-debug-msvc Target=SmatchetStandalone BuildOnly=True RunOnly=False Verify=False StandaloneArgs=--version") {
+            throw "Expected every forwarded argument to bind by name. Got:`n$($run.Output)"
+        }
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 6: with cl.exe already on PATH, build_and_run.ps1 is invoked directly.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build.ps1: cl.exe on PATH bypasses with-msvc.ps1" {
+    $sandbox = New-BuildPs1Sandbox -WithCl
+    try {
+        $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments "-BuildOnly"
+        if ($Verbose) { Write-Host "  exit=$($run.ExitCode)`n$($run.Output)" }
+
+        if ($run.Output -notmatch "STUB build_and_run:") {
+            throw "Expected build_and_run.ps1 to be invoked. Got:`n$($run.Output)"
+        }
+        if ($run.Output -match "STUB with-msvc:") {
+            throw "with-msvc.ps1 must be skipped when cl.exe is already on PATH. Got:`n$($run.Output)"
+        }
+        if ($run.ExitCode -ne 0) {
+            throw "Expected exit 0 on the direct path, got $($run.ExitCode)."
+        }
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 7: with-msvc.ps1 exit 2 (no usable VS install) surfaces winget hints.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build.ps1: with-msvc exit 2 surfaces winget hints and propagates exit 2" {
+    $sandbox = New-BuildPs1Sandbox
+    try {
+        $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments "-BuildOnly" -WithMsvcExit "2"
+        if ($Verbose) { Write-Host "  exit=$($run.ExitCode)`n$($run.Output)" }
+
+        if ($run.ExitCode -ne 2) {
+            throw "Expected with-msvc's exit 2 to propagate, got $($run.ExitCode). Output:`n$($run.Output)"
+        }
+        if ($run.Output -notmatch "no usable MSVC toolchain") {
+            throw "Expected the no-toolchain diagnosis. Got:`n$($run.Output)"
+        }
+        if ($run.Output -notmatch [regex]::Escape("winget install Microsoft.VisualStudio.2022.BuildTools")) {
+            throw "Expected the Build Tools winget hint. Got:`n$($run.Output)"
+        }
+        if ($run.Output -notmatch [regex]::Escape("winget install LLVM.LLVM")) {
+            throw "Expected the LLVM winget hint. Got:`n$($run.Output)"
+        }
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 8: build_standalone.ps1 fails fast on an MSVC preset with no cl.exe,
+#         before reaching the cmake configure step.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build_standalone: *-msvc preset without cl.exe fails fast before cmake" {
+    # cmake + ninja must resolve so their Assert-Command checks pass and the new
+    # pre-flight is what actually fires; neither fake is ever executed.
+    $fakeBin = Join-Path $env:TEMP "smatchet-fakebin-$([System.IO.Path]::GetRandomFileName())"
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    foreach ($tool in @("cmake.exe", "ninja.exe")) {
+        Set-Content -Encoding ASCII -Path (Join-Path $fakeBin $tool) -Value "@echo off`r`nexit 0"
+    }
+
+    try {
+        $buildScript = Join-Path $PSScriptDir "build_standalone.ps1"
+        $childPath = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
+        $prevEap = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        $output = powershell -NoProfile -ExecutionPolicy Bypass `
+            -Command "`$env:PATH = '$childPath'; & '$buildScript' -Preset ninja-iter-msvc 2>&1" 2>&1
+        $exitCode = $LASTEXITCODE
+        $ErrorActionPreference = $prevEap
+        $combined = ($output | ForEach-Object { "$_" }) -join "`n"
+        if ($Verbose) { Write-Host "  exit=$exitCode  output=$combined" }
+
+        if ($exitCode -eq 0) {
+            throw "Expected non-zero exit when cl.exe is missing, got 0. Output:`n$combined"
+        }
+        if ($combined -notmatch "cl\.exe is not on PATH") {
+            throw "Expected the missing-cl.exe diagnosis. Got:`n$combined"
+        }
+        if ($combined -notmatch [regex]::Escape("build.ps1")) {
+            throw "Expected the message to name .\build.ps1. Got:`n$combined"
+        }
+        if ($combined -match "cmake --preset") {
+            throw "Pre-flight must fire before the cmake configure step. Got:`n$combined"
+        }
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $fakeBin -ErrorAction SilentlyContinue }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
