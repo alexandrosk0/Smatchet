@@ -2,6 +2,7 @@
 #include "LuaConsolePlugin_detail.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+// SMATCHET_DEVIATION(rule=duplication; reason=the prologue below (project headers + SmatchetLocalizedImGui #define + std-library include block) is the shared preamble every panel/plugin TU carries — SmatchetAiAssistantUi / SmatchetBulkTicketsUi / SmatchetOfflineQueueUi / SmatchetPreferencesUi*; adding <future> for the Issue #1925 async script load lengthened that already-common run past the clone threshold rather than introducing new copy-paste, and there is no shared prologue header to factor into without worse coupling (the DRY gate doc endorses an exemption over cross-context abstraction); owner=orchestrator; revisit=when a shared UI-TU prologue header lands)
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
@@ -17,6 +18,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <future>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -101,9 +103,13 @@ void RepairLuaWindowLayout(UiDrawSession& d) {
 
 void ReloadSmatchetHooksSetupScript(AppController& app) { app.RunLuaSetupScript("SmatchetHooks.lua"); }
 
+// Pillar 2 (Issue #1925): runs on the std::async worker owned by LuaConsolePlugin::scriptLoadFuture_,
+// never on the UI thread. Scripts are small (typically < 100 KB) and the read is sub-ms typical, but
+// the LATENCY of a single open/read is unbounded on a network share or an antivirus-filtered path —
+// which is the reason it had to leave the render thread regardless of size.
 bool ReadFileAll(const std::string& path, std::string& out) {
-    // TODO(pillar2): bug-2026-05-20-ui-sync-reads — UI-thread Lua script load on editor open.
-    // Small scripts (typically < 100 KB), sub-ms typical. Lowest-priority of the three TODO sites.
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~1ms — script read on the std::async worker owned by
+                              // LuaConsolePlugin::scriptLoadFuture_; no frame budget applies.
     std::ifstream f(path, std::ios::binary);
     if (!f) {
         return false;
@@ -248,7 +254,23 @@ void LuaConsolePlugin::SyncSelectionToList() {
     selectedScriptName_.clear();
 }
 
-bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr) {
+void LuaConsolePlugin::KickScriptLoad(const AppController& app, const std::string& name) {
+    // ResolveLuaScriptPath is a pure string operation (traversal rejection + directory join) —
+    // no filesystem hit — so resolving on the UI thread before the launch is Pillar-2 safe.
+    const std::string path = app.ResolveLuaScriptPath(name);
+    if (path.empty()) {
+        return;
+    }
+    scriptLoadInFlight_ = true;
+    scriptLoadFuture_ = std::async(std::launch::async, [name, path]() {
+        ScriptLoadResult result;
+        result.name = name;
+        result.ok = ReadFileAll(path, result.content);
+        return result;
+    });
+}
+
+bool LuaConsolePlugin::StartLoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr) {
     if (selectedScriptName_.empty()) {
         outErr = "No script selected.";
         return false;
@@ -258,21 +280,58 @@ bool LuaConsolePlugin::LoadSelectedScriptIntoEditor(const AppController& app, st
         outErr = "Invalid script path.";
         return false;
     }
-    std::string content;
-    if (!ReadFileAll(path, content)) {
-        content = "-- New file\n";
-    }
-    luaEditor_.SetText(content);
+    // Blank the editor for the in-flight window and re-baseline the snapshot with it. Leaving the
+    // previous file's text visible would be worse than a blank pane (it looks like the new script's
+    // content), and leaving diskSnapshot_ stale would make the dirty check fire a spurious
+    // unsaved-switch modal against a buffer that is about to be replaced anyway.
+    luaEditor_.SetText(std::string());
     // SetText() strips '\r'; compare dirty state against editor text, not raw file bytes.
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
+    if (scriptLoadInFlight_) {
+        // Do NOT re-assign scriptLoadFuture_ here — for a std::async future operator= blocks until
+        // the old task completes. Queue the name; PollScriptLoad re-kicks once the stale read lands.
+        queuedLoadName_ = selectedScriptName_;
+        return true;
+    }
+    KickScriptLoad(app, selectedScriptName_);
     (void)outErr;
     return true;
+}
+
+void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
+    if (!scriptLoadInFlight_ || !scriptLoadFuture_.valid()) {
+        return;
+    }
+    if (scriptLoadFuture_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+        return;
+    }
+    const ScriptLoadResult result = scriptLoadFuture_.get();
+    scriptLoadInFlight_ = false;
+    if (!queuedLoadName_.empty()) {
+        const std::string next = queuedLoadName_;
+        queuedLoadName_.clear();
+        KickScriptLoad(app, next); // selection moved mid-read — this body is stale
+        return;
+    }
+    if (result.name != selectedScriptName_) {
+        return; // selection cleared or retargeted without a queued kick
+    }
+    luaEditor_.SetText(result.ok ? result.content : std::string("-- New file\n"));
+    diskSnapshot_ = luaEditor_.GetText();
+    ClearErrorMarkers();
 }
 
 bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& outErr) {
     if (selectedScriptName_.empty()) {
         outErr = "No script selected.";
+        return false;
+    }
+    if (scriptLoadInFlight_) {
+        // The editor is blanked while the async load is in flight (Issue #1925) — writing it now
+        // would truncate the file on disk. Every Run path saves first, so this one guard covers
+        // Save, Run, and the unsaved-switch modal.
+        outErr = "Still loading the script — try again in a moment.";
         return false;
     }
     // Target the tracked script by identity, never by list index: RefreshScriptList
@@ -355,7 +414,8 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
     selectedScriptName_ = "Automation.lua";
     SyncSelectionToList();
     std::string err;
-    (void)LoadSelectedScriptIntoEditor(app, err);
+    // Kick only — the read lands on a later frame via PollScriptLoad at the top of OnDraw.
+    (void)StartLoadSelectedScriptIntoEditor(app, err);
     {
         const nlohmann::json j = ConfigManager::LoadMergedConfigJson();
         const float loadedHeight = static_cast<float>(j.value("lua_scripts_panel_height_px", 0.0));
@@ -557,7 +617,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
                     } else {
                         selectedScriptName_ = entry;
                         std::string e;
-                        (void)LoadSelectedScriptIntoEditor(app, e);
+                        (void)StartLoadSelectedScriptIntoEditor(app, e);
                     }
                 }
             }
@@ -573,7 +633,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
             std::string e;
             if (SaveCurrentScript(app, e)) {
                 selectedScriptName_ = pendingScriptName_;
-                (void)LoadSelectedScriptIntoEditor(app, e);
+                (void)StartLoadSelectedScriptIntoEditor(app, e);
             } else {
                 g_ui.gridEditError = e;
             }
@@ -583,7 +643,7 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
         if (ImGui::Button("Discard", ImVec2(120, 0))) {
             selectedScriptName_ = pendingScriptName_;
             std::string e;
-            (void)LoadSelectedScriptIntoEditor(app, e);
+            (void)StartLoadSelectedScriptIntoEditor(app, e);
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
@@ -606,8 +666,13 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
     ImGui::SameLine();
     if (ImGui::Button("Reload from disk", ImVec2(130, 0))) {
         std::string e;
-        (void)LoadSelectedScriptIntoEditor(app, e);
+        (void)StartLoadSelectedScriptIntoEditor(app, e);
         g_ui.gridEditSuccess = "Reloaded " + curName;
+    }
+    if (scriptLoadInFlight_) {
+        // Visible cue for the off-thread read (Pillar 2 cue contract — see Source/Core/src/Ui/AGENTS.md).
+        ImGui::SameLine();
+        ImGui::TextDisabled("Loading...");
     }
 
     DrawRunButtonRow(ctx, curName);
@@ -726,6 +791,10 @@ void LuaConsolePlugin::DrawSplitterAndConsole(DrawCtx& ctx) {
 }
 
 void LuaConsolePlugin::OnDraw(AppController& app) {
+    // Ahead of the window-hidden early-out below: a read kicked from OnEarlyInit (or while the
+    // Scripting window was closed) must still be able to land.
+    PollScriptLoad(app);
+
     // Auto-open + focus the Scripting window when the background automation worker signals
     // a Lua error (set via scriptingWindowOpenRequested_ in AppController).
     if (app.ConsumeScriptingWindowRequest()) {

@@ -3,6 +3,7 @@
 #include "IPlugin.h"
 #include "LuaConsole.h"
 #include "TextEditor.h"
+#include <future>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,24 @@ class LuaConsolePlugin : public IPlugin {
     std::string pendingScriptName_;
     std::string diskSnapshot_;
 
+    /// Payload of one off-thread script read (Pillar 2, Issue #1925). `name` is echoed back so
+    /// the poll can drop a result whose selection moved while the read was in flight.
+    struct ScriptLoadResult {
+        std::string name;
+        std::string content;
+        /// false = the file could not be opened; the editor gets the "-- New file" stub, matching
+        /// the behaviour of the old synchronous ReadFileAll failure path.
+        bool ok = false;
+    };
+    std::future<ScriptLoadResult> scriptLoadFuture_;
+    /// A script read is running on the std::async worker. Also gates SaveCurrentScript: the editor
+    /// is blank during the in-flight window, so a save would truncate the file on disk.
+    bool scriptLoadInFlight_ = false;
+    /// Selection made WHILE a read was in flight. Re-kicked from PollScriptLoad rather than
+    /// re-assigning `scriptLoadFuture_` inline — move-assigning over a live std::async future
+    /// blocks the render thread until the old task's shared state is released.
+    std::string queuedLoadName_;
+
     /// Clamped height for `BeginChild` (script pane) this frame.
     float luaAutomationScriptPaneHeightPx_ = 0.f;
     /// User/persisted intent; not overwritten when early-frame `maxScriptH` is tiny (docked layout settling).
@@ -54,7 +73,16 @@ class LuaConsolePlugin : public IPlugin {
     /// nothing has been selected yet; clears the selection when a tracked file
     /// vanished (so a save cannot fall through to an unrelated file -- DR11).
     void SyncSelectionToList();
-    bool LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
+    /// Blank the editor and kick the selected script's read onto a worker (Pillar 2: no file I/O
+    /// on the render thread). Returns false only for the synchronous validation failures (no
+    /// selection / unresolvable path); a read error surfaces later via PollScriptLoad.
+    bool StartLoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
+    /// Launch the worker for `name`. Assumes no read is already in flight.
+    void KickScriptLoad(const AppController& app, const std::string& name);
+    /// Per-frame non-blocking poll of `scriptLoadFuture_`; applies the text once ready. Called at
+    /// the top of OnDraw, before the window-hidden early-out, so a read kicked from OnEarlyInit
+    /// (or while the window was closed) still lands.
+    void PollScriptLoad(const AppController& app);
     bool SaveCurrentScript(const AppController& app, std::string& outErr);
     void ApplyErrorMarkersFromMessage(const std::string& errMsg);
     void ClearErrorMarkers();

@@ -79,10 +79,12 @@ static ParsedImageInfo ParseImageDimensions(const std::string& path, const std::
     // segments falls through to the existing "could not parse" degradation — rare, and the S5
     // decoder still reads the file in full off the UI thread).
     constexpr std::size_t kMaxHeaderBytes = 64u * 1024u;
-    // Still synchronous on the UI thread (dimensions feed layout this frame) but now bounded to
-    // <=64 KB (sub-ms), down from a whole-file slurp.
-    // TODO(pillar2): memory-budget-and-lifetime-hardening — source dimensions from the S5 async
-    // decode so even this bounded header read leaves the UI thread.
+    // Pillar 2 (Issue #1925): runs on the joined worker pool via MaybeKickDimensionParse, never on
+    // the UI thread. The 64 KB cap bounds the BYTES; nothing bounds the LATENCY of a single
+    // open/read on a network share or an antivirus-filtered path, which is why a "sub-ms typical"
+    // read still had to leave the render thread.
+    /* PILLAR2_WORKER_ONLY */ // est-latency: ~1ms — 64 KB header read on the joined pool via
+                              // MaybeKickDimensionParse; no frame budget applies.
     std::ifstream ifs(path.c_str(), std::ios::binary);
     if (!ifs.is_open()) {
         result.Error = "Failed to open downloaded attachment file.";
@@ -582,6 +584,55 @@ static ImVec2 FitImageInsideSquare(int imageWidth, int imageHeight, float maxEdg
     return ImVec2(w, h);
 }
 
+// Pillar 2 (Issue #1925): run the bounded image-header read on the joined pool instead of inline
+// in the download-completion drain. Mirrors MaybeKickThumbnailDecode below — the worker captures
+// path + Url by value and the post-back re-finds the entry by Url in the process-global g_ui, so
+// a vector resize/reorder between kick and completion can never dangle (Pillar 3).
+// DimensionParseInFlight dedupes per-entry; DimensionParseDone latches the one-shot per LocalPath.
+// Unlike the thumbnail decode this is deliberately NOT rate-limited: a 64 KB header read is cheap
+// and its result gates both the card layout and the decode kick. Called per-frame from the
+// card-draw loop, so nothing is silently dropped.
+static void MaybeKickDimensionParse(AppController& app, AttachmentWindowEntry& entry) {
+    if (entry.DimensionParseInFlight || entry.DimensionParseDone || !entry.PreviewError.empty() || entry.Url.empty() ||
+        entry.LocalPath.empty() || !IsSupportedImageMime(entry.MimeType)) {
+        return;
+    }
+    const std::string localPath = entry.LocalPath;
+    const std::string urlKey = entry.Url;
+    const std::string mimeType = entry.MimeType;
+    entry.DimensionParseInFlight = true;
+    app.LaunchBackgroundTask([&app, localPath, urlKey, mimeType]() {
+        const ParsedImageInfo info = ParseImageDimensions(localPath, mimeType);
+        app.PostToMainThread([urlKey, localPath, info]() {
+            AttachmentWindowEntry* target = nullptr;
+            for (AttachmentWindowEntry& e : g_ui.attachmentWindowEntries) {
+                if (e.Url == urlKey) {
+                    target = &e;
+                    break;
+                }
+            }
+            if (target == nullptr) {
+                return; // entry gone (window reloaded) — nothing to apply
+            }
+            target->DimensionParseInFlight = false;
+            if (target->LocalPath != localPath) {
+                // Re-downloaded to a different path while the read was in flight — drop this
+                // result and leave DimensionParseDone false so the next frame re-kicks.
+                return;
+            }
+            target->DimensionParseDone = true;
+            if (info.Ok) {
+                target->ImageWidth = info.Width;
+                target->ImageHeight = info.Height;
+            } else {
+                target->PreviewError = info.Error;
+                LOG_WARN("SmatchetUI: attachment dimension parse failed url=%s err=%s", urlKey.c_str(),
+                         info.Error.c_str());
+            }
+        });
+    });
+}
+
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
 static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
     if (!entry.ThumbnailTextureData) {
@@ -609,9 +660,15 @@ static void DrawAttachmentThumbnailTooltip(const AttachmentWindowEntry& entry) {
 // resize/reorder between decode and upload can never dangle a pointer (Pillar 3). The
 // ThumbnailDecodeInFlight flag dedupes per-entry; a rate-limited skip just retries next frame
 // (no silent drop). Called per-frame from the card-draw loop.
+//
+// Waits on DimensionParseDone (Issue #1925). The dimension parse used to run synchronously in the
+// update-drain BEFORE this kick was ever reachable, so a parse failure stamped PreviewError and
+// suppressed the decode. Now that the parse is async, gating here reproduces that ordering exactly
+// — without it a decode could start (and succeed) against a file the parse is about to reject.
 static void MaybeKickThumbnailDecode(AppController& app, AttachmentWindowEntry& entry) {
     if (entry.ThumbnailDecodeInFlight || entry.ThumbnailTextureData != nullptr || !entry.PreviewError.empty() ||
-        entry.Url.empty() || entry.LocalPath.empty() || !IsSupportedImageMime(entry.MimeType)) {
+        entry.Url.empty() || entry.LocalPath.empty() || !entry.DimensionParseDone ||
+        !IsSupportedImageMime(entry.MimeType)) {
         return;
     }
     std::atomic<std::size_t>& pending = smatchet::memtel::PendingThumbnailUploads();
@@ -695,9 +752,10 @@ static void IngestAttachmentCollection(AppController& app, UiDrawSession& d,
     }
 }
 
-// Apply a drained batch of download-completion updates to the matching window entries
-// (parsing image dimensions on the UI thread for the matched entry). Non-ImGui state
-// mutation only — extracted verbatim from drawAttachmentPreviewWindow's update-drain phase.
+// Apply a drained batch of download-completion updates to the matching window entries. Records
+// the new local path and resets the per-path derived state (dimensions, parse latches); the
+// dimension parse itself is kicked off-thread from the card-draw loop. Non-ImGui state mutation
+// only — extracted from drawAttachmentPreviewWindow's update-drain phase.
 static void ApplyAttachmentPreviewUpdates(UiDrawSession& d, const std::deque<AttachmentPreviewUpdate>& previewUpdates) {
     for (const AttachmentPreviewUpdate& nextPreviewUpdate : previewUpdates) {
         int targetIndex = -1;
@@ -729,15 +787,10 @@ static void ApplyAttachmentPreviewUpdates(UiDrawSession& d, const std::deque<Att
             entry.ImageWidth = 0;
             entry.ImageHeight = 0;
             entry.PreviewRequestIssued = true;
-            if (IsSupportedImageMime(entry.MimeType)) {
-                const ParsedImageInfo imageInfo = ParseImageDimensions(entry.LocalPath, entry.MimeType);
-                if (imageInfo.Ok) {
-                    entry.ImageWidth = imageInfo.Width;
-                    entry.ImageHeight = imageInfo.Height;
-                } else {
-                    entry.PreviewError = imageInfo.Error;
-                }
-            }
+            // Issue #1925: a fresh LocalPath invalidates the parse latches so the per-frame
+            // MaybeKickDimensionParse() in the card-draw loop re-reads the header off-thread.
+            // Kicked there rather than here for the same reason as the decode below.
+            entry.DimensionParseDone = false;
             // S5: the off-thread thumbnail decode is kicked per-frame by MaybeKickThumbnailDecode()
             // in the card-draw loop below — not here — so a rate-limited (saturated) skip retries
             // on a later frame instead of this one-shot update dropping it silently.
@@ -851,7 +904,10 @@ const char* AttachmentCardLabelText(smatchet::attach::CardLabel label) {
 void DrawAttachmentCard(AppController& app, UiDrawSession& d, AttachmentWindowEntry& entry, int i,
                         const AttachmentThumbnailSupport& thumbnailSupport, float cardWidth, float cardHeight,
                         float tileSize) {
-    (void)app; // only read on the SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS decode-kick path below.
+    // Issue #1925: per-frame off-thread header-parse kick, dedup'd via the entry's
+    // DimensionParseInFlight/Done latches. Deliberately outside the bitmap-thumbnail guard —
+    // dimensions feed the card + tooltip layout on every target, thumbnails or not.
+    MaybeKickDimensionParse(app, entry);
 #if defined(SMATCHET_ENABLE_BITMAP_ATTACHMENT_THUMBNAILS)
     // S5: per-frame decode kick — retries a rate-limited skip, dedup'd via the
     // entry's ThumbnailDecodeInFlight flag.

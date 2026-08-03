@@ -86,6 +86,14 @@ struct AttachmentWindowEntry {
     // same entry while its decode runs, and lets a rate-limited (saturated) skip retry on a later
     // frame instead of the thumbnail silently never loading.
     bool ThumbnailDecodeInFlight = false;
+    /// Pillar 2 (Issue #1925): an off-thread image-header parse is in flight for `LocalPath`.
+    /// Set when the parse is kicked, cleared by the dispatcher post-back. Dedupes the per-frame
+    /// kick the same way ThumbnailDecodeInFlight does for the decode.
+    bool DimensionParseInFlight = false;
+    /// A dimension parse for the current `LocalPath` has landed (success OR failure). Gates the
+    /// thumbnail decode kick so a parse failure still suppresses the decode, preserving the
+    /// ordering the old synchronous parse-then-kick had. Reset whenever `LocalPath` changes.
+    bool DimensionParseDone = false;
 };
 
 struct PendingFieldEdit {
