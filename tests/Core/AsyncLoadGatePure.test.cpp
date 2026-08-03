@@ -10,6 +10,11 @@
 //     which BLOCKS the render thread — the exact freeze this Issue removed;
 //   * a kick that never fires leaves a stale body on screen forever;
 //   * a stale result applied unconditionally shows file A's contents under file B's name.
+//
+// The fixture keys are deliberately NOT spelled as `docs/plans/...` paths even though the
+// viewer's real keys are: test-plan-ref-integrity.sh scans the tree for plan references and
+// flags such string literals as dangling plan docs. The predicates are path-agnostic, so the
+// names carry no meaning beyond being distinct.
 
 #include "AsyncLoadGatePure.h"
 
@@ -23,22 +28,22 @@ using smatchet::async_load::ShouldKickOnce;
 
 TEST_CASE("ShouldKickLoad kicks only when the selection has moved off the cached payload") {
     // Fresh selection, nothing cached — the load must start.
-    CHECK(ShouldKickLoad(false, "docs/plans/active/a.md", ""));
+    CHECK(ShouldKickLoad(false, "plan-alpha.md", ""));
     // Selection moved to a different doc — reload.
-    CHECK(ShouldKickLoad(false, "docs/plans/active/b.md", "docs/plans/active/a.md"));
+    CHECK(ShouldKickLoad(false, "plan-beta.md", "plan-alpha.md"));
     // Already showing exactly this doc — no re-read, or the viewer would loop on every
     // frame re-reading the same file off disk.
-    CHECK_FALSE(ShouldKickLoad(false, "docs/plans/active/a.md", "docs/plans/active/a.md"));
+    CHECK_FALSE(ShouldKickLoad(false, "plan-alpha.md", "plan-alpha.md"));
     // Nothing selected (index empty, or a rescan cleared the selection) — nothing to read.
-    CHECK_FALSE(ShouldKickLoad(false, "", "docs/plans/active/a.md"));
+    CHECK_FALSE(ShouldKickLoad(false, "", "plan-alpha.md"));
     CHECK_FALSE(ShouldKickLoad(false, "", ""));
 }
 
 TEST_CASE("ShouldKickLoad never overlaps an in-flight read") {
     // The in-flight term dominates every other input: re-assigning the future slot while a
     // std::async task is live blocks the caller until that task completes.
-    CHECK_FALSE(ShouldKickLoad(true, "docs/plans/active/b.md", "docs/plans/active/a.md"));
-    CHECK_FALSE(ShouldKickLoad(true, "docs/plans/active/a.md", ""));
+    CHECK_FALSE(ShouldKickLoad(true, "plan-beta.md", "plan-alpha.md"));
+    CHECK_FALSE(ShouldKickLoad(true, "plan-alpha.md", ""));
     CHECK_FALSE(ShouldKickLoad(true, "", ""));
 }
 
@@ -46,7 +51,7 @@ TEST_CASE("ShouldKickLoad is case- and whitespace-exact on the key") {
     // The key is compared verbatim — no path normalisation happens here, so two spellings
     // of the same file are two different keys and both would be read. Pinned so a future
     // "helpful" normalisation in the callers is a deliberate change, not a silent one.
-    CHECK(ShouldKickLoad(false, "Docs/Plans/A.md", "docs/plans/a.md"));
+    CHECK(ShouldKickLoad(false, "Plan-Alpha.md", "plan-alpha.md"));
     CHECK(ShouldKickLoad(false, "a.md ", "a.md"));
 }
 
@@ -82,12 +87,12 @@ TEST_CASE("ShouldKickOnce blocks whenever any single suppressing term is set") {
 }
 
 TEST_CASE("ResultIsCurrent applies a landed result only against the live key") {
-    CHECK(ResultIsCurrent("docs/plans/active/a.md", "docs/plans/active/a.md"));
+    CHECK(ResultIsCurrent("plan-alpha.md", "plan-alpha.md"));
     // Selection moved while the read was in flight — the body describes a file the UI is
     // no longer showing.
-    CHECK_FALSE(ResultIsCurrent("docs/plans/active/a.md", "docs/plans/active/b.md"));
+    CHECK_FALSE(ResultIsCurrent("plan-alpha.md", "plan-beta.md"));
     // Selection cleared mid-read (index rescan) — nothing to apply the payload to.
-    CHECK_FALSE(ResultIsCurrent("docs/plans/active/a.md", ""));
+    CHECK_FALSE(ResultIsCurrent("plan-alpha.md", ""));
 }
 
 TEST_CASE("ResultIsCurrent treats an empty result key as never current") {
@@ -95,21 +100,21 @@ TEST_CASE("ResultIsCurrent treats an empty result key as never current") {
     // defaulted/corrupted payload. Matching it against an empty live key would apply that
     // payload to "nothing selected".
     CHECK_FALSE(ResultIsCurrent("", ""));
-    CHECK_FALSE(ResultIsCurrent("", "docs/plans/active/a.md"));
+    CHECK_FALSE(ResultIsCurrent("", "plan-alpha.md"));
 }
 
 TEST_CASE("kick and apply gates agree on the same key") {
     // Round-trip of the production sequence: kick for `target`, worker echoes `target`
     // back, nothing moved in between -> the result applies, and once `loadedKey` is the
     // applied key the gate stops re-kicking.
-    const std::string target = "docs/plans/active/a.md";
+    const std::string target = "plan-alpha.md";
     REQUIRE(ShouldKickLoad(false, target, ""));
     CHECK(ResultIsCurrent(target, target));
     CHECK_FALSE(ShouldKickLoad(false, target, target));
 
     // And the losing race: the selection moved to `next` while `target` was in flight.
     // The landed `target` result is discarded, and the gate then kicks for `next`.
-    const std::string next = "docs/plans/active/b.md";
+    const std::string next = "plan-beta.md";
     CHECK_FALSE(ResultIsCurrent(target, next));
     CHECK(ShouldKickLoad(false, next, ""));
 }
