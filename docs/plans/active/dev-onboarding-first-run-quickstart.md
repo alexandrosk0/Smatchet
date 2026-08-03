@@ -2,7 +2,7 @@
 
 > **Slug**: `dev-onboarding-first-run-quickstart` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — three independently shippable slices. Slice 3 (QUICKSTART) must land at-or-after slice 1 so it cites the real entry point; slice 2 is independent of both.
+> **Status**: `active` — slices 1 + 3 shipped in PR-1 (`87169939`); slice 2 (tracker setup on the Preferences tab) is the remaining PR-2. Slice 3 (QUICKSTART) landed with slice 1 so it cites the real entry point; slice 2 is independent of both.
 
 ## Context
 
@@ -180,11 +180,28 @@ PR-1 bundles slices 1 + 3 — one logical feature (the build entry point and the
 ## Implementation log
 *(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
 
+- `87169939` · **PR-1 (slices 1 + 3)** — new root [`build.ps1`](../../../build.ps1) (60 lines, zero build logic: preset auto-detect + printed reason + `with-msvc.ps1` routing + exit-2 winget hints); [`build_standalone.ps1`](../../../scripts/dev/local/build_standalone.ps1) drops the dead `Use-Msys2Ucrt64Environment` and gains the `*-msvc`/`*-clang`-without-`cl.exe` fail-fast; [`test-build-wrapper.ps1`](../../../scripts/dev/local/test-build-wrapper.ps1) gains 5 sandbox cases (8 passed / 0 failed); new [`QUICKSTART.md`](../../../QUICKSTART.md); [`README.md`](../../../README.md) + [`BUILD.md`](../../../BUILD.md) lead with `.\build.ps1` and demote raw presets to "Advanced"; [`docs/agent-rules/build.md`](../../agent-rules/build.md) gains § Entry point and loses the false vswhere→vcvars64 auto-bootstrap claim (the plan's `build.md:39` item); [`kill-powershell-minimize-toolchain.md`](kill-powershell-minimize-toolchain.md) Phase 1 gains the `build.ps1` port row; [`test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh) root-doc scope gains `QUICKSTART.md`.
+- *(slice 2 / PR-2 — pending)*
+
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
 
+- **`build.ps1` routes BOTH dispatch branches through native `powershell.exe -File`**, not just the no-`cl.exe` one. § Files to modify item 1 specifies invoking `build_and_run.ps1` **directly** on the `cl.exe`-present branch; the direct `& $buildAndRun @forward` form was implemented, and slice-1 test 4 caught it binding **positionally** (`Preset=-Preset Target=ninja-iter-msvc`) — a PowerShell **array** splat binds by position, only a hashtable binds by name. A native exe has no parameter binder, so `-File` binds correctly; one shared `$child` array serves both branches and keeps the file at the ≤60-line cap. The plan's intent ("directly" = do not import the MSVC env redundantly) is preserved — the cl-present branch still never touches `with-msvc.ps1`, asserted by test 6.
+- **`build_standalone.ps1`'s `Assert-Command ninja` InstallHint rewritten** (unplanned, +1 line): it now names `.\build.ps1` alongside `winget install Ninja-build.Ninja`. Not in § Files to modify item 2 (which scoped the file to the `Use-Msys2Ucrt64Environment` delete + the `cl.exe` pre-flight); done because the adjacent pre-flight message names the new entry point and a ninja-missing error two lines away that does not was incoherent.
+- **The kill-PowerShell port row landed in that plan's Phase 1, not Phase 2.** § Risks says "add `build.ps1` to the kill-PowerShell plan's Phase-2 port list"; Phase 2 there covers `scripts/publish/*` release scripts, while `build_and_run.ps1` — `build.ps1`'s delegate, which must port with it — is a **Phase 1** dev-wrapper. Placed with its delegate.
+- **`QUICKSTART.md` added to the markdown-link gate's root-doc scope** (unplanned, 2-line edit to `test-markdown-links.sh` + its header contract). The gate's `is_active_md()` allow-lists root docs by name, so the new file was invisible to it (scan reported 4 files, not 5) — an onboarding doc whose whole job is to link out was the worst possible blind spot to leave.
+
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+**PR-1 (slices 1 + 3):**
+
+- **PASSED** — `powershell -ExecutionPolicy Bypass -File scripts/dev/local/test-build-wrapper.ps1`: **8 passed, 0 failed** (3 pre-existing + the 5 new slice-1 cases: auto-detect table across cl / clang-cl / neither, explicit-`-Preset` override + switch forwarding, cl-present bypass of `with-msvc.ps1`, exit-2 winget hints + exit-code propagation, `build_standalone.ps1` fail-fast before `cmake --preset`). The cases run against a sandbox directory holding a copy of `build.ps1` plus stub delegates at the same relative paths, with a `bin\` of fake compilers — `$PSScriptRoot` resolution means every dispatch branch is exercised with **no production seams, no compiler and no CMake configure**, so they are CI-safe. The with-msvc stub deliberately reproduces the real `& $exe @rest` tail; that is what caught the positional-splat bug (§ Deviations).
+- **PASSED** — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (strict-zone, comment-noise, whole-tree `no-raw-new`/`deviation-overdue`/`no-detach`).
+- **PASSED** — `bash agents/scripts/core/test-markdown-links.sh`: 5 scanned, 0 dangling (4 before `QUICKSTART.md` entered scope); `--selftest` PASS; `shellcheck -S warning` clean on the edited gate.
+- **NOT RUN** — the § Verification build gate (`cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`) and both ctest buckets: PR-1 touches no C++ (scripts + markdown only), and its one new always-on Core TU belongs to slice 2. Deferred to PR-2, which is the slice that introduces `TrackerSetupPure`.
+- **NOT RUN** — the plan's manual slice-1 end-to-end from an ordinary PowerShell (`.\build.ps1 -BuildOnly` / `-RunOnly` / `-Preset ninja-debug-msvc -BuildOnly`). The sandbox cases pin the dispatcher's decision + forwarding logic mechanically; what remains unpinned is the live MSVC-env import and a real compile, which need a non-Developer-Prompt human shell. **Manual residue** — one human smoke owed before slice 2 ships.
+- **N/A** — visual-validation exception: PR-1 touches no `Ui/`, theme, or `Locales/` file.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
