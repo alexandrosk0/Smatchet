@@ -58,6 +58,10 @@ on:
         type: boolean
         required: false
         default: false
+      notes:
+        description: "Release notes body. Leave empty to auto-generate from commits since the previous release — but note that the FIRST release has no previous release to diff against, so auto-generation spans the whole history and GitHub rejects it with 'body is too long (maximum is 125000 characters)'. Supply a short body for a bootstrap release."
+        required: false
+        default: ""
 
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
@@ -182,6 +186,11 @@ jobs:
           PARAM_DRAFT: ${{ steps.params.outputs.draft }}
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
           PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
+          # Passed straight through rather than via GITHUB_OUTPUT: notes are
+          # free text and may be multi-line, which needs heredoc delimiters to
+          # survive a step output. Read via $env: below, never interpolated
+          # into the script body.
+          PARAM_NOTES: ${{ github.event.inputs.notes }}
         run: |
           # Belt-and-braces tag guard for -Publish runs. The "Tag not found
           # locally" failures this originally chased were NOT a missing ref:
@@ -238,6 +247,16 @@ jobs:
             AllowDirty = $true
           }
           if ($env:PARAM_SIGN -eq "true") { $releaseArgs["Sign"] = $true }
+          # With no -Notes, release_github.ps1 falls back to `gh --generate-notes`,
+          # which diffs against the previous release. The FIRST release has no
+          # previous release, so generation spans the entire history and GitHub
+          # rejects the create with:
+          #   HTTP 422 Validation Failed — body is too long (maximum is 125000 characters)
+          # Supplying notes skips generation entirely. Later releases can leave
+          # this empty: once a release exists, the generated diff is bounded.
+          if (-not [string]::IsNullOrWhiteSpace($env:PARAM_NOTES)) {
+            $releaseArgs["Notes"] = $env:PARAM_NOTES
+          }
           if ($env:PARAM_PUBLISH -eq "true") {
             $releaseArgs["Publish"] = $true
             # release_github.ps1 independently refuses -Publish without -Sign;
