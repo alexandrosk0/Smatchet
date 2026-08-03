@@ -1,7 +1,7 @@
 {
   "FileVersion": 3,
-  "Version": 607,
-  "VersionName": "0.6.7",
+  "Version": 608,
+  "VersionName": "0.6.8",
   "FriendlyName": "Smatchet ImGui Plugin",
   "Description": "Embeds Smatchet ImGui UI inside Unreal via platform render backends (DX12/PS5/Xbox).",
   "Category": "UI",
