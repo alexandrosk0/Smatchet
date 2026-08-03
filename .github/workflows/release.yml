@@ -183,6 +183,18 @@ jobs:
           PARAM_PRERELEASE: ${{ steps.params.outputs.prerelease }}
           PARAM_ALLOW_UNSIGNED: ${{ steps.params.outputs.allow_unsigned }}
         run: |
+          # Defensive re-fetch: a real -Publish dispatch against tag v0.6.7 hit
+          # "Tag 'v0.6.7' not found locally" inside release_github.ps1's
+          # Assert-CleanGitTree/-Publish tag-verify check, even though the
+          # Checkout step's own log confirms `git tag --list v0.6.7` resolved
+          # right after checkout. Root cause wasn't pinned down (nothing between
+          # checkout and this step should touch git refs), so force-refresh the
+          # tag ref immediately before use rather than trust the checkout's copy.
+          git fetch origin "+refs/tags/$($env:PARAM_TAG):refs/tags/$($env:PARAM_TAG)" --force
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to fetch tag '$($env:PARAM_TAG)' from origin before release."
+            exit 1
+          }
           # Hashtable splat, NOT array splat: array splatting (@("-Tag", $val, ...))
           # does NOT parse "-Flag" tokens as parameter names — it binds every
           # element positionally, in parameter-declaration order. That silently
