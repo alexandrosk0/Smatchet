@@ -119,9 +119,13 @@ if ($Preset -like "ninja*") {
 }
 
 # Fail fast with an actionable message instead of letting CMake die later on an opaque
-# "CMAKE_CXX_COMPILER not set". Both the -msvc and -clang presets need the MSVC environment
+# "CMAKE_CXX_COMPILER not set". Every msvc/clang preset needs the MSVC environment
 # (clang-cl still resolves the Windows SDK through it), and cl.exe on PATH is its marker.
-if (($Preset -like "*-msvc" -or $Preset -like "*-clang") -and -not (Get-Command "cl.exe" -ErrorAction SilentlyContinue)) {
+# The match is deliberately a substring, not a suffix: the toolchain token sits mid-name in
+# ninja-msvc-asan / ninja-clang-asan / ninja-iter-msvc-arm64 / ninja-publish-msvc-arm64, and a
+# "*-msvc" suffix test let all four skip the pre-flight. No non-MSVC preset carries either
+# token (the Linux/Android ones are *-linux / android-ndk-arm64 / posix-core-check).
+if (($Preset -like "*msvc*" -or $Preset -like "*clang*") -and -not (Get-Command "cl.exe" -ErrorAction SilentlyContinue)) {
     throw "$Preset needs the MSVC environment, but cl.exe is not on PATH. Run .\build.ps1 from the repo root (it imports the environment for you), or wrap this command in scripts\dev\with-msvc.ps1."
 }
 
