@@ -38,6 +38,24 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
+# resolve_py — echo the first python that BOTH resolves and actually RUNS.
+# Exec-validation is the point: on Windows `python3` resolves to the Microsoft
+# Store App Execution Alias stub under %LOCALAPPDATA%\Microsoft\WindowsApps\,
+# which is on PATH but prints a "run without arguments to install" banner and
+# exits non-zero. A `command -v`-only probe hands back that stub, so the tier
+# resolution below silently reads nothing and the python check reports an
+# unparseable version — on the one machine that most needs a truthful report.
+resolve_py() {
+    local c
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then
+            printf '%s\n' "$c"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # ---------------------------------------------------------------------------
 # Environment capability tier (project.config.json § environments; finding C3 /
 # Proposal P5). A required toolchain check whose tool is ABSENT and NOT in the
@@ -77,8 +95,8 @@ TIER="${TIER:-${SMATCHET_DOCTOR_TIER:-}}"
 TIER_EXPECTS=""
 TIER_KNOWN=0
 TIER_RESOLVED=""
-if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
-    _py="$(command -v python3 || command -v python)"
+_py="$(resolve_py || true)"
+if [ -n "$_py" ]; then
     _tier_out="$("$_py" - "$REPO_ROOT/project.config.json" "$TIER" <<'PY' 2>/dev/null || true
 import json, sys
 cfg_path, want = sys.argv[1], sys.argv[2]
@@ -106,8 +124,8 @@ fi
 # causes so the message is not misleading: a genuinely-unknown tier name vs an
 # upstream resolution failure (no python to read the config).
 if [ -n "$TIER" ] && [ "$TIER_KNOWN" -eq 0 ]; then
-    if ! { command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; }; then
-        echo "doctor: cannot resolve tier '$TIER' -- no python3/python on PATH to read project.config.json" >&2
+    if [ -z "$_py" ]; then
+        echo "doctor: cannot resolve tier '$TIER' -- no working python3/python on PATH to read project.config.json" >&2
     else
         echo "doctor: unknown tier '$TIER' (not in project.config.json § environments.tiers, or the environments block is missing/unreadable)" >&2
     fi
@@ -264,10 +282,13 @@ else
     warn_or_skip 'link.exe' 'not found -- run from a VS Developer Command Prompt for MSVC builds'
 fi
 
-# python >= 3.10
-py_line=$(tool_version python --version)
-if [ -z "$py_line" ]; then
-    py_line=$(tool_version python3 --version)
+# python >= 3.10 — version-probe the interpreter resolve_py picked, not whichever
+# name resolves first: asking a Store-alias stub for --version yields its
+# install banner, which parses as "could not parse version" rather than the
+# honest "not found".
+py_line=""
+if [ -n "$_py" ]; then
+    py_line=$(tool_version "$_py" --version)
 fi
 if [ -z "$py_line" ]; then
     fail_or_skip 'python' 'install: winget install Python.Python.3.12'

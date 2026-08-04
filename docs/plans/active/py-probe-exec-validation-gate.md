@@ -16,8 +16,8 @@ that cannot execute anything.
 PR #1936 fixed the reported instance (`tests/bats/issue_sweep.bats` and the
 sibling bats suites, where the resolve-only probe defeated the skip guard so 4
 of 6 cases failed instead of skipping). Two same-class sites were explicitly
-left out of scope in that PR — [`scripts/dev/doctor.sh`](../../scripts/dev/doctor.sh)
-and [`agents/scripts/core/merge-watcher-stuck-nudge.sh`](../../agents/scripts/core/merge-watcher-stuck-nudge.sh)
+left out of scope in that PR — [`scripts/dev/doctor.sh`](../../../scripts/dev/doctor.sh)
+and [`agents/scripts/core/merge-watcher-stuck-nudge.sh`](../../../agents/scripts/core/merge-watcher-stuck-nudge.sh)
 — and a sweep for the pattern found two more (`agent-eval-run.sh`,
 `test-tooltip-wrapwidth.sh`) plus one in the plan-lock substrate itself
 (`lock-table-cache.sh`).
@@ -36,14 +36,14 @@ Two halves.
 **1 — fix the remaining pickers.** Replace each resolve-only probe with a
 resolve-**and-run** probe: `command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1`.
 The canonical shape already exists in-tree at
-[`assert-code-unchanged.sh:20`](../../agents/scripts/core/assert-code-unchanged.sh) —
+[`assert-code-unchanged.sh:20`](../../../agents/scripts/core/assert-code-unchanged.sh) —
 the fixes converge on it. Repeating a ~6-line resolver across shell scripts does
 not trip the `duplication` gate (AGENTS.md scopes that rule to first-party C++),
 and no shared shell library exists that all five callers already source, so a
 copied helper is the honest option here.
 
 **2 — gate the class.** New rule 9 in
-[`agents/scripts/core/test-shell-lint.sh`](../../agents/scripts/core/test-shell-lint.sh)
+[`agents/scripts/core/test-shell-lint.sh`](../../../agents/scripts/core/test-shell-lint.sh)
 (`SHELL_LINT_PY_PROBE`) flagging a python-interpreter **picker** that resolves
 without exec-validating.
 
@@ -62,7 +62,7 @@ would mean rewriting every downstream `python3 foo.py` call site to `"$PY" foo.p
 an unrelated and much riskier diff. Narrowed to the picker shape the population
 is 3, all genuine, all fixed here. Precedent for remediating pre-existing
 violators inside the rule's own PR:
-[`docs/plans/shell-script-self-review-lint.md`](../plans/shell-script-self-review-lint.md)
+`docs/plans/shell-script-self-review-lint.md`
 § "Pre-existing violator remediation in same PR". The residual is recorded in
 the backlog, not silently dropped.
 
@@ -92,10 +92,13 @@ a blocking whole-tree rule.
    rule list, `eight-rule` → `nine-rule`, wire into the per-target loop.
 7. `tests/bats/shell_lint.bats` — rule-9 fires / does-not-fire cases; update the
    two tests whose names hardcode the rule count.
-8. `tests/fixtures/shell_lint/py-probe-picker-{bad,good}.sh` — new fixtures.
+8. `tests/fixtures/shell_lint/known-{bad,good}-9-py-probe.sh` — new fixtures.
 9. `docs/self-improvement/categories/tooling/2026-08-04-py-probe-single-candidate-residual.md`
    — backlog entry for the deliberate residual + the `_lock-json.py` CRLF root
    cause.
+10. `scripts/dev/test-docs.sh` — added in flight (see § Deviations): its
+    single-candidate guard resolved `python3` without running it, then hardcoded
+    `python3` in the `md_lint` step, so the step died on the Store-stub banner.
 
 ## Existing utilities reused
 
@@ -170,7 +173,24 @@ _(filled post-ship)_
 
 ## Deviations
 
-_(filled post-ship)_
+- **Scope grew by one file: `scripts/dev/test-docs.sh`** (§ Files to modify
+  entry 10). Found while running this plan's own § Verification — the `md_lint`
+  step failed with the Store-stub banner. Its guard is the *single-candidate*
+  shape this plan deliberately leaves unflagged (§ Risks residual 1), so rule 9
+  does not catch it and never will in this diff; it is fixed here anyway because
+  it blocked verification of this very change. That does not reopen the residual:
+  the other ~15 single-candidate sites stay backlogged, because clearing them
+  means rewriting downstream `python3 foo.py` call sites, not editing a probe.
+  `test-docs` went `Passed: 13 Failed: 3` → `Passed: 15 Failed: 1` (the one
+  remaining failure is pre-existing — see § Verification).
+- **Rule 9's shape-(a) detector was wrong on first cut** and silently missed the
+  candidate-loop picker, i.e. the primary shape. `grep -oE` over the candidate
+  list consumes the delimiting space, so adjacent names alternate and
+  `python3 python py` counted as **1** candidate — under the `>= 2` picker
+  threshold. Fixed by splitting to one word per line and matching whole words
+  (`tr` → `sed` → `grep -xE`). The bad fixture now reports both line 11
+  (shape a) and line 17 (shape b); the bats case asserts both line numbers
+  precisely so a regression to one-shape detection fails loudly.
 
 ## Archive
 

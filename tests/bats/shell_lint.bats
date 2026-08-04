@@ -193,9 +193,39 @@ setup() {
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]
 }
 
+# ---------- rule 9: resolve-only python-interpreter picker ----------
+
+@test "rule 9 (py-probe): fires on both picker shapes (candidate loop + literal chain)" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-bad-9-py-probe.sh"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"SHELL_LINT_PY_PROBE"* ]]
+    # Both shapes must be reported, not just whichever runs first: the loop at
+    # line 11 (shape a) and the if/elif chain at line 17 (shape b).
+    [[ "$output" == *"known-bad-9-py-probe.sh:11: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:17: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"Passed: 0  Failed: 1"* ]]
+}
+
+@test "rule 9 (py-probe): does NOT fire on exec-validated pickers nor a single-candidate guard" {
+    run bash "$LINT" --target "$FIXTURE_DIR/known-good-9-py-probe.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
+@test "rule 9 (py-probe): does NOT fire on the canonical in-tree resolver" {
+    # assert-code-unchanged.sh validates a DIFFERENT variable than it probes
+    # (`_p="$(command -v "$_c")"` … `"$_p" -c ""`). Anchoring the exec-check
+    # search to the loop variable would false-positive on the very shape the
+    # rule tells everyone to adopt.
+    run bash "$LINT" --target "$REPO_ROOT/agents/scripts/core/assert-code-unchanged.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_PY_PROBE"* ]]
+}
+
 # ---------- known-good: all rules clean ----------
 
-@test "known-good fixture passes all 8 rules" {
+@test "known-good fixture passes all 9 rules" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-good.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]

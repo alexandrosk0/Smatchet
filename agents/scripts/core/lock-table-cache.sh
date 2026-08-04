@@ -53,7 +53,13 @@ _ltc_cache_dir() { printf '%s' "${TMPDIR:-/tmp}"; }
 
 _ltc_pybin() {
   local c
-  for c in python3 python; do command -v "$c" >/dev/null 2>&1 && { printf '%s' "$c"; return 0; }; done
+  # Exec-validate, don't just resolve: on Windows `python3` resolves to the
+  # Microsoft Store App Execution Alias stub (on PATH, exits non-zero when run),
+  # so a `command -v`-only probe hands back a stub that cannot execute the cache
+  # helper while a working `python` sits later in the list.
+  for c in python3 python py; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then printf '%s' "$c"; return 0; fi
+  done
   printf 'python3'
 }
 
@@ -75,6 +81,11 @@ _ltc_repo_key() {
 # runner (Layer C), active on Windows git-bash (A/B) — correct on both.
 _ltc_norm_path() {
   local p="$1"
+  # Strip CR first. `_lock-json.py` writes its TSV rows through a Windows
+  # text-mode stdout, so every row arrives CRLF-terminated and the trailing CR
+  # lands on the LAST field -- the path. An unstripped CR makes the exact-match
+  # below fail for every locked path, i.e. a held lock silently covers nothing.
+  p="${p//$'\r'/}"
   p="${p//\\//}"
   case "$p" in ./*) p="${p#./}" ;; esac
   printf '%s' "$p"
