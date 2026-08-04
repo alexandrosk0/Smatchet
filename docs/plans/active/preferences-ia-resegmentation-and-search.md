@@ -64,8 +64,18 @@ is what makes the two-step slice 2a/2b split cheap.
 The shell replaces `BeginTabBar` with a left `BeginChild` rail (search box on top,
 `Selectable` per category) and a scrolling right pane, reusing the shape already shipped in
 [`CommandPaletteUi.cpp:284-330`](../../../Source/Core/src/Commands/CommandPaletteUi.cpp).
-Below a width threshold the rail collapses to a category `Combo` above the pane — no
-navigation stack, and the phone tab-strip defect is fixed as a side effect.
+The rail collapses to a category `Combo` above the pane when
+`effectiveUiMode == Mobile || paneWidth < threshold` — mobile is *guaranteed* the combo
+(not threshold-dependent), and a Preferences window docked into a narrow desktop node
+degrades the same way (the window is dockable via `prepareTopLevelWindow`, so window-size
+constraints cannot protect a fixed rail). The threshold carries local hysteresis (collapse
+below ~30× `GetFontSize()`, restore above ~32.5× — two named constants, font-relative so
+large fonts collapse earlier) to prevent flicker at the boundary, the same trick
+`resolveEffectiveUiMode` uses. The decision is a small pure helper
+`resolvePrefsNavMode(effectiveUiMode, availWidth, prevMode)` — bucket-A testable. Rail is
+fixed-width (~10× `GetFontSize()`); the search box spans the full window width above both
+panes so it survives the swap. No navigation stack, and the phone tab-strip defect is
+fixed as a side effect.
 
 Trade-off taken: the per-tab save-semantics footer switch
 ([`SmatchetPreferencesUi.cpp:697-736`](../../../Source/Core/src/Ui/SmatchetPreferencesUi.cpp))
@@ -280,7 +290,7 @@ Diff touches `Source/Core/src/Ui/`, `Source/Core/src/Config/`, and `Source/Core/
 
 ## Verification
 
-- **Bucket A (pure-logic ctest, `test-rig`)**: `PreferencesSchema.test.cpp` — ids unique, every section's `CategoryId` resolves, every setting's `SectionId` resolves, no empty label. `PreferencesFilter.test.cpp` — empty query returns everything, substring hit, fuzzy fallback fires only when substring misses, case-insensitivity, no-match returns empty. Existing `PreferencesCredentialTrim`, `PreferencesDateFormatIndex`, `ConfigManager*`, `ConfigMigration` must stay green (the new `PreferencesCollapsedSections` key round-trips).
+- **Bucket A (pure-logic ctest, `test-rig`)**: `PreferencesSchema.test.cpp` — ids unique, every section's `CategoryId` resolves, every setting's `SectionId` resolves, no empty label. `PreferencesFilter.test.cpp` — empty query returns everything, substring hit, fuzzy fallback fires only when substring misses, case-insensitivity, no-match returns empty. `resolvePrefsNavMode` — Mobile always combo, Desktop wide → rail, Desktop narrow → combo, hysteresis band holds the previous mode. Existing `PreferencesCredentialTrim`, `PreferencesDateFormatIndex`, `ConfigManager*`, `ConfigMigration` must stay green (the new `PreferencesCollapsedSections` key round-trips).
 - **Bucket E (ImGui Test Engine, `cmake --build --preset ninja-ui-test-msvc`)**: `prefs_schema_coverage.test.cpp` (drift guard — walk all 8 categories with an empty query, assert observed-id set == descriptor set); `prefs_search_filter.test.cpp` (type `vsy` → 1 of ≈80 visible **and** the survivor is the real checkbox, toggled in place, `cfg.VsyncEnabled` flips); retargeted `funcsize_preferences_tabs.test.cpp`; unchanged `ai_assistant_preferences_*.test.cpp`, `ai_prefs_autosave_flow`, `annotate_prefs_persist_flow`, `keybindings_editor_rebind`, `help_marker_keyboard_focus` must stay green.
 - **Bash-driver scenario / screenshot / sanitizer**: `preferences-slider-drag` scenario runs clean post-rail (`scripts/dev/perf-run.sh`); `scripts/dev/test-all.sh` covers the sanitizer leg.
 - **Feature-OFF build**: configure without `SMATCHET_WITH_MCP` / `SMATCHET_WITH_AI` / `SMATCHET_WITH_WHISPER` and confirm `PreferencesSchema.test.cpp` + the coverage test still pass — this is where a mis-guarded descriptor row surfaces.
