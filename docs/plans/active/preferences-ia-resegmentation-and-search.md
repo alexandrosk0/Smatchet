@@ -86,7 +86,7 @@ the **section** descriptor (`SaveSemantics` enum) and the hint renders per secti
 | **Connections** | MCP server · Perforce · Activity sources | MCP ← `Integrations`; **P4Executable / P4VcExecutable / PathRemaps / TimelapseCommandTemplate / ChangeCommandTemplate** ← Annotate; **git repos / production keyword / day window / max changes / feed layout** ← `User Info` |
 | **AI & Voice** | Assistant · Agent context · Voice dictation · Voice diagnostics | Assistant + Whisper merge; `AgentsMd*` split into own section; Whisper's 3 test buttons become `Voice diagnostics` |
 | **Editing** | Grid behaviour · Time estimates · Work log templates · Quick comments · Annotate comments | `Grid` + `Fields Inputs` merge; **nested tab bar dies** → sibling sections; **EnableFieldOverflowTooltips + GridEndWheelSwallowsBeforeHorizontal** ← Appearance |
-| **Shortcuts** | Keyboard shortcuts · System shortcuts | tab-local filter kept for the dynamic command rows; global query forwards into it |
+| **Shortcuts** | Keyboard shortcuts · System shortcuts | tab-local search box **removed**; the global box is the only one — `RowMatchesFilter` consumes the global query directly |
 | **Annotate** | Analysis · Tracker field mapping · Colors | shrinks — Perforce paths/commands leave for Connections |
 
 Dead after this: `Local data`, `Integrations`, `User Info`, `Grid`, `Fields Inputs` as
@@ -191,8 +191,12 @@ Separate PRs on one feature branch, shipped as one feature (§ Merge gates PR-ba
   category + ~22 section titles.
 - **Slice 3 — per-setting gating (~80 call sites).** Wrap each setting in
   `if (st.Filter.ShowSetting("<id>"))`; live search box with `(showing N of M)`, matched
-  sections auto-expand, empty-result state, global query forwarded into the Shortcuts
-  tab-local `RowMatchesFilter`.
+  sections auto-expand, empty-result state. Shortcuts: the tab-local `###kbSearch` box and
+  its `static std::string filter` are **deleted** — `RowMatchesFilter` consumes the global
+  query (lowercased) directly, keeping the id + hotkey haystack (`"ctrl+k"` still finds
+  rows). Dynamic command rows stay substring-only (no fuzzy tier) — accepted, documented.
+  The Shortcuts `(N of M)` readout counts dynamic row matches, not descriptors. The
+  add-command popup keeps its popup-local `addFilter` (different scope).
 
 ## Files to modify
 
@@ -210,7 +214,7 @@ returns nothing — no existing TU or synonym to collide with.
 6. [`Source/Core/src/Ui/SmatchetPreferencesUi_Local.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Local.cpp) `:396` Updates block leaves for General; `:248` Local-data tab dissolves; keeps Appearance only.
 7. [`Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Templates.cpp) `:446` nested `BeginTabBar("FieldsInputsSubTabBar")` → sibling sections under Editing.
 8. [`Source/Core/src/Ui/SmatchetPreferencesUi_Assistant.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Assistant.cpp) + [`_Whisper.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Whisper.cpp) — merge into the `AI & Voice` category as 4 sections.
-9. [`Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp) `:47-56` — `ToLowerAscii` / `ContainsLower` move into `PreferencesFilter` (removes the duplicate, Pillar 5); `RowMatchesFilter` `:62` stays for the dynamic command rows and accepts the forwarded global query.
+9. [`Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Keybindings.cpp) `:47-56` — `ToLowerAscii` / `ContainsLower` move into `PreferencesFilter` (removes the duplicate, Pillar 5); `RowMatchesFilter` `:62` stays for the dynamic command rows and consumes the global query directly (the tab-local `###kbSearch` box + its `static` filter state are deleted).
 10. [`Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp`](../../../Source/Core/src/Ui/AnnotateAnalysisUi_Preferences.cpp) — Perforce block leaves for Connections; the detached `PersistAnnotateCfg:16` save path becomes `SaveSemantics::AnnotateDetached` on its sections.
 11. [`Source/Core/src/Ui/SmatchetPreferencesUi_detail.h`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_detail.h) — section-function declarations.
 
