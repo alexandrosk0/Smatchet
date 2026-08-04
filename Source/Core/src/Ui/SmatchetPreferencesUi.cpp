@@ -32,6 +32,7 @@
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "TrackerFieldValueUtils.h"
+#include "TrackerSetupPure.h"
 #include "SmatchetImGuiFonts.h"
 #include "FieldCatalogCache.h"
 #include "SmatchetHelpMarker.h"
@@ -152,6 +153,9 @@ void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     d.trackerPrefsTestInFlight = false;
     d.trackerPrefsTestResult.clear();
     d.trackerPrefsTestResultKind = 0;
+    // Same staleness contract for the verified-credential pin: a verdict that is no longer
+    // on screen must not keep unlocking first-run read-only on a later Save & Sync.
+    d.trackerPrefsTestVerifiedFingerprint.clear();
     ++d.trackerPrefsTestGen;
     // Pillar 2 (#892): drop the Tracker-tab open-edge latch so reopening the window re-snapshots
     // the cached-project list once (instead of re-reading disk every frame the tab is visible).
@@ -573,24 +577,32 @@ void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
     if (d.trackerPrefsTestInFlight) {
         ImGui::BeginDisabled();
     }
-    if (ImGui::Button("Test connection")) {
+    if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.test.button", "Test connection"))) {
         TrackerConfig probeCfg = d.cfg;
         CopyTrackerBuffersToConfig(d, probeCfg);
         d.trackerPrefsTestInFlight = true;
         d.trackerPrefsTestResult.clear();
         d.trackerPrefsTestResultKind = 0;
         const int probeGen = ++d.trackerPrefsTestGen;
+        // Digest the exact values being probed, on the UI thread while the buffers are stable.
+        // Save & Sync only clears first-run read-only when the live buffers still digest to
+        // this, so probing green then editing the token cannot unlock on an unverified value.
+        const std::string probeFingerprint = TrackerSetupPure::CredentialFingerprint(probeCfg);
         AppController* appPtr = &app;
-        app.LaunchBackgroundTask([appPtr, probeCfg, probeGen]() {
+        app.LaunchBackgroundTask([appPtr, probeCfg, probeGen, probeFingerprint]() {
             const TrackerReachabilityProbeResult probe = appPtr->ProbeTrackerCredentials(probeCfg);
-            appPtr->PostToMainThread([probe, probeGen]() {
+            appPtr->PostToMainThread([probe, probeGen, probeFingerprint]() {
                 if (g_ui.trackerPrefsTestGen != probeGen) {
                     return; // superseded by a newer probe or a window close — drop silently
                 }
                 g_ui.trackerPrefsTestInFlight = false;
+                // Any non-green verdict invalidates a previously verified pin: the credentials
+                // now on screen are the ones that just failed.
+                g_ui.trackerPrefsTestVerifiedFingerprint.clear();
                 switch (probe.Kind) {
                 case TrackerReachabilityProbeKind::AuthenticatedReachable:
                     g_ui.trackerPrefsTestResultKind = 1;
+                    g_ui.trackerPrefsTestVerifiedFingerprint = probeFingerprint;
                     g_ui.trackerPrefsTestResult =
                         SmatchetLocalization::T("prefs.tracker.test.ok", "Connected - credentials verified.");
                     break;
@@ -656,6 +668,26 @@ bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
            d.cfg.LinearWorkspaceUrl != d.linearWorkspaceUrlBuf;
 }
 
+// First-run explainer for the Tracker tab (dev-onboarding-first-run-quickstart, slice 2).
+// Shown while TrackerSetupPure::NeedsSetup reads true — i.e. the backend has never been
+// confirmed reachable, or a required credential field is still blank. The menu bar and the
+// grid are already locked to this tab in that state (SmatchetUI_MainMenu.cpp), so this line
+// is the only thing telling the user WHY, and what the three steps are.
+void DrawTrackerFirstRunExplainer(const UiDrawSession& d) {
+    if (!TrackerSetupPure::NeedsSetup(d.cfg)) {
+        return;
+    }
+    const SmatchetThemeSemanticColors& sem = SmatchetTheme::GetActiveSemanticColors();
+    ImGui::PushStyleColor(ImGuiCol_Text, sem.WarningText);
+    ImGui::TextWrapped("%s", SmatchetLocalization::T("tracker.setup.title", "Finish setting up your tracker"));
+    ImGui::PopStyleColor();
+    ImGui::TextWrapped("%s", SmatchetLocalization::T(
+                                 "tracker.setup.body",
+                                 "1. Pick a backend.  2. Fill in the credentials below.  3. Press Test connection. "
+                                 "Save & Sync unlocks the rest of the app once the connection is verified."));
+    ImGui::Separator();
+}
+
 } // namespace
 
 void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d) {
@@ -668,6 +700,7 @@ void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d)
     // Pillar 2 (#892): snapshot ListCachedProjects() on the tab open-edge; the latch is reset
     // in resetPreferencesWindowState when the window closes, so reopening re-snapshots once.
     RefreshCachedProjectsSnapshotOnOpen(d, /*isOpenNow=*/true, d.prefsTrackerTabWasOpen);
+    DrawTrackerFirstRunExplainer(d);
     const int currentItem = DrawTrackerBackendSelection(d);
     DrawTrackerBackendConfig(d, currentItem);
     DrawTrackerTestConnection(app, d);
@@ -792,6 +825,16 @@ template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<
 
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
     CopyTrackerBuffersToConfig(d, d.cfg);
+    // First-run unlock: clear read-only ONLY when the credentials being saved are byte-for-byte
+    // the ones a "Test connection" probe returned AuthenticatedReachable for this session. An
+    // empty pin means nothing was verified (or the window was reopened), so read-only stands.
+    // This is an ADDED clear — Save & Sync never touched ReadOnlyMode before; see the plan's
+    // § Deviations.
+    if (d.cfg.ReadOnlyMode && !d.trackerPrefsTestVerifiedFingerprint.empty() &&
+        TrackerSetupPure::CredentialFingerprint(d.cfg) == d.trackerPrefsTestVerifiedFingerprint) {
+        d.cfg.ReadOnlyMode = false;
+        LOG_INFO("First-run setup: saved credentials match the verified probe — read-only mode cleared.");
+    }
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsGitHubBuf, d.cfg.NewIssueInheritFieldIdsGitHub);
