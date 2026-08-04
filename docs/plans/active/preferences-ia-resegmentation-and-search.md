@@ -311,7 +311,7 @@ Diff touches `Source/Core/src/Ui/`, `Source/Core/src/Config/`, and `Source/Core/
 
 **Deferral residue-sweep (keep this note)** — per `AGENTS.md` § Process rules § Scope-reduction edits: before finalising, grep `**/CONTEXT*.md`, `docs/adr/`, `agents/*.md`, and `docs/self-improvement/categories/` for stray references to anything deferred here (`Local data` / `Integrations` / `User Info` / `Grid` / `Fields Inputs` as tab names; `PreferencesActiveTab`), and revise or delete them.
 
-- **Deep mobile drill-down navigation** — the width-threshold combo is the whole mobile story here; a real drill-down stack belongs to [`docs/plans/mobile-app-fuller-integration.md`](mobile-app-fuller-integration.md).
+- **Deep mobile drill-down navigation** — the width-threshold combo is the whole mobile story here; a real drill-down stack belongs to [`docs/plans/mobile-app-fuller-integration.md`](../shipped/mobile-app-fuller-integration.md).
 - **Localizing existing Annotate preference body strings** — deferred; owes a § Deviations row + `docs/self-improvement/categories/debt/` entry (see § Risks).
 - **Per-item filtering inside the list editors** (templates, path remaps, nav pages) — one descriptor per editor; per-row filtering is a follow-up if users ask.
 - **Registering settings as `Command`s** — no-action, see § Risks non-goal.
