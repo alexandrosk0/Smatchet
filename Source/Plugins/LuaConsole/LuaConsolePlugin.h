@@ -7,6 +7,14 @@
 #include <string>
 #include <vector>
 
+/// Outcome of one script read. NotOpenable and TooLarge are deliberately distinct: the first is
+/// the ordinary "picked a name with no file behind it" path and gets the "-- New file" stub, but
+/// stubbing an oversize file would re-baseline `diskSnapshot_` onto a two-line placeholder and
+/// the next Save would truncate the real script on disk.
+/// File-scope rather than nested in LuaConsolePlugin so the anonymous-namespace reader in the .cpp
+/// can name it; a private nested enum would be unreachable from a free function.
+enum class LuaScriptReadStatus { Ok, NotOpenable, TooLarge };
+
 class LuaConsolePlugin : public IPlugin {
   public:
     /// Drains an in-flight script read before the members go away. A std::async future's
@@ -43,9 +51,9 @@ class LuaConsolePlugin : public IPlugin {
     struct ScriptLoadResult {
         std::string name;
         std::string content;
-        /// false = the file could not be opened; the editor gets the "-- New file" stub, matching
-        /// the behaviour of the old synchronous ReadFileAll failure path.
-        bool ok = false;
+        /// NotOpenable reproduces the old synchronous ReadFileAll failure path (editor gets the
+        /// "-- New file" stub); see LuaScriptReadStatus for why TooLarge must not share it.
+        LuaScriptReadStatus status = LuaScriptReadStatus::NotOpenable;
     };
     std::future<ScriptLoadResult> scriptLoadFuture_;
     /// A script read is running on the std::async worker. Also gates SaveCurrentScript: the editor
@@ -60,6 +68,11 @@ class LuaConsolePlugin : public IPlugin {
     /// the outcome banner must be reported by PollScriptLoad, and a selection change made in the
     /// meantime must not mislabel an unrelated load as the user's reload.
     std::string reloadNoticeName_;
+    /// The selected script exists on disk but was refused (over the size cap), so the editor is
+    /// blank for a file that has real content. Gates SaveCurrentScript for the same reason
+    /// `scriptLoadInFlight_` does — writing the blank buffer back would truncate the file. Cleared
+    /// on every fresh kick; set only by a TooLarge result that still matches the selection.
+    bool scriptLoadRefused_ = false;
 
     /// Clamped height for `BeginChild` (script pane) this frame.
     float luaAutomationScriptPaneHeightPx_ = 0.f;

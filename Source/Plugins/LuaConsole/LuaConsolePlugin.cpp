@@ -19,7 +19,6 @@
 #include <cmath>
 #include <fstream>
 #include <future>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -107,17 +106,32 @@ void ReloadSmatchetHooksSetupScript(AppController& app) { app.RunLuaSetupScript(
 // never on the UI thread. Scripts are small (typically < 100 KB) and the read is sub-ms typical, but
 // the LATENCY of a single open/read is unbounded on a network share or an antivirus-filtered path —
 // which is the reason it had to leave the render thread regardless of size.
-bool ReadFileAll(const std::string& path, std::string& out) {
+LuaScriptReadStatus ReadFileAll(const std::string& path, std::string& out) {
+    // Same 8 MiB ceiling AppController_LuaScriptFiles.cpp applies to script loads (SECURITY_AUDIT
+    // #33 class — no unbounded slurp). Sizing off seekg/tellg and reading into an exactly-sized
+    // buffer, rather than draining rdbuf() into a stringstream, is what makes the cap load-bearing:
+    // the stringstream form allocates the whole file before anything can check its size.
+    constexpr std::streamoff kMaxLuaScriptBytes = 8ll * 1024 * 1024;
     /* PILLAR2_WORKER_ONLY */ // est-latency: ~1ms — script read on the std::async worker owned by
                               // LuaConsolePlugin::scriptLoadFuture_; no frame budget applies.
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        return false;
+        return LuaScriptReadStatus::NotOpenable;
     }
-    std::stringstream ss;
-    ss << f.rdbuf();
-    out = ss.str();
-    return true;
+    f.seekg(0, std::ios::end);
+    const std::streamoff size = f.tellg();
+    if (size < 0) {
+        return LuaScriptReadStatus::NotOpenable;
+    }
+    if (size > kMaxLuaScriptBytes) {
+        return LuaScriptReadStatus::TooLarge;
+    }
+    f.seekg(0, std::ios::beg);
+    out.assign(static_cast<std::size_t>(size), '\0');
+    if (size > 0 && !f.read(&out[0], size)) {
+        return LuaScriptReadStatus::NotOpenable;
+    }
+    return LuaScriptReadStatus::Ok;
 }
 
 bool WriteFileAll(const std::string& path, const std::string& content, std::string& err) {
@@ -262,10 +276,12 @@ void LuaConsolePlugin::KickScriptLoad(const AppController& app, const std::strin
         return;
     }
     scriptLoadInFlight_ = true;
+    // A fresh read supersedes any earlier refusal; only the result that lands can re-raise it.
+    scriptLoadRefused_ = false;
     scriptLoadFuture_ = std::async(std::launch::async, [name, path]() {
         ScriptLoadResult result;
         result.name = name;
-        result.ok = ReadFileAll(path, result.content);
+        result.status = ReadFileAll(path, result.content);
         return result;
     });
 }
@@ -306,8 +322,23 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
     if (scriptLoadFuture_.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         return;
     }
-    const ScriptLoadResult result = scriptLoadFuture_.get();
+    // Clear the flag BEFORE get(): the future is consumed either way, so an exception thrown by
+    // the worker and rethrown here must not leave scriptLoadInFlight_ latched true — that would
+    // wedge Save behind a load that can never land, for the rest of the session.
     scriptLoadInFlight_ = false;
+    ScriptLoadResult result;
+    try {
+        result = scriptLoadFuture_.get();
+    } catch (const std::exception& ex) {
+        // Not an empty catch: a worker throw (bad_alloc on the sized buffer, an ifstream
+        // exception) is reported and the load abandoned. queuedLoadName_ is dropped with it —
+        // re-selecting the script kicks a fresh read.
+        LOG_ERROR("Lua script load failed: %s", ex.what());
+        g_ui.gridEditError = "Could not read the script.";
+        queuedLoadName_.clear();
+        reloadNoticeName_.clear();
+        return;
+    }
     if (reloadNoticeName_ != selectedScriptName_) {
         // The user moved off the script they asked to reload — its banner is moot. Checked
         // before the branches below so a superseded reload cannot report against a later load.
@@ -322,7 +353,17 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
     if (result.name != selectedScriptName_) {
         return; // selection cleared or retargeted without a queued kick
     }
-    luaEditor_.SetText(result.ok ? result.content : std::string("-- New file\n"));
+    if (result.status == LuaScriptReadStatus::TooLarge) {
+        // Deliberately NOT the "-- New file" stub: the file exists and has content, so stubbing it
+        // would re-baseline diskSnapshot_ on the placeholder and the next Save would truncate the
+        // real script. Leave the editor blank and gate Save instead.
+        scriptLoadRefused_ = true;
+        g_ui.gridEditError = "Script too large to open in the editor (8 MiB cap): " + result.name;
+        reloadNoticeName_.clear();
+        return;
+    }
+    luaEditor_.SetText(result.status == LuaScriptReadStatus::Ok ? result.content
+                                                               : std::string("-- New file\n"));
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
     if (!reloadNoticeName_.empty() && reloadNoticeName_ == result.name) {
@@ -331,7 +372,7 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         // (picking a name with no file on disk starts a new script) — but the user who pressed
         // Reload asked about a file that is supposed to exist, so a failure is an error to them.
         reloadNoticeName_.clear();
-        if (result.ok) {
+        if (result.status == LuaScriptReadStatus::Ok) {
             g_ui.gridEditSuccess = "Reloaded " + result.name;
             g_ui.gridEditError.clear();
         } else {
@@ -350,6 +391,13 @@ bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& 
         // would truncate the file on disk. Every Run path saves first, so this one guard covers
         // Save, Run, and the unsaved-switch modal.
         outErr = "Still loading the script — try again in a moment.";
+        return false;
+    }
+    if (scriptLoadRefused_) {
+        // Same hazard as the in-flight case, permanently: the editor is blank because the file was
+        // refused (over the size cap), not because it is empty. Writing the buffer back would
+        // truncate a real script.
+        outErr = "Script is too large to edit here — open it in an external editor.";
         return false;
     }
     // Target the tracked script by identity, never by list index: RefreshScriptList
@@ -648,9 +696,17 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
                         // Defer until after EndCombo so BeginPopupModal runs same frame after OpenPopup.
                         openUnsavedSwitchAfterCombo = true;
                     } else {
+                        // Restore the previous selection if the load never started: the only false
+                        // returns happen before the editor is blanked, so the old script is still
+                        // on screen and leaving selectedScriptName_ on the unloadable entry would
+                        // point Save at a file the editor never showed.
+                        const std::string prev = selectedScriptName_;
                         selectedScriptName_ = entry;
                         std::string e;
-                        (void)StartLoadSelectedScriptIntoEditor(app, e);
+                        if (!StartLoadSelectedScriptIntoEditor(app, e)) {
+                            selectedScriptName_ = prev;
+                            g_ui.gridEditError = e;
+                        }
                     }
                 }
             }
@@ -665,8 +721,12 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
         if (ImGui::Button("Save", ImVec2(120, 0))) {
             std::string e;
             if (SaveCurrentScript(app, e)) {
+                const std::string prev = selectedScriptName_;
                 selectedScriptName_ = pendingScriptName_;
-                (void)StartLoadSelectedScriptIntoEditor(app, e);
+                if (!StartLoadSelectedScriptIntoEditor(app, e)) {
+                    selectedScriptName_ = prev;
+                    g_ui.gridEditError = e;
+                }
             } else {
                 g_ui.gridEditError = e;
             }
@@ -674,9 +734,13 @@ void LuaConsolePlugin::DrawScriptsTab(DrawCtx& ctx, const std::string& curName) 
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard", ImVec2(120, 0))) {
+            const std::string prev = selectedScriptName_;
             selectedScriptName_ = pendingScriptName_;
             std::string e;
-            (void)StartLoadSelectedScriptIntoEditor(app, e);
+            if (!StartLoadSelectedScriptIntoEditor(app, e)) {
+                selectedScriptName_ = prev;
+                g_ui.gridEditError = e;
+            }
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
