@@ -175,8 +175,11 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
 
     ImGui::SameLine();
     if (ImGui::Button("Copy to Clipboard")) {
-        // Redacted on the way out for the same reason the bug-report egress path
-        // is: the report carries filesystem paths that embed a username.
+        // Same egress scrubber the bug-report path uses. It matches by shape
+        // (emails, tokens, URL userinfo) — not usernames — so it will not touch
+        // the filesystem paths; it is here so a tracker URL or address that ever
+        // reaches this report cannot be pasted into a public thread. Git SHAs are
+        // deliberately preserved by RedactLogLine.
         const std::string report =
             smatchet::privacy::RedactLogText(smatchet::diagnostics::BuildAboutReportText(ctx.info));
         ::ImGui::SetClipboardText(report.c_str());
