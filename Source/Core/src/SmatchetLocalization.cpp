@@ -1110,7 +1110,7 @@ const TranslationEntry kEntries[] = {
      "1. Pick a backend.  2. Fill in the credentials below.  3. Press Test connection. Save & Sync unlocks the "
      "rest of the app once the connection is verified.",
      u8"1. Choisissez un service.  2. Renseignez les identifiants ci-dessous.  3. Appuyez sur Tester la connexion. "
-     u8"Save & Sync déverrouille le reste de l'application une fois la connexion vérifiée."},
+     u8"« Enregistrer et synchroniser » déverrouille le reste de l'application une fois la connexion vérifiée."},
     {"keybindings.editor.needs_modifier", "Include Ctrl, Alt, or Win (Shift alone types text) - or an F-key alone.",
      u8"Incluez Ctrl, Alt ou Win (Maj seul saisit du texte) - ou une touche F seule."},
     {"keybindings.editor.resetConfirm",

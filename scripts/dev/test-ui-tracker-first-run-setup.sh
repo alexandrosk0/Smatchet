@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-ui-tracker-first-run-setup.sh — bucket-E driver for the Preferences
-# Tracker tab's first-run setup surface (docs/plans/active/
+# Tracker tab's first-run setup surface (docs/plans/
 # dev-onboarding-first-run-quickstart.md, slice 2). Invokes `ui_test.run`
 # against an ephemeral spawn, parses the JSON envelope, and reports
 # Passed / Failed.

@@ -829,8 +829,10 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     // saved are byte-for-byte the ones a "Test connection" probe returned AuthenticatedReachable
     // for this session. An empty pin means nothing was verified (or the window was reopened), so
     // read-only stands. The two flags move as a pair inside the pure helper so bucket-A covers
-    // the pairing. This is an ADDED clear — Save & Sync never touched ReadOnlyMode before; see
-    // the plan's § Deviations.
+    // the pairing. The helper also CONSUMES the pin on the firing edge (hence the non-const ref),
+    // so a read-only mode the user re-enables later in this same Preferences session survives the
+    // next save instead of being reverted by the stale verdict. This is an ADDED clear — Save &
+    // Sync never touched ReadOnlyMode before; see the plan's § Deviations.
     if (TrackerSetupPure::ApplyVerifiedSaveUnlock(d.cfg, d.trackerPrefsTestVerifiedFingerprint)) {
         LOG_INFO("First-run setup: saved credentials match the verified probe — read-only mode cleared, "
                  "backend reachability latched.");

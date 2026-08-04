@@ -67,10 +67,13 @@ std::string CredentialFingerprint(const TrackerConfig& cfg) {
     return ToHex(h);
 }
 
-bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, const std::string& verifiedFingerprint) {
+bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, std::string& verifiedFingerprint) {
     if (!cfg.ReadOnlyMode || verifiedFingerprint.empty() || CredentialFingerprint(cfg) != verifiedFingerprint) {
         return false;
     }
+    // One-shot: consume the pin on the firing edge so a read-only mode the user re-enables later
+    // in the same Preferences session is not cleared again by a stale verdict.
+    verifiedFingerprint.clear();
     cfg.ReadOnlyMode = false;
     // Same edge, both flags. The pin is only ever set on an AuthenticatedReachable probe —
     // the identical verdict the connectivity monitor latches on (SmatchetUI.cpp, first-launch

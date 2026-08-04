@@ -48,6 +48,10 @@ std::string CredentialFingerprint(const TrackerConfig& cfg);
 /// leave NeedsSetup(), the locked main menu and the grid welcome state all still reading
 /// first-run until the connectivity monitor independently latched the same verdict a tick
 /// later. Pure so the pairing is covered by the bucket-A rig rather than only in a live frame.
-bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, const std::string& verifiedFingerprint);
+/// The pin is ONE-SHOT: it is consumed (cleared) on the firing edge, which is why it is taken
+/// by non-const reference. Without that, a user who re-checks "Read-only mode" later in the
+/// same Preferences session and saves again with unchanged credentials would have the surviving
+/// pin match a second time and their deliberate choice silently reverted with no cue.
+bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, std::string& verifiedFingerprint);
 
 } // namespace TrackerSetupPure

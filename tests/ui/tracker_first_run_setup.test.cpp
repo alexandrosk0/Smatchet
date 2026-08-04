@@ -1,5 +1,5 @@
 // tracker_first_run_setup.test.cpp — bucket-E coverage for the Preferences
-// Tracker tab's first-run setup surface (docs/plans/active/
+// Tracker tab's first-run setup surface (docs/plans/
 // dev-onboarding-first-run-quickstart.md, slice 2).
 //
 // TWO things the pure bucket-A rig (tests/Core/TrackerSetupPure.test.cpp)
@@ -83,9 +83,7 @@ bool OpenPreferences(ImGuiTestContext* ctx) {
 // The Tracker tab is the FIRST BeginTabItem in the "PreferencesTabs" bar, so it
 // is selected on open with no click needed. preferencesActiveTab is assigned
 // inside the tab body, so observing it IS the "the body ran this frame" signal.
-bool TrackerTabBodyRan() {
-    return g_ui.preferencesActiveTab == PreferencesActiveTab::Tracker;
-}
+bool TrackerTabBodyRan() { return g_ui.preferencesActiveTab == PreferencesActiveTab::Tracker; }
 
 // A config the credential-completeness half of NeedsSetup is satisfied by, so
 // BackendHasBeenReachable alone decides the predicate.

@@ -124,7 +124,7 @@ TEST_CASE("CredentialFingerprint: stable, and moves with the active backend's fi
 TEST_CASE("ApplyVerifiedSaveUnlock: a matching pin clears read-only AND latches reachability") {
     TrackerConfig cfg = JiraCfg();
     cfg.ReadOnlyMode = true;
-    const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+    std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
     CHECK(TrackerSetupPure::NeedsSetup(cfg));
 
     CHECK(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
@@ -133,27 +133,47 @@ TEST_CASE("ApplyVerifiedSaveUnlock: a matching pin clears read-only AND latches 
     CHECK_FALSE(TrackerSetupPure::NeedsSetup(cfg));
 }
 
+// Regression: the pin used to survive the unlock. A user who re-checks "Read-only mode" in the
+// same Preferences session and saves again with unchanged credentials would then match the stale
+// pin and have their deliberate choice reverted with no cue. The pin is consumed on the edge.
+TEST_CASE("ApplyVerifiedSaveUnlock: the pin is one-shot, so a re-enabled read-only mode stands") {
+    TrackerConfig cfg = JiraCfg();
+    cfg.ReadOnlyMode = true;
+    std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+
+    CHECK(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+    CHECK(pin.empty());
+
+    // The user re-enables read-only and saves again with the very same credentials.
+    cfg.ReadOnlyMode = true;
+    CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+    CHECK(cfg.ReadOnlyMode);
+}
+
 TEST_CASE("ApplyVerifiedSaveUnlock: refuses every unverified path and mutates nothing") {
     SUBCASE("an empty pin means nothing was probed this session") {
         TrackerConfig cfg = JiraCfg();
         cfg.ReadOnlyMode = true;
-        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, std::string()));
+        std::string pin;
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
         CHECK(cfg.ReadOnlyMode);
         CHECK_FALSE(cfg.BackendHasBeenReachable);
     }
     SUBCASE("editing a credential after the probe invalidates the pin") {
         TrackerConfig cfg = JiraCfg();
         cfg.ReadOnlyMode = true;
-        const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
         cfg.ApiToken = "token-edited-after-the-probe";
         CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
         CHECK(cfg.ReadOnlyMode);
         CHECK_FALSE(cfg.BackendHasBeenReachable);
+        // A refused call leaves the pin alone: only the firing edge consumes it.
+        CHECK_FALSE(pin.empty());
     }
     SUBCASE("switching backend after the probe invalidates the pin") {
         TrackerConfig cfg = JiraCfg();
         cfg.ReadOnlyMode = true;
-        const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
         cfg.TrackerType = "GitHub";
         cfg.GitHubPat = "ghp_x";
         cfg.GitHubOwner = "acme";
@@ -165,7 +185,8 @@ TEST_CASE("ApplyVerifiedSaveUnlock: refuses every unverified path and mutates no
     SUBCASE("read-only already off: a deliberate read-only session is not silently latched") {
         TrackerConfig cfg = JiraCfg();
         cfg.ReadOnlyMode = false;
-        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, TrackerSetupPure::CredentialFingerprint(cfg)));
+        std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
         CHECK_FALSE(cfg.BackendHasBeenReachable);
     }
 }
