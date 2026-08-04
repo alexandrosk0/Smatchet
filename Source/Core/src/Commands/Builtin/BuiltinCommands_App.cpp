@@ -26,10 +26,9 @@ namespace {
 /// Fold the Help > About snapshot into `app.version`'s JSON. Same
 /// diagnostics::AboutInfo the dialog renders, so the two can never disagree —
 /// which is the whole point of exposing it here: a bug thread can ask for
-/// `Smatchet.exe cmd app.version` instead of a screenshot.
-///
-/// Kept out of the handler lambda so `app.version` stays readable; the assembly
-/// is a straight field copy with no logic of its own.
+/// `Smatchet.exe cmd app.version` instead of a screenshot. Kept out of the
+/// handler lambda so `app.version` stays readable; the assembly is a straight
+/// field copy with no logic of its own.
 void AddAboutFields(nlohmann::json& out, IAppMeta& app) {
     const diagnostics::AboutInfo info = diagnostics::GatherAboutInfo(app.GetAppVersion(), app.GetGitHubReleaseRepo());
 

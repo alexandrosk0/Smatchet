@@ -2,7 +2,6 @@
 // snapshot (version / build / git / runtime / third-party) and offers the three
 // actions a user actually needs from an About box: open the repo, check for
 // updates, and copy the whole thing for a bug thread.
-//
 // This TU is render-only: every fact comes from AboutInfo.cpp, which is the sole
 // includer of the generated SmatchetBuildInfo.h. Nothing here touches CMake
 // codegen, and nothing here re-derives a value.
@@ -10,6 +9,12 @@
 
 #include "SmatchetAboutUi.h"
 
+// The three things this modal needs live on AppController and nowhere narrower:
+// OpenUrl (which carries the scheme allowlist and the host-callback indirection
+// that keep a link safe under Unreal), GetAppVersion, and GetGitHubReleaseRepo.
+// DrawAboutModal takes an AppController reference by signature, exactly as every
+// sibling modal TU already does, so there is no lighter dependency to swap in.
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=calls OpenUrl/GetAppVersion; owner=alexk; revisit=2026-12-31)
 #include "AppController.h"
 #include "Diagnostics/AboutInfo.h"
 #include "Privacy/TextRedaction.h"

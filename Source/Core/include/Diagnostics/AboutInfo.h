@@ -9,17 +9,15 @@
 // copy-to-clipboard report text. ImGui-free and headlessly testable, so the UI
 // (SmatchetAboutUi.cpp) and the command surface (app.version) both consume the
 // same values and cannot disagree.
-//
 // Deliberately does NOT include the generated SmatchetBuildInfo.h — that header
 // is included by exactly one TU (AboutInfo.cpp). Keeping it out of every public
 // header is what stops it leaking into the packaged Unreal plugin's flat include
 // dir, where a copy would go stale against the packaged .lib.
-// docs/plans/active/about-dialog-help-menu.md.
-//
 // Also takes no AppController — the two facts it needs from one (app version,
 // release repo) come in as strings, so the doctest rig can link this TU without
 // dragging in AppController's cpr/SQLite closure (the same reason
 // BugReportBody.cpp is split out of BugReportService.cpp).
+// docs/plans/active/about-dialog-help-menu.md.
 
 namespace smatchet {
 namespace diagnostics {
