@@ -37,8 +37,15 @@ case "${1:-}" in
 esac
 
 BOT_LOGINS="${BOT_LOGINS:-coderabbitai coderabbitai[bot] app/coderabbitai}"
-PY=""; for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }; done
-[ -n "$PY" ] || { echo "issue-sweep: no python" >&2; exit 2; }
+# Probe-EXECUTE each candidate, don't just `command -v` it: on Windows `python3`
+# resolves to the Microsoft Store App Execution Alias stub, which is on PATH but
+# exits non-zero on run — a resolve-only probe picks it and every parse yields 0
+# records.
+PY=""
+for c in python3 python py; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+[ -n "$PY" ] || { echo "issue-sweep: no working python interpreter" >&2; exit 2; }
 
 # Source of open Issues: a fixture file (bats) or a live `gh issue list`.
 if [ -n "${ISSUES_JSON:-}" ]; then

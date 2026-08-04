@@ -22,8 +22,17 @@
 setup() {
     SCRIPT="$(git rev-parse --show-toplevel)/agents/scripts/core/lock-staleness-sweep.sh"
     export SCRIPT
-    PYBIN="$(command -v python3 || command -v python)"
+    # Exec-validate the interpreter: a bare `command -v python3` matches the
+    # Windows WinStore alias stub, which resolves on PATH but exits non-zero on
+    # run — `iso_ago` below would then emit an empty timestamp into every fixture.
+    PYBIN=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then
+            PYBIN="$(command -v "$c")"; break
+        fi
+    done
     export PYBIN
+    [ -n "$PYBIN" ] || skip "no working python interpreter"
     REPO_TMP="$(mktemp -d)"
     export REPO_TMP
     STUB_BIN="$(mktemp -d)"

@@ -1116,6 +1116,13 @@ const TranslationEntry kEntries[] = {
     {"prefs.tracker.test.transport", "Couldn't reach the server: ", u8"Impossible d'atteindre le serveur : "},
     {"prefs.tracker.test.unavailable", "Service unavailable.", u8"Service indisponible."},
     {"prefs.tracker.test.testing", "Testing...", u8"Test en cours..."},
+    {"prefs.tracker.test.button", "Test connection", u8"Tester la connexion"},
+    {"tracker.setup.title", "Finish setting up your tracker", u8"Terminez la configuration de votre suivi"},
+    {"tracker.setup.body",
+     "1. Pick a backend.  2. Fill in the credentials below.  3. Press Test connection. Save & Sync unlocks the "
+     "rest of the app once the connection is verified.",
+     u8"1. Choisissez un service.  2. Renseignez les identifiants ci-dessous.  3. Appuyez sur Tester la connexion. "
+     u8"« Enregistrer et synchroniser » déverrouille le reste de l'application une fois la connexion vérifiée."},
     {"keybindings.editor.needs_modifier", "Include Ctrl, Alt, or Win (Shift alone types text) - or an F-key alone.",
      u8"Incluez Ctrl, Alt ou Win (Maj seul saisit du texte) - ou une touche F seule."},
     {"keybindings.editor.resetConfirm",

@@ -286,6 +286,15 @@ void UiTestScenario::OnStart(IAppScenarioHost& app, const nlohmann::json& args, 
     io.ConfigNoThrottle = true;
     io.ConfigLogToTTY = true;
     io.ConfigLogToDebugger = false;
+    // The engine is created per ui_test.run and destroyed in OnFinish, i.e. while
+    // the app's ImGui context is still alive. With the default (true),
+    // ImGuiTestEngine_DestroyContext() asserts "You need to call
+    // ImGui::DestroyContext() BEFORE ImGuiTestEngine_DestroyContext()" and aborts
+    // the process before OnFinish can write the result JSON — every bucket-E
+    // driver then times out with the run already green in the child log. Upstream's
+    // documented escape for a runtime-created engine that does not care about its
+    // own .ini settings (imgui_te_engine.cpp ImGuiTestEngine_DestroyContext).
+    io.ConfigSavedSettings = false;
 
     SmatchetRegisterAllUiTests(engine_);
 

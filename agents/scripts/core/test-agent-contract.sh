@@ -23,8 +23,56 @@
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
+#
+# Modes:
+#   (no args) | --check   run all 15 checks against the tree.
+#   --selftest            dogfood the locale-safe matcher (see grep_fixed below).
 
 set -euo pipefail
+
+# -------------------------------------------------------------------------
+# grep_fixed <pattern> — byte-wise fixed-string match against stdin.
+# -------------------------------------------------------------------------
+# GNU grep 3.0 — the build Git for Windows ships — fails a `-F` (and `-E`)
+# match when the PATTERN contains a 4-byte UTF-8 character (`🤖` U+1F916)
+# under a multibyte locale (LANG=en_US.UTF-8). Check 5 interpolates the robot
+# emoji into its expected banner, so every agent read as a banner mismatch for
+# Windows devs while CI (Ubuntu, newer grep) passed — a false negative, not
+# drift. `LC_ALL=C` forces the byte-wise compare a fixed-string match wants
+# anyway, so both environments return the same verdict.
+# Only emoji-bearing PATTERNS are affected: an ASCII pattern still matches a
+# line that contains emoji, so the other `grep -qF` sites here are fine.
+grep_fixed() { LC_ALL=C grep -qF -- "$1"; }
+
+# selftest: asserts-failure — the negative case below feeds a drifted banner and
+# requires grep_fixed to REJECT it, so a helper stubbed to `return 0` cannot pass.
+run_selftest() {
+  local rc=0
+  local fixture='**Banner** — open with: `🤖 AGENT: architect · opus/high · read-only · v2`'
+  # Positive: a 4-byte-UTF-8 pattern must match under a multibyte locale. The
+  # explicit UTF-8 export is the regression trigger — drop grep_fixed's LC_ALL=C
+  # and this case fails on GNU grep 3.0 (Git-Bash) exactly as check 5 did.
+  if ! ( export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+         printf '%s\n' "$fixture" | grep_fixed '🤖 AGENT: architect · opus/high · read-only' ); then
+    echo "selftest: FAIL — 4-byte-UTF-8 pattern did not match (grep locale regression)" >&2
+    rc=1
+  fi
+  # Negative: real drift (model changed) must still be reported as a mismatch.
+  if ( export LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+       printf '%s\n' "$fixture" | grep_fixed '🤖 AGENT: architect · sonnet/high · read-only' ); then
+    echo "selftest: FAIL — a drifted banner was accepted as a match" >&2
+    rc=1
+  fi
+  if [[ $rc -eq 0 ]]; then echo "test-agent-contract --selftest: PASS"; fi
+  return "$rc"
+}
+
+case "${1:---check}" in
+  --check)    : ;;
+  --selftest) run_selftest; exit $? ;;
+  -h|--help)  echo "usage: test-agent-contract.sh [--check|--selftest]"; exit 0 ;;
+  *)          echo "usage: test-agent-contract.sh [--check|--selftest]" >&2; exit 2 ;;
+esac
 
 command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
 
@@ -142,7 +190,9 @@ for f in $(agent_files); do
   # is still caught (the close `✅ END —` half shares the line).
   expected="🤖 AGENT: ${fm_name} · ${fm_model}/${fm_effort} · ${ro_tok}"
   banner=$(grep -m1 -F '**Banner**' "$f" || true)
-  if ! echo "$banner" | grep -qF "$expected"; then
+  # grep_fixed (not a bare `grep -qF`): the 4-byte 🤖 in $expected breaks fixed-
+  # string matching on GNU grep 3.0 under a UTF-8 locale — see its definition.
+  if ! printf '%s\n' "$banner" | grep_fixed "$expected"; then
     banner_mismatch+=("$base: expected '$expected'; banner: $banner")
   fi
 done

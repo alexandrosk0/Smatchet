@@ -323,6 +323,12 @@ struct UiDrawSession {
     /// Probe generation: bumped on every probe start AND on Preferences close, so a
     /// completion from a superseded/abandoned probe can't overwrite fresh state.
     int trackerPrefsTestGen = 0;
+    /// TrackerSetupPure::CredentialFingerprint of the credentials a probe last returned
+    /// AuthenticatedReachable for. Written only on the Kind==1 completion; compared against
+    /// a fresh fingerprint of the live buffers at Save & Sync, which clears first-run
+    /// read-only ONLY on a match. Without it, probing green, then editing the token, then
+    /// saving would unlock on an unverified value. Empty = nothing verified this session.
+    std::string trackerPrefsTestVerifiedFingerprint;
     /// One-frame focus latch for the Preferences window. Set true by the menu-bar
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).

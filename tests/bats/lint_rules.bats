@@ -28,6 +28,21 @@ teardown() {
     return 0
 }
 
+# Echo the first python that BOTH resolves and actually runs. Exec-validation is
+# required: on Windows `python3` resolves to the Microsoft Store App Execution
+# Alias stub, which is on PATH but exits non-zero on run, so a `command -v`-only
+# probe hands back an interpreter that fails every invocation. Resolved per-test
+# (not in setup) so the non-python tests here never skip on a python-less box.
+_resolve_py() {
+    local c
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then
+            printf '%s\n' "$c"; return 0
+        fi
+    done
+    return 1
+}
+
 # ---------- per-rule detection (--scan-file) ----------
 
 @test "no-printf-stderr fires on unexempted std::printf" {
@@ -694,14 +709,14 @@ teardown() {
 # ---------- comment_audit prose-vs-code discriminator (build-quality #7) ----------
 
 @test "comment_audit.py --selftest passes (prose-vs-code fixtures)" {
-    PY="$(command -v python3 || command -v python)"
+    PY="$(_resolve_py)" || skip "no working python interpreter"
     run "$PY" "$REPO_ROOT/agents/scripts/core/comment_audit.py" --selftest
     [ "$status" -eq 0 ]
     [[ "$output" == *"PASS"* ]]
 }
 
 @test "comment_audit.py --fix strips a new blank-comment run but keeps prose AND code-like" {
-    PY="$(command -v python3 || command -v python)"
+    PY="$(_resolve_py)" || skip "no working python interpreter"
     AUDIT="$REPO_ROOT/agents/scripts/core/comment_audit.py"
     tmp="$(mktemp -d)"
     mkdir -p "$tmp/Source/Core/include"
