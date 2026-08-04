@@ -217,11 +217,16 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
 
     ImGui::SetNextWindowSize(ImVec2(560.0f, 520.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::BeginPopupModal(kAboutPopupId, &d.showAbout, ImGuiWindowFlags_NoSavedSettings)) {
-        // Dismissed via Escape or the title-bar close button — drop the flag and
-        // the snapshot so the next open re-reads config (and so the menu item is
-        // not re-opening a popup that ImGui has already closed).
-        d.showAbout = false;
-        d.aboutInfo.reset();
+        // Two different states return false here: the popup is gone (dismissed
+        // via Escape or the title-bar X), or it is still open but a popup at a
+        // deeper stack level owns this frame. Only the first is a dismissal —
+        // clearing state on the second silently drops the user's request.
+        if (!::ImGui::IsPopupOpen(kAboutPopupId, ImGuiPopupFlags_AnyPopupLevel)) {
+            // Drop the flag and the snapshot so the next open re-reads config,
+            // and so the menu item is not re-opening a popup ImGui already closed.
+            d.showAbout = false;
+            d.aboutInfo.reset();
+        }
         return;
     }
 
