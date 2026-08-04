@@ -220,7 +220,7 @@ returns nothing — no existing TU or synonym to collide with.
 
 **State + config + strings**
 12. [`Source/Core/include/Ui/SmatchetUiSession.h`](../../../Source/Core/include/Ui/SmatchetUiSession.h) `:146-157` `enum class PreferencesActiveTab` → `PreferencesCategory` (not persisted today, free to change); member `:257`; add filter state + collapsed-section set.
-13. [`Source/Core/src/Config/ConfigManager.cpp`](../../../Source/Core/src/Config/ConfigManager.cpp) `:201` — one new `std::string PreferencesCollapsedSections` row (comma-joined) in the existing `kStringFields[]` table; no bespoke serializer. Matching member in [`ConfigManager.h`](../../../Source/Core/include/Config/ConfigManager.h).
+13. [`Source/Core/src/Config/ConfigManager.cpp`](../../../Source/Core/src/Config/ConfigManager.cpp) `:201` — one new `std::string PreferencesCollapsedSections` row (comma-joined) in the existing `kStringFields[]` table; no bespoke serializer. Matching member in [`ConfigManager.h`](../../../Source/Core/include/Config/ConfigManager.h). Semantics: stores the **collapsed** set (sparse — empty = fresh install = all expanded; new sections ship expanded automatically); dotted-lowercase section ids contain no commas by construction; stale ids from renamed/deleted sections are ignored on read, never pruned. While the search query is non-empty, matching sections are forced open via `SetNextItemOpen(true)` each frame and header clicks do **not** mutate the persisted set — clearing the query restores persisted collapse state exactly.
 14. [`Source/Core/src/SmatchetLocalization.cpp`](../../../Source/Core/src/SmatchetLocalization.cpp) — `kEntries[]` rows for 8 category + ~22 section titles.
 
 **Tests**
