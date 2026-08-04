@@ -29,8 +29,15 @@ case "${1:-}" in
 esac
 [ -f "$BUG_MD" ] || { echo "migrate-bugs: missing $BUG_MD" >&2; exit 2; }
 
-PY=""; for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }; done
-[ -n "$PY" ] || { echo "migrate-bugs: no python" >&2; exit 2; }
+# Probe-EXECUTE each candidate, don't just `command -v` it: on Windows `python3`
+# resolves to the Microsoft Store App Execution Alias stub, which is on PATH but
+# exits non-zero on run — a resolve-only probe picks it and the classifier yields
+# 0 records.
+PY=""
+for c in python3 python py; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+done
+[ -n "$PY" ] || { echo "migrate-bugs: no working python interpreter" >&2; exit 2; }
 
 # The classifier emits one record per entry: verdict<TAB>prio<TAB>area<TAB>title<TAB>bodyfile
 # (bodyfile = a temp file holding the Issue body). Parsing + the bug-vs-debt heuristic live

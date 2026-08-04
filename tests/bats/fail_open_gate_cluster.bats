@@ -25,13 +25,14 @@ setup() {
     DEV="$REPO_ROOT/scripts/dev"
     export DEV
     # A python interpreter the drivers can use (they probe PYTHON / python).
-    if command -v python >/dev/null 2>&1; then
-        PY=python
-    elif command -v python3 >/dev/null 2>&1; then
-        PY=python3
-    else
-        skip "no python interpreter on PATH"
-    fi
+    # Exec-validate each candidate: a bare `command -v python3` matches the
+    # Windows WinStore alias stub, which resolves on PATH but exits non-zero on
+    # run — the skip guard would never fire and the drivers would parse nothing.
+    PY=""
+    for c in python python3 py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
+    [ -n "$PY" ] || skip "no working python interpreter on PATH"
     export PYTHON="$PY"
     STUBDIR="$(mktemp -d)"
     export STUBDIR

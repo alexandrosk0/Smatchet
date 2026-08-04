@@ -9,8 +9,14 @@ setup() {
     export REPO_ROOT
     export SCRIPT="$REPO_ROOT/agents/scripts/core/issue-sweep.sh"
     WORK="$BATS_TEST_TMPDIR"; export WORK
-    for c in python3 python py; do command -v "$c" >/dev/null 2>&1 && { PY="$c"; break; }; done
-    [ -n "${PY:-}" ] || skip "no python"
+    # Exec-validate the interpreter: a bare `command -v python3` matches the
+    # Windows WinStore alias stub, which resolves on PATH but exits non-zero on
+    # run — the skip guard then never fires and every verdict assertion fails.
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
+    [ -n "$PY" ] || skip "no working python interpreter"
     cat > "$WORK/issues.json" <<'JSON'
 [
  {"number":734,"title":"bulkImportFutures.clear() blocks UI thread","author":{"login":"app/coderabbitai"},"labels":[]},

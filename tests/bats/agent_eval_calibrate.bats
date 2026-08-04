@@ -22,8 +22,15 @@ setup() {
     POLICY="$REPO_ROOT/docs/agent-eval/calibration-policy.json"
     export CAL POLICY
 
-    if command -v python3 >/dev/null 2>&1; then PY=python3; else PY=python; fi
+    # Exec-validate the interpreter: a bare `command -v python3` matches the
+    # Windows WinStore alias stub, which resolves on PATH but exits non-zero on
+    # run — every `"$PY" …` invocation then fails with a Store-install banner.
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
     export PY
+    [ -n "$PY" ] || skip "no working python interpreter"
 
     WORK="$BATS_TEST_TMPDIR"
 
