@@ -3,7 +3,8 @@
     No build logic lives here: a thin dispatcher that picks a preset, prints the
     reason, and delegates to scripts/dev/local/build_and_run.ps1 - directly when
     cl.exe is on PATH, else through scripts/dev/with-msvc.ps1 (which imports the
-    MSVC vcvars environment first; its exit 2 means "no usable VS install").
+    MSVC vcvars environment first; its exit 78 means "no usable VS install" -- a
+    wrapper-level status, distinct from any code the wrapped build itself returns).
 
     Examples: .\build.ps1 | .\build.ps1 -BuildOnly
               .\build.ps1 -Preset ninja-debug-msvc -BuildOnly
@@ -51,10 +52,18 @@ if ($haveCl) {
 else {
     Write-Host "build.ps1: no cl.exe on PATH - importing the MSVC environment via with-msvc.ps1"
     & $withMsvc -Command $child
-    if ($LASTEXITCODE -eq 2) {
-        Write-Host "build.ps1: no usable MSVC toolchain (see the with-msvc line above). Install one of:"
+    # 78, not 2: with-msvc.ps1 propagates the wrapped command's own exit code, so a
+    # build that happened to exit 2 would otherwise be misreported as "no toolchain".
+    if ($LASTEXITCODE -eq 78) {
+        # Build Tools is mandatory, not one option among several: every Windows preset
+        # (clang included) needs the MSVC environment for the Windows SDK headers/libs,
+        # and build_standalone.ps1's pre-flight demands cl.exe for all of them. LLVM
+        # alone cannot satisfy this, so it is listed as an addition, never a substitute.
+        Write-Host "build.ps1: no usable MSVC toolchain (see the with-msvc line above). Install Visual Studio Build Tools with the C++ workload:"
         Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools --override `"--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended`"   # provides cl.exe"
-        Write-Host "  winget install LLVM.LLVM   # clang-cl, ninja-*-clang only"
+        if ($Preset -like "*clang*") {
+            Write-Host "  winget install LLVM.LLVM   # additionally required for $Preset (clang-cl), on top of the Build Tools above"
+        }
     }
 }
 exit $LASTEXITCODE

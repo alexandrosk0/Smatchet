@@ -115,7 +115,11 @@ if ($Preset -like "*-msys2") {
 }
 
 if ($Preset -like "ninja*") {
-    Assert-Command -Name "ninja" -InstallHint "Install Ninja (winget install Ninja-build.Ninja) or run .\build.ps1 from the repo root."
+    # The two hints are not equal alternatives: build.ps1 installs nothing, it imports the
+    # MSVC environment, which puts the VS-bundled ninja on PATH when the "C++ CMake tools
+    # for Windows" component is present (it ships with the VCTools workload). Say so, so a
+    # host with no VS at all reaches for winget rather than looping through build.ps1.
+    Assert-Command -Name "ninja" -InstallHint "Run .\build.ps1 from the repo root -- the MSVC environment it imports also puts the VS-bundled ninja on PATH (C++ CMake tools component). If that still does not resolve ninja, install it: winget install Ninja-build.Ninja."
 }
 
 # Fail fast with an actionable message instead of letting CMake die later on an opaque
@@ -127,6 +131,16 @@ if ($Preset -like "ninja*") {
 # token (the Linux/Android ones are *-linux / android-ndk-arm64 / posix-core-check).
 if (($Preset -like "*msvc*" -or $Preset -like "*clang*") -and -not (Get-Command "cl.exe" -ErrorAction SilentlyContinue)) {
     throw "$Preset needs the MSVC environment, but cl.exe is not on PATH. Run .\build.ps1 from the repo root (it imports the environment for you), or wrap this command in scripts\dev\with-msvc.ps1."
+}
+
+# The clang presets set CMAKE_C_COMPILER/CMAKE_CXX_COMPILER to clang-cl (CMakePresets.json),
+# which the MSVC environment alone does not guarantee: vcvars only adds a clang-cl when the
+# "C++ Clang tools for Windows" component is installed, and with-msvc.ps1 front-loads a
+# standalone LLVM only if one exists. Ordered AFTER the cl.exe gate on purpose -- a host
+# with neither must hear about the MSVC environment first, since clang-cl still resolves the
+# Windows SDK through it.
+if ($Preset -like "*clang*" -and -not (Get-Command "clang-cl.exe" -ErrorAction SilentlyContinue)) {
+    throw "$Preset builds with clang-cl, but clang-cl.exe is not on PATH. Install LLVM (winget install LLVM.LLVM) or the Visual Studio 'C++ Clang tools for Windows' component, then run .\build.ps1 from the repo root."
 }
 
 Push-Location $repoRoot
