@@ -960,7 +960,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
-    # docs/plans/active/about-dialog-help-menu.md Slice 3 — Help > About pure data
+    # docs/plans/shipped/about-dialog-help-menu.md Slice 3 — Help > About pure data
     # layer. AboutInfo.cpp takes no AppController (version/repo arrive as strings),
     # so the rig links it without cpr/SQLite; it does pull HostMachineInfo.cpp (the
     # OS/arch/emulation probes shared with BugReportService) and ConfigManager,

@@ -2,7 +2,7 @@
 
 > **Slug**: `about-dialog-help-menu` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — five slices. Slice 1 (CMake codegen) and slice 2 (host-info extraction) are independent; 3 depends on 1+2; 4 and 5 depend on 3. All five ship as **one PR** per `AGENTS.md` § Autonomous ship-loop default (one PR per logical feature, not per slice).
+> **Status**: `shipped` — five slices, all landed in one PR per `AGENTS.md` § Autonomous ship-loop default (one PR per logical feature, not per slice). Slice 1 (CMake codegen) and slice 2 (host-info extraction) were independent; 3 depended on 1+2; 4 and 5 on 3.
 
 ## Context
 
@@ -228,6 +228,14 @@ Failure modes, all degrading to `"unknown"` — **the script must never `message
 - **Slice 5 — the bats suite needed a `test-*.sh` wrapper the plan did not name.** `scripts/dev/test-all.sh` enrols suites by globbing `agents/scripts/**/test-*.sh`, not by globbing `tests/bats/*.bats`; an unwrapped suite runs on a developer's machine and never in CI. `test-orphan-bats` catches exactly this and FAILed the doc-validation suite until `agents/scripts/project/test-about-buildinfo-bats.sh` was added (mirrors `test-subsystem-docs-bats.sh`).
 - **Slice 5 — `app.version` gained the About fields via an anon-namespace `AddAboutFields` helper.** Keeps the handler lambda readable; pre-existing `version` / `releaseRepo` keys are untouched for back-compat as the plan required.
 
+### Rebase onto current `develop` (pre-PR)
+
+The feature was implemented on a shared session branch that also carried nine unrelated sibling commits, so the eight About commits were cherry-picked onto a clean branch (`feat/about-dialog-help-menu`) off `origin/develop` in an isolated worktree. `develop` had moved under the branch in three ways that forced code changes:
+
+- **Slice 1 — the root `CMakeLists.txt` hunks split across two files.** `develop` refactored the root list to `include()` per-directory `CMakeLists.txt` files, moving the `SmatchetCoreInterface` target into `Source/Core/CMakeLists.txt`. The include-dir line and the `SMATCHET_BUILD_CONFIG="$<CONFIG>"` compile definition moved there with it; the codegen block and the `add_dependencies` loop stayed at the root. Safe because these are `include()` (same variable scope), not `add_subdirectory` — `${SMATCHET_BUILDINFO_DIR}` is still visible from the child list.
+- **Slice 5 — `AddAboutFields` takes `IAppMeta&`, not `AppController&`.** `develop`'s AppController fan-in Phase 5 narrowed `RegisterAppCommands` to `IAppMeta&` and `AppViewCommands.cpp` to `IMainThreadPoster&`. `IAppMeta` declares both facts the helper needs (`GetAppVersion()`, `GetGitHubReleaseRepo()`), so the narrowing was adopted rather than worked around — strictly better than the original `AppController&`.
+- **Slice 1 — the dep manifest's cpp-httplib record bumped `v0.14.1` → `v0.49.0`.** `develop` bumped the pin in PR #1588 after this branch was cut, and `smatchet_check_dep_manifest` caught it exactly as designed: the probe string no longer appeared in the root `CMakeLists.txt`, which WARNs locally and would have FATAL'd under `$ENV{CI}`. First live proof the drift guard earns its keep — without it the credits box would have shipped a lying version.
+
 ## Verification (actual)
 
 Run against `d1a4fb88` on `claude/peaceful-faraday-6jm1w5`, preset `ninja-test-msvc` (MSVC toolset 14.38, x64).
@@ -244,17 +252,9 @@ Run against `d1a4fb88` on `claude/peaceful-faraday-6jm1w5`, preset `ninja-test-m
 | 8 | **Packaging invariant** — generated header must not reach the Unreal plugin | **PASS** — `find Source/UnrealPlugins -name 'SmatchetBuildInfo.h'` returns nothing |
 | 9a | **Doc validation** — `bash scripts/dev/test-docs.sh` | **PASS** — 14/14. First run FAILed `test-orphan-bats`: `about_buildinfo.bats` had no `test-*.sh` wrapper, so CI would never have run it. Fixed by adding `agents/scripts/project/test-about-buildinfo-bats.sh` |
 | 9 | **Lint gates** — `test-lint-rules.sh --diff origin/develop` | **PASS** — strict-zone, comment-noise, raw-`new`/overdue-deviation/`detach`, GLFW-in-Core-headers, CMake-FATAL scope, function length/branching, include cycles, AppController fan-in, agent prompt sizes all clean |
-| 10 | **UI, manual** — Help → About opens, sections populated, clipboard round-trip, GitHub link, stacked update modal | **PENDING USER VERDICT** — visual-validation exception (`AGENTS.md` § Autonomous ship-loop default, exception 5) |
-| 11 | **Reachability regression, manual** — tracker unreachable: Help menu enabled, About enabled, the other two Help items greyed exactly as before | **PENDING USER VERDICT** — same exception |
+| 10 | **UI, manual** — Help → About opens, sections populated, clipboard round-trip, GitHub link, stacked update modal | **PASS** — user walked all six checks against the launched exe and returned "Looks good, ship it" (visual-validation exception, `AGENTS.md` § Autonomous ship-loop default, exception 5) |
+| 11 | **Reachability regression, manual** — tracker unreachable: Help menu enabled, About enabled, the other two Help items greyed exactly as before | **PASS** — same verdict, same exception |
 
 **Non-blocking WARNs accepted:** `RegisterAppViewCommands` at 111 lines (soft tier; hard cap 120), and 5 `[dup]` calibration-phase clone WARNs — 3 of them the pre-existing `BuiltinCommands_App.cpp:35-37` ↔ `AnnotateAnalysisUi_Modals.cpp:121` json-field-assignment pattern.
 
 **Unrelated pre-existing failure, not caused by this diff:** `tests/bats/issue_sweep.bats` fails 4/6 on this Windows machine. Its `setup()` probes interpreters with `command -v python`, which resolves to the Microsoft Store App Execution Alias stub — present on `PATH`, not a real interpreter — so the `skip "no python"` guard never fires and `issue-sweep.sh` parses 0 issues. Neither the script nor the suite is touched by this branch (`git diff --name-only origin/develop...HEAD` matches nothing under `issue`/`sweep`). Filed as a separate task.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*

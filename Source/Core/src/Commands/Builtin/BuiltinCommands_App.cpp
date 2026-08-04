@@ -37,6 +37,9 @@ void AddAboutFields(nlohmann::json& out, IAppMeta& app) {
     nlohmann::json build;
     build["config"] = info.Build.Config;
     build["compilerId"] = info.Build.CompilerId;
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=the flat `obj["key"] = struct.Field;` run below token-matches BuildAnnotateExportJson in Ui/AnnotateAnalysisUi_Modals.cpp — same nlohmann idiom, different structs, disjoint field names. Factoring it out would couple the app command layer to the P4-annotate UI for no shared behaviour, which AGENTS.md Pillar 5 names as the CRITICAL failure mode; owner=commands; revisit=if a declarative struct-to-json reflection helper ever lands)
+    // clang-format on
     build["compilerVersion"] = info.Build.CompilerVersion;
     build["cmakeVersion"] = info.Build.CMakeVersion;
     build["dateTime"] = info.Build.DateTime;

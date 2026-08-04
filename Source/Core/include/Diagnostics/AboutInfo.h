@@ -17,7 +17,7 @@
 // release repo) come in as strings, so the doctest rig can link this TU without
 // dragging in AppController's cpr/SQLite closure (the same reason
 // BugReportBody.cpp is split out of BugReportService.cpp).
-// docs/plans/active/about-dialog-help-menu.md.
+// docs/plans/shipped/about-dialog-help-menu.md.
 
 namespace smatchet {
 namespace diagnostics {

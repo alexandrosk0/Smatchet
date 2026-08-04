@@ -5,7 +5,7 @@
 // environment and third-party credits, plus copy-to-clipboard / open-repo /
 // check-for-updates actions. Core/Ui, dual-target (no GL/GLFW).
 // All data comes from diagnostics::AboutInfo; this TU only renders it.
-// docs/plans/active/about-dialog-help-menu.md Slice 4.
+// docs/plans/shipped/about-dialog-help-menu.md Slice 4.
 
 class AppController;
 struct UiDrawSession;

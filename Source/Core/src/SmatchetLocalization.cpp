@@ -113,7 +113,7 @@ const TranslationEntry kEntries[] = {
     {"menu.bulk_export", "Bulk export...", u8"Export en lot..."},
     {"menu.about", "About Smatchet...", u8"À propos de Smatchet..."},
 
-    // About modal (docs/plans/active/about-dialog-help-menu.md). Section headers and
+    // About modal (docs/plans/shipped/about-dialog-help-menu.md). Section headers and
     // buttons only — the DATA values (sha, compiler, paths, dep names) deliberately
     // bypass the dictionary so they stay copy-pasteable verbatim.
     {"about.section.build", "Build", u8"Build"},

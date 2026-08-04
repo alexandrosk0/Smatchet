@@ -5,7 +5,7 @@
 // This TU is render-only: every fact comes from AboutInfo.cpp, which is the sole
 // includer of the generated SmatchetBuildInfo.h. Nothing here touches CMake
 // codegen, and nothing here re-derives a value.
-// docs/plans/active/about-dialog-help-menu.md Slice 4.
+// docs/plans/shipped/about-dialog-help-menu.md Slice 4.
 
 #include "SmatchetAboutUi.h"
 

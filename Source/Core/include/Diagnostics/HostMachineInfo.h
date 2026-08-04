@@ -6,7 +6,7 @@
 // BugReportService's env payload and the Help > About dialog.
 // Extracted verbatim from BugReportService.cpp's anonymous namespace so the two
 // surfaces cannot drift apart (a copy would also trip the `duplication` gate).
-// docs/plans/active/about-dialog-help-menu.md.
+// docs/plans/shipped/about-dialog-help-menu.md.
 
 namespace smatchet {
 namespace diagnostics {

@@ -1036,7 +1036,7 @@ struct UiDrawSession {
     std::string quickCreateArgProject;
     std::string quickCreateArgIssueType;
 
-    // --- "About Smatchet" modal (docs/plans/active/about-dialog-help-menu.md Slice 4) ---
+    // --- "About Smatchet" modal (docs/plans/shipped/about-dialog-help-menu.md Slice 4) ---
     // UI-thread only. The latch exists because the command layer (`app.about.open`) raises
     // this from a non-draw context — same reason the bug-report modal has one.
     bool showAbout = false;

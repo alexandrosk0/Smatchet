@@ -1,5 +1,5 @@
 // AboutInfo doctests — the pure data layer behind Help > About.
-// docs/plans/active/about-dialog-help-menu.md Slice 3.
+// docs/plans/shipped/about-dialog-help-menu.md Slice 3.
 //
 // Deliberately asserts NOTHING machine-specific: never the real SHA, branch,
 // build date, config dir or compiler version — those differ per checkout and per

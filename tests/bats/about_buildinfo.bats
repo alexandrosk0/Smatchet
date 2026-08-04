@@ -12,7 +12,7 @@
 # unified CLI dispatches over MCP to a *running* instance, and CI cannot boot
 # the exe (root AGENTS.md, Bucket- checks dropped 2026-06-15), so a
 # `Smatchet.exe cmd app.version` assertion would be unrunnable exactly where it
-# needs to run. See docs/plans/active/about-dialog-help-menu.md § Deviations.
+# needs to run. See docs/plans/shipped/about-dialog-help-menu.md § Deviations.
 #
 # Requires: cmake, git.
 

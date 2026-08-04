@@ -3,7 +3,7 @@
 // lives in the build tree, is never committed, and is never packaged into the
 // Unreal plugin's flat include dir (a copy there would go stale against the
 // packaged .lib — the exact drift this feature exists to kill).
-// docs/plans/active/about-dialog-help-menu.md.
+// docs/plans/shipped/about-dialog-help-menu.md.
 
 #include "AboutInfo.h"
 
