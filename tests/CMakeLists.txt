@@ -1241,6 +1241,12 @@ add_executable(SmatchetTests
     # TicketChangeDiffPure structs (no JiraClient/cpr), so it links in this pure block.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraChangelogDeltaPure.cpp"
     Core/JiraChangelogDeltaPure.test.cpp
+    # dev-onboarding-first-run-quickstart slice 2 — first-run tracker-setup decisions
+    # (NeedsSetup / CredentialFieldsComplete / CredentialFingerprint). Pure: delegates the
+    # per-backend required-field table to ConfigManager::BackendCredentialsPresent, which
+    # lives in ConfigManager_Views.cpp (already listed in this block).
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerSetupPure.cpp"
+    Core/TrackerSetupPure.test.cpp
     # ticket-change-monitor S1c-1 — pure poll gate (PaneSyncKickPolicy.h ShouldPollForChanges,
     # header-only) + the tickets.monitor decision helper and its config interval clamp (the
     # latter round-trips through ConfigManager, already linked in this pure block).

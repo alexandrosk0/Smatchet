@@ -11,6 +11,7 @@
 extern "C" void SmatchetRegisterViewsColumnsReorderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterJiraDeterministicBackendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterPreferencesTrackerSwitchTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterTrackerFirstRunSetupTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterLinearDeterministicBackendTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterCallstackTooltipHoverTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterHelpMarkerKeyboardFocusTests(ImGuiTestEngine* engine);
@@ -72,6 +73,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterViewsColumnsReorderTests(engine);
     SmatchetRegisterJiraDeterministicBackendTests(engine);
     SmatchetRegisterPreferencesTrackerSwitchTests(engine);
+    SmatchetRegisterTrackerFirstRunSetupTests(engine);
     SmatchetRegisterLinearDeterministicBackendTests(engine);
     SmatchetRegisterCallstackTooltipHoverTests(engine);
     SmatchetRegisterHelpMarkerKeyboardFocusTests(engine);

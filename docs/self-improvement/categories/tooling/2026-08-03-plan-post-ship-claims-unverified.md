@@ -39,7 +39,7 @@
     (:71-83 `Get-VsWherePath` → MSBuild only, zero vcvars); PR #493 (`a9058b96`, plan) / **PR #495**
     (`da36b45f`, the escaping PR); `scripts/dev/with-msvc.ps1` :39-139 (where a real vcvars import DOES
     live — the capability exists in the tree, just not in the file the plan named);
-    `docs/plans/active/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
+    `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
     premise); `docs/self-improvement/postmortems.md` (ledger entry).
   Status: open
   Last-reviewed: 2026-08-03
