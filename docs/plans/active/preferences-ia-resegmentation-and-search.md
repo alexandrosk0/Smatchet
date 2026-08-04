@@ -204,7 +204,11 @@ Separate PRs on one feature branch, shipped as one feature (§ Merge gates PR-ba
   category + ~22 section titles.
 - **Slice 3 — per-setting gating (~80 call sites).** Wrap each setting in
   `if (st.Filter.ShowSetting("<id>"))`; live search box with `(showing N of M)`, matched
-  sections auto-expand, empty-result state. Shortcuts: the tab-local `###kbSearch` box and
+  sections auto-expand, empty-result state. Rail while filtering: zero-match categories
+  render dimmed (`TextDisabled` style) but stay clickable; matching categories show an
+  `(n)` match-count badge; **no auto-switch** — if the selected category has zero matches
+  while others hit, the pane shows an empty-result hint ("No matches here — N in other
+  categories"), user switches manually. Shortcuts: the tab-local `###kbSearch` box and
   its `static std::string filter` are **deleted** — `RowMatchesFilter` consumes the global
   query (lowercased) directly, keeping the id + hotkey haystack (`"ctrl+k"` still finds
   rows). Dynamic command rows stay substring-only (no fuzzy tier) — accepted, documented.
@@ -299,7 +303,7 @@ Diff touches `Source/Core/src/Ui/`, `Source/Core/src/Config/`, and `Source/Core/
 - **Feature-OFF build**: configure without `SMATCHET_WITH_MCP` / `SMATCHET_WITH_AI` / `SMATCHET_WITH_WHISPER` and confirm `PreferencesSchema.test.cpp` + the coverage test still pass — this is where a mis-guarded descriptor row surfaces.
 - **Build gate**: `bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (dual-target; a bare `cmake --build` from bash fails on `stdio.h`).
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates the doc-validation steps — anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint; defer to the script). A red doc-validation job blocks merge even though non-required.
-- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome here.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: DONE 2026-08-04, 8 questions, all resolved with user sign-off. Q1 static descriptor table + drift guard over self-registration → [ADR-0023](../../adr/0023-preferences-taxonomy-as-static-descriptor-table.md). Q2 index by English source string via `TranslateSource(LabelEn)`, no `LabelKey`/`TitleKey` (third-lookup-path French-search break); drift guard compares rendered labels, not just ids. Q3 house rule: descriptor-backed settings draw every frame their section draws (`BeginDisabled`, never hidden); `ConditionalDraw` escape hatch; the 4 transient status/action rows get no descriptor. Q4 single global search box — Shortcuts tab-local filter deleted, `RowMatchesFilter` consumes the global query. Q5 collapsed-set persistence (default expanded, stale ids ignored, filtering never mutates the persisted set). Q6 rail→combo on `Mobile || narrow-pane` with font-relative hysteresis (`resolvePrefsNavMode`, bucket-A tested). Q7 fuzzy tier `FuzzyScore > 0`, no invented threshold. Q8 rail dims zero-match categories with `(n)` badges, no auto-switch. Every decision verified against code (`file:line` cited in the relevant section) before locking.
 - **Lint**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` per slice.
 - **Manual residue**: the visual-validation exception fires on slices 2a/2b/3 (`Smatchet*Ui*.cpp` in the diff) — the orchestrator pauses with a launched exe for the user's verdict on: all 8 categories open; a cross-category setting (`Enable vsync`, `Check for updates automatically`) persists across restart; collapsed-section state survives restart; `Save & Sync` still commits Tracker credentials; Annotate colors still save via the detached path; `UiMode = Mobile` Settings shows the category combo, not a tab strip. **Deferred-automation action plan**: the first three are automatable as bucket-E once the drift guard lands (config round-trip + rail navigation are both Test-Engine-reachable) — file a `docs/self-improvement/categories/tooling/` entry in slice 2a naming them, so the residue shrinks to genuine pixel judgement (rail spacing, mobile combo layout) rather than behaviour.
 
