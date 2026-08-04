@@ -107,12 +107,15 @@ $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScript
 
 Assert-Command -Name "cmake" -InstallHint "Install CMake 3.24+ or run from a shell where CMake is available."
 
-if ($Preset -like "ninja*") {
-    Assert-Command -Name "ninja" -InstallHint "Install Ninja (winget install Ninja-build.Ninja) or run .\build.ps1 from the repo root."
-}
-
+# Retirement check FIRST: ninja-iter-msys2 also matches the `ninja*` glob below, so a
+# host without ninja on PATH would otherwise get "install Ninja" instead of the
+# migration hint (and test-build-wrapper.ps1 test 1 asserts on that hint).
 if ($Preset -like "*-msys2") {
     throw "$Preset is retired. Use ninja-iter-msvc for MSVC or ninja-iter-clang for clang-cl. MSYS2 is no longer required or proposed for building Smatchet."
+}
+
+if ($Preset -like "ninja*") {
+    Assert-Command -Name "ninja" -InstallHint "Install Ninja (winget install Ninja-build.Ninja) or run .\build.ps1 from the repo root."
 }
 
 # Fail fast with an actionable message instead of letting CMake die later on an opaque

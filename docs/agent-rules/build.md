@@ -6,7 +6,7 @@ Trigger: **building** the project (configuring presets, the light build, the dua
 
 The canonical build command **from an ordinary PowerShell** (no Developer Prompt, no vcvars) is:
 
-```
+```powershell
 .\build.ps1              # build + run   |   .\build.ps1 -BuildOnly
 .\build.ps1 -Preset ninja-debug-msvc -BuildOnly
 ```

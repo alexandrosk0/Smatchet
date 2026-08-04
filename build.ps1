@@ -53,8 +53,8 @@ else {
     & $withMsvc -Command $child
     if ($LASTEXITCODE -eq 2) {
         Write-Host "build.ps1: no usable MSVC toolchain (see the with-msvc line above). Install one of:"
-        Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools   # provides cl.exe"
-        Write-Host "  winget install LLVM.LLVM                               # clang-cl, ninja-*-clang only"
+        Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools --override `"--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended`"   # provides cl.exe"
+        Write-Host "  winget install LLVM.LLVM   # clang-cl, ninja-*-clang only"
     }
 }
 exit $LASTEXITCODE

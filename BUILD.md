@@ -21,8 +21,10 @@ Install the recommended toolchain (MSVC):
 
 ```powershell
 winget install Git.Git           # Git for Windows
-# Visual Studio 2022 Build Tools (or Community/Professional/Enterprise)
-winget install Microsoft.VisualStudio.2022.BuildTools
+# Visual Studio 2022 Build Tools (or Community/Professional/Enterprise).
+# The bare package installs only the core installer — --override passes the
+# C++ workload through, which is what brings cl.exe and the Windows SDK.
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
 Or Clang/LLVM:

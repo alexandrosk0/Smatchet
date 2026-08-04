@@ -13,9 +13,13 @@ cd Smatchet
 ## 2. Prerequisites
 
 ```powershell
-winget install Kitware.CMake                             # CMake 3.24+
-winget install Ninja-build.Ninja                         # Ninja
-winget install Microsoft.VisualStudio.2022.BuildTools    # MSVC (provides cl.exe)
+winget install Kitware.CMake      # CMake 3.24+
+winget install Ninja-build.Ninja  # Ninja
+
+# MSVC (provides cl.exe). The bare Build Tools package installs only the core
+# installer — the --override passes the C++ workload through to it, which is
+# what actually brings cl.exe and the Windows SDK.
+winget install Microsoft.VisualStudio.2022.BuildTools --override "--passive --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
 ```
 
 Clang/LLVM (`winget install LLVM.LLVM`) works as an alternative compiler, but the Windows SDK still
