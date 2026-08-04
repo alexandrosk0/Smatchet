@@ -489,6 +489,61 @@ endif()
 include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
 include(cmake/Sanitizers.cmake)
+include(cmake/SmatchetDepManifest.cmake)
+
+# ---------------------------------------------------------------------------
+# Help > About build-info codegen.
+#
+# Emits build/generated/include/SmatchetBuildInfo.h — git SHA/branch/dirty,
+# toolchain, and the third-party credits manifest. Included by EXACTLY ONE TU
+# (Source/Core/src/Diagnostics/AboutInfo.cpp); never packaged into the Unreal
+# plugin (a copy there would go stale against the packaged .lib — the exact
+# drift the About dialog exists to make impossible).
+#
+# Runs at BUILD time, not just configure time: a plain configure_file would
+# freeze the SHA at configure time and then lie after the next commit. The
+# generator script writes through `copy_if_different`, so an unchanged SHA never
+# moves the header's mtime and the always-run target costs no recompiles.
+# ---------------------------------------------------------------------------
+find_package(Git QUIET)
+
+set(SMATCHET_BUILDINFO_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/include")
+set(SMATCHET_BUILDINFO_HEADER "${SMATCHET_BUILDINFO_DIR}/SmatchetBuildInfo.h")
+file(MAKE_DIRECTORY "${SMATCHET_BUILDINFO_DIR}")
+
+smatchet_collect_dep_manifest(SMATCHET_DEP_MANIFEST)
+smatchet_check_dep_manifest("${SMATCHET_DEP_MANIFEST}" "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt")
+smatchet_build_dep_literals("${SMATCHET_DEP_MANIFEST}" SMATCHET_DEPS_LITERALS)
+
+# The static (configure-time-known) half is handed to the -P script through a
+# generated .cmake file rather than -D flags: SMATCHET_DEPS_LITERALS is
+# multi-line and full of quotes and backslashes, which a command line mangles.
+set(_smatchet_buildinfo_static "${CMAKE_CURRENT_BINARY_DIR}/generated/SmatchetBuildInfoStatic.cmake")
+file(WRITE "${_smatchet_buildinfo_static}"
+"# AUTO-GENERATED at configure time by CMakeLists.txt. Do not edit.\n"
+"set(SMATCHET_CXX_COMPILER_ID \"${CMAKE_CXX_COMPILER_ID}\")\n"
+"set(SMATCHET_CXX_COMPILER_VERSION \"${CMAKE_CXX_COMPILER_VERSION}\")\n"
+"set(SMATCHET_DEPS_LITERALS [==[${SMATCHET_DEPS_LITERALS}]==])\n")
+
+set(_smatchet_buildinfo_script "${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmatchetGenerateBuildInfo.cmake")
+set(_smatchet_buildinfo_args
+        "-DSMATCHET_TEMPLATE=${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmatchetBuildInfo.h.in"
+        "-DSMATCHET_OUT=${SMATCHET_BUILDINFO_HEADER}"
+        "-DSMATCHET_STATIC_VARS=${_smatchet_buildinfo_static}"
+        "-DSMATCHET_SRC_DIR=${CMAKE_CURRENT_SOURCE_DIR}"
+        "-DGIT_EXECUTABLE=${GIT_EXECUTABLE}")
+
+# Configure-time seed: the header must exist before the first compile for
+# clangd/IDE indexing, and for EXCLUDE_FROM_ALL targets built without `ALL`
+# having run (SmatchetCore_DX12, SmatchetCore_PosixCheck).
+execute_process(COMMAND "${CMAKE_COMMAND}" ${_smatchet_buildinfo_args} -P "${_smatchet_buildinfo_script}")
+
+# Build-time refresh: always runs, but copy_if_different means no rebuild storm.
+add_custom_target(SmatchetBuildInfoGen ALL
+        COMMAND "${CMAKE_COMMAND}" ${_smatchet_buildinfo_args} -P "${_smatchet_buildinfo_script}"
+        BYPRODUCTS "${SMATCHET_BUILDINFO_HEADER}"
+        COMMENT "Refreshing SmatchetBuildInfo.h (git provenance)"
+        VERBATIM)
 
 # /RTC1-vs-/fsanitize=address fix (infra: asan-doctest-rig-not-instrumented).
 # Must run BEFORE any add_library/add_executable so the cleaned Debug flags reach
@@ -1183,3 +1238,26 @@ if(SMATCHET_BUILD_LUA_TESTS)
     enable_testing()
     add_subdirectory(tests/Lua)
 endif()
+
+# ---------------------------------------------------------------------------
+# SmatchetBuildInfoGen ordering edges. Deliberately at the very end of the file,
+# after every target (incl. the tests subdirectories) has been defined.
+#
+# The `ALL` on the custom target already covers a plain `cmake --build .`. These
+# explicit edges cover the targets that `ALL` does NOT reach — SmatchetCore_DX12
+# and SmatchetCore_PosixCheck are EXCLUDE_FROM_ALL, so `--target SmatchetCore_DX12`
+# would otherwise race the generator.
+#
+# The edges attach to the concrete targets, NOT to SmatchetCoreInterface:
+# add_dependencies() on an INTERFACE library does not propagate to consumers.
+# ---------------------------------------------------------------------------
+foreach(_smatchet_bi_consumer
+        SmatchetStandalone
+        SmatchetCore_DX12
+        SmatchetMobile
+        SmatchetCore_PosixCheck
+        SmatchetTests)
+    if(TARGET ${_smatchet_bi_consumer})
+        add_dependencies(${_smatchet_bi_consumer} SmatchetBuildInfoGen)
+    endif()
+endforeach()

@@ -220,6 +220,10 @@ target_include_directories(SmatchetCoreInterface INTERFACE
         # is wired through the SmatchetStandalone POST_BUILD copy below.
         Source/Core/ThirdParty/IconsFontAwesome6
         ${sqlitecpp_SOURCE_DIR}/include
+        # Generated SmatchetBuildInfo.h (Help > About). One INTERFACE line here
+        # means every consumer — Standalone, DX12, Mobile, PosixCheck, tests —
+        # inherits the path without a per-target edit.
+        ${SMATCHET_BUILDINFO_DIR}
 )
 # Source-tree fallback path for asset lookups (Phase 4 of
 # ai-chat-claude-desktop-parity). SmatchetApplyImGuiFont resolves the FA TTF
@@ -228,6 +232,12 @@ target_include_directories(SmatchetCoreInterface INTERFACE
 # SmatchetCoreInterface so Standalone + DX12 both pick it up.
 target_compile_definitions(SmatchetCoreInterface INTERFACE
         "SMATCHET_ASSETS_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/assets\"")
+# Build configuration for the Help > About dialog. MUST be a $<CONFIG> generator
+# expression and NOT a value baked into SmatchetBuildInfo.h: CMAKE_BUILD_TYPE is
+# EMPTY under the Visual Studio multi-config generator (the primary Windows dev
+# path), so a header-baked value would render a blank build type there.
+target_compile_definitions(SmatchetCoreInterface INTERFACE
+        "SMATCHET_BUILD_CONFIG=\"$<CONFIG>\"")
 if(SMATCHET_WITH_LUA_AUTOMATION)
     target_include_directories(SmatchetCoreInterface INTERFACE
             ${LUA_SRC_DIR}/src
