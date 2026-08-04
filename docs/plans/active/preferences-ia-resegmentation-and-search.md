@@ -52,7 +52,12 @@ Introduce a **descriptor table** (`PreferencesSchema.{h,cpp}`) as pure data — 
 sections, settings — with no ImGui dependency, and a **filter** (`PreferencesFilter.{h,cpp}`)
 that indexes each setting's translated label + keywords + section + category title into one
 haystack. The draw code then asks `st.Filter.ShowSetting("<id>")` before emitting each
-widget. Because the taxonomy lives in data rather than in `BeginTabItem` call order,
+widget. The table is deliberately a *second* source of truth alongside the draw code — the
+self-registering alternative cannot index a category the user has not opened, which is
+exactly what "search should work on all tabs" requires — so the duplication is paid for by
+the drift guard below; rationale + rejected alternatives in
+[ADR-0023](../../adr/0023-preferences-taxonomy-as-static-descriptor-table.md). Because the
+taxonomy lives in data rather than in `BeginTabItem` call order,
 re-parenting a section later is a one-field edit rather than a second restructure — which
 is what makes the two-step slice 2a/2b split cheap.
 
@@ -90,17 +95,39 @@ top-level entries, and the nested `BeginTabBar("FieldsInputsSubTabBar")`.
 ### Descriptor + filter shape
 
 ```cpp
-struct PrefsCategoryDesc { const char* Id; const char* TitleKey; const char* TitleEn; };
-struct PrefsSectionDesc  { const char* Id; const char* CategoryId; const char* TitleKey;
-                           const char* TitleEn; SaveSemantics Save; };
-struct PrefsSettingDesc  { const char* Id; const char* SectionId; const char* LabelKey;
-                           const char* LabelEn; const char* Keywords; };
+struct PrefsCategoryDesc { const char* Id; const char* TitleEn; };
+struct PrefsSectionDesc  { const char* Id; const char* CategoryId; const char* TitleEn;
+                           SaveSemantics Save; };
+struct PrefsSettingDesc  { const char* Id; const char* SectionId; const char* LabelEn;
+                           const char* Keywords; };
 ```
 
 `SaveSemantics` = `{ SaveAndSync, Autosave, Immediate, Restart, AnnotateDetached }`. Ids are
 dotted and stable (`general.updates.check_enabled`, `connections.perforce.p4_exe`,
 `editing.grid.single_click_edit`). `Keywords` is seeded with the **old** tab name so muscle
 memory still resolves (`"integrations mcp server port"`).
+
+**Localization: index by English source string, never by key.** There is deliberately no
+`LabelKey` / `TitleKey` field. Six of the seven prefs TUs carry
+`#define ImGui SmatchetLocalizedImGui`, so a widget's displayed label resolves through
+`SmatchetLocalization::LabelFromSource(englishLiteral)` /
+[`TranslateSource`](../../../Source/Core/include/SmatchetLocalizedImGui.h) — matched against
+the `English` column of `kEntries[]` via `EntriesByEnglish()`
+([`SmatchetLocalization.cpp:943`](../../../Source/Core/src/SmatchetLocalization.cpp)) — not
+through the key-based `T(key, englishFallback)` path (which a minority of strings use in
+addition). A `LabelKey` field would therefore be a **third** lookup path: any descriptor
+whose key is absent from `kEntries[]` while its English source string *has* a row would
+index the English text while the widget draws French, silently breaking search for that
+setting in `fr` only. So the filter indexes `TranslateSource(LabelEn)` — the same call the
+widget makes — which makes the indexed string byte-identical to the drawn one by
+construction, in every language. Two consequences: (a) new category/section titles get
+ordinary `kEntries[]` rows keyed by their English text, same as every other prefs string;
+(b) the haystack is truncated at the first `##`, because `LabelFromSource` appends a stable
+English-derived `###id` suffix when the label has none (so ImGui ids don't change with
+language) and that suffix must not become searchable. Note
+`AnnotateAnalysisUi_Preferences.cpp` has neither the `#define` nor any `T()` call — it is
+unlocalized, so `TranslateSource` returns its English input unchanged, which is consistent
+rather than a special case.
 
 Call-site shape — the section body goes through one template helper so a `Begin`/`End` pair
 never spans two functions (decomposition contract at
@@ -132,7 +159,9 @@ gated out fails the coverage test in the feature-OFF build — the class
 
 **Drift guard**: `PreferencesFilter` records every id passed to `ShowSetting` during a
 frame; a bucket-E test walks all categories with an empty query and asserts the observed id
-set equals the descriptor set. Without this the table rots silently.
+set equals the descriptor set. It also asserts each observed setting's **rendered label**
+matches its descriptor's `LabelEn` — an id-only check would pass a renamed label that kept
+its id, which is exactly an invisible search break. Without this the table rots silently.
 
 ### Slices
 
@@ -195,6 +224,7 @@ needed beyond the § Verification build line.
 - Search-box + `BeginChild` + `Selectable` + `SetScrollHereY(0.5f)` list shape — [`CommandPaletteUi.cpp:284-330`](../../../Source/Core/src/Commands/CommandPaletteUi.cpp) — the rail is the same pattern; don't invent a second one.
 - Deferred-scroll flag idiom (`scrollToSelected` → `SetScrollHereY` next frame) — [`SmatchetAutocompleteUi_detail.h:14`](../../../Source/Core/src/Ui/SmatchetAutocompleteUi_detail.h) — scrolling the pane to the first match.
 - Localized `CollapsingHeader` (+ `p_visible` overload) — [`SmatchetLocalizedImGui.h:165,:169`](../../../Source/Core/include/SmatchetLocalizedImGui.h) — section headers come translated for free.
+- `SmatchetLocalization::TranslateSource(englishSource)` — [`SmatchetLocalization.h`](../../../Source/Core/include/SmatchetLocalization.h) — the filter indexes through the *same* English-source lookup the localized ImGui wrappers use, so no second translation path is introduced (see § Descriptor + filter shape § Localization).
 - `template <typename T> struct FieldDesc { const char* key; T TrackerConfig::* member; }` — [`ConfigManager.cpp:188`](../../../Source/Core/src/Config/ConfigManager.cpp) — the collapsed-sections key is one `kStringFields[]` row, not a hand-rolled serializer.
 - `PreferencesSliderDragScenario` (`"preferences-slider-drag"`) — [`Source/Core/src/Commands/Scenarios/PreferencesSliderDragScenario.cpp:38`](../../../Source/Core/src/Commands/Scenarios/PreferencesSliderDragScenario.cpp) — the existing perf hook for this window; must keep driving after the rail lands.
 
