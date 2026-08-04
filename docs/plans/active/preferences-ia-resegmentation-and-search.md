@@ -99,7 +99,7 @@ struct PrefsCategoryDesc { const char* Id; const char* TitleEn; };
 struct PrefsSectionDesc  { const char* Id; const char* CategoryId; const char* TitleEn;
                            SaveSemantics Save; };
 struct PrefsSettingDesc  { const char* Id; const char* SectionId; const char* LabelEn;
-                           const char* Keywords; };
+                           const char* Keywords; bool ConditionalDraw /*= false*/; };
 ```
 
 `SaveSemantics` = `{ SaveAndSync, Autosave, Immediate, Restart, AnnotateDetached }`. Ids are
@@ -162,6 +162,19 @@ frame; a bucket-E test walks all categories with an empty query and asserts the 
 set equals the descriptor set. It also asserts each observed setting's **rendered label**
 matches its descriptor's `LabelEn` — an id-only check would pass a renamed label that kept
 its id, which is exactly an invisible search break. Without this the table rots silently.
+
+**State-conditional widgets vs the two-way guard.** House rule: *a descriptor-backed
+setting must draw every frame its section draws; "not applicable right now" is
+`BeginDisabled`, never a hidden widget* (the existing repo idiom — Templates ×6, Whisper ×4,
+Assistant ×1, Keybindings ×1). Escape hatch for genuine exceptions:
+`ConditionalDraw = true` exempts a row from the **observed ⊇ descriptor** direction only
+(the guard still fails if an undescribed id shows up), and every such row must carry a
+comment naming the gating condition. Expected count at ship time: zero. The four
+state-gated draw sites that exist today get **no descriptor** — `(checking...)` /
+skipped-version text + Clear button ([`_Local.cpp:415-424`](../../../Source/Core/src/Ui/SmatchetPreferencesUi_Local.cpp)),
+`Restart Smatchet now` (`:222-232`) — because they are transient status/action rows, not
+settings; "skip version restart" folds into the owning section's `Keywords` so search still
+lands on the section.
 
 ### Slices
 
