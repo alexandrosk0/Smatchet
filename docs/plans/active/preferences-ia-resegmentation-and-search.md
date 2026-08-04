@@ -151,8 +151,11 @@ PrefsSection(st, "appearance.display", [&] {
 });
 ```
 
-Matching is two-tier: `ContainsLower` substring first, `FuzzyScore(...) > threshold` only if
-tier 1 returned nothing. `ShowSetting` returns `true` immediately on an empty query, so the
+Matching is two-tier: `ContainsLower` substring first, `FuzzyScore(...) > 0` only if
+tier 1 returned nothing — no invented threshold; `> 0` is the repo convention at both
+existing `FuzzyScore` call sites (palette, registry did-you-mean), and tier gating bounds
+the noise: the permissive subsequence match can only ever *recover* results from an
+otherwise-empty state (typo recovery, `vysnc` → vsync). `ShowSetting` returns `true` immediately on an empty query, so the
 steady-state (non-searching) frame does zero extra work.
 
 **Granularity**: one descriptor per *value*, not per widget. The list editors
