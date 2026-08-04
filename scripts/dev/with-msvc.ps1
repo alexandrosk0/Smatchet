@@ -18,8 +18,13 @@
 .NOTES
     Toolset pin resolution order: $env:SMATCHET_VCVARS_VER, then
     build.msvc_toolset_pin in project.config.json. If neither resolves, vcvars
-    is called unpinned (newest). Exit codes: 2 = vswhere/vcvars not found or no
-    VC-tools install; otherwise the wrapped command's own exit code.
+    is called unpinned (newest). Exit codes: 78 = wrapper-level toolchain
+    failure (bad SMATCHET_MSVC_ARCH, vswhere missing, no VC-tools install, or
+    the vcvars batch missing); otherwise the wrapped command's own exit code,
+    propagated verbatim. 78 (sysexits EX_CONFIG) is deliberately outside the
+    range cmake/ninja/ctest return, so a caller can tell "no usable toolchain"
+    apart from "the wrapped build itself failed with that code" -- a plain
+    `exit 2` was ambiguous with a child process that exited 2.
 
     Target arch: $env:SMATCHET_MSVC_ARCH (default x64) selects the vcvars batch
     (arm64 -> vcvarsamd64_arm64.bat cross from x64, vcvarsarm64.bat native) and
@@ -32,6 +37,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# Wrapper-level "no usable MSVC toolchain" status. Distinct from any exit code the
+# wrapped command can plausibly return (cmake/ninja/ctest use 1/2/8), so build.ps1
+# can print install hints for THIS failure without mistaking a child's exit 2 for it.
+$ToolchainMissingExit = 78
 
 # Repo root = two levels up from scripts/dev/.
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -70,10 +80,10 @@ switch ($Arch.ToLowerInvariant()) {
     }
     default {
         # [Console]::Error.WriteLine (not Write-Error): with $ErrorActionPreference
-        # = 'Stop', Write-Error is terminating and would exit 1 before `exit 2` runs,
-        # breaking the documented exit-code contract.
+        # = 'Stop', Write-Error is terminating and would exit 1 before the explicit
+        # exit runs, breaking the documented exit-code contract.
         [Console]::Error.WriteLine("with-msvc: invalid SMATCHET_MSVC_ARCH='$Arch' (expected x64 or arm64).")
-        exit 2
+        exit $ToolchainMissingExit
     }
 }
 
@@ -81,7 +91,7 @@ switch ($Arch.ToLowerInvariant()) {
 $VsWhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
 if (-not (Test-Path $VsWhere)) {
     [Console]::Error.WriteLine("with-msvc: vswhere.exe not found at $VsWhere. Install Visual Studio 2017+ (Community is free).")
-    exit 2
+    exit $ToolchainMissingExit
 }
 
 # Deliberately NOT -latest: on a box with a pinned-toolset VS plus a newer
@@ -93,7 +103,7 @@ $installs = & $VsWhere -products '*' `
     -property installationPath
 if (-not $installs) {
     [Console]::Error.WriteLine("with-msvc: no VS install with the $VcRequires component found (vswhere returned nothing for arch $Arch).")
-    exit 2
+    exit $ToolchainMissingExit
 }
 
 $VsInstall = $null
@@ -108,7 +118,7 @@ foreach ($cand in @($installs)) {
 $Vcvars = Join-Path $VsInstall "VC\Auxiliary\Build\$VcvarsBat"
 if (-not (Test-Path $Vcvars)) {
     [Console]::Error.WriteLine("with-msvc: $VcvarsBat not found under $VsInstall (arch $Arch; install the matching VC toolset component).")
-    exit 2
+    exit $ToolchainMissingExit
 }
 
 # --- Import vcvars64 env, then exec the command -------------------------------
