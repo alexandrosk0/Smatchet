@@ -35,7 +35,6 @@ bool NeedsSetup(const TrackerConfig& cfg);
 /// green "Test connection" verdict to the exact values that were probed. Save & Sync recomputes
 /// it from the live buffers and refuses to clear read-only when it differs, so probing, then
 /// editing the token, then saving cannot unlock on an unverified value.
-///
 /// FNV-1a over backend key + fields, hex-encoded. Not a security primitive — it never leaves
 /// memory and only has to change when a field changes. Deliberately returns a digest rather
 /// than the raw values so the session struct does not hold a second plaintext copy of a token.
