@@ -203,7 +203,16 @@ Failure modes, all degrading to `"unknown"` — **the script must never `message
 - **`THIRD_PARTY_LICENSES.md` gaps** — that file does not document `stb`, `ImGuiColorTextEdit`, or `whisper.cpp`, all of which the new credits list names. No-action here (the About manifest is intentionally a superset, not a replacement for the notice file); worth a follow-up to bring the notice file up to parity.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `5257d598` · plan committed (`wip(plan): about-dialog-help-menu`).
+- `203e7eff` · Slice 1 — `cmake/SmatchetBuildInfo.h.in` + `cmake/SmatchetGenerateBuildInfo.cmake` (`cmake -P`, every failure degrading to `"unknown"`, never `FATAL_ERROR`) + `cmake/SmatchetDepManifest.cmake` (collect / drift-guard / literal-build) + root `CMakeLists.txt` wiring: configure-time seed, `SmatchetBuildInfoGen ALL` custom target, `copy_if_different`, include dir on `SmatchetCoreInterface`, and `SMATCHET_BUILD_CONFIG="$<CONFIG>"` as a compile definition rather than a baked header value.
+- `25a2e5e0` · Slice 2 — `HostOsName` / `HostArchName` / `DetectHostMachine` moved verbatim out of `BugReportService.cpp`'s anonymous namespace into `Diagnostics/HostMachineInfo.{h,cpp}`; bug-report `env` payload unchanged.
+- `3bca6b28` · Slice 3 — `Diagnostics/AboutInfo.{h,cpp}` (the sole includer of the generated header, behind an `__has_include` fallback) + `tests/Core/AboutInfo.test.cpp` (13 cases / 142 assertions) + `tests/CMakeLists.txt` registration.
+- `a81f2cab` · Slice 4 — `Ui/SmatchetAboutUi.{h,cpp}` (`AboutDrawCtx` + six section helpers), `UiSession` latch + cached snapshot, `drawGlobalOverlays` call, the Help-menu restructure that moves `drawMenuBarHelpMenu` outside the `trackerLocked` bracket, and the `menu.about` localization entry.
+- `7b3c4709` · Slice 5 — `app.about.open` registered in `AppViewCommands.cpp`; `app.version` extended with `build` / `git` / `runtime` / `deps` via an anon-namespace `AddAboutFields`; `tests/bats/about_buildinfo.bats` (9 cases).
+- `d1a4fb88` · lint-gate remediation — `comment-noise` separators removed and the `app-controller-fan-in` deviation collapsed onto one 118-column line above the include (which is the only shape `appcontroller_fan_in_audit.py` recognises).
+
+**Branch note:** this branch also carries `1f8018c6` (ADR-0023) and `77c18ee0` (preferences-IA plan) from concurrent sessions sharing the integration tree. They are unrelated to this feature and must be split out or acknowledged before the PR is opened.
 
 ## Deviations from plan
 *(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
@@ -216,10 +225,31 @@ Failure modes, all degrading to `"unknown"` — **the script must never `message
 - **Slice 4 — `MenuShortcut(ctx, "app.about.open", "")`, not `nullptr`.** The plan's literal text passed `nullptr` as the fallback; `MenuShortcut` ends `return std::string(fallback);` and constructing a `std::string` from `nullptr` is undefined behaviour. Empty string gives the same "no hint unless the user rebinds" behaviour safely.
 - **Slice 4 — Escape/title-bar dismissal does not follow the `DrawAppUpdateModal` precedent.** That modal calls `OpenPopup` every frame its flag is set, which would re-open About the frame after Escape closes it. Here `OpenPopup` fires only off the latch, and the `!BeginPopupModal` branch clears `showAbout` + releases the cached snapshot.
 - **Slice 5 — the bats case asserts the CMake half directly, not `app.version` over the CLI.** The plan called for `app.version --json | jq -e '.deps | length > 5'`. Two blockers: there is no `--json` flag (`CliCommandRunner.cpp`'s `ParseArgs` accepts `--help/--pretty/--quiet/--yes/--dry-run/--tokens/--spawn/--mcp-host/--mcp-port/--timeout`; JSON is already the default output), and CLI dispatch goes over MCP to a **running instance** — CI cannot boot the exe (root `AGENTS.md`: the `Bucket-` checks were dropped 2026-06-15 because the Mesa-GL lanes can't boot it). A CLI assertion would therefore be unrunnable exactly where the plan wanted it to run, and every other `tests/bats/*.bats` targets `agents/scripts/**`, not the app. `tests/bats/about_buildinfo.bats` instead drives `cmake -P` straight — 9 cases covering HEAD-sha freshness, `GIT_EXECUTABLE-NOTFOUND` / non-repo / missing-template degradation (= Verification item 2), `copy_if_different` mtime stability, dep-record shape, feature-flag gating, and the drift guard's WARN-local / FATAL-under-CI split. Same regression caught (a broken `add_custom_target` or a bumped pin), and it runs headless.
+- **Slice 5 — the bats suite needed a `test-*.sh` wrapper the plan did not name.** `scripts/dev/test-all.sh` enrols suites by globbing `agents/scripts/**/test-*.sh`, not by globbing `tests/bats/*.bats`; an unwrapped suite runs on a developer's machine and never in CI. `test-orphan-bats` catches exactly this and FAILed the doc-validation suite until `agents/scripts/project/test-about-buildinfo-bats.sh` was added (mirrors `test-subsystem-docs-bats.sh`).
 - **Slice 5 — `app.version` gained the About fields via an anon-namespace `AddAboutFields` helper.** Keeps the handler lambda readable; pre-existing `version` / `releaseRepo` keys are untouched for back-compat as the plan required.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+
+Run against `d1a4fb88` on `claude/peaceful-faraday-6jm1w5`, preset `ninja-test-msvc` (MSVC toolset 14.38, x64).
+
+| # | Item | Result |
+|---|---|---|
+| 1 | **Build gate (dual-target)** — `SmatchetStandalone` + `SmatchetCore_DX12` + `SmatchetTests` | **PASS** — exit 0, zero warnings, zero errors |
+| 2 | **Bucket A (ctest)** — full suite | **PASS** — 7/7, 100%, 13.59 s |
+| 3 | **Bucket A (About cases)** — `SmatchetTests.exe -tc=*DepManifest*,*AboutGitLine*,*AboutReportText*,*GatherAboutInfo*` | **PASS** — 13 cases / 142 assertions, 0 failed |
+| 4 | **Bash-driver** — `bash agents/scripts/project/test-about-buildinfo-bats.sh` | **PASS** — 9/9 |
+| 5 | **Codegen freshness** — generated header vs real HEAD | **PASS** — `SMATCHET_GIT_SHA "d1a4fb88…"` / `_SHA_SHORT "d1a4fb887275"` / `_BRANCH "claude/peaceful-faraday-6jm1w5"` / `_DIRTY 1` / `_SHALLOW 0`, matching `git rev-parse HEAD` + `--abbrev-ref HEAD` exactly |
+| 6 | **No rebuild storm** — build twice with no commit in between | **PASS** — both builds run only the `Refreshing SmatchetBuildInfo.h` edge; no compile, no link. `copy_if_different` holds |
+| 7 | **Degradation** — git absent / not a repo / missing template, must never FATAL | **PASS** — covered by `about_buildinfo.bats` cases 2-4 (`GIT_EXECUTABLE-NOTFOUND`, non-repo dir, absent template all yield `"unknown"` at exit 0) |
+| 8 | **Packaging invariant** — generated header must not reach the Unreal plugin | **PASS** — `find Source/UnrealPlugins -name 'SmatchetBuildInfo.h'` returns nothing |
+| 9a | **Doc validation** — `bash scripts/dev/test-docs.sh` | **PASS** — 14/14. First run FAILed `test-orphan-bats`: `about_buildinfo.bats` had no `test-*.sh` wrapper, so CI would never have run it. Fixed by adding `agents/scripts/project/test-about-buildinfo-bats.sh` |
+| 9 | **Lint gates** — `test-lint-rules.sh --diff origin/develop` | **PASS** — strict-zone, comment-noise, raw-`new`/overdue-deviation/`detach`, GLFW-in-Core-headers, CMake-FATAL scope, function length/branching, include cycles, AppController fan-in, agent prompt sizes all clean |
+| 10 | **UI, manual** — Help → About opens, sections populated, clipboard round-trip, GitHub link, stacked update modal | **PENDING USER VERDICT** — visual-validation exception (`AGENTS.md` § Autonomous ship-loop default, exception 5) |
+| 11 | **Reachability regression, manual** — tracker unreachable: Help menu enabled, About enabled, the other two Help items greyed exactly as before | **PENDING USER VERDICT** — same exception |
+
+**Non-blocking WARNs accepted:** `RegisterAppViewCommands` at 111 lines (soft tier; hard cap 120), and 5 `[dup]` calibration-phase clone WARNs — 3 of them the pre-existing `BuiltinCommands_App.cpp:35-37` ↔ `AnnotateAnalysisUi_Modals.cpp:121` json-field-assignment pattern.
+
+**Unrelated pre-existing failure, not caused by this diff:** `tests/bats/issue_sweep.bats` fails 4/6 on this Windows machine. Its `setup()` probes interpreters with `command -v python`, which resolves to the Microsoft Store App Execution Alias stub — present on `PATH`, not a real interpreter — so the `skip "no python"` guard never fires and `issue-sweep.sh` parses 0 issues. Neither the script nor the suite is touched by this branch (`git diff --name-only origin/develop...HEAD` matches nothing under `issue`/`sweep`). Filed as a separate task.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
