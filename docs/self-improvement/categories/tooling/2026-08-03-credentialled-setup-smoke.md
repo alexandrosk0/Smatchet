@@ -14,7 +14,7 @@
     `BackendHasBeenReachable == true` and `ReadOnlyMode == false`. Never enabled in CI; the value is
     that the smoke becomes **reproducible on demand** (one command, deterministic assertions) instead
     of a prose checklist a human re-derives each time. Est ~0.5d.
-  Cross-ref: `docs/plans/active/dev-onboarding-first-run-quickstart.md` § Verification § Manual residue
+  Cross-ref: `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` § Verification § Manual residue
     (the bullet that requires this entry); `tests/ui/tracker_first_run_setup.test.cpp`;
     `tests/Core/TrackerSetupPure.test.cpp`; `tests/Core/data_dependent_windows_smoke.test.cpp`
     (the opt-in pattern to copy); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp`

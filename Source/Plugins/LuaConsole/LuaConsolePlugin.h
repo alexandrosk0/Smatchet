@@ -3,11 +3,28 @@
 #include "IPlugin.h"
 #include "LuaConsole.h"
 #include "TextEditor.h"
+#include <future>
 #include <string>
 #include <vector>
 
+/// Outcome of one script read. NotOpenable and TooLarge are deliberately distinct: the first is
+/// the ordinary "picked a name with no file behind it" path and gets the "-- New file" stub, but
+/// stubbing an oversize file would re-baseline `diskSnapshot_` onto a two-line placeholder and
+/// the next Save would truncate the real script on disk.
+/// File-scope rather than nested in LuaConsolePlugin so the anonymous-namespace reader in the .cpp
+/// can name it; a private nested enum would be unreachable from a free function.
+enum class LuaScriptReadStatus { Ok, NotOpenable, TooLarge };
+
 class LuaConsolePlugin : public IPlugin {
   public:
+    /// Drains an in-flight script read before the members go away. A std::async future's
+    /// destructor already blocks until its task completes, so tearing the plugin down mid-read
+    /// (hot-reload, shutdown) would stall the destroying thread with no explanation; draining
+    /// here makes that wait explicit, bounded in reporting, and diagnosable via LOG_WARN.
+    /// Detaching the task instead is not an option (`no-detach` is an absolute lint rule, and the
+    /// task's result feeds members that are being destroyed).
+    ~LuaConsolePlugin();
+
     const char* Id() const override { return "lua_console"; }
     void OnEarlyInit(AppController& app) override;
     void OnDraw(AppController& app) override;
@@ -28,6 +45,36 @@ class LuaConsolePlugin : public IPlugin {
     /// (not index) because a refresh can reorder the list before the user picks.
     std::string pendingScriptName_;
     std::string diskSnapshot_;
+
+    /// Payload of one off-thread script read (Pillar 2, Issue #1925). `name` is echoed back so
+    /// the poll can drop a result whose selection moved while the read was in flight.
+    struct ScriptLoadResult {
+        std::string name;
+        std::string content;
+        /// NotOpenable reproduces the old synchronous ReadFileAll failure path (editor gets the
+        /// "-- New file" stub); see LuaScriptReadStatus for why TooLarge must not share it.
+        LuaScriptReadStatus status = LuaScriptReadStatus::NotOpenable;
+    };
+    std::future<ScriptLoadResult> scriptLoadFuture_;
+    /// A script read is running on the std::async worker. Also gates SaveCurrentScript: the editor
+    /// is blank during the in-flight window, so a save would truncate the file on disk.
+    bool scriptLoadInFlight_ = false;
+    /// Selection made WHILE a read was in flight. Re-kicked from PollScriptLoad rather than
+    /// re-assigning `scriptLoadFuture_` inline — move-assigning over a live std::async future
+    /// blocks the render thread until the old task's shared state is released.
+    std::string queuedLoadName_;
+    /// Script name whose "Reload from disk" press is still waiting on its off-thread read; empty
+    /// when no reload is outstanding. Held by NAME, not a bool: the read lands frames later, so
+    /// the outcome banner must be reported by PollScriptLoad, and a selection change made in the
+    /// meantime must not mislabel an unrelated load as the user's reload.
+    std::string reloadNoticeName_;
+    /// Non-empty when the editor is blank for a script that was NOT read successfully — refused
+    /// (over the size cap), a worker throw, or a launch that never started. Gates SaveCurrentScript
+    /// for the same reason `scriptLoadInFlight_` does: writing the blank buffer back would truncate
+    /// a file that has real content. A string rather than a bool because the three causes need
+    /// different guidance ("too large, use an external editor" vs "reopen it"), and a wrong message
+    /// here points the user at the wrong remedy. Cleared on every fresh kick.
+    std::string scriptLoadRefusedReason_;
 
     /// Clamped height for `BeginChild` (script pane) this frame.
     float luaAutomationScriptPaneHeightPx_ = 0.f;
@@ -54,7 +101,16 @@ class LuaConsolePlugin : public IPlugin {
     /// nothing has been selected yet; clears the selection when a tracked file
     /// vanished (so a save cannot fall through to an unrelated file -- DR11).
     void SyncSelectionToList();
-    bool LoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
+    /// Blank the editor and kick the selected script's read onto a worker (Pillar 2: no file I/O
+    /// on the render thread). Returns false only for the synchronous validation failures (no
+    /// selection / unresolvable path); a read error surfaces later via PollScriptLoad.
+    bool StartLoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr);
+    /// Launch the worker for `name`. Assumes no read is already in flight.
+    void KickScriptLoad(const AppController& app, const std::string& name);
+    /// Per-frame non-blocking poll of `scriptLoadFuture_`; applies the text once ready. Called at
+    /// the top of OnDraw, before the window-hidden early-out, so a read kicked from OnEarlyInit
+    /// (or while the window was closed) still lands.
+    void PollScriptLoad(const AppController& app);
     bool SaveCurrentScript(const AppController& app, std::string& outErr);
     void ApplyErrorMarkersFromMessage(const std::string& errMsg);
     void ClearErrorMarkers();

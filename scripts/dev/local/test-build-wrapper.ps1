@@ -17,9 +17,18 @@
          when routed through with-msvc.ps1's positional splat.
       6. build.ps1 invokes build_and_run.ps1 directly (no with-msvc.ps1) when
          cl.exe is already on PATH.
-      7. build.ps1 maps with-msvc.ps1's exit 2 to winget install hints and exits 2.
-      8. build_standalone.ps1 fails fast on a *-msvc preset with no cl.exe, before
-         reaching the cmake configure step.
+      7. build.ps1 maps with-msvc.ps1's toolchain-missing status (78) to install
+         hints and propagates it — while a wrapped command that merely exited 2
+         propagates untouched, with no bogus "no usable MSVC toolchain" claim.
+         Build Tools is stated as mandatory; the LLVM hint appears only for a
+         clang preset, as an addition rather than an alternative.
+      8. build_standalone.ps1 fails fast on every msvc/clang preset with no cl.exe,
+         before reaching the cmake configure step — including the mid-name-token
+         presets (ninja-msvc-asan, ninja-clang-asan, *-msvc-arm64).
+      9. The pre-flight does not over-reach: presets with no msvc/clang token
+         (ninja-tsan-linux, ninja-test-linux) never demand cl.exe.
+     10. A clang preset with cl.exe present but no clang-cl.exe still fails fast,
+         naming clang-cl, before reaching the cmake configure step.
 
     Exit codes:
       0 — all tests passed
@@ -339,36 +348,77 @@ Invoke-Test "build.ps1: cl.exe on PATH bypasses with-msvc.ps1" {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 7: with-msvc.ps1 exit 2 (no usable VS install) surfaces winget hints.
+# Test 7: with-msvc.ps1's toolchain-missing status (78) surfaces install hints —
+#         and nothing else does. Row 3 is the regression that motivated the
+#         dedicated code: with-msvc propagates the wrapped command's exit code,
+#         so a build that legitimately exited 2 used to be reported as a missing
+#         MSVC install. Rows 1-2 pin the hint text: Build Tools is mandatory for
+#         every Windows preset, so LLVM is offered only for a clang preset and
+#         only as an addition to it.
 # ──────────────────────────────────────────────────────────────────────────────
-Invoke-Test "build.ps1: with-msvc exit 2 surfaces winget hints and propagates exit 2" {
-    $sandbox = New-BuildPs1Sandbox
-    try {
-        $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments "-BuildOnly" -WithMsvcExit "2"
-        if ($Verbose) { Write-Host "  exit=$($run.ExitCode)`n$($run.Output)" }
+Invoke-Test "build.ps1: with-msvc exit 78 surfaces install hints; a propagated exit 2 does not" {
+    $cases = @(
+        @{ Name = "no toolchain, msvc preset";  Exit = 78; Arguments = "-BuildOnly";                          WantHints = $true;  WantLlvm = $false },
+        @{ Name = "no toolchain, clang preset"; Exit = 78; Arguments = "-Preset ninja-iter-clang -BuildOnly"; WantHints = $true;  WantLlvm = $true  },
+        @{ Name = "wrapped build exited 2";     Exit = 2;  Arguments = "-BuildOnly";                          WantHints = $false; WantLlvm = $false }
+    )
+    foreach ($case in $cases) {
+        $sandbox = New-BuildPs1Sandbox
+        try {
+            $run = Invoke-BuildPs1Sandbox -Sandbox $sandbox -Arguments $case.Arguments -WithMsvcExit "$($case.Exit)"
+            if ($Verbose) { Write-Host "  [$($case.Name)] exit=$($run.ExitCode)`n$($run.Output)" }
 
-        if ($run.ExitCode -ne 2) {
-            throw "Expected with-msvc's exit 2 to propagate, got $($run.ExitCode). Output:`n$($run.Output)"
+            if ($run.ExitCode -ne $case.Exit) {
+                throw "[$($case.Name)] expected with-msvc's exit $($case.Exit) to propagate, got $($run.ExitCode). Output:`n$($run.Output)"
+            }
+
+            $sawDiagnosis = [bool]($run.Output -match "no usable MSVC toolchain")
+            if ($case.WantHints -ne $sawDiagnosis) {
+                if ($case.WantHints) {
+                    throw "[$($case.Name)] expected the no-toolchain diagnosis. Got:`n$($run.Output)"
+                }
+                throw "[$($case.Name)] a propagated child exit code must not be reported as a missing toolchain. Got:`n$($run.Output)"
+            }
+
+            if ($case.WantHints) {
+                if ($run.Output -notmatch [regex]::Escape("Install Visual Studio Build Tools with the C++ workload")) {
+                    throw "[$($case.Name)] Build Tools must be stated as mandatory, not one option among several. Got:`n$($run.Output)"
+                }
+                if ($run.Output -notmatch [regex]::Escape("winget install Microsoft.VisualStudio.2022.BuildTools")) {
+                    throw "[$($case.Name)] expected the Build Tools winget hint. Got:`n$($run.Output)"
+                }
+            }
+
+            $sawLlvm = [bool]($run.Output -match [regex]::Escape("winget install LLVM.LLVM"))
+            if ($case.WantLlvm -ne $sawLlvm) {
+                if ($case.WantLlvm) {
+                    throw "[$($case.Name)] expected the LLVM hint for a clang preset. Got:`n$($run.Output)"
+                }
+                throw "[$($case.Name)] LLVM cannot substitute for the MSVC environment, so the hint must not appear here. Got:`n$($run.Output)"
+            }
         }
-        if ($run.Output -notmatch "no usable MSVC toolchain") {
-            throw "Expected the no-toolchain diagnosis. Got:`n$($run.Output)"
-        }
-        if ($run.Output -notmatch [regex]::Escape("winget install Microsoft.VisualStudio.2022.BuildTools")) {
-            throw "Expected the Build Tools winget hint. Got:`n$($run.Output)"
-        }
-        if ($run.Output -notmatch [regex]::Escape("winget install LLVM.LLVM")) {
-            throw "Expected the LLVM winget hint. Got:`n$($run.Output)"
-        }
+        finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
     }
-    finally { Remove-Item -Recurse -Force -LiteralPath $sandbox -ErrorAction SilentlyContinue }
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Test 8: build_standalone.ps1 fails fast on an MSVC preset with no cl.exe,
-#         before reaching the cmake configure step.
+# Test 8: build_standalone.ps1 fails fast on every MSVC-needing preset with no
+#         cl.exe, before reaching the cmake configure step.
+#
+#         The table is not just ninja-iter-msvc: the toolchain token sits mid-name
+#         in the sanitizer and arm64 presets, which a "*-msvc" suffix test silently
+#         skipped. Every preset here must trip the pre-flight.
 # ──────────────────────────────────────────────────────────────────────────────
-Invoke-Test "build_standalone: *-msvc preset without cl.exe fails fast before cmake" {
-    # cmake + ninja must resolve so their Assert-Command checks pass and the new
+$MsvcNeedingPresets = @(
+    "ninja-iter-msvc",          # suffix form — the original case
+    "ninja-msvc-asan",          # token mid-name
+    "ninja-clang-asan",         # token mid-name, clang-cl still needs the MSVC env
+    "ninja-iter-msvc-arm64",    # token mid-name, arm64 suffix
+    "ninja-publish-msvc-arm64"
+)
+
+Invoke-Test "build_standalone: every msvc/clang preset without cl.exe fails fast before cmake" {
+    # cmake + ninja must resolve so their Assert-Command checks pass and the
     # pre-flight is what actually fires; neither fake is ever executed.
     $fakeBin = Join-Path $env:TEMP "smatchet-fakebin-$([System.IO.Path]::GetRandomFileName())"
     New-Item -ItemType Directory -Path $fakeBin | Out-Null
@@ -379,26 +429,107 @@ Invoke-Test "build_standalone: *-msvc preset without cl.exe fails fast before cm
     try {
         $buildScript = Join-Path $PSScriptDir "build_standalone.ps1"
         $childPath = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
-        $prevEap = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        $output = powershell -NoProfile -ExecutionPolicy Bypass `
-            -Command "`$env:PATH = '$childPath'; & '$buildScript' -Preset ninja-iter-msvc 2>&1" 2>&1
-        $exitCode = $LASTEXITCODE
-        $ErrorActionPreference = $prevEap
-        $combined = ($output | ForEach-Object { "$_" }) -join "`n"
-        if ($Verbose) { Write-Host "  exit=$exitCode  output=$combined" }
+        foreach ($preset in $MsvcNeedingPresets) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $output = powershell -NoProfile -ExecutionPolicy Bypass `
+                -Command "`$env:PATH = '$childPath'; & '$buildScript' -Preset $preset 2>&1" 2>&1
+            $exitCode = $LASTEXITCODE
+            $ErrorActionPreference = $prevEap
+            $combined = ($output | ForEach-Object { "$_" }) -join "`n"
+            if ($Verbose) { Write-Host "  $preset -> exit=$exitCode  output=$combined" }
 
-        if ($exitCode -eq 0) {
-            throw "Expected non-zero exit when cl.exe is missing, got 0. Output:`n$combined"
+            if ($exitCode -eq 0) {
+                throw "[$preset] Expected non-zero exit when cl.exe is missing, got 0. Output:`n$combined"
+            }
+            if ($combined -notmatch "cl\.exe is not on PATH") {
+                throw "[$preset] Expected the missing-cl.exe diagnosis. Got:`n$combined"
+            }
+            if ($combined -notmatch [regex]::Escape("build.ps1")) {
+                throw "[$preset] Expected the message to name .\build.ps1. Got:`n$combined"
+            }
+            if ($combined -match "cmake --preset") {
+                throw "[$preset] Pre-flight must fire before the cmake configure step. Got:`n$combined"
+            }
         }
-        if ($combined -notmatch "cl\.exe is not on PATH") {
-            throw "Expected the missing-cl.exe diagnosis. Got:`n$combined"
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $fakeBin -ErrorAction SilentlyContinue }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 9: the widened match must not over-reach — a preset that carries no
+#         msvc/clang token never demands cl.exe.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build_standalone: non-MSVC presets are not caught by the cl.exe pre-flight" {
+    $fakeBin = Join-Path $env:TEMP "smatchet-fakebin-$([System.IO.Path]::GetRandomFileName())"
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    foreach ($tool in @("cmake.exe", "ninja.exe")) {
+        Set-Content -Encoding ASCII -Path (Join-Path $fakeBin $tool) -Value "@echo off`r`nexit 0"
+    }
+
+    try {
+        $buildScript = Join-Path $PSScriptDir "build_standalone.ps1"
+        $childPath = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
+        foreach ($preset in @("ninja-tsan-linux", "ninja-test-linux")) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $output = powershell -NoProfile -ExecutionPolicy Bypass `
+                -Command "`$env:PATH = '$childPath'; & '$buildScript' -Preset $preset 2>&1" 2>&1
+            $ErrorActionPreference = $prevEap
+            $combined = ($output | ForEach-Object { "$_" }) -join "`n"
+            if ($Verbose) { Write-Host "  $preset -> output=$combined" }
+
+            if ($combined -match "cl\.exe is not on PATH") {
+                throw "[$preset] carries no msvc/clang token and must not trip the pre-flight. Got:`n$combined"
+            }
         }
-        if ($combined -notmatch [regex]::Escape("build.ps1")) {
-            throw "Expected the message to name .\build.ps1. Got:`n$combined"
-        }
-        if ($combined -match "cmake --preset") {
-            throw "Pre-flight must fire before the cmake configure step. Got:`n$combined"
+    }
+    finally { Remove-Item -Recurse -Force -LiteralPath $fakeBin -ErrorAction SilentlyContinue }
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Test 10: cl.exe alone does not satisfy a clang preset. The clang presets pin
+#          CMAKE_CXX_COMPILER to clang-cl, and the MSVC environment only ships
+#          one when the "C++ Clang tools for Windows" component is installed —
+#          so a host with Build Tools but no LLVM must be told about clang-cl
+#          rather than dying later inside cmake on an opaque compiler error.
+# ──────────────────────────────────────────────────────────────────────────────
+Invoke-Test "build_standalone: a clang preset with cl.exe but no clang-cl.exe fails fast before cmake" {
+    $fakeBin = Join-Path $env:TEMP "smatchet-fakebin-$([System.IO.Path]::GetRandomFileName())"
+    New-Item -ItemType Directory -Path $fakeBin | Out-Null
+    # cl.exe present on purpose: it clears the earlier MSVC-environment gate, so the
+    # clang-cl gate is the only thing left that can fire. None of the fakes are executed.
+    foreach ($tool in @("cmake.exe", "ninja.exe", "cl.exe")) {
+        Set-Content -Encoding ASCII -Path (Join-Path $fakeBin $tool) -Value "@echo off`r`nexit 0"
+    }
+
+    try {
+        $buildScript = Join-Path $PSScriptDir "build_standalone.ps1"
+        $childPath = "$fakeBin;$env:SystemRoot\System32;$env:SystemRoot"
+        foreach ($preset in @("ninja-iter-clang", "ninja-clang-asan")) {
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = "Continue"
+            $output = powershell -NoProfile -ExecutionPolicy Bypass `
+                -Command "`$env:PATH = '$childPath'; & '$buildScript' -Preset $preset 2>&1" 2>&1
+            $exitCode = $LASTEXITCODE
+            $ErrorActionPreference = $prevEap
+            $combined = ($output | ForEach-Object { "$_" }) -join "`n"
+            if ($Verbose) { Write-Host "  $preset -> exit=$exitCode  output=$combined" }
+
+            if ($exitCode -eq 0) {
+                throw "[$preset] Expected non-zero exit when clang-cl.exe is missing, got 0. Output:`n$combined"
+            }
+            if ($combined -notmatch "clang-cl\.exe is not on PATH") {
+                throw "[$preset] Expected the missing-clang-cl diagnosis. Got:`n$combined"
+            }
+            # Lookbehind, not a bare "cl\.exe": the clang-cl message contains the cl.exe
+            # message as a substring, so an unanchored match would flag every run.
+            if ($combined -match "(?<!clang-)cl\.exe is not on PATH") {
+                throw "[$preset] cl.exe IS on PATH here; the earlier gate must not fire. Got:`n$combined"
+            }
+            if ($combined -match "cmake --preset") {
+                throw "[$preset] Pre-flight must fire before the cmake configure step. Got:`n$combined"
+            }
         }
     }
     finally { Remove-Item -Recurse -Force -LiteralPath $fakeBin -ErrorAction SilentlyContinue }

@@ -23,7 +23,7 @@
   Cross-ref: `Source/Core/src/Commands/Scenarios/UiTestScenario.cpp` (the `io.ConfigSavedSettings = false`
     fix); `Source/Core/src/Commands/CliDispatch.cpp:476` (the `scenarioWaitMs` computation that drops
     `pa.timeoutMs`); `scripts/dev/test-ui-tracker-first-run-setup.sh` + `scripts/dev/test-ui-annotate-prefs-persist.sh`
-    (drivers that both hung pre-fix); `docs/plans/active/dev-onboarding-first-run-quickstart.md`
+    (drivers that both hung pre-fix); `docs/plans/shipped/dev-onboarding-first-run-quickstart.md`
     § Deviations (the out-of-plan infra-fix entry).
   Status: open
   Last-reviewed: 2026-08-03

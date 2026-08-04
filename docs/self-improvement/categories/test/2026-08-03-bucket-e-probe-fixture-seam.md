@@ -16,7 +16,7 @@
     Then port § Verification items 2-6 into `tracker_first_run_setup.test.cpp`. Prefer this over a
     network-level fake (an httplib stub would pin transport, not the setup state machine, which is
     what regressed-risk lives in). Est ~0.5-1d.
-  Cross-ref: `docs/plans/active/dev-onboarding-first-run-quickstart.md` § Verification bucket-E items
+  Cross-ref: `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` § Verification bucket-E items
     2-6 + § Deviations (the entry recording the descope); `tests/ui/tracker_first_run_setup.test.cpp`
     (the 2 shipped tests); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` (probe dispatch +
     `onPreferencesSaveAndSync`); `Source/Core/include/Tracker/ITrackerBackendFactory.h`;
