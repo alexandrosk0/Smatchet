@@ -116,3 +116,56 @@ TEST_CASE("CredentialFingerprint: stable, and moves with the active backend's fi
         CHECK(TrackerSetupPure::CredentialFingerprint(latched) == fp);
     }
 }
+
+// Regression: the Save & Sync unlock originally cleared ReadOnlyMode alone, leaving
+// NeedsSetup() (and with it the locked main menu + the grid welcome state) still reading
+// first-run until the connectivity monitor independently latched the same verdict. Both
+// halves must move on the one edge — that pairing is what these cases pin.
+TEST_CASE("ApplyVerifiedSaveUnlock: a matching pin clears read-only AND latches reachability") {
+    TrackerConfig cfg = JiraCfg();
+    cfg.ReadOnlyMode = true;
+    const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+    CHECK(TrackerSetupPure::NeedsSetup(cfg));
+
+    CHECK(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+    CHECK_FALSE(cfg.ReadOnlyMode);
+    CHECK(cfg.BackendHasBeenReachable);
+    CHECK_FALSE(TrackerSetupPure::NeedsSetup(cfg));
+}
+
+TEST_CASE("ApplyVerifiedSaveUnlock: refuses every unverified path and mutates nothing") {
+    SUBCASE("an empty pin means nothing was probed this session") {
+        TrackerConfig cfg = JiraCfg();
+        cfg.ReadOnlyMode = true;
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, std::string()));
+        CHECK(cfg.ReadOnlyMode);
+        CHECK_FALSE(cfg.BackendHasBeenReachable);
+    }
+    SUBCASE("editing a credential after the probe invalidates the pin") {
+        TrackerConfig cfg = JiraCfg();
+        cfg.ReadOnlyMode = true;
+        const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        cfg.ApiToken = "token-edited-after-the-probe";
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+        CHECK(cfg.ReadOnlyMode);
+        CHECK_FALSE(cfg.BackendHasBeenReachable);
+    }
+    SUBCASE("switching backend after the probe invalidates the pin") {
+        TrackerConfig cfg = JiraCfg();
+        cfg.ReadOnlyMode = true;
+        const std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        cfg.TrackerType = "GitHub";
+        cfg.GitHubPat = "ghp_x";
+        cfg.GitHubOwner = "acme";
+        cfg.GitHubRepo = "widgets";
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+        CHECK(cfg.ReadOnlyMode);
+        CHECK_FALSE(cfg.BackendHasBeenReachable);
+    }
+    SUBCASE("read-only already off: a deliberate read-only session is not silently latched") {
+        TrackerConfig cfg = JiraCfg();
+        cfg.ReadOnlyMode = false;
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, TrackerSetupPure::CredentialFingerprint(cfg)));
+        CHECK_FALSE(cfg.BackendHasBeenReachable);
+    }
+}

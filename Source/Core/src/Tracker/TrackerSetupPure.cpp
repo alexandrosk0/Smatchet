@@ -37,9 +37,7 @@ bool CredentialFieldsComplete(const TrackerConfig& cfg) {
     return ConfigManager::BackendCredentialsPresent(cfg, ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType));
 }
 
-bool NeedsSetup(const TrackerConfig& cfg) {
-    return !cfg.BackendHasBeenReachable || !CredentialFieldsComplete(cfg);
-}
+bool NeedsSetup(const TrackerConfig& cfg) { return !cfg.BackendHasBeenReachable || !CredentialFieldsComplete(cfg); }
 
 std::string CredentialFingerprint(const TrackerConfig& cfg) {
     const std::string backend = ConfigManager::NormalizeViewsBackendKey(cfg.TrackerType);
@@ -67,6 +65,18 @@ std::string CredentialFingerprint(const TrackerConfig& cfg) {
         HashField(h, cfg.ApiToken);
     }
     return ToHex(h);
+}
+
+bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, const std::string& verifiedFingerprint) {
+    if (!cfg.ReadOnlyMode || verifiedFingerprint.empty() || CredentialFingerprint(cfg) != verifiedFingerprint) {
+        return false;
+    }
+    cfg.ReadOnlyMode = false;
+    // Same edge, both flags. The pin is only ever set on an AuthenticatedReachable probe —
+    // the identical verdict the connectivity monitor latches on (SmatchetUI.cpp, first-launch
+    // gate) — so this is that same latch reached one tick earlier, not a weaker gate.
+    cfg.BackendHasBeenReachable = true;
+    return true;
 }
 
 } // namespace TrackerSetupPure

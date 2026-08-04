@@ -40,4 +40,14 @@ bool NeedsSetup(const TrackerConfig& cfg);
 /// than the raw values so the session struct does not hold a second plaintext copy of a token.
 std::string CredentialFingerprint(const TrackerConfig& cfg);
 
+/// Applies the first-run unlock that Save & Sync performs, and reports whether it fired.
+/// Unlocks only when read-only is still on AND `verifiedFingerprint` is a non-empty pin that
+/// still matches `cfg` — i.e. the exact values a "Test connection" probe returned
+/// AuthenticatedReachable for. On that edge BOTH halves of the first-run state move together:
+/// ReadOnlyMode clears and BackendHasBeenReachable latches. Clearing only the former would
+/// leave NeedsSetup(), the locked main menu and the grid welcome state all still reading
+/// first-run until the connectivity monitor independently latched the same verdict a tick
+/// later. Pure so the pairing is covered by the bucket-A rig rather than only in a live frame.
+bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, const std::string& verifiedFingerprint);
+
 } // namespace TrackerSetupPure

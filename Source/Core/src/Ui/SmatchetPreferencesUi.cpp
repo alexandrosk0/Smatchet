@@ -825,15 +825,15 @@ template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<
 
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
     CopyTrackerBuffersToConfig(d, d.cfg);
-    // First-run unlock: clear read-only ONLY when the credentials being saved are byte-for-byte
-    // the ones a "Test connection" probe returned AuthenticatedReachable for this session. An
-    // empty pin means nothing was verified (or the window was reopened), so read-only stands.
-    // This is an ADDED clear — Save & Sync never touched ReadOnlyMode before; see the plan's
-    // § Deviations.
-    if (d.cfg.ReadOnlyMode && !d.trackerPrefsTestVerifiedFingerprint.empty() &&
-        TrackerSetupPure::CredentialFingerprint(d.cfg) == d.trackerPrefsTestVerifiedFingerprint) {
-        d.cfg.ReadOnlyMode = false;
-        LOG_INFO("First-run setup: saved credentials match the verified probe — read-only mode cleared.");
+    // First-run unlock: clear read-only AND latch reachability ONLY when the credentials being
+    // saved are byte-for-byte the ones a "Test connection" probe returned AuthenticatedReachable
+    // for this session. An empty pin means nothing was verified (or the window was reopened), so
+    // read-only stands. The two flags move as a pair inside the pure helper so bucket-A covers
+    // the pairing. This is an ADDED clear — Save & Sync never touched ReadOnlyMode before; see
+    // the plan's § Deviations.
+    if (TrackerSetupPure::ApplyVerifiedSaveUnlock(d.cfg, d.trackerPrefsTestVerifiedFingerprint)) {
+        LOG_INFO("First-run setup: saved credentials match the verified probe — read-only mode cleared, "
+                 "backend reachability latched.");
     }
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsBuf, d.cfg.NewIssueInheritFieldIds);
     ApplyInheritFieldsBuf(d.newIssueInheritFieldsPlaneBuf, d.cfg.NewIssueInheritFieldIdsPlane);
