@@ -2,7 +2,12 @@
 #include "LuaConsolePlugin_detail.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-// SMATCHET_DEVIATION(rule=duplication; reason=the prologue below (project headers + SmatchetLocalizedImGui #define + std-library include block) is the shared preamble every panel/plugin TU carries — SmatchetAiAssistantUi / SmatchetBulkTicketsUi / SmatchetOfflineQueueUi / SmatchetPreferencesUi*; adding <future> for the Issue #1925 async script load lengthened that already-common run past the clone threshold rather than introducing new copy-paste, and there is no shared prologue header to factor into without worse coupling (the DRY gate doc endorses an exemption over cross-context abstraction); owner=orchestrator; revisit=when a shared UI-TU prologue header lands)
+// SMATCHET_DEVIATION(rule=duplication; reason=the prologue below (project headers + SmatchetLocalizedImGui #define +
+// std-library include block) is the shared preamble every panel/plugin TU carries — SmatchetAiAssistantUi /
+// SmatchetBulkTicketsUi / SmatchetOfflineQueueUi / SmatchetPreferencesUi*; adding <future> for the Issue #1925 async
+// script load lengthened that already-common run past the clone threshold rather than introducing new copy-paste, and
+// there is no shared prologue header to factor into without worse coupling (the DRY gate doc endorses an exemption over
+// cross-context abstraction); owner=orchestrator; revisit=when a shared UI-TU prologue header lands)
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
@@ -272,18 +277,36 @@ void LuaConsolePlugin::KickScriptLoad(const AppController& app, const std::strin
     // ResolveLuaScriptPath is a pure string operation (traversal rejection + directory join) —
     // no filesystem hit — so resolving on the UI thread before the launch is Pillar-2 safe.
     const std::string path = app.ResolveLuaScriptPath(name);
+    // A fresh read supersedes any earlier refusal; only an outcome that lands can re-raise it.
+    scriptLoadRefusedReason_.clear();
     if (path.empty()) {
+        // Caller already blanked the editor, so a load that never starts must still block Save —
+        // otherwise the blank buffer writes over whatever the name resolves to later.
+        scriptLoadRefusedReason_ = "Could not resolve the script path — reselect the script.";
         return;
     }
+    std::future<ScriptLoadResult> pending;
+    try {
+        pending = std::async(std::launch::async, [name, path]() {
+            ScriptLoadResult result;
+            result.name = name;
+            result.status = ReadFileAll(path, result.content);
+            return result;
+        });
+    } catch (const std::exception& ex) {
+        // A launch can throw before any future exists — system_error when threads are exhausted,
+        // or bad_alloc. Latching scriptLoadInFlight_ ahead of the launch would be unrecoverable:
+        // the future stays invalid, so PollScriptLoad early-outs and nothing ever clears the flag,
+        // leaving Save blocked for the rest of the session.
+        LOG_ERROR("Lua script load could not start: %s", ex.what());
+        g_ui.gridEditError = "Could not start reading the script.";
+        scriptLoadRefusedReason_ = "The script never loaded — reselect it before saving.";
+        reloadNoticeName_.clear();
+        return;
+    }
+    // Both flag and future are set only once the launch has succeeded.
+    scriptLoadFuture_ = std::move(pending);
     scriptLoadInFlight_ = true;
-    // A fresh read supersedes any earlier refusal; only the result that lands can re-raise it.
-    scriptLoadRefused_ = false;
-    scriptLoadFuture_ = std::async(std::launch::async, [name, path]() {
-        ScriptLoadResult result;
-        result.name = name;
-        result.status = ReadFileAll(path, result.content);
-        return result;
-    });
 }
 
 bool LuaConsolePlugin::StartLoadSelectedScriptIntoEditor(const AppController& app, std::string& outErr) {
@@ -335,6 +358,10 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         // re-selecting the script kicks a fresh read.
         LOG_ERROR("Lua script load failed: %s", ex.what());
         g_ui.gridEditError = "Could not read the script.";
+        // The editor is blank and diskSnapshot_ was re-baselined onto that blank — exactly the
+        // TooLarge hazard, so Save has to be gated here too. Without this the next Save writes the
+        // empty buffer over a script that is intact on disk.
+        scriptLoadRefusedReason_ = "The script could not be read — reselect it before saving.";
         queuedLoadName_.clear();
         reloadNoticeName_.clear();
         return;
@@ -357,13 +384,12 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         // Deliberately NOT the "-- New file" stub: the file exists and has content, so stubbing it
         // would re-baseline diskSnapshot_ on the placeholder and the next Save would truncate the
         // real script. Leave the editor blank and gate Save instead.
-        scriptLoadRefused_ = true;
+        scriptLoadRefusedReason_ = "Script is too large to edit here — open it in an external editor.";
         g_ui.gridEditError = "Script too large to open in the editor (8 MiB cap): " + result.name;
         reloadNoticeName_.clear();
         return;
     }
-    luaEditor_.SetText(result.status == LuaScriptReadStatus::Ok ? result.content
-                                                               : std::string("-- New file\n"));
+    luaEditor_.SetText(result.status == LuaScriptReadStatus::Ok ? result.content : std::string("-- New file\n"));
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
     if (!reloadNoticeName_.empty() && reloadNoticeName_ == result.name) {
@@ -393,11 +419,11 @@ bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& 
         outErr = "Still loading the script — try again in a moment.";
         return false;
     }
-    if (scriptLoadRefused_) {
-        // Same hazard as the in-flight case, permanently: the editor is blank because the file was
-        // refused (over the size cap), not because it is empty. Writing the buffer back would
-        // truncate a real script.
-        outErr = "Script is too large to edit here — open it in an external editor.";
+    if (!scriptLoadRefusedReason_.empty()) {
+        // Same hazard as the in-flight case, but persistent: the editor is blank because the read
+        // was refused or never landed, not because the file is empty. Writing the buffer back would
+        // truncate a real script. The reason string carries the remedy for whichever cause it was.
+        outErr = scriptLoadRefusedReason_;
         return false;
     }
     // Target the tracked script by identity, never by list index: RefreshScriptList

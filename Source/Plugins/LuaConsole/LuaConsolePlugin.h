@@ -68,11 +68,13 @@ class LuaConsolePlugin : public IPlugin {
     /// the outcome banner must be reported by PollScriptLoad, and a selection change made in the
     /// meantime must not mislabel an unrelated load as the user's reload.
     std::string reloadNoticeName_;
-    /// The selected script exists on disk but was refused (over the size cap), so the editor is
-    /// blank for a file that has real content. Gates SaveCurrentScript for the same reason
-    /// `scriptLoadInFlight_` does — writing the blank buffer back would truncate the file. Cleared
-    /// on every fresh kick; set only by a TooLarge result that still matches the selection.
-    bool scriptLoadRefused_ = false;
+    /// Non-empty when the editor is blank for a script that was NOT read successfully — refused
+    /// (over the size cap), a worker throw, or a launch that never started. Gates SaveCurrentScript
+    /// for the same reason `scriptLoadInFlight_` does: writing the blank buffer back would truncate
+    /// a file that has real content. A string rather than a bool because the three causes need
+    /// different guidance ("too large, use an external editor" vs "reopen it"), and a wrong message
+    /// here points the user at the wrong remedy. Cleared on every fresh kick.
+    std::string scriptLoadRefusedReason_;
 
     /// Clamped height for `BeginChild` (script pane) this frame.
     float luaAutomationScriptPaneHeightPx_ = 0.f;
