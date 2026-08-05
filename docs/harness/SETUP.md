@@ -44,12 +44,11 @@ Guard mechanics + recovery: [`process-rules.md`](../agent-rules/process-rules.md
 | `cmake` | every build preset | `winget install Kitware.CMake` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cmake`) |
 | `ninja` | preset generator | `winget install Ninja-build.Ninja` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-ninja`) |
 | `gcc` / `g++` | lint toolchain (clang-format/cppcheck invoke gcc for syntax checks) | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-gcc` — build itself uses MSVC or Clang |
-| `python` | dev scripts (perf-compare, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
+| `python` | dev scripts (perf-compare, `lockfile.py` drain serialisation, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
 | `jq` | test harness only (`merge_gates.bats` mocks `gh` via jq). The merge-gates poller parses via gh's bundled jq (`gh api --jq`) — no standalone jq at runtime. | `winget install jqlang.jq` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-jq`) |
 | `gh` | PR ops + merge-gates poller | `winget install GitHub.cli` then add `C:/Program Files/GitHub CLI` to PATH |
 | `clang-format`, `clang-tidy` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra` |
 | `cppcheck` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cppcheck` |
-| `flock` | `lint-cpp-drain.sh` queue serialisation | usually built-in (Linux/macOS); MSYS2 needs `pacman -S util-linux` |
 
 Optional (warn-only — not required for the standard ship-loop):
 
@@ -71,7 +70,7 @@ bash scripts/dev/setup-env.sh --yes       # non-interactive (CI / fresh-clone bo
 
 Also `--list` (full tool → package map for this host) and `--with-optional` (include the warn-only tools). Idempotent — already-present tools are skipped, so re-running a completed setup is a no-op. It prepends the same known toolchain dirs the probe does, so a tool that is installed but off the inherited `PATH` is not reinstalled.
 
-It does **not** install the C++ build toolchain (Visual Studio / MSVC or Clang-cl) and does not configure or build the project — those stay with [`BUILD.md`](../../BUILD.md) § Prerequisites and `bash scripts/dev/doctor.sh`. Packages with no mapping on the current host (e.g. `bats` with no `npm`, `flock` with no MSYS2, `OpenCppCoverage`) are printed as an explicit manual hint rather than silently skipped.
+It does **not** install the C++ build toolchain (Visual Studio / MSVC or Clang-cl) and does not configure or build the project — those stay with [`BUILD.md`](../../BUILD.md) § Prerequisites and `bash scripts/dev/doctor.sh`. Packages with no mapping on the current host (e.g. `bats` with no `npm`, `OpenCppCoverage`) are printed as an explicit manual hint rather than silently skipped.
 
 Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness>`.
 

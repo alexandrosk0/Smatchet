@@ -7,9 +7,9 @@
 # - Runs cppcheck + clang-tidy + (for .cpp outside tests/) dual-target syntax
 #   on each chunked file. Surfaces consolidated findings via exit 2.
 #
-# Serialised by flock on .claude/.lint-queue.lock so concurrent Stop events
-# (e.g. orchestrator + subagent both ending close together) cannot trample
-# each other.
+# Serialised by scripts/dev/lockfile.py on .claude/.lint-queue.lock so
+# concurrent Stop events (e.g. orchestrator + subagent both ending close
+# together) cannot trample each other.
 
 set -u
 
@@ -19,12 +19,24 @@ export CLAUDE_PROJECT_DIR="$PROJ_DIR"
 LOCK_FILE="$PROJ_DIR/.claude/.lint-queue.lock"
 
 # --- Serialise concurrent Stop events --------------------------------------
-# Open fd 200 on the lock file and take a non-blocking exclusive lock. If
-# another drain holds it, exit silently — that drain will process the queue
-# (or a later Stop event will).
-if command -v flock >/dev/null 2>&1; then
-    exec 200>"$LOCK_FILE" || exit 0
-    flock -n 200 || exit 0
+# Re-exec this script under a non-blocking exclusive lock so the lock is held
+# for the whole drain, then released by the OS when the process exits. If
+# another drain already holds it, --busy-rc 0 makes us exit silently — that
+# drain will process the queue (or a later Stop event will).
+#
+# lockfile.py (not flock(1)): flock is util-linux, absent on Git Bash and
+# stock Windows, so the lock would silently no-op on the exact host that runs
+# concurrent orchestrator + subagent Stop events. See docs/harness/SETUP.md.
+if [[ -z "${SMATCHET_LINT_DRAIN_LOCKED:-}" ]]; then
+    LOCK_PY="$PROJ_DIR/scripts/dev/lockfile.py"
+    for py in python python3; do
+        if command -v "$py" >/dev/null 2>&1 && [[ -f "$LOCK_PY" ]]; then
+            export SMATCHET_LINT_DRAIN_LOCKED=1
+            exec "$py" "$LOCK_PY" --lockfile "$LOCK_FILE" --nonblock --busy-rc 0 \
+                -- bash "$0" "$@"
+        fi
+    done
+    # No Python: run lock-free rather than skipping the drain entirely.
 fi
 
 # --- Library + filters -----------------------------------------------------
@@ -33,7 +45,14 @@ fi
 
 # --- Collect queue entries -------------------------------------------------
 shopt -s nullglob
-QUEUE_FILES=("$PROJ_DIR"/.claude/.lint-queue.*)
+QUEUE_FILES=()
+for q in "$PROJ_DIR"/.claude/.lint-queue.*; do
+    # .lint-queue.lock is the serialisation lock, not a per-PID queue file.
+    # It must never be read as queue content nor rm'd out from under the
+    # holder (on Windows the delete fails anyway: the lock keeps it open).
+    [[ "$q" == *.lock ]] && continue
+    QUEUE_FILES+=("$q")
+done
 shopt -u nullglob
 
 if [[ ${#QUEUE_FILES[@]} -eq 0 ]]; then
