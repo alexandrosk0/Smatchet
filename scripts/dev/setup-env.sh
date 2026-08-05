@@ -24,8 +24,9 @@
 #
 # Exit codes:
 #   0  every required tool present after the run
-#   1  one or more tools still missing (an installer failed, or no package
-#      manager could provide it — the reason is printed per tool)
+#   1  one or more tools still missing (an installer failed, no package manager
+#      could provide it, or the user declined the plan at the prompt — the
+#      reason is printed per tool)
 #   2  usage error
 
 set -uo pipefail
@@ -89,8 +90,13 @@ refresh_path() {
         prepend_path_dir "$win_root/Program Files/CMake/bin"
         prepend_path_dir "$win_root/Program Files/GitHub CLI"
         prepend_path_dir "$win_root/Program Files/LLVM/bin"
-        prepend_path_dir "$win_root/Python314"
-        prepend_path_dir "$win_root/Python314/Scripts"
+        # Machine-scope Python roots. The version is not pinned to the winget id
+        # (Python.Python.3.13 → Python313) because a host may carry any of them.
+        for pkg_dir in "$win_root"/Python3*; do
+            [[ -d "$pkg_dir" ]] || continue
+            prepend_path_dir "$pkg_dir"
+            prepend_path_dir "$pkg_dir/Scripts"
+        done
         [[ -d "$win_root/Users" ]] || continue
         for pkg_dir in "$win_root"/Users/*/AppData/Local/Microsoft/WinGet/Packages/*; do
             [[ -d "$pkg_dir" ]] || continue
@@ -98,10 +104,19 @@ refresh_path() {
             prepend_path_dir "$pkg_dir/bin"
             prepend_path_dir "$pkg_dir/mingw64/bin"
         done
-        for pkg_dir in "$win_root"/Users/*/AppData/Local/Microsoft/WindowsApps; do
+        # winget's DEFAULT (user) scope for Python.Python.3.13 lands here, not in
+        # C:\Python313 — without this the tool we just installed stays invisible.
+        for pkg_dir in "$win_root"/Users/*/AppData/Local/Programs/Python/Python3*; do
+            [[ -d "$pkg_dir" ]] || continue
             prepend_path_dir "$pkg_dir"
+            prepend_path_dir "$pkg_dir/Scripts"
         done
     done
+    # NOTE: %LOCALAPPDATA%\Microsoft\WindowsApps is deliberately NOT prepended.
+    # It holds the Microsoft Store `python.exe` stub, which resolves under
+    # `command -v` but only opens the Store — that would make `have python`
+    # true, skip a real install, and let verification pass on a dead tool.
+    # check-required-tools.sh omits it for the same reason; stay aligned.
 }
 refresh_path
 
@@ -122,7 +137,10 @@ HAVE_NPM=0;    have npm && HAVE_NPM=1
 #
 # Columns: tools | category | winget-id | pacman-pkg | apt-pkg | brew-pkg | npm-pkg
 # `-` means "this manager cannot provide it". `tools` is a comma-separated list;
-# the package is installed when ANY of its tools is missing.
+# the package is installed when ANY of its tools is missing. A package cell may
+# be a SPACE-separated list when one manager splits what another ships as one
+# package (Debian ships clang-format and clang-tidy separately) — winget is the
+# exception, `--id` takes exactly one id.
 
 SEP=$'\x1f'
 PACKAGES=(
@@ -130,10 +148,10 @@ PACKAGES=(
     "cmake${SEP}REQUIRED${SEP}Kitware.CMake${SEP}mingw-w64-ucrt-x86_64-cmake${SEP}cmake${SEP}cmake${SEP}-"
     "ninja${SEP}REQUIRED${SEP}Ninja-build.Ninja${SEP}mingw-w64-ucrt-x86_64-ninja${SEP}ninja-build${SEP}ninja${SEP}-"
     "gcc,g++${SEP}REQUIRED${SEP}-${SEP}mingw-w64-ucrt-x86_64-gcc${SEP}build-essential${SEP}gcc${SEP}-"
-    "python${SEP}REQUIRED${SEP}Python.Python.3.13${SEP}mingw-w64-ucrt-x86_64-python${SEP}python3${SEP}python${SEP}-"
+    "python${SEP}REQUIRED${SEP}Python.Python.3.13${SEP}mingw-w64-ucrt-x86_64-python${SEP}python3 python-is-python3${SEP}python${SEP}-"
     "jq${SEP}REQUIRED${SEP}jqlang.jq${SEP}mingw-w64-ucrt-x86_64-jq${SEP}jq${SEP}jq${SEP}-"
     "gh${SEP}REQUIRED${SEP}GitHub.cli${SEP}-${SEP}gh${SEP}gh${SEP}-"
-    "clang-format,clang-tidy${SEP}REQUIRED${SEP}LLVM.LLVM${SEP}mingw-w64-ucrt-x86_64-clang-tools-extra${SEP}clang-format${SEP}llvm${SEP}-"
+    "clang-format,clang-tidy${SEP}REQUIRED${SEP}LLVM.LLVM${SEP}mingw-w64-ucrt-x86_64-clang-tools-extra${SEP}clang-format clang-tidy${SEP}llvm${SEP}-"
     "cppcheck${SEP}REQUIRED${SEP}Cppcheck.Cppcheck${SEP}mingw-w64-ucrt-x86_64-cppcheck${SEP}cppcheck${SEP}cppcheck${SEP}-"
     "flock${SEP}REQUIRED${SEP}-${SEP}util-linux${SEP}util-linux${SEP}util-linux${SEP}-"
     "bats${SEP}REQUIRED${SEP}-${SEP}-${SEP}-${SEP}-${SEP}bats"
@@ -169,18 +187,25 @@ pkgs_for() {
     echo ""
 }
 
+# install_with <manager> <package>... — every manager but winget takes the whole
+# list in one transaction; winget's --id is single-valued, so it loops.
 install_with() {
-    local manager="$1" pkg="$2"
+    local manager="$1"
+    shift
+    (( $# > 0 )) || return 1
     case "$manager" in
         winget)
-            winget install --exact --id "$pkg" \
-                --accept-package-agreements --accept-source-agreements \
-                --disable-interactivity --silent
+            local id
+            for id in "$@"; do
+                winget install --exact --id "$id" \
+                    --accept-package-agreements --accept-source-agreements \
+                    --disable-interactivity --silent || return 1
+            done
             ;;
-        pacman) pacman -S --needed --noconfirm "$pkg" ;;
-        apt)    sudo apt-get install -y "$pkg" ;;
-        brew)   brew install "$pkg" ;;
-        npm)    npm install -g "$pkg" ;;
+        pacman) pacman -S --needed --noconfirm "$@" ;;
+        apt)    sudo apt-get install -y "$@" ;;
+        brew)   brew install "$@" ;;
+        npm)    npm install -g "$@" ;;
         *)      return 1 ;;
     esac
 }
@@ -242,11 +267,13 @@ if (( ${#PLAN_ROWS[@]} == 0 )) && (( ${#UNMAPPED_ROWS[@]} == 0 )); then
     color_green "Nothing to install — all $PRESENT packages already present."
 else
     echo "Install plan:"
-    for row in "${PLAN_ROWS[@]}"; do
+    # ${A[@]+"${A[@]}"} — bash < 4.4 (macOS /bin/bash 3.2) treats a plain
+    # "${A[@]}" on an EMPTY array as unbound under `set -u`.
+    for row in ${PLAN_ROWS[@]+"${PLAN_ROWS[@]}"}; do
         IFS="$SEP" read -r tools missing choice <<<"$row"
         printf '  + %-24s (missing: %s)  via %s\n' "$tools" "$missing" "$choice"
     done
-    for row in "${UNMAPPED_ROWS[@]}"; do
+    for row in ${UNMAPPED_ROWS[@]+"${UNMAPPED_ROWS[@]}"}; do
         IFS="$SEP" read -r tools category <<<"$row"
         color_yellow "  ! $tools ($category) — no automatic install on this host: $(manual_hint "$tools")"
     done
@@ -263,22 +290,25 @@ if (( ${#PLAN_ROWS[@]} > 0 )) && (( ! ASSUME_YES )); then
     read -r -p "Proceed with the install plan above? [y/N] " reply
     case "$reply" in
         y|Y|yes|YES) ;;
-        *) echo "Aborted — nothing installed."; exit 0 ;;
+        # exit 1, not 0: the required tools are still missing, and a caller
+        # gating on the status must not walk into a half-provisioned env.
+        *) echo "Aborted — nothing installed."; exit 1 ;;
     esac
 fi
 
 # --- install ------------------------------------------------------------------
 
 INSTALL_FAILURES=0
-for row in "${PLAN_ROWS[@]}"; do
+for row in ${PLAN_ROWS[@]+"${PLAN_ROWS[@]}"}; do
     IFS="$SEP" read -r tools missing choice <<<"$row"
-    read -r manager pkg <<<"$choice"
+    read -r -a choice_parts <<<"$choice"
+    manager="${choice_parts[0]}"
     echo
-    echo "==> installing $tools ($manager $pkg)"
-    if install_with "$manager" "$pkg"; then
+    echo "==> installing $tools ($choice)"
+    if install_with "$manager" "${choice_parts[@]:1}"; then
         color_green "    ok: $tools"
     else
-        color_red "    FAILED: $manager install of '$pkg' (for $tools)"
+        color_red "    FAILED: $manager install of '${choice_parts[*]:1}' (for $tools)"
         INSTALL_FAILURES=$((INSTALL_FAILURES + 1))
     fi
 done
@@ -292,7 +322,24 @@ refresh_path
 echo
 echo "==> verifying with scripts/dev/check-required-tools.sh"
 echo
-if bash "$SCRIPT_DIR/check-required-tools.sh"; then
+PROBE_RC=0
+bash "$SCRIPT_DIR/check-required-tools.sh" || PROBE_RC=$?
+
+# The probe does not cover every row in this map (shellcheck and bats are lint /
+# test-harness tools it never looks for), so a GREEN probe alone would let a
+# failed shellcheck install report success while the pre-push gate stays broken.
+# Re-check every REQUIRED tool here; this is the authoritative verdict.
+RESIDUAL=""
+for row in "${PACKAGES[@]}"; do
+    IFS="$SEP" read -r tools category _rest <<<"$row"
+    [[ "$category" == "REQUIRED" ]] || continue
+    IFS=',' read -r -a tool_list <<<"$tools"
+    for tool in "${tool_list[@]}"; do
+        have "$tool" || RESIDUAL="${RESIDUAL:+$RESIDUAL }$tool"
+    done
+done
+
+if (( PROBE_RC == 0 )) && [[ -z "$RESIDUAL" ]]; then
     echo
     color_green "setup-env: GREEN — required tool set complete."
     echo "Next: bash scripts/dev/doctor.sh          # build toolchain + disk pre-flight"
@@ -302,6 +349,9 @@ fi
 
 echo
 color_red "setup-env: RED — tools still missing after the install pass."
+if [[ -n "$RESIDUAL" ]]; then
+    color_red "  still missing: $RESIDUAL"
+fi
 if (( INSTALL_FAILURES > 0 )); then
     echo "  $INSTALL_FAILURES package install(s) failed above — read their output first."
 fi
