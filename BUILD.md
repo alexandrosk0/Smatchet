@@ -54,6 +54,14 @@ bash scripts/dev/check-required-tools.sh
 
 Exits 0 when every required tool resolves; fails loudly with install hints for any missing tool. The orchestrator's `setup-harness.sh` runs this on every fresh clone.
 
+Install whatever it reports missing:
+
+```bash
+bash scripts/dev/setup-env.sh
+```
+
+Resolves each missing tool to a package on the host's native manager (winget / MSYS2 `pacman` / `apt` / `brew`, `npm` for `bats` + `shellcheck`), installs it, then re-runs the probe as its verdict. `--dry-run` prints the plan only, `--yes` skips the prompt, `--list` dumps the tool → package map. Idempotent. It covers the dev-script CLI tools in the table above — **not** the MSVC / Clang build toolchain, which stays a manual install per the section above. Full flag reference: [`docs/harness/SETUP.md`](docs/harness/SETUP.md) § Installing the missing ones.
+
 **Scheduled-Task / service environments** (notably `SmatchetMergeWatcher`) get a more minimal PATH than an interactive shell and may not resolve `gh` / `jq` / `bash` via bare-name lookup. The `merge-watcher-install-autostart.ps1` installer probes standard install locations + winget's Links dir + Git's `bin` dir explicitly so daemons keep working. See [`docs/plans/shipped/smatchet-merge-watcher.md`](docs/plans/shipped/smatchet-merge-watcher.md) § Daemon environment prerequisites for the gotchas.
 
 ## Supported Presets

@@ -59,6 +59,22 @@ Optional (warn-only — not required for the standard ship-loop):
 
 Ad-hoc invocation: `bash scripts/dev/check-required-tools.sh` (add `--quiet` to suppress PASS lines). Re-run anytime; idempotent.
 
+### Installing the missing ones
+
+`scripts/dev/setup-env.sh` is the write-side companion: it installs whatever the probe reports missing, through the host's native package manager (winget or MSYS2 `pacman` on Windows, `apt` on Debian/Ubuntu, `brew` on macOS, `npm` for `bats` / `shellcheck`), then re-runs `check-required-tools.sh` as its verdict.
+
+```bash
+bash scripts/dev/setup-env.sh --dry-run   # print the install plan, change nothing
+bash scripts/dev/setup-env.sh             # plan, prompt, install, verify
+bash scripts/dev/setup-env.sh --yes       # non-interactive (CI / fresh-clone bootstrap)
+```
+
+Also `--list` (full tool → package map for this host) and `--with-optional` (include the warn-only tools). Idempotent — already-present tools are skipped, so re-running a completed setup is a no-op. It prepends the same known toolchain dirs the probe does, so a tool that is installed but off the inherited `PATH` is not reinstalled.
+
+It does **not** install the C++ build toolchain (Visual Studio / MSVC or Clang-cl) and does not configure or build the project — those stay with [`BUILD.md`](../../BUILD.md) § Prerequisites and `bash scripts/dev/doctor.sh`. Packages with no mapping on the current host (e.g. `bats` with no `npm`, `flock` with no MSYS2, `OpenCppCoverage`) are printed as an explicit manual hint rather than silently skipped.
+
+Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness>`.
+
 ## VCS mode (git vs Perforce) — per machine
 
 Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".
