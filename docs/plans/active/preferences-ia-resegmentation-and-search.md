@@ -40,8 +40,8 @@ truth for the taxonomy, and one search box filters **live, editable widgets in p
 across every category.
 
 **Sequencing**: implementation starts only after
-[`docs/plans/dev-onboarding-first-run-quickstart.md`](dev-onboarding-first-run-quickstart.md)
-slice 2 merges — it rewrites `drawPreferencesTrackerTab`, adds `TrackerSetupCompleted` +
+[`docs/plans/shipped/dev-onboarding-first-run-quickstart.md`](../shipped/dev-onboarding-first-run-quickstart.md)
+slice 2 merges (shipped) — it rewrites `drawPreferencesTrackerTab`, adds `TrackerSetupCompleted` +
 its serialization, and adds `UiDrawSession` prefs fields cleared at
 `SmatchetPreferencesUi.cpp:155-157`. Its test-connection control + first-run gate then
 relocate unchanged into `Tracker › Backend & credentials`.
@@ -290,7 +290,7 @@ Diff touches `Source/Core/src/Ui/`, `Source/Core/src/Config/`, and `Source/Core/
 - **Feature-OFF config skew** — an unguarded MCP/AI/Whisper descriptor row breaks the coverage test only in the feature-OFF build. Mitigated by the explicit feature-OFF verification step; this is the `unused-symbol-under-config-guard` (WARN) failure class.
 - **DRY (Pillar 5) WARN** — ~22 same-shaped section functions will read as copy-paste to `dup_audit.py`. Mitigated: shared chrome lives in `PrefsSection`, section bodies stay thin. WARN-first per [ADR-0015](../../adr/0015-dry-quality-pillar-duplication-gate.md), so it won't block; if it fires, take the exemption with `code-review` sign-off rather than fusing unrelated sections.
 - **`function-too-long`** — net improvement expected (extraction reduces the long category draw functions), but re-check `DrawWhisperPreferencesTab` / `DrawAssistantPreferencesTab` after section-izing.
-- **Collision with in-flight onboarding plan** — [`dev-onboarding-first-run-quickstart`](dev-onboarding-first-run-quickstart.md) rewrites `drawPreferencesTrackerTab` and adds `UiDrawSession` fields cleared at `SmatchetPreferencesUi.cpp:155-157`. Mitigated by sequencing: this plan starts only after its slice 2 merges.
+- **Collision with in-flight onboarding plan** — [`dev-onboarding-first-run-quickstart`](../shipped/dev-onboarding-first-run-quickstart.md) rewrites `drawPreferencesTrackerTab` and adds `UiDrawSession` fields cleared at `SmatchetPreferencesUi.cpp:155-157`. Mitigated by sequencing: this plan starts only after its slice 2 merges.
 - **Annotate is unlocalized** — `AnnotateAnalysisUi_Preferences.cpp` has zero localization today. In scope: the new section titles + any string this change adds. Body-string localization is **deferred** → owes a § Deviations row + a `docs/self-improvement/categories/debt/` entry in the same turn it is skipped.
 - **Non-goal: settings as `Command`s.** `Command` ([`Command.h:159`](../../../Source/Core/include/Commands/Command.h)) is an action with no value binding, no widget, and no keywords field; registering ≈80 settings would pollute the palette without giving in-place editing.
 - **Non-goal: per-setting deep links / anchors** from outside the window.
