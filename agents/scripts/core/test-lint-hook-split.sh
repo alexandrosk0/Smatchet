@@ -335,7 +335,9 @@ cleanup
 LOCK_PY="$PROJ_DIR/scripts/dev/lockfile.py"
 PY_BIN=""
 for cand in python python3; do
-    if command -v "$cand" >/dev/null 2>&1; then PY_BIN="$cand"; break; fi
+    # Exec-probe, not just command -v: on Windows `python3` is the Microsoft
+    # Store alias stub — on PATH, but exits non-zero when run.
+    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "" >/dev/null 2>&1; then PY_BIN="$cand"; break; fi
 done
 if [[ -z "$PY_BIN" || ! -f "$LOCK_PY" ]]; then
     # The drain's serialisation runs through scripts/dev/lockfile.py; with no

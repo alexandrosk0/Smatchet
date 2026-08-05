@@ -30,7 +30,9 @@ LOCK_FILE="$PROJ_DIR/.claude/.lint-queue.lock"
 if [[ -z "${SMATCHET_LINT_DRAIN_LOCKED:-}" ]]; then
     LOCK_PY="$PROJ_DIR/scripts/dev/lockfile.py"
     for py in python python3; do
-        if command -v "$py" >/dev/null 2>&1 && [[ -f "$LOCK_PY" ]]; then
+        # Exec-probe, not just command -v: on Windows `python3` is the Microsoft
+        # Store alias stub — on PATH, but exits non-zero when run.
+        if command -v "$py" >/dev/null 2>&1 && "$py" -c "" >/dev/null 2>&1 && [[ -f "$LOCK_PY" ]]; then
             export SMATCHET_LINT_DRAIN_LOCKED=1
             exec "$py" "$LOCK_PY" --lockfile "$LOCK_FILE" --nonblock --busy-rc 0 \
                 -- bash "$0" "$@"
