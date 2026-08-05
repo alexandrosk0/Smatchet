@@ -1,5 +1,10 @@
 #include <doctest/doctest.h>
 
+// Self-gate on the same guard as AiPrefsTestConnectionPure.h so the rig keeps
+// building when AI is disabled (matches the LocalCacheManagerChat.test.cpp
+// precedent — the helper namespace does not exist in an AI-OFF configure).
+#if defined(SMATCHET_WITH_AI)
+
 // Coverage for the pre-network half of the preferences Test-connection probe
 // (TEST_COVERAGE_GAP_MAP.md Tier 1 #8). The contract under test is credential ROUTING:
 // which API-key slot, base URL, and model id each provider reads (the CPP_CODE_AUDIT.md #2
@@ -125,3 +130,5 @@ TEST_CASE("PlanProbe leaves DefaultedBaseUrl empty when the slot is configured")
     CHECK(plan.DefaultedBaseUrl.empty());
     CHECK(plan.ClientCfg.BaseUrl.find("127.0.0.1") != std::string::npos);
 }
+
+#endif // defined(SMATCHET_WITH_AI)
