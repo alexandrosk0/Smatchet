@@ -48,6 +48,15 @@ FAILED=$(printf '%s\n' "$OUT" | grep -cE '^not ok [0-9]+' || true)
 
 echo "Passed: ${PASSED}  Failed: ${FAILED}"
 
+# PASSED floor. A bats run that emits no TAP at all (vanished file, parse error,
+# a harness that dies before the plan line) leaves PASSED=FAILED=0, which a
+# FAILED-only gate would report as green — the fail-open shape. The cmake-less
+# skip path still emits `ok N # skip`, so it clears the floor.
+if [ "$PASSED" -eq 0 ] && [ "$FAILED" -eq 0 ]; then
+    echo "test-font-asset-resolve-bats: no TAP results parsed from $BATS_FILE (expected >= 1)" >&2
+    exit 1
+fi
+
 if [ "$FAILED" -gt 0 ] || [ "$RC" -ne 0 ]; then
     exit 1
 fi
