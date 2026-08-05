@@ -203,7 +203,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`github-projects-v2-fields`](shipped/github-projects-v2-fields.md) | 2026-07-14 | Plan — GitHub Projects v2 custom fields + ListProjects |
 | [`gate-blind-spot-sweep`](shipped/gate-blind-spot-sweep.md) | 2026-07-25 | close four gate blind spots — cross-TU dead exports, sub-floor helper clones, link-gate target scope, and the untaxonomised root audit docs |
 | [`dev-onboarding-first-run-quickstart`](shipped/dev-onboarding-first-run-quickstart.md) | 2026-08-03 | Plan — Dev onboarding, first-run tracker setup, QUICKSTART |
-| [`about-dialog-help-menu`](shipped/about-dialog-help-menu.md) | 2026-08-04 | Plan — About dialog under Help |
+| [`about-dialog-help-menu`](shipped/about-dialog-help-menu.md) | 2026-08-05 | Plan — About dialog under Help |
 <!-- END auto-plan-index -->
 
 ### Notes
