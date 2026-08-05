@@ -167,24 +167,17 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
     return added;
 }
 
-} // namespace
+// Persistent across frames (single Preferences window): the search filter and the command
+// key of the row currently capturing a combo (empty = none; at most one). File-scope so
+// ResetKeybindingsCaptureState can abandon an armed capture from drawPreferencesWindow
+// when the Keybindings page stops drawing — otherwise the state survives and re-arms
+// that row when the page is reopened.
+std::string s_kbFilter;
+std::string s_kbCapturingKey;
 
-void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
-    // Persistent across frames (single Preferences window): the search filter and the command
-    // key of the row currently capturing a combo (empty = none; at most one). Declared above
-    // BeginTabItem so the inactive-tab early return can abandon an armed capture — otherwise the
-    // static survives and re-arms that row when the tab is reopened.
-    static std::string filter;
-    static std::string capturingKey;
-
-    const std::string tabLabel =
-        std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) + "###prefsTabKeybindings";
-    if (!ImGui::BeginTabItem(tabLabel.c_str(), nullptr,
-                             SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Keyboard Shortcuts"))) {
-        capturingKey.clear(); // tab switched away / closed mid-capture — drop the armed row
-        return;
-    }
-    d.preferencesActiveTab = PreferencesActiveTab::Keybindings;
+void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
+    std::string& filter = s_kbFilter;
+    std::string& capturingKey = s_kbCapturingKey;
 
     ImGui::TextWrapped("%s",
                        SmatchetLocalization::T("keybindings.editor.intro",
@@ -325,6 +318,25 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
         ui.MarkKeybindingsDirty();
         MarkPrefsDirty(d);
     }
-
-    ImGui::EndTabItem();
 }
+
+} // namespace
+
+void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
+    bool bodyRan = false;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "shortcuts.keyboard", [&] {
+        bodyRan = true;
+        DrawKeybindingsSectionBody(ui, app, d);
+    });
+    if (!bodyRan) {
+        // Section collapsed (or filtered out) mid-capture — drop the armed row, matching
+        // the old inactive-tab early-return semantics.
+        s_kbCapturingKey.clear();
+    }
+}
+
+namespace SmatchetPreferencesUiDetail {
+void ResetKeybindingsCaptureState() {
+    s_kbCapturingKey.clear();
+}
+} // namespace SmatchetPreferencesUiDetail

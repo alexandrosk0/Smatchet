@@ -26,14 +26,7 @@ void DrawContextCheckbox(UiDrawSession& d, const char* key, const char* fallback
     }
 }
 
-} // namespace
-
-void DrawQuickCreatePreferencesTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem(SmatchetLocalization::T("quickcreate.prefs.tabTitle", "Unreal"))) {
-        return;
-    }
-    d.preferencesActiveTab = PreferencesActiveTab::QuickCreate;
-
+void DrawQuickCreateSectionBody(UiDrawSession& d) {
     const std::string hotkey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "issue.quick_create.open");
     ImGui::TextWrapped(
         "%s", SmatchetLocalization::Format(
@@ -76,6 +69,10 @@ void DrawQuickCreatePreferencesTab(UiDrawSession& d) {
     ImGui::TextDisabled(
         "%s", SmatchetLocalization::T("quickcreate.prefs.note",
                                       "Items missing from the engine snapshot are skipped even when enabled."));
+}
 
-    ImGui::EndTabItem();
+} // namespace
+
+void DrawQuickCreatePreferencesTab(UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "editing.quick_create", [&] { DrawQuickCreateSectionBody(d); });
 }

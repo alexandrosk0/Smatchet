@@ -27,27 +27,23 @@
 
 namespace {
 
-void DrawGridSubTab(UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Grid", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Grid"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Templates;
-        ImGui::TextUnformatted("Editing");
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
-            MarkPrefsDirty(d);
-        }
-        ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
-        if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
-            MarkPrefsDirty(d);
-        }
-        ImGui::SetItemTooltip("Long-text editor opens in preview mode.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.templates.longtext_preview.help",
-                                   "When on, the long-text edit modal (description, callstack, custom "
-                                   "textarea fields) opens showing the rendered preview. When off (default) "
-                                   "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
-        ImGui::EndTabItem();
+void DrawGridSectionBody(UiDrawSession& d) {
+    ImGui::TextUnformatted("Editing");
+    ImGui::Separator();
+    ImGui::Spacing();
+    if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
+        MarkPrefsDirty(d);
     }
+    ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
+    if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
+        MarkPrefsDirty(d);
+    }
+    ImGui::SetItemTooltip("Long-text editor opens in preview mode.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.templates.longtext_preview.help",
+                               "When on, the long-text edit modal (description, callstack, custom "
+                               "textarea fields) opens showing the rendered preview. When off (default) "
+                               "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
 }
 
 void DrawTimeEstimatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
@@ -474,17 +470,15 @@ void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateF
                               d.cfg.AnnotateCommentTemplates, flags.annotateTemplatesLoaded, st);
 }
 
-void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Fields Inputs", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Fields Inputs"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Templates;
-        if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
-            DrawTimeEstimatesSubTab(d, flags);
-            DrawWorkLogTemplatesSubTab(d, flags);
-            DrawQuickCommentsSubTab(d, flags);
-            DrawAnnotateCommentsSubTab(d, flags);
-            ImGui::EndTabBar();
-        }
-        ImGui::EndTabItem();
+// The four template editors keep their nested tab bar inside one section for
+// slice 2a; they become sibling sections when they re-home under Editing (2b).
+void DrawFieldsInputsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
+        DrawTimeEstimatesSubTab(d, flags);
+        DrawWorkLogTemplatesSubTab(d, flags);
+        DrawQuickCommentsSubTab(d, flags);
+        DrawAnnotateCommentsSubTab(d, flags);
+        ImGui::EndTabBar();
     }
 }
 
@@ -493,11 +487,13 @@ void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags
 void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
                                  const IAppTicketMutations& ticketMutations, UiDrawSession& d,
                                  SmatchetPreferencesUiTemplateFlags& flags) {
-    DrawGridSubTab(d);
-    DrawFieldsInputsSubTab(d, flags);
-    if (ImGui::BeginTabItem("Annotate", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Annotate"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Annotate;
-        ui.DrawAnnotatePreferencesTabForwarded(availableFields, ticketMutations);
-        ImGui::EndTabItem();
-    }
+    // Annotate now draws from its own dispatch case in drawPreferencesWindow; these
+    // params stay until the 2b re-home so the dispatch call shape is stable.
+    (void)ui;
+    (void)availableFields;
+    (void)ticketMutations;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "editing.grid", [&] { DrawGridSectionBody(d); });
+    // Drawn bare (no PrefsSection): the four editors keep their nested tab bar in 2a
+    // and become the editing.* template sections when the bar dies in 2b.
+    DrawFieldsInputsSectionBody(d, flags);
 }

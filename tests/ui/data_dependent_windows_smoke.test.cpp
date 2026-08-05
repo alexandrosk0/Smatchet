@@ -362,9 +362,8 @@ void RegisterPlanDocViewerWindowRenderSmoke(ImGuiTestEngine* engine) {
 // Robust probe: "PerformanceTabs/CPU" — the first BeginTabItem("CPU") inside the
 // BeginTabBar("PerformanceTabs"), always active on first open. A tab item's
 // ImGui ID is seeded inside the tab-bar scope, so the engine ref must be
-// tab-bar-qualified ("<TabBarID>/<label>"), mirroring the passing
-// funcsize_preferences_tabs pilot's "PreferencesTabs/<label>" idiom. A bare
-// "CPU" resolves against the window root, where no such item exists.
+// tab-bar-qualified ("<TabBarID>/<label>"). A bare "CPU" resolves against the
+// window root, where no such item exists.
 void RegisterPerformanceWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "DataDependentWindowsSmoke", "PerformanceWindow_RendersAndShowsTabBar");
     t->TestFunc = [](ImGuiTestContext* ctx) {

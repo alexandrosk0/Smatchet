@@ -370,6 +370,7 @@ class SmatchetUI {
     void resetPreferencesWindowState(UiDrawSession& d);
     bool beginPreferencesWindow(UiDrawSession& d);
     void loadPreferencesBuffers(UiDrawSession& d);
+    void drawPreferencesCategoryBody(AppController& app, UiDrawSession& d);
     void drawPreferencesTrackerTab(AppController& app, UiDrawSession& d);
     void drawPreferencesUserInfoTab(UiDrawSession& d);
 #if defined(SMATCHET_WITH_MCP)

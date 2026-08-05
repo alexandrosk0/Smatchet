@@ -12,9 +12,9 @@
 // Contract with the draw code (enforced by the bucket-E drift guard,
 // prefs_schema_coverage):
 //   - every descriptor id is passed to PreferencesFilter::ShowSetting by exactly
-//     one always-drawn widget (ConditionalDraw rows may legitimately not draw);
-//   - LabelEn is the VERBATIM English source string the widget renders (it is
-//     both the search haystack seed and the drift guard's label check);
+//     one always-drawn widget — ConditionalDraw rows may legitimately not draw.
+//   - LabelEn is the VERBATIM English source string the widget renders — it is
+//     both the search haystack seed and the drift guard's label check.
 //   - feature-gated rows sit inside the same #if guards as their draw code, so
 //     a feature-OFF build never carries a descriptor its UI cannot draw.
 

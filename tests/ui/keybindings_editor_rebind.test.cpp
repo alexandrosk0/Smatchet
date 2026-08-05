@@ -7,10 +7,11 @@
 //
 //   A. EditorTabRendersWithLiveConflict — seed a deliberate collision into the
 //      live keybinding table (app.dock_debug.toggle rebound onto Ctrl+B, which
-//      view.sidebar.primary already owns by default), open Preferences, click
-//      the "Keyboard Shortcuts" tab, and YieldUntil the editor reports itself
-//      active (d.preferencesActiveTab == Keybindings). Tab-active means
-//      BeginTabItem returned true → DrawKeybindingsPreferencesTab's body ran for
+//      view.sidebar.primary already owns by default), open Preferences, select
+//      the "Keyboard Shortcuts" category via its nav-rail Selectable, and
+//      YieldUntil g_ui.preferencesCategory == Keybindings. Since slice 2a the
+//      dispatch switch draws the selected category's body every frame, so
+//      category-selected means DrawKeybindingsPreferencesTab's body ran for
 //      several frames WITH a live conflict present, so the per-row
 //      FindKeybindingConflict() + the "conflicts with <action>" TextColored
 //      branch + the searchable table + the System-shortcuts CollapsingHeader all
@@ -64,7 +65,7 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 #include "Config/KeybindingsConfig.h"          // KeybindingsConfig, SetBindingHotkey
-#include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesActiveTab, g_ui
+#include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesCategory, g_ui
 #include "Ui/SmatchetHotkeyCapture.h"          // smatchet::ui::FindKeybindingConflict
 
 #include "imgui.h"
@@ -76,7 +77,7 @@
 
 // g_ui — the shared bag of UI-thread visibility flags + the live TrackerConfig
 // (g_ui.cfg). We set showPreferences / requestPreferencesFocus and read
-// preferencesActiveTab / showDockDebug exactly as the real View menu / dispatch
+// preferencesCategory / showDockDebug exactly as the real View menu / dispatch
 // paths do. Same handle the funcsize_preferences_tabs pilot drives.
 extern UiDrawSession g_ui;
 
@@ -143,22 +144,26 @@ void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
             return;
         }
 
-        // The Keyboard Shortcuts tab carries a locale-stable ###id suffix
-        // ("Keyboard Shortcuts###prefsTabKeybindings"), so the header ref resolves
-        // regardless of UI language (ImHashStr restarts at ###). A tab header is
-        // addressed tab-bar-qualified: "<TabBarID>/<label>".
-        const char* tabRef = "PreferencesTabs/Keyboard Shortcuts###prefsTabKeybindings";
-        const bool tabExists = ctx->ItemExists(tabRef);
-        IM_CHECK_NO_RET(tabExists);
-        if (tabExists) {
-            ctx->ItemClick(tabRef);
-            // Tab-active is the editor's own signal: DrawKeybindingsPreferencesTab
-            // sets d.preferencesActiveTab = Keybindings inside its BeginTabItem body,
-            // so this is true only once the full body (incl. the conflict-render
-            // branch above) has ticked. Locale-independent — set by code, not a label.
-            const bool active =
-                YieldUntil(ctx, [] { return g_ui.preferencesActiveTab == PreferencesActiveTab::Keybindings; });
-            IM_CHECK_NO_RET(active);
+        // The Keyboard Shortcuts rail Selectable carries a locale-stable ###id
+        // suffix ("Keyboard Shortcuts###prefsNavKeybindings"), so the ref resolves
+        // regardless of UI language (ImHashStr restarts at ###). It lives inside
+        // the "PrefsNavRail" child window → wildcard ref. Below the narrow-width
+        // threshold the rail is a combo instead; fall back to selecting the
+        // category directly — same body coverage.
+        const char* railRef = "**/Keyboard Shortcuts###prefsNavKeybindings";
+        if (ctx->ItemExists(railRef)) {
+            ctx->ItemClick(railRef);
+        } else {
+            ctx->LogInfo("nav rail item absent (combo mode) — selecting category directly");
+            g_ui.preferencesCategory = PreferencesCategory::Keybindings;
+        }
+        // Category-selected means the dispatch switch draws the Keybindings body
+        // (incl. the conflict-render branch above) every subsequent frame.
+        // Locale-independent — an enum, not a label.
+        const bool active = YieldUntil(ctx, [] { return g_ui.preferencesCategory == PreferencesCategory::Keybindings; });
+        IM_CHECK_NO_RET(active);
+        for (int i = 0; i < 5; ++i) {
+            ctx->Yield();
         }
 
         // Restore the seeded binding + close Preferences so sibling tests start clean.

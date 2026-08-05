@@ -774,13 +774,11 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     TrackerConfig& work = d.assistantPrefsWorking;
     SeedAssistantBuffers(s_bufs, d, work);
 
-    // Dirty must be known BEFORE BeginTabItem so the `*` marker can be part of
-    // the label (the marker shows even when another tab is the active one).
+    // The nav rail owns the dirty `*` marker now (drawPreferencesWindow computes it
+    // via AssistantAiFieldsDiffer before DrawPrefsNav).
     const bool dirty = SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(work, d.cfg);
-    const char* tabLabel = dirty ? "Assistant *###AssistantPrefsTab" : "Assistant###AssistantPrefsTab";
 
-    if (ImGui::BeginTabItem(tabLabel, nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Assistant"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Assistant;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.assistant", [&] {
         // Validator runs against the working copy so the user gets live feedback
         // for the unsaved text they're typing.
         const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(work);
@@ -792,12 +790,11 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
         RenderProviderCredentials(d, work, selectedKind, s_bufs, s_consentModalProvider);
 
         RenderReasoningEffort(d, work);
-        RenderAgentsMdHarness(work, s_bufs);
 
         RenderAssistantSaveDiscard(app, d, dirty);
-
-        ImGui::EndTabItem();
-    }
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.agent_context",
+                                              [&] { RenderAgentsMdHarness(work, s_bufs); });
 }
 
 #endif // SMATCHET_WITH_AI

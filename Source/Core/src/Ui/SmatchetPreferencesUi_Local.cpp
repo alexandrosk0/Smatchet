@@ -255,17 +255,6 @@ void DrawLocalDataStorageSection(AppController& app) {
     ImGui::TextDisabled("Marker file: %s", ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir).c_str());
 }
 
-// "Local data" tab body — owns its own tab-item begin/end pair (the end runs only when
-// the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
-// function-size decomposition; behaviour-identical.
-void DrawLocalDataTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Local data", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Local data"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::LocalData;
-        DrawLocalDataRecreateDbSection(ui, app, d);
-        DrawLocalDataStorageSection(app);
-        ImGui::EndTabItem();
-    }
-}
 
 // Typography section of the Appearance tab: application font + UI language combos.
 // Extracted from DrawAppearanceTab during the over-100-line decomposition; behaviour-identical.
@@ -603,27 +592,36 @@ void DrawAppearanceMobileSection(UiDrawSession& d) {
     ImGui::SetItemTooltip("The page shown first when the mobile shell opens.");
 }
 
-// "Appearance" tab body — owns its own tab-item begin/end pair (the end runs only when
-// the begin returned true). Split out of DrawLocalAndAppearancePreferencesTabs during the
-// function-size decomposition; behaviour-identical.
-void DrawAppearanceTab(AppController& app, UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Appearance", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Appearance"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Appearance;
-        DrawAppearanceTypographySection(d);
-        DrawAppearanceGridTextSection(d);
-        DrawAppearanceDateSection(d);
-        DrawAppearanceDisplaySection(d);
-        DrawAppearanceUiModeSection(d);
-        DrawAppearanceMobileSection(d);
-        DrawAppearanceUpdatesSection(app, d);
-        DrawAppearanceNotificationsSection(d);
-        ImGui::EndTabItem();
-    }
-}
-
 } // namespace
 
-void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    DrawLocalDataTab(ui, app, d);
-    DrawAppearanceTab(app, d);
+void DrawLocalDataPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database", [&] {
+        DrawLocalDataRecreateDbSection(ui, app, d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] {
+        DrawLocalDataStorageSection(app);
+    });
+}
+
+void DrawAppearancePreferencesTab(AppController& app, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "appearance.theme_font", [&] {
+        DrawAppearanceTypographySection(d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "appearance.layout_density", [&] {
+        DrawAppearanceGridTextSection(d);
+        DrawAppearanceMobileSection(d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region", [&] {
+        DrawAppearanceDateSection(d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "appearance.display", [&] {
+        DrawAppearanceDisplaySection(d);
+        DrawAppearanceUiModeSection(d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] {
+        DrawAppearanceUpdatesSection(app, d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.notifications", [&] {
+        DrawAppearanceNotificationsSection(d);
+    });
 }

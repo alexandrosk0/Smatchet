@@ -248,6 +248,27 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
 
 namespace {
 
+// Backend index (0=Jira, 1=Plane, 2=GitHub, 3=Linear) from the persisted type buffer.
+// Defensive case-insensitive match — smatchet_config.json could be hand-edited with
+// lowercase "plane"/"github"/"linear" values; the combo writer always emits canonical
+// PascalCase, but the load path doesn't canonicalize. Hoisted out of
+// DrawTrackerBackendSelection so the Recent-projects section resolves the backend even
+// while the Backend & credentials section is collapsed (its body — and the combo's
+// return value — doesn't run then).
+int TrackerBackendIndexFromBuf(const UiDrawSession& d) {
+    const std::string trackerTypeStr(d.trackerTypeBuf);
+    if (trackerTypeStr == "Plane" || trackerTypeStr == "plane") {
+        return 1;
+    }
+    if (trackerTypeStr == "GitHub" || trackerTypeStr == "github") {
+        return 2;
+    }
+    if (trackerTypeStr == "Linear" || trackerTypeStr == "linear") {
+        return 3;
+    }
+    return 0;
+}
+
 // Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub/Linear combo.
 // Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub, 3=Linear). Extracted from
 // drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
@@ -268,22 +289,7 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
     ImGui::Spacing();
 
     const char* items[] = {"Jira", "Plane", "GitHub", "Linear"};
-    int currentItem = 0;
-    {
-        // Defensive case-insensitive match against persisted config —
-        // smatchet_config.json could be hand-edited with lowercase
-        // "plane"/"github"/"linear" values; the combo writer below always
-        // emits canonical PascalCase, but the load path doesn't
-        // canonicalize.
-        const std::string trackerTypeStr(d.trackerTypeBuf);
-        if (trackerTypeStr == "Plane" || trackerTypeStr == "plane") {
-            currentItem = 1;
-        } else if (trackerTypeStr == "GitHub" || trackerTypeStr == "github") {
-            currentItem = 2;
-        } else if (trackerTypeStr == "Linear" || trackerTypeStr == "linear") {
-            currentItem = 3;
-        }
-    }
+    int currentItem = TrackerBackendIndexFromBuf(d);
     if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
         // P1.5 touch-first backend picker: when the mobile shell renders this Preferences page
         // (effectiveUiMode == Mobile — phone, or a narrow desktop window pinned/auto-resolved to
@@ -691,45 +697,38 @@ void DrawTrackerFirstRunExplainer(const UiDrawSession& d) {
 } // namespace
 
 void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d) {
-    const char* trackerTabLabel =
-        TrackerPrefsFieldsDiffer(d) ? "Tracker *###TrackerPrefsTab" : "Tracker###TrackerPrefsTab";
-    if (!ImGui::BeginTabItem(trackerTabLabel, nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Tracker"))) {
-        return;
-    }
-    d.preferencesActiveTab = PreferencesActiveTab::Tracker;
-    // Pillar 2 (#892): snapshot ListCachedProjects() on the tab open-edge; the latch is reset
+    // Pillar 2 (#892): snapshot ListCachedProjects() on the page open-edge; the latch is reset
     // in resetPreferencesWindowState when the window closes, so reopening re-snapshots once.
     RefreshCachedProjectsSnapshotOnOpen(d, /*isOpenNow=*/true, d.prefsTrackerTabWasOpen);
-    DrawTrackerFirstRunExplainer(d);
-    const int currentItem = DrawTrackerBackendSelection(d);
-    DrawTrackerBackendConfig(d, currentItem);
-    DrawTrackerTestConnection(app, d);
-    DrawTrackerRecentProjects(d, currentItem);
-    if (ImGui::Button("Open Views Dashboard")) {
-        d.showViewsDashboard = true;
-        d.requestViewsDashboardFocus = true;
-    }
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
-                               "Query/JQL and column fields are configured in the Views dashboard.");
-    ImGui::EndTabItem();
+    SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.backend", [&] {
+        DrawTrackerFirstRunExplainer(d);
+        const int currentItem = DrawTrackerBackendSelection(d);
+        DrawTrackerBackendConfig(d, currentItem);
+        DrawTrackerTestConnection(app, d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.recent_projects", [&] {
+        DrawTrackerRecentProjects(d, TrackerBackendIndexFromBuf(d));
+        if (ImGui::Button("Open Views Dashboard")) {
+            d.showViewsDashboard = true;
+            d.requestViewsDashboardFocus = true;
+        }
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
+                                   "Query/JQL and column fields are configured in the Views dashboard.");
+    });
 }
 
 void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("User Info", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "User Info"))) {
-        return;
-    }
-    d.preferencesActiveTab = PreferencesActiveTab::UserInfo;
-    DrawUserInfoFeedSettings(d);
-    ImGui::EndTabItem();
+    SmatchetPreferencesUiDetail::PrefsSection(d, "connections.activity", [&] { DrawUserInfoFeedSettings(d); });
 }
 
 #if defined(SMATCHET_WITH_MCP)
-void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSession& d) {
-    if (!ImGui::BeginTabItem("Integrations", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Integrations"))) {
-        return;
-    }
-    d.preferencesActiveTab = PreferencesActiveTab::Integrations;
+namespace {
+
+// MCP-server section body (immediate-save semantics — the dirty-diff block below writes
+// cfg + syncs the plugin host as soon as a widget changes). Split out of the old
+// Integrations tab so the PrefsSection lambda stays a one-liner.
+void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
     ImGui::TextUnformatted("MCP (Model Context Protocol)");
     ImGui::Separator();
     ImGui::Spacing();
@@ -797,7 +796,12 @@ void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSessio
     ImGui::Spacing();
     ImGui::TextDisabled(
         "Runtime status, endpoints, and action log: Automation -> Agent Bridge (MCP)... (separate window).");
-    ImGui::EndTabItem();
+}
+
+} // namespace
+
+void SmatchetUI::drawPreferencesIntegrationsTab(AppController& app, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "connections.mcp", [&] { DrawMcpSectionBody(app, d); });
 }
 #endif
 
@@ -892,18 +896,6 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
     app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
 }
 
-namespace SmatchetPreferencesUiDetail {
-
-int PrefsTabFlags(UiDrawSession& d, const char* canonicalName) {
-    if (!d.prefsSelectTabRequest.empty() && d.prefsSelectTabRequest == canonicalName) {
-        d.prefsSelectTabRequest.clear();
-        return ImGuiTabItemFlags_SetSelected;
-    }
-    return ImGuiTabItemFlags_None;
-}
-
-} // namespace SmatchetPreferencesUiDetail
-
 namespace {
 
 // Settings-search index (UX critique M4): finding a setting shouldn't require knowing
@@ -958,8 +950,8 @@ bool PrefsKeywordsMatch(const char* haystack, const std::string& needleLower) {
     return hay.find(needleLower) != std::string::npos;
 }
 
-// The search box + match chips drawn above the tab bar. Clicking a chip selects that tab
-// via d.prefsSelectTabRequest / PrefsTabFlags.
+// The search box + match chips drawn above the nav. Clicking a chip selects the category
+// that hosts the old tab via d.prefsSelectTabRequest / PrefsCategoryForChipName.
 void DrawPrefsSearchBox(UiDrawSession& d) {
     ImGui::SetNextItemWidth(280.0f);
     ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
@@ -1012,6 +1004,57 @@ void DrawPrefsSearchBox(UiDrawSession& d) {
 
 } // namespace
 
+/// The right-pane body for the selected category. Runs inside the caller's
+/// "PrefsBody" child; feature-gated categories draw nothing in a feature-OFF
+/// build (the nav rail never offers them, so this is a stale-selection guard).
+void SmatchetUI::drawPreferencesCategoryBody(AppController& app, UiDrawSession& d) {
+    switch (d.preferencesCategory) {
+    case PreferencesCategory::Tracker:
+        drawPreferencesTrackerTab(app, d);
+        break;
+    case PreferencesCategory::UserInfo:
+        drawPreferencesUserInfoTab(d);
+        break;
+    case PreferencesCategory::Integrations:
+#if defined(SMATCHET_WITH_MCP)
+        drawPreferencesIntegrationsTab(app, d);
+#endif
+        break;
+    case PreferencesCategory::Assistant:
+#if defined(SMATCHET_WITH_AI)
+        DrawAssistantPreferencesTab(app, d);
+#endif
+        break;
+    case PreferencesCategory::Whisper:
+#if defined(SMATCHET_WITH_WHISPER)
+        DrawWhisperPreferencesTab(app, d);
+#endif
+        break;
+    case PreferencesCategory::LocalData:
+        DrawLocalDataPreferencesTab(*this, app, d);
+        break;
+    case PreferencesCategory::Appearance:
+        DrawAppearancePreferencesTab(app, d);
+        break;
+    case PreferencesCategory::Templates:
+        DrawTemplatePreferencesTabs(*this, app.GetAvailableFields(), app, d, preferencesState_.templateFlags);
+        break;
+    case PreferencesCategory::Annotate:
+        DrawAnnotatePreferencesTabForwarded(app.GetAvailableFields(), app);
+        break;
+    case PreferencesCategory::Keybindings:
+        DrawKeybindingsPreferencesTab(*this, app, d);
+        break;
+    case PreferencesCategory::QuickCreate:
+#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
+        // Engine-context prefill toggles for the quick-create popup — only meaningful
+        // where a host engine pushes context snapshots (the Unreal-embedded build).
+        DrawQuickCreatePreferencesTab(d);
+#endif
+        break;
+    }
+}
+
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded) {
     // embedded (dual-ui slice 4): mobile Settings page draws the body directly into the page
     // child; skip the show-gate + beginPreferencesWindow/End chrome. Desktop path below is
@@ -1039,74 +1082,52 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
 
     DrawPrefsSearchBox(d);
 
-    if (ImGui::BeginTabBar("PreferencesTabs")) {
-        drawPreferencesTrackerTab(app, d);
-        drawPreferencesUserInfoTab(d);
-#if defined(SMATCHET_WITH_MCP)
-        drawPreferencesIntegrationsTab(app, d);
-#endif
+    // Consume a search-chip jump request: chips still carry the old canonical tab
+    // names; unknown names are dropped (stale request from a removed entry).
+    if (!d.prefsSelectTabRequest.empty()) {
+        PreferencesCategory chipTarget;
+        if (SmatchetPreferencesUiDetail::PrefsCategoryForChipName(d.prefsSelectTabRequest, chipTarget)) {
+            d.preferencesCategory = chipTarget;
+        }
+        d.prefsSelectTabRequest.clear();
+    }
+
+    // Dirty markers for the nav labels (the old dirty-tab "*"). Computed here because
+    // TrackerPrefsFieldsDiffer lives in this TU's anonymous namespace and the assistant
+    // diff helper is AI-gated.
+    const bool trackerDirty = d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d);
+    bool assistantDirty = false;
 #if defined(SMATCHET_WITH_AI)
-        DrawAssistantPreferencesTab(app, d);
+    assistantDirty = d.assistantPrefsWorkingSeeded &&
+                     SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(d.assistantPrefsWorking, d.cfg);
 #endif
-#if defined(SMATCHET_WITH_WHISPER)
-        DrawWhisperPreferencesTab(app, d);
-#endif
-        DrawLocalAndAppearancePreferencesTabs(*this, app, d);
-        DrawKeybindingsPreferencesTab(*this, app, d);
-        DrawTemplatePreferencesTabs(*this, app.GetAvailableFields(), app, d, preferencesState_.templateFlags);
-#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
-        // Engine-context prefill toggles for the quick-create popup — only meaningful
-        // where a host engine pushes context snapshots (the Unreal-embedded build).
-        DrawQuickCreatePreferencesTab(d);
-#endif
-        ImGui::EndTabBar();
+
+    // Reserve the footer strip (separator + Save & Sync row) so the nav rail and the
+    // right pane share the remaining height.
+    const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 3.0f;
+    const float bodyHeight = ImGui::GetContentRegionAvail().y - footerHeight;
+    d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(
+        embedded, ImGui::GetContentRegionAvail().x, ImGui::GetFontSize(), d.prefsNavCombo);
+    SmatchetPreferencesUiDetail::DrawPrefsNav(d, trackerDirty, assistantDirty, bodyHeight);
+    float paneHeight = bodyHeight;
+    if (d.prefsNavCombo) {
+        // The combo consumed a row above the pane; re-measure what's left.
+        paneHeight = ImGui::GetContentRegionAvail().y - footerHeight;
+    } else {
+        ImGui::SameLine();
+    }
+    if (ImGui::BeginChild("PrefsBody", ImVec2(0.0f, paneHeight))) {
+        drawPreferencesCategoryBody(app, d);
+    }
+    ImGui::EndChild();
+    if (d.preferencesCategory != PreferencesCategory::Keybindings) {
+        // Preserve the old inactive-BeginTabItem early-return semantics: an armed
+        // hotkey capture dies when the page stops drawing.
+        SmatchetPreferencesUiDetail::ResetKeybindingsCaptureState();
     }
 
     ImGui::Spacing();
     ImGui::Separator();
-    // Per-tab save-semantics line: only the info relevant to the active tab; the
-    // (?) marker carries the full cross-tab explanation.
-    const char* footerKey = "prefs.footer.tracker.short";
-    const char* footerFallback = "Save & Sync writes this tab to disk and refreshes the tracker connection.";
-    switch (d.preferencesActiveTab) {
-    case PreferencesActiveTab::Tracker:
-        break;
-    case PreferencesActiveTab::Integrations:
-        footerKey = "prefs.footer.integrations.short";
-        footerFallback = "MCP settings save when changed. Runtime status: Automation -> Agent Bridge (MCP)...";
-        break;
-    case PreferencesActiveTab::Assistant:
-        footerKey = "prefs.footer.assistant.short";
-        footerFallback = "Assistant settings use explicit Save / Discard. Unsaved edits show an * on the tab.";
-        break;
-    case PreferencesActiveTab::Whisper:
-    case PreferencesActiveTab::Templates:
-    case PreferencesActiveTab::Keybindings:
-    case PreferencesActiveTab::QuickCreate:
-        footerKey = "prefs.footer.autosave.short";
-        footerFallback = "Settings on this tab save automatically when changed.";
-        break;
-    case PreferencesActiveTab::LocalData:
-    case PreferencesActiveTab::Appearance:
-    case PreferencesActiveTab::UserInfo:
-        footerKey = "prefs.footer.immediate.short";
-        footerFallback = "Options on this tab apply and save immediately.";
-        break;
-    case PreferencesActiveTab::Annotate:
-        footerKey = "prefs.footer.annotate.short";
-        footerFallback = "This tab has its own Save settings and Reload settings buttons.";
-        break;
-    }
-    ImGui::TextWrapped("%s", SmatchetLocalization::T(footerKey, footerFallback));
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render(
-        "prefs.footer.save_sync.help",
-        "Save & Sync writes the Tracker tab (and optional Integrations tab when enabled in this build) to "
-        "disk and refreshes the tracker connection. Assistant, Whisper, Local data, Appearance, and template "
-        "settings save automatically when changed. MCP runtime status: Automation -> Agent Bridge (MCP)... "
-        "Log level and verbose logging: Inspect -> Runtime Log. The Annotate Analysis tab has its own Save "
-        "settings and Reload settings buttons.");
-    ImGui::Spacing();
     if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
         onPreferencesSaveAndSync(app, d);
     }

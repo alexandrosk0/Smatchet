@@ -1,32 +1,33 @@
 // funcsize_preferences_tabs.test.cpp — Phase-0 GREEN batch of the
-// full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md).
+// full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md),
+// retargeted from the old "PreferencesTabs" tab bar to the category nav rail
+// (docs/plans/active/preferences-ia-resegmentation-and-search.md, slice 2a).
 //
-// PURPOSE — STRUCTURAL coverage for the four large Preferences *tab* draw
-// functions slated for decomposition in Phase 5:
-//   - DrawWhisperPreferencesTab            (SmatchetPreferencesUi_Whisper.cpp,  781L)
-//   - DrawAssistantPreferencesTab          (SmatchetPreferencesUi_Assistant.cpp, 533L)
-//   - DrawTemplatePreferencesTabs          (SmatchetPreferencesUi_Templates.cpp, 510L)
-//   - DrawLocalAndAppearancePreferencesTabs(SmatchetPreferencesUi_Local.cpp,     264L)
+// PURPOSE — STRUCTURAL coverage for the large Preferences *page* draw
+// functions:
+//   - DrawWhisperPreferencesTab       (SmatchetPreferencesUi_Whisper.cpp)
+//   - DrawAssistantPreferencesTab     (SmatchetPreferencesUi_Assistant.cpp)
+//   - DrawTemplatePreferencesTabs     (SmatchetPreferencesUi_Templates.cpp)
+//   - DrawLocalDataPreferencesTab /
+//     DrawAppearancePreferencesTab    (SmatchetPreferencesUi_Local.cpp)
 //
-// These four functions are *called* every frame, but each does its real work
-// only INSIDE an `if (ImGui::BeginTabItem("<label>"))` body — that body runs
-// only when the tab is the active one. A no-backend smoke test that merely
-// opens Preferences (the pilot's PreferencesWindow test) ticks the function
-// shells (their BeginTabItem/EndTabItem balance) but NOT the per-tab bodies.
-// To exercise the bodies — and therefore catch a Begin/End or Push/PopID
-// imbalance a future decomposition might introduce inside them — this test
-// boots the real app, opens Preferences, and ItemClicks each target tab in
-// turn, YieldUntil-asserting a stable child widget unique to that tab is
-// present. Each click activates the tab → its body runs for several frames →
-// the ImGui Test Engine traps any in-frame IM_ASSERT and fails the test.
+// Since slice 2a, drawPreferencesWindow dispatches on d.preferencesCategory —
+// a page body runs every frame its category is the selected one (no
+// BeginTabItem gate any more). Selecting each category in turn ticks the
+// page body for several frames; the ImGui Test Engine traps any in-frame
+// IM_ASSERT (Begin/End or Push/PopID imbalance) and fails the test.
 //
-// All four tabs render config-backed widgets only — ZERO project / ticket /
-// field backend is required (green class per the plan's pilot findings). The
-// Assistant + Whisper tabs are feature-gated (SMATCHET_WITH_AI /
-// SMATCHET_WITH_WHISPER); under ninja-ui-test-msvc both default ON, so all
-// four tabs compile and render. The per-tab assertions are guarded to match.
+// Selection path: the nav rail Selectables carry stable "###prefsNav*" ids,
+// addressed by wildcard ref ("**/…") because they live inside the
+// "PrefsNavRail" child window. Below the narrow-width threshold the rail is
+// replaced by a combo; in that mode the rail item doesn't exist and the test
+// falls back to assigning g_ui.preferencesCategory directly — same body
+// coverage, no click.
 //
-// No checked-in pixel golden — the live tick IS the coverage.
+// All pages render config-backed widgets only — ZERO project / ticket /
+// field backend is required. Assistant + Whisper are feature-gated
+// (SMATCHET_WITH_AI / SMATCHET_WITH_WHISPER); under ninja-ui-test-msvc both
+// default ON. No checked-in pixel golden — the live tick IS the coverage.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
@@ -38,9 +39,6 @@
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
-
-#include <cstdio>  // std::snprintf — builds the "PreferencesTabs/<label>" header ref
-#include <cstring> // std::strcmp — compares the selected-tab name
 
 // g_ui — the shared bag of UI-thread visibility flags (see the pilot file for
 // the rationale). We set showPreferences / requestPreferencesFocus directly,
@@ -64,34 +62,6 @@ bool WindowIsLive(const char* title) {
     return win != nullptr && win->Active;
 }
 
-// True once the "PreferencesTabs" tab bar inside the Preferences window has
-// `tabLabel` as its selected tab. This is the structural-coverage signal we
-// assert after clicking a tab: a selected tab means BeginTabItem(tabLabel)
-// returned true this frame → the tab's body draw function actually ran (and
-// any Begin/End or Push/PopID imbalance it introduces would have tripped an
-// ImGui IM_ASSERT trapped by the engine). It does NOT depend on an in-tab
-// child widget being unclipped — the docked Preferences window opens with a
-// short content region in the headless app, which clips lower widgets out of
-// the Test Engine item table, so ItemExists on tab content is unreliable here.
-bool PrefsTabSelected(const char* tabLabel) {
-    ImGuiContext& g = *ImGui::GetCurrentContext();
-    ImGuiWindow* win = ImGui::FindWindowByName("Preferences");
-    if (win == nullptr) {
-        return false;
-    }
-    const ImGuiID tabBarId = win->GetID("PreferencesTabs");
-    ImGuiTabBar* tabBar = g.TabBars.GetByKey(tabBarId);
-    if (tabBar == nullptr) {
-        return false;
-    }
-    ImGuiTabItem* selected = ImGui::TabBarFindTabByID(tabBar, tabBar->SelectedTabId);
-    if (selected == nullptr) {
-        return false;
-    }
-    const char* name = ImGui::TabBarGetTabName(tabBar, selected);
-    return name != nullptr && std::strcmp(name, tabLabel) == 0;
-}
-
 // Open Preferences and tick until the "Preferences" window is live (Active).
 // Mirrors the pilot's docked-window open recipe: re-arm the focus latch every
 // frame until the docked tab activates, since the draw fn consumes it in one
@@ -106,34 +76,33 @@ bool OpenPreferences(ImGuiTestContext* ctx) {
     });
 }
 
-// Click a tab by its label, then YieldUntil that tab is the selected tab in the
-// Preferences tab bar — the signal that BeginTabItem(tabLabel) returned true and
-// its body draw function ran. A tab *header* is addressed by the
-// tab-bar-qualified path "<TabBarID>/<TabLabel>" — the real Preferences tab bar
-// is ImGui::BeginTabBar("PreferencesTabs"), so the header ref is
-// "PreferencesTabs/<TabLabel>" relative to SetRef("Preferences") (the same
-// convention ai_assistant_preferences_docking uses for "##PrefsTabs/Assistant").
-// IM_CHECK_NO_RET makes the assertion BITE — a missing tab header, or a tab that
-// never becomes selected (so its body never ran), fails the test rather than
-// silently passing. Returns true if the tab became selected.
-bool ClickTabAndAssertSelected(ImGuiTestContext* ctx, const char* tabLabel) {
-    char tabHeaderRef[160];
-    std::snprintf(tabHeaderRef, sizeof(tabHeaderRef), "PreferencesTabs/%s", tabLabel);
-    const bool tabExists = ctx->ItemExists(tabHeaderRef);
-    IM_CHECK_NO_RET(tabExists);
-    if (!tabExists) {
+// Select a category via its nav-rail Selectable (wildcard ref — the rail is a
+// child window), or by direct assignment when the narrow-width combo replaced
+// the rail. Then YieldUntil the dispatch actually ran on that category for a
+// few frames. IM_CHECK_NO_RET makes a selection that never lands fail the
+// test rather than silently passing.
+bool SelectCategoryAndAssert(ImGuiTestContext* ctx, const char* railRef, PreferencesCategory expected) {
+    if (ctx->ItemExists(railRef)) {
+        ctx->ItemClick(railRef);
+    } else {
+        ctx->LogInfo("nav rail item '%s' absent (combo mode) — selecting category directly", railRef);
+        g_ui.preferencesCategory = expected;
+    }
+    const bool selected = YieldUntil(ctx, [&] { return g_ui.preferencesCategory == expected; });
+    IM_CHECK_NO_RET(selected);
+    if (!selected) {
         return false;
     }
-    ctx->ItemClick(tabHeaderRef);
-    const bool selected = YieldUntil(ctx, [&] { return PrefsTabSelected(tabLabel); });
-    IM_CHECK_NO_RET(selected);
-    return selected;
+    // Let the page body tick a few frames so an imbalance inside it trips.
+    for (int i = 0; i < 5; ++i) {
+        ctx->Yield();
+    }
+    return true;
 }
 
-// --- Preferences tab cycle ----------------------------------------------
-// Drives each of the four large tab draw functions by selecting its tab and
-// asserting a stable in-body widget. Confirms every target body actually
-// ticked (not just the function shell).
+// --- Preferences category cycle ------------------------------------------
+// Drives each of the large page draw functions by selecting its category and
+// asserting the dispatch landed. Confirms every target body actually ticked.
 void RegisterPreferencesTabsRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizePreferencesTabs", "AllTargetTabsRenderBodies");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -150,31 +119,26 @@ void RegisterPreferencesTabsRenderSmoke(ImGuiTestEngine* engine) {
             return;
         }
 
-        // Each click activates the named tab → its BeginTabItem body draw
-        // function runs for several frames. PrefsTabSelected confirms the body
-        // ticked; a Begin/End or Push/PopID imbalance introduced by a future
-        // decomposition would trip an ImGui IM_ASSERT trapped by the engine.
+        // DrawLocalDataPreferencesTab / DrawAppearancePreferencesTab — the two
+        // pages split out of the old combined Local+Appearance draw function.
+        SelectCategoryAndAssert(ctx, "**/Local data###prefsNavLocalData", PreferencesCategory::LocalData);
+        SelectCategoryAndAssert(ctx, "**/Appearance###prefsNavAppearance", PreferencesCategory::Appearance);
 
-        // DrawLocalAndAppearancePreferencesTabs — owns BOTH "Local data" and
-        // "Appearance" tab items; selecting each ticks the respective body.
-        ClickTabAndAssertSelected(ctx, "Local data");
-        ClickTabAndAssertSelected(ctx, "Appearance");
+        // DrawTemplatePreferencesTabs — the "Grid & Fields" category.
+        SelectCategoryAndAssert(ctx, "**/Grid & Fields###prefsNavTemplates", PreferencesCategory::Templates);
 
-        // DrawTemplatePreferencesTabs — its first tab is "Grid".
-        ClickTabAndAssertSelected(ctx, "Grid");
-
-        // drawPreferencesUserInfoTab — the "User Info" tab hosts the User Info &
-        // commit-feed settings (relocated out of the Tracker tab). Config-backed,
-        // zero backend — same green class as the tabs above.
-        ClickTabAndAssertSelected(ctx, "User Info");
+        // drawPreferencesUserInfoTab — User Info & commit-feed settings.
+        // Config-backed, zero backend — same green class as the pages above.
+        SelectCategoryAndAssert(ctx, "**/User Info###prefsNavUserInfo", PreferencesCategory::UserInfo);
 
 #if defined(SMATCHET_WITH_AI)
-        // DrawAssistantPreferencesTab — "Assistant" tab.
-        ClickTabAndAssertSelected(ctx, "Assistant");
+        // DrawAssistantPreferencesTab. The rail label may carry a " *" dirty
+        // marker, but "###prefsNavAssistant" keeps the item id stable either way.
+        SelectCategoryAndAssert(ctx, "**/Assistant###prefsNavAssistant", PreferencesCategory::Assistant);
 #endif
-#if defined(SMATCHET_WITH_WHISPER)
-        // DrawWhisperPreferencesTab — "Whisper" tab.
-        ClickTabAndAssertSelected(ctx, "Whisper");
+#if defined(SMATCHET_WITH_WHISPER) && SMATCHET_WITH_WHISPER
+        // DrawWhisperPreferencesTab.
+        SelectCategoryAndAssert(ctx, "**/Whisper###prefsNavWhisper", PreferencesCategory::Whisper);
 #endif
 
         g_ui.showPreferences = false;

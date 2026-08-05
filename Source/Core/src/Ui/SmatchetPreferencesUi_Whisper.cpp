@@ -878,9 +878,7 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
     // banner-owned ModelDownloader so a fetch started from the banner continues
     // to show progress on this tab.
     static WhisperPrefsTabState s_state;
-    if (ImGui::BeginTabItem(SmatchetLocalization::T("whisper.preferences.tabTitle", "Whisper"), nullptr,
-                            SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Whisper"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Whisper;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.dictation", [&] {
         ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.whisper.ptt.help",
@@ -894,14 +892,14 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
         DrawWhisperModelPicker(app, d);
         DrawWhisperHotkey(d, s_state);
         DrawWhisperApiKey(d, s_state);
+        DrawWhisperAdvancedRows(d);
+        DrawWhisperPrivacyAndRerun(d);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.diagnostics", [&] {
         DrawWhisperTestConnection(app, d, s_state);
         DrawWhisperTestMicrophone(app, s_state);
         DrawWhisperTestE2E(app, d, s_state);
-        DrawWhisperAdvancedRows(d);
-        DrawWhisperPrivacyAndRerun(d);
-
-        ImGui::EndTabItem();
-    }
+    });
 }
 
 #endif // SMATCHET_WITH_WHISPER
