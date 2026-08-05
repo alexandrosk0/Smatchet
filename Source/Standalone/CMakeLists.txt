@@ -143,7 +143,11 @@ endif()
 # Resolution (cmake/SmatchetFontAssets.cmake) falls back to the MAIN
 # worktree's assets/fonts/ so linked worktrees — which never receive the
 # gitignored TTF — still get icons instead of silent text-mode.
-smatchet_resolve_font_asset(_SMATCHET_FA_TTF_SRC "${CMAKE_CURRENT_SOURCE_DIR}" "fa-solid-900.ttf")
+# PROJECT_SOURCE_DIR, not CMAKE_CURRENT_SOURCE_DIR: the drop-in lives at the
+# repo root. The root list-file pulls this file in with include() (not
+# add_subdirectory), so the two are equal today — PROJECT_SOURCE_DIR keeps
+# pointing at the root if that ever changes.
+smatchet_resolve_font_asset(_SMATCHET_FA_TTF_SRC "${PROJECT_SOURCE_DIR}" "fa-solid-900.ttf")
 if(_SMATCHET_FA_TTF_SRC)
     add_custom_command(TARGET SmatchetStandalone POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -152,7 +156,7 @@ if(_SMATCHET_FA_TTF_SRC)
             COMMENT "Copy fa-solid-900.ttf next to SmatchetStandalone"
             VERBATIM)
 else()
-    message(STATUS "FA Solid TTF not found in ${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/ "
+    message(STATUS "FA Solid TTF not found in ${PROJECT_SOURCE_DIR}/assets/fonts/ "
                    "nor in the main worktree's assets/fonts/; "
                    "AI chat hover row will fall back to text labels at runtime. "
                    "See assets/fonts/README.md for drop-in instructions.")
