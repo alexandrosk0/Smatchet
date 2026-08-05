@@ -17,7 +17,7 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
     unset(_NINJA_FROM_PATH CACHE)
 endif()
 
-project(SmatchetApp VERSION 0.6.8 LANGUAGES C CXX)
+project(SmatchetApp VERSION 0.6.9 LANGUAGES C CXX)
 set(SMATCHET_GITHUB_RELEASE_REPO "alexandrosk0/Smatchet" CACHE STRING
     "GitHub owner/repo used by the standalone updater")
 add_compile_definitions(
