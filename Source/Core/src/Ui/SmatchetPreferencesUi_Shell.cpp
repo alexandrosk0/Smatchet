@@ -145,26 +145,19 @@ void PrefsSectionEnd(UiDrawSession& d, const char* sectionId) {
 
 void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
     (void)assistantDirty; // only read when the AI feature is compiled in
+    // Order mirrors SmatchetPrefsSchema::Categories(); AI & Voice is compiled
+    // out entirely when neither feature is built, matching the schema's guard.
     const PrefsNavEntry entries[] = {
-        {PreferencesCategory::Tracker, "Tracker", "prefsNavTracker", trackerDirty},
-        {PreferencesCategory::UserInfo, "User Info", "prefsNavUserInfo", false},
-#if defined(SMATCHET_WITH_MCP)
-        {PreferencesCategory::Integrations, "Integrations", "prefsNavIntegrations", false},
-#endif
-#if defined(SMATCHET_WITH_AI)
-        {PreferencesCategory::Assistant, "Assistant", "prefsNavAssistant", assistantDirty},
-#endif
-#if defined(SMATCHET_WITH_WHISPER) && SMATCHET_WITH_WHISPER
-        {PreferencesCategory::Whisper, "Whisper", "prefsNavWhisper", false},
-#endif
-        {PreferencesCategory::LocalData, "Local data", "prefsNavLocalData", false},
+        {PreferencesCategory::General, "General", "prefsNavGeneral", false},
         {PreferencesCategory::Appearance, "Appearance", "prefsNavAppearance", false},
-        {PreferencesCategory::Templates, "Grid & Fields", "prefsNavTemplates", false},
-        {PreferencesCategory::Annotate, "Annotate", "prefsNavAnnotate", false},
-        {PreferencesCategory::Keybindings, "Keyboard Shortcuts", "prefsNavKeybindings", false},
-#if defined(SMATCHET_EMBEDDED_IN_UNREAL)
-        {PreferencesCategory::QuickCreate, "Unreal", "prefsNavQuickCreate", false},
+        {PreferencesCategory::Tracker, "Tracker", "prefsNavTracker", trackerDirty},
+        {PreferencesCategory::Connections, "Connections", "prefsNavConnections", false},
+#if defined(SMATCHET_WITH_AI) || defined(SMATCHET_WITH_WHISPER)
+        {PreferencesCategory::AiVoice, "AI & Voice", "prefsNavAiVoice", assistantDirty},
 #endif
+        {PreferencesCategory::Editing, "Editing", "prefsNavEditing", false},
+        {PreferencesCategory::Shortcuts, "Shortcuts", "prefsNavShortcuts", false},
+        {PreferencesCategory::Annotate, "Annotate", "prefsNavAnnotate", false},
     };
     char label[96];
     if (d.prefsNavCombo) {
@@ -212,17 +205,24 @@ bool PrefsCategoryForChipName(const std::string& name, PreferencesCategory& out)
         const char* Name;
         PreferencesCategory Category;
     };
+    // Chip names are the pre-resegmentation tab names — kept so the legacy
+    // search chips still land somewhere sane until slice 3 removes them.
+    // A const name->enum table plus a linear scan matches CodeColorView.cpp's tag-alias table by
+    // shape only; the two share no domain, and this whole function is transient scaffolding that
+    // slice 3 deletes with the legacy chips, so a shared generic lookup would couple independent
+    // subsystems for the sake of dead code.
+    // SMATCHET_DEVIATION(rule=duplication; reason=shape-only, dies slice 3; owner=prefs-ia; revisit=2026-09-05)
     static const ChipRow kRows[] = {
         {"Tracker", PreferencesCategory::Tracker},
-        {"User Info", PreferencesCategory::UserInfo},
-        {"Integrations", PreferencesCategory::Integrations},
-        {"Assistant", PreferencesCategory::Assistant},
-        {"Whisper", PreferencesCategory::Whisper},
-        {"Local data", PreferencesCategory::LocalData},
+        {"User Info", PreferencesCategory::Connections},
+        {"Integrations", PreferencesCategory::Connections},
+        {"Assistant", PreferencesCategory::AiVoice},
+        {"Whisper", PreferencesCategory::AiVoice},
+        {"Local data", PreferencesCategory::General},
         {"Appearance", PreferencesCategory::Appearance},
-        {"Keyboard Shortcuts", PreferencesCategory::Keybindings},
-        {"Grid", PreferencesCategory::Templates},
-        {"Fields Inputs", PreferencesCategory::Templates},
+        {"Keyboard Shortcuts", PreferencesCategory::Shortcuts},
+        {"Grid", PreferencesCategory::Editing},
+        {"Fields Inputs", PreferencesCategory::Editing},
         {"Annotate", PreferencesCategory::Annotate},
     };
     for (const ChipRow& row : kRows) {

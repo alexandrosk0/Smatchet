@@ -81,19 +81,29 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
     cfgLoaded_ = true;
 }
 
-void AnnotateAnalysisUi::DrawAnnotatePreferencesTab(const std::vector<TrackerField>& availableFields,
-                                                    const IAppTicketMutations& ticketMutations) {
+void AnnotateAnalysisUi::DrawAnnotatePrefsSection(AnnotatePrefsSection section,
+                                                 const std::vector<TrackerField>& availableFields,
+                                                 const IAppTicketMutations& ticketMutations) {
+    // Every section call re-runs hydration + autoselect. Both are idempotent latches, so the
+    // per-section cost is a bool test once the first drawn section has warmed them.
     ensureSettingsBuffersLoaded();
     MaybeAutoselectCallstackTrackerField(availableFields);
     MaybeAutoselectLastFoundClTrackerField(availableFields);
     MaybeAutoselectLastOccurrencesTrackerField(availableFields);
-    ImGui::TextUnformatted("Annotate configuration (stored in smatchet_config.json).");
-    ImGui::SameLine();
-    SmatchetHelpMarker::RenderText("Perforce paths, ignore list, and Jira callstack source used by Annotate "
-                                   "(stored in smatchet_config.json).");
-    ImGui::Spacing();
-    const AnnotateUiThemeColors& theme = State().annotateCfg.UiColors;
-    DrawAnnotatePersistedOptionsForm(availableFields, ticketMutations, theme);
+    switch (section) {
+    case AnnotatePrefsSection::Analysis:
+        DrawAnnotateAnalysisFields();
+        break;
+    case AnnotatePrefsSection::FieldMapping:
+        DrawAnnotateJiraFieldCombos(availableFields, ticketMutations, State().annotateCfg.UiColors);
+        break;
+    case AnnotatePrefsSection::Colors:
+        DrawAnnotateColors();
+        break;
+    case AnnotatePrefsSection::Perforce:
+        DrawAnnotatePerforceFields();
+        break;
+    }
 }
 
 bool AnnotateRowHasNonEmptyCallstackField(const std::vector<TrackerField>& availableFields,

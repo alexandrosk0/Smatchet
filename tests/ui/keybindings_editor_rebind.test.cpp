@@ -144,23 +144,23 @@ void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
             return;
         }
 
-        // The Keyboard Shortcuts rail Selectable carries a locale-stable ###id
-        // suffix ("Keyboard Shortcuts###prefsNavKeybindings"), so the ref resolves
-        // regardless of UI language (ImHashStr restarts at ###). It lives inside
-        // the "PrefsNavRail" child window → wildcard ref. Below the narrow-width
-        // threshold the rail is a combo instead; fall back to selecting the
-        // category directly — same body coverage.
-        const char* railRef = "**/Keyboard Shortcuts###prefsNavKeybindings";
+        // The Shortcuts rail Selectable carries a locale-stable ###id suffix
+        // ("Shortcuts###prefsNavShortcuts"), so the ref resolves regardless of UI
+        // language (ImHashStr restarts at ###). It lives inside the "PrefsNavRail"
+        // child window → wildcard ref. Below the narrow-width threshold the rail is
+        // a combo instead; fall back to selecting the category directly — same body
+        // coverage.
+        const char* railRef = "**/Shortcuts###prefsNavShortcuts";
         if (ctx->ItemExists(railRef)) {
             ctx->ItemClick(railRef);
         } else {
             ctx->LogInfo("nav rail item absent (combo mode) — selecting category directly");
-            g_ui.preferencesCategory = PreferencesCategory::Keybindings;
+            g_ui.preferencesCategory = PreferencesCategory::Shortcuts;
         }
-        // Category-selected means the dispatch switch draws the Keybindings body
+        // Category-selected means the dispatch switch draws the Shortcuts body
         // (incl. the conflict-render branch above) every subsequent frame.
         // Locale-independent — an enum, not a label.
-        const bool active = YieldUntil(ctx, [] { return g_ui.preferencesCategory == PreferencesCategory::Keybindings; });
+        const bool active = YieldUntil(ctx, [] { return g_ui.preferencesCategory == PreferencesCategory::Shortcuts; });
         IM_CHECK_NO_RET(active);
         for (int i = 0; i < 5; ++i) {
             ctx->Yield();

@@ -125,13 +125,44 @@ const TranslationEntry kEntries[] = {
     {"window.votes", "Votes", u8"Votes"},
     {"window.mcp_server", "MCP Server", u8"Serveur MCP"},
 
-    {"prefs.tab.tracker", "Tracker", u8"Suivi"},
-    {"prefs.tab.integrations", "Integrations", u8"Intégrations"},
-    {"prefs.tab.appearance", "Appearance", u8"Apparence"},
-    {"prefs.tab.fields_inputs", "Fields Inputs", u8"Saisie des champs"},
-    {"prefs.tab.annotate_analysis", "Annotate", u8"Annoter"},
-    {"prefs.tab.local_data", "Local data", u8"Données locales"},
-    {"prefs.tab.keybindings", "Keyboard Shortcuts", u8"Raccourcis clavier"},
+    // Preferences navigation rail + section headers. These mirror the TitleEn strings in
+    // PreferencesSchema.cpp verbatim: the rail and PrefsSection render them through the
+    // SmatchetLocalizedImGui wrappers, which resolve by English reverse lookup, so the
+    // English column here IS the lookup key. Titles whose English text already appears
+    // earlier in this table (Appearance, Tracker, Updates, Storage, Local database,
+    // Annotate) are intentionally absent — first entry wins the reverse lookup and those
+    // existing rows already carry the right translation.
+    {"prefs.cat.general", "General", u8"Général"},
+    {"prefs.cat.connections", "Connections", u8"Connexions"},
+    {"prefs.cat.ai_voice", "AI & Voice", u8"IA et voix"},
+    {"prefs.cat.editing", "Editing", u8"Édition"},
+    {"prefs.cat.shortcuts", "Shortcuts", u8"Raccourcis"},
+
+    {"prefs.section.language_region", "Language & region", u8"Langue et région"},
+    {"prefs.section.theme_font", "Theme & font", u8"Thème et police"},
+    {"prefs.section.layout_density", "Layout & density", u8"Disposition et densité"},
+    {"prefs.section.display", "Display", u8"Affichage"},
+    {"prefs.section.backend_credentials", "Backend & credentials", u8"Backend et identifiants"},
+    {"prefs.section.recent_projects", "Recent projects", u8"Projets récents"},
+    {"prefs.section.change_notifications", "Change notifications", u8"Notifications de changement"},
+    {"prefs.section.mcp", "MCP server", u8"Serveur MCP"},
+    {"prefs.section.perforce", "Perforce", u8"Perforce"},
+    {"prefs.section.activity", "Activity sources", u8"Sources d'activité"},
+    {"prefs.section.assistant", "Assistant", u8"Assistant"},
+    {"prefs.section.agent_context", "Agent context", u8"Contexte de l'agent"},
+    {"prefs.section.dictation", "Voice dictation", u8"Dictée vocale"},
+    {"prefs.section.voice_diagnostics", "Voice diagnostics", u8"Diagnostics vocaux"},
+    {"prefs.section.grid", "Grid behaviour", u8"Comportement de la grille"},
+    {"prefs.section.time_estimates", "Time estimates", u8"Estimations de temps"},
+    {"prefs.section.work_log_templates", "Work log templates", u8"Modèles de journal de travail"},
+    {"prefs.section.quick_comments", "Quick comments", u8"Commentaires rapides"},
+    {"prefs.section.annotate_comments", "Annotate comments", u8"Commentaires d'annotation"},
+    {"prefs.section.quick_create", "Unreal quick create", u8"Création rapide Unreal"},
+    {"prefs.section.keyboard", "Keyboard shortcuts", u8"Raccourcis clavier"},
+    {"prefs.section.system_shortcuts", "System shortcuts", u8"Raccourcis système"},
+    {"prefs.section.analysis", "Analysis", u8"Analyse"},
+    {"prefs.section.field_mapping", "Tracker field mapping", u8"Correspondance des champs"},
+    {"prefs.section.colors", "Colors", u8"Couleurs"},
 
     // Preferences "Keyboard Shortcuts" tab + the shared capture widget + quick-bind popup.
     // See SmatchetPreferencesUi_Keybindings.cpp / SmatchetHotkeyCapture.cpp and

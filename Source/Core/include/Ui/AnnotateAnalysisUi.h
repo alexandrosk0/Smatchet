@@ -39,10 +39,21 @@ class AnnotateAnalysisUi {
      *  Sets *wantClose = true when the user clicks Close. */
     void DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey);
 
-    /** Persisted annotate options (same fields as former Annotate "Options…"); call from Preferences.
+    /** One page of the persisted annotate options. The Preferences IA scatters these across two
+     *  categories (Perforce lives under Connections), so the caller picks the slice it owns and
+     *  wraps it in its own PrefsSection; hydration + tracker-field autoselect run per call and are
+     *  idempotent. */
+    enum class AnnotatePrefsSection {
+        Analysis,
+        FieldMapping,
+        Colors,
+        Perforce,
+    };
+
+    /** Draw one persisted-annotate-options section (same fields as the former Annotate "Options…").
      *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews). */
-    void DrawAnnotatePreferencesTab(const std::vector<TrackerField>& availableFields,
-                                    const IAppTicketMutations& ticketMutations);
+    void DrawAnnotatePrefsSection(AnnotatePrefsSection section, const std::vector<TrackerField>& availableFields,
+                                  const IAppTicketMutations& ticketMutations);
 
   private:
     void ensureSettingsBuffersLoaded();

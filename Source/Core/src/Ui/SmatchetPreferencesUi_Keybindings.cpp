@@ -305,19 +305,19 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
         mutated = true;
     }
 
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader(
-            SmatchetLocalization::T("keybindings.editor.systemHeader", "System shortcuts (not rebindable)"))) {
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"), "Ctrl+M, Z");
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenExit", "Exit Zen mode"), "Esc Esc");
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
-                              "Up / Down / Enter / Esc");
-    }
-
     if (mutated) {
         ui.MarkKeybindingsDirty();
         MarkPrefsDirty(d);
     }
+}
+
+// Shortcuts > System shortcuts body: the fixed, non-rebindable chords. Its own section now —
+// the inner CollapsingHeader it used to carry is the PrefsSection header.
+void DrawSystemShortcutsSectionBody() {
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"), "Ctrl+M, Z");
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenExit", "Exit Zen mode"), "Esc Esc");
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
+                          "Up / Down / Enter / Esc");
 }
 
 } // namespace
@@ -333,6 +333,7 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
         // the old inactive-tab early-return semantics.
         s_kbCapturingKey.clear();
     }
+    SmatchetPreferencesUiDetail::PrefsSection(d, "shortcuts.system", [&] { DrawSystemShortcutsSectionBody(); });
 }
 
 namespace SmatchetPreferencesUiDetail {

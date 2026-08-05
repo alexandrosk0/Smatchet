@@ -716,6 +716,8 @@ void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d)
         SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
                                    "Query/JQL and column fields are configured in the Views dashboard.");
     });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.notifications",
+                                              [&] { DrawTrackerNotificationsSectionBody(d); });
 }
 
 void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
@@ -729,9 +731,7 @@ namespace {
 // cfg + syncs the plugin host as soon as a widget changes). Split out of the old
 // Integrations tab so the PrefsSection lambda stays a one-liner.
 void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
-    ImGui::TextUnformatted("MCP (Model Context Protocol)");
-    ImGui::Separator();
-    ImGui::Spacing();
+    // No title/Separator here — PrefsSection already drew the section header.
     ImGui::Checkbox("Enable MCP server", &d.mcpEnabled);
     ImGui::InputInt("MCP Port", &d.mcpPort);
     if (d.mcpPort < 1) {
@@ -1009,50 +1009,72 @@ void DrawPrefsSearchBox(UiDrawSession& d) {
 /// build (the nav rail never offers them, so this is a stale-selection guard).
 void SmatchetUI::drawPreferencesCategoryBody(AppController& app, UiDrawSession& d) {
     switch (d.preferencesCategory) {
+    case PreferencesCategory::General:
+        DrawGeneralPreferencesTab(*this, app, d);
+        break;
+    case PreferencesCategory::Appearance:
+        DrawAppearancePreferencesTab(d);
+        break;
     case PreferencesCategory::Tracker:
         drawPreferencesTrackerTab(app, d);
         break;
-    case PreferencesCategory::UserInfo:
-        drawPreferencesUserInfoTab(d);
+    case PreferencesCategory::Connections:
+        drawPreferencesConnectionsTab(app, d);
         break;
-    case PreferencesCategory::Integrations:
-#if defined(SMATCHET_WITH_MCP)
-        drawPreferencesIntegrationsTab(app, d);
-#endif
-        break;
-    case PreferencesCategory::Assistant:
+    case PreferencesCategory::AiVoice:
+        // Two features, one category: each half compiles out with its own flag, and the
+        // nav rail hides the category only when both are off.
 #if defined(SMATCHET_WITH_AI)
         DrawAssistantPreferencesTab(app, d);
 #endif
-        break;
-    case PreferencesCategory::Whisper:
 #if defined(SMATCHET_WITH_WHISPER)
         DrawWhisperPreferencesTab(app, d);
 #endif
         break;
-    case PreferencesCategory::LocalData:
-        DrawLocalDataPreferencesTab(*this, app, d);
-        break;
-    case PreferencesCategory::Appearance:
-        DrawAppearancePreferencesTab(app, d);
-        break;
-    case PreferencesCategory::Templates:
-        DrawTemplatePreferencesTabs(*this, app.GetAvailableFields(), app, d, preferencesState_.templateFlags);
-        break;
-    case PreferencesCategory::Annotate:
-        DrawAnnotatePreferencesTabForwarded(app.GetAvailableFields(), app);
-        break;
-    case PreferencesCategory::Keybindings:
-        DrawKeybindingsPreferencesTab(*this, app, d);
-        break;
-    case PreferencesCategory::QuickCreate:
+    case PreferencesCategory::Editing:
+        DrawEditingPreferencesTab(d, preferencesState_.templateFlags);
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
         // Engine-context prefill toggles for the quick-create popup — only meaningful
         // where a host engine pushes context snapshots (the Unreal-embedded build).
         DrawQuickCreatePreferencesTab(d);
 #endif
         break;
+    case PreferencesCategory::Shortcuts:
+        DrawKeybindingsPreferencesTab(*this, app, d);
+        break;
+    case PreferencesCategory::Annotate:
+        drawPreferencesAnnotateTab(app, d);
+        break;
     }
+}
+
+/// Connections: MCP server, the Perforce executables/commands that used to sit in the
+/// Annotate tab, and the activity-feed sources from the old User Info tab.
+void SmatchetUI::drawPreferencesConnectionsTab(AppController& app, UiDrawSession& d) {
+#if defined(SMATCHET_WITH_MCP)
+    drawPreferencesIntegrationsTab(app, d);
+#endif
+    SmatchetPreferencesUiDetail::PrefsSection(d, "connections.perforce", [&] {
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Perforce, app.GetAvailableFields(),
+                                          app);
+    });
+    drawPreferencesUserInfoTab(d);
+}
+
+/// Annotate: what stayed behind after the Perforce block moved to Connections.
+void SmatchetUI::drawPreferencesAnnotateTab(AppController& app, UiDrawSession& d) {
+    SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.analysis", [&] {
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Analysis, app.GetAvailableFields(),
+                                          app);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.field_mapping", [&] {
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::FieldMapping,
+                                          app.GetAvailableFields(), app);
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.colors", [&] {
+        DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Colors, app.GetAvailableFields(),
+                                          app);
+    });
 }
 
 void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, bool embedded) {
@@ -1120,7 +1142,7 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         drawPreferencesCategoryBody(app, d);
     }
     ImGui::EndChild();
-    if (d.preferencesCategory != PreferencesCategory::Keybindings) {
+    if (d.preferencesCategory != PreferencesCategory::Shortcuts) {
         // Preserve the old inactive-BeginTabItem early-return semantics: an armed
         // hotkey capture dies when the page stops drawing.
         SmatchetPreferencesUiDetail::ResetKeybindingsCaptureState();

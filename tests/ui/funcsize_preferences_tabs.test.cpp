@@ -7,9 +7,12 @@
 // functions:
 //   - DrawWhisperPreferencesTab       (SmatchetPreferencesUi_Whisper.cpp)
 //   - DrawAssistantPreferencesTab     (SmatchetPreferencesUi_Assistant.cpp)
-//   - DrawTemplatePreferencesTabs     (SmatchetPreferencesUi_Templates.cpp)
-//   - DrawLocalDataPreferencesTab /
-//     DrawAppearancePreferencesTab    (SmatchetPreferencesUi_Local.cpp)
+//   - DrawEditingPreferencesTab       (SmatchetPreferencesUi_Templates.cpp)
+//   - DrawGeneralPreferencesTab       (SmatchetPreferencesUi_General.cpp)
+//   - DrawAppearancePreferencesTab    (SmatchetPreferencesUi_Local.cpp)
+//   - DrawKeybindingsPreferencesTab   (SmatchetPreferencesUi_Keybindings.cpp)
+//   - drawPreferencesConnectionsTab /
+//     drawPreferencesAnnotateTab      (SmatchetPreferencesUi.cpp)
 //
 // Since slice 2a, drawPreferencesWindow dispatches on d.preferencesCategory —
 // a page body runs every frame its category is the selected one (no
@@ -119,26 +122,29 @@ void RegisterPreferencesTabsRenderSmoke(ImGuiTestEngine* engine) {
             return;
         }
 
-        // DrawLocalDataPreferencesTab / DrawAppearancePreferencesTab — the two
-        // pages split out of the old combined Local+Appearance draw function.
-        SelectCategoryAndAssert(ctx, "**/Local data###prefsNavLocalData", PreferencesCategory::LocalData);
+        // DrawGeneralPreferencesTab — Updates / Language & region / Storage /
+        // Local database, the sections gathered out of the old Appearance and
+        // "Local data" tabs by slice 2b.
+        SelectCategoryAndAssert(ctx, "**/General###prefsNavGeneral", PreferencesCategory::General);
         SelectCategoryAndAssert(ctx, "**/Appearance###prefsNavAppearance", PreferencesCategory::Appearance);
+        SelectCategoryAndAssert(ctx, "**/Tracker###prefsNavTracker", PreferencesCategory::Tracker);
 
-        // DrawTemplatePreferencesTabs — the "Grid & Fields" category.
-        SelectCategoryAndAssert(ctx, "**/Grid & Fields###prefsNavTemplates", PreferencesCategory::Templates);
+        // drawPreferencesConnectionsTab — MCP + Perforce + activity sources.
+        SelectCategoryAndAssert(ctx, "**/Connections###prefsNavConnections", PreferencesCategory::Connections);
 
-        // drawPreferencesUserInfoTab — User Info & commit-feed settings.
-        // Config-backed, zero backend — same green class as the pages above.
-        SelectCategoryAndAssert(ctx, "**/User Info###prefsNavUserInfo", PreferencesCategory::UserInfo);
+        // DrawEditingPreferencesTab — the five sections that replaced the nested
+        // "Fields Inputs" tab bar.
+        SelectCategoryAndAssert(ctx, "**/Editing###prefsNavEditing", PreferencesCategory::Editing);
 
-#if defined(SMATCHET_WITH_AI)
-        // DrawAssistantPreferencesTab. The rail label may carry a " *" dirty
-        // marker, but "###prefsNavAssistant" keeps the item id stable either way.
-        SelectCategoryAndAssert(ctx, "**/Assistant###prefsNavAssistant", PreferencesCategory::Assistant);
-#endif
-#if defined(SMATCHET_WITH_WHISPER) && SMATCHET_WITH_WHISPER
-        // DrawWhisperPreferencesTab.
-        SelectCategoryAndAssert(ctx, "**/Whisper###prefsNavWhisper", PreferencesCategory::Whisper);
+        // DrawKeybindingsPreferencesTab / drawPreferencesAnnotateTab.
+        SelectCategoryAndAssert(ctx, "**/Shortcuts###prefsNavShortcuts", PreferencesCategory::Shortcuts);
+        SelectCategoryAndAssert(ctx, "**/Annotate###prefsNavAnnotate", PreferencesCategory::Annotate);
+
+#if defined(SMATCHET_WITH_AI) || defined(SMATCHET_WITH_WHISPER) // same guard as the rail row
+        // DrawAssistantPreferencesTab + DrawWhisperPreferencesTab now share one
+        // category. The rail label may carry a " *" dirty marker, but
+        // "###prefsNavAiVoice" keeps the item id stable either way.
+        SelectCategoryAndAssert(ctx, "**/AI & Voice###prefsNavAiVoice", PreferencesCategory::AiVoice);
 #endif
 
         g_ui.showPreferences = false;

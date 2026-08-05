@@ -194,7 +194,7 @@ inline void ResetAssistantPrefsSeedLatchesOnClose(bool& workingSeeded, bool& for
 
 } // namespace SmatchetPreferencesUiDetail
 
-// Lazy-load flags for template lists in DrawTemplatePreferencesTabs.
+// Lazy-load flags for the template lists drawn by DrawEditingPreferencesTab.
 // Declared here so drawPreferencesWindow can reset them on window close.
 struct SmatchetPreferencesUiTemplateFlags {
     bool suggestionsLoaded = false;
@@ -215,9 +215,15 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 /// embedded in Unreal (call site is #ifdef'd); the TU compiles in both targets.
 void DrawQuickCreatePreferencesTab(UiDrawSession& d);
 
-void DrawLocalDataPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
-void DrawAppearancePreferencesTab(AppController& app, UiDrawSession& d);
+/// General category page: Updates, Language & region, Storage, Local database.
+/// Defined in SmatchetPreferencesUi_General.cpp.
+void DrawGeneralPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
+
+void DrawAppearancePreferencesTab(UiDrawSession& d);
+
+/// Ticket-change-monitor body. Lives in SmatchetPreferencesUi_Local.cpp for
+/// history but belongs to Tracker > Notifications, so the Tracker page owns the
+/// surrounding PrefsSection and calls this for the body.
+void DrawTrackerNotificationsSectionBody(UiDrawSession& d);
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d);
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
-                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
-                                 SmatchetPreferencesUiTemplateFlags& flags);
+void DrawEditingPreferencesTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags);

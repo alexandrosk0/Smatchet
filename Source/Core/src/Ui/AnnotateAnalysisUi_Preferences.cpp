@@ -70,9 +70,12 @@ void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const 
 
 } // namespace
 
-// Scalar + text fields (max frames, ignore keywords, p4/p4vc execs, command templates, AI URL).
-// Split out of DrawAnnotatePersistedOptionsForm for function-size compliance.
-void DrawAnnotateScalarAndTextFields() {
+// Defined below; drawn as the tail of the Perforce section.
+void DrawAnnotatePathRemaps();
+
+// Annotate > Analysis body: run limits, ignore list, changelist cache, AI hand-off URL.
+// Perforce executables + command templates live in Connections > Perforce.
+void DrawAnnotateAnalysisFields() {
     auto& cfg = State().annotateCfg;
 
     ImGui::InputInt("Max frames", &State().maxFramesVal);
@@ -89,6 +92,26 @@ void DrawAnnotateScalarAndTextFields() {
         PersistAnnotateCfg("edit_ignore");
     }
 
+    ImGui::InputInt("Changelist cache size", &State().clCacheVal);
+    const bool clCacheDirty = ImGui::IsItemDeactivatedAfterEdit();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::SetTooltip("Max changelist-describe entries cached during annotate (clamped 16..8192).");
+    }
+    if (clCacheDirty) {
+        State().clCacheVal = std::max(16, std::min(8192, State().clCacheVal));
+        cfg.ChangelistCacheMaxEntries = State().clCacheVal;
+        PersistAnnotateCfg("edit_clcache");
+    }
+
+    ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
+    CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+}
+
+// Connections > Perforce body: p4/p4vc executables, the two command templates, and the
+// path-remap rules that resolve callstack frames against a local workspace.
+void DrawAnnotatePerforceFields() {
+    auto& cfg = State().annotateCfg;
+
     ImGui::InputText("p4 executable", State().p4Exe, sizeof(State().p4Exe));
     CommitTextField(State().p4Exe, cfg.P4Executable, "edit_p4exe");
 
@@ -102,17 +125,15 @@ void DrawAnnotateScalarAndTextFields() {
     ImGui::InputText("Changelist command (optional)", State().changeTpl, sizeof(State().changeTpl));
     CommitTextField(State().changeTpl, cfg.ChangeCommandTemplate, "edit_change");
 
-    ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
-    CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+    DrawAnnotatePathRemaps();
 }
 
-// Jira-field source combos (callstack, before-changelist, last-occurrences date). Split out of
-// DrawAnnotatePersistedOptionsForm for function-size compliance.
+// Annotate > Tracker field mapping body: the Jira-field source combos (callstack,
+// before-changelist, last-occurrences date).
 void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableFields,
                                  const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme) {
     auto& cfg = State().annotateCfg;
 
-    ImGui::Separator();
     ImGui::TextUnformatted("Callstack from Jira");
     ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when "
                         "Annotate is shown, when the selected issue changes, or when you open Annotate for an "
@@ -140,7 +161,7 @@ void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableField
 }
 
 // Path-remap rules editor (per-row from/to + add/remove). Keeps the per-row edit buffers in
-// lockstep with the rule vector. Split out of DrawAnnotatePersistedOptionsForm.
+// lockstep with the rule vector. Drawn as the tail of Connections > Perforce.
 void DrawAnnotatePathRemaps() {
     auto& cfg = State().annotateCfg;
     ImGui::Separator();
@@ -191,48 +212,25 @@ void DrawAnnotatePathRemaps() {
     }
 }
 
-// Changelist-cache-size input + the collapsible UI-color editors. Split out of
-// DrawAnnotatePersistedOptionsForm.
-void DrawAnnotateCacheAndColors() {
+// Annotate > Colors body. The owning PrefsSection draws the header, so the rows sit bare.
+void DrawAnnotateColors() {
     auto& cfg = State().annotateCfg;
-    ImGui::Separator();
-    ImGui::InputInt("Changelist cache size", &State().clCacheVal);
-    const bool clCacheDirty = ImGui::IsItemDeactivatedAfterEdit();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::SetTooltip("Max changelist-describe entries cached during annotate (clamped 16..8192).");
-    }
-    if (clCacheDirty) {
-        State().clCacheVal = std::max(16, std::min(8192, State().clCacheVal));
-        cfg.ChangelistCacheMaxEntries = State().clCacheVal;
-        PersistAnnotateCfg("edit_clcache");
-    }
-
-    if (ImGui::CollapsingHeader("Colors")) {
-        auto colorRow = [](const char* label, float* c) {
-            ImGui::ColorEdit4(label, c, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
-            if (ImGui::IsItemDeactivatedAfterEdit()) {
-                // Off-thread the write like every sibling persist in this file (#565): the
-                // synchronous ConfigManager::SaveAnnotateAnalysis was the lone UI-thread blocker
-                // here. PersistAnnotateCfg routes through the coalescing ConfigSaveWorker.
-                PersistAnnotateCfg("edit_color");
-            }
-        };
-        colorRow("Status info", cfg.UiColors.StatusInfo);
-        colorRow("Status error", cfg.UiColors.StatusError);
-        colorRow("Status warning", cfg.UiColors.StatusWarning);
-        colorRow("Find highlight", cfg.UiColors.FindHighlight);
-        colorRow("Text disabled", cfg.UiColors.TextDisabled);
-        colorRow("Import existing", cfg.UiColors.ImportExisting);
-        colorRow("CL tooltip title", cfg.UiColors.ClTooltipTitle);
-    }
-}
-
-void DrawAnnotatePersistedOptionsForm(const std::vector<TrackerField>& availableFields,
-                                      const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme) {
-    DrawAnnotateScalarAndTextFields();
-    DrawAnnotateJiraFieldCombos(availableFields, ticketMutations, theme);
-    DrawAnnotatePathRemaps();
-    DrawAnnotateCacheAndColors();
+    auto colorRow = [](const char* label, float* c) {
+        ImGui::ColorEdit4(label, c, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            // Off-thread the write like every sibling persist in this file (#565): the
+            // synchronous ConfigManager::SaveAnnotateAnalysis was the lone UI-thread blocker
+            // here. PersistAnnotateCfg routes through the coalescing ConfigSaveWorker.
+            PersistAnnotateCfg("edit_color");
+        }
+    };
+    colorRow("Status info", cfg.UiColors.StatusInfo);
+    colorRow("Status error", cfg.UiColors.StatusError);
+    colorRow("Status warning", cfg.UiColors.StatusWarning);
+    colorRow("Find highlight", cfg.UiColors.FindHighlight);
+    colorRow("Text disabled", cfg.UiColors.TextDisabled);
+    colorRow("Import existing", cfg.UiColors.ImportExisting);
+    colorRow("CL tooltip title", cfg.UiColors.ClTooltipTitle);
 }
 
 } // namespace AnnotateInternal

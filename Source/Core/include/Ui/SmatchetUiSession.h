@@ -177,21 +177,18 @@ enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimary
 
 /// Which Preferences category the left nav rail (or the narrow-width combo)
 /// has selected. Set by the rail/combo click handler in drawPreferencesWindow;
-/// the right pane switches on it to draw that category's sections. Slice 2a
-/// keeps the values 1:1 with the old tab set; slice 2b collapses them to the
-/// 8 final categories.
+/// the right pane switches on it to draw that category's sections. Values are
+/// the 8 categories of SmatchetPrefsSchema::Categories(), in rail order.
+/// Tracker stays the default so the first-run backend gate opens on it.
 enum class PreferencesCategory : std::uint8_t {
     Tracker = 0,
-    Integrations,
-    Assistant,
-    Whisper,
-    LocalData,
+    General,
     Appearance,
-    Templates,
+    Connections,
+    AiVoice,
+    Editing,
+    Shortcuts,
     Annotate,
-    Keybindings,
-    UserInfo,
-    QuickCreate,
 };
 
 struct CellWriteFeedback {
