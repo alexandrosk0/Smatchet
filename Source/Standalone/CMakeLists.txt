@@ -135,13 +135,16 @@ endif()
 # Font Awesome 6 Solid TTF — Phase 4 of ai-chat-claude-desktop-parity.
 # The TTF is NOT committed to git (430 KB binary, SIL OFL 1.1 — see
 # assets/fonts/README.md for drop-in instructions). Configure-time gate:
-# when the file exists, copy it next to the exe so the shipped Standalone
+# when the file resolves, copy it next to the exe so the shipped Standalone
 # build finds it via the exe-dir resolver. When absent, log a STATUS
 # message — the runtime gracefully falls back to text labels via the
 # g_FaIconsLoaded flag in SmatchetImGuiFonts.cpp, so a missing TTF does
 # NOT fail the build, just degrades the UI to text-mode icons.
-set(_SMATCHET_FA_TTF_SRC "${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/fa-solid-900.ttf")
-if(EXISTS "${_SMATCHET_FA_TTF_SRC}")
+# Resolution (cmake/SmatchetFontAssets.cmake) falls back to the MAIN
+# worktree's assets/fonts/ so linked worktrees — which never receive the
+# gitignored TTF — still get icons instead of silent text-mode.
+smatchet_resolve_font_asset(_SMATCHET_FA_TTF_SRC "${CMAKE_CURRENT_SOURCE_DIR}" "fa-solid-900.ttf")
+if(_SMATCHET_FA_TTF_SRC)
     add_custom_command(TARGET SmatchetStandalone POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                     "${_SMATCHET_FA_TTF_SRC}"
@@ -149,7 +152,8 @@ if(EXISTS "${_SMATCHET_FA_TTF_SRC}")
             COMMENT "Copy fa-solid-900.ttf next to SmatchetStandalone"
             VERBATIM)
 else()
-    message(STATUS "FA Solid TTF not found at ${_SMATCHET_FA_TTF_SRC}; "
+    message(STATUS "FA Solid TTF not found in ${CMAKE_CURRENT_SOURCE_DIR}/assets/fonts/ "
+                   "nor in the main worktree's assets/fonts/; "
                    "AI chat hover row will fall back to text labels at runtime. "
                    "See assets/fonts/README.md for drop-in instructions.")
 endif()
