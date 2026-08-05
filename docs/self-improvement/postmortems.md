@@ -34,6 +34,36 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-05 · PR #1937 · `Doc anchors + agent contract` was GREEN on the PR head and RED on `develop` the instant the squash landed — `test-plan-index` derives row dates from git history the merge itself rewrites
+
+### What escaped
+`feat(about): About Smatchet dialog under Help, with generated build provenance` (#1937) merged at `2026-08-05T11:33:25Z` as `fce0951c` with every check terminal-green, including the required `Doc anchors + agent contract`. The develop tip went **RED on that same check** immediately after, with `test-plan-index: DRIFT — shipped-plan index out of sync (182 plans in archive)`. The PR archived `docs/plans/shipped/about-dialog-help-menu.md` and committed the matching `docs/plans/INDEX.md` row dated `2026-08-04`; after the squash the generator wanted `2026-08-05`. No override label, no admin merge, no flake — the merge was correct against every signal available at merge time. There was **no state of the PR branch that could have passed both pre- and post-merge**, because the value being checked did not exist until the merge created it.
+
+### Root cause
+Blameless — **a gate whose expected value is a function of git metadata that squash-merge rewrites.** `agents/scripts/core/test-plan-index.sh:122-143` derives each row's date from `git log --follow --format=%ad --date=short -- <path>`, i.e. the file's *first-commit* date. `--follow` is what makes this normally stable: a plan created in `plans/active/` months ago keeps its original date when it moves to `plans/shipped/`. But a squash-merge collapses the entire branch into one commit, and the pre-merge per-file history is not reachable from `develop` — so `--follow` finds exactly one commit and returns the **squash date**:
+
+```
+$ git log --follow --format='%ad %h %s' --date=short -- docs/plans/shipped/about-dialog-help-menu.md
+2026-08-05 fce0951c feat(about): About Smatchet dialog under Help, ... (#1937)
+```
+
+The failure therefore needs three conditions, all of which held: (1) the PR both *creates or moves* a plan file into `shipped/` and *commits the index row* for it; (2) the repo squash-merges; (3) the branch work and the merge fall on different calendar days. #1937's plan was authored `2026-08-04` and merged `2026-08-05` — one midnight boundary.
+
+Three defences did not fire, and none of them could have: **(a) pre-merge CI** computed the date from branch history where `2026-08-04` was correct; **(b) local `pre-ship.sh`** does the same and also passed; **(c) `postmortem-owed.sh`** keys on merge signals — non-SUCCESS checks at merge, override labels, `Revert`, overdue deviations — and this escape emits **none** of them (it reports "no gate escapes owed" for #1937 today), so the class is structurally invisible to the nudge. That blindness is the same one named in the `2026-07-10 · PR #1698` entry, and this is its **second instance**: a required check goes red on the develop tip, nothing announces it, and the next author inherits the block.
+
+Note the two workarounds already sitting in this script for the *same underlying fragility* — a shallow-clone guard (`:45`, `:105`) and a staged-rename sibling-tier fallback (`:135-143`, citing the #1061 / #1092 archive date-drift "twice"). Each patched one way git metadata can move under the generator. Squash-merge is the third. The recurring shape is the defect, not any one of the three.
+
+### Preventing gate
+**Stop deriving the value from mutable git metadata.** `test-plan-index.sh --fix` should write the resolved date **into the plan file itself** (an explicit `<!-- plan-date: YYYY-MM-DD -->` marker, authored once when a plan is archived) and have the generator prefer that marker, falling back to `git log --follow` only for legacy plans with no marker. The marker travels through squash, shallow clone, and staged rename identically, because it is content rather than history — so it does not add a fourth special case, it **retires the existing two** (`:45` shallow guard, `:135-143` sibling tier) whose whole job is to paper over a history lookup that should not be load-bearing. Enforcement: `test-plan-index.sh --selftest` gains a case asserting that a `shipped/` plan whose only commit is the current HEAD still resolves a stable date, and that a marker date disagreeing with the index row FAILs.
+
+**Second, close the detection hole:** the develop-tip required-green assertion proposed in the `2026-07-10 · PR #1698` entry and never landed. It is now two-for-two — extend `agents/scripts/core/postmortem-owed.sh` (or add `develop-tip-required-green.sh`) to query the develop tip's required-check conclusions at SessionStart and raise a loud nudge naming the introducing PR. A gate that can only go red *after* the merge needs a detector that looks *after* the merge; merge-instant signals cannot see this class by construction.
+
+### Eval case
+None — not agent-reviewable. The miss is a determinism property of a CI generator's input (git history vs file content), not a defect visible in #1937's diff; a reviewer reading that PR would have seen a correct index row, because it *was* correct until the merge rewrote its basis.
+
+### Filed as
+This entry + the one-line index resync in PR #1944 (instance) + [`categories/tooling/2026-08-05-plan-index-date-derived-from-mutable-git-history.md`](categories/tooling/2026-08-05-plan-index-date-derived-from-mutable-git-history.md) (P1, tooling — the marker-based fix and the develop-tip assertion).
+
 ## 2026-08-03 · PR #495 · a shipped plan's § Deviations closed a planned file-row by asserting a delivery that was never made
 
 ### What escaped
