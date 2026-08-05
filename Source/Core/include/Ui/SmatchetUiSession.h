@@ -53,7 +53,8 @@
 namespace smatchet {
 namespace diagnostics {
 struct SubmitResult; // log-a-bug-github — held by shared_ptr in UiDrawSession
-}
+struct AboutInfo;    // about-dialog-help-menu — held by shared_ptr in UiDrawSession
+} // namespace diagnostics
 } // namespace smatchet
 
 struct AttachmentCollectionRequest {
@@ -1040,6 +1041,15 @@ struct UiDrawSession {
     std::string quickCreateArgDescription;
     std::string quickCreateArgProject;
     std::string quickCreateArgIssueType;
+
+    // --- "About Smatchet" modal (docs/plans/shipped/about-dialog-help-menu.md Slice 4) ---
+    // UI-thread only. The latch exists because the command layer (`app.about.open`) raises
+    // this from a non-draw context — same reason the bug-report modal has one.
+    bool showAbout = false;
+    bool aboutOpenLatch = false;
+    /// Snapshot taken once per open (GatherAboutInfo reads the disk-backed config), released
+    /// on close. Held by pointer so this 75-includer header never pulls in AboutInfo.h.
+    std::shared_ptr<smatchet::diagnostics::AboutInfo> aboutInfo;
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
     /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive

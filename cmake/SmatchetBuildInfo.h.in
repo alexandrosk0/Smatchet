@@ -1,0 +1,46 @@
+// ============================================================================
+// SmatchetBuildInfo.h — AUTO-GENERATED. DO NOT EDIT. DO NOT COMMIT.
+//
+// Regenerated on every build by cmake/SmatchetGenerateBuildInfo.cmake (run via
+// `cmake -P`) and copied into place with `copy_if_different`, so the file's
+// mtime only moves when its bytes actually change — an unchanged git SHA does
+// not trigger a rebuild of the one TU that includes this.
+//
+// Consumed by EXACTLY ONE translation unit: Source/Core/src/Diagnostics/AboutInfo.cpp.
+// Never include this from a header, and never add it to _SMATCHET_PKG_CMDS
+// (the Unreal plugin packaging step) — a copy inside the plugin's include dir
+// would go stale against the packaged .lib, which is the exact drift the About
+// dialog exists to make impossible.
+//
+// Deliberately absent (compile-time macros are more accurate than CMake here):
+//   build date/time  -> __DATE__ / __TIME__
+//   ImGui version    -> IMGUI_VERSION
+//   target arch      -> _M_X64 / _M_ARM64 / __x86_64__ / __aarch64__
+//                       (CMAKE_SYSTEM_PROCESSOR lies on the VS generator)
+//   build config     -> SMATCHET_BUILD_CONFIG, a $<CONFIG> compile definition
+//                       (CMAKE_BUILD_TYPE is EMPTY on the multi-config VS
+//                        generator, so it cannot be baked in here)
+// ============================================================================
+#pragma once
+
+#define SMATCHET_BUILDINFO_AVAILABLE 1
+
+// --- git provenance (all fields degrade to "unknown"; never a hard error) ---
+#define SMATCHET_GIT_SHA        "@SMATCHET_GIT_SHA@"
+#define SMATCHET_GIT_SHA_SHORT  "@SMATCHET_GIT_SHA_SHORT@"
+#define SMATCHET_GIT_BRANCH     "@SMATCHET_GIT_BRANCH@"
+#define SMATCHET_GIT_DIRTY      @SMATCHET_GIT_DIRTY@
+#define SMATCHET_GIT_SHALLOW    @SMATCHET_GIT_SHALLOW@
+
+// --- toolchain ---
+#define SMATCHET_CXX_COMPILER_ID      "@SMATCHET_CXX_COMPILER_ID@"
+#define SMATCHET_CXX_COMPILER_VERSION "@SMATCHET_CXX_COMPILER_VERSION@"
+#define SMATCHET_CMAKE_VERSION        "@SMATCHET_CMAKE_VERSION@"
+
+// --- third-party credits ---
+// One newline-terminated "name|version|license|url" record per dependency that
+// this configuration actually links. One string literal PER DEP rather than one
+// giant literal: MSVC caps a single string literal at 16380 bytes, and per-line
+// literals keep the generated diff readable.
+#define SMATCHET_DEPS_TEXT \
+@SMATCHET_DEPS_LITERALS@    ""

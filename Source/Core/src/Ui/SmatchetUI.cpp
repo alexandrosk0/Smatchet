@@ -32,6 +32,7 @@
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetBugReportUi.h"
 #include "SmatchetQuickCreateIssueUi.h"
+#include "SmatchetAboutUi.h"
 #include "ImGuiHotkey.h"
 #include "SmatchetTicketChangeNotifications.h"
 #include "SmatchetUiSession.h"
@@ -1112,9 +1113,9 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     }
 }
 
-// Mode-independent floating overlays — toasts + the app-update modal. Drawn by BOTH the
-// desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither mode
-// loses transient notifications or the update prompt. Each owns its own ImGui scope.
+// Mode-independent floating overlays — toasts + the app-update and About modals. Drawn by
+// BOTH the desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither
+// mode loses transient notifications or the update prompt. Each owns its own ImGui scope.
 void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
@@ -1126,6 +1127,9 @@ void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     // mobile fork) mid-confirm would leave an unsubmitted modal in ImGui's popup stack —
     // invisible, yet blocking all mouse input via GetTopMostPopupModal.
     drawLayoutResetConfirmModal(d);
+    // Global-overlay placement is deliberate: About must be reachable regardless of
+    // docking layout or which panel has focus.
+    DrawAboutModal(app, d);
 }
 
 // Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
