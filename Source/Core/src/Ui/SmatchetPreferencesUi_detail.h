@@ -3,6 +3,7 @@
 #include "ConfigManager.h"
 #include "StringUtil.h"
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -16,15 +17,69 @@ class IAppThreading;       // fan-in Phase 6 T4: whisper tab only launches worke
 class IAppTicketMutations; // Scope A: templates tab forwards the field-lookup facet to Annotate prefs
 struct TrackerField;
 struct UiDrawSession;
+enum class PreferencesCategory : std::uint8_t; // full definition in SmatchetUiSession.h
 
 namespace SmatchetPreferencesUiDetail {
 
-/// Settings-search "jump to tab" support (UX critique M4): the search box atop the
-/// Preferences window sets d.prefsSelectTabRequest to a tab's canonical name; each
-/// top-level BeginTabItem passes this as its flags argument, which returns
-/// ImGuiTabItemFlags_SetSelected (and consumes the request) when that tab is the target.
-/// Returns int so this header stays imgui-free. Defined in SmatchetPreferencesUi.cpp.
-int PrefsTabFlags(UiDrawSession& d, const char* canonicalName);
+/// Collapsible section chrome for the Preferences right pane (rail IA — see
+/// docs/plans/shipped/preferences-ia-resegmentation-and-search.md). Begin pushes
+/// the section's ID scope, draws the CollapsingHeader (title from
+/// SmatchetPrefsSchema::FindSection) + per-section save-semantics hint, applies
+/// the persisted collapsed state, and — once the filter goes live in slice 3 —
+/// hides the section on no-match / force-expands it on match. Returns true when
+/// the body should draw; on false it has already popped the ID scope. End pops
+/// the ID scope and adds trailing spacing. Both defined in
+/// SmatchetPreferencesUi_Shell.cpp so ImGui stays out of this header; the
+/// template below is the only sanctioned call shape (a Begin/End pair never
+/// spans two functions — SmatchetUI.h contract).
+bool PrefsSectionBegin(UiDrawSession& d, const char* sectionId);
+void PrefsSectionEnd(UiDrawSession& d, const char* sectionId);
+
+template <typename BodyFn> inline void PrefsSection(UiDrawSession& d, const char* sectionId, BodyFn&& body) {
+    if (PrefsSectionBegin(d, sectionId)) {
+        body();
+        PrefsSectionEnd(d, sectionId);
+    }
+}
+
+/// True when the live global query hits at least one keybinding row (command
+/// label, command id or hotkey). The rows are dynamic and have no descriptors,
+/// so the schema-driven filter cannot see them; the caller feeds the answer back
+/// via PreferencesFilter::AddDynamicMatch before the nav rail draws. Returns
+/// false when the filter is inactive.
+bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d);
+
+/// Pure width→presentation resolver for the Preferences nav (bucket-A testable).
+/// Mobile always uses the combo. Otherwise a ~2.5-em hysteresis band around
+/// 30 em stops the rail flickering while the user drags the window edge:
+/// below 30 em → combo, above 32.5 em → rail, in between → keep the previous
+/// presentation.
+inline bool ResolvePrefsNavUseCombo(bool mobileUi, float availWidth, float fontSize, bool prevUseCombo) {
+    if (mobileUi) {
+        return true;
+    }
+    if (availWidth < 30.0f * fontSize) {
+        return true;
+    }
+    if (availWidth > 32.5f * fontSize) {
+        return false;
+    }
+    return prevUseCombo;
+}
+
+/// Left rail (or narrow-width combo) for the Preferences window. Draws one entry
+/// per visible category, updates d.preferencesCategory on click, and appends a
+/// dirty "*" to the Tracker / Assistant labels (the old dirty-tab markers — the
+/// flags are computed by the caller because the diff helpers live in the main
+/// TU / behind SMATCHET_WITH_AI). Defined in SmatchetPreferencesUi_Shell.cpp.
+void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight);
+
+/// Drop any armed hotkey-capture state in the Keybindings page. Called by the
+/// dispatch in drawPreferencesWindow whenever the page is not drawn (category
+/// switched away / window closed) — preserves the old inactive-BeginTabItem
+/// early-return semantics after the statics moved to file scope. Defined in
+/// SmatchetPreferencesUi_Keybindings.cpp.
+void ResetKeybindingsCaptureState();
 
 /// Maps the persisted cfg.DateFormatOption string to the Combo index used by the
 /// Appearance tab's "Date Format Style" dropdown. Unknown / "compact" → 0. Pure —
@@ -140,7 +195,7 @@ inline void ResetAssistantPrefsSeedLatchesOnClose(bool& workingSeeded, bool& for
 
 } // namespace SmatchetPreferencesUiDetail
 
-// Lazy-load flags for template lists in DrawTemplatePreferencesTabs.
+// Lazy-load flags for the template lists drawn by DrawEditingPreferencesTab.
 // Declared here so drawPreferencesWindow can reset them on window close.
 struct SmatchetPreferencesUiTemplateFlags {
     bool suggestionsLoaded = false;
@@ -161,8 +216,15 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d);
 /// embedded in Unreal (call site is #ifdef'd); the TU compiles in both targets.
 void DrawQuickCreatePreferencesTab(UiDrawSession& d);
 
-void DrawLocalAndAppearancePreferencesTabs(SmatchetUI& ui, AppController& app, UiDrawSession& d);
+/// General category page: Updates, Language & region, Storage, Local database.
+/// Defined in SmatchetPreferencesUi_General.cpp.
+void DrawGeneralPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d);
+
+void DrawAppearancePreferencesTab(UiDrawSession& d);
+
+/// Ticket-change-monitor body. Lives in SmatchetPreferencesUi_Local.cpp for
+/// history but belongs to Tracker > Notifications, so the Tracker page owns the
+/// surrounding PrefsSection and calls this for the body.
+void DrawTrackerNotificationsSectionBody(UiDrawSession& d);
 void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d);
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
-                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
-                                 SmatchetPreferencesUiTemplateFlags& flags);
+void DrawEditingPreferencesTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags);

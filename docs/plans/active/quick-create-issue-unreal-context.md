@@ -46,10 +46,10 @@ every other rebindable chord) inside Unreal.
 
 Core — Ui (light zone):
 
-1. `Source/Core/include/Ui/SmatchetUiSession.h` — `quickCreate*` state cluster + `PreferencesActiveTab::QuickCreate`.
+1. `Source/Core/include/Ui/SmatchetUiSession.h` — `quickCreate*` state cluster. (The old `PreferencesActiveTab::QuickCreate` enumerator is gone: the preferences-IA re-segmentation replaced the tab bar with 8 categories, and the quick-create rows now draw as an `SMATCHET_EMBEDDED_IN_UNREAL`-gated section under `PreferencesCategory::Editing`.)
 2. `Source/Core/include/Ui/SmatchetQuickCreateIssueUi.h` + `Source/Core/src/Ui/SmatchetQuickCreateIssueUi.cpp` (new) — the popup; helpers split per the ImGui-draw pattern.
 3. `Source/Core/src/Ui/SmatchetUI.cpp` — draw call beside `SmatchetBugReportUi_Draw`; future drain on teardown.
-4. `Source/Core/src/Ui/SmatchetPreferencesUi_QuickCreate.cpp` (new) + `SmatchetPreferencesUi.cpp` + `SmatchetPreferencesUi_detail.h` — embedded-only "Unreal" tab.
+4. `Source/Core/src/Ui/SmatchetPreferencesUi_QuickCreate.cpp` (new) + `SmatchetPreferencesUi.cpp` + `SmatchetPreferencesUi_detail.h` — embedded-only "Unreal" section under Editing.
 5. `Source/Core/src/SmatchetLocalization.cpp` — en/fr rows for all new visible strings.
 6. `Source/Core/include/Ui/SmatchetImGuiHostC.h` + `Source/Core/include/Ui/SmatchetImGuiHost.h` + `Source/Core/src/Ui/SmatchetImGuiHost.cpp` — `SmatchetHost_SetHostContextJson` C ABI + host method.
 

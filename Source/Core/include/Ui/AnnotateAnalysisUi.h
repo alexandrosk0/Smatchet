@@ -6,6 +6,7 @@
 
 class AppController;
 class IAppTicketMutations;
+class PreferencesFilter;
 struct CachedTicket;
 struct SpreadsheetState;
 struct TrackerField;
@@ -39,10 +40,24 @@ class AnnotateAnalysisUi {
      *  Sets *wantClose = true when the user clicks Close. */
     void DrawContent(AppController& app, bool* wantClose, const std::string& selectedJiraIssueKey);
 
-    /** Persisted annotate options (same fields as former Annotate "Options…"); call from Preferences.
-     *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews). */
-    void DrawAnnotatePreferencesTab(const std::vector<TrackerField>& availableFields,
-                                    const IAppTicketMutations& ticketMutations);
+    /** One page of the persisted annotate options. The Preferences IA scatters these across two
+     *  categories (Perforce lives under Connections), so the caller picks the slice it owns and
+     *  wraps it in its own PrefsSection; hydration + tracker-field autoselect run per call and are
+     *  idempotent. */
+    enum class AnnotatePrefsSection {
+        Analysis,
+        FieldMapping,
+        Colors,
+        Perforce,
+    };
+
+    /** Draw one persisted-annotate-options section (same fields as the former Annotate "Options…").
+     *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews).
+     *  filter is the owning Preferences page's search filter: every row inside asks it whether to draw,
+     *  and it records the ids the coverage drift-guard compares against the descriptor table. It is a
+     *  reference (not a nullable pointer) precisely so no call path can skip that recording. */
+    void DrawAnnotatePrefsSection(AnnotatePrefsSection section, const std::vector<TrackerField>& availableFields,
+                                  const IAppTicketMutations& ticketMutations, PreferencesFilter& filter);
 
   private:
     void ensureSettingsBuffersLoaded();

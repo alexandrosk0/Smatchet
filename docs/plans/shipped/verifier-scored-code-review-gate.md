@@ -2,7 +2,7 @@
 
 > **Slug**: `verifier-scored-code-review-gate`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -93,15 +93,33 @@ N/A — the diff touches no `Source/Core/` file; it is shell, Python-adjacent co
 - **Scoring non-C++ diffs** — the substantive test inherits PR #1964's first-party-C++ scope. Widening it is a separate decision with its own cost profile.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `48c84ecf` · slice 1 — verdict fields on the `.review-ack` record, `review-ack.sh --record --verdict`, `--check` veto enforcement (new rc 3), `pre-commit` veto rendering distinct from "no code review". Also fixed a latent #1964 bug (`ra_read_marker` folding the new fields into the fingerprint) and a fail-open in its own first draft (empty `candidates` fabricating a clean verdict). PR #1970.
+- `216f1fbd` · slice 1 follow-up — reject incomplete verdicts by TYPE after a CodeRabbit finding: a candidate with `overall_score` but no `hard_veto` was accepted and rendered as `hard_veto=false`, silently dropping the only blocking signal. Also refused `--verdict=` with an empty path (it had degraded to a presence-only ack). PR #1970.
+- *(this PR)* · slice 2 — `pre-ship.sh --ack-review` drives `verifier-produce.py | verifier-sidecar.py aggregate` over the branch diff when an INDEPENDENT backend is configured, attaches the verdict to the `branch` ack, records a calibration trace to `.verifier-traces/`, and fails the push on `hard_veto`.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+Both were surfaced by the pre-implementation stress-test (§ Verification, `grill-with-docs`), which resolved by running the tooling rather than reading its docs — and both changed the design.
+
+1. **Only `hard_veto` blocks; `recommendation` does not.** The plan's § Approach said the gate would block on "`hard_veto` (or, post-calibration, a sub-threshold score)". Running `verifier-sidecar.py aggregate` shows `recommendation` is `block` for a **low score** as well as for a veto, and `escalate` for an ordinary single sample (a 0.82 score at 0.7 confidence already returns `escalate`). Blocking on `recommendation` would therefore either gate on an uncalibrated score — the exact thing rule 5 forbids — or wedge nearly every commit. The gate keys on `hard_veto` alone.
+
+2. **The veto is self-reported, and that is accepted for this one signal.** The plan's § Approach asserted the verifier "must not be the reviewer". `verifier-produce.py` emits **criterion scores only — it never emits `hard_veto`** (confirmed: no occurrence in the file; the sidecar reads the flag from its input sample). So a veto can only originate from the reviewing agent's own verifier object. Rather than drop veto-blocking, the design adopts an **asymmetric trust rule**: a veto is a *confession* — an agent reporting a security hole in its own change argues against its own interest, which a high score never does — so self-reported **bad** news is trusted while self-reported **good** news is not. The continuous score still requires an independent backend to mean anything, which is why it stays advisory. Recorded in `docs/agent-rules/verifier-sidecar.md` § Where it runs first.
+
+3. **The push gate now blocks on a recorded veto on EVERY run** — found by the mandated adversarial review of slice 2, not by the tests. `--ack-review` wrote the ack and *then* exited 1 on the veto, so a plain `pre-ship.sh` re-run found a matching fingerprint, reported "ack current → safe to push", and the veto blocked exactly one invocation rather than the gate. The commit gate already honoured the veto (rc 3); the push gate was the weaker of the two, which is the wrong way round. Fixed + pinned by two regression tests that were verified to FAIL with the fix reverted.
+
+4. **The produced verdict alone can never veto, and the docs now say so.** `verifier-produce.py` emits per-criterion scores only and never `hard_veto`, so at push time the veto branch is unreachable through the standard pipeline — proved by running the full producer→sidecar path with every criterion pinned to `T`: `overall_score` 0.0108, `recommendation: block`, `hard_veto: false`, push allowed. An earlier draft of § Where it runs first claimed "`hard_veto` ⇒ the push fails" without that qualification, which promised a safety net the code cannot provide. The veto branch is retained (it fires for an agent-authored verdict attached via `--verdict`), but the limitation is now stated in both the doc and `pre-ship.sh --help`, and pinned by a test.
+
+Also fixed in passing, a latent bug in the shipped #1964 code rather than a plan deviation: `ra_read_marker` ran `tr -d '[:space:]'` over everything after the mode field, which was correct for a 2-field record but would have folded the new verdict fields into the fingerprint — producing an ack that could never match, i.e. a gate that blocks forever. Now field-exact.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. flip the § Status header to `shipped`,
-2. `git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,
-3. regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.
+- **Bash-driver scenario** — `tests/bats/verifier_preship_wiring.bats` 6/6, driving the REAL producer→sidecar pipeline over HTTP against `verifier-endpoint.py` (canned, no model/key/egress): no-backend ⇒ no verdict; unreachable backend ⇒ WARN + presence-only ack, push not blocked; healthy backend ⇒ verdict attached + advisory; a calibration trace is written per verdict; the recorded score is the sidecar's (pinned via `--fixed A`), not a default; an empty diff produces no verdict. PASSED.
+- `tests/bats/verifier_review_gate.bats` 20/20 and `tests/bats/review_ack_gate.bats` 18/18 — PASSED (slice 1 + the presence half, unregressed).
+- `pre-ship.sh --selftest` / `review-ack.sh --selftest` — PASSED.
+- `test-shell-lint.sh` 314+/0 and `shellcheck -S warning -x` on every touched script — PASSED.
+- `scripts/dev/test-docs.sh` — PASSED.
+- **Full aggregator** `bash scripts/dev/test-all.sh --ci` (the `Agentic self-tests (bats)` lane's own command) — `Passed: 1693  Failed: 0  Scripts: 183` at slice-1 time. NOTE: that CI lane never successfully executed on either shipping PR (see infra P1 `required-check-that-never-reports-is-invisible`), so the local aggregator is the strongest evidence this work has.
+- **Not run**: dual-target build / ctest — no C++ touched by either slice.
+- **Adversarial code review of slice 2** — run per the user's request after implementation; surfaced two P1s (veto bypassable by re-run; veto unreachable via the producer pipeline while the docs claimed otherwise). Both fixed in-slice, both pinned by regression tests verified to fail without the fix. See § Deviations 3-4.
+- **`grill-with-docs` stress-test** — run before slice-1 implementation; it resolved by running the tooling rather than reading its docs and changed the design twice (see § Deviations). Both findings are recorded there.

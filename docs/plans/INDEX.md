@@ -206,6 +206,8 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`dev-onboarding-first-run-quickstart`](shipped/dev-onboarding-first-run-quickstart.md) | 2026-08-03 | Plan — Dev onboarding, first-run tracker setup, QUICKSTART |
 | [`about-dialog-help-menu`](shipped/about-dialog-help-menu.md) | 2026-08-05 | Plan — About dialog under Help |
 | [`bucket-c-screenshot-determinism`](shipped/bucket-c-screenshot-determinism.md) | 2026-08-06 | Plan — bucket-C screenshot-diff determinism (user-info-* flake) |
+| [`preferences-ia-resegmentation-and-search`](shipped/preferences-ia-resegmentation-and-search.md) | 2026-08-06 | Plan — Preferences IA re-segmentation + global in-place search |
+| [`verifier-scored-code-review-gate`](shipped/verifier-scored-code-review-gate.md) | 2026-08-06 | Plan — Verifier-scored code-review gate |
 | [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-06 | Plan — Window Expand Button |
 <!-- END auto-plan-index -->
 
