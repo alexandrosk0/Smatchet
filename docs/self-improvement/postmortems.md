@@ -34,6 +34,77 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
+
+### What escaped
+`fix(build): resolve font assets from the main worktree when a linked worktree lacks them` (#1948)
+merged to `develop` 2026-08-05 (`2602340e`) carrying `cr-out-of-band`. The label was strictly
+**load-bearing**: the required StatusContext `CR findings (0 actionable)` sat PENDING with every other
+check green (22/22), `mergeStateStatus=BLOCKED`, and re-running the workflow re-posted PENDING. No
+CodeRabbit review of the merged diff ever completed — the override, not a verdict, cleared the gate.
+Two gates missed it: the CR finding gate (no terminal state for this input) and `postmortem-owed.sh`,
+whose `--list` reports "no gate escapes owed" for this PR.
+
+### Root cause
+Blameless — two independent holes on the same CR path.
+
+**(1) The gate cannot terminate.** `.github/actions/cr-finding-gate/action.yml` `decide()` takes the
+`n_reviews > 0` branch as soon as any CR review node exists on the head, which skips the
+`n_reviews == 0` disambiguation via CR's own `CodeRabbit` StatusContext (which *was* SUCCESS). It then
+greps the review body for `Actionable comments posted:[[:space:]]*[0-9]+`. CR's last on-head review was
+its post-resolve acknowledgement — an **empty body** — so `n` is empty and `decide()` returns
+non-terminal (correctly fail-closed since #524, where a preamble line above the header produced a
+fail-*open*). After 12×15 s the action posts `pending — awaiting CodeRabbit review on current head`.
+No path leads from "CR's final word on this head is body-less" to a terminal verdict, and the state is
+not self-healing: only a new push or a fresh CR review clears it, and neither is guaranteed to arrive.
+The fail-closed instinct is right; the missing piece is a terminal arm for the one input where
+fail-closed can never resolve.
+
+**(2) The nudge that should have flagged the override is scope-gated, not evidence-gated.**
+`postmortem-owed.sh:156-163` drops the trigger `override: cr-out-of-band` whenever
+`pr_touches_core_cpp()` is false, on the rationale (:149-155) that the label "only waives the
+(advisory) CodeRabbit review", making a non-Core diff a false positive. #1948 touched CMake, a bats
+file, a wrapper script and a README — zero `Source/Core/src/*.cpp` — so it was dropped. That rationale
+holds for an advisory-verdict waiver but not for a **wedged required gate**, where diff scope says
+nothing about whether the override mattered. The script already owns the right test
+(`override_is_moot()` / `gate_conclusion()`, applied to `tests-out-of-band` / `perf-out-of-band` /
+`coverage-out-of-band` / `intent-out-of-band`); `cr-out-of-band` is the one override routed to the
+scope heuristic instead.
+
+### Preventing gate
+Two, one per hole.
+
+**(a) Terminal arm in the CR finding gate** — in the `n_reviews > 0` / empty-`n` path, disambiguate the
+way the `n_reviews == 0` path already does, but only for a **body-less** review: if the latest on-head
+CR review body is empty/whitespace **and** CR's `CodeRabbit` StatusContext on that head is SUCCESS,
+post success ("CR settled with nothing actionable"); keep the non-terminal retry for a **non-empty**
+body that merely lacks the header, so the #524 fail-open (a preamble line *above* a real header, i.e. a
+non-empty body) stays closed. An empty body cannot hide a finding count. Pin the empty-body +
+StatusContext-SUCCESS combination in the harness covering the action's decision table.
+
+**(b) Evidence-gate the nudge's `cr-out-of-band` drop** — replace the `pr_touches_core_cpp()` scope
+heuristic with `gate_conclusion "$pr" 'CR findings'`: SUCCESS on its own → moot, drop; PENDING /
+non-SUCCESS / absent → load-bearing, keep and owe a postmortem, whatever the diff touches. This folds
+`cr-out-of-band` into the `override_is_moot()` machinery the other four labels already use and deletes
+the special case. Without (b), future regressions of (a) would ship equally invisibly.
+
+### Eval case
+none — not agent-reviewable. Both holes are CI-config / gate-logic gaps (a GitHub Action's decision
+table and a nudge script's trigger filter), not a code smell or logic bug in a reviewable diff. No
+reviewer reading #1948's diff — CMake, a bats file and a README — could have surfaced either; the
+defect lives in the gate machinery, not the change under review.
+
+### Filed as
+(a) [`categories/process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](categories/process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md)
+(P1, process — shipped in PR #1953, `ec41fe86`) ·
+(b) [`categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md`](categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md)
+(P2, process).
+
+Sibling non-escape found while auditing this one — a poller **false-block**, opposite sign, no
+postmortem owed:
+[`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
+(P1, tooling).
+
 ## 2026-08-05 · PR #1937 · `Doc anchors + agent contract` was GREEN on the PR head and RED on `develop` the instant the squash landed — `test-plan-index` derives row dates from git history the merge itself rewrites
 
 ### What escaped
