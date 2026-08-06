@@ -49,7 +49,7 @@ Pi pays zero (direct import).
 8. `docs/harness/claude-code/hooks/{guard-head-drift,resync-head-baseline,guard-shared-tree}.sh` + `agents/scripts/core/{session-tree-banner,session-heartbeat}.sh` — **delete** (logic → core).
 9. `docs/harness/claude-code/settings.json.tmpl` — swap the 5 bash-hook entries → `node guard.mjs … --harness claude` (SessionStart / PreToolUse Edit|Write|MultiEdit|NotebookEdit + Bash / PostToolUse Bash / Stop).
 10. `agents/scripts/core/setup-harness.sh` — `setup_claude_code`: drop the 3 guard-hook `copy_template` lines + add a `node` presence check; `setup_pi`: copy `index.ts` + `guard.mjs` into `.pi/extensions/session-guard/`; `setup_codex`: deploy `.codex/hooks.json`.
-11. `scripts/dev/worktree.ps1` — `Get-RegistryDir` → `.session-guard`; list/resync read the new path.
+11. `scripts/dev/worktree.sh` — `registry_dir` → `.session-guard`; list/resync read the new path.
 12. `.gitignore` — add `.session-guard/`.
 13. `docs/agent-rules/process-rules.md` — update § Concurrent interactive sessions: node core, neutral registry, cross-harness, which harnesses enforce vs worktree-only.
 14. `docs/harness/capability-adapter.md` — add a `session-guard` row: claude ✓ / pi ✓ / codex ✓ (best-effort) / cursor ✗.
@@ -61,7 +61,7 @@ Pi pays zero (direct import).
 - #913 hooks (`docs/harness/claude-code/hooks/guard-head-drift.sh` et al.) — registry entry format + thresholds (1800s liveness, 604800s sweep) + decision rules ported verbatim into `guard.mjs`.
 - `docs/harness/claude-code/hooks/guard-head-drift.sh` — the exact PreToolUse deny-JSON shape (reused for Claude + Codex, which share it).
 - `setup_pi()` in `agents/scripts/core/setup-harness.sh` — existing extension-copy flow (the subagent extension) as the model for deploying our Pi extension.
-- `scripts/dev/worktree.ps1` `Invoke-Native` + git-bash resolution — reused for the registry-path change.
+- `scripts/dev/worktree.sh` `registry_dir` + `live_session_count` — reused for the registry-path change.
 
 ## UX Pillar callouts
 
