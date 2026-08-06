@@ -85,9 +85,11 @@ resolve_installer_path() {
     fi
     [ -n "${RELEASE_DIR//[[:space:]]/}" ] || die "Specify either --installer-path or --release-dir."
     assets="$(abs_path "$RELEASE_DIR")/assets"
-    match="$(find "$assets" -maxdepth 1 -type f -name '*windows-setup.exe' -printf '%T@\t%p\n' 2>/dev/null \
+    # Arch-agnostic: ARM64 assets carry an "-arm64" token between "windows" and
+    # "setup", so an exact '*windows-setup.exe' glob misses them entirely.
+    match="$(find "$assets" -maxdepth 1 -type f -name '*windows*setup.exe' -printf '%T@\t%p\n' 2>/dev/null \
         | sort -rn | head -1 | cut -f2- || true)"
-    [ -n "$match" ] || die "Could not find *windows-setup.exe under $assets"
+    [ -n "$match" ] || die "Could not find *windows*setup.exe under $assets"
     printf '%s\n' "$match"
 }
 
@@ -188,9 +190,11 @@ fi
 "$INSTALLED_EXE" >/dev/null 2>&1 &
 APP_PID=$!
 sleep "$LAUNCH_SECONDS"
-if kill -0 "$APP_PID" 2>/dev/null; then
-    kill -9 "$APP_PID" 2>/dev/null || taskkill //F //PID "$APP_PID" >/dev/null 2>&1 || true
-fi
+# Liveness is the assertion, not just a kill precondition: an exe that dies on
+# startup would otherwise sail through this step as a pass.
+kill -0 "$APP_PID" 2>/dev/null \
+    || die "Installed exe exited within ${LAUNCH_SECONDS}s of launch: $INSTALLED_EXE"
+kill -9 "$APP_PID" 2>/dev/null || taskkill //F //PID "$APP_PID" >/dev/null 2>&1 || true
 wait "$APP_PID" 2>/dev/null || true
 sleep 1
 

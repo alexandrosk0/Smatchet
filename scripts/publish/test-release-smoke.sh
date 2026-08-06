@@ -78,8 +78,12 @@ ASSETS_DIR="$RELEASE_ROOT/assets"
 
 # First match wins, exactly as the PowerShell version's Get-ChildItem | Select-Object -First 1.
 find_asset() {
-    local pattern="$1" description="$2" match
-    match="$(find "$ASSETS_DIR" -maxdepth 1 -type f -name "$pattern" | sort | head -1)"
+    local pattern="$1" description="$2" exclude="${3:-}" match
+    if [ -n "$exclude" ]; then
+        match="$(find "$ASSETS_DIR" -maxdepth 1 -type f -name "$pattern" ! -name "$exclude" | sort | head -1)"
+    else
+        match="$(find "$ASSETS_DIR" -maxdepth 1 -type f -name "$pattern" | sort | head -1)"
+    fi
     [ -n "$match" ] || die "Could not find $description ($pattern) under $ASSETS_DIR"
     printf '%s\n' "$match"
 }
@@ -116,12 +120,15 @@ print(value)
 PY
 }
 
-PORTABLE_ZIP="$(find_asset '*windows-portable.zip' 'the portable zip')"
+# Globs stay arch-agnostic: release-github.sh stamps an "-arm64" arch token into
+# the middle of every Windows asset name, so '*windows-portable.zip' would miss
+# every ARM64 release. The portable glob excludes the light zip explicitly.
+PORTABLE_ZIP="$(find_asset '*windows*portable.zip' 'the portable zip' '*light-portable.zip')"
 LIGHT_ZIP=""
 if [ "$SKIP_LIGHT_STANDALONE" -eq 0 ]; then
-    LIGHT_ZIP="$(find_asset '*windows-light-portable.zip' 'the light portable zip')"
+    LIGHT_ZIP="$(find_asset '*windows*light-portable.zip' 'the light portable zip')"
 fi
-INSTALLER="$(find_asset '*windows-setup.exe' 'the installer')"
+INSTALLER="$(find_asset '*windows*setup.exe' 'the installer')"
 PLUGIN_ZIP="$(find_asset '*unreal-plugin.zip' 'the Unreal plugin zip')"
 FAB_ZIP="$(find_asset '*fab-submission.zip' 'the Fab submission zip')"
 SOURCE_ZIP="$(find_asset '*source.zip' 'the source zip')"

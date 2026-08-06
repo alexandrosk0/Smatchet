@@ -70,10 +70,14 @@ updated, count = re.subn(
     text,
     count=1,
 )
-if count == 0 or updated == text:
-    sys.exit("Failed to update SmatchetApp VERSION in " + path)
-with open(path, "w", encoding="utf-8", newline="") as fh:
-    fh.write(updated)
+# "already at this version" is success, not failure: the no---version mode
+# re-stamps the manifest from whatever CMakeLists.txt declares, so the
+# substitution is expected to be a no-op there. Only a missing declaration fails.
+if count == 0:
+    sys.exit("No project(SmatchetApp VERSION ...) declaration found in " + path)
+if updated != text:
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        fh.write(updated)
 PY
 
 smatchet_set_plugin_manifest_version "$UPLUGIN_PATH" "$VERSION"

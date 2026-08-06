@@ -84,7 +84,9 @@ fi
 
 if [ -n "${PROJECT_ROOT//[[:space:]]/}" ]; then
     RESOLVED_PROJECT_ROOT="$(resolve_existing_path "$PROJECT_ROOT" "Project root")"
-    if ! find "$RESOLVED_PROJECT_ROOT" -maxdepth 1 -type f -name '*.uproject' | grep -q .; then
+    # No pipe: `grep -q` closing early can SIGPIPE `find` into exit 141, which
+    # `set -o pipefail` would turn into a bogus "no .uproject" failure.
+    if [ -z "$(find "$RESOLVED_PROJECT_ROOT" -maxdepth 1 -type f -name '*.uproject' -print -quit)" ]; then
         die "Project root does not contain a .uproject file: $RESOLVED_PROJECT_ROOT"
     fi
     DEST_ROOT="$RESOLVED_PROJECT_ROOT/Plugins"
