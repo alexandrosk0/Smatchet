@@ -204,7 +204,11 @@ void DrawIconRotated(ImDrawList* dl, const ImVec2& pos, const ImVec2& dir) {
     if (!smatchet::ui::TryGetAboutIconTexture(tex)) {
         const char* glyph = SmatchetAreFaIconsLoaded() ? ICON_FA_CUBE : "[S]";
         const float size = kAboutIconSize * 0.8f;
-        const ImVec2 extent = ::ImGui::CalcTextSize(glyph);
+        // CalcTextSize measures at the current font size, but AddText draws at `size` — centre off
+        // the scaled extent or the glyph lands down-right of `pos` on every no-texture renderer.
+        const float scale = size / ::ImGui::GetFontSize();
+        const ImVec2 base = ::ImGui::CalcTextSize(glyph);
+        const ImVec2 extent(base.x * scale, base.y * scale);
         dl->AddText(::ImGui::GetFont(), size, ImVec2(pos.x - extent.x * 0.5f, pos.y - extent.y * 0.5f),
                     ::ImGui::GetColorU32(ImGuiCol_Text), glyph);
         return;
@@ -265,7 +269,10 @@ void DrawAboutIcon(const AboutDrawCtx& ctx) {
         }
     }
 
-    ImDrawList* dl = ::ImGui::GetWindowDrawList();
+    // In flight the rocket crosses the fact tables and the credits child, both submitted after this
+    // helper and so painted over it. The foreground list keeps the whole path visible; it is not
+    // clipped to the window, which is why the lo/hi inset above is the real bound.
+    ImDrawList* dl = d.aboutRocketStart >= 0.0 ? ::ImGui::GetForegroundDrawList() : ::ImGui::GetWindowDrawList();
     if (heat > 0.0f) {
         DrawRocketTrail(dl, pos, dir, heat);
     }
