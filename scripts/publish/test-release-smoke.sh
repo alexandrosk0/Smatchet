@@ -165,8 +165,12 @@ envelope = json.loads(os.environ["SMOKE_COMMANDS_LIST"])
 if not envelope.get("ok"):
     sys.exit("commands.list envelope reported ok=false on the light build.")
 data = envelope.get("data") or {}
-commands = data.get("commands") or []
+# PaginateJsonArray names the page "items"; a "commands" key would silently read
+# back an empty list and turn the ai.* leak check below into a no-op.
+commands = data.get("items") or []
 names = [c.get("name", "") if isinstance(c, dict) else str(c) for c in commands]
+if not names:
+    sys.exit("commands.list returned no commands on the light build (envelope shape changed?).")
 leaked = [n for n in names if n.startswith("ai.")]
 if leaked:
     sys.exit("Light build exposes ai.* commands: %s" % ", ".join(sorted(leaked)))

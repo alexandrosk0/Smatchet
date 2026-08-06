@@ -309,6 +309,15 @@ resolve_inno_setup_compiler() {
 # dump on stdin and prints the InstallLocation of every "Inno Setup*" entry.
 inno_install_locations() {
     local hive="$1" key="" line loc
+    # `reg query` accepts the short hive name on input but echoes key lines with
+    # the full one (HKLM\... in, HKEY_LOCAL_MACHINE\... out), so expand before
+    # matching or no key line is ever recognised.
+    case "$hive" in
+        HKLM\\*) hive="HKEY_LOCAL_MACHINE${hive#HKLM}" ;;
+        HKCU\\*) hive="HKEY_CURRENT_USER${hive#HKCU}" ;;
+        HKCR\\*) hive="HKEY_CLASSES_ROOT${hive#HKCR}" ;;
+        HKU\\*) hive="HKEY_USERS${hive#HKU}" ;;
+    esac
     while IFS= read -r line; do
         line="${line%$'\r'}"
         case "$line" in
