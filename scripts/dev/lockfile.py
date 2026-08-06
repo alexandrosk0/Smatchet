@@ -46,6 +46,12 @@ else:
 
 POLL_SECONDS = 0.05
 
+# The errnos that mean "another process holds it", not "the lock is broken".
+# POSIX flock(2) is documented to use either EACCES or EAGAIN inconsistently
+# across kernels; Windows _locking() reports contention as EACCES. Anything
+# else (ENOLCK, EIO, EBADF, ...) is a real fault and must not read as busy.
+CONTENTION_ERRNOS = (errno.EACCES, errno.EAGAIN)
+
 
 def _try_lock(fd):
     """Attempt a non-blocking exclusive lock. True on success, False if held."""
@@ -59,8 +65,10 @@ def _try_lock(fd):
             msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
         else:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return False
+    except OSError as exc:
+        if exc.errno in CONTENTION_ERRNOS:
+            return False
+        raise
     return True
 
 

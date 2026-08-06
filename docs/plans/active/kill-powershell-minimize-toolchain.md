@@ -152,7 +152,7 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
 - **ARM64 installer CI break (new)** — the only PS in a *required* CI path. Mitigation: land Phase 2's workflow edit alone, on a PR that actually exercises the installer job, before deleting `release_github.ps1`.
 - **PS→bash quoting bugs** — Windows path quoting + spaces in `%USERPROFILE%`. Mitigation: every new `.sh` gets a bats test exercising paths-with-spaces (existing pattern in `tests/bats/`).
 - **Unreal packaging breakage** — UBT from bash via `cmd.exe /c` works in `setup-harness.sh` but is untested under heavy build load. Mitigation: keep the PS in git one PR cycle as `.ps1.bak`, delete in the next.
-- **Lint-hook drift** — `lint-cpp-drain.sh` calls `flock`; update in lockstep with `lockfile.py` landing.
+- **Lint-hook drift** — **resolved in Slice A**: `lint-cpp-drain.sh` no longer calls `flock`; it serialises through `scripts/dev/lockfile.py` and degrades to lock-free when no Python is present. Residual risk is narrower — the drain's python-candidate probe and `lockfile.py`'s CLI (`--nonblock` / `--busy-rc`) must stay in step; `agents/scripts/core/test-lint-hook-split.sh` Test 10 is the gate.
 - **`setup-env.sh` skew (new)** — the installer's package map duplicates the tool list; any tool-floor change must edit it too or a fresh clone re-installs a dropped tool.
 
 ## Verification

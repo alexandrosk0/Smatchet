@@ -105,7 +105,7 @@ else
     nope "queue file missing after inline"
 fi
 
-if grep -q "lint_hook_probe.cpp" "${QUEUE_REAL[@]}" 2>/dev/null; then
+if [[ ${#QUEUE_REAL[@]} -gt 0 ]] && grep -q "lint_hook_probe.cpp" "${QUEUE_REAL[@]}" 2>/dev/null; then
     ok "queue contains probe path"
 else
     nope "queue does not contain probe path"
@@ -350,15 +350,27 @@ else
     # 0 WITHOUT consuming the queue (the holder will, or a later Stop event).
     echo '{"tool_input": {"file_path": "'"$PROBE_FILE"'"}}' | bash "$HOOKS_DIR/lint-cpp.sh" || true
     LOCK_FILE="$CLAUDE_DIR/.lint-queue.lock"
-    # Background holder: grab the exclusive lock and sleep, holding it.
-    "$PY_BIN" "$LOCK_PY" --lockfile "$LOCK_FILE" -- sleep 3 >/dev/null 2>&1 &
+    READY_FILE="$CLAUDE_DIR/.lint-lock-held"
+    rm -f "$READY_FILE"
+    # Background holder: grab the exclusive lock, then signal readiness and
+    # sleep, holding it. The marker is written by the locked command, so its
+    # existence PROVES the lock is held — a fixed sleep would let a slow host
+    # start the drain first and make this test intermittent.
+    "$PY_BIN" "$LOCK_PY" --lockfile "$LOCK_FILE" -- \
+        bash -c ': > "$1"; sleep 3' _ "$READY_FILE" >/dev/null 2>&1 &
     HOLDER_PID=$!
-    sleep 1   # give the holder time to start python and acquire
+    # Bounded poll: 100 * 0.05s = 5s ceiling, then run anyway and let the
+    # assertion below report the failure rather than hanging the suite.
+    for _ in $(seq 1 100); do
+        [[ -e "$READY_FILE" ]] && break
+        sleep 0.05
+    done
     contend_rc=0
     bash "$HOOKS_DIR/lint-cpp-drain.sh" >/dev/null 2>&1 || contend_rc=$?
     collect_queue_files
     # The contended drain must NOT have consumed the queued work (lock held).
-    if [[ $contend_rc -eq 0 ]] && grep -q "lint_hook_probe.cpp" "${QUEUE_REAL[@]}" 2>/dev/null; then
+    if [[ $contend_rc -eq 0 && ${#QUEUE_REAL[@]} -gt 0 ]] &&
+       grep -q "lint_hook_probe.cpp" "${QUEUE_REAL[@]}" 2>/dev/null; then
         ok "contended drain exited 0 and left the queue for the lock holder"
     else
         nope "contended drain mis-handled the held lock (rc=$contend_rc, files=${#QUEUE_REAL[@]})"
