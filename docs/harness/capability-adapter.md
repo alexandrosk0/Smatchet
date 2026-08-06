@@ -17,6 +17,7 @@ Trigger: **mapping an agent's capability tags to a specific harness's tools** (p
 | `web-fetch` | `WebFetch` | `web.fetch` | — | — | — (dropped) | `curl` |
 | `git-history` | `Bash(git log)` | `shell(git log)` | (built-in) | (built-in) | `bash` (git log) | `git log` |
 | `prompt-intent-capture` | `UserPromptSubmit` hook (`capture-intent.sh`) | — (no prompt hook → orchestrator fallback) | — (no executable hooks → fallback) | — (fallback) | — (no prompt hook → fallback) | — (fallback) |
+| `file-lock` | `Bash(python scripts/dev/lockfile.py)` | `shell(python scripts/dev/lockfile.py)` | terminal (same script) | shell (same script) | `bash` (same script) | `python scripts/dev/lockfile.py` |
 
 ## Harness notes
 
@@ -24,5 +25,6 @@ Trigger: **mapping an agent's capability tags to a specific harness's tools** (p
 - **Codex / OpenAI Agents** reads `AGENTS.md` per the [agents.md spec](https://agents.md/). Discover individual agents at `agents/{core,project}/*.md`; `setup-harness codex` also generates `.codex/agents/*.toml` custom agents from those canonical prompts.
 - **Cursor / Aider / generic** — human-driven. Agent files at `agents/` are reference docs the user pastes or invokes manually.
 - **pi** discovers a **flat** `.pi/agents/*.md` (parser reads only `name`/`description`/`tools`/`model`) and auto-loads extensions from `.pi/extensions/`. Both are generated/patched (gitignored) by `bash agents/scripts/core/setup-harness.sh pi` — the `capabilities:`→`tools:` mapping above plus a tier→model map. Project agents are off + confirm-gated in stock pi; the adapter relaxes that for this trusted repo. Bring-up + the security note: [`pi/README.md`](pi/README.md).
+- **`file-lock` is one script on every harness.** `flock(1)` is util-linux — absent on Git Bash, so it is never the primitive here; cross-shell mutual exclusion (e.g. the deferred-lint drain) goes through `scripts/dev/lockfile.py`, which is stdlib-only Python and therefore identical on Windows, macOS, and Linux.
 - Harnesses without `semantic-code-search` should fall back to text-search with the symbol set named in each agent's prose. Output is degraded but workable — expect more round-trips and larger context per query.
 - **`prompt-intent-capture` is Claude-Code-only.** Only Claude Code exposes a `UserPromptSubmit`-equivalent hook, so only it auto-captures the originating prompt into `.session-intent/<branch>.log`. Codex (SessionStart/Stop only), Cursor (no executable hooks), and pi (subagent extension, no prompt hook) cannot — on those, the orchestrator MUST hand-fill the PR `## Intent` from the live prompt (`docs/agent-rules/ship-loops.md` § Intent capture, Fallback). The `Intent section` gate blocks either way; the `intent-out-of-band` label is the escape hatch when neither capture nor hand-fill is possible.
