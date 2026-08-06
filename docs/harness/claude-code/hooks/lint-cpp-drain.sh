@@ -33,9 +33,17 @@ if [[ -z "${SMATCHET_LINT_DRAIN_LOCKED:-}" ]]; then
         # Exec-probe, not just command -v: on Windows `python3` is the Microsoft
         # Store alias stub — on PATH, but exits non-zero when run.
         if command -v "$py" >/dev/null 2>&1 && "$py" -c "" >/dev/null 2>&1 && [[ -f "$LOCK_PY" ]]; then
+            # execfail keeps this shell alive if the exec itself fails; without
+            # it bash would exit 126/127 and the Stop hook would read that as
+            # lint findings. On failure, clear the guard again so the next
+            # candidate re-execs and the no-Python fallthrough below still
+            # runs the drain lock-free instead of skipping it.
+            shopt -s execfail
             export SMATCHET_LINT_DRAIN_LOCKED=1
             exec "$py" "$LOCK_PY" --lockfile "$LOCK_FILE" --nonblock --busy-rc 0 \
                 -- bash "$0" "$@"
+            unset SMATCHET_LINT_DRAIN_LOCKED
+            shopt -u execfail
         fi
     done
     # No Python: run lock-free rather than skipping the drain entirely.
