@@ -3,6 +3,7 @@
 #include "NotificationCenterPure.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 
 #include "imgui.h"
 
@@ -33,6 +34,8 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
         ImGui::SetNextWindowFocus();
     }
     ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_FirstUseEver);
+    // SMATCHET_DEVIATION(rule=duplication; reason=window-open prologue idiom; owner=ui; revisit=2026-12-01)
+    SmatchetWindowExpand::BeginWindow(d, "Notifications");
     if (!ImGui::Begin("Notifications", &d.showNotificationCenterWindow)) {
         ImGui::End();
         if (wantFocus) {
@@ -40,6 +43,7 @@ void SmatchetDrawNotificationCenterWindow(UiDrawSession& d) {
         }
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     if (wantFocus) {
         ImGui::SetWindowFocus();
         d.requestNotificationCenterFocus = false;

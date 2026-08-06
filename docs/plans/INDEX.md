@@ -204,6 +204,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`gate-blind-spot-sweep`](shipped/gate-blind-spot-sweep.md) | 2026-07-25 | close four gate blind spots — cross-TU dead exports, sub-floor helper clones, link-gate target scope, and the untaxonomised root audit docs |
 | [`dev-onboarding-first-run-quickstart`](shipped/dev-onboarding-first-run-quickstart.md) | 2026-08-03 | Plan — Dev onboarding, first-run tracker setup, QUICKSTART |
 | [`about-dialog-help-menu`](shipped/about-dialog-help-menu.md) | 2026-08-05 | Plan — About dialog under Help |
+| [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-05 | Plan — Window Expand Button |
 <!-- END auto-plan-index -->
 
 ### Notes

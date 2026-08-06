@@ -7,6 +7,7 @@ class AppController; // fan-in Phase 6: this TU only names AppController& in sig
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetToast.h"
+#include "SmatchetWindowExpand.h"
 
 #include <algorithm>
 #include <cstring>
@@ -142,6 +143,12 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
     if (ImGui::IsWindowDocked()) {
         return;
     }
+    if (SmatchetWindowExpand::IsCurrentWindowExpanded(d)) {
+        // An expanded window is deliberately undocked and deliberately fills the work
+        // area; both the re-dock arm and the fallback-rect snap below would fight the
+        // per-frame fullscreen pin in SmatchetWindowExpand::BeginWindow.
+        return;
+    }
     // Window is floating — schedule force-dock on next frame if it has a registered slot.
     const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
     if (slot != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
@@ -204,6 +211,10 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
         return;
     }
     d.pendingLayoutReset = false;
+
+    // Drop any expansion first: the reset's forced redock and the fullscreen pin are
+    // mutually exclusive, and the user asked for the DEFAULT layout.
+    SmatchetWindowExpand::Reset(d);
 
     // Runs at end-of-frame (drawEndOfFramePersistence). Must be called on the UI thread.
     d.showViewsDashboard = true;

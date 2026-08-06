@@ -31,6 +31,7 @@
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerSetupPure.h"
 #include "SmatchetImGuiFonts.h"
@@ -187,6 +188,7 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
     // wantFocus OR layoutForceDefaultsFrames forces SetNextWindowFocus before Begin — the only
     // path that activates a docked tab. Post-Begin SetWindowFocus is belt-and-braces for floating.
     prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, wantFocus || d.layoutForceDefaultsFrames > 0);
+    SmatchetWindowExpand::BeginWindow(d, "Preferences");
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         if (wantFocus) {
             d.requestPreferencesFocus = false;
@@ -194,6 +196,7 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
         ImGui::End();
         return false;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
     if (wantFocus) {
         ImGui::SetWindowFocus();

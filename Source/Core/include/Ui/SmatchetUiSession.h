@@ -28,6 +28,7 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
+#include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiTypes.h"
 #include "AiOutboundConsent.h"
@@ -388,6 +389,8 @@ struct UiDrawSession {
     /// next NewFrame while the same-frame redock corrupts the stale tree (orphans 0x02/0x04/
     /// 0x08). drawEndOfFramePersistence drains this via SmatchetUI_ApplyDeferredLayoutReset.
     bool pendingLayoutReset = false;
+    /// Per-window "expand over the whole workspace" toggle state (SmatchetWindowExpand.h).
+    SmatchetWindowExpand::WindowExpandState windowExpand;
 
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */

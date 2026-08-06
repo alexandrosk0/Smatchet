@@ -136,6 +136,8 @@ const TranslationEntry kEntries[] = {
     {"window.watchers", "Watchers", u8"Observateurs"},
     {"window.votes", "Votes", u8"Votes"},
     {"window.mcp_server", "MCP Server", u8"Serveur MCP"},
+    {"window.expand.tooltip", "Expand over the whole workspace", u8"Agrandir sur tout l'espace de travail"},
+    {"window.minimize.tooltip", "Minimize (restore previous position)", u8"Réduire (restaurer la position précédente)"},
 
     {"prefs.tab.tracker", "Tracker", u8"Suivi"},
     {"prefs.tab.integrations", "Integrations", u8"Intégrations"},

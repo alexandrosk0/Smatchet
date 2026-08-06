@@ -10,6 +10,8 @@
 #include "Logger.h"
 #include "P4Annotate.h"
 #include "SmatchetHelpMarker.h"
+#include "SmatchetUiSession.h" // g_ui — this TU has no UiDrawSession& parameter to thread through
+#include "SmatchetWindowExpand.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerFieldSchema.h"
 #include "Ui/P4ClPreview.h"
@@ -1142,6 +1144,7 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
         ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
     }
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
+    SmatchetWindowExpand::BeginWindow(g_ui, "Annotate###AnnotateAnalysisModal");
     if (!ImGui::Begin("Annotate###AnnotateAnalysisModal", pOpen, kPanelFlags)) {
         if (!*pOpen) {
             CloseAnnotateModal(pOpen);
@@ -1149,6 +1152,7 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(g_ui);
     if (!*pOpen) {
         CloseAnnotateModal(pOpen);
         ImGui::End();

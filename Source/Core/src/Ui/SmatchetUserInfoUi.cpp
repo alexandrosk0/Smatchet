@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "P4Annotate.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "Ui/P4ClPreview.h"
 #include "Ui/SmatchetLayoutBreakpoints.h"
 #include "Vcs/GitHubCommits.h"
@@ -66,10 +67,12 @@ void SmatchetUserInfoUi::DrawWindow(AppController& app, UiDrawSession& d, bool* 
     if (d.userInfoRequestPending) {
         adoptPendingRequest(app, d);
     }
+    SmatchetWindowExpand::BeginWindow(d, "User Info");
     if (!ImGui::Begin("User Info", open)) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
         *open = false;
     }

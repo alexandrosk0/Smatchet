@@ -4,6 +4,7 @@
 #include "Logger.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "Ui/SmatchetLog_detail.h"
 
 #include "imgui.h"
@@ -128,7 +129,9 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d, bool embedded) {
         // Pass wantFocus as 4th arg so prepareTopLevelWindow calls SetNextWindowFocus before Begin —
         // this is what activates a docked tab. The post-Begin SetWindowFocus below is belt-and-braces
         // for floating-window state (mirrors SmatchetViewsDashboardUi.cpp pattern).
+        // SMATCHET_DEVIATION(rule=duplication; reason=window-open prologue idiom; owner=ui; revisit=2026-12-01)
         prepareTopLevelWindow(d, "log", 900.0f, 320.0f, wantFocus);
+        SmatchetWindowExpand::BeginWindow(d, "Log");
         if (!ImGui::Begin("Log", &d.showLogWindow)) {
             if (wantFocus) {
                 d.requestLogFocus = false;
@@ -136,6 +139,7 @@ void SmatchetUI::drawLogWindow(UiDrawSession& d, bool embedded) {
             ImGui::End();
             return;
         }
+        SmatchetWindowExpand::DrawToggle(d);
         repairTopLevelWindow(d, "log", 360.0f, 220.0f);
         if (wantFocus) {
             ImGui::SetWindowFocus();
