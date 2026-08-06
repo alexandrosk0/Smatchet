@@ -50,6 +50,7 @@ fi
 #   rc 0 = acked, or the staged diff is not substantive -> allow
 #   rc 1 = substantive staged C++ with no current ack   -> BLOCK
 #   rc 2 = infra/usage (not a work tree, bad flag)      -> WARN + allow
+#   rc 3 = ack is current but carries a verifier HARD VETO -> BLOCK
 #
 # IN-PROGRESS MERGE / REVERT / CHERRY-PICK / REBASE ARE EXEMPT. Resolving a
 # conflicted `git merge origin/develop` (the § Catch-up sync the ship-loop
@@ -114,6 +115,35 @@ pre-commit: REFUSING a commit with no code review.
   Any later edit to a staged file re-arms this gate — that is the point.
 
   Override (trivial/emergency only — logged, discouraged):
+    SMATCHET_SKIP_REVIEW_GATE=1 git commit ...
+EOF
+        exit 1
+        ;;
+    3)
+        cat >&2 <<EOF
+
+pre-commit: REFUSING — the code review recorded a HARD VETO.
+
+  $review_out
+
+  A veto is a security finding, a deterministic-gate failure, or a
+  project-invariant breach — the reviewer marked it as something that must not
+  be averaged away by good scores elsewhere (docs/agent-rules/verifier-sidecar.md
+  § Operating rules, rule 2: veto beats average).
+
+  This is NOT the advisory score. The continuous verifier score never blocks a
+  commit until verifier-calibrate.py justifies promoting it; only a veto does.
+
+  1) fix the vetoed issue,
+  2) re-run the review on the corrected staged diff,
+  3) record the new ack + verdict:
+       bash agents/scripts/core/review-ack.sh --record --staged --verdict <aggregate.json>
+  4) commit again.
+
+  If the veto is wrong, say so in the review and record a verdict without it —
+  do not reach for the bypass to paper over a real finding.
+
+  Override (emergency only — logged, discouraged):
     SMATCHET_SKIP_REVIEW_GATE=1 git commit ...
 EOF
         exit 1

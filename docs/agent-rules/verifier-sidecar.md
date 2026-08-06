@@ -60,6 +60,11 @@ python scripts/dev/verifier-produce.py job.json | python scripts/dev/verifier-si
 
 `agents/_shared/workflows/pre-merge-review.js` asks its judge to emit a verifier object next to the existing `merge_recommendation`. Existing consumers keep reading the categorical recommendation; newer consumers use the continuous signal for triage and calibration.
 
+**The commit gate** (`scripts/git-hooks/pre-commit` check (B), via `agents/scripts/core/review-ack.sh --record --verdict <aggregate.json>`) attaches a verdict to the `.review-ack` record so the gate can act on review *quality*, not just review *presence*. Plan: [`docs/plans/verifier-scored-code-review-gate.md`](../plans/verifier-scored-code-review-gate.md). Two rules govern what it does with that verdict, and they are asymmetric on purpose:
+
+- **Only `hard_veto` blocks.** `recommendation` is not a gate — the aggregator returns `block` for a low *score* as well as for a veto, and returns `escalate` for an ordinary single sample, so gating on it would either trust an uncalibrated score (rule 5) or wedge nearly every commit. The continuous score is printed and recorded, never enforced, until `verifier-calibrate.py` justifies promoting it.
+- **A veto is trusted even when self-reported.** `verifier-produce.py` scores criteria only — it never emits `hard_veto`, so a veto can only come from the reviewing agent's own verifier object. That is acceptable for this one signal because a veto is a *confession*: an agent reporting a security hole in its own change argues against its own interest in a way a high score never does. Trust self-reported bad news; distrust self-reported good news. The score therefore still requires an independent backend to mean anything.
+
 `scripts/dev/verifier-sidecar.py` is the deterministic aggregator. It has three modes:
 
 - `aggregate <samples.json>` (default) — per-candidate `overall_score`, criterion means, `uncertainty`, a `std_error` + 95% `confidence_interval` on the mean, `hard_veto` propagation, an SEM-driven `repeated_evaluations_recommended`, a `recommendation` (`accept` / `escalate` / `block`), and — for multiple candidates — a Bradley-Terry `ranking` plus a full pivot-tournament schedule.

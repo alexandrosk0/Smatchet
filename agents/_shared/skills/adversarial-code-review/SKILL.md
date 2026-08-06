@@ -131,6 +131,15 @@ Verification
 bash agents/scripts/core/review-ack.sh --record --staged
 ```
 
+If you emit a verifier object (`overall_score`, `confidence`, `hard_veto`, per-criterion scores), aggregate and attach it so the gate sees the verdict:
+
+```bash
+python3 scripts/dev/verifier-sidecar.py aggregate samples.json > /tmp/verdict.json
+bash agents/scripts/core/review-ack.sh --record --staged --verdict /tmp/verdict.json
+```
+
+Only `hard_veto` blocks the commit — set it for a security issue or invariant breach, never for a stylistic doubt. The continuous score is advisory until calibrated.
+
 Do not record while a P0/P1 stands, and never record a review you did not run — the fingerprint proves only that the diff is unchanged since something was acknowledged. Any later staged edit re-arms the gate.
 
 ## Review Discipline

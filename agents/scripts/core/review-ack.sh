@@ -18,7 +18,7 @@
 # diff has not changed since SOMETHING was acknowledged, never that a review ran.
 #
 # Usage:
-#   bash agents/scripts/core/review-ack.sh --record [--staged|--branch] [<base-ref>]
+#   bash agents/scripts/core/review-ack.sh --record [--staged|--branch] [--verdict <f>] [<base-ref>]
 #   bash agents/scripts/core/review-ack.sh --check  [--staged|--branch] [<base-ref>]
 #   bash agents/scripts/core/review-ack.sh --selftest
 #   bash agents/scripts/core/review-ack.sh --help
@@ -27,10 +27,17 @@
 # plus the working tree — the push gate). <base-ref> defaults to origin/develop
 # and is ignored by --staged.
 #
+# --verdict <file> attaches a verifier verdict (a `verifier-sidecar.py aggregate`
+# result) to the ack — see docs/agent-rules/verifier-sidecar.md and
+# docs/plans/verifier-scored-code-review-gate.md. ONLY `hard_veto` blocks; the
+# continuous score is advisory until verifier-calibrate.py justifies promoting it
+# (verifier-sidecar.md § Operating rules, rule 5).
+#
 # Exit codes:
 #   0 — ack recorded, or (--check) the diff is acked / not substantive.
 #   1 — (--check) a substantive diff has no current ack.
-#   2 — usage error, or not inside a git work tree.
+#   2 — usage error, not inside a git work tree, or an unreadable --verdict file.
+#   3 — (--check) the ack is current but carries a HARD VETO.
 #
 # selftest: asserts-failure
 set -euo pipefail
@@ -143,10 +150,29 @@ case "${1:-}" in
 esac
 shift
 
+verdict_file=""
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --staged) mode="staged" ;;
         --branch) mode="branch" ;;
+        --verdict)
+            verdict_file="${2:-}"
+            if [ -z "$verdict_file" ]; then
+                echo "review-ack: --verdict requires a file (verifier-sidecar.py aggregate output)" >&2
+                exit 2
+            fi
+            shift
+            ;;
+        --verdict=*)
+            verdict_file="${1#--verdict=}"
+            # An empty `--verdict=` must NOT fall through to a presence-only
+            # ack: the caller asked for a scored one and would never be told it
+            # did not get it. Same refusal as bare `--verdict` with no argument.
+            if [ -z "$verdict_file" ]; then
+                echo "review-ack: --verdict= requires a non-empty file path" >&2
+                exit 2
+            fi
+            ;;
         --*)
             echo "review-ack: unknown flag '$1'" >&2
             exit 2
@@ -182,7 +208,21 @@ fi
 cd "$repo_root"
 
 if [ "$action" = "record" ]; then
-    ra_write_marker "$mode" "$(ra_fingerprint "$mode" "$base_ref")"
+    fp="$(ra_fingerprint "$mode" "$base_ref")"
+    if [ -n "$verdict_file" ]; then
+        # A malformed / unreadable verdict must NOT silently degrade to a
+        # presence-only ack: the caller asked for a scored ack and would
+        # otherwise believe it got one.
+        if ! verdict="$(ra_verdict_from_json "$verdict_file")"; then
+            echo "review-ack: cannot read a verdict from '$verdict_file' (needs jq + a verifier-sidecar aggregate result)." >&2
+            exit 2
+        fi
+        IFS=$'\t' read -r v_score v_rec v_veto v_reason <<< "$verdict"
+        ra_write_marker "$mode" "$fp" "$v_score" "$v_rec" "$v_veto" "$v_reason"
+        echo "review-ack: recorded a $mode review ack + verdict (score=$v_score recommendation=$v_rec hard_veto=$v_veto)."
+        exit 0
+    fi
+    ra_write_marker "$mode" "$fp"
     echo "review-ack: recorded a $mode review ack for the current diff (.review-ack)."
     exit 0
 fi
@@ -194,6 +234,35 @@ if ra_is_substantive "$mode" "$base_ref"; then
         echo "review-ack: NO current $mode ack — $RA_SUBSTANTIVE_REASON (.review-ack ${have:+is stale}${have:-missing})." >&2
         exit 1
     fi
+
+    # The ack is current. Now consider the verdict, if one was recorded.
+    #
+    # ONLY `hard_veto` blocks. `recommendation` is NOT a blocking signal: the
+    # sidecar returns "block" for a low SCORE as well as for a veto, and gating
+    # on a score before verifier-calibrate.py clears its Brier/ECE/AUC
+    # thresholds is exactly what verifier-sidecar.md § Operating rules rule 5
+    # forbids. `escalate` is the ordinary single-sample outcome (a 0.82/0.7
+    # sample already returns it), so treating it as blocking would wedge nearly
+    # every commit.
+    #
+    # A veto is trusted even though it may be self-reported by the reviewing
+    # agent, because a veto is a CONFESSION, not a claim of quality: an agent
+    # reporting "I found a security hole in my own change" argues against its
+    # own interest in a way a high score never does. Trust self-reported bad
+    # news; distrust self-reported good news. That asymmetry is why the score
+    # stays advisory while the veto blocks.
+    verdict="$(ra_read_verdict "$mode")"
+    if [ -n "$verdict" ]; then
+        IFS=$'\t' read -r v_score v_rec v_veto v_reason <<< "$verdict"
+        if [ "$v_veto" = "true" ]; then
+            echo "review-ack: HARD VETO on this $mode diff — ${v_reason:-no reason recorded} (score=$v_score recommendation=$v_rec)." >&2
+            exit 3
+        fi
+        echo "review-ack: $mode ack current for this diff (.review-ack matches)."
+        echo "review-ack: verifier score=$v_score recommendation=$v_rec (ADVISORY — not a gate until calibrated)."
+        exit 0
+    fi
+
     echo "review-ack: $mode ack current for this diff (.review-ack matches)."
     exit 0
 fi
