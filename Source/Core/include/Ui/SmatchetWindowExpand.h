@@ -6,12 +6,15 @@
 // WORK AREA (below the menu bar, above the status bar — both stay reachable),
 // covering every other view; the same control then minimizes it back.
 //
-// No dock-node surgery: expanding stores the window's dock id (plus its rect when
-// floating) and re-issues SetNextWindowDockID(0) + SetNextWindowPos/Size(WorkPos/
-// WorkSize) each frame before Begin; minimizing replays the stored dock id for one
-// frame.
+// Expanding stores the window's dock id (plus its rect when floating), undocks it
+// ONCE via DockContextProcessUndockWindow(clear_persistent_docking_ref=false), then
+// re-issues SetNextWindowDockID(0) + SetNextWindowPos/Size(WorkPos/WorkSize) each
+// frame before Begin; minimizing replays the stored dock id for one frame. Keeping
+// the persistent dock ref is what makes the node SURVIVE an expand of its last tab:
+// DockNodeRemoveWindow only destroys an emptied leaf when the departing window
+// cleared that ref, and letting SetNextWindowDockID(0) do the undock clears it.
 //
-// Three limits this deliberately does NOT solve — none is invisible, and none
+// Four limits this deliberately does NOT solve — none is invisible, and none
 // should be assumed away by later work:
 //  - It is NOT .ini-safe. The override IS the window's live state, and ImGui's
 //    settings writer snapshots Pos/Size/DockId off the live window (dropping the
@@ -20,11 +23,22 @@
 //    and fullscreen. On relaunch SmatchetUI_Layout's pendingReDockWindows path
 //    force-redocks it within ~2 frames — to its DEFAULT slot, so a customised dock
 //    placement is lost. Fixing that needs an ini-safe transition, not a comment.
-//  - Minimize does not always land in the ORIGINAL node. Undocking the last tab out
-//    of a leaf node destroys the node, so on restore the saved id resolves to
-//    nothing and BeginWindow falls back to the pre-expand float rect (see there),
-//    after which repairTopLevelWindow re-docks to the default slot. Common for any
-//    window docked alone.
+//  - The node-survival trick above covers OUR undock, not a node killed by anything
+//    else while expanded (a sibling being dragged out, an .ini reload). If the saved
+//    id resolves to nothing, the restore cuts the slot again from the recorded split
+//    (side + ratio): same PLACE, but a NEW id, because DockBuilderSplitNode returns
+//    an auto-generated child id. Any other window that replays the old canonical
+//    constant then docks into nothing. Only when the rebuild also finds nothing
+//    alive does it fall back to the pre-expand float rect, after which
+//    repairTopLevelWindow re-docks to the default slot.
+//  - Keeping the leaf alive does NOT cost a visible empty pane, which is worth
+//    stating because it looks like it should. An emptied non-central leaf goes
+//    IsVisible = false (DockNodeUpdateVisibleFlag), and DockNodeTreeUpdatePosSize
+//    skips its whole sizing block unless BOTH children are visible — so the sibling
+//    is handed the full parent rect and SizeRef is never rewritten. The pane
+//    silently yields its space and minimize restores the original ratio. (A CENTRAL
+//    node is the exception: it stays visible while empty, by design.) The leaf lives
+//    until the next settings load, where DockContextPruneUnusedSettingsNodes takes it.
 //  - On a FULL tab bar the button overlaps the last tab and takes its clicks.
 //    DockNodeCalcTabBarLayout reserves room for the node's own close X, not for
 //    this control, so once the tabs fill BarRect the two occupy the same pixels.
@@ -43,12 +57,21 @@ namespace SmatchetWindowExpand {
 
 /// Where a window sat before it was expanded. `DockId == 0` means it was floating,
 /// in which case Pos/Size carry its rect (a docked window's rect belongs to its node).
+/// The Split* fields describe the SLOT rather than the node, for the last-resort case
+/// where something OTHER than our own undock destroyed the leaf while we were
+/// expanded, leaving `DockId` naming nothing. They carry enough to cut the same slot
+/// again — which side of which split, at which ratio — with the sibling recorded
+/// because the parent is the node that may have been merged over.
 struct WindowExpandSaved {
     unsigned int DockId = 0;
     float PosX = 0.0f;
     float PosY = 0.0f;
     float SizeX = 0.0f;
     float SizeY = 0.0f;
+    unsigned int SplitParentId = 0;  ///< Node that split to make DockId; 0 when it had no parent.
+    unsigned int SplitSiblingId = 0; ///< The other child of that split.
+    int SplitDir = -1;               ///< ImGuiDir of DockId within the split; -1 = unknown.
+    float SplitRatio = 0.5f;         ///< DockId's share of the parent along the split axis.
 };
 
 /// A docked window's toggle, deferred to end-of-frame. It is drawn by re-Begin-ing

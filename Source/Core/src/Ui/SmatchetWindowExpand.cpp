@@ -67,7 +67,57 @@ WindowExpandSaved CapturePlacement(const ImGuiWindow* window) {
     out.PosY = window->Pos.y;
     out.SizeX = window->SizeFull.x;
     out.SizeY = window->SizeFull.y;
+
+    // Describe the SLOT as well as the node — see WindowExpandSaved: the node id
+    // alone does not survive undocking the last tab out of it.
+    const ImGuiDockNode* node = window->DockNode;
+    const ImGuiDockNode* parent = (node != NULL) ? node->ParentNode : NULL;
+    if (parent == NULL) {
+        return out;
+    }
+    const bool firstChild = (parent->ChildNodes[0] == node);
+    const ImGuiDockNode* sibling = parent->ChildNodes[firstChild ? 1 : 0];
+    out.SplitParentId = static_cast<unsigned int>(parent->ID);
+    out.SplitSiblingId = (sibling != NULL) ? static_cast<unsigned int>(sibling->ID) : 0u;
+    const bool horizontal = (parent->SplitAxis == ImGuiAxis_X);
+    out.SplitDir =
+        horizontal ? (firstChild ? ImGuiDir_Left : ImGuiDir_Right) : (firstChild ? ImGuiDir_Up : ImGuiDir_Down);
+    const float parentSize = horizontal ? parent->Size.x : parent->Size.y;
+    const float ownSize = horizontal ? node->Size.x : node->Size.y;
+    // Clamped: a degenerate ratio would rebuild the slot as an invisible sliver.
+    out.SplitRatio = (parentSize > 1.0f) ? ImClamp(ownSize / parentSize, 0.05f, 0.95f) : 0.5f;
     return out;
+}
+
+/// Cuts `restore`'s slot again after its node was merged away, and docks
+/// `windowName` into it. Returns the new node id, or 0 when neither end of the
+/// recorded split is still around to cut.
+unsigned int RebuildDockSlot(const char* windowName, const WindowExpandSaved& restore) {
+    if (restore.SplitDir < 0) {
+        return 0u;
+    }
+    // Prefer the parent, which is what the sibling was merged INTO and so the usual
+    // survivor, then fall back to the sibling for a tree that shifted the other way.
+    ImGuiDockNode* target = ImGui::DockBuilderGetNode(static_cast<ImGuiID>(restore.SplitParentId));
+    if (target == NULL) {
+        target = ImGui::DockBuilderGetNode(static_cast<ImGuiID>(restore.SplitSiblingId));
+    }
+    if (target == NULL) {
+        return 0u;
+    }
+    const ImGuiID root = ImGui::DockNodeGetRootNode(target)->ID;
+    // DockBuilder does its tree surgery IMMEDIATELY, and this runs mid-frame from a
+    // pre-Begin path, so it can re-dock windows that already ran their Begin this
+    // frame. Tolerated only because this is the last-resort fallback: the normal
+    // restore replays a still-live node id and never reaches here.
+    ImGuiID atDir = 0;
+    ImGui::DockBuilderSplitNode(target->ID, static_cast<ImGuiDir>(restore.SplitDir), restore.SplitRatio, &atDir, NULL);
+    if (atDir == 0) {
+        return 0u;
+    }
+    ImGui::DockBuilderDockWindow(windowName, atDir);
+    ImGui::DockBuilderFinish(root);
+    return static_cast<unsigned int>(atDir);
 }
 
 /// The control itself. Both paths place it by absolute screen pos inside a window
@@ -140,15 +190,25 @@ void BeginWindow(UiDrawSession& d, const char* windowName) {
 
     WindowExpandSaved restore;
     if (detail::ConsumeRestore(s, id, restore)) {
-        // The saved node can be GONE: expanding undocks the window, and undocking the
-        // last tab out of a node destroys it. Replaying a dead id docks nowhere and
-        // leaves the window sitting at its fullscreen rect until repairTopLevelWindow
-        // notices — tens of frames of a window that looks stuck. Fall back to the
-        // pre-expand rect instead, which lands on the very next frame.
-        const bool nodeAlive =
-            restore.DockId != 0 && ImGui::DockBuilderGetNode(static_cast<ImGuiID>(restore.DockId)) != NULL;
-        ImGui::SetNextWindowDockID(nodeAlive ? static_cast<ImGuiID>(restore.DockId) : 0u, ImGuiCond_Always);
-        if (!nodeAlive) {
+        // Our own undock keeps the node alive (see the expand branch below), so the
+        // saved id normally still resolves and is replayed as-is. It can still be GONE
+        // if something else killed the node while we were expanded — a sibling dragged
+        // out, an .ini reload. Replaying a dead id does not fail loudly: ImGui mints an
+        // orphan root at the window's current rect, i.e. a fullscreen-sized float that
+        // merely LOOKS docked. So a dead id falls through to RebuildDockSlot, and only
+        // then to the pre-expand float rect.
+        unsigned int dockTo =
+            (restore.DockId != 0 && ImGui::DockBuilderGetNode(static_cast<ImGuiID>(restore.DockId)) != NULL)
+                ? restore.DockId
+                : 0u;
+        if (dockTo == 0 && restore.DockId != 0) {
+            // Cut the slot again rather than dropping the window to a float that merely
+            // LOOKS docked — such a float survives until the user drags a dock splitter,
+            // at which point the panes resize out from under it and it visibly pops out.
+            dockTo = RebuildDockSlot(windowName, restore);
+        }
+        ImGui::SetNextWindowDockID(static_cast<ImGuiID>(dockTo), ImGuiCond_Always);
+        if (dockTo == 0) {
             ImGui::SetNextWindowPos(ImVec2(restore.PosX, restore.PosY), ImGuiCond_Always);
             if (restore.SizeX > 0.0f && restore.SizeY > 0.0f) {
                 ImGui::SetNextWindowSize(ImVec2(restore.SizeX, restore.SizeY), ImGuiCond_Always);
@@ -158,6 +218,20 @@ void BeginWindow(UiDrawSession& d, const char* windowName) {
     }
     if (s.ExpandedId != id) {
         return;
+    }
+    // Undock ONCE, explicitly, KEEPING the window's persistent dock ref. ImGui only
+    // destroys an emptied leaf when the departing window cleared that ref — see
+    // DockNodeRemoveWindow's `window->DockId != node->ID` guard. Letting
+    // SetNextWindowDockID(0) perform the undock clears it, so expanding the LAST tab
+    // out of a node kills the node. Its id is a canonical layout constant that other
+    // windows replay verbatim, and docking into a dead id does not fail loudly:
+    // DockContextBindNodeToWindow mints an orphan root inheriting the window's current
+    // rect — a float that merely LOOKS docked until a splitter drag resizes the real
+    // panes out from under it.
+    ImGuiWindow* expanded = ImGui::FindWindowByName(windowName);
+    if (expanded != NULL && expanded->DockNode != NULL) {
+        ImGui::DockContextProcessUndockWindow(ImGui::GetCurrentContext(), expanded,
+                                              /*clear_persistent_docking_ref=*/false);
     }
     // Re-pinned every frame: a docked sibling being dragged, or an .ini reload,
     // would otherwise pull the fullscreen window back into the tree.

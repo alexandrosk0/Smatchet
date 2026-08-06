@@ -29,6 +29,7 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
+#include "Logger.h" // splitter-drag case reports its phases to the app log
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 
@@ -45,6 +46,9 @@ namespace {
 
 const char* const kLogWindow = "Log";
 const char* const kAuditWindow = "Backend Audit";
+// Views' visible label carries the backend name, so it is addressed by its
+// ###-suffix id (ImHashStr restarts the hash there, so this resolves).
+const char* const kViewsWindow = "###SmatchetViewsDashboard";
 // The bootstrap grid pane keeps the legacy window name (SmatchetActiveProjectGridUi.cpp).
 const char* const kMainPane = "Smatchet - Active Project";
 // Must match SmatchetWindowExpand.cpp's kToggleLabel.
@@ -184,8 +188,10 @@ bool OpenWindow(ImGuiTestContext* ctx, bool UiDrawSession::* openFlag, bool UiDr
 struct WindowExpandSessionGuard {
     bool showLog;
     bool showAudit;
+    bool showViews;
 
-    WindowExpandSessionGuard() : showLog(g_ui.showLogWindow), showAudit(g_ui.showAuditTrail) {}
+    WindowExpandSessionGuard()
+        : showLog(g_ui.showLogWindow), showAudit(g_ui.showAuditTrail), showViews(g_ui.showViewsDashboard) {}
 
     ~WindowExpandSessionGuard() {
         const unsigned int expanded = g_ui.windowExpand.ExpandedId;
@@ -198,6 +204,11 @@ struct WindowExpandSessionGuard {
         }
         g_ui.showLogWindow = showLog;
         g_ui.showAuditTrail = showAudit;
+        // Every flag this suite can flip, not just the ones the oldest cases used:
+        // the splitter case opens Views, and it is registered FIRST, so a missing
+        // restore here leaks a visible dashboard into every later case and into the
+        // dev's own config.
+        g_ui.showViewsDashboard = showViews;
     }
 };
 
@@ -457,6 +468,16 @@ void RegisterStaleDockNodeRestoreFallsBack(ImGuiTestEngine* engine) {
             return;
         }
         saved->second.DockId = static_cast<unsigned int>(kStaleNodeId);
+        // Clear the split record too, or this stops being the test it claims to be:
+        // those fields still name LIVE nodes, so the restore would take RebuildDockSlot
+        // and re-cut the layout (DockNodeTreeSplit re-parents the whole subtree and
+        // renames settings refs) instead of reaching the float-rect terminal fallback
+        // this case exists to cover — and the fresh split would outlive the cleanup
+        // below, which only removes kStaleNodeId.
+        saved->second.SplitParentId = 0;
+        saved->second.SplitSiblingId = 0;
+        saved->second.SplitDir = -1;
+        saved->second.SplitRatio = 0.5f;
         IM_CHECK_NO_RET(ImGui::DockBuilderGetNode(kStaleNodeId) == nullptr);
 
         SmatchetWindowExpand::ToggleWindow(g_ui, kLogWindow);
@@ -521,9 +542,200 @@ void RegisterMainPaneExpandsWithTitleBar(ImGuiTestEngine* engine) {
     };
 }
 
+// --- resizing the dock tree must not pop a restored window out of it --------
+// Reported from manual verification: minimize a window (e.g. Views), then drag
+// the splitter between two docked areas, and the restored window undocks. The
+// control phase drags the same splitter BEFORE any expand, so a failure there
+// says the undock predates this feature rather than following from the restore.
+
+// Every ancestor that actually splits — each one owns a draggable splitter, and
+// the report does not say WHICH border was dragged, so the case sweeps them all
+// (a leaf typically sits under both a vertical and a horizontal one).
+// Ids, not pointers: a drag yields whole frames, and any docking mutation in one
+// of them can free a node — a cached ImGuiDockNode* would dangle. Every use
+// re-resolves through DockBuilderGetNode.
+void CollectSplitAncestors(const ImGuiDockNode* node, ImVector<ImGuiID>& out) {
+    out.clear();
+    for (const ImGuiDockNode* walk = node; walk != nullptr; walk = walk->ParentNode) {
+        const ImGuiDockNode* parent = walk->ParentNode;
+        if (parent != nullptr && parent->ChildNodes[0] != nullptr && parent->ChildNodes[1] != nullptr) {
+            out.push_back(parent->ID);
+        }
+    }
+}
+
+// Drags `splitId`'s splitter by `delta` pixels along its axis. False when the node
+// is gone or its geometry gives nothing grabbable (degenerate / zero-sized children).
+bool DragSplitter(ImGuiTestContext* ctx, ImGuiID splitId, float delta) {
+    const ImGuiDockNode* split = ImGui::DockBuilderGetNode(splitId);
+    if (split == nullptr) {
+        return false;
+    }
+    const ImGuiDockNode* first = split->ChildNodes[0];
+    const ImGuiDockNode* second = split->ChildNodes[1];
+    if (first == nullptr || second == nullptr) {
+        return false;
+    }
+    const ImGuiID firstId = first->ID;
+    const ImGuiAxis axis = split->SplitAxis;
+    if (axis != ImGuiAxis_X && axis != ImGuiAxis_Y) {
+        return false;
+    }
+    // The splitter fills the gap the two children leave between them.
+    const float firstEnd = (axis == ImGuiAxis_X) ? (first->Pos.x + first->Size.x) : (first->Pos.y + first->Size.y);
+    const float secondStart = (axis == ImGuiAxis_X) ? second->Pos.x : second->Pos.y;
+    const float along = (firstEnd + secondStart) * 0.5f;
+    // Across the splitter: the middle of the shared span.
+    const float acrossMin = (axis == ImGuiAxis_X) ? split->Pos.y : split->Pos.x;
+    const float acrossSize = (axis == ImGuiAxis_X) ? split->Size.y : split->Size.x;
+    if (acrossSize <= 2.0f * kRectEpsilon) {
+        return false;
+    }
+    const float across = acrossMin + acrossSize * 0.5f;
+    const ImVec2 grab = (axis == ImGuiAxis_X) ? ImVec2(along, across) : ImVec2(across, along);
+
+    const float sizeBefore = (axis == ImGuiAxis_X) ? first->Size.x : first->Size.y;
+    ctx->MouseMoveToPos(grab);
+    ctx->MouseDown(0);
+    // Several steps: a single jump can land outside the splitter's grab logic.
+    for (int step = 1; step <= 4; ++step) {
+        const float moved = delta * (static_cast<float>(step) / 4.0f);
+        ctx->MouseMoveToPos((axis == ImGuiAxis_X) ? ImVec2(along + moved, across) : ImVec2(across, along + moved));
+        ctx->Yield();
+    }
+    ctx->MouseUp(0);
+    ctx->Yield(3);
+    // Re-resolved: `first` may have been freed by a docking mutation during the yields.
+    const ImGuiDockNode* firstAfter = ImGui::DockBuilderGetNode(firstId);
+    if (firstAfter == nullptr) {
+        return false;
+    }
+    const float sizeAfter = (axis == ImGuiAxis_X) ? firstAfter->Size.x : firstAfter->Size.y;
+    // A drag that moved nothing proves nothing — say so rather than passing.
+    LOG_INFO("SplitterDrag: axis=%d grab=(%.1f,%.1f) delta=%.1f size %.1f -> %.1f", static_cast<int>(axis), grab.x,
+             grab.y, delta, sizeBefore, sizeAfter);
+    return ImFabs(sizeAfter - sizeBefore) > kRectEpsilon;
+}
+
+// Lifts the Views first-launch gate for one scope and puts it back.
+struct BackendReachableOverride {
+    bool Previous;
+    BackendReachableOverride() : Previous(g_ui.cfg.BackendHasBeenReachable) { g_ui.cfg.BackendHasBeenReachable = true; }
+    ~BackendReachableOverride() { g_ui.cfg.BackendHasBeenReachable = Previous; }
+};
+
+// 0 when the window is absent or floating.
+unsigned int CurrentDockId(const char* title) {
+    const ImGuiWindow* win = ImGui::FindWindowByName(title);
+    if (win == nullptr || win->DockNode == nullptr) {
+        return 0u;
+    }
+    return static_cast<unsigned int>(win->DockNode->ID);
+}
+
+bool StillDocked(const char* title, unsigned int dockId) {
+    const ImGuiWindow* win = ImGui::FindWindowByName(title);
+    return win != nullptr && win->DockNode != nullptr && static_cast<unsigned int>(win->DockNode->ID) == dockId;
+}
+
+// Drags every splitter around `title`'s node. Returns false if the window is not
+// docked (nothing to prove); otherwise asserts it is still in its node after each
+// drag. `phase` only names the run in the log.
+bool SweepSplittersAround(ImGuiTestContext* ctx, const char* title, const char* phase, float delta) {
+    const ImGuiWindow* win = ImGui::FindWindowByName(title);
+    if (win == nullptr || win->DockNode == nullptr) {
+        LOG_WARN("SplitterDrag[%s]: '%s' is not docked in this boot — nothing to resize", phase, title);
+        return false;
+    }
+    const unsigned int dockId = static_cast<unsigned int>(win->DockNode->ID);
+    ImVector<ImGuiID> splits;
+    CollectSplitAncestors(win->DockNode, splits);
+    if (splits.empty()) {
+        LOG_WARN("SplitterDrag[%s]: '%s' sits in an unsplit dock tree", phase, title);
+        return false;
+    }
+    bool anyMoved = false;
+    for (int i = 0; i < splits.Size; ++i) {
+        const bool moved = DragSplitter(ctx, splits[i], delta);
+        anyMoved = anyMoved || moved;
+        const bool docked = StillDocked(title, dockId);
+        LOG_INFO("SplitterDrag[%s]: '%s' node=%08X split=%08X moved=%d docked=%d", phase, title, dockId,
+                 static_cast<unsigned int>(splits[i]), moved ? 1 : 0, docked ? 1 : 0);
+        IM_CHECK_NO_RET(docked);
+        // Put it back so the next drag starts from the same layout.
+        DragSplitter(ctx, splits[i], -delta);
+        IM_CHECK_NO_RET(StillDocked(title, dockId));
+    }
+    // Asserted, not merely logged: if every grab point missed its splitter (geometry
+    // drift, a DockingSeparatorSize change, a node laid out at 0x0), each drag is a
+    // no-op, `docked` is trivially true, and the sweep goes green having resized
+    // nothing. An individual splitter may legitimately refuse to move (already at a
+    // child's minimum), so the bar is at least one real movement per sweep.
+    IM_CHECK_NO_RET(anyMoved);
+    return true;
+}
+
+// One window: sweep the splitters, expand, minimize, sweep again.
+// `splitTreeRequired` makes the control phase an assertion rather than a skip — the
+// id check below is the ONLY coverage of the bug this feature fixes, so at least one
+// subject must be a deterministic split-tree resident (Log, in a throwaway test home).
+// Without it a boot that brings every window up floating passes with zero assertions.
+void RunSplitterCase(ImGuiTestContext* ctx, const char* title, bool splitTreeRequired) {
+    const bool swept = SweepSplittersAround(ctx, title, "control", -24.0f);
+    if (splitTreeRequired) {
+        IM_CHECK_NO_RET(swept);
+    }
+    const unsigned int dockBefore = CurrentDockId(title);
+    SmatchetWindowExpand::ToggleWindow(g_ui, title);
+    IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return CoversWorkArea(title); }));
+    SmatchetWindowExpand::ToggleWindow(g_ui, title);
+    IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return !FootprintCoversWorkArea(title); }));
+    ctx->Yield(4);
+    // Same NODE, not merely the same place. Rebuilding an equivalent slot mints a
+    // fresh auto-generated id (DockBuilderSplitNode returns a child id, never the
+    // caller's), which leaves the canonical layout constant dead for every other
+    // window that replays it — those then dock into nothing and float on a
+    // remembered rect. Expanding must preserve the id, not re-cut the layout.
+    const unsigned int dockAfter = CurrentDockId(title);
+    LOG_INFO("SplitterDrag[node-id]: '%s' before=%08X after=%08X", title, dockBefore, dockAfter);
+    IM_CHECK_NO_RET(dockAfter == dockBefore);
+    if (swept) {
+        // The control phase proved this window sits in a split tree, so a post-minimize
+        // sweep that finds no splitter is the bug itself (restored as a float parked on
+        // the old rect), not a layout this boot cannot exercise — fail rather than warn.
+        IM_CHECK_NO_RET(SweepSplittersAround(ctx, title, "post-minimize", -24.0f));
+    }
+}
+
+void RegisterSplitterDragAfterMinimizeKeepsDocking(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "WindowExpand", "SplitterDragAfterMinimizeKeepsDocking");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (BootedAppOrSkip(ctx) == nullptr) {
+            return;
+        }
+        WindowExpandSessionGuard guard;
+
+        IM_CHECK_NO_RET(OpenWindow(ctx, &UiDrawSession::showLogWindow, &UiDrawSession::requestLogFocus, kLogWindow));
+        RunSplitterCase(ctx, kLogWindow, /*splitTreeRequired=*/true);
+
+        // Views hides behind a first-launch gate (no backend has ever been
+        // reachable in a throwaway test home), so lift it for this test only.
+        // RAII, so an early exit added later cannot leak the override into siblings.
+        BackendReachableOverride reachable;
+        const bool viewsOpen = OpenWindow(ctx, &UiDrawSession::showViewsDashboard,
+                                          &UiDrawSession::requestViewsDashboardFocus, kViewsWindow);
+        if (viewsOpen) {
+            RunSplitterCase(ctx, kViewsWindow, /*splitTreeRequired=*/false);
+        } else {
+            LOG_WARN("SplitterDrag: '%s' did not come up in this boot", kViewsWindow);
+        }
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine) {
+    RegisterSplitterDragAfterMinimizeKeepsDocking(engine);
     RegisterExpandThenMinimize(engine);
     RegisterSecondExpandMinimizesFirst(engine);
     RegisterClosedWhileExpandedSelfHeals(engine);
