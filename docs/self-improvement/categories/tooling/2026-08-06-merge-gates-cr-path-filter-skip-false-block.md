@@ -23,7 +23,7 @@
     the required, fail-closed gate that already decided — and when it does, the only exit is the
     `cr-out-of-band` label, i.e. the bug manufactures override use on exactly the diffs (docs-only)
     that least need one.
-  Concrete next action: two changes in `agents/scripts/core/merge-gates.sh`, plus test pins.
+  Concrete next action: three changes in `agents/scripts/core/merge-gates.sh`, plus test pins.
     (1) **Narrow `$crskip`** — drop the bare `contains("skip review by coderabbit.ai")` disjunct (it is a
     generic skip marker, not a size marker) and keep only the size-specific test, i.e.
     `any(test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files")))`.
@@ -34,10 +34,16 @@
     already required and already fail-closed (it returns non-terminal rather than guess), so a poller
     re-derivation that disagrees with it can only produce a false block, never catch a real escape.
     Order it ahead of the `case NONE` chain.
-    (3) **Pin both in `tests/bats/merge_gates.bats`**: (a) path-filter skip comment + `CR findings`
+    (3) **Name the contradiction instead of blocking generically** — when the CR bucket is about to
+    BLOCK while `CR findings (0 actionable)` is SUCCESS on that head, the state is by construction a
+    poller bug, not a PR problem: exit with a distinct outcome (`GATES_POLLER_CONTRADICTION`) naming
+    both verdicts. A generic BLOCK routes a session to `cr-out-of-band` or an out-of-band merge (both
+    observed on #1953 — see `docs/self-improvement/postmortems.md`, 2026-08-06 · PR #1953); a named
+    contradiction routes it to a bug report.
+    (4) **Pin all of it in `tests/bats/merge_gates.bats`**: (a) path-filter skip comment + `CR findings`
     SUCCESS → PASS; (b) `## Review skipped` + "too many files" → still BLOCK (the #638-reorg contract
     preserved); (c) `CR findings` SUCCESS + any skip comment → PASS via the new precedence rule.
-    Est ~0.5d (jq edit + precedence arm + 3 bats cases).
+    Est ~0.5d (jq edit + precedence arm + contradiction outcome + 3 bats cases).
   Cross-ref: `agents/scripts/core/merge-gates.sh` (:552-554 `$crskip`, :564-569 `$crreviewskipped`,
     :937-980 the `case NONE` arms, :1164-1167 the size-skip override message); PR #1953 (the observed
     false-block; merged externally at `ec41fe86`); `.coderabbit.yaml` (`!docs/self-improvement/**` path

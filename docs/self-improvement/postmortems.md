@@ -34,6 +34,83 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-06 · PR #1953 · merged out-of-band while the gate-poller held a BLOCK the repo's own required CR gate had already contradicted
+
+### What escaped
+`docs(self-improvement): CR finding gate wedges on empty-body CR review` (#1953) merged to `develop`
+at `2026-08-06T01:58:32Z` as `ec41fe86` with **no override label** — while a registered
+`merge-gates.sh` poller for that same PR was running to `GATES_TIMEOUT` at poll 60/60, printing
+`BLOCK: CodeRabbit skipped review — too many files (exceeds CR file limit); split the PR` against a
+**one-file** diff. The merge itself was safe (CI 22/22, `CR findings (0 actionable)` SUCCESS, no
+unresolved threads) and a sibling session merging an open green PR on the shared login is documented
+expected behaviour, not a fault ([`process-rules.md`](../agent-rules/process-rules.md) § Git/p4
+discipline). What escaped is the **control**: the sanctioned merge path was structurally unusable, so
+the PR landed on a path the poller never saw. No signal records that — `postmortem-owed.sh --list`
+reports clean (no label, no red check, no `Revert`), exactly as for the `#1948` entry below but for
+the opposite reason.
+
+### Root cause
+Blameless — **the poller re-derives a CodeRabbit verdict that a required, fail-closed gate has already
+issued, and can therefore contradict it.** `agents/scripts/core/merge-gates.sh:552-554` computes:
+
+```
+any(contains("skip review by coderabbit.ai")
+    or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))
+```
+
+The first disjunct matches `<!-- This is an auto-generated comment: skip review by coderabbit.ai -->`,
+the marker CR emits for **every** skip reason — path filters, docs-only, trivial diff, too-many-files
+alike. #1953 was skipped by the `!docs/self-improvement/**` path filter in `.coderabbit.yaml`; its
+comment contains no "too many files" text at all. But `$crskip` fires anyway, and the `case NONE`
+size-skip arm (:957-961) is a deliberate hard short-circuit — added to close the hole that let a
+638-file reorg merge unreviewed — so it sets `cr_pass=false` **before** the correct
+`$crreviewskipped` PASS arm (:564-569) can run. That arm would not have saved it either: it keys on
+the `CodeRabbit` StatusContext *description* matching "review skipped", and on #1953 that description
+read `Review completed`. CR's status text and its own comment text disagree about the same run, so
+the fallback is keyed on a field that does not carry the fact.
+
+Meanwhile the repo's own **required** StatusContext had already ruled: `CR findings (0 actionable)`
+= SUCCESS, description `self-improvement-only diff (1 file(s) under docs/self-improvement/**) — CR
+review exempt`. That gate is required *and* fail-closed (it returns non-terminal rather than guess —
+see the `#1948` entry, where that property wedges a PR rather than passing it). A second, independent
+re-derivation sitting downstream of it can only ever produce a **false block**; it cannot catch an
+escape the required gate missed, because the required gate does not pass on ambiguity.
+
+Given that BLOCK, a session has exactly two exits, and both erode a gate: apply `cr-out-of-band` —
+manufacturing override use on precisely the diffs (docs-only, CR-exempt) that least need one and
+poisoning the override-label signal `postmortem-owed.sh` depends on — or merge outside the poller,
+which is what happened. The bug's real cost is not the blocked PR; it is that it trains both exits.
+
+### Preventing gate
+**Let the required gate win, and stop guessing skip reasons.** Two changes in `merge-gates.sh`,
+already specified in the filed tooling entry: (1) drop the bare
+`contains("skip review by coderabbit.ai")` disjunct from `$crskip` and keep only the size-specific
+test — a genuine too-many-files skip carries that exact phrase, so the #638-reorg contract is
+preserved while a path-filter skip falls through to the terminal-pass arms; (2) order a precedence
+arm ahead of the `case NONE` chain so that `CR findings (0 actionable)` SUCCESS on the current head
+passes the CR bucket outright, with no re-derivation.
+
+**Third, make the contradiction loud instead of silent.** When the poller is about to BLOCK on the CR
+bucket while `CR findings (0 actionable)` is SUCCESS on that head, that state is by construction a
+poller bug, not a PR problem — it must exit with a distinct outcome (e.g. `GATES_POLLER_CONTRADICTION`)
+naming both verdicts, not a generic `BLOCK` that reads as "this PR is unsafe". A generic block is what
+routes a session to an override label or an out-of-band merge; a named contradiction routes it to a
+bug report. Pin all three in `tests/bats/merge_gates.bats`: path-filter skip + `CR findings` SUCCESS
+→ PASS; `## Review skipped` + "too many files" → still BLOCK; skip comment + `CR findings` SUCCESS
+→ PASS via the precedence rule, never `BLOCK`.
+
+### Eval case
+none — not agent-reviewable. The defect is a jq predicate and an arm-ordering decision inside the
+gate poller itself; #1953's diff was a single self-improvement markdown file. No reviewer scoring that
+diff could surface it, and the misclassification is invisible from the change under review.
+
+### Filed as
+[`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
+(P1, tooling — carries all three changes above).
+
+Mirror image of the `#1948` entry below: same CR path, opposite sign — that one a gate that cannot
+reach a verdict, this one a poller that reaches the wrong one over a gate that already had.
+
 ## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
 
 ### What escaped
@@ -100,8 +177,8 @@ defect lives in the gate machinery, not the change under review.
 (b) [`categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md`](categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md)
 (P2, process).
 
-Sibling non-escape found while auditing this one — a poller **false-block**, opposite sign, no
-postmortem owed:
+Sibling hole found while auditing this one — a poller **false-block**, opposite sign, filed as its own
+entry above (`2026-08-06 · PR #1953`) plus
 [`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
 (P1, tooling).
 
