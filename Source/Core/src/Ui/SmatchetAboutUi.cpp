@@ -1,7 +1,8 @@
 // SmatchetAboutUi — the "About Smatchet" modal. Renders the diagnostics::AboutInfo
-// snapshot (version / build / git / runtime / third-party) and offers the three
-// actions a user actually needs from an About box: open the repo, check for
-// updates, and copy the whole thing for a bug thread.
+// snapshot (version / build / git / runtime / third-party) and offers the two
+// actions a user actually needs from an About box: open the repo and copy the
+// whole thing for a bug thread. Deliberately no "Check for Updates" — Help
+// already owns that item, and a second entry point is pure duplication.
 // This TU is render-only: every fact comes from AboutInfo.cpp, which is the sole
 // includer of the generated SmatchetBuildInfo.h. Nothing here touches CMake
 // codegen, and nothing here re-derives a value.
@@ -26,16 +27,11 @@
 // Routes all ImGui::* calls in this TU through the localization wrapper.
 #define ImGui SmatchetLocalizedImGui
 
+#include <cfloat>
+#include <cstring>
 #include <memory>
 #include <string>
-
-// Declared in SmatchetUI_MainMenu.cpp / SmatchetUI.cpp; reused verbatim so the
-// About dialog's update button behaves exactly like the Help-menu entry.
-namespace smatchet {
-namespace ui_detail {
-void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual);
-} // namespace ui_detail
-} // namespace smatchet
+#include <vector>
 
 namespace {
 
@@ -53,6 +49,64 @@ struct AboutDrawCtx {
     const AboutInfo& info;
 };
 
+/// Renders `value` as a frameless read-only InputText rather than static text, so
+/// the user can drag-select part of a SHA or a path and Ctrl+C it — ImGui gates
+/// cut/paste/undo on !ReadOnly but never copy.
+/// The per-frame buffer copy is deliberate and safe: ImGui's read-only path reads
+/// straight from the caller's buffer, never writes to it, and only dereferences it
+/// for the duration of the call ("For _ReadOnly fields, pointer will be null
+/// outside the InputText() call", imgui_internal.h). So there is no cross-frame
+/// lifetime to manage and no const_cast onto the std::string's own storage.
+/// `width` 0 fills the remaining space; a positive value fits the field to its
+/// text so a SameLine() can follow. `dim` renders in the disabled text colour,
+/// matching the TextDisabled() call this replaced.
+void SelectableValue(const char* id, const std::string& value, float width = 0.0f, bool dim = false) {
+    const char* text = value.empty() ? "unknown" : value.c_str();
+    const std::size_t len = std::strlen(text);
+    std::vector<char> buf(text, text + len + 1);
+
+    // Only FrameBg is cleared — FrameBgHovered/Active stay, and that hover
+    // highlight is the affordance that tells the user the value is selectable.
+    ::ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    if (dim) {
+        ::ImGui::PushStyleColor(ImGuiCol_Text, ::ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    }
+    // Zero padding so the field is exactly one text line tall and every row keeps
+    // the height it had while these were Text() calls.
+    ::ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(0.0f, 0.0f));
+    ::ImGui::SetNextItemWidth(width > 0.0f ? width : -FLT_MIN);
+    ::ImGui::InputText(id, buf.data(), buf.size(), ImGuiInputTextFlags_ReadOnly);
+    ::ImGui::PopStyleVar();
+    ::ImGui::PopStyleColor(dim ? 2 : 1);
+
+    // The field clips and scrolls instead of wrapping, so anything wider than its
+    // column needs the whole value on hover.
+    if (::ImGui::CalcTextSize(text).x > ::ImGui::GetItemRectSize().x) {
+        ::ImGui::SetItemTooltip("%s", text);
+    }
+}
+
+/// Right-click menu for the item drawn immediately before the call. Left-click is
+/// deliberately NOT a link activation: the values are text-selectable now, and a
+/// stray click while selecting must never launch a browser.
+void LinkContextMenu(const AboutDrawCtx& ctx, const char* popupId, const std::string& url) {
+    if (url.empty()) {
+        return;
+    }
+    if (!::ImGui::BeginPopupContextItem(popupId)) {
+        return;
+    }
+    if (ImGui::MenuItem("Open in Browser")) {
+        // Same allowlisted, host-indirected path the "Open on GitHub" button uses.
+        ctx.app.OpenUrl(url);
+    }
+    if (ImGui::MenuItem("Copy Link")) {
+        ::ImGui::SetClipboardText(url.c_str());
+        SmatchetToastManager::Instance().Push("About", "Link copied to clipboard.", ToastType::Success, 2500);
+    }
+    ::ImGui::EndPopup();
+}
+
 /// Two-column key/value table. Keys are localized; values NEVER are — a SHA, a
 /// compiler version or a filesystem path must stay copy-pasteable verbatim.
 bool BeginFactTable(const char* id) {
@@ -64,6 +118,10 @@ bool BeginFactTable(const char* id) {
     return true;
 }
 
+/// One key/value row. The value is a SelectableValue, which also subsumes what the
+/// old FactRowWrapped() existed for: a long path or SHA is bounded by its column
+/// and scrolls inside the field instead of wrapping the modal wider, and the full
+/// text is one hover away.
 void FactRow(const char* label, const std::string& value) {
     ::ImGui::TableNextRow();
     ::ImGui::TableSetColumnIndex(0);
@@ -71,25 +129,23 @@ void FactRow(const char* label, const std::string& value) {
     // string is both a -Wformat-security warning and a varargs hazard.
     ::ImGui::TextDisabled("%s", SmatchetLocalization::TranslateSource(label));
     ::ImGui::TableSetColumnIndex(1);
-    ::ImGui::TextUnformatted(value.empty() ? "unknown" : value.c_str());
-}
-
-/// Same as FactRow but wraps the value — for filesystem paths and URLs, which
-/// would otherwise stretch the modal off-screen.
-void FactRowWrapped(const char* label, const std::string& value) {
-    ::ImGui::TableNextRow();
-    ::ImGui::TableSetColumnIndex(0);
-    ::ImGui::TextDisabled("%s", SmatchetLocalization::TranslateSource(label));
-    ::ImGui::TableSetColumnIndex(1);
-    ::ImGui::TextWrapped("%s", value.empty() ? "unknown" : value.c_str());
+    // The label is unique within its table, so it is the row's ID scope; the
+    // field itself only needs a hidden ("##") label.
+    ::ImGui::PushID(label);
+    SelectableValue("##value", value);
+    ::ImGui::PopID();
 }
 
 void DrawAboutIdentity(const AboutDrawCtx& ctx) {
     ImGui::Text("%s", ctx.info.AppName.c_str());
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", ctx.info.Version.c_str());
+    // Width-fitted so the version keeps sitting beside the name; it is the single
+    // most-copied value in the dialog, so it is selectable like the rest.
+    SelectableValue("##about.version", ctx.info.Version,
+                    ::ImGui::CalcTextSize(ctx.info.Version.c_str()).x + 4.0f, true);
     if (!ctx.info.RepoUrl.empty()) {
-        ImGui::TextDisabled("%s", ctx.info.RepoUrl.c_str());
+        SelectableValue("##about.repo", ctx.info.RepoUrl, 0.0f, true);
+        LinkContextMenu(ctx, "##about.repo.menu", ctx.info.RepoUrl);
     }
 }
 
@@ -118,7 +174,7 @@ void DrawAboutGit(const AboutDrawCtx& ctx) {
     // Full SHA on its own row: the one-line form above is abbreviated, and a bug
     // thread wants the unambiguous 40-char value.
     if (!ctx.info.Git.Sha.empty() && ctx.info.Git.Sha != ctx.info.Git.ShaShort) {
-        FactRowWrapped("full sha", ctx.info.Git.Sha);
+        FactRow("full sha", ctx.info.Git.Sha);
     }
     ::ImGui::EndTable();
 }
@@ -136,8 +192,8 @@ void DrawAboutRuntime(const AboutDrawCtx& ctx) {
         FactRow("host cpu", r.NativeArch + (r.Emulated ? " (emulated)" : ""));
     }
     FactRow("tracker", r.Tracker);
-    FactRowWrapped("data dir", r.UserDataDir);
-    FactRowWrapped("config", r.ConfigPath);
+    FactRow("data dir", r.UserDataDir);
+    FactRow("config", r.ConfigPath);
     ::ImGui::EndTable();
 }
 
@@ -151,11 +207,19 @@ void DrawAboutCredits(const AboutDrawCtx& ctx) {
     ::ImGui::BeginChild("AboutCredits", ImVec2(0.0f, 132.0f), ImGuiChildFlags_Borders);
     for (std::size_t i = 0; i < ctx.info.Deps.size(); ++i) {
         const AboutDep& dep = ctx.info.Deps[i];
-        ImGui::Text("%s %s", dep.Name.c_str(), dep.Version.c_str());
+        ::ImGui::PushID(static_cast<int>(i));
+        // Name and version as one selectable run: that is what a user pastes when
+        // reporting "which build of X am I on".
+        const std::string nameAndVersion = dep.Name + " " + dep.Version;
+        SelectableValue("##dep", nameAndVersion, ::ImGui::CalcTextSize(nameAndVersion.c_str()).x + 4.0f);
+        // dep.Url comes straight from the CMake dependency manifest and had no
+        // surface in the UI until now.
+        LinkContextMenu(ctx, "##dep.menu", dep.Url);
         if (!dep.License.empty()) {
             ImGui::SameLine();
             ImGui::TextDisabled("%s", dep.License.c_str());
         }
+        ::ImGui::PopID();
     }
     ::ImGui::EndChild();
 }
@@ -168,13 +232,6 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
         // OpenUrl carries the scheme allowlist + the host-callback indirection
         // that keeps this safe under Unreal.
         ctx.app.OpenUrl(ctx.info.RepoUrl);
-    }
-    ::ImGui::EndDisabled();
-
-    ImGui::SameLine();
-    ::ImGui::BeginDisabled(d.appUpdateCheckInFlight);
-    if (ImGui::Button("Check for Updates")) {
-        smatchet::ui_detail::StartAppUpdateCheck(d, ctx.app, true);
     }
     ::ImGui::EndDisabled();
 
@@ -236,6 +293,9 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
     DrawAboutGit(ctx);
     DrawAboutRuntime(ctx);
     DrawAboutCredits(ctx);
+    // Both affordances added below are invisible until used — a one-line hint is
+    // the whole discoverability story for them.
+    ImGui::TextDisabled("Select any value to copy it. Right-click a link for actions.");
     ImGui::Separator();
     DrawAboutActions(ctx);
 
