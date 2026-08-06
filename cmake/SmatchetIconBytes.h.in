@@ -1,0 +1,22 @@
+#pragma once
+// AUTO-GENERATED at configure time from Source/Standalone/smatchet.ico by CMakeLists.txt
+// (template: cmake/SmatchetIconBytes.h.in). Do not edit, do not commit.
+//
+// The About dialog draws the real app icon, and the only icon asset in the tree is the Win32
+// resource .ico. Baking its bytes keeps that single source of truth: no second copy of the artwork
+// to drift, no runtime file lookup (which has no meaningful answer inside the Unreal plugin), and
+// nothing new to ship next to the executable. Unpacked by Source/Core/src/Persistence/SmatchetIcoDecode.cpp.
+//
+// Included by EXACTLY ONE TU (Source/Core/src/Ui/SmatchetAboutIcon.cpp) and never packaged into
+// the Unreal plugin — same invariant as SmatchetBuildInfo.h.
+
+#define SMATCHET_ICON_BYTES_AVAILABLE @SMATCHET_ICON_AVAILABLE@
+
+#if SMATCHET_ICON_BYTES_AVAILABLE
+
+// @SMATCHET_ICON_BYTE_COUNT@ bytes of .ico container, verbatim.
+static const unsigned char kSmatchetIconIcoBytes[] = {
+    @SMATCHET_ICON_BYTES@
+};
+
+#endif // SMATCHET_ICON_BYTES_AVAILABLE

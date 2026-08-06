@@ -18,9 +18,12 @@
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=calls OpenUrl/GetAppVersion; owner=alexk; revisit=2026-12-31)
 #include "AppController.h"
 #include "Diagnostics/AboutInfo.h"
+#include "IconsFontAwesome6.h"
 #include "Privacy/TextRedaction.h"
+#include "SmatchetImGuiFonts.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetAboutIcon.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -136,17 +139,102 @@ void FactRow(const char* label, const std::string& value) {
     ::ImGui::PopID();
 }
 
+const float kAboutIconSize = 48.0f;
+
+// Rocket-launch easter egg (Ctrl+Shift+click the icon). Three phases: an accelerating climb out
+// of the modal, a beat spent off-frame, then a free-fall back into the slot.
+const double kRocketAscentSecs = 0.55;
+const double kRocketAwaySecs = 0.25;
+const double kRocketReturnSecs = 0.70;
+const double kRocketTotalSecs = kRocketAscentSecs + kRocketAwaySecs + kRocketReturnSecs;
+/// Apex offset. Only the first ~200 px are ever visible — the window clip rect swallows the rest —
+/// but a large value is what makes the exit read as "gone", not "parked above the title bar".
+const float kRocketApexPx = 900.0f;
+
+/// Vertical offset above the resting slot at `elapsed` seconds into the launch.
+/// @return false during the coast phase, where the icon is off-frame and must not be drawn at all.
+bool RocketOffsetAt(double elapsed, float& outDy) {
+    if (elapsed < kRocketAscentSecs) {
+        const float u = static_cast<float>(elapsed / kRocketAscentSecs);
+        outDy = kRocketApexPx * u * u; // Quadratic: slow off the pad, fast at the top.
+        return true;
+    }
+    if (elapsed < kRocketAscentSecs + kRocketAwaySecs) {
+        return false;
+    }
+    const float u = static_cast<float>((elapsed - kRocketAscentSecs - kRocketAwaySecs) / kRocketReturnSecs);
+    outDy = kRocketApexPx * (1.0f - u * u); // Mirrored: drifts in, then drops the last stretch fast.
+    return true;
+}
+
+/// Exhaust plume under the icon, fading with distance from the nozzle and fading in with speed
+/// (dy stands in for velocity — it is small on the pad and at touchdown, large mid-flight).
+void DrawRocketTrail(ImDrawList* dl, const ImVec2& iconPos, float dy) {
+    float intensity = dy / 240.0f;
+    intensity = intensity > 1.0f ? 1.0f : intensity;
+    const char* flame = SmatchetAreFaIconsLoaded() ? ICON_FA_FIRE : "^";
+    for (int i = 1; i <= 4; ++i) {
+        const float t = static_cast<float>(i) / 4.0f;
+        const ImVec2 p(iconPos.x + kAboutIconSize * 0.34f, iconPos.y + kAboutIconSize * (0.75f + t * 0.9f));
+        const ImU32 col =
+            IM_COL32(255, static_cast<int>(190.0f - 120.0f * t), 40, static_cast<int>(220.0f * intensity * (1.0f - t)));
+        dl->AddText(::ImGui::GetFont(), kAboutIconSize * (0.55f - 0.09f * t), p, col, flame);
+    }
+}
+
+/// The app icon, drawn from the baked-in .ico via the texture cache, with a Font Awesome glyph
+/// fallback for renderers with no texture support (and for a build with no icon baked in).
+void DrawAboutIcon(const AboutDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+
+    // The hit target is the resting slot and never moves: the layout below cannot shift mid-flight,
+    // and a re-launch stays clickable while the icon is still in the air.
+    const ImVec2 slot = ::ImGui::GetCursorScreenPos();
+    ::ImGui::InvisibleButton("##about.icon", ImVec2(kAboutIconSize, kAboutIconSize));
+    const ImGuiIO& io = ::ImGui::GetIO();
+    if (::ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyCtrl && io.KeyShift) {
+        d.aboutRocketStart = ::ImGui::GetTime();
+    }
+
+    float dy = 0.0f;
+    if (d.aboutRocketStart >= 0.0) {
+        const double elapsed = ::ImGui::GetTime() - d.aboutRocketStart;
+        if (elapsed >= kRocketTotalSecs) {
+            d.aboutRocketStart = -1.0;
+        } else if (!RocketOffsetAt(elapsed, dy)) {
+            return; // Off-frame this beat.
+        }
+    }
+
+    const ImVec2 p(slot.x, slot.y - dy);
+    ImDrawList* dl = ::ImGui::GetWindowDrawList();
+    if (dy > 0.0f) {
+        DrawRocketTrail(dl, p, dy);
+    }
+    SmatchetLoadedIconTexture tex;
+    if (smatchet::ui::TryGetAboutIconTexture(tex)) {
+        dl->AddImage(tex.Texture->GetTexRef(), p, ImVec2(p.x + kAboutIconSize, p.y + kAboutIconSize));
+        return;
+    }
+    const char* glyph = SmatchetAreFaIconsLoaded() ? ICON_FA_CUBE : "[S]";
+    dl->AddText(::ImGui::GetFont(), kAboutIconSize * 0.8f, p, ::ImGui::GetColorU32(ImGuiCol_Text), glyph);
+}
+
 void DrawAboutIdentity(const AboutDrawCtx& ctx) {
+    DrawAboutIcon(ctx);
+    ::ImGui::SameLine();
+    ::ImGui::BeginGroup();
     ImGui::Text("%s", ctx.info.AppName.c_str());
     ImGui::SameLine();
     // Width-fitted so the version keeps sitting beside the name; it is the single
     // most-copied value in the dialog, so it is selectable like the rest.
-    SelectableValue("##about.version", ctx.info.Version,
-                    ::ImGui::CalcTextSize(ctx.info.Version.c_str()).x + 4.0f, true);
+    SelectableValue("##about.version", ctx.info.Version, ::ImGui::CalcTextSize(ctx.info.Version.c_str()).x + 4.0f,
+                    true);
     if (!ctx.info.RepoUrl.empty()) {
         SelectableValue("##about.repo", ctx.info.RepoUrl, 0.0f, true);
         LinkContextMenu(ctx, "##about.repo.menu", ctx.info.RepoUrl);
     }
+    ::ImGui::EndGroup();
 }
 
 void DrawAboutBuild(const AboutDrawCtx& ctx) {
@@ -224,6 +312,25 @@ void DrawAboutCredits(const AboutDrawCtx& ctx) {
     ::ImGui::EndChild();
 }
 
+/// Toast text for the Nth "Copy to Clipboard" press of the current open. The clipboard payload is
+/// identical every time, so the message is what escalates. Raw literals on purpose: toast strings do
+/// not route through the localization shim, so this adds no translation rows.
+const char* CopyToastText(int presses) {
+    if (presses <= 1) {
+        return "Build info copied to clipboard.";
+    }
+    if (presses == 2) {
+        return "Copied again.";
+    }
+    if (presses == 3) {
+        return "Still the same build.";
+    }
+    if (presses == 4) {
+        return "Yes, still the same build.";
+    }
+    return "I admire the persistence.";
+}
+
 void DrawAboutActions(const AboutDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
 
@@ -245,7 +352,8 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
         const std::string report =
             smatchet::privacy::RedactLogText(smatchet::diagnostics::BuildAboutReportText(ctx.info));
         ::ImGui::SetClipboardText(report.c_str());
-        SmatchetToastManager::Instance().Push("About", "Build info copied to clipboard.", ToastType::Success, 2500);
+        ++d.aboutCopyPresses;
+        SmatchetToastManager::Instance().Push("About", CopyToastText(d.aboutCopyPresses), ToastType::Success, 2500);
     }
 
     ImGui::SameLine();
@@ -255,11 +363,19 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
     }
 }
 
+/// Drop everything that only makes sense within one open: the cached snapshot (so the next open
+/// re-reads config), the copy-press counter, and any rocket still in the air.
+void ResetAboutTransient(UiDrawSession& d) {
+    d.aboutInfo.reset();
+    d.aboutCopyPresses = 0;
+    d.aboutRocketStart = -1.0;
+}
+
 } // namespace
 
 void DrawAboutModal(AppController& app, UiDrawSession& d) {
     if (!d.showAbout) {
-        d.aboutInfo.reset();
+        ResetAboutTransient(d);
         return;
     }
 
@@ -282,7 +398,7 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
             // Drop the flag and the snapshot so the next open re-reads config,
             // and so the menu item is not re-opening a popup ImGui already closed.
             d.showAbout = false;
-            d.aboutInfo.reset();
+            ResetAboutTransient(d);
         }
         return;
     }

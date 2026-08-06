@@ -977,6 +977,11 @@ add_executable(SmatchetTests
     Core/AboutInfo.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/AboutInfo.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/HostMachineInfo.cpp"
+    # Help > About app icon — the .ico unpacker behind the baked-in app icon. Pure byte parsing
+    # with no ImGui/texture dependency (the upload half lives in SmatchetImageTextureCache and is
+    # not linked here), so the truncation/malformed-header cases run headless.
+    Core/IcoDecode.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
