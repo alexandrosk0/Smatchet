@@ -35,7 +35,7 @@
         "msvc_toolset_pin": {
           "type": "string",
           "pattern": "^[0-9]+\\.[0-9]+$",
-          "description": "Optional, Windows-only. MSVC toolset version (major.minor) to pin vcvars64 to on a multi-VS box, so a newer side-by-side toolset doesn't load STL headers that break the cached cl.exe (STL1001). Read by scripts/dev/with-msvc-env.sh (bash) and build-msvc-asan.ps1 (PowerShell); overridable via $SMATCHET_VCVARS_VER."
+          "description": "Optional, Windows-only. MSVC toolset version (major.minor) to pin vcvars64 to on a multi-VS box, so a newer side-by-side toolset doesn't load STL headers that break the cached cl.exe (STL1001). Read by scripts/dev/with-msvc-env.sh (bash) and scripts/dev/local/build-msvc-asan.sh; overridable via $SMATCHET_VCVARS_VER."
         }
       }
     },

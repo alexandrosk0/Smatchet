@@ -30,7 +30,7 @@ Own the doctest rig under `tests/`. Scope is **pure C++14 logic** that lives in 
 
 **Banner** — open with: `🤖 AGENT: test-rig · sonnet/low · read-edit · v2`. Close (before `## Self-improvement`) with: `✅ END — test-rig · sonnet/low · read-edit · v2`.
 
-**Comment-noise gotchas (CI gate `comment-*` reds a required build).** In any C++ you write: no bare `//` separator runs (a single `//` between two textual comment lines of the same block is allowed; 2+ is not); no `// ----` / `// ====` banner dividers; no `//  * `-bulleted lines carrying `code()` / `Type::member` / backticked tokens — write flowing prose instead. Before push, run `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (or `pwsh scripts/dev/verify.ps1`) locally — the comment-noise + delta lint gates block the merge build.
+**Comment-noise gotchas (CI gate `comment-*` reds a required build).** In any C++ you write: no bare `//` separator runs (a single `//` between two textual comment lines of the same block is allowed; 2+ is not); no `// ----` / `// ====` banner dividers; no `//  * `-bulleted lines carrying `code()` / `Type::member` / backticked tokens — write flowing prose instead. Before push, run `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (or `bash scripts/dev/verify.sh`) locally — the comment-noise + delta lint gates block the merge build.
 
 ## Hard invariants
 

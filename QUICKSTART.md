@@ -28,20 +28,20 @@ installing so `PATH` picks the tools up.
 
 ## 3. Build and run
 
-```powershell
-.\build.ps1
+```bash
+./build.sh
 ```
 
-That's it. `build.ps1` picks a preset (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
+That's it. `build.sh` picks a preset (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
 `ninja-iter-clang`), prints which one and why, imports the MSVC environment if it isn't already
-active, builds, and launches the app.
+active, builds, and launches the app. Run it from Git Bash (shipped with Git for Windows).
 
 Useful variants:
 
-```powershell
-.\build.ps1 -BuildOnly                              # build, don't launch
-.\build.ps1 -Preset ninja-debug-msvc -BuildOnly     # explicit preset
-.\build.ps1 -RunOnly -StandaloneArgs '--version'    # run what's already built
+```bash
+./build.sh --build-only                            # build, don't launch
+./build.sh --preset ninja-debug-msvc --build-only   # explicit preset
+./build.sh --run-only -- --version                  # run what's already built
 ```
 
 **Expect ~5 minutes on the first build** — CMake `FetchContent` downloads and builds every
@@ -59,9 +59,9 @@ Sync** pulls your issues in.
 
 | Symptom | Fix |
 |---|---|
-| `build.ps1` exits `2`, "no usable MSVC toolchain" | Install the Build Tools (step 2); it prints the exact winget command. |
-| `ninja not found on PATH` | `winget install Ninja-build.Ninja`, then reopen PowerShell. |
-| `cl.exe is not on PATH` from `build_standalone.ps1` | You called the inner script directly — use `.\build.ps1` instead, it imports the environment. |
+| `build.sh` exits `78`, "no usable MSVC toolchain" | Install the Build Tools (step 2); it prints the exact winget command. |
+| `ninja not found on PATH` | `winget install Ninja-build.Ninja`, then reopen the shell. |
+| `cl.exe is not on PATH` from `build-standalone.sh` | You called the inner script directly — use `./build.sh` instead, it imports the environment. |
 | Anything else | `bash scripts/dev/doctor.sh` prints `[PASS]`/`[FAIL]` per prerequisite with install hints. |
 
 Full build reference — every preset, Clang, Unreal/DX12, tests, sanitizers, bash flows:
