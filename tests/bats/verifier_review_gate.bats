@@ -156,6 +156,54 @@ commit_in_fixture() {
     [ "$status" -eq 2 ]
 }
 
+@test "a candidate missing hard_veto is rejected, not defaulted to false" {
+    # The veto-dropping case: `if .hard_veto then` renders a MISSING key as
+    # "false", so a truncated or foreign-schema file would silently report
+    # "no veto" — losing the only signal this gate blocks on.
+    echo '{"candidates":[{"overall_score":0.9,"recommendation":"accept"}]}' > "$REPO_TMP/p.json"
+    run record --verdict p.json
+    [ "$status" -eq 2 ]
+    run check
+    [ "$status" -eq 1 ]
+}
+
+@test "a candidate missing overall_score is rejected" {
+    echo '{"candidates":[{"hard_veto":false,"recommendation":"accept"}]}' > "$REPO_TMP/p.json"
+    run record --verdict p.json
+    [ "$status" -eq 2 ]
+}
+
+@test "a non-boolean hard_veto is rejected rather than coerced" {
+    # jq truthiness would treat the STRING "false" as true. Rejecting is both
+    # safer and honest: the file does not mean what the schema says.
+    echo '{"candidates":[{"overall_score":0.9,"hard_veto":"false"}]}' > "$REPO_TMP/p.json"
+    run record --verdict p.json
+    [ "$status" -eq 2 ]
+}
+
+@test "a non-numeric overall_score is rejected" {
+    echo '{"candidates":[{"overall_score":"0.9","hard_veto":false}]}' > "$REPO_TMP/p.json"
+    run record --verdict p.json
+    [ "$status" -eq 2 ]
+}
+
+@test "--verdict= with an empty path is rejected, not silently presence-only" {
+    run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --record --staged --verdict= 2>&1"
+    [ "$status" -eq 2 ]
+    # And nothing was recorded.
+    run check
+    [ "$status" -eq 1 ]
+}
+
+@test "--verdict=<path> attaches the verdict" {
+    verdict v.json 0.91 accept false
+    run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --record --staged --verdict=v.json 2>&1"
+    [ "$status" -eq 0 ]
+    run check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"score=0.91"* ]]
+}
+
 @test "--verdict requires an argument" {
     run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --record --staged --verdict 2>&1"
     [ "$status" -eq 2 ]

@@ -32,16 +32,31 @@
 #   ra_is_substantive <mode> [base_ref]  -> rc 0 when the diff requires a review
 #   ra_substantive_reason                -> human reason string for the last ra_is_substantive
 #   ra_read_marker <mode>                -> prints the recorded sha for <mode> (or empty)
-#   ra_write_marker <mode> <sha>         -> records <sha> for <mode>, preserving other modes
+#   ra_write_marker <mode> <sha> [verdict...] -> records <sha> (+ optional verdict)
+#   ra_read_verdict <mode>               -> prints the recorded verdict, or empty
+#   ra_verdict_from_json <aggregate.json> -> verdict fields from a sidecar result
 #
 #   <mode> is `branch` (committed-on-branch + working tree, vs base_ref) or
 #   `staged` (the index only). base_ref defaults to origin/develop and is ignored
 #   by `staged`.
 #
 # MARKER FORMAT
-#   .review-ack (gitignored) holds one `<mode>\t<sha256>` record per line. A
-#   legacy single-line bare sha256 — everything written before this library
-#   existed — is read as mode `branch`, so an in-flight ack keeps working.
+#   .review-ack (gitignored) holds one record per line, tab-separated:
+#
+#     <mode>\t<sha256>
+#     <mode>\t<sha256>\t<score>\t<recommendation>\t<hard_veto>\t<veto_reason>
+#
+#   The 6-field form carries a verifier verdict (see
+#   docs/plans/verifier-scored-code-review-gate.md); the 2-field form is what a
+#   repo with no verifier configured writes, and the two are read
+#   interchangeably. A legacy single-line bare sha256 — everything written
+#   before this library existed — is read as mode `branch`, so an in-flight ack
+#   keeps working.
+#
+#   Readers must extract fields EXACTLY: an earlier implementation stripped all
+#   whitespace after the mode, which silently folded the verdict fields into the
+#   fingerprint once they existed (an ack that can never match = a gate that
+#   blocks forever).
 # ----------------------------------------------------------------------------
 
 # The C++ trees whose diff content the fingerprint covers (mirrors pre-ship.sh's
@@ -58,6 +73,9 @@ RA_CPP_GLOBS=(
 # scripts/dev/pre-ship.sh and agents/scripts/core/review-ack.sh, not this file).
 export RA_SUBSTANTIVE_REASON=""
 
+# ra_marker_path — absolute path of the .review-ack marker for this work tree
+# (empty when not inside one). Per-worktree by construction: it resolves against
+# `git rev-parse --show-toplevel`, so parallel worktrees never share an ack.
 ra_marker_path() {
     local root
     root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
@@ -112,6 +130,8 @@ ra_changed_files() {
     fi
 }
 
+# ra_changed_lines <mode> [base_ref] — added+deleted first-party C++ line count
+# for the mode's diff. Renames/deletes contribute 0 via the `-` numstat columns.
 ra_changed_lines() {
     local mode="$1" base="${2:-origin/develop}"
     {
@@ -184,6 +204,9 @@ ra_is_substantive() {
     return 1
 }
 
+# ra_read_marker <mode> — print the recorded FINGERPRINT for <mode>, or nothing.
+# Reads both the 2-field and the verdict-bearing record shapes, plus the legacy
+# bare-sha marker written before this library existed.
 ra_read_marker() {
     local mode="$1" marker line rest
     marker="$(ra_marker_path)"
@@ -272,17 +295,29 @@ ra_verdict_from_json() {
     local file="$1"
     [ -r "$file" ] || return 1
     command -v jq >/dev/null 2>&1 || return 1
-    # `select` first, and require overall_score: without it an empty
-    # `candidates` array makes .candidates[0] null, the `//` defaults fabricate
-    # `unknown/false`, and MALFORMED INPUT SILENTLY YIELDS A CLEAN VERDICT —
-    # a veto could be dropped by a truncated file. Fail instead.
+    # Validate the blocking-relevant fields BY TYPE before emitting anything.
+    #
+    # Every `//` default here is a chance to invent a clean verdict out of a
+    # broken file, and the one that matters is `hard_veto`: `if .hard_veto then`
+    # renders a MISSING key as "false", so a truncated or foreign-schema file
+    # would silently report "no veto" — dropping the single signal this gate
+    # blocks on. An empty `candidates` array does the same thing one level up.
+    # Both fail closed instead: no output, non-zero rc, and the caller (which
+    # treats that as rc 2 infra) refuses to record a presence-only ack behind
+    # the author's back.
+    #
+    # `recommendation` and `veto_reasons` stay optional-with-default on purpose
+    # — they are advisory metadata that can never block, so a missing one is not
+    # worth failing a review over.
     jq -e -r '
         .candidates[0]
-        | select(type == "object" and has("overall_score"))
+        | select(type == "object")
+        | select((.overall_score | type) == "number")
+        | select((.hard_veto | type) == "boolean")
         | [ (.overall_score | tostring),
             (.recommendation // "unknown"),
             (if .hard_veto then "true" else "false" end),
-            ((.veto_reasons // []) | if length > 0 then .[0] else "" end)
+            ((.veto_reasons // []) | if type == "array" and length > 0 then (.[0] | tostring) else "" end)
           ] | @tsv
     ' "$file" 2>/dev/null
 }

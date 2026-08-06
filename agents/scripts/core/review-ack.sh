@@ -163,7 +163,16 @@ while [ "$#" -gt 0 ]; do
             fi
             shift
             ;;
-        --verdict=*) verdict_file="${1#--verdict=}" ;;
+        --verdict=*)
+            verdict_file="${1#--verdict=}"
+            # An empty `--verdict=` must NOT fall through to a presence-only
+            # ack: the caller asked for a scored one and would never be told it
+            # did not get it. Same refusal as bare `--verdict` with no argument.
+            if [ -z "$verdict_file" ]; then
+                echo "review-ack: --verdict= requires a non-empty file path" >&2
+                exit 2
+            fi
+            ;;
         --*)
             echo "review-ack: unknown flag '$1'" >&2
             exit 2
