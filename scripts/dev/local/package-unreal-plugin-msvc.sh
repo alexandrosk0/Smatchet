@@ -116,8 +116,14 @@ CMAKE_CACHE="$BUILD_DIR/CMakeCache.txt"
 
 # Refuse to rm -rf anything that is not under the repo root.
 assert_inside_repo() {
-    case "$(winpath "$1")" in
-        "$(winpath "$REPO_ROOT")"/*) return 0 ;;
+    # Case-folded: Windows paths are case-insensitive, so a --build-dir typed as
+    # c:/dev/... names the same folder as a C:/Dev/... repo root and must not be
+    # rejected as "outside the repo".
+    local target root
+    target="$(winpath "$1" | tr '[:upper:]' '[:lower:]')"
+    root="$(winpath "$REPO_ROOT" | tr '[:upper:]' '[:lower:]')"
+    case "$target" in
+        "$root"/*) return 0 ;;
     esac
     die "refusing to remove a directory outside the repo root: $1"
 }
