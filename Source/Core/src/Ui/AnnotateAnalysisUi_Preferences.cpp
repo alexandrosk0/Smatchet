@@ -3,6 +3,7 @@
 #include "ConfigManager.h"
 #include "Interfaces/IAppTicketMutations.h"
 #include "Logger.h"
+#include "Ui/PreferencesFilter.h"
 #include "SmatchetFieldRender.h"
 #include "TrackerFieldSchema.h"
 
@@ -70,101 +71,136 @@ void DrawJiraFieldCombo(const std::vector<TrackerField>& availableFields, const 
 
 } // namespace
 
-// Defined below; drawn as the tail of the Perforce section.
-void DrawAnnotatePathRemaps();
+// Defined below; drawn as the tail of the Perforce section. `filtering` = a Preferences search
+// is narrowing the pane, so the leading rule (section chrome) is dropped.
+void DrawAnnotatePathRemaps(bool filtering);
 
 // Annotate > Analysis body: run limits, ignore list, changelist cache, AI hand-off URL.
 // Perforce executables + command templates live in Connections > Perforce.
-void DrawAnnotateAnalysisFields() {
+void DrawAnnotateAnalysisFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
-    ImGui::InputInt("Max frames", &State().maxFramesVal);
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        State().maxFramesVal = std::max(1, std::min(500, State().maxFramesVal));
-        cfg.DefaultMaxFrames = State().maxFramesVal;
-        PersistAnnotateCfg("edit_max_frames");
+    if (filter.ShowSetting("annotate.analysis.max_frames")) {
+        ImGui::InputInt("Max frames", &State().maxFramesVal);
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            State().maxFramesVal = std::max(1, std::min(500, State().maxFramesVal));
+            cfg.DefaultMaxFrames = State().maxFramesVal;
+            PersistAnnotateCfg("edit_max_frames");
+        }
     }
 
-    ImGui::InputTextMultiline("Ignore keywords (comma or newline)", State().ignoreBuf.data(), State().ignoreBuf.size(),
-                              ImVec2(-1, 60));
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        cfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
-        PersistAnnotateCfg("edit_ignore");
+    if (filter.ShowSetting("annotate.analysis.ignore_keywords")) {
+        ImGui::InputTextMultiline("Ignore keywords (comma or newline)", State().ignoreBuf.data(),
+                                  State().ignoreBuf.size(), ImVec2(-1, 60));
+        if (ImGui::IsItemDeactivatedAfterEdit()) {
+            cfg.DefaultIgnoreKeywords = SplitIgnoreKeywords(std::string(State().ignoreBuf.data()));
+            PersistAnnotateCfg("edit_ignore");
+        }
     }
 
-    ImGui::InputInt("Changelist cache size", &State().clCacheVal);
-    const bool clCacheDirty = ImGui::IsItemDeactivatedAfterEdit();
-    if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::SetTooltip("Max changelist-describe entries cached during annotate (clamped 16..8192).");
-    }
-    if (clCacheDirty) {
-        State().clCacheVal = std::max(16, std::min(8192, State().clCacheVal));
-        cfg.ChangelistCacheMaxEntries = State().clCacheVal;
-        PersistAnnotateCfg("edit_clcache");
+    if (filter.ShowSetting("annotate.analysis.cache_size")) {
+        ImGui::InputInt("Changelist cache size", &State().clCacheVal);
+        const bool clCacheDirty = ImGui::IsItemDeactivatedAfterEdit();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::SetTooltip("Max changelist-describe entries cached during annotate (clamped 16..8192).");
+        }
+        if (clCacheDirty) {
+            State().clCacheVal = std::max(16, std::min(8192, State().clCacheVal));
+            cfg.ChangelistCacheMaxEntries = State().clCacheVal;
+            PersistAnnotateCfg("edit_clcache");
+        }
     }
 
-    ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
-    CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+    if (filter.ShowSetting("annotate.analysis.ai_chat_url")) {
+        ImGui::InputText("AI chat URL (optional)", State().aiUrl, sizeof(State().aiUrl));
+        CommitTextField(State().aiUrl, cfg.AiChatUrl, "edit_aiurl");
+    }
 }
 
 // Connections > Perforce body: p4/p4vc executables, the two command templates, and the
 // path-remap rules that resolve callstack frames against a local workspace.
-void DrawAnnotatePerforceFields() {
+void DrawAnnotatePerforceFields(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
-    ImGui::InputText("p4 executable", State().p4Exe, sizeof(State().p4Exe));
-    CommitTextField(State().p4Exe, cfg.P4Executable, "edit_p4exe");
+    if (filter.ShowSetting("connections.perforce.p4_exe")) {
+        ImGui::InputText("p4 executable", State().p4Exe, sizeof(State().p4Exe));
+        CommitTextField(State().p4Exe, cfg.P4Executable, "edit_p4exe");
+    }
 
-    ImGui::InputText("p4vc executable", State().p4vcExe, sizeof(State().p4vcExe));
-    CommitTextField(State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe");
+    if (filter.ShowSetting("connections.perforce.p4vc_exe")) {
+        ImGui::InputText("p4vc executable", State().p4vcExe, sizeof(State().p4vcExe));
+        CommitTextField(State().p4vcExe, cfg.P4VcExecutable, "edit_p4vcexe");
+    }
 
-    ImGui::InputText("Timelapse command (optional)", State().timeTpl, sizeof(State().timeTpl));
-    CommitTextField(State().timeTpl, cfg.TimelapseCommandTemplate, "edit_timelapse");
-    ImGui::TextDisabled("Placeholders: {file} {line} {cl}");
+    if (filter.ShowSetting("connections.perforce.timelapse_cmd")) {
+        ImGui::InputText("Timelapse command (optional)", State().timeTpl, sizeof(State().timeTpl));
+        CommitTextField(State().timeTpl, cfg.TimelapseCommandTemplate, "edit_timelapse");
+        ImGui::TextDisabled("Placeholders: {file} {line} {cl}");
+    }
 
-    ImGui::InputText("Changelist command (optional)", State().changeTpl, sizeof(State().changeTpl));
-    CommitTextField(State().changeTpl, cfg.ChangeCommandTemplate, "edit_change");
+    if (filter.ShowSetting("connections.perforce.change_cmd")) {
+        ImGui::InputText("Changelist command (optional)", State().changeTpl, sizeof(State().changeTpl));
+        CommitTextField(State().changeTpl, cfg.ChangeCommandTemplate, "edit_change");
+    }
 
-    DrawAnnotatePathRemaps();
+    // One descriptor covers the whole remap-rule editor; its per-row from/to inputs are not
+    // individually filterable.
+    if (filter.ShowSetting("connections.perforce.path_remaps")) {
+        DrawAnnotatePathRemaps(filter.Active());
+    }
 }
 
 // Annotate > Tracker field mapping body: the Jira-field source combos (callstack,
 // before-changelist, last-occurrences date).
 void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableFields,
-                                 const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme) {
+                                 const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme,
+                                 PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
 
-    ImGui::TextUnformatted("Callstack from Jira");
-    ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when "
-                        "Annotate is shown, when the selected issue changes, or when you open Annotate for an "
-                        "issue from the grid.");
-    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Callstack source field",
-                       "Choose which Jira field supplies callstack text for the selected issue whenever Annotate "
-                       "is shown or the selection changes (including opening Annotate from the grid).",
-                       cfg.CallstackTrackerFieldId, "callstacksrc", "edit_callstackfield");
+    // Each combo keeps its own caption + explainer inside the gate — they describe that one
+    // mapping, so a narrowed pane would be unreadable without them. Only the rule between the
+    // first two blocks is section chrome.
+    if (filter.ShowSetting("annotate.field_mapping.callstack_field")) {
+        ImGui::TextUnformatted("Callstack from Jira");
+        ImGui::TextDisabled("When set, the callstack buffer is filled from this field for the selected issue when "
+                            "Annotate is shown, when the selected issue changes, or when you open Annotate for an "
+                            "issue from the grid.");
+        DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Callstack source field",
+                           "Choose which Jira field supplies callstack text for the selected issue whenever Annotate "
+                           "is shown or the selection changes (including opening Annotate from the grid).",
+                           cfg.CallstackTrackerFieldId, "callstacksrc", "edit_callstackfield");
+    }
 
-    ImGui::Separator();
-    ImGui::TextUnformatted("Before changelist (Jira)");
-    ImGui::TextDisabled("When set, opening Annotate on an issue fills \"Before changelist\" from this field (digits "
-                        "only). Autoselect matches a field named \"Last Found CL\".");
-    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Before-changelist field",
-                       "Jira field whose value pre-fills Before changelist when Annotate opens on an issue.",
-                       cfg.LastFoundClTrackerFieldId, "lastfoundcl", "edit_lastfoundcl");
+    if (!filter.Active()) {
+        ImGui::Separator();
+    }
+    if (filter.ShowSetting("annotate.field_mapping.before_cl_field")) {
+        ImGui::TextUnformatted("Before changelist (Jira)");
+        ImGui::TextDisabled("When set, opening Annotate on an issue fills \"Before changelist\" from this field "
+                            "(digits only). Autoselect matches a field named \"Last Found CL\".");
+        DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Before-changelist field",
+                           "Jira field whose value pre-fills Before changelist when Annotate opens on an issue.",
+                           cfg.LastFoundClTrackerFieldId, "lastfoundcl", "edit_lastfoundcl");
+    }
 
-    ImGui::TextUnformatted("Last occurrences date (Jira)");
-    ImGui::TextDisabled("When set, opening Annotate on an issue pre-fills the \"or day\" date from this field (ISO "
-                        "or parseable date). Otherwise the date stays empty. Autoselect matches \"Last "
-                        "Occurrences\" or \"Last Occurances\".");
-    DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Last-occurrences date field",
-                       "Jira date field used to seed the Before-changelist day picker when Annotate opens.",
-                       cfg.LastOccurrencesTrackerFieldId, "lastoccurrences", "edit_lastocc");
+    if (filter.ShowSetting("annotate.field_mapping.last_occurrences_field")) {
+        ImGui::TextUnformatted("Last occurrences date (Jira)");
+        ImGui::TextDisabled("When set, opening Annotate on an issue pre-fills the \"or day\" date from this field "
+                            "(ISO or parseable date). Otherwise the date stays empty. Autoselect matches \"Last "
+                            "Occurrences\" or \"Last Occurances\".");
+        DrawJiraFieldCombo(availableFields, ticketMutations, theme, "Last-occurrences date field",
+                           "Jira date field used to seed the Before-changelist day picker when Annotate opens.",
+                           cfg.LastOccurrencesTrackerFieldId, "lastoccurrences", "edit_lastocc");
+    }
 }
 
 // Path-remap rules editor (per-row from/to + add/remove). Keeps the per-row edit buffers in
 // lockstep with the rule vector. Drawn as the tail of Connections > Perforce.
-void DrawAnnotatePathRemaps() {
+void DrawAnnotatePathRemaps(bool filtering) {
     auto& cfg = State().annotateCfg;
-    ImGui::Separator();
+    if (!filtering) {
+        ImGui::Separator();
+    }
     ImGui::TextUnformatted("Path remaps");
     ImGui::TextDisabled("Rewrite source-path prefixes before resolving callstack frames. Longest matching "
                         "prefix wins; add rules in any order.");
@@ -213,9 +249,12 @@ void DrawAnnotatePathRemaps() {
 }
 
 // Annotate > Colors body. The owning PrefsSection draws the header, so the rows sit bare.
-void DrawAnnotateColors() {
+void DrawAnnotateColors(PreferencesFilter& filter) {
     auto& cfg = State().annotateCfg;
-    auto colorRow = [](const char* label, float* c) {
+    auto colorRow = [&filter](const char* settingId, const char* label, float* c) {
+        if (!filter.ShowSetting(settingId)) {
+            return;
+        }
         ImGui::ColorEdit4(label, c, ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_NoInputs);
         if (ImGui::IsItemDeactivatedAfterEdit()) {
             // Off-thread the write like every sibling persist in this file (#565): the
@@ -224,13 +263,13 @@ void DrawAnnotateColors() {
             PersistAnnotateCfg("edit_color");
         }
     };
-    colorRow("Status info", cfg.UiColors.StatusInfo);
-    colorRow("Status error", cfg.UiColors.StatusError);
-    colorRow("Status warning", cfg.UiColors.StatusWarning);
-    colorRow("Find highlight", cfg.UiColors.FindHighlight);
-    colorRow("Text disabled", cfg.UiColors.TextDisabled);
-    colorRow("Import existing", cfg.UiColors.ImportExisting);
-    colorRow("CL tooltip title", cfg.UiColors.ClTooltipTitle);
+    colorRow("annotate.colors.status_info", "Status info", cfg.UiColors.StatusInfo);
+    colorRow("annotate.colors.status_error", "Status error", cfg.UiColors.StatusError);
+    colorRow("annotate.colors.status_warning", "Status warning", cfg.UiColors.StatusWarning);
+    colorRow("annotate.colors.find_highlight", "Find highlight", cfg.UiColors.FindHighlight);
+    colorRow("annotate.colors.text_disabled", "Text disabled", cfg.UiColors.TextDisabled);
+    colorRow("annotate.colors.import_existing", "Import existing", cfg.UiColors.ImportExisting);
+    colorRow("annotate.colors.cl_tooltip_title", "CL tooltip title", cfg.UiColors.ClTooltipTitle);
 }
 
 } // namespace AnnotateInternal

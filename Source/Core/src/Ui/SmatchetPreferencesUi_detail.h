@@ -42,6 +42,13 @@ template <typename BodyFn> inline void PrefsSection(UiDrawSession& d, const char
     }
 }
 
+/// True when the live global query hits at least one keybinding row (command
+/// label, command id or hotkey). The rows are dynamic and have no descriptors,
+/// so the schema-driven filter cannot see them; the caller feeds the answer back
+/// via PreferencesFilter::AddDynamicMatch before the nav rail draws. Returns
+/// false when the filter is inactive.
+bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d);
+
 /// Pure width→presentation resolver for the Preferences nav (bucket-A testable).
 /// Mobile always uses the combo. Otherwise a ~2.5-em hysteresis band around
 /// 30 em stops the rail flickering while the user drags the window edge:
@@ -66,12 +73,6 @@ inline bool ResolvePrefsNavUseCombo(bool mobileUi, float availWidth, float fontS
 /// flags are computed by the caller because the diff helpers live in the main
 /// TU / behind SMATCHET_WITH_AI). Defined in SmatchetPreferencesUi_Shell.cpp.
 void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight);
-
-/// Search-chip "jump to category" support (UX critique M4): maps a chip's
-/// canonical tab name (kPrefsSearchIndex rows) to the category that now hosts
-/// it. Returns false for unknown names (request is dropped). Defined in
-/// SmatchetPreferencesUi_Shell.cpp.
-bool PrefsCategoryForChipName(const std::string& name, PreferencesCategory& out);
 
 /// Drop any armed hotkey-capture state in the Keybindings page. Called by the
 /// dispatch in drawPreferencesWindow whenever the page is not drawn (category

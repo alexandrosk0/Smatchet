@@ -29,6 +29,12 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 #include "SmatchetUI.h"
+// Not a new dependency: the Updates / Storage / Local-database bodies moved here verbatim from
+// SmatchetPreferencesUi_Local.cpp, which dropped its own AppController.h include in the same
+// change, so tree-wide fan-in is net-unchanged. They call app.CheckForAppUpdate / RequestAppQuit /
+// GetResolvedLocalCacheDbPath / RecreateLocalCacheDatabase / SyncWithBackend — no narrower header.
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=include relocated from SmatchetPreferencesUi_Local.cpp, which
+// dropped its own; net fan-in unchanged; owner=prefs-ia; revisit=2026-12-01)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "SmatchetHelpMarker.h"
@@ -109,33 +115,44 @@ namespace {
 
 // Updates section: auto-check + prerelease toggles, manual check, skip-version.
 void DrawGeneralUpdatesSection(AppController& app, UiDrawSession& d) {
-    if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
-        MarkPrefsDirty(d);
-    }
-    if (ImGui::Checkbox("Include prerelease builds", &d.cfg.UpdateIncludePrerelease)) {
-        MarkPrefsDirty(d);
-    }
-    ImGui::SetItemTooltip("When enabled, startup and manual checks can target prerelease GitHub releases too.");
-    if (ImGui::Button("Check for Updates Now")) {
-        d.appUpdateStartupCheckStarted = true;
-        d.appUpdateActionStatus.clear();
-        d.appUpdateCheckManual = true;
-        d.appUpdateCheckInFlight = true;
-        d.appUpdateFuture = std::async(
-            std::launch::async, [&app, cfg = d.cfg]() { return app.CheckForAppUpdate(cfg.UpdateIncludePrerelease); });
-    }
-    if (d.appUpdateCheckInFlight) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(checking...)");
-    }
-    if (!d.cfg.UpdateSkipVersion.empty()) {
-        ImGui::TextDisabled("Skipped version: %s", d.cfg.UpdateSkipVersion.c_str());
-        if (ImGui::SmallButton("Clear skipped version")) {
-            d.cfg.UpdateSkipVersion.clear();
+    if (d.prefsFilter.ShowSetting("general.updates.check_enabled")) {
+        if (ImGui::Checkbox("Check for updates automatically", &d.cfg.UpdateCheckEnabled)) {
             MarkPrefsDirty(d);
         }
     }
-    ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
+    if (d.prefsFilter.ShowSetting("general.updates.include_prerelease")) {
+        if (ImGui::Checkbox("Include prerelease builds", &d.cfg.UpdateIncludePrerelease)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("When enabled, startup and manual checks can target prerelease GitHub releases too.");
+    }
+    if (d.prefsFilter.ShowSetting("general.updates.check_now")) {
+        if (ImGui::Button("Check for Updates Now")) {
+            d.appUpdateStartupCheckStarted = true;
+            d.appUpdateActionStatus.clear();
+            d.appUpdateCheckManual = true;
+            d.appUpdateCheckInFlight = true;
+            d.appUpdateFuture = std::async(std::launch::async, [&app, cfg = d.cfg]() {
+                return app.CheckForAppUpdate(cfg.UpdateIncludePrerelease);
+            });
+        }
+        if (d.appUpdateCheckInFlight) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(checking...)");
+        }
+    }
+    // Status readouts, not settings: they own no descriptor row, so they stay out
+    // of the filtered view rather than padding a section the query narrowed down.
+    if (!d.prefsFilter.Active()) {
+        if (!d.cfg.UpdateSkipVersion.empty()) {
+            ImGui::TextDisabled("Skipped version: %s", d.cfg.UpdateSkipVersion.c_str());
+            if (ImGui::SmallButton("Clear skipped version")) {
+                d.cfg.UpdateSkipVersion.clear();
+                MarkPrefsDirty(d);
+            }
+        }
+        ImGui::TextDisabled("GitHub release repo: %s", d.cfg.UpdateGithubRepo.c_str());
+    }
 }
 
 // Language & region: UI language combo (was next to the font combo on the old
@@ -151,36 +168,42 @@ void DrawGeneralLanguageRegionSection(UiDrawSession& d) {
     }
     const char* languageItems[] = {SmatchetLocalization::T("language.en_us", "English"),
                                    SmatchetLocalization::T("language.fr_native", u8"Français")};
-    if (ImGui::Combo("Language", &currentLanguageIdx, languageItems, IM_ARRAYSIZE(languageItems))) {
-        if (currentLanguageIdx >= 0 && currentLanguageIdx < static_cast<int>(languages.size())) {
-            d.cfg.UiLanguage = languages[static_cast<size_t>(currentLanguageIdx)].Code;
-            MarkPrefsDirty(d);
-            SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
+    if (d.prefsFilter.ShowSetting("general.language_region.language")) {
+        if (ImGui::Combo("Language", &currentLanguageIdx, languageItems, IM_ARRAYSIZE(languageItems))) {
+            if (currentLanguageIdx >= 0 && currentLanguageIdx < static_cast<int>(languages.size())) {
+                d.cfg.UiLanguage = languages[static_cast<size_t>(currentLanguageIdx)].Code;
+                MarkPrefsDirty(d);
+                SmatchetLocalization::SetLanguage(d.cfg.UiLanguage);
+            }
         }
+        ImGui::SetItemTooltip("UI language; applies immediately.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.language.help",
+                                   "Select the UI language. App-owned UI text changes immediately; tracker data "
+                                   "is shown as-is.");
+        ImGui::Spacing();
     }
-    ImGui::SetItemTooltip("UI language; applies immediately.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.appearance.language.help",
-                               "Select the UI language. App-owned UI text changes immediately; tracker data "
-                               "is shown as-is.");
 
-    ImGui::Spacing();
     const char* dateFormats[] = {SmatchetLocalization::T("prefs.date_relative_compact", "Relative / Compact"),
                                  SmatchetLocalization::T("prefs.date_always_relative", "Always Relative"),
                                  SmatchetLocalization::T("prefs.date_absolute_iso", "Absolute ISO"),
                                  SmatchetLocalization::T("prefs.date_absolute_friendly", "Absolute Friendly")};
     int currentDateFormatIdx = SmatchetPreferencesUiDetail::DateFormatOptionToIndex(d.cfg.DateFormatOption);
-    if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {
-        d.cfg.DateFormatOption = SmatchetPreferencesUiDetail::DateFormatIndexToOption(currentDateFormatIdx);
-        MarkPrefsDirty(d);
+    if (d.prefsFilter.ShowSetting("general.language_region.date_format")) {
+        if (ImGui::Combo("Date Format Style", &currentDateFormatIdx, dateFormats, IM_ARRAYSIZE(dateFormats))) {
+            d.cfg.DateFormatOption = SmatchetPreferencesUiDetail::DateFormatIndexToOption(currentDateFormatIdx);
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("How date values render across the UI.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.date_format.help",
+                                   "Select how date and datetime values are rendered in the grids and UI "
+                                   "panels.");
     }
-    ImGui::SetItemTooltip("How date values render across the UI.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.appearance.date_format.help",
-                               "Select how date and datetime values are rendered in the grids and UI "
-                               "panels.");
 
-    if (currentDateFormatIdx == 0) {
+    // ConditionalDraw row: the threshold only exists for the compact style, so the
+    // coverage guard tolerates it never being observed.
+    if (currentDateFormatIdx == 0 && d.prefsFilter.ShowSetting("general.language_region.date_compact_threshold")) {
         int threshold = d.cfg.DateCompactRelativeThresholdDays;
         if (ImGui::SliderInt("Compact Relative Threshold (Days)", &threshold, 1, 90, "%d days")) {
             d.cfg.DateCompactRelativeThresholdDays = threshold;
@@ -195,10 +218,13 @@ void DrawGeneralLanguageRegionSection(UiDrawSession& d) {
 }
 
 // Storage: Portable/Shared storage-mode combo and the restart prompt.
-void DrawGeneralStorageSection(AppController& app) {
+void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
     // `app` (RequestAppQuit) is only reached on the non-Unreal restart path below; in the
     // SMATCHET_EMBEDDED_IN_UNREAL build that block is compiled out, leaving it unreferenced.
     (void)app;
+    if (!d.prefsFilter.ShowSetting("general.storage.mode")) {
+        return;
+    }
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
     SmatchetHelpMarker::Render("prefs.local_data.storage_unreal.help",
                                "Plugin default: writable files (config / views / SQLite cache / ImGui "
@@ -279,6 +305,9 @@ void DrawGeneralStorageSection(AppController& app) {
 // Local database: intro blurb, resolved cache path, the "Recreate database..."
 // button and its confirm modal (modal stays whole with its opener).
 void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
+    if (!d.prefsFilter.ShowSetting("general.local_database.recreate")) {
+        return;
+    }
     ImGui::TextUnformatted("Local SQLite cache: tickets, offline queues, pending edits.");
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.local_data.recreate_intro.help",
@@ -338,16 +367,10 @@ void DrawGeneralLocalDatabaseSection(SmatchetUI& ui, AppController& app, UiDrawS
 } // namespace
 
 void DrawGeneralPreferencesTab(SmatchetUI& ui, AppController& app, UiDrawSession& d) {
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] {
-        DrawGeneralUpdatesSection(app, d);
-    });
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region", [&] {
-        DrawGeneralLanguageRegionSection(d);
-    });
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] {
-        DrawGeneralStorageSection(app);
-    });
-    SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database", [&] {
-        DrawGeneralLocalDatabaseSection(ui, app, d);
-    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.updates", [&] { DrawGeneralUpdatesSection(app, d); });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.language_region",
+                                              [&] { DrawGeneralLanguageRegionSection(d); });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.storage", [&] { DrawGeneralStorageSection(app, d); });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "general.local_database",
+                                              [&] { DrawGeneralLocalDatabaseSection(ui, app, d); });
 }

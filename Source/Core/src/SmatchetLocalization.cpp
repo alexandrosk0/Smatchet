@@ -1124,7 +1124,8 @@ const TranslationEntry kEntries[] = {
      u8"Abandonner le commentaire en cours de rédaction ?"},
     {"grid.sort.remove_key", "Remove this sort key", u8"Supprimer cette clé de tri"},
     {"cmdpalette.scope", "Showing %s commands only", u8"Affichage des commandes %s uniquement"},
-    {"prefs.search.too_short", "type at least 3 characters", u8"saisissez au moins 3 caractères"},
+    {"prefs.search.showing", "showing", u8"affichage"},
+    {"prefs.search.no_match", "No settings match.", u8"Aucun paramètre ne correspond."},
     {"prefs.tracker.close_guard.body",
      "The Tracker tab has unsaved edits. Save & Sync applies them; closing without saving discards them.",
      u8"L'onglet Suivi contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "

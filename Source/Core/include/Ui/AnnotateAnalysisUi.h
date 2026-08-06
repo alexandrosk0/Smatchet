@@ -6,6 +6,7 @@
 
 class AppController;
 class IAppTicketMutations;
+class PreferencesFilter;
 struct CachedTicket;
 struct SpreadsheetState;
 struct TrackerField;
@@ -51,9 +52,12 @@ class AnnotateAnalysisUi {
     };
 
     /** Draw one persisted-annotate-options section (same fields as the former Annotate "Options…").
-     *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews). */
+     *  Takes the app-owned field catalog plus the mutations facet (field-id lookup for combo previews).
+     *  filter is the owning Preferences page's search filter: every row inside asks it whether to draw,
+     *  and it records the ids the coverage drift-guard compares against the descriptor table. It is a
+     *  reference (not a nullable pointer) precisely so no call path can skip that recording. */
     void DrawAnnotatePrefsSection(AnnotatePrefsSection section, const std::vector<TrackerField>& availableFields,
-                                  const IAppTicketMutations& ticketMutations);
+                                  const IAppTicketMutations& ticketMutations, PreferencesFilter& filter);
 
   private:
     void ensureSettingsBuffersLoaded();

@@ -42,7 +42,8 @@ void PreferencesFilter::Update(const char* query, const std::string& uiLanguage)
         RebuildIndex();
     }
     const std::string incoming = query != nullptr ? query : "";
-    if (languageChanged || incoming != queryRaw_) {
+    queryChanged_ = incoming != queryRaw_;
+    if (languageChanged || queryChanged_) {
         queryRaw_ = incoming;
         queryLower_ = ToLowerAscii(incoming);
         RecomputeMatches();
@@ -53,7 +54,9 @@ bool PreferencesFilter::ShowSetting(const char* id) {
     if (id == nullptr) {
         return true;
     }
-    observed_.insert(id);
+    if (recordObserved_) {
+        observed_.insert(id);
+    }
     if (queryLower_.empty()) {
         return true;
     }
@@ -61,6 +64,21 @@ bool PreferencesFilter::ShowSetting(const char* id) {
         return true; // fail open — the drift guard owns reporting unknown ids
     }
     return matched_.count(id) != 0;
+}
+
+void PreferencesFilter::AddDynamicMatch(const char* settingId) {
+    if (settingId == nullptr || queryLower_.empty()) {
+        return;
+    }
+    const SmatchetPrefsSchema::PrefsSettingDesc* setting = SmatchetPrefsSchema::FindSetting(settingId);
+    if (setting == nullptr || !matched_.insert(settingId).second) {
+        return;
+    }
+    sectionMatches_.insert(setting->SectionId);
+    const SmatchetPrefsSchema::PrefsSectionDesc* section = SmatchetPrefsSchema::FindSection(setting->SectionId);
+    if (section != nullptr) {
+        ++categoryMatches_[section->CategoryId];
+    }
 }
 
 std::size_t PreferencesFilter::TotalCount() const {
@@ -94,13 +112,11 @@ std::size_t PreferencesFilter::CategoryMatchCount(const char* categoryId) const 
 void PreferencesFilter::RebuildIndex() {
     index_.clear();
     std::size_t settingCount = 0;
-    const SmatchetPrefsSchema::PrefsSettingDesc* settings =
-        SmatchetPrefsSchema::Settings(settingCount);
+    const SmatchetPrefsSchema::PrefsSettingDesc* settings = SmatchetPrefsSchema::Settings(settingCount);
     index_.reserve(settingCount);
     for (std::size_t i = 0; i < settingCount; ++i) {
         const SmatchetPrefsSchema::PrefsSettingDesc& setting = settings[i];
-        const SmatchetPrefsSchema::PrefsSectionDesc* section =
-            SmatchetPrefsSchema::FindSection(setting.SectionId);
+        const SmatchetPrefsSchema::PrefsSectionDesc* section = SmatchetPrefsSchema::FindSection(setting.SectionId);
         Entry entry;
         entry.Id = setting.Id;
         entry.SectionId = setting.SectionId;

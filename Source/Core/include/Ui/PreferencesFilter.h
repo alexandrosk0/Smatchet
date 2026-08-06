@@ -23,7 +23,7 @@
 // descriptor table.
 
 class PreferencesFilter {
-public:
+  public:
     // Shared ASCII helpers, absorbed from SmatchetPreferencesUi_Keybindings.cpp
     // (same semantics; the keybindings TU switches to these when slice 3 wires
     // the global query into its row filter — Pillar 5).
@@ -40,12 +40,29 @@ public:
     /// True while a non-empty query is filtering.
     bool Active() const { return !queryLower_.empty(); }
 
+    /// True when the most recent Update() saw a different query string than the
+    /// call before it. The nav rail uses this as the edge to re-home the
+    /// selection on the first matching category: reacting to the edge rather
+    /// than to Active() lets the user click a different category mid-query
+    /// without being yanked back on the next frame.
+    bool QueryChangedThisUpdate() const { return queryChanged_; }
+
     /// True when the setting should draw. Always true on an empty query (no
     /// lookup on the non-searching hot path). Unknown ids fail OPEN — a widget
     /// whose id is missing from the schema must stay visible, and the drift
-    /// guard (not the filter) reports the mismatch. Records `id` in the
-    /// observed set either way.
+    /// guard (not the filter) reports the mismatch. Records `id` in the observed
+    /// set (either way) only while recording is enabled — see
+    /// SetRecordObservedSettingIds.
     bool ShowSetting(const char* id);
+
+    /// Fold a match the schema cannot see into this frame's result set. The
+    /// keybindings table is dynamic rows with no descriptors, so its "does the
+    /// query hit a command?" answer only exists at draw time; without folding it
+    /// back in, the rail would disable the Shortcuts category and the auto-switch
+    /// would skip past it while the section below happily listed hits. Idempotent;
+    /// cleared by the next query change. `settingId` must be a real descriptor id
+    /// (it stands in for the dynamic content), otherwise this is a no-op.
+    void AddDynamicMatch(const char* settingId);
 
     /// Matched / total descriptor counts for the "(showing N of M)" readout.
     /// MatchCount() is 0 while inactive.
@@ -60,10 +77,15 @@ public:
 
     /// Drift-guard support: every id ever passed to ShowSetting since the last
     /// reset (accumulates across frames; the guard resets explicitly).
+    /// Recording is OFF by default and only the drift guard turns it on: the
+    /// bookkeeping is a std::string node per drawn setting per frame (~120 of
+    /// them), which is real allocator traffic on the steady-state path where the
+    /// user is not searching at all (Pillar 1).
+    void SetRecordObservedSettingIds(bool enabled) { recordObserved_ = enabled; }
     const std::set<std::string>& ObservedSettingIds() const { return observed_; }
     void ResetObservedSettingIds() { observed_.clear(); }
 
-private:
+  private:
     struct Entry {
         const char* Id;
         const char* SectionId;
@@ -78,6 +100,8 @@ private:
     std::string queryLower_;
     std::string indexedLanguage_;
     bool indexBuilt_ = false;
+    bool queryChanged_ = false;
+    bool recordObserved_ = false;
     std::vector<Entry> index_;
     std::unordered_set<std::string> matched_;
     std::unordered_set<std::string> sectionMatches_;

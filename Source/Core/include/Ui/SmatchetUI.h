@@ -97,8 +97,8 @@ class SmatchetUI {
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
     void DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection section,
                                            const std::vector<TrackerField>& availableFields,
-                                           const IAppTicketMutations& ticketMutations) {
-        annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations);
+                                           const IAppTicketMutations& ticketMutations, PreferencesFilter& filter) {
+        annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations, filter);
     }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it

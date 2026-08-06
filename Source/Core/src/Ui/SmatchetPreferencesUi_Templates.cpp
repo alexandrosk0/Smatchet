@@ -27,24 +27,64 @@
 
 namespace {
 
+// Grid behaviour. The overflow-tooltip and wheel-swallow rows came from the old
+// Appearance tab's "Grid and field text" block — both are grid behaviour, not
+// typography, and the descriptor table homes them here.
 void DrawGridSectionBody(UiDrawSession& d) {
     // No title/Separator here — PrefsSection already drew the section header.
-    if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
-        MarkPrefsDirty(d);
+    if (d.prefsFilter.ShowSetting("editing.grid.single_click")) {
+        if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
     }
-    ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
-    if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
-        MarkPrefsDirty(d);
+    if (d.prefsFilter.ShowSetting("editing.grid.long_text_preview")) {
+        if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Long-text editor opens in preview mode.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.templates.longtext_preview.help",
+                                   "When on, the long-text edit modal (description, callstack, custom "
+                                   "textarea fields) opens showing the rendered preview. When off (default) "
+                                   "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
     }
-    ImGui::SetItemTooltip("Long-text editor opens in preview mode.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.templates.longtext_preview.help",
-                               "When on, the long-text edit modal (description, callstack, custom "
-                               "textarea fields) opens showing the rendered preview. When off (default) "
-                               "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
+    if (d.prefsFilter.ShowSetting("editing.grid.overflow_tooltips")) {
+        if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Hover truncated cells to read the full text.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.overflow_tooltips.help",
+                                   "When a value is truncated to fit the cell, or spans multiple lines, hover "
+                                   "to read the full text in a tooltip.");
+    }
+    if (d.prefsFilter.ShowSetting("editing.grid.wheel_ticks")) {
+        int gridWheelSwallowTicks = d.cfg.GridEndWheelSwallowsBeforeHorizontal;
+        if (ImGui::InputInt("Wheel ticks before horizontal scroll", &gridWheelSwallowTicks)) {
+            if (gridWheelSwallowTicks < 0) {
+                gridWheelSwallowTicks = 0;
+            }
+            if (gridWheelSwallowTicks > 32) {
+                gridWheelSwallowTicks = 32;
+            }
+            d.cfg.GridEndWheelSwallowsBeforeHorizontal = gridWheelSwallowTicks;
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Wheel ticks swallowed at the grid edge.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.wheel_swallow.help",
+                                   "At top/bottom of the ticket grid, vertical wheel starts horizontal "
+                                   "scrolling after this many wheel ticks. 0 routes immediately.");
+    }
 }
 
 void DrawTimeEstimatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor covers the whole list editor — its per-row inputs are not
+    // individually filterable.
+    if (!d.prefsFilter.ShowSetting("editing.time_estimates.duration_suggestions")) {
+        return;
+    }
     ImGui::TextDisabled("Default options for time-estimate dropdowns.");
     ImGui::SameLine();
     SmatchetHelpMarker::Render("prefs.templates.duration_suggestions.help",
@@ -142,6 +182,10 @@ void DrawTimeEstimatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplat
 }
 
 void DrawWorkLogTemplatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.work_log_templates.list")) {
+        return;
+    }
     ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown "
                         "next to the Log Work description field.");
     ImGui::Spacing();
@@ -429,6 +473,10 @@ void DrawCommentTemplateSectionBody(UiDrawSession& d, const char* placeholderHel
 }
 
 void DrawQuickCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.quick_comments.list")) {
+        return;
+    }
     static CommentTemplateSubTabState st;
     DrawCommentTemplateSectionBody(d,
                                    "Customize templates displayed when right-clicking issue cells in the grid. "
@@ -438,6 +486,10 @@ void DrawQuickCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplat
 }
 
 void DrawAnnotateCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.annotate_comments.list")) {
+        return;
+    }
     static CommentTemplateSubTabState st;
     DrawCommentTemplateSectionBody(d,
                                    "Customize templates displayed when clicking on the Annotate rows. "

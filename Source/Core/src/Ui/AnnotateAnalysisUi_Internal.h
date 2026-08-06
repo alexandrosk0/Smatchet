@@ -235,12 +235,14 @@ std::string BuildAnnotateQuickCommentTemplate(const std::string& issueKey, const
 
 // --- Preferences-section helpers (AnnotateAnalysisUi_Preferences.cpp) ---
 // One body per AnnotateAnalysisUi::AnnotatePrefsSection. The owning Preferences page draws the
-// CollapsingHeader chrome, so none of these emit their own section title.
-void DrawAnnotateAnalysisFields();
-void DrawAnnotatePerforceFields();
+// CollapsingHeader chrome, so none of these emit their own section title. Each row asks
+// `filter` whether it draws, so a Preferences search narrows these bodies like any other.
+void DrawAnnotateAnalysisFields(PreferencesFilter& filter);
+void DrawAnnotatePerforceFields(PreferencesFilter& filter);
 void DrawAnnotateJiraFieldCombos(const std::vector<TrackerField>& availableFields,
-                                 const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme);
-void DrawAnnotateColors();
+                                 const IAppTicketMutations& ticketMutations, const AnnotateUiThemeColors& theme,
+                                 PreferencesFilter& filter);
+void DrawAnnotateColors(PreferencesFilter& filter);
 
 // --- DrawContent section helpers (AnnotateAnalysisUi_Window.cpp) ---
 // Per-frame context threaded through the section helpers that DrawContent

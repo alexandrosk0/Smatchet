@@ -273,23 +273,33 @@ int TrackerBackendIndexFromBuf(const UiDrawSession& d) {
 // Returns the selected backend index (0=Jira, 1=Plane, 2=GitHub, 3=Linear). Extracted from
 // drawPreferencesTrackerTab during the over-100-line decomposition; behaviour-identical.
 int DrawTrackerBackendSelection(UiDrawSession& d) {
-    ImGui::TextUnformatted("Backend Selection");
-    ImGui::Separator();
-    ImGui::Spacing();
-
-    if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
-        MarkPrefsDirty(d);
+    // Heading + rules are section chrome — no descriptor rows of their own.
+    if (!d.prefsFilter.Active()) {
+        ImGui::TextUnformatted("Backend Selection");
+        ImGui::Separator();
+        ImGui::Spacing();
     }
-    ImGui::SetItemTooltip("Disables all tracker-changing actions.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.tracker.read_only.help",
-                               "Disables tracker-changing actions such as field edits, issue creation, "
-                               "comments, worklogs, and offline write replay. Enabled by default on first "
-                               "launch before setup.");
-    ImGui::Spacing();
+
+    if (d.prefsFilter.ShowSetting("tracker.backend.read_only")) {
+        if (ImGui::Checkbox("Read-only mode", &d.cfg.ReadOnlyMode)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Disables all tracker-changing actions.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.read_only.help",
+                                   "Disables tracker-changing actions such as field edits, issue creation, "
+                                   "comments, worklogs, and offline write replay. Enabled by default on first "
+                                   "launch before setup.");
+        ImGui::Spacing();
+    }
 
     const char* items[] = {"Jira", "Plane", "GitHub", "Linear"};
+    // The index is computed unconditionally: every credential row below keys off it,
+    // so it must survive the backend picker being filtered out.
     int currentItem = TrackerBackendIndexFromBuf(d);
+    if (!d.prefsFilter.ShowSetting("tracker.backend.type")) {
+        return currentItem;
+    }
     if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
         // P1.5 touch-first backend picker: when the mobile shell renders this Preferences page
         // (effectiveUiMode == Mobile — phone, or a narrow desktop window pinned/auto-resolved to
@@ -310,10 +320,166 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
     } else if (ImGui::Combo("Tracker Backend", &currentItem, items, IM_ARRAYSIZE(items))) {
         CopyStringToBuffer(d.trackerTypeBuf, items[currentItem]);
     }
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    if (!d.prefsFilter.Active()) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+    }
     return currentItem;
+}
+
+// One function per backend below. Every row is a ConditionalDraw descriptor: only the selected
+// backend's block draws, so the drift guard tolerates the other three never being observed. The
+// `chrome` flag suppresses headings/spacers while a search query is active — chrome has no
+// descriptor row of its own and would otherwise survive a filter that matched nothing here.
+void DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
+    if (chrome) {
+        ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_domain")) {
+        ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_email")) {
+        ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_api_token")) {
+        SmatchetSecretInputText("API Token", d.tokenBuf, sizeof(d.tokenBuf));
+    }
+    // No "Project Key" preference row. Project is per-operation — picked
+    // via the new-issue draft picker, derived from the active view's JQL, or supplied
+    // on ticket.create. The "Recently used projects" section below surfaces cached
+    // projects for visibility / Forget.
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_inherit")) {
+        ImGui::Spacing();
+        ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf,
+                         sizeof(d.newIssueInheritFieldsBuf));
+        ImGui::SetItemTooltip("Comma-separated Jira field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_jira.help",
+                                   "Comma-separated Jira field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels, "
+                                   "components).");
+    }
+}
+
+void DrawTrackerPlaneConfig(UiDrawSession& d, bool chrome) {
+    if (chrome) {
+        ImGui::TextUnformatted("Plane Configuration (plane.so)");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.plane_url")) {
+        ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("e.g. https://api.plane.so");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.plane_workspace")) {
+        ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
+                         ImGuiInputTextFlags_CharsNoBlank);
+    }
+    // No "Project ID (UUID)" preference row. See Jira note above.
+    if (d.prefsFilter.ShowSetting("tracker.backend.plane_api_key")) {
+        SmatchetSecretInputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf));
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.plane_inherit")) {
+        ImGui::Spacing();
+        ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
+                         sizeof(d.newIssueInheritFieldsPlaneBuf));
+        ImGui::SetItemTooltip("Comma-separated Plane field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_plane.help",
+                                   "Comma-separated Plane field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels).");
+    }
+}
+
+// GitHub-as-tracker — docs/plans/shipped/github-tracker-backend.md.
+void DrawTrackerGitHubConfig(UiDrawSession& d, bool chrome) {
+    if (chrome) {
+        ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_base_url")) {
+        ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_pat")) {
+        SmatchetSecretInputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf));
+        ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_owner")) {
+        ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_repo")) {
+        ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Repository name, e.g. \"Smatchet\".");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.github_repo.help",
+                                   "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues "
+                                   "from github.com/<owner>/<repo>. Leave both empty for cross-repo "
+                                   "/search/issues.");
+    }
+    // Clamp outside the filter gate: the buffer is also seeded from cfg, so a negative
+    // value must not survive just because the query happens to hide this row.
+    if (d.githubProjectNumber < 0) {
+        d.githubProjectNumber = 0; // no negative board numbers; 0 keeps the feature off
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_project_number")) {
+        ImGui::InputInt("Project number", &d.githubProjectNumber);
+        ImGui::SetItemTooltip("Projects v2 board number under Owner; 0 disables project fields.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.github_project.help",
+                                   "The N in github.com/orgs/<owner>/projects/N (or /users/<owner>/projects/N). "
+                                   "When set, that board's custom fields appear as editable grid columns for "
+                                   "issues on the board. 0 turns the feature off.");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.gh_inherit")) {
+        ImGui::Spacing();
+        ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
+                         sizeof(d.newIssueInheritFieldsGitHubBuf));
+        ImGui::SetItemTooltip("Comma-separated GitHub field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_github.help",
+                                   "Comma-separated GitHub field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. body, labels, assignees, milestone).");
+    }
+}
+
+// Linear-as-tracker — Slice 1 of docs/plans/linear-tracker-backend.md. Draft scope is
+// the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
+void DrawTrackerLinearConfig(UiDrawSession& d, bool chrome) {
+    if (chrome) {
+        ImGui::TextUnformatted("Linear Configuration (linear.app)");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_api_key")) {
+        SmatchetSecretInputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf));
+        ImGui::SetItemTooltip("Personal API Key from Linear Settings -> API.");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_team_key")) {
+        ImGui::InputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Team key, e.g. \"ENG\" (the TEAM-123 issue prefix).");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_team")) {
+        ImGui::InputText("Team", d.linearTeamIdBuf, sizeof(d.linearTeamIdBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Linear team UUID. Optional — resolved from Team Key when empty.");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_base_url")) {
+        ImGui::InputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_workspace_url")) {
+        ImGui::InputText("Workspace URL", d.linearWorkspaceUrlBuf, sizeof(d.linearWorkspaceUrlBuf),
+                         ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SetItemTooltip("Optional workspace URL / display hint.");
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.linear_inherit")) {
+        ImGui::Spacing();
+        ImGui::InputText("New issue: inherit fields from last row (Linear)", d.newIssueInheritFieldsLinearBuf,
+                         sizeof(d.newIssueInheritFieldsLinearBuf));
+        ImGui::SetItemTooltip("Comma-separated Linear field ids.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.inherit_linear.help",
+                                   "Comma-separated Linear field ids copied from the last grid row when you "
+                                   "click + New issue (e.g. description, priority, assignee, labels).");
+    }
 }
 
 // Per-backend credential/config inputs of the Tracker tab (Jira / Plane / GitHub / Linear). Extracted
@@ -325,106 +491,28 @@ void DrawTrackerBackendConfig(UiDrawSession& d, int currentItem) {
     // build without a platform secret store (Linux/macOS) the tracker API token persists as
     // plaintext in the app's private config file. Warn explicitly there. Android is excluded:
     // Phase-1 P1.0 seals the token via the Keystore-backed SetSecretCryptoOverride seam.
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.80f, 0.30f, 1.0f));
-    ImGui::TextWrapped("Note: on this platform the API token is stored unencrypted in the app's private "
-                       "storage. Use a scoped, revocable token.");
-    ImGui::PopStyleColor();
-    ImGui::Spacing();
-#endif
-    if (currentItem == 0) {
-        ImGui::TextUnformatted("Jira Configuration (Atlassian Cloud)");
-        ImGui::InputText("Domain", d.domainBuf, sizeof(d.domainBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("e.g. companyname.atlassian.net");
-        ImGui::InputText("Email", d.emailBuf, sizeof(d.emailBuf));
-        SmatchetSecretInputText("API Token", d.tokenBuf, sizeof(d.tokenBuf));
-        // No "Project Key" preference row. Project is per-operation — picked
-        // via the new-issue draft picker, derived from the active view's JQL, or supplied
-        // on ticket.create. The "Recently used projects" section below surfaces cached
-        // projects for visibility / Forget.
+    // Plaintext-token warning is section chrome — no descriptor row of its own.
+    if (!d.prefsFilter.Active()) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.80f, 0.30f, 1.0f));
+        ImGui::TextWrapped("Note: on this platform the API token is stored unencrypted in the app's private "
+                           "storage. Use a scoped, revocable token.");
+        ImGui::PopStyleColor();
         ImGui::Spacing();
-        ImGui::InputText("New issue: inherit fields from last row (Jira)", d.newIssueInheritFieldsBuf,
-                         sizeof(d.newIssueInheritFieldsBuf));
-        ImGui::SetItemTooltip("Comma-separated Jira field ids.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.inherit_jira.help",
-                                   "Comma-separated Jira field ids copied from the last grid row when you "
-                                   "click + New issue (e.g. description, priority, assignee, labels, "
-                                   "components).");
-    } else if (currentItem == 1) {
-        ImGui::TextUnformatted("Plane Configuration (plane.so)");
-        ImGui::InputText("URL", d.planeUrlBuf, sizeof(d.planeUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("e.g. https://api.plane.so");
-        ImGui::InputText("Workspace Slug", d.planeWorkspaceBuf, sizeof(d.planeWorkspaceBuf),
-                         ImGuiInputTextFlags_CharsNoBlank);
-        // No "Project ID (UUID)" preference row. See Jira note above.
-        SmatchetSecretInputText("API Key", d.planeApiKeyBuf, sizeof(d.planeApiKeyBuf));
-        ImGui::Spacing();
-        ImGui::InputText("New issue: inherit fields from last row (Plane)", d.newIssueInheritFieldsPlaneBuf,
-                         sizeof(d.newIssueInheritFieldsPlaneBuf));
-        ImGui::SetItemTooltip("Comma-separated Plane field ids.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.inherit_plane.help",
-                                   "Comma-separated Plane field ids copied from the last grid row when you "
-                                   "click + New issue (e.g. description, priority, assignee, labels).");
-    } else if (currentItem == 2) {
-        // GitHub-as-tracker — docs/plans/shipped/github-tracker-backend.md.
-        ImGui::TextUnformatted("GitHub Configuration (github.com or Enterprise)");
-        ImGui::InputText("Base URL", d.githubBaseUrlBuf, sizeof(d.githubBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("e.g. https://api.github.com or https://github.your-corp.com/api/v3");
-        SmatchetSecretInputText("Personal Access Token", d.githubPatBuf, sizeof(d.githubPatBuf));
-        ImGui::SetItemTooltip("Fine-grained PAT with repo + issues + projects (read/write) scope.");
-        ImGui::InputText("Owner", d.githubOwnerBuf, sizeof(d.githubOwnerBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("GitHub user or organization, e.g. \"alexandrosk0\".");
-        ImGui::InputText("Repo", d.githubRepoBuf, sizeof(d.githubRepoBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("Repository name, e.g. \"Smatchet\".");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.github_repo.help",
-                                   "Repository name, e.g. \"Smatchet\". Combined with Owner: fetches issues "
-                                   "from github.com/<owner>/<repo>. Leave both empty for cross-repo "
-                                   "/search/issues.");
-        ImGui::InputInt("Project number", &d.githubProjectNumber);
-        if (d.githubProjectNumber < 0) {
-            d.githubProjectNumber = 0; // no negative board numbers; 0 keeps the feature off
-        }
-        ImGui::SetItemTooltip("Projects v2 board number under Owner; 0 disables project fields.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.github_project.help",
-                                   "The N in github.com/orgs/<owner>/projects/N (or /users/<owner>/projects/N). "
-                                   "When set, that board's custom fields appear as editable grid columns for "
-                                   "issues on the board. 0 turns the feature off.");
-        ImGui::Spacing();
-        ImGui::InputText("New issue: inherit fields from last row (GitHub)", d.newIssueInheritFieldsGitHubBuf,
-                         sizeof(d.newIssueInheritFieldsGitHubBuf));
-        ImGui::SetItemTooltip("Comma-separated GitHub field ids.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.inherit_github.help",
-                                   "Comma-separated GitHub field ids copied from the last grid row when you "
-                                   "click + New issue (e.g. body, labels, assignees, milestone).");
-    } else {
-        // Linear-as-tracker — Slice 1 of docs/plans/linear-tracker-backend.md. Draft scope is
-        // the Team, so identity is the Team Key / Team Id pair (mirrors GitHub's Owner/Repo shape).
-        ImGui::TextUnformatted("Linear Configuration (linear.app)");
-        SmatchetSecretInputText("API Key", d.linearApiKeyBuf, sizeof(d.linearApiKeyBuf));
-        ImGui::SetItemTooltip("Personal API Key from Linear Settings -> API.");
-        ImGui::InputText("Team Key", d.linearTeamKeyBuf, sizeof(d.linearTeamKeyBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("Team key, e.g. \"ENG\" (the TEAM-123 issue prefix).");
-        ImGui::InputText("Team", d.linearTeamIdBuf, sizeof(d.linearTeamIdBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("Linear team UUID. Optional — resolved from Team Key when empty.");
-        ImGui::InputText("Base URL", d.linearBaseUrlBuf, sizeof(d.linearBaseUrlBuf), ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("e.g. https://api.linear.app/graphql");
-        ImGui::InputText("Workspace URL", d.linearWorkspaceUrlBuf, sizeof(d.linearWorkspaceUrlBuf),
-                         ImGuiInputTextFlags_CharsNoBlank);
-        ImGui::SetItemTooltip("Optional workspace URL / display hint.");
-        ImGui::Spacing();
-        ImGui::InputText("New issue: inherit fields from last row (Linear)", d.newIssueInheritFieldsLinearBuf,
-                         sizeof(d.newIssueInheritFieldsLinearBuf));
-        ImGui::SetItemTooltip("Comma-separated Linear field ids.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.inherit_linear.help",
-                                   "Comma-separated Linear field ids copied from the last grid row when you "
-                                   "click + New issue (e.g. description, priority, assignee, labels).");
     }
-    ImGui::Spacing();
+#endif
+    const bool chrome = !d.prefsFilter.Active();
+    if (currentItem == 0) {
+        DrawTrackerJiraConfig(d, chrome);
+    } else if (currentItem == 1) {
+        DrawTrackerPlaneConfig(d, chrome);
+    } else if (currentItem == 2) {
+        DrawTrackerGitHubConfig(d, chrome);
+    } else {
+        DrawTrackerLinearConfig(d, chrome);
+    }
+    if (chrome) {
+        ImGui::Spacing();
+    }
 }
 
 // "Recently used projects" section of the Tracker tab: cached-project list filtered to the current
@@ -434,7 +522,13 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
     // "Recently used projects" — read-only listbox sourced from FieldCatalogCache,
     // filtered to the current backend + endpoint. Replaces the deleted "Project Key" /
     // "Project ID (UUID)" preference rows. Each row has a Forget button.
-    ImGui::Separator();
+    // One descriptor covers the whole list: the rows are cache entries, not settings.
+    if (!d.prefsFilter.ShowSetting("tracker.recent_projects.list")) {
+        return;
+    }
+    if (!d.prefsFilter.Active()) {
+        ImGui::Separator();
+    }
     ImGui::TextUnformatted(SmatchetLocalization::T("prefs.recentProjects", "Recently used projects"));
     std::string backendKind;
     std::string endpoint;
@@ -495,36 +589,51 @@ void DrawTrackerRecentProjects(UiDrawSession& d, int currentItem) {
 // no Save button. These keys were config-only (not on the config.set allowlist, hand-edited JSON)
 // until exposed here.
 void DrawUserInfoFeedSettings(UiDrawSession& d) {
-    ImGui::TextUnformatted("User Info & commit feed");
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::InputText("Git commit repos", d.gitCommitReposBuf, sizeof(d.gitCommitReposBuf));
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.userinfo.git_commit_repos.help",
-                               "Comma-separated owner/repo list the GitHub commit feed queries in the User "
-                               "Info window (e.g. \"alexandrosk0/Smatchet\"). Leave empty to reuse the "
-                               "tracker's own Owner/Repo. Auth reuses the GitHub PAT.");
-    ImGui::InputText("Production group keyword", d.productionGroupKeywordBuf, sizeof(d.productionGroupKeywordBuf));
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.userinfo.production_group.help",
-                               "Case-insensitive substring marking a tracker user-group as \"production\" "
-                               "(e.g. \"prod\"). Empty disables the production-group highlight.");
-    ImGui::InputInt("Activity day window", &d.userActivityDayWindow);
-    if (d.userActivityDayWindow < 1) {
-        d.userActivityDayWindow = 1;
+    // Heading + rule are section chrome — no descriptor rows of their own.
+    if (!d.prefsFilter.Active()) {
+        ImGui::TextUnformatted("User Info & commit feed");
+        ImGui::Separator();
+        ImGui::Spacing();
     }
-    ImGui::SetItemTooltip("How many days back the activity feed reaches (>= 1).");
-    ImGui::InputInt("Max changes per source", &d.maxUserChanges);
-    if (d.maxUserChanges < 1) {
-        d.maxUserChanges = 1;
+    // Each row below writes a session buffer; the dirty-compare at the end reads those
+    // buffers, so a filtered-out row simply keeps its current value — no desync.
+    if (d.prefsFilter.ShowSetting("connections.activity.git_repos")) {
+        ImGui::InputText("Git commit repos", d.gitCommitReposBuf, sizeof(d.gitCommitReposBuf));
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.userinfo.git_commit_repos.help",
+                                   "Comma-separated owner/repo list the GitHub commit feed queries in the User "
+                                   "Info window (e.g. \"alexandrosk0/Smatchet\"). Leave empty to reuse the "
+                                   "tracker's own Owner/Repo. Auth reuses the GitHub PAT.");
     }
-    ImGui::SetItemTooltip("Max submitted changes fetched per VCS source (>= 1).");
-    const char* kLayouts[] = {"unified", "separate"};
-    ImGui::Combo("VCS feed layout", &d.vcsFeedLayoutIndex, kLayouts, IM_ARRAYSIZE(kLayouts));
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.userinfo.vcs_layout.help",
-                               "unified: commits from all sources merged newest-first. separate: one "
-                               "section per VCS source.");
+    if (d.prefsFilter.ShowSetting("connections.activity.production_keyword")) {
+        ImGui::InputText("Production group keyword", d.productionGroupKeywordBuf, sizeof(d.productionGroupKeywordBuf));
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.userinfo.production_group.help",
+                                   "Case-insensitive substring marking a tracker user-group as \"production\" "
+                                   "(e.g. \"prod\"). Empty disables the production-group highlight.");
+    }
+    if (d.prefsFilter.ShowSetting("connections.activity.day_window")) {
+        ImGui::InputInt("Activity day window", &d.userActivityDayWindow);
+        if (d.userActivityDayWindow < 1) {
+            d.userActivityDayWindow = 1;
+        }
+        ImGui::SetItemTooltip("How many days back the activity feed reaches (>= 1).");
+    }
+    if (d.prefsFilter.ShowSetting("connections.activity.max_changes")) {
+        ImGui::InputInt("Max changes per source", &d.maxUserChanges);
+        if (d.maxUserChanges < 1) {
+            d.maxUserChanges = 1;
+        }
+        ImGui::SetItemTooltip("Max submitted changes fetched per VCS source (>= 1).");
+    }
+    if (d.prefsFilter.ShowSetting("connections.activity.vcs_layout")) {
+        const char* kLayouts[] = {"unified", "separate"};
+        ImGui::Combo("VCS feed layout", &d.vcsFeedLayoutIndex, kLayouts, IM_ARRAYSIZE(kLayouts));
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.userinfo.vcs_layout.help",
+                                   "unified: commits from all sources merged newest-first. separate: one "
+                                   "section per VCS source.");
+    }
     const std::string reposBuf(d.gitCommitReposBuf);
     const std::string prodBuf(d.productionGroupKeywordBuf);
     const std::string layout = (d.vcsFeedLayoutIndex == 1) ? "separate" : "unified";
@@ -580,6 +689,10 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
 // verdict line - the same pattern the Assistant and Whisper tabs already use. First-run
 // users can now verify a token before committing it with Save & Sync.
 void DrawTrackerTestConnection(AppController& app, UiDrawSession& d) {
+    // Whole row (button + in-flight hint + verdict) is one descriptor.
+    if (!d.prefsFilter.ShowSetting("tracker.backend.test_connection")) {
+        return;
+    }
     if (d.trackerPrefsTestInFlight) {
         ImGui::BeginDisabled();
     }
@@ -680,7 +793,8 @@ bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
 // grid are already locked to this tab in that state (SmatchetUI_MainMenu.cpp), so this line
 // is the only thing telling the user WHY, and what the three steps are.
 void DrawTrackerFirstRunExplainer(const UiDrawSession& d) {
-    if (!TrackerSetupPure::NeedsSetup(d.cfg)) {
+    // Banner is section chrome — it owns no descriptor row, so a narrowed pane drops it.
+    if (d.prefsFilter.Active() || !TrackerSetupPure::NeedsSetup(d.cfg)) {
         return;
     }
     const SmatchetThemeSemanticColors& sem = SmatchetTheme::GetActiveSemanticColors();
@@ -708,13 +822,15 @@ void SmatchetUI::drawPreferencesTrackerTab(AppController& app, UiDrawSession& d)
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.recent_projects", [&] {
         DrawTrackerRecentProjects(d, TrackerBackendIndexFromBuf(d));
-        if (ImGui::Button("Open Views Dashboard")) {
-            d.showViewsDashboard = true;
-            d.requestViewsDashboardFocus = true;
+        if (d.prefsFilter.ShowSetting("tracker.recent_projects.open_views_dashboard")) {
+            if (ImGui::Button("Open Views Dashboard")) {
+                d.showViewsDashboard = true;
+                d.requestViewsDashboardFocus = true;
+            }
+            ImGui::SameLine();
+            SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
+                                       "Query/JQL and column fields are configured in the Views dashboard.");
         }
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.tracker.views_note.help",
-                                   "Query/JQL and column fields are configured in the Views dashboard.");
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "tracker.notifications",
                                               [&] { DrawTrackerNotificationsSectionBody(d); });
@@ -732,32 +848,42 @@ namespace {
 // Integrations tab so the PrefsSection lambda stays a one-liner.
 void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
     // No title/Separator here — PrefsSection already drew the section header.
-    ImGui::Checkbox("Enable MCP server", &d.mcpEnabled);
-    ImGui::InputInt("MCP Port", &d.mcpPort);
-    if (d.mcpPort < 1) {
-        d.mcpPort = 1;
+    if (d.prefsFilter.ShowSetting("connections.mcp.enabled")) {
+        ImGui::Checkbox("Enable MCP server", &d.mcpEnabled);
     }
-    if (d.mcpPort > 65535) {
-        d.mcpPort = 65535;
+    if (d.prefsFilter.ShowSetting("connections.mcp.port")) {
+        ImGui::InputInt("MCP Port", &d.mcpPort);
+        if (d.mcpPort < 1) {
+            d.mcpPort = 1;
+        }
+        if (d.mcpPort > 65535) {
+            d.mcpPort = 65535;
+        }
     }
-    ImGui::Checkbox("Bind on all interfaces (LAN)", &d.mcpAllowRemote);
-    ImGui::SetItemTooltip("Off: localhost only. On: binds 0.0.0.0.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.integrations.mcp_bind.help",
-                               "When off, MCP listens on localhost only (127.0.0.1). When on, it binds "
-                               "0.0.0.0 — reachable on your network. Set an auth token below if you enable "
-                               "this.");
-    SmatchetSecretInputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf));
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.integrations.mcp_token.help",
-                               "If set, clients must send header X-Smatchet-Token with this value. If empty "
-                               "and bind is localhost-only, only loopback clients may connect.");
-    ImGui::Checkbox("Allow MCP run_lua tool (dangerous)", &d.mcpAllowLuaExecution);
-    ImGui::SetItemTooltip("Lets MCP clients execute Lua. Off by default.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.integrations.mcp_lua.help",
-                               "Off by default. When enabled, MCP clients can execute Lua snippets or "
-                               "Scripts/*.lua via the built-in run_lua tool.");
+    if (d.prefsFilter.ShowSetting("connections.mcp.allow_remote")) {
+        ImGui::Checkbox("Bind on all interfaces (LAN)", &d.mcpAllowRemote);
+        ImGui::SetItemTooltip("Off: localhost only. On: binds 0.0.0.0.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.integrations.mcp_bind.help",
+                                   "When off, MCP listens on localhost only (127.0.0.1). When on, it binds "
+                                   "0.0.0.0 — reachable on your network. Set an auth token below if you enable "
+                                   "this.");
+    }
+    if (d.prefsFilter.ShowSetting("connections.mcp.auth_token")) {
+        SmatchetSecretInputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf));
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.integrations.mcp_token.help",
+                                   "If set, clients must send header X-Smatchet-Token with this value. If empty "
+                                   "and bind is localhost-only, only loopback clients may connect.");
+    }
+    if (d.prefsFilter.ShowSetting("connections.mcp.allow_lua")) {
+        ImGui::Checkbox("Allow MCP run_lua tool (dangerous)", &d.mcpAllowLuaExecution);
+        ImGui::SetItemTooltip("Lets MCP clients execute Lua. Off by default.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.integrations.mcp_lua.help",
+                                   "Off by default. When enabled, MCP clients can execute Lua snippets or "
+                                   "Scripts/*.lua via the built-in run_lua tool.");
+    }
     {
         const std::string tokenBufStr(d.mcpAuthTokenBuf);
         const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||
@@ -782,6 +908,10 @@ void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
             }
             d.mcpPrefsSavedHintUntil = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
         }
+    }
+    // Saved-hint + the two trailing notes are status chrome, not settings.
+    if (d.prefsFilter.Active()) {
+        return;
     }
     if (std::chrono::steady_clock::now() < d.mcpPrefsSavedHintUntil) {
         ImGui::TextColored(ImVec4(0.45f, 0.95f, 0.55f, 1.0f), "MCP settings saved to disk.");
@@ -898,108 +1028,52 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
 
 namespace {
 
-// Settings-search index (UX critique M4): finding a setting shouldn't require knowing
-// which of ~13 tabs owns it. Each entry pairs a top-level tab's canonical name with a
-// lowercase keyword bag covering the labels/concepts that tab hosts. Curated by hand —
-// the tab bodies are static label strings, so drift is caught on sight when a tab gains
-// a new concept.
-struct PrefsSearchEntry {
-    const char* tab;            // canonical tab name (BeginTabItem literal) / display label
-    const char* keywords;       // lowercase, space-separated
-    const char* note = nullptr; // non-null: the setting lives OUTSIDE Preferences — the
-                                // match renders this pointer text instead of a jump chip
-                                // (P2-M10: "theme" used to send users to the wrong tab).
-};
-
-const PrefsSearchEntry kPrefsSearchIndex[] = {
-    {"Tracker",
-     "backend jira plane github linear connection domain email api token pat credentials workspace url project "
-     "read-only sync"},
-    {"User Info", "git commit repos activity feed vcs production group user changes"},
-#if defined(SMATCHET_WITH_MCP)
-    {"Integrations", "mcp model context protocol server port remote lan bind auth token lua automation agent"},
-#endif
-#if defined(SMATCHET_WITH_AI)
-    {"Assistant", "ai provider model api key openai anthropic claude chat assistant temperature context"},
-#endif
-#if defined(SMATCHET_WITH_WHISPER)
-    {"Whisper", "dictation speech voice microphone audio transcribe push to talk hotkey whisper model recording"},
-#endif
-    // P2-M10: bags pruned to labels that actually render on the tab; concepts that
-    // live outside Preferences resolve to a pointer note instead of a wrong-tab chip.
-    {"Local data", "cache database offline local data sqlite clear catalog projects"},
-    {"Appearance", "font size density compact zoom ui mode mobile date format tooltip overflow vsync wheel update"},
-    {"Keyboard Shortcuts", "keyboard shortcut hotkey binding chord rebind keys keybindings"},
-    {"Grid", "grid rows estimate chip write badge editing markdown"},
-    {"Themes", "theme color dark light contrast norton", "Themes: View > Appearance menu"},
-    {"Logging", "log level verbose logging", "Log level and verbose logging: Inspect > Runtime Log"},
-    // Time Estimates / Work Log Templates / Quick Comments live as sub-tabs INSIDE the
-    // Fields Inputs tab — their keywords jump to that top-level parent.
-    {"Fields Inputs",
-     "field input default inherit issue type new issue draft autocomplete time estimate duration suggestions "
-     "worklog work log template quick comment"},
-    {"Annotate", "annotate perforce p4 blame changelist source"},
-};
-
-// Case-insensitive substring match of `needleLower` against haystack (also lowercased).
-bool PrefsKeywordsMatch(const char* haystack, const std::string& needleLower) {
-    std::string hay(haystack);
-    for (std::size_t i = 0; i < hay.size(); ++i) {
-        hay[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(hay[i])));
-    }
-    return hay.find(needleLower) != std::string::npos;
-}
-
-// The search box + match chips drawn above the nav. Clicking a chip selects the category
-// that hosts the old tab via d.prefsSelectTabRequest / PrefsCategoryForChipName.
-void DrawPrefsSearchBox(UiDrawSession& d) {
+// The global settings search box, drawn above the nav rail. The query drives
+// PreferencesFilter, which hides non-matching widgets in place across every
+// category — no jump chips, no minimum query length: the descriptor table is the
+// index, so a one-character query narrows rather than lighting up whole tabs.
+// Split in two around the caller's Update() + dynamic-match fold: the input half
+// only edits the buffer, the readout half reports the resulting MatchCount().
+// Nothing between them emits ImGui, so the readout's SameLine still attaches to
+// the clear button.
+void DrawPrefsSearchBoxInput(UiDrawSession& d) {
     ImGui::SetNextItemWidth(280.0f);
     ImGui::InputTextWithHint("##PrefsSearch", "Search settings...", d.prefsSearchBuf, sizeof(d.prefsSearchBuf));
-    if (d.prefsSearchBuf[0] == '\0') {
-        return;
-    }
-    std::string needle(d.prefsSearchBuf);
-    for (std::size_t i = 0; i < needle.size(); ++i) {
-        needle[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(needle[i])));
-    }
-    // P2-M10: one- and two-character substrings light up half the tab set, so wait
-    // for at least three characters of signal before matching.
-    if (needle.size() < 3) {
+    const bool hasQuery = d.prefsSearchBuf[0] != '\0';
+    if (hasQuery) {
+        // Clear button, drawn before the caller's Update() so the cleared buffer
+        // takes effect this same frame rather than leaving one stale filtered
+        // frame behind.
         ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.too_short", "type at least 3 characters"));
+        if (ImGui::SmallButton("x###PrefsSearchClear")) {
+            d.prefsSearchBuf[0] = '\0';
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("%s", SmatchetLocalization::T("prefs.search.clear", "Clear search"));
+        }
+    }
+}
+
+// The "showing N / M" readout. Drawn after the caller folded in the dynamic
+// (descriptor-less) matches, so a query that only hits a keybinding row reports
+// a count instead of "No settings match."
+void DrawPrefsSearchReadout(UiDrawSession& d) {
+    if (!d.prefsFilter.Active()) {
         return;
     }
     ImGui::SameLine();
-    ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.found_in", "Found in:"));
-    int matches = 0;
-    for (const PrefsSearchEntry& entry : kPrefsSearchIndex) {
-        if (!PrefsKeywordsMatch(entry.tab, needle) && !PrefsKeywordsMatch(entry.keywords, needle)) {
-            continue;
-        }
-        // Wrap onto a new line when the next chip wouldn't fit — a broad query can match
-        // most of the tab set and would otherwise run off the window edge. Measured from
-        // the PREVIOUS item's right edge (the standard ImGui wrapping idiom): checking
-        // GetContentRegionAvail before SameLine would read a fresh-line cursor and never
-        // trigger.
-        const char* chipText = entry.note != nullptr ? entry.note : entry.tab;
-        const float chipW = ImGui::CalcTextSize(chipText).x + ImGui::GetStyle().FramePadding.x * 2.0f;
-        const float windowRightX = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
-        const float nextChipEndX = ImGui::GetItemRectMax().x + ImGui::GetStyle().ItemSpacing.x + chipW;
-        if (nextChipEndX < windowRightX) {
-            ImGui::SameLine();
-        }
-        if (entry.note != nullptr) {
-            // Lives outside Preferences — point there instead of jumping to a wrong tab.
-            ImGui::TextDisabled("%s", entry.note);
-        } else if (ImGui::SmallButton(entry.tab)) {
-            d.prefsSelectTabRequest = entry.tab;
-        }
-        ++matches;
-    }
+    const std::size_t matches = d.prefsFilter.MatchCount();
     if (matches == 0) {
-        ImGui::SameLine();
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.no_match", "no matching tab"));
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("prefs.search.no_match", "No settings match."));
+        return;
     }
+    // Built with snprintf rather than passed as a format string: the localized
+    // TextDisabled routes its fmt argument through TranslateSourceAsFormat, so a
+    // translated fragment must never carry the %d placeholders itself.
+    char readout[96];
+    std::snprintf(readout, sizeof(readout), "%s %d / %d", SmatchetLocalization::T("prefs.search.showing", "showing"),
+                  static_cast<int>(matches), static_cast<int>(d.prefsFilter.TotalCount()));
+    ImGui::TextDisabled("%s", readout);
 }
 
 } // namespace
@@ -1056,7 +1130,7 @@ void SmatchetUI::drawPreferencesConnectionsTab(AppController& app, UiDrawSession
 #endif
     SmatchetPreferencesUiDetail::PrefsSection(d, "connections.perforce", [&] {
         DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Perforce, app.GetAvailableFields(),
-                                          app);
+                                          app, d.prefsFilter);
     });
     drawPreferencesUserInfoTab(d);
 }
@@ -1065,15 +1139,15 @@ void SmatchetUI::drawPreferencesConnectionsTab(AppController& app, UiDrawSession
 void SmatchetUI::drawPreferencesAnnotateTab(AppController& app, UiDrawSession& d) {
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.analysis", [&] {
         DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Analysis, app.GetAvailableFields(),
-                                          app);
+                                          app, d.prefsFilter);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.field_mapping", [&] {
         DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::FieldMapping,
-                                          app.GetAvailableFields(), app);
+                                          app.GetAvailableFields(), app, d.prefsFilter);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "annotate.colors", [&] {
         DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection::Colors, app.GetAvailableFields(),
-                                          app);
+                                          app, d.prefsFilter);
     });
 }
 
@@ -1102,17 +1176,19 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
 
     loadPreferencesBuffers(d);
 
-    DrawPrefsSearchBox(d);
+    DrawPrefsSearchBoxInput(d);
+    d.prefsFilter.Update(d.prefsSearchBuf, d.cfg.UiLanguage);
 
-    // Consume a search-chip jump request: chips still carry the old canonical tab
-    // names; unknown names are dropped (stale request from a removed entry).
-    if (!d.prefsSelectTabRequest.empty()) {
-        PreferencesCategory chipTarget;
-        if (SmatchetPreferencesUiDetail::PrefsCategoryForChipName(d.prefsSelectTabRequest, chipTarget)) {
-            d.preferencesCategory = chipTarget;
-        }
-        d.prefsSelectTabRequest.clear();
+    // The keybindings rows are dynamic and carry no descriptors, so the schema-driven
+    // filter cannot see a command-name query. Fold the answer back in here — after
+    // Update(), before anything reads the result — so the match readout, the rail's
+    // enabled state, the auto-switch target and the section's own visibility all agree
+    // on the same frame.
+    d.prefsKeybindRowsMatchQuery = SmatchetPreferencesUiDetail::AnyKeybindingRowMatchesQuery(app, d);
+    if (d.prefsKeybindRowsMatchQuery) {
+        d.prefsFilter.AddDynamicMatch("shortcuts.keyboard.bindings");
     }
+    DrawPrefsSearchReadout(d);
 
     // Dirty markers for the nav labels (the old dirty-tab "*"). Computed here because
     // TrackerPrefsFieldsDiffer lives in this TU's anonymous namespace and the assistant
@@ -1128,8 +1204,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // right pane share the remaining height.
     const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 3.0f;
     const float bodyHeight = ImGui::GetContentRegionAvail().y - footerHeight;
-    d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(
-        embedded, ImGui::GetContentRegionAvail().x, ImGui::GetFontSize(), d.prefsNavCombo);
+    d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(embedded, ImGui::GetContentRegionAvail().x,
+                                                                           ImGui::GetFontSize(), d.prefsNavCombo);
     SmatchetPreferencesUiDetail::DrawPrefsNav(d, trackerDirty, assistantDirty, bodyHeight);
     float paneHeight = bodyHeight;
     if (d.prefsNavCombo) {

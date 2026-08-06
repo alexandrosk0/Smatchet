@@ -178,8 +178,9 @@ enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimary
 /// Which Preferences category the left nav rail (or the narrow-width combo)
 /// has selected. Set by the rail/combo click handler in drawPreferencesWindow;
 /// the right pane switches on it to draw that category's sections. Values are
-/// the 8 categories of SmatchetPrefsSchema::Categories(), in rail order.
-/// Tracker stays the default so the first-run backend gate opens on it.
+/// the 8 categories of SmatchetPrefsSchema::Categories(); the enumerator order
+/// is NOT the rail order (the rail's own entry table owns that) — Tracker leads
+/// here only so the zero value is the first-run backend gate's category.
 enum class PreferencesCategory : std::uint8_t {
     Tracker = 0,
     General,
@@ -305,13 +306,17 @@ struct UiDrawSession {
     /// Persists across frames; defaults to Tracker.
     PreferencesCategory preferencesCategory = PreferencesCategory::Tracker;
     /// Settings-search box atop the Preferences window (UX critique M4). The query
-    /// live-matches a per-tab keyword index; clicking a match chip sets the jump request
-    /// consumed by the nav dispatch in drawPreferencesWindow (chip name → category).
+    /// feeds prefsFilter, which hides non-matching widgets in place across every
+    /// category — no jump chips, no per-tab keyword index.
     char prefsSearchBuf[64] = {};
-    std::string prefsSelectTabRequest;
-    /// Live in-place settings filter (slice 3 wires the search box into it;
-    /// dormant in slice 2a — Update is never called, so Active() stays false).
+    /// Live in-place settings filter, driven by prefsSearchBuf each frame from
+    /// drawPreferencesWindow. Inactive (shows everything) while the query is empty.
     PreferencesFilter prefsFilter;
+    /// Does the live global query hit at least one keybinding row? Computed once per
+    /// frame in drawPreferencesWindow (the answer is needed before the nav rail draws,
+    /// and again later by the keybindings table itself — scanning twice would double
+    /// the per-frame command-label lookups). False while the filter is inactive.
+    bool prefsKeybindRowsMatchQuery = false;
     /// Collapsed PrefsSection ids, persisted as the comma-joined
     /// cfg.PreferencesCollapsedSections string. Parsed lazily on first
     /// Preferences draw (prefsCollapsedLoaded latch) — cfg is loaded after

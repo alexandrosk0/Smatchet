@@ -135,6 +135,11 @@ TEST_CASE("PreferencesFilter — language change triggers a rebuild, not a crash
 TEST_CASE("PreferencesFilter — observed-id set accumulates and resets") {
     PreferencesFilter filter;
     filter.Update("", "en");
+    // Recording is opt-in (off on the production draw path), so the guard's own
+    // switch is part of what this covers: nothing accumulates until it is on.
+    filter.ShowSetting(kVsyncId);
+    CHECK(filter.ObservedSettingIds().empty());
+    filter.SetRecordObservedSettingIds(true);
     filter.ResetObservedSettingIds();
     CHECK(filter.ObservedSettingIds().empty());
     filter.ShowSetting(kVsyncId);

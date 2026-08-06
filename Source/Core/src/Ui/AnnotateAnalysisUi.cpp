@@ -82,8 +82,9 @@ void AnnotateAnalysisUi::ensureSettingsBuffersLoaded() {
 }
 
 void AnnotateAnalysisUi::DrawAnnotatePrefsSection(AnnotatePrefsSection section,
-                                                 const std::vector<TrackerField>& availableFields,
-                                                 const IAppTicketMutations& ticketMutations) {
+                                                  const std::vector<TrackerField>& availableFields,
+                                                  const IAppTicketMutations& ticketMutations,
+                                                  PreferencesFilter& filter) {
     // Every section call re-runs hydration + autoselect. Both are idempotent latches, so the
     // per-section cost is a bool test once the first drawn section has warmed them.
     ensureSettingsBuffersLoaded();
@@ -92,16 +93,16 @@ void AnnotateAnalysisUi::DrawAnnotatePrefsSection(AnnotatePrefsSection section,
     MaybeAutoselectLastOccurrencesTrackerField(availableFields);
     switch (section) {
     case AnnotatePrefsSection::Analysis:
-        DrawAnnotateAnalysisFields();
+        DrawAnnotateAnalysisFields(filter);
         break;
     case AnnotatePrefsSection::FieldMapping:
-        DrawAnnotateJiraFieldCombos(availableFields, ticketMutations, State().annotateCfg.UiColors);
+        DrawAnnotateJiraFieldCombos(availableFields, ticketMutations, State().annotateCfg.UiColors, filter);
         break;
     case AnnotatePrefsSection::Colors:
-        DrawAnnotateColors();
+        DrawAnnotateColors(filter);
         break;
     case AnnotatePrefsSection::Perforce:
-        DrawAnnotatePerforceFields();
+        DrawAnnotatePerforceFields(filter);
         break;
     }
 }

@@ -98,6 +98,12 @@ bool WindowIsLive(const char* title) {
     return win != nullptr && win->Active;
 }
 
+// The app's update-available modal owns NavWindow and nulls HoveredWindow, so no
+// widget under it can be hovered, clicked or nav-activated — an ItemClick in a
+// replica window silently never lands. BeginPopupModal closes on a false p_open,
+// so clearing the flag every frame dismisses it for the run.
+void DismissAppUpdateModal() { g_ui.appUpdateModalOpen = false; }
+
 // Open Preferences and tick until its window is live (Active). Mirrors the pilot's
 // docked-window open recipe: re-arm the focus latch every frame until the docked
 // tab activates, since the draw fn consumes it in one frame.
@@ -306,6 +312,7 @@ CaptureWidgetState g_captureState;
 void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "CaptureWidgetClickThenKeyCommits");
     t->GuiFunc = [](ImGuiTestContext*) {
+        DismissAppUpdateModal();
         ImGui::SetNextWindowSize(ImVec2(420.0f, 140.0f), ImGuiCond_Appearing);
         if (ImGui::Begin("SmatchetTest::HotkeyCaptureWidget")) {
             if (smatchet::ui::DrawHotkeyRebindControl("captureTest", g_captureState.display, g_captureState.capturing,
@@ -343,6 +350,7 @@ bool g_qbChanged = false;
 void RegisterQuickBindCaptureThenSet(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "QuickBindPopupCaptureThenSetBinds");
     t->GuiFunc = [](ImGuiTestContext*) {
+        DismissAppUpdateModal();
         ImGui::SetNextWindowSize(ImVec2(460.0f, 220.0f), ImGuiCond_Appearing);
         if (ImGui::Begin("SmatchetTest::QuickBindHost")) {
             if (g_qbPopup.Draw(g_ui.cfg)) {

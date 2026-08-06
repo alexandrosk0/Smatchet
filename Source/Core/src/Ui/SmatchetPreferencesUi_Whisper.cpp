@@ -78,7 +78,8 @@ struct WhisperPrefsTabState {
 };
 
 void DrawWhisperEnableAndMode(UiDrawSession& d) {
-    if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.enableToggle", "Enable voice dictation"),
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.enabled") &&
+        ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.enableToggle", "Enable voice dictation"),
                         &d.cfg.WhisperEnabled)) {
         if (d.cfg.WhisperEnabled) {
             d.cfg.WhisperSetupCompleted = true;
@@ -90,7 +91,7 @@ void DrawWhisperEnableAndMode(UiDrawSession& d) {
     }
 
     // Mode selector.
-    {
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.mode")) {
         int modeIdx = 0;
         if (d.cfg.WhisperMode == "local") {
             modeIdx = 1;
@@ -156,12 +157,19 @@ void DrawWhisperModelPicker(IAppThreading& app, UiDrawSession& d) {
     labelPtrs.reserve(labelStorage.size());
     std::transform(labelStorage.begin(), labelStorage.end(), std::back_inserter(labelPtrs),
                    [](const std::string& s) { return s.c_str(); });
-    if (ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"), &selIdx, labelPtrs.data(),
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.model") &&
+        ImGui::Combo(SmatchetLocalization::T("whisper.preferences.model", "Speech model"), &selIdx, labelPtrs.data(),
                      static_cast<int>(labelPtrs.size()))) {
         if (selIdx >= 0 && static_cast<std::size_t>(selIdx) < catalog.size()) {
             d.cfg.WhisperModel = catalog[static_cast<std::size_t>(selIdx)].Id;
             MarkPrefsDirty(d);
         }
+    }
+
+    // Download button + its progress/cancel/error chrome are one unit: hiding the
+    // button while a filtered query is active must not strand the progress bar.
+    if (!d.prefsFilter.ShowSetting("ai_voice.dictation.download_model")) {
+        return;
     }
 
     smatchet::whisper::ModelDownloader& dl = smatchet::whisper::banner::BannerOwnedDownloader();
@@ -296,6 +304,9 @@ void DrawWhisperHotkey(UiDrawSession& d, WhisperPrefsTabState& state) {
     // the global hotkey happens on the next plugin OnStop/OnStart cycle (or at
     // app restart) — Phase E does not hot-rebind the live hook to keep the
     // surface tight.
+    if (!d.prefsFilter.ShowSetting("ai_voice.dictation.hotkey")) {
+        return;
+    }
     ImGui::Separator();
     ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.hotkey", "Push-to-talk hotkey"));
     if (!state.hotkeyDisplaySeeded || std::strcmp(state.hotkeyDisplay, d.cfg.WhisperHotkey.c_str()) != 0) {
@@ -333,6 +344,11 @@ void DrawWhisperHotkey(UiDrawSession& d, WhisperPrefsTabState& state) {
 
 void DrawWhisperApiKey(UiDrawSession& d, WhisperPrefsTabState& state) {
     // API key — passworded input, with fallback hint when empty + AiProvider=openai.
+    // The heading is this row's only visible label (the input id is hidden), so it
+    // lives inside the gate rather than being treated as section chrome.
+    if (!d.prefsFilter.ShowSetting("ai_voice.dictation.api_key")) {
+        return;
+    }
     ImGui::Separator();
     ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.apiKey", "OpenAI API key (cloud mode)"));
     if (!state.keyBufSeeded) {
@@ -776,10 +792,13 @@ void DrawWhisperTestE2E(IAppThreading& app, UiDrawSession& d, WhisperPrefsTabSta
 
 void DrawWhisperAdvancedRows(UiDrawSession& d) {
     // --- Phase F language / trim / max-clip / auto-send rows. ---
-    ImGui::Separator();
-    ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.language.label", "Language:"));
-    ImGui::SameLine();
-    {
+    // The separator is section chrome (no descriptor row of its own).
+    if (!d.prefsFilter.Active()) {
+        ImGui::Separator();
+    }
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.language")) {
+        ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.language.label", "Language:"));
+        ImGui::SameLine();
         // Static set of common ISO codes the bundled English models +
         // multilingual cloud both understand. "auto" asks the backend to detect.
         // Users with a multilingual local model can add more codes via direct
@@ -800,18 +819,19 @@ void DrawWhisperAdvancedRows(UiDrawSession& d) {
             d.cfg.WhisperLanguage = kLanguageCodes[langIdx];
             MarkPrefsDirty(d);
         }
+        ImGui::SameLine();
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("whisper.preferences.language.autoHint", "(or \"auto\" for autodetect)"));
     }
-    ImGui::SameLine();
-    ImGui::TextDisabled(
-        "%s", SmatchetLocalization::T("whisper.preferences.language.autoHint", "(or \"auto\" for autodetect)"));
 
-    if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.trim.label", "Trim leading/trailing silence"),
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.trim") &&
+        ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.trim.label", "Trim leading/trailing silence"),
                         &d.cfg.WhisperTrim)) {
         MarkPrefsDirty(d);
     }
 
     // Max clip length: int input with explicit clamp on edit. 0 = unlimited.
-    {
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.max_clip")) {
         int maxClip = d.cfg.WhisperMaxClipSec;
         ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.maxClipSec.label", "Max clip length:"));
         ImGui::SameLine();
@@ -831,7 +851,8 @@ void DrawWhisperAdvancedRows(UiDrawSession& d) {
                             SmatchetLocalization::T("whisper.preferences.maxClipSec.hint", "(0 = unlimited; max 600)"));
     }
 
-    if (ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.autoSend.label",
+    if (d.prefsFilter.ShowSetting("ai_voice.dictation.auto_send") &&
+        ImGui::Checkbox(SmatchetLocalization::T("whisper.preferences.autoSend.label",
                                                 "Auto-send AI chat on punctuation (\".\", \"!\", \"?\")"),
                         &d.cfg.WhisperAutoSendOnPunctuation)) {
         MarkPrefsDirty(d);
@@ -839,24 +860,32 @@ void DrawWhisperAdvancedRows(UiDrawSession& d) {
 }
 
 void DrawWhisperPrivacyAndRerun(UiDrawSession& d) {
-    // Privacy disclosure — three-bullet list.
-    ImGui::Separator();
-    ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading", "Privacy disclosure"));
-    ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyLocal",
-                                                    "Local mode: audio stays on your machine; "
-                                                    "no network call is made."));
-    ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyCloud",
-                                                    "Cloud mode: audio is uploaded to OpenAI "
-                                                    "for transcription."));
-    ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyDisabled",
-                                                    "Disabled: no microphone access, no "
-                                                    "network call, no model download."));
+    // Privacy disclosure — three-bullet list. Read-only disclosure, no descriptor
+    // row: it is section chrome and stays out of a narrowed result.
+    if (!d.prefsFilter.Active()) {
+        ImGui::Separator();
+        ImGui::TextUnformatted(SmatchetLocalization::T("whisper.preferences.privacyHeading", "Privacy disclosure"));
+        ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyLocal",
+                                                        "Local mode: audio stays on your machine; "
+                                                        "no network call is made."));
+        ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyCloud",
+                                                        "Cloud mode: audio is uploaded to OpenAI "
+                                                        "for transcription."));
+        ImGui::BulletText("%s", SmatchetLocalization::T("whisper.preferences.privacyDisabled",
+                                                        "Disabled: no microphone access, no "
+                                                        "network call, no model download."));
+    }
 
     // Phase F — "Re-run setup banner" debug helper. Flips WhisperSetupCompleted
     // back to false so the first-run banner appears on next launch. Useful for
     // QA / repro flows; not for routine users (no harm if pressed — the banner
     // just re-asks the consent question).
-    ImGui::Separator();
+    if (!d.prefsFilter.ShowSetting("ai_voice.dictation.rerun_setup")) {
+        return;
+    }
+    if (!d.prefsFilter.Active()) {
+        ImGui::Separator();
+    }
     if (SmatchetIconButton(ICON_FA_ARROWS_ROTATE, "Re-run setup banner", nullptr)) {
         d.cfg.WhisperSetupCompleted = false;
         d.cfg.WhisperSetupChoice.clear();
@@ -879,14 +908,18 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
     // to show progress on this tab.
     static WhisperPrefsTabState s_state;
     SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.dictation", [&] {
-        ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.whisper.ptt.help",
-                                   "Push-to-talk dictation. Hold the configured hotkey, speak, release. "
-                                   "Transcription runs locally when a Whisper model is on disk; falls back "
-                                   "to OpenAI Whisper API when no model is present (cloud mode requires an "
-                                   "API key).");
-        ImGui::Spacing();
+        // Section intro + its help marker own no descriptor row: chrome, dropped
+        // while a query is narrowing the pane.
+        if (!d.prefsFilter.Active()) {
+            ImGui::TextUnformatted("Push-to-talk dictation: hold the hotkey, speak, release.");
+            ImGui::SameLine();
+            SmatchetHelpMarker::Render("prefs.whisper.ptt.help",
+                                       "Push-to-talk dictation. Hold the configured hotkey, speak, release. "
+                                       "Transcription runs locally when a Whisper model is on disk; falls back "
+                                       "to OpenAI Whisper API when no model is present (cloud mode requires an "
+                                       "API key).");
+            ImGui::Spacing();
+        }
 
         DrawWhisperEnableAndMode(d);
         DrawWhisperModelPicker(app, d);
@@ -896,9 +929,17 @@ void DrawWhisperPreferencesTab(IAppThreading& app, UiDrawSession& d) {
         DrawWhisperPrivacyAndRerun(d);
     });
     SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.diagnostics", [&] {
-        DrawWhisperTestConnection(app, d, s_state);
-        DrawWhisperTestMicrophone(app, s_state);
-        DrawWhisperTestE2E(app, d, s_state);
+        // Gated at the call site: each probe owns its in-flight state + inline result
+        // readout, so the whole helper is the filter unit.
+        if (d.prefsFilter.ShowSetting("ai_voice.diagnostics.test_connection")) {
+            DrawWhisperTestConnection(app, d, s_state);
+        }
+        if (d.prefsFilter.ShowSetting("ai_voice.diagnostics.test_microphone")) {
+            DrawWhisperTestMicrophone(app, s_state);
+        }
+        if (d.prefsFilter.ShowSetting("ai_voice.diagnostics.test_e2e")) {
+            DrawWhisperTestE2E(app, d, s_state);
+        }
     });
 }
 

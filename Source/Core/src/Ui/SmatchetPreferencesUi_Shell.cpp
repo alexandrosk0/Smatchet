@@ -1,6 +1,6 @@
 // Preferences window shell helpers: the left category nav rail (or the
-// narrow-width category combo), the collapsible PrefsSection chrome with
-// per-section save-semantics hints, and the search-chip name -> category map.
+// narrow-width category combo) with its no-match dimming, and the collapsible
+// PrefsSection chrome with per-section save-semantics hints.
 // The positional Begin/End frame itself stays in drawPreferencesWindow
 // (SmatchetPreferencesUi.cpp); nothing here splits a positional-ImGui pair
 // across the call boundary.
@@ -83,9 +83,11 @@ void PersistCollapsedSections(UiDrawSession& d) {
 
 /// One nav entry. navId is the stable "###"-suffixed ImGui id so tests and
 /// translations never shift the item id; dirty appends a " *" marker to the
-/// visible part only.
+/// visible part only. SchemaId keys the descriptor-table category so the rail
+/// can dim entries holding no search match.
 struct PrefsNavEntry {
     PreferencesCategory Category;
+    const char* SchemaId;
     const char* TitleEn;
     const char* NavId;
     bool Dirty;
@@ -95,6 +97,14 @@ struct PrefsNavEntry {
 const char* ComposeNavLabel(char* buf, std::size_t bufSize, const PrefsNavEntry& e) {
     std::snprintf(buf, bufSize, "%s%s###%s", e.TitleEn, e.Dirty ? " *" : "", e.NavId);
     return buf;
+}
+
+/// True when the filter is active and this category holds nothing that matches.
+/// Such an entry draws disabled rather than merely dimmed: selecting it lands on
+/// an empty pane, which reads as "the category is broken" instead of "your query
+/// does not reach here".
+bool CategoryIsEmptyUnderFilter(UiDrawSession& d, bool filtering, const char* schemaId) {
+    return filtering && d.prefsFilter.CategoryMatchCount(schemaId) == 0;
 }
 
 } // namespace
@@ -131,7 +141,10 @@ bool PrefsSectionBegin(UiDrawSession& d, const char* sectionId) {
         return false;
     }
     if (desc != nullptr) {
-        ImGui::TextDisabled(SaveHintForSemantics(desc->Save));
+        // "%s" indirection is mandatory: ImGui here is SmatchetLocalizedImGui, whose
+        // TextDisabled translates the format string first — a translator's stray '%'
+        // would then read an empty va_list.
+        ImGui::TextDisabled("%s", SaveHintForSemantics(desc->Save));
     }
     return true;
 }
@@ -148,17 +161,33 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
     // Order mirrors SmatchetPrefsSchema::Categories(); AI & Voice is compiled
     // out entirely when neither feature is built, matching the schema's guard.
     const PrefsNavEntry entries[] = {
-        {PreferencesCategory::General, "General", "prefsNavGeneral", false},
-        {PreferencesCategory::Appearance, "Appearance", "prefsNavAppearance", false},
-        {PreferencesCategory::Tracker, "Tracker", "prefsNavTracker", trackerDirty},
-        {PreferencesCategory::Connections, "Connections", "prefsNavConnections", false},
+        {PreferencesCategory::General, "general", "General", "prefsNavGeneral", false},
+        {PreferencesCategory::Appearance, "appearance", "Appearance", "prefsNavAppearance", false},
+        {PreferencesCategory::Tracker, "tracker", "Tracker", "prefsNavTracker", trackerDirty},
+        {PreferencesCategory::Connections, "connections", "Connections", "prefsNavConnections", false},
 #if defined(SMATCHET_WITH_AI) || defined(SMATCHET_WITH_WHISPER)
-        {PreferencesCategory::AiVoice, "AI & Voice", "prefsNavAiVoice", assistantDirty},
+        {PreferencesCategory::AiVoice, "ai_voice", "AI & Voice", "prefsNavAiVoice", assistantDirty},
 #endif
-        {PreferencesCategory::Editing, "Editing", "prefsNavEditing", false},
-        {PreferencesCategory::Shortcuts, "Shortcuts", "prefsNavShortcuts", false},
-        {PreferencesCategory::Annotate, "Annotate", "prefsNavAnnotate", false},
+        {PreferencesCategory::Editing, "editing", "Editing", "prefsNavEditing", false},
+        {PreferencesCategory::Shortcuts, "shortcuts", "Shortcuts", "prefsNavShortcuts", false},
+        {PreferencesCategory::Annotate, "annotate", "Annotate", "prefsNavAnnotate", false},
     };
+    // While filtering, a category with zero matching settings stays in place but
+    // draws disabled — hiding it would make the rail jump under the cursor
+    // mid-type, and leaving it clickable offers a pane that can only ever be
+    // empty.
+    const bool filtering = d.prefsFilter.Active();
+    // Re-home the selection on every query edit (not every frame): the results
+    // the user is typing towards are useless behind a category that no longer
+    // matches. Between edits the selection is theirs to move.
+    if (filtering && d.prefsFilter.QueryChangedThisUpdate()) {
+        for (const PrefsNavEntry& e : entries) {
+            if (d.prefsFilter.CategoryMatchCount(e.SchemaId) > 0) {
+                d.preferencesCategory = e.Category;
+                break;
+            }
+        }
+    }
     char label[96];
     if (d.prefsNavCombo) {
         const PrefsNavEntry* current = &entries[0];
@@ -171,14 +200,20 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
         // Preview text renders verbatim (no "###" id-splitting), so compose
         // the visible part only.
         char preview[96];
-        std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn,
-                      current->Dirty ? " *" : "");
+        std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn, current->Dirty ? " *" : "");
         ImGui::SetNextItemWidth(-FLT_MIN);
         if (ImGui::BeginCombo("###prefsNavCombo", preview)) {
             for (const PrefsNavEntry& e : entries) {
                 const bool selected = e.Category == d.preferencesCategory;
+                const bool empty = CategoryIsEmptyUnderFilter(d, filtering, e.SchemaId);
+                if (empty) {
+                    ImGui::BeginDisabled();
+                }
                 if (ImGui::Selectable(ComposeNavLabel(label, sizeof(label), e), selected)) {
                     d.preferencesCategory = e.Category;
+                }
+                if (empty) {
+                    ImGui::EndDisabled();
                 }
                 if (selected) {
                     ImGui::SetItemDefaultFocus();
@@ -192,46 +227,19 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
     if (ImGui::BeginChild("PrefsNavRail", ImVec2(railWidth, bodyHeight))) {
         for (const PrefsNavEntry& e : entries) {
             const bool selected = e.Category == d.preferencesCategory;
+            const bool empty = CategoryIsEmptyUnderFilter(d, filtering, e.SchemaId);
+            if (empty) {
+                ImGui::BeginDisabled();
+            }
             if (ImGui::Selectable(ComposeNavLabel(label, sizeof(label), e), selected)) {
                 d.preferencesCategory = e.Category;
+            }
+            if (empty) {
+                ImGui::EndDisabled();
             }
         }
     }
     ImGui::EndChild();
-}
-
-bool PrefsCategoryForChipName(const std::string& name, PreferencesCategory& out) {
-    struct ChipRow {
-        const char* Name;
-        PreferencesCategory Category;
-    };
-    // Chip names are the pre-resegmentation tab names — kept so the legacy
-    // search chips still land somewhere sane until slice 3 removes them.
-    // A const name->enum table plus a linear scan matches CodeColorView.cpp's tag-alias table by
-    // shape only; the two share no domain, and this whole function is transient scaffolding that
-    // slice 3 deletes with the legacy chips, so a shared generic lookup would couple independent
-    // subsystems for the sake of dead code.
-    // SMATCHET_DEVIATION(rule=duplication; reason=shape-only, dies slice 3; owner=prefs-ia; revisit=2026-09-05)
-    static const ChipRow kRows[] = {
-        {"Tracker", PreferencesCategory::Tracker},
-        {"User Info", PreferencesCategory::Connections},
-        {"Integrations", PreferencesCategory::Connections},
-        {"Assistant", PreferencesCategory::AiVoice},
-        {"Whisper", PreferencesCategory::AiVoice},
-        {"Local data", PreferencesCategory::General},
-        {"Appearance", PreferencesCategory::Appearance},
-        {"Keyboard Shortcuts", PreferencesCategory::Shortcuts},
-        {"Grid", PreferencesCategory::Editing},
-        {"Fields Inputs", PreferencesCategory::Editing},
-        {"Annotate", PreferencesCategory::Annotate},
-    };
-    for (const ChipRow& row : kRows) {
-        if (name == row.Name) {
-            out = row.Category;
-            return true;
-        }
-    }
-    return false;
 }
 
 } // namespace SmatchetPreferencesUiDetail
