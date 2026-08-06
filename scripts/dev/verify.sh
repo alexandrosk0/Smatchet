@@ -50,8 +50,11 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --preset)     PRESET="${2:-}"; shift 2 ;;
+        --preset=*)   PRESET="${1#*=}"; shift ;;
         --target)     TARGET="${2:-}"; shift 2 ;;
+        --target=*)   TARGET="${1#*=}"; shift ;;
         --base)       BASE="${2:-}"; shift 2 ;;
+        --base=*)     BASE="${1#*=}"; shift ;;
         --skip-build) SKIP_BUILD=1; shift ;;
         -h|--help)    usage; exit 0 ;;
         *)
