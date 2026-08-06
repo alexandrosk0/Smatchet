@@ -477,7 +477,7 @@ add_executable(SmatchetTests
     # SMATCHET_WITH_AI, which this target defines); no extra .cpp link.
     Core/PreferencesAssistantWorkingCopy.test.cpp
     # Preferences IA re-segmentation slice 1
-    # (docs/plans/active/preferences-ia-resegmentation-and-search.md) — the
+    # (docs/plans/preferences-ia-resegmentation-and-search.md) — the
     # settings-descriptor table (pure data) + the live search filter. The filter
     # pulls the already-linked SmatchetLocalization.cpp (TranslateSource) and
     # FuzzyMatch.cpp (tier-2 fallback); only the two new source TUs need links.
