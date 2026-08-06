@@ -2,21 +2,21 @@ name: Release
 
 # Publishes a signed Windows release (standalone + light standalone + Inno
 # installer + source zip) to GitHub Releases whenever a `v*.*.*` tag is
-# pushed, driving scripts/publish/release_github.ps1 — previously a
+# pushed, driving scripts/publish/release-github.sh — previously a
 # maintainer-only, local-Windows-only script (see scripts/publish/SIGNING.md,
 # scripts/publish/INSTALLER_SMOKE_TEST.md). The Windows-x64-installer-smoke
 # job in build-and-test.yml already builds+installs this pipeline UNSIGNED on
 # every develop push; this workflow is the signed, published counterpart that
 # only runs against an actual release tag.
 #
-# Skips the Unreal plugin package and Fab bundle (-SkipUnreal -SkipFabBundle):
+# Skips the Unreal plugin package and Fab bundle (--skip-unreal --skip-fab-bundle):
 # both require an Unreal Engine install that hosted runners don't have. Ship
 # those manually per scripts/publish/INSTALL_UNREAL_PLUGIN.md until UE tooling
 # lands in CI.
 #
-# release_github.ps1 refuses to -Publish a tag that doesn't match the
-# CMakeLists.txt SmatchetApp VERSION (Convert-SmatchetVersionToTag) — bump the
-# version with scripts/publish/sync_release_version.ps1 and commit it BEFORE
+# release-github.sh refuses to --publish a tag that doesn't match the
+# CMakeLists.txt SmatchetApp VERSION (smatchet_version_tag) — bump the
+# version with scripts/publish/sync-release-version.sh and commit it BEFORE
 # tagging, or this workflow fails fast instead of publishing a mismatched
 # release.
 
@@ -163,7 +163,7 @@ jobs:
           choco install innosetup -y --no-progress
           $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
           if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
-          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release-github.sh also searches fixed install dirs + the uninstall registry." }
 
       - name: Decode signing certificate
         if: ${{ steps.params.outputs.sign == 'true' }}
@@ -179,8 +179,8 @@ jobs:
           [System.IO.File]::WriteAllBytes($pfxPath, [System.Convert]::FromBase64String($env:SMATCHET_SIGN_PFX_BASE64))
           "SMATCHET_SIGN_PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
 
-      - name: Build release bundle (release_github.ps1)
-        shell: pwsh
+      - name: Build release bundle (release-github.sh)
+        shell: bash
         env:
           SMATCHET_SIGN_PFX_PASSWORD: ${{ secrets.SMATCHET_SIGN_PFX_PASSWORD }}
           GH_TOKEN: ${{ github.token }}
@@ -197,94 +197,87 @@ jobs:
           PARAM_NOTES: ${{ github.event.inputs.notes }}
           PARAM_RELEASE_NAME: ${{ github.event.inputs.release_name }}
         run: |
-          # Belt-and-braces tag guard for -Publish runs. The "Tag not found
-          # locally" failures this originally chased were NOT a missing ref:
-          # release_github.ps1's probes read Invoke-Checked's return value,
-          # which mixes the command's stdout in with the exit code, so the
+          # Belt-and-braces tag guard for --publish runs. The "Tag not found
+          # locally" failures this originally chased were NOT a missing ref: the
+          # publisher's probes read a checked-command wrapper's return value,
+          # which mixed the command's stdout in with the exit code, so the
           # checks inverted whenever the tag actually existed (fixed in that
           # script). Keeping an explicit HEAD-vs-tag check here is still worth
           # it: `git fetch --force` refreshes a tag ref without moving HEAD, so
           # this is the one place that can catch a checkout/tag mismatch before
-          # we publish artifacts built from the wrong commit. Only -Publish
+          # we publish artifacts built from the wrong commit. Only --publish
           # cares, so dry runs skip it rather than fail on a transient fetch.
-          if ($env:PARAM_PUBLISH -eq "true") {
-            git fetch origin "+refs/tags/$($env:PARAM_TAG):refs/tags/$($env:PARAM_TAG)" --force
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "Failed to fetch tag '$($env:PARAM_TAG)' from origin before release."
+          if [ "${PARAM_PUBLISH:-}" = "true" ]; then
+            if ! git fetch origin "+refs/tags/${PARAM_TAG}:refs/tags/${PARAM_TAG}" --force; then
+              echo "Failed to fetch tag '${PARAM_TAG}' from origin before release." >&2
               exit 1
-            }
+            fi
             # `git fetch --force` updates the local tag ref but does NOT move
             # HEAD or the checked-out working tree, so a re-fetch alone can't
             # actually fix a checkout/tag mismatch — it can only mask it.
             # Verify HEAD and the (peeled) tag commit agree before handing off
-            # to -Publish, and fail loudly instead of silently publishing
+            # to --publish, and fail loudly instead of silently publishing
             # against the wrong commit.
-            $headCommit = (git rev-parse HEAD).Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($headCommit)) {
-              Write-Error "Could not resolve HEAD to a commit."
+            head_commit="$(git rev-parse HEAD)" || head_commit=""
+            if [ -z "$head_commit" ]; then
+              echo "Could not resolve HEAD to a commit." >&2
               exit 1
-            }
-            $tagCommit = (git rev-parse "refs/tags/$($env:PARAM_TAG)^{commit}").Trim()
-            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($tagCommit)) {
-              Write-Error "Could not resolve tag 'refs/tags/$($env:PARAM_TAG)' to a commit after fetch."
+            fi
+            tag_commit="$(git rev-parse "refs/tags/${PARAM_TAG}^{commit}")" || tag_commit=""
+            if [ -z "$tag_commit" ]; then
+              echo "Could not resolve tag 'refs/tags/${PARAM_TAG}' to a commit after fetch." >&2
               exit 1
-            }
-            if ($headCommit -ne $tagCommit) {
-              Write-Error "Checked-out HEAD ($headCommit) does not match tag '$($env:PARAM_TAG)' ($tagCommit) after re-fetch; refusing to publish against a possibly wrong commit."
+            fi
+            if [ "$head_commit" != "$tag_commit" ]; then
+              echo "Checked-out HEAD ($head_commit) does not match tag '${PARAM_TAG}' ($tag_commit) after re-fetch; refusing to publish against a possibly wrong commit." >&2
               exit 1
-            }
-          }
-          # Hashtable splat, NOT array splat: array splatting (@("-Tag", $val, ...))
-          # does NOT parse "-Flag" tokens as parameter names — it binds every
-          # element positionally, in parameter-declaration order. That silently
-          # mis-bound $Tag="-Tag", $Notes="-SkipUnreal", $NotesFile="-SkipFabBundle"
-          # (both truthy -> "Use either -Notes or -NotesFile, not both."), while
-          # $OutDir kept its default. Hashtable splat (@{ Name = Value }) maps keys
-          # to parameter names correctly, including switches via boolean values.
-          $releaseArgs = @{
-            Tag = $env:PARAM_TAG
-            SkipUnreal = $true
-            SkipFabBundle = $true
-            OutDir = "out/release"
+            fi
+          fi
+          # A bash array, one element per token: never a single string run through
+          # word-splitting. --notes and --release-name carry free text with spaces
+          # (and possibly newlines), so a flat string would split them into bogus
+          # positional arguments.
+          release_args=(
+            --tag "$PARAM_TAG"
+            --skip-unreal
+            --skip-fab-bundle
+            --out-dir out/release
             # Matches build-and-test.yml's "Windows x64 installer smoke" job:
             # the Font Awesome fetch step dirties the worktree, so a clean
-            # release build off a fresh checkout still needs -AllowDirty.
-            AllowDirty = $true
-          }
-          if ($env:PARAM_SIGN -eq "true") { $releaseArgs["Sign"] = $true }
-          # With no -Notes, release_github.ps1 falls back to `gh --generate-notes`,
+            # release build off a fresh checkout still needs --allow-dirty.
+            --allow-dirty
+          )
+          if [ "${PARAM_SIGN:-}" = "true" ]; then release_args+=(--sign); fi
+          # With no --notes, release-github.sh falls back to `gh --generate-notes`,
           # which diffs against the previous release. The FIRST release has no
           # previous release, so generation spans the entire history and GitHub
           # rejects the create with:
           #   HTTP 422 Validation Failed — body is too long (maximum is 125000 characters)
           # Supplying notes skips generation entirely. Later releases can leave
           # this empty: once a release exists, the generated diff is bounded.
-          if (-not [string]::IsNullOrWhiteSpace($env:PARAM_NOTES)) {
-            $releaseArgs["Notes"] = $env:PARAM_NOTES
-          }
-          # Without --title, GitHub displays the bare tag ("v0.6.8") as the
+          if [ -n "$(printf '%s' "${PARAM_NOTES:-}" | tr -d '[:space:]')" ]; then
+            release_args+=(--notes "$PARAM_NOTES")
+          fi
+          # Without a title, GitHub displays the bare tag ("v0.6.8") as the
           # release heading. Default to "Smatchet <tag>" so every release gets a
           # real title with no per-run input, including tag-push runs (which
           # carry no inputs context at all). Only reaches gh on the create path;
-          # a -Clobber re-upload leaves an existing title untouched.
-          $releaseName = $env:PARAM_RELEASE_NAME
-          if ([string]::IsNullOrWhiteSpace($releaseName)) {
-            $releaseName = "Smatchet $($env:PARAM_TAG)"
-          }
-          $releaseArgs["ReleaseName"] = $releaseName
-          if ($env:PARAM_PUBLISH -eq "true") {
-            $releaseArgs["Publish"] = $true
-            # release_github.ps1 independently refuses -Publish without -Sign;
+          # a --clobber re-upload leaves an existing title untouched.
+          release_name="${PARAM_RELEASE_NAME:-}"
+          if [ -z "$(printf '%s' "$release_name" | tr -d '[:space:]')" ]; then
+            release_name="Smatchet ${PARAM_TAG}"
+          fi
+          release_args+=(--release-name "$release_name")
+          if [ "${PARAM_PUBLISH:-}" = "true" ]; then
+            release_args+=(--publish)
+            # release-github.sh independently refuses --publish without --sign;
             # forward the same knowing override the workflow already gated on.
-            if ($env:PARAM_ALLOW_UNSIGNED -eq "true") { $releaseArgs["AllowUnsignedPublish"] = $true }
-            if ($env:PARAM_DRAFT -eq "true") { $releaseArgs["Draft"] = $true }
-            if ($env:PARAM_PRERELEASE -eq "true") { $releaseArgs["Prerelease"] = $true }
-          }
-          $argsDisplay = ($releaseArgs.GetEnumerator() | ForEach-Object {
-            if ($_.Value -is [bool] -and $_.Value) { "-$($_.Key)" } else { "-$($_.Key) $($_.Value)" }
-          }) -join ' '
-          Write-Host "release_github.ps1 $argsDisplay"
-          ./scripts/publish/release_github.ps1 @releaseArgs
+            if [ "${PARAM_ALLOW_UNSIGNED:-}" = "true" ]; then release_args+=(--allow-unsigned-publish); fi
+            if [ "${PARAM_DRAFT:-}" = "true" ]; then release_args+=(--draft); fi
+            if [ "${PARAM_PRERELEASE:-}" = "true" ]; then release_args+=(--prerelease); fi
+          fi
+          echo "release-github.sh ${release_args[*]}"
+          bash scripts/publish/release-github.sh "${release_args[@]}"
 
       - name: Remove decoded signing certificate
         if: always()
