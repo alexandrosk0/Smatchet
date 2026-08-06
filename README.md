@@ -137,8 +137,10 @@ If no usable Visual Studio install is found it exits `78` with the winget comman
 
 #### Advanced — raw presets
 
-These are what CI runs, and what you want when the MSVC environment is already active (a VS
-Developer Command Prompt, or inside `scripts/dev/with-msvc-env.sh`).
+These are what CI runs, and what you want once `cl.exe` is already on `PATH` (a VS Developer
+Command Prompt). `scripts/dev/with-msvc-env.sh` is a command *wrapper*, not a shell — it cannot
+export the environment to your shell, so run each command through it:
+`bash scripts/dev/with-msvc-env.sh cmake --preset ninja-iter-msvc`.
 
 **MSVC:**
 

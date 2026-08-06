@@ -264,7 +264,7 @@ Per `AGENTS.md` § Verification automation. For **this campaign doc** (a pure-do
 **Deferral residue-sweep** — before flipping this campaign to `shipped`, grep `docs/self-improvement/categories/`, `agents/*.md`, and `docs/adr/` for stray references to the refuted `vexp-*` cluster and the stale counts fixed in Slice C3.
 
 - **The `code-review-handover-pr947-951.md` evidence** (separate older investigation, not part of this fleet) — preserved in the salvage dir; mine independently if useful. No-action here.
-- **`harness-portability` HP-01** (ps1/sh setup parity) — already tracked: `kill-powershell-minimize-toolchain.md` Phase 4 deleted `setup-harness.ps1` rather than bringing it to parity (shipped in that plan's Slice C). No slice; see appendix.
+- **`harness-portability` HP-01** (ps1/sh setup parity) — already tracked: `docs/plans/kill-powershell-minimize-toolchain.md` Phase 4 deleted `setup-harness.ps1` rather than bringing it to parity (shipped in that plan's Slice C). No slice; see appendix.
 - **The refuted set** (~30 candidates) — recorded in `C:\Dev\salvage-2026-06-11\results\verify\*.md` § Refuted for each charter; not carried. No-action by design.
 
 ## Already-known appendix (tracked elsewhere — not slices)
@@ -273,7 +273,7 @@ These survived mining but the verifier found the root cause already tracked; lis
 
 | ID | Sev | Tracked in |
 |---|---|---|
-| HP-01 | P1 | `docs/plans/active/kill-powershell-minimize-toolchain.md` Phase 4 / Slice C (deleted `setup-harness.ps1`) |
+| HP-01 | P1 | `docs/plans/kill-powershell-minimize-toolchain.md` Phase 4 / Slice C (deleted `setup-harness.ps1`) |
 | merge-pipeline-07 | P2 | `docs/self-improvement/categories/process.md` — `cr-out-of-band-disposition-trail` (2026-06-07, lines 29-33) |
 | self-improvement-loop-03 | P1 | `docs/self-improvement/categories/tooling.md:149` — `mandatory-merge-snapshot-on-override-merge` (applied 2026-06-13, watcher path; admin path deferred) |
 | bats-coverage-03 | P1 | `docs/self-improvement/categories/test.md:29-33` — bats suites not auto-enrolled by `test-all.sh` (open) |
