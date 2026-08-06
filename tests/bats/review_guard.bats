@@ -34,7 +34,7 @@ setup() {
 }
 
 teardown() {
-    rm -rf "${REPO_TMP:-}" "${STATE_TMP:-}"
+    rm -rf "${REPO_TMP:-}" "${STATE_TMP:-}" "${NOREPO_TMP:-}"
 }
 
 # dirty <out-file> — run get_dirty_state on the fixture repo into a file.
@@ -49,20 +49,16 @@ dirty() {
 }
 
 @test "no work tree: rc 1 (UNVERIFIED), never an empty clean" {
-    local plain
-    plain="$(mktemp -d)"
-    run get_dirty_state "$plain"
+    NOREPO_TMP="$(mktemp -d)"
+    run get_dirty_state "$NOREPO_TMP"
     [ "$status" -eq 1 ]
-    rm -rf "$plain"
 }
 
 @test ".git file with dead gitdir pointer: rc 1 (git fails, guard must not fail open)" {
-    local broken
-    broken="$(mktemp -d)"
-    echo "gitdir: /nonexistent/gitdir/path" > "$broken/.git"
-    run get_dirty_state "$broken"
+    NOREPO_TMP="$(mktemp -d)"
+    echo "gitdir: /nonexistent/gitdir/path" > "$NOREPO_TMP/.git"
+    run get_dirty_state "$NOREPO_TMP"
     [ "$status" -eq 1 ]
-    rm -rf "$broken"
 }
 
 @test "baseline captures modified + untracked, with three-part signatures" {
