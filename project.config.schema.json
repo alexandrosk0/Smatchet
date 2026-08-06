@@ -222,6 +222,41 @@
         "sink_warn_lines": { "type": "integer", "minimum": 1, "description": "Soft-warn-only line count for the sink classes (docs/agent-rules, agents/_shared/skills); never blocks." }
       }
     },
+    "review-panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Review-panel roster (docs/agent-rules/review-panels.md § Roster). Read by agents/scripts/core/run-review.sh: one leg per (harness, model); the launcher passes <flag> <id> and names the output file <prefix>review-<round>-<harness>-<tag>.md.",
+      "required": ["harnesses"],
+      "properties": {
+        "_doc": { "type": "string" },
+        "harnesses": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["flag", "models"],
+            "properties": {
+              "flag": { "type": "string", "minLength": 1, "description": "The harness CLI's model-selection flag (e.g. --model, -m)." },
+              "start_dwell_secs": { "type": "integer", "minimum": 0, "description": "Startup stagger between same-harness legs (shared-config write race at CLI startup). Default 3." },
+              "models": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["tag", "id"],
+                  "properties": {
+                    "tag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Short name used in the review filename." },
+                    "id": { "type": "string", "minLength": 1, "description": "The value passed to <flag> (the harness's real model id)." }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "governance": {
       "type": "object",
       "additionalProperties": false,

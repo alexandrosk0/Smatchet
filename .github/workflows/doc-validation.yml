@@ -430,6 +430,13 @@ jobs:
           bash agents/scripts/core/test-orphan-bats.sh --selftest
           bash agents/scripts/core/test-orphan-bats.sh
 
+      - name: work_item_lint — work-item close shape + ledger-citation sweep
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          python3 agents/scripts/core/work_item_lint.py --selftest
+          python3 agents/scripts/core/work_item_lint.py --all
+          bash scripts/dev/test-work-item-lint.sh
+
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-agent-discovery-fixture.sh
