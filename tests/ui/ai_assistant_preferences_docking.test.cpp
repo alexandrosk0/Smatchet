@@ -1,14 +1,17 @@
 // ai_assistant_preferences_docking.test.cpp — bucket-E coverage for the
-// AI Assistant Preferences tab's docking surface: tab activation, tab-bar
-// docking inside the Preferences modal, and "Assistant" tab persistence
-// across re-open.
+// AI Assistant Preferences pane's docking surface: pane activation, docking
+// inside the Preferences modal, and Assistant-pane persistence across re-open.
 //
-// Drift warning — IF YOU CHANGE Source/Core/src/SmatchetPreferencesUi.cpp
-// (specifically the `BeginTabItem("Assistant")` block at line 562 + the
-// tab-bar surrounding it, the showPreferences gating at
-// Source/Core/include/SmatchetUiSession.h:128, OR the close-handler cancel
-// at SmatchetPreferencesUi.cpp:231-235 that cancels the in-flight probe on
-// tab/modal close), UPDATE THIS REPLICA to match.
+// The replica below still uses a tab bar. That is deliberate: the surface under
+// test is ImGui's activate/deactivate edge and the close-handler cancel, not the
+// production navigation chrome. Live Preferences navigates by category nav rail
+// (SmatchetPreferencesUi_Shell.cpp DrawPrefsNav) since the IA re-segmentation;
+// rail navigation itself is covered by funcsize_preferences_tabs.test.cpp.
+//
+// Drift warning — IF YOU CHANGE the showPreferences gating at
+// Source/Core/include/Ui/SmatchetUiSession.h, OR the close-handler cancel in
+// SmatchetPreferencesUi.cpp that cancels the in-flight probe when the AI & Voice
+// category or the modal closes, UPDATE THIS REPLICA to match.
 //
 // Per slice 9 (docs/plans/shipped/autonomous-debugging-no-creds.md § Slice 9) and
 // the per-test isolation contract: ResetDockingState() runs at the top of
