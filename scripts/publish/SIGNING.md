@@ -2,12 +2,12 @@
 
 Smatchet's release script signs the standalone payload and the generated Inno Setup installer.
 
-**Signing is mandatory for published releases**: `release_github.ps1 -Publish` refuses to run
-without `-Sign` unless you explicitly pass `-AllowUnsignedPublish`. Two things depend on it:
+**Signing is mandatory for published releases**: `release-github.sh --publish` refuses to run
+without `--sign` unless you explicitly pass `--allow-unsigned-publish`. Two things depend on it:
 unsigned binaries trigger Windows SmartScreen warnings for every user, and the in-app
 auto-updater verifies the downloaded installer's Authenticode signature before launching it —
 an unsigned published installer is downloaded and then **rejected** by updating clients.
-Local bundles built without `-Publish` may stay unsigned (e.g. CI installer smoke jobs).
+Local bundles built without `--publish` may stay unsigned (e.g. CI installer smoke jobs).
 
 What gets signed:
 
@@ -28,18 +28,18 @@ What gets signed:
 
 You can drive signing entirely from environment variables:
 
-```powershell
-$env:SMATCHET_SIGN_PFX_PATH = 'C:\secure\smatchet-signing.pfx'
-$env:SMATCHET_SIGN_PFX_PASSWORD = 'your-pfx-password'
-$env:SMATCHET_SIGN_TIMESTAMP_URL = 'http://timestamp.digicert.com'
+```bash
+export SMATCHET_SIGN_PFX_PATH='C:/secure/smatchet-signing.pfx'
+export SMATCHET_SIGN_PFX_PASSWORD='your-pfx-password'
+export SMATCHET_SIGN_TIMESTAMP_URL='http://timestamp.digicert.com'
 ```
 
 Or use a certificate already imported into the Windows certificate store:
 
-```powershell
-$env:SMATCHET_SIGN_CERT_SHA1 = '0123456789ABCDEF0123456789ABCDEF01234567'
-$env:SMATCHET_SIGN_USE_MACHINE_STORE = '1'   # optional
-$env:SMATCHET_SIGN_TIMESTAMP_URL = 'http://timestamp.digicert.com'
+```bash
+export SMATCHET_SIGN_CERT_SHA1='0123456789ABCDEF0123456789ABCDEF01234567'
+export SMATCHET_SIGN_USE_MACHINE_STORE=1   # optional
+export SMATCHET_SIGN_TIMESTAMP_URL='http://timestamp.digicert.com'
 ```
 
 Supported variables:
@@ -56,30 +56,30 @@ Supported variables:
 
 Sign a local release bundle:
 
-```powershell
-.\scripts\publish\release_github.ps1 -Sign -AllowDirty
+```bash
+bash scripts/publish/release-github.sh --sign --allow-dirty
 ```
 
 Sign and publish a tagged release:
 
-```powershell
-.\scripts\publish\release_github.ps1 -Tag v0.6.7 -Sign -Publish
+```bash
+bash scripts/publish/release-github.sh --tag v0.6.7 --sign --publish
 ```
 
 You can also override settings directly on the command line:
 
-```powershell
-.\scripts\publish\release_github.ps1 `
-  -Tag v0.6.7 `
-  -Sign `
-  -SigningCertificatePath 'C:\secure\smatchet-signing.pfx' `
-  -SigningCertificatePassword 'your-pfx-password' `
-  -TimestampUrl 'http://timestamp.digicert.com'
+```bash
+bash scripts/publish/release-github.sh \
+  --tag v0.6.7 \
+  --sign \
+  --signing-certificate-path 'C:/secure/smatchet-signing.pfx' \
+  --signing-certificate-password 'your-pfx-password' \
+  --timestamp-url 'http://timestamp.digicert.com'
 ```
 
 ## CI (GitHub Actions)
 
-`.github/workflows/release.yml` runs `release_github.ps1 -Sign -Publish` on
+`.github/workflows/release.yml` runs `release-github.sh --sign --publish` on
 every `v*.*.*` tag push. It reads the certificate from two repository
 secrets instead of a file on disk:
 
@@ -118,7 +118,7 @@ the release as a prerelease. Sign every subsequent release.
 
 ## Notes
 
-- The release script requires exactly one certificate selector: `-SigningCertificatePath`, `-SigningCertificateThumbprint`, or `-SigningCertificateSubject`.
+- The release script requires exactly one certificate selector: `--signing-certificate-path`, `--signing-certificate-thumbprint`, or `--signing-certificate-subject`.
 - ZIP files are not Authenticode-signed; the signed binaries live inside the portable ZIP and installer.
 - For production distribution, use a real OV/EV code-signing certificate. A self-signed certificate is fine only for local pipeline validation.
 - The in-app updater (`AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate`) runs
