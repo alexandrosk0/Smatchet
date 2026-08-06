@@ -1,4 +1,5 @@
 # agents/scripts/core/merge-watcher-uninstall-autostart.ps1
+# Last remaining PowerShell file - see docs/harness/SETUP.md section Windows-only shims.
 # ----------------------------------------------------------------------------
 # Counterpart to merge-watcher-install-autostart.ps1. Removes the Scheduled
 # Task + stops the running daemon (if any). Phase 4c of

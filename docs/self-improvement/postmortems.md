@@ -2200,3 +2200,59 @@ race is one upstream cause).
 ### Filed as
 This entry + the #1705 wrapper (instance) + a follow-up backlog item for the develop-tip
 health assertion (class).
+
+## 2026-08-06 · PR #1937 · masked gate: bucket-C golden diff swallowed a stale-golden verdict
+
+### What escaped
+`feat(about): About Smatchet dialog under Help` (#1937) moved `drawMenuBarHelpMenu(ctx)`
+outside the `trackerLocked` `BeginDisabled()` block in `SmatchetUI_MainMenu.cpp:142-174`,
+which permanently changed the rendered "Help" menu-bar label from dim `(154,154,154)` to
+bright `(232,232,232)`. Four `user-info-*` bucket-C goldens were not regenerated. The
+bucket-C golden-diff step then failed on every subsequent run — `linf=81`, confined to
+`y=[8,19] x=[273,296]` — and reported green anyway, because that step is one of the three
+sanctioned step-level masks (`AGENTS.md` § Merge gates). Found ~3 weeks later, by hand,
+while debugging an unrelated screenshot flake. Three further goldens
+(`code-syntax-coloring`, `command-palette-fuzzy`, `dock-gap-sentinel`, `linf≈240`) turn out
+to be stale the same way from an older theme-palette change (bg `(15,15,15)` → `(31,31,36)`);
+those files date to 2026-05-26/31. Seven stale goldens, zero signals emitted.
+
+### Root cause
+The mask is **total, not graduated**. It was added for a real reason — scenario
+nondeterminism must not block merge — but it discards the step's verdict rather than
+downgrading it, so a golden stale for a perfectly *deterministic* reason (a deliberate,
+permanent UI change nobody regenerated for) is indistinguishable from a clean run. The
+detecting gate ran, computed the correct answer, and threw it away.
+
+Nothing else covers the gap: `postmortem-owed.sh` keys on merge-instant signals
+(non-SUCCESS checks, override labels, `Revert`, overdue deviations) and a masked step emits
+none, so no owe was raised for #1937. Goldens have no age nag, no staleness inventory, and
+no expiry — the only detection path is a human diffing them by hand, which is exactly what
+happened, three weeks late.
+
+Same shape as the 2026-07-10 #1698 entry (a working gate whose *result* never reached a
+blocking position), but the failure is in signal handling rather than timing: there, a
+required check ran after the merge; here, it ran before and its answer was suppressed.
+
+### Preventing gate
+**Split reporting from blocking — a masked step must still publish its verdict.** Have the
+bucket-C step always write per-scenario results (`name`, `linf`, band `y=[a,b]`, golden
+mtime) to the job summary / an artifact regardless of the mask, and surface that on the PR.
+A stale golden then lands attributably on the PR that changed the pixels without gaining the
+power to block a flaky lane. This generalises to the other two sanctioned masks (fuzz-smoke's
+stochastic run, bucket-E's Mesa per-test run), which discard their verdicts for the same
+reason.
+
+Instance ratchet, available now: PR #1962 removes the three nondeterminism sources behind
+the `user-info-*` flake (pre-`Draw` dispatcher-drain clobber of `g_ui.cfg`, docked-tab focus
+via `TabBar->NextSelectedTabId`, and ephemeral-session suppression of the update modal),
+measured 0/20 deviations twice. The flakiness that justified masking no longer applies to
+that subset, so `user-info-*` can carry an **unmasked** diff while the rest stay masked
+pending their own determinism work (`ScenarioRunner::Tick` runs twice per rendered frame,
+duplicating content for any scenario that draws in `OnFrame`).
+
+Prerequisite for both: regenerating the seven stale goldens, which is approval-gated by
+`docs/agent-rules/golden-image-approval.md`.
+
+### Filed as
+This entry + [`tooling/2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md`](categories/tooling/2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md)
+(the report-don't-discard gate) + PR #1962 (the determinism work the instance ratchet rests on).

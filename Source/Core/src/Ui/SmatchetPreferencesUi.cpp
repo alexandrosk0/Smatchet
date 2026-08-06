@@ -184,9 +184,13 @@ void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
 
 bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
     const bool wantFocus = d.requestPreferencesFocus;
-    // wantFocus OR layoutForceDefaultsFrames forces SetNextWindowFocus before Begin — the only
-    // path that activates a docked tab. Post-Begin SetWindowFocus is belt-and-braces for floating.
+    // wantFocus OR layoutForceDefaultsFrames forces SetNextWindowFocus before Begin, which raises
+    // the window when it is FLOATING. Post-Begin SetWindowFocus is belt-and-braces for that case.
+    // A DOCKED tab needs selectDockedTab as well — SetNextWindowFocus does not touch the tab bar.
     prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, wantFocus || d.layoutForceDefaultsFrames > 0);
+    if (wantFocus) {
+        selectDockedTab("Preferences");
+    }
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         if (wantFocus) {
             d.requestPreferencesFocus = false;

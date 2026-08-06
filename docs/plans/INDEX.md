@@ -65,6 +65,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
 | [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
 | [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
+| [`kill-powershell-minimize-toolchain`](shipped/kill-powershell-minimize-toolchain.md) | 2026-05-22 | Kill PowerShell + Minimize External Tools |
 | [`agents-md-reduction`](shipped/agents-md-reduction.md) | 2026-05-23 | Plan — AGENTS.md size reduction via topical extraction |
 | [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
 | [`deterministic-jira-test-backend`](shipped/deterministic-jira-test-backend.md) | 2026-05-23 | Plan - Deterministic Jira test backend and frontend tests |
@@ -204,6 +205,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`gate-blind-spot-sweep`](shipped/gate-blind-spot-sweep.md) | 2026-07-25 | close four gate blind spots — cross-TU dead exports, sub-floor helper clones, link-gate target scope, and the untaxonomised root audit docs |
 | [`dev-onboarding-first-run-quickstart`](shipped/dev-onboarding-first-run-quickstart.md) | 2026-08-03 | Plan — Dev onboarding, first-run tracker setup, QUICKSTART |
 | [`about-dialog-help-menu`](shipped/about-dialog-help-menu.md) | 2026-08-05 | Plan — About dialog under Help |
+| [`bucket-c-screenshot-determinism`](shipped/bucket-c-screenshot-determinism.md) | 2026-08-05 | Plan — bucket-C screenshot-diff determinism (user-info-* flake) |
 <!-- END auto-plan-index -->
 
 ### Notes

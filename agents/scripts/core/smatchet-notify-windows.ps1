@@ -1,4 +1,5 @@
 # agents/scripts/core/smatchet-notify-windows.ps1
+# Last remaining PowerShell file - see docs/harness/SETUP.md section Windows-only shims.
 # ----------------------------------------------------------------------------
 # Windows native toast notification for smatchet-merge-watcher Phase 4a.
 # Invoked by agents/scripts/core/smatchet-notify.sh on Windows when the Smatchet
