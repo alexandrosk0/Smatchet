@@ -2,7 +2,7 @@
 
 > **Slug**: `bucket-c-screenshot-determinism`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -178,9 +178,9 @@ Diff touches `Source/Core/` — gates declared:
 
 - **Bucket A (ctest)**: N/A — all three fixes are ImGui-frame-ordering and
   process-identity behaviour, none reachable from a pure-logic unit.
-- **Bucket E (ImGui Test Engine)**: not added. `selectDockedTab` is the one piece with
-  a testable contract (docked window → tab selected + node focused); deferred with a
-  `tooling.md` backlog entry rather than shipped untested-in-CI.
+- **Bucket E (ImGui Test Engine)**: `tests/ui/docked_tab_focus.test.cpp` — two variants
+  over the real `SmatchetUI::selectDockedTab` (docked sibling → tab raised, with the
+  `SetNextWindowFocus`-alone control; undocked / unknown window → no-op).
 - **Bash-driver scenario / screenshot**: `bash scripts/dev/test-screenshot-diff.sh`;
   plus the scratchpad `repro-log.sh 20` loop over `user-info-desktop-unified`
   (`--spawn`, fresh `SMATCHET_USER_DATA` per run) as the determinism gate.
@@ -204,13 +204,66 @@ this plan; the three non-goals above are new findings, not retracted scope.
   `docs/agent-rules/golden-image-approval.md`.
 
 ## Implementation log
-*(populated post-ship)*
+
+Shipped as PR #1962 on `claude/confident-allen-551b01`, in four commits:
+
+1. `b089d2ad fix(screenshot)` — the three nondeterminism sources, exactly as
+   § Files to modify lists them:
+   - **Pre-`Draw` dispatcher-drain clobber.** `RunRenderLoop` drained
+     `MainThreadDispatcher` before the first `SmatchetUI::Draw`, so an MCP command
+     could apply config writes that `drawInitConfigOnce` then overwrote with the
+     on-disk (first-run) values — including the scenario's
+     `WhisperSetupCompleted = true`. Gated the pre-`Draw` drain on
+     `d.cfgInitialized`; the in-`Draw` drain is untouched.
+   - **Docked-tab focus.** `SetNextWindowFocus()` cannot raise a docked tab
+     (upstream imgui#2304), so the User Info window sometimes rendered behind a
+     sibling in the same node. New `SmatchetUI::selectDockedTab` writes
+     `DockNode->TabBar->NextSelectedTabId` then `FocusWindow`s.
+   - **Ephemeral update modal.** The startup update check fired in spawned
+     sessions and could open the "Update Available" popup mid-capture. New
+     `UiDrawSession::ephemeralSession`, latched from `forceMcp` in `Initialize`,
+     gates both the check and the `OpenPopup`.
+2. `e9a7afdc docs(self-improvement)` — backlog entries for the four non-goals
+   (scenario double-tick, bucket-C golden mask, eager pre-loop config init,
+   unsynchronized `glReadBuffer` readback).
+3. `09693e74 test(golden)` — regenerated the four `user-info-*` goldens under
+   explicit user approval (see § Deviations).
+4. `0c13e450 test(bucket-e)` — `tests/ui/docked_tab_focus.test.cpp`, closing the
+   deferral this plan's § Verification had originally taken.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Golden regeneration moved in scope.** § Risks / non-goals declared all seven
+  stale goldens out of scope pending approval. The user approved regenerating
+  **exactly the four `user-info-*` PNGs** (`AskUserQuestion`, "Just the four
+  user-info-*"), so those shipped here. `code-syntax-coloring`,
+  `command-palette-fuzzy` and `dock-gap-sentinel` were restored with
+  `git checkout --` and remain stale + masked — they need the `ScenarioRunner::Tick`
+  double-call fixed first.
+- **Bucket-E coverage un-deferred.** § Verification planned to defer the
+  `selectDockedTab` test to a backlog entry. The test-delta merge gate correctly
+  refused a `Source/Core/` diff with no test delta, so the test was written in this
+  PR and the backlog entry deleted rather than filed.
+- **`selectDockedTab` visibility.** Declared private per plan; made public so the
+  bucket-E guard drives the real implementation instead of a replica that would
+  keep passing after the imgui-internal workaround broke.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+- **Determinism gate (the user's acceptance criterion)**: 10 consecutive
+  `bash scripts/dev/test-screenshot-diff.sh` runs, every one `user-info FAIL=0`.
+  Before the fix the same loop reproduced the Whisper first-run banner on ~25% of
+  spawns (diff band `y=[95,160]`, `linf=240`).
+- **Per-cause loop**: scratchpad `repro-log.sh 20` over `user-info-desktop-unified`,
+  fresh `SMATCHET_USER_DATA` per run — 0/20 deviations, measured twice (ledger in
+  § Measurement ledger above).
+- **Bucket E**: `ui_test.run --name=DockedTabFocus --spawn` → `passed=2 failed=0`.
+- **Build gate**: `ninja-iter-msvc` (dual-target) and `ninja-ui-test-msvc` both green.
+- **Delta lint**: `agents/scripts/project/test-lint-rules.sh --diff origin/develop`
+  — all PASS; two advisory WARNs (`tu-line-ceiling` on the pre-existing
+  `SmatchetUI.cpp`, comment-ratio on two headers).
+- **Plan stress-test — `grill-with-docs`**: run pre-implementation; its findings are
+  the § Risks / non-goals list.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. *flip the § Status header to `shipped`,*
