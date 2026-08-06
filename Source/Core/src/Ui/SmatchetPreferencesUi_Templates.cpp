@@ -27,16 +27,18 @@
 
 namespace {
 
-void DrawGridSubTab(UiDrawSession& d) {
-    if (ImGui::BeginTabItem("Grid", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Grid"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Templates;
-        ImGui::TextUnformatted("Editing");
-        ImGui::Separator();
-        ImGui::Spacing();
+// Grid behaviour. The overflow-tooltip and wheel-swallow rows came from the old
+// Appearance tab's "Grid and field text" block — both are grid behaviour, not
+// typography, and the descriptor table homes them here.
+void DrawGridSectionBody(UiDrawSession& d) {
+    // No title/Separator here — PrefsSection already drew the section header.
+    if (d.prefsFilter.ShowSetting("editing.grid.single_click")) {
         if (ImGui::Checkbox("Single-click to edit grid cells", &d.cfg.SingleClickToEditGridCells)) {
             MarkPrefsDirty(d);
         }
         ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
+    }
+    if (d.prefsFilter.ShowSetting("editing.grid.long_text_preview")) {
         if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
             MarkPrefsDirty(d);
         }
@@ -46,208 +48,230 @@ void DrawGridSubTab(UiDrawSession& d) {
                                    "When on, the long-text edit modal (description, callstack, custom "
                                    "textarea fields) opens showing the rendered preview. When off (default) "
                                    "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
-        ImGui::EndTabItem();
+    }
+    if (d.prefsFilter.ShowSetting("editing.grid.overflow_tooltips")) {
+        if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Hover truncated cells to read the full text.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.overflow_tooltips.help",
+                                   "When a value is truncated to fit the cell, or spans multiple lines, hover "
+                                   "to read the full text in a tooltip.");
+    }
+    if (d.prefsFilter.ShowSetting("editing.grid.wheel_ticks")) {
+        int gridWheelSwallowTicks = d.cfg.GridEndWheelSwallowsBeforeHorizontal;
+        if (ImGui::InputInt("Wheel ticks before horizontal scroll", &gridWheelSwallowTicks)) {
+            if (gridWheelSwallowTicks < 0) {
+                gridWheelSwallowTicks = 0;
+            }
+            if (gridWheelSwallowTicks > 32) {
+                gridWheelSwallowTicks = 32;
+            }
+            d.cfg.GridEndWheelSwallowsBeforeHorizontal = gridWheelSwallowTicks;
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Wheel ticks swallowed at the grid edge.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.appearance.wheel_swallow.help",
+                                   "At top/bottom of the ticket grid, vertical wheel starts horizontal "
+                                   "scrolling after this many wheel ticks. 0 routes immediately.");
     }
 }
 
-void DrawTimeEstimatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Time Estimates")) {
-        ImGui::TextUnformatted("Duration Suggestions");
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextDisabled("Default options for time-estimate dropdowns.");
-        ImGui::SameLine();
-        SmatchetHelpMarker::Render("prefs.templates.duration_suggestions.help",
-                                   "Customize the default options displayed in the dropdown menus for "
-                                   "Original Estimate, Remaining Estimate, and Time Spent fields.");
-        ImGui::Spacing();
+void DrawTimeEstimatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor covers the whole list editor — its per-row inputs are not
+    // individually filterable.
+    if (!d.prefsFilter.ShowSetting("editing.time_estimates.duration_suggestions")) {
+        return;
+    }
+    ImGui::TextDisabled("Default options for time-estimate dropdowns.");
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render("prefs.templates.duration_suggestions.help",
+                               "Customize the default options displayed in the dropdown menus for "
+                               "Original Estimate, Remaining Estimate, and Time Spent fields.");
+    ImGui::Spacing();
 
-        // Pillar 2 (#732): seed the working list from live cfg (no disk read) and persist each edit
-        // via MarkPrefsDirty's debounced save — never a synchronous per-click RMW+Save on the render
-        // thread. Matches the sibling comment-template sub-tabs, which write the cfg field then mark
-        // dirty. The runtime consumer (TicketFieldEditor) re-reads via ConfigManager once the
-        // debounced save lands.
-        static std::vector<std::string> s_suggestionsList;
-        if (!flags.suggestionsLoaded) {
-            s_suggestionsList = d.cfg.DurationSuggestions;
-            flags.suggestionsLoaded = true;
-        }
+    // Pillar 2 (#732): seed the working list from live cfg (no disk read) and persist each edit
+    // via MarkPrefsDirty's debounced save — never a synchronous per-click RMW+Save on the render
+    // thread. Matches the sibling comment-template sub-tabs, which write the cfg field then mark
+    // dirty. The runtime consumer (TicketFieldEditor) re-reads via ConfigManager once the
+    // debounced save lands.
+    static std::vector<std::string> s_suggestionsList;
+    if (!flags.suggestionsLoaded) {
+        s_suggestionsList = d.cfg.DurationSuggestions;
+        flags.suggestionsLoaded = true;
+    }
 
-        // Render list of current suggestions in a premium boxed child frame
-        ImGui::Text("Current Suggestions:");
-        ImGui::BeginChild("SuggestionsListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
-                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        for (size_t i = 0; i < s_suggestionsList.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
+    // Render list of current suggestions in a premium boxed child frame
+    ImGui::Text("Current Suggestions:");
+    ImGui::BeginChild("SuggestionsListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (size_t i = 0; i < s_suggestionsList.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
 
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(s_suggestionsList[i].c_str());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(s_suggestionsList[i].c_str());
 
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
-            if (i > 0) {
-                if (ImGui::Button("▲")) {
-                    std::swap(s_suggestionsList[i], s_suggestionsList[i - 1]);
-                    d.cfg.DurationSuggestions = s_suggestionsList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▲");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
-            if (i < s_suggestionsList.size() - 1) {
-                if (ImGui::Button("▼")) {
-                    std::swap(s_suggestionsList[i], s_suggestionsList[i + 1]);
-                    d.cfg.DurationSuggestions = s_suggestionsList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▼");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            if (ImGui::Button("✖")) {
-                s_suggestionsList.erase(s_suggestionsList.begin() + i);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+        if (i > 0) {
+            if (ImGui::Button("▲")) {
+                std::swap(s_suggestionsList[i], s_suggestionsList[i - 1]);
                 d.cfg.DurationSuggestions = s_suggestionsList;
                 MarkPrefsDirty(d);
-                --i;
             }
-            ImGui::PopStyleColor();
-
-            ImGui::PopID();
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button("▲");
+            ImGui::EndDisabled();
         }
-        ImGui::EndChild();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Inline add controls
-        static char s_prefNewSuggestionBuf[16] = "";
-        ImGui::Text("Add Custom Suggestion");
-        ImGui::SetNextItemWidth(140.0f);
-        // EnterReturnsTrue commits from the input itself — the old IsItemFocused() check
-        // ran on the BUTTON, so Enter in the field silently did nothing (P2-L10).
-        const bool suggestionEntered =
-            ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue);
-        ImGui::SameLine();
-        if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || suggestionEntered) {
-            std::string newVal = s_prefNewSuggestionBuf;
-            if (!newVal.empty()) {
-                if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
-                    s_suggestionsList.push_back(newVal);
-                    d.cfg.DurationSuggestions = s_suggestionsList;
-                    MarkPrefsDirty(d);
-                }
-                s_prefNewSuggestionBuf[0] = '\0';
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+        if (i < s_suggestionsList.size() - 1) {
+            if (ImGui::Button("▼")) {
+                std::swap(s_suggestionsList[i], s_suggestionsList[i + 1]);
+                d.cfg.DurationSuggestions = s_suggestionsList;
+                MarkPrefsDirty(d);
             }
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button("▼");
+            ImGui::EndDisabled();
         }
-        ImGui::SetItemTooltip("Enter duration strings e.g. '15m', '2h', '3.5h', '1d', '2w'");
 
-        ImGui::EndTabItem();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        if (ImGui::Button("✖")) {
+            s_suggestionsList.erase(s_suggestionsList.begin() + i);
+            d.cfg.DurationSuggestions = s_suggestionsList;
+            MarkPrefsDirty(d);
+            --i;
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::PopID();
     }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Inline add controls
+    static char s_prefNewSuggestionBuf[16] = "";
+    ImGui::Text("Add Custom Suggestion");
+    ImGui::SetNextItemWidth(140.0f);
+    // EnterReturnsTrue commits from the input itself — the old IsItemFocused() check
+    // ran on the BUTTON, so Enter in the field silently did nothing (P2-L10).
+    const bool suggestionEntered =
+        ImGui::InputText("##PrefNewSuggestion", s_prefNewSuggestionBuf, sizeof(s_prefNewSuggestionBuf),
+                         ImGuiInputTextFlags_EnterReturnsTrue);
+    ImGui::SameLine();
+    if (ImGui::Button("Add Option", ImVec2(90.0f, 0.0f)) || suggestionEntered) {
+        std::string newVal = s_prefNewSuggestionBuf;
+        if (!newVal.empty()) {
+            if (std::find(s_suggestionsList.begin(), s_suggestionsList.end(), newVal) == s_suggestionsList.end()) {
+                s_suggestionsList.push_back(newVal);
+                d.cfg.DurationSuggestions = s_suggestionsList;
+                MarkPrefsDirty(d);
+            }
+            s_prefNewSuggestionBuf[0] = '\0';
+        }
+    }
+    ImGui::SetItemTooltip("Enter duration strings e.g. '15m', '2h', '3.5h', '1d', '2w'");
 }
 
-void DrawWorkLogTemplatesSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Work Log Templates")) {
-        ImGui::TextUnformatted("Work Log Description Templates");
-        ImGui::Separator();
-        ImGui::Spacing();
-        ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown "
-                            "next to the Log Work description field.");
-        ImGui::Spacing();
+void DrawWorkLogTemplatesSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.work_log_templates.list")) {
+        return;
+    }
+    ImGui::TextDisabled("Customize the quick comment templates displayed in the 'Templates' dropdown "
+                        "next to the Log Work description field.");
+    ImGui::Spacing();
 
-        // Pillar 2 (#732): seed from live cfg + persist via debounced MarkPrefsDirty (see the
-        // duration sub-tab above) instead of a synchronous per-click ConfigManager RMW+Save.
-        static std::vector<std::string> s_templatesList;
-        if (!flags.templatesLoaded) {
-            s_templatesList = d.cfg.WorkLogCommentTemplates;
-            flags.templatesLoaded = true;
-        }
+    // Pillar 2 (#732): seed from live cfg + persist via debounced MarkPrefsDirty (see the
+    // duration sub-tab above) instead of a synchronous per-click ConfigManager RMW+Save.
+    static std::vector<std::string> s_templatesList;
+    if (!flags.templatesLoaded) {
+        s_templatesList = d.cfg.WorkLogCommentTemplates;
+        flags.templatesLoaded = true;
+    }
 
-        // Render list of current comment templates in a premium boxed child frame
-        ImGui::Text("Current Comment Templates:");
-        ImGui::BeginChild("TemplatesListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
-                          ImGuiWindowFlags_AlwaysVerticalScrollbar);
-        for (size_t i = 0; i < s_templatesList.size(); ++i) {
-            ImGui::PushID(static_cast<int>(i));
+    // Render list of current comment templates in a premium boxed child frame
+    ImGui::Text("Current Comment Templates:");
+    ImGui::BeginChild("TemplatesListChild", ImVec2(0.0f, 160.0f), ImGuiChildFlags_Borders,
+                      ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    for (size_t i = 0; i < s_templatesList.size(); ++i) {
+        ImGui::PushID(static_cast<int>(i));
 
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextUnformatted(s_templatesList[i].c_str());
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted(s_templatesList[i].c_str());
 
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
-            if (i > 0) {
-                if (ImGui::Button("▲")) {
-                    std::swap(s_templatesList[i], s_templatesList[i - 1]);
-                    d.cfg.WorkLogCommentTemplates = s_templatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▲");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
-            if (i < s_templatesList.size() - 1) {
-                if (ImGui::Button("▼")) {
-                    std::swap(s_templatesList[i], s_templatesList[i + 1]);
-                    d.cfg.WorkLogCommentTemplates = s_templatesList;
-                    MarkPrefsDirty(d);
-                }
-            } else {
-                ImGui::BeginDisabled();
-                ImGui::Button("▼");
-                ImGui::EndDisabled();
-            }
-
-            ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
-            if (ImGui::Button("✖")) {
-                s_templatesList.erase(s_templatesList.begin() + i);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 82.0f);
+        if (i > 0) {
+            if (ImGui::Button("▲")) {
+                std::swap(s_templatesList[i], s_templatesList[i - 1]);
                 d.cfg.WorkLogCommentTemplates = s_templatesList;
                 MarkPrefsDirty(d);
-                --i;
             }
-            ImGui::PopStyleColor();
-
-            ImGui::PopID();
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button("▲");
+            ImGui::EndDisabled();
         }
-        ImGui::EndChild();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // Inline add controls for templates
-        static char s_prefNewTemplateBuf[128] = "";
-        ImGui::Text("Add Comment Template");
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
-        const bool templateEntered =
-            ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf),
-                             ImGuiInputTextFlags_EnterReturnsTrue); // Enter adds (P2-L10)
-        ImGui::SameLine();
-        if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || templateEntered) {
-            std::string newVal = s_prefNewTemplateBuf;
-            if (!newVal.empty()) {
-                if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
-                    s_templatesList.push_back(newVal);
-                    d.cfg.WorkLogCommentTemplates = s_templatesList;
-                    MarkPrefsDirty(d);
-                }
-                s_prefNewTemplateBuf[0] = '\0';
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 56.0f);
+        if (i < s_templatesList.size() - 1) {
+            if (ImGui::Button("▼")) {
+                std::swap(s_templatesList[i], s_templatesList[i + 1]);
+                d.cfg.WorkLogCommentTemplates = s_templatesList;
+                MarkPrefsDirty(d);
             }
+        } else {
+            ImGui::BeginDisabled();
+            ImGui::Button("▼");
+            ImGui::EndDisabled();
         }
-        ImGui::SetItemTooltip("Enter template text, e.g. 'Investigated and resolved issue #123.'");
 
-        ImGui::EndTabItem();
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 30.0f);
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.4f, 0.4f, 1.0f));
+        if (ImGui::Button("✖")) {
+            s_templatesList.erase(s_templatesList.begin() + i);
+            d.cfg.WorkLogCommentTemplates = s_templatesList;
+            MarkPrefsDirty(d);
+            --i;
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::PopID();
     }
+    ImGui::EndChild();
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Inline add controls for templates
+    static char s_prefNewTemplateBuf[128] = "";
+    ImGui::Text("Add Comment Template");
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 110.0f);
+    const bool templateEntered =
+        ImGui::InputText("##PrefNewTemplate", s_prefNewTemplateBuf, sizeof(s_prefNewTemplateBuf),
+                         ImGuiInputTextFlags_EnterReturnsTrue); // Enter adds (P2-L10)
+    ImGui::SameLine();
+    if (ImGui::Button("Add Template", ImVec2(100.0f, 0.0f)) || templateEntered) {
+        std::string newVal = s_prefNewTemplateBuf;
+        if (!newVal.empty()) {
+            if (std::find(s_templatesList.begin(), s_templatesList.end(), newVal) == s_templatesList.end()) {
+                s_templatesList.push_back(newVal);
+                d.cfg.WorkLogCommentTemplates = s_templatesList;
+                MarkPrefsDirty(d);
+            }
+            s_prefNewTemplateBuf[0] = '\0';
+        }
+    }
+    ImGui::SetItemTooltip("Enter template text, e.g. 'Investigated and resolved issue #123.'");
 }
 
 // Persistent per-sub-tab state for a comment-template editor (working-copy list, selection, and the
@@ -423,21 +447,15 @@ void DrawCommentTemplateDetailAndAdd(UiDrawSession& d, const char* titleWidgetId
     }
 }
 
-// Shared body for a comment-template editor sub-tab. The Quick-Comments and Annotate-Comments
-// sub-tabs were byte-identical apart from their labels, widget ids, and backing config field, so
+// Shared body for a comment-template editor section. The Quick-Comments and Annotate-Comments
+// editors were byte-identical apart from their labels, widget ids, and backing config field, so
 // this collapses both for DRY while staying behaviour-identical, with the caller passing every
 // ImGui id and label verbatim. The cfgField argument is the persisted vector and loadedFlag gates
-// the one-time working-copy load.
-void DrawCommentTemplateSubTab(UiDrawSession& d, const char* tabLabel, const char* heading, const char* placeholderHelp,
-                               const char* childId, const char* titleWidgetId, const char* idWidgetId,
-                               const char* bodyWidgetId, std::vector<CommentTemplate>& cfgField, bool& loadedFlag,
-                               CommentTemplateSubTabState& st) {
-    if (!ImGui::BeginTabItem(tabLabel)) {
-        return;
-    }
-    ImGui::TextUnformatted(heading);
-    ImGui::Separator();
-    ImGui::Spacing();
+// the one-time working-copy load. The owning PrefsSection draws the header.
+void DrawCommentTemplateSectionBody(UiDrawSession& d, const char* placeholderHelp, const char* childId,
+                                    const char* titleWidgetId, const char* idWidgetId, const char* bodyWidgetId,
+                                    std::vector<CommentTemplate>& cfgField, bool& loadedFlag,
+                                    CommentTemplateSubTabState& st) {
     ImGui::TextDisabled("%s", placeholderHelp);
     ImGui::Spacing();
 
@@ -452,52 +470,41 @@ void DrawCommentTemplateSubTab(UiDrawSession& d, const char* tabLabel, const cha
     DrawCommentTemplateList(d, childId, cfgField, st);
     ImGui::Spacing();
     DrawCommentTemplateDetailAndAdd(d, titleWidgetId, idWidgetId, bodyWidgetId, cfgField, st);
-
-    ImGui::EndTabItem();
 }
 
-void DrawQuickCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    static CommentTemplateSubTabState st;
-    DrawCommentTemplateSubTab(d, "Quick Comments", "Grid Right-Click Quick Comments",
-                              "Customize templates displayed when right-clicking issue cells in the grid. "
-                              "Placeholders: {key} (or {issueKey})",
-                              "QuickListChild", "##EditQuickTitle", "##EditQuickId", "##EditQuickText",
-                              d.cfg.QuickCommentTemplates, flags.quickTemplatesLoaded, st);
-}
-
-void DrawAnnotateCommentsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    static CommentTemplateSubTabState st;
-    DrawCommentTemplateSubTab(d, "Annotate Comments", "Annotate Quick Comments",
-                              "Customize templates displayed when clicking on the Annotate rows. "
-                              "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}",
-                              "AnnotateListChild", "##EditAnnotateTitle", "##EditAnnotateId", "##EditAnnotateText",
-                              d.cfg.AnnotateCommentTemplates, flags.annotateTemplatesLoaded, st);
-}
-
-void DrawFieldsInputsSubTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
-    if (ImGui::BeginTabItem("Fields Inputs", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Fields Inputs"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Templates;
-        if (ImGui::BeginTabBar("FieldsInputsSubTabBar")) {
-            DrawTimeEstimatesSubTab(d, flags);
-            DrawWorkLogTemplatesSubTab(d, flags);
-            DrawQuickCommentsSubTab(d, flags);
-            DrawAnnotateCommentsSubTab(d, flags);
-            ImGui::EndTabBar();
-        }
-        ImGui::EndTabItem();
+void DrawQuickCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.quick_comments.list")) {
+        return;
     }
+    static CommentTemplateSubTabState st;
+    DrawCommentTemplateSectionBody(d,
+                                   "Customize templates displayed when right-clicking issue cells in the grid. "
+                                   "Placeholders: {key} (or {issueKey})",
+                                   "QuickListChild", "##EditQuickTitle", "##EditQuickId", "##EditQuickText",
+                                   d.cfg.QuickCommentTemplates, flags.quickTemplatesLoaded, st);
+}
+
+void DrawAnnotateCommentsSectionBody(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    // One descriptor per list editor (see DrawTimeEstimatesSectionBody).
+    if (!d.prefsFilter.ShowSetting("editing.annotate_comments.list")) {
+        return;
+    }
+    static CommentTemplateSubTabState st;
+    DrawCommentTemplateSectionBody(d,
+                                   "Customize templates displayed when clicking on the Annotate rows. "
+                                   "Placeholders: {key}, {path}, {line}, {cl}, {user}, {function}",
+                                   "AnnotateListChild", "##EditAnnotateTitle", "##EditAnnotateId", "##EditAnnotateText",
+                                   d.cfg.AnnotateCommentTemplates, flags.annotateTemplatesLoaded, st);
 }
 
 } // namespace
 
-void DrawTemplatePreferencesTabs(SmatchetUI& ui, const std::vector<TrackerField>& availableFields,
-                                 const IAppTicketMutations& ticketMutations, UiDrawSession& d,
-                                 SmatchetPreferencesUiTemplateFlags& flags) {
-    DrawGridSubTab(d);
-    DrawFieldsInputsSubTab(d, flags);
-    if (ImGui::BeginTabItem("Annotate", nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Annotate"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Annotate;
-        ui.DrawAnnotatePreferencesTabForwarded(availableFields, ticketMutations);
-        ImGui::EndTabItem();
-    }
+void DrawEditingPreferencesTab(UiDrawSession& d, SmatchetPreferencesUiTemplateFlags& flags) {
+    namespace Detail = SmatchetPreferencesUiDetail;
+    Detail::PrefsSection(d, "editing.grid", [&] { DrawGridSectionBody(d); });
+    Detail::PrefsSection(d, "editing.time_estimates", [&] { DrawTimeEstimatesSectionBody(d, flags); });
+    Detail::PrefsSection(d, "editing.work_log_templates", [&] { DrawWorkLogTemplatesSectionBody(d, flags); });
+    Detail::PrefsSection(d, "editing.quick_comments", [&] { DrawQuickCommentsSectionBody(d, flags); });
+    Detail::PrefsSection(d, "editing.annotate_comments", [&] { DrawAnnotateCommentsSectionBody(d, flags); });
 }

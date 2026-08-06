@@ -55,6 +55,23 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 
 5. **Synthesize.** Dedupe analyzer output against your reading, suppress noise, group by severity.
 
+6. **Record the review ack** (staged-diff reviews only). `scripts/git-hooks/pre-commit` check (B) refuses a substantive staged C++ commit with no ack pinned to that exact diff (`docs/agent-rules/process-rules.md` § Code-review before every commit). When you reviewed the **staged** diff and no `## Critical` / `## High` finding is outstanding — every one fixed or explicitly user-waived — record it so the commit can proceed:
+
+   ```bash
+   bash agents/scripts/core/review-ack.sh --record --staged
+   ```
+
+   **With a verifier verdict.** When you emit the verifier object (the schema `agents/_shared/workflows/pre-merge-review.js` already requires — `overall_score`, `confidence`, `hard_veto`, per-criterion scores), aggregate it and attach it so the gate can act on the verdict, not just the ack:
+
+   ```bash
+   python3 scripts/dev/verifier-sidecar.py aggregate samples.json > /tmp/verdict.json
+   bash agents/scripts/core/review-ack.sh --record --staged --verdict /tmp/verdict.json
+   ```
+
+   Set `hard_veto=true` for a security issue, deterministic-gate failure, or project-invariant breach — that, and only that, blocks the commit; the score is advisory until calibrated (`docs/agent-rules/verifier-sidecar.md` § Where it runs first). Do not set a veto you do not believe, and do not withhold one you do: the veto is trusted precisely because it costs you something to report.
+
+   Do **not** record while a Critical/High finding stands, and never record a review you did not run — the fingerprint proves only that the diff is unchanged since *something* was acknowledged. Recording is the one write this otherwise read-only agent makes; it touches `.review-ack` (gitignored) and no source file. The push-side twin is `bash scripts/dev/pre-ship.sh --ack-review`.
+
 ## Smatchet checklist
 
 **C++14 compliance** (must build on MSVC + Clang):

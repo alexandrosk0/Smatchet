@@ -242,6 +242,7 @@ const FieldDesc<std::string> kStringFields[] = {
     {"production_group_keyword", &TrackerConfig::ProductionGroupKeyword},
     {"git_commit_repos", &TrackerConfig::GitCommitRepos},
     {"vcs_feed_layout", &TrackerConfig::VcsFeedLayout},
+    {"preferences_collapsed_sections", &TrackerConfig::PreferencesCollapsedSections},
 };
 
 const FieldDesc<bool> kBoolFields[] = {

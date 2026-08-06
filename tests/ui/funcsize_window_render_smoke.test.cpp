@@ -152,22 +152,21 @@ void RegisterAuditWindowRenderSmoke(ImGuiTestEngine* engine) {
 // --- Preferences window --------------------------------------------------
 // drawPreferencesWindow (SmatchetPreferencesUi.cpp). Title "Preferences".
 //
-// Probe: the "Keyboard Shortcuts###prefsTabKeybindings" tab header inside the
-// BeginTabBar("PreferencesTabs"), referenced tab-bar-qualified as
-// "PreferencesTabs/<label>". The "Save & Sync" footer button is NOT a stable
-// probe: SmatchetIconLeadingButton composes "<glyph> <translated>##Save & Sync"
-// and ImGui seeds the item ID from the WHOLE string (`##` truncates the display
-// but does NOT reset the ID hash — only `###` does, per ImHashStr), so the ID is
-// glyph- and locale-dependent and a bare "Save & Sync" ref can never match it.
-// The Keybindings tab carries a `###prefsTabKeybindings` suffix, so its ID hash
-// resets there and resolves locale-independently (same ref the passing
-// keybindings_editor_rebind pilot drives). Reaching the tab bar confirms the
-// body ran past Begin() and submitted its content, needing no backend state.
+// Probe: the "##PrefsSearch" settings-search InputText, submitted
+// unconditionally right after the window's buffers load — before the nav rail /
+// category dispatch — so it exists in both the rail and the narrow-width combo
+// nav modes. The "Save & Sync" footer button is NOT a stable probe:
+// SmatchetIconLeadingButton composes "<glyph> <translated>##Save & Sync" and
+// ImGui seeds the item ID from the WHOLE string (`##` truncates the display but
+// does NOT reset the ID hash — only `###` does, per ImHashStr), so the ID is
+// glyph- and locale-dependent. "##PrefsSearch" is a constant literal — its hash
+// is locale-independent. Reaching the search box confirms the body ran past
+// Begin() and submitted its content, needing no backend state.
 void RegisterPreferencesWindowRenderSmoke(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "FuncSizeWindowRender", "PreferencesWindow_RendersAndShowsSaveButton");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         RunWindowRenderSmoke(ctx, &UiDrawSession::showPreferences, &UiDrawSession::requestPreferencesFocus,
-                             "Preferences", "PreferencesTabs/Keyboard Shortcuts###prefsTabKeybindings");
+                             "Preferences", "##PrefsSearch");
     };
 }
 
