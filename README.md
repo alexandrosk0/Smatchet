@@ -138,7 +138,7 @@ If no usable Visual Studio install is found it exits `78` with the winget comman
 #### Advanced — raw presets
 
 These are what CI runs, and what you want when the MSVC environment is already active (a VS
-Developer Command Prompt, or inside `scripts/dev/with-msvc.ps1` / `scripts/dev/with-msvc-env.sh`).
+Developer Command Prompt, or inside `scripts/dev/with-msvc-env.sh`).
 
 **MSVC:**
 

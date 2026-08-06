@@ -4,8 +4,6 @@ Generated locally at `.claude/` by:
 
 ```bash
 bash agents/scripts/core/setup-harness.sh claude-code
-# or, on Windows-native PowerShell:
-pwsh agents/scripts/core/setup-harness.ps1 claude-code
 ```
 
 Idempotent. Run it after every clone and any time the canonical templates change. The script never overwrites a user-modified template — it prints `skip-copy` and leaves your local edits alone.

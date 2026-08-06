@@ -16,7 +16,7 @@ Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are 
 | pi (earendil-works) | `bash agents/scripts/core/setup-harness.sh pi` | [pi/README.md](pi/README.md) |
 | Aider / generic | Manual — paste agent files from `agents/` as needed. No adapter dir. | — |
 
-Windows users can substitute `pwsh agents/scripts/core/setup-harness.ps1 <name>`.
+Windows users run the same command — Git Bash ships with Git for Windows, and the PowerShell twin was deleted (it drifted from the bash original rather than tracking it).
 
 ## Concurrent-session HEAD-drift guard — INACTIVE until first setup
 
@@ -78,12 +78,8 @@ Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness
 
 Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".
 
-`scripts/dev/set-vcs-mode.{sh,ps1}` sets **both** layers idempotently — run it **once per machine** to pin the mode you want everywhere:
+`scripts/dev/set-vcs-mode.sh` sets **both** layers idempotently — run it **once per machine** to pin the mode you want everywhere. It is the only implementation on every platform; the PowerShell twin was deleted, since the bash script already writes the Windows User-registry env via `setx`:
 
-```powershell
-# Windows (authoritative — sets the User registry + the ~/.bashrc managed block)
-pwsh scripts/dev/set-vcs-mode.ps1 git    # or: p4
-```
 ```bash
 # git-bash / POSIX (also syncs the Windows registry via setx when on Windows)
 bash scripts/dev/set-vcs-mode.sh git     # or: p4;  no arg prints the current mode
@@ -168,6 +164,6 @@ Reference implementations: [`claude-code/hooks/lint-portable-purity.sh`](claude-
 
 1. Create `docs/harness/<name>/setup.md` with the recreation steps.
 2. If the harness needs template files, place them under `docs/harness/<name>/`.
-3. Add a `setup_<name>()` function to `agents/scripts/core/setup-harness.sh` + `.ps1`.
+3. Add a `setup_<name>()` function to `agents/scripts/core/setup-harness.sh` (single implementation — there is no PowerShell twin to keep in step).
 4. Add a row to the table above.
 5. Add `.<name>/` to `.gitignore`.

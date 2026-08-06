@@ -525,7 +525,7 @@ jobs:
           # Assert the leg is on a real ARM core before the expensive build —
           # otherwise a misprovisioned/x64 runner would silently build+ctest as x64
           # and green-wash the atomics validation. Resolve the *host* arch the way
-          # the repo's MSVC wrappers do (scripts/dev/with-msvc.ps1): prefer
+          # the repo's MSVC wrapper does (scripts/dev/with-msvc-env.sh): prefer
           # PROCESSOR_ARCHITEW6432 (the native arch when the shell is emulated — e.g.
           # x64 pwsh under Prism on ARM64) and fall back to PROCESSOR_ARCHITECTURE; a
           # bare PROCESSOR_ARCHITECTURE check would false-fail on an emulated shell.

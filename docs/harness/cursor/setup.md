@@ -4,8 +4,6 @@ Generated locally at `.cursor/rules/agents.mdc` by:
 
 ```bash
 bash agents/scripts/core/setup-harness.sh cursor
-# or, on Windows-native PowerShell:
-pwsh agents/scripts/core/setup-harness.ps1 cursor
 ```
 
 Idempotent. The script never overwrites a user-modified rule file.
