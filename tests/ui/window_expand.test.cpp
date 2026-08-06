@@ -29,7 +29,8 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
-#include "Logger.h" // splitter-drag case reports its phases to the app log
+#include "Logger.h"     // splitter-drag case reports its phases to the app log
+#include "SmatchetUI.h" // selectDockedTab — SetNextWindowFocus cannot raise a docked tab (imgui#2304)
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 
@@ -189,9 +190,21 @@ struct WindowExpandSessionGuard {
     bool showLog;
     bool showAudit;
     bool showViews;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    // UiDrawSession only declares the Lua flags under this feature guard, so a
+    // Lua-OFF bucket-E configure would fail to compile the whole suite — not just
+    // the Scripting case — if the snapshot referenced them unconditionally.
+    bool showScripting;
+#endif
 
     WindowExpandSessionGuard()
-        : showLog(g_ui.showLogWindow), showAudit(g_ui.showAuditTrail), showViews(g_ui.showViewsDashboard) {}
+        : showLog(g_ui.showLogWindow), showAudit(g_ui.showAuditTrail), showViews(g_ui.showViewsDashboard)
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+          ,
+          showScripting(g_ui.showLuaAutomationWindow)
+#endif
+    {
+    }
 
     ~WindowExpandSessionGuard() {
         const unsigned int expanded = g_ui.windowExpand.ExpandedId;
@@ -209,6 +222,9 @@ struct WindowExpandSessionGuard {
         // restore here leaks a visible dashboard into every later case and into the
         // dev's own config.
         g_ui.showViewsDashboard = showViews;
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+        g_ui.showLuaAutomationWindow = showScripting;
+#endif
     }
 };
 
@@ -732,9 +748,89 @@ void RegisterSplitterDragAfterMinimizeKeepsDocking(ImGuiTestEngine* engine) {
     };
 }
 
+// --- every dockable window is wired, not just the ones we happened to try ---
+// The Scripting window was the one registered dock-slot window that never called
+// BeginWindow/DrawToggle, so its node queued NO button while Scripting was the
+// selected tab — only the selected tab's Begin returns true, so the whole bottom
+// panel looked like it had lost the control ("the first tab doesn't have the
+// expand icon"). Switching tabs made it reappear, which is what made it read as a
+// first-tab bug rather than a missing call site.
+// Guarded whole: the window itself only exists in a Lua-ON build (LuaConsolePlugin.cpp
+// isn't compiled otherwise), and the g_ui flags this case drives are declared inside the
+// same #if in SmatchetUiSession.h — so an unguarded body would fail to compile the ENTIRE
+// bucket-E suite under -DSMATCHET_WITH_LUA_AUTOMATION=OFF, not just this case.
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+
+const char* const kScriptingWindow = "Scripting";
+
+void RegisterScriptingWindowHasToggle(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "WindowExpand", "ScriptingWindowContributesTabBarToggle");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (BootedAppOrSkip(ctx) == nullptr) {
+            return;
+        }
+        WindowExpandSessionGuard guard;
+
+        const bool opened = OpenWindow(ctx, &UiDrawSession::showLuaAutomationWindow,
+                                       &UiDrawSession::requestLuaAutomationFocus, kScriptingWindow);
+        IM_CHECK_NO_RET(opened);
+        if (!opened) {
+            return;
+        }
+        // Docked is the CONTRACT, not an accident: SmatchetDockNodeIds.cpp kEntries pins
+        // {"scripting", kBottomPanel}. Skipping here instead of asserting would make a
+        // future layout change that floats Scripting silently disarm the only automated
+        // coverage of this bug — and a floating Scripting is itself a no-tab-bar-toggle
+        // state, i.e. adjacent to the very regression being guarded.
+        const ImGuiWindow* win = ImGui::FindWindowByName(kScriptingWindow);
+        IM_CHECK_NO_RET(win != nullptr && win->DockNode != nullptr);
+        if (win == nullptr || win->DockNode == nullptr) {
+            return;
+        }
+        // Being open is not being SELECTED: SetNextWindowFocus cannot raise a docked tab
+        // (imgui#2304), and only the selected tab's Begin returns true, so an unselected
+        // Scripting would bail in DrawToggle on SkipItems and fail this case on layout
+        // rather than on regression. Drive the selection explicitly, then assert it.
+        // Re-armed every frame like OpenWindow's focus request: selectDockedTab silently
+        // no-ops while the node has no TabBar yet, so a single call can be dropped.
+        const bool selected = YieldUntil(ctx, [&] {
+            SmatchetUI::selectDockedTab(kScriptingWindow);
+            return win->DockNode != nullptr && win->DockNode->TabBar != nullptr &&
+                   win->DockNode->TabBar->SelectedTabId == win->TabId;
+        });
+        IM_CHECK_NO_RET(selected);
+        if (!selected) {
+            return;
+        }
+        const ImGuiID toggleId = ToggleIdSeededBy(win->DockNode->ID);
+        const ImGuiTestItemInfo toggleInfo = ctx->ItemInfo(ImGuiTestRef(toggleId));
+        IM_CHECK_NO_RET(toggleInfo.ID == toggleId);
+        if (toggleInfo.ID != toggleId) {
+            // Clicking a missing item aborts the whole suite mid-run; a clean check-fail
+            // is the useful signal.
+            return;
+        }
+
+        // The id above is NODE-seeded, so on its own it only proves *some* window on the
+        // bottom node queued a button. The round trip is the attribution: the click has
+        // to expand SCRIPTING and restore SCRIPTING, which is only true if Scripting is
+        // the window that registered the placement behind that button.
+        const Placement before = Capture(kScriptingWindow);
+        IM_CHECK_NO_RET(before.dockId != 0u);
+        ctx->ItemClick(ImGuiTestRef(toggleId));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return CoversWorkArea(kScriptingWindow); }));
+        ctx->ItemClick(ImGuiTestRef(ToggleIdSeededBy(win->ID)));
+        IM_CHECK_NO_RET(YieldUntil(ctx, [&] { return PlacementRestored(kScriptingWindow, before); }));
+    };
+}
+
+#endif // SMATCHET_WITH_LUA_AUTOMATION
+
 } // namespace
 
 extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine) {
+    // Order is load-bearing: the splitter-drag case must run against a boot whose
+    // layout no earlier case has mutated, so it stays first. New cases append.
     RegisterSplitterDragAfterMinimizeKeepsDocking(engine);
     RegisterExpandThenMinimize(engine);
     RegisterSecondExpandMinimizesFirst(engine);
@@ -743,6 +839,9 @@ extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine) {
     RegisterTabBarToggleClickRoundTrips(engine);
     RegisterStaleDockNodeRestoreFallsBack(engine);
     RegisterMainPaneExpandsWithTitleBar(engine);
+#if defined(SMATCHET_WITH_LUA_AUTOMATION)
+    RegisterScriptingWindowHasToggle(engine);
+#endif
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
