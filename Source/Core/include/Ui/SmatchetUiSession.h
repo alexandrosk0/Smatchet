@@ -841,6 +841,14 @@ struct UiDrawSession {
     bool viewSortDirty = false;
     bool logAutoScroll = true;
 
+    /// True when this process was launched as a CLI-spawned ephemeral instance
+    /// (`--ephemeral`, hidden window, forced MCP) — it exists only to serve one
+    /// scripted command and then exit. Startup UI work whose completion frame is
+    /// wall-clock- or network-dependent must be suppressed for the whole session:
+    /// a scenario-state gate cannot do it, because the child boots and starts that
+    /// work BEFORE the driver sends `scenario.run` over MCP. Set once at bootstrap.
+    bool ephemeralSession = false;
+
     bool appUpdateStartupCheckStarted = false;
     bool appUpdateCheckInFlight = false;
     bool appUpdateCheckManual = false;

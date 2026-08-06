@@ -339,6 +339,13 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # about-selectable-values — pin the About modal's chrome strings. They reach the
+    # table through implicit source-string keying (TranslateSource), so a retyped
+    # button label would silently drop to English with nothing else noticing; the
+    # right-click menu items have no other call site in the repo. Also pins the
+    # retired about.check_updates key as absent, and the distinct Help/Preferences
+    # "Check for Updates" literals as still present.
+    Core/AboutLocalization.test.cpp
     # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
     # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
     Core/I18nSweepLocalization.test.cpp

@@ -1,4 +1,5 @@
 # agents/scripts/core/merge-watcher-install-prune-task.ps1
+# Last remaining PowerShell file - see docs/harness/SETUP.md section Windows-only shims.
 # ----------------------------------------------------------------------------
 # Register a Windows Scheduled Task that runs `merge-watch prune` daily, so the
 # watcher registry self-heals even across daemon-down windows.
@@ -8,7 +9,7 @@
 # machine is logged out, or it is simply stopped for a while, merged/closed
 # PRs accrete in the registry and slow every live PR's poll cadence. This
 # daily sweep heals the registry independently of the daemon's lifecycle.
-# `prune` is fail-safe — it KEEPS any PR whose state it can't determine.
+# `prune` is fail-safe - it KEEPS any PR whose state it can't determine.
 #
 # Idempotent -- re-running unregisters + re-registers, so changes to the
 # schedule take effect on next run.
@@ -98,7 +99,7 @@ $action = New-ScheduledTaskAction `
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
 
 # Short-lived task: cap the run at 10 min (prune is a handful of gh calls) so a
-# wedged gh can't leave it hanging. No restart-on-crash — it just runs again
+# wedged gh can't leave it hanging. No restart-on-crash - it just runs again
 # tomorrow.
 $settings = New-ScheduledTaskSettingsSet `
     -StartWhenAvailable `

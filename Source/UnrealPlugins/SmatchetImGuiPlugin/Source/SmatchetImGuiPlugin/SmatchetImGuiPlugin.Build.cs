@@ -172,7 +172,7 @@ public class SmatchetImGuiPlugin : ModuleRules
                     : "Found MinGW archive(s)";
                 throw new BuildException(
                     $"SmatchetImGuiPlugin: {reason} for '{targetName}' under '{LibDir}', but Win64 Unreal must link MSVC-produced .lib files only. " +
-                    "Repackage with scripts\\dev\\local\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
+                    "Repackage with scripts/dev/local/package-unreal-plugin-msvc.sh and rebuild the plugin.");
             }
 
             if (File.Exists(msvcLibNoPrefix))
@@ -216,7 +216,7 @@ public class SmatchetImGuiPlugin : ModuleRules
                     : "Found MinGW archive(s)";
                 throw new BuildException(
                     $"SmatchetImGuiPlugin: {reason} for optional '{targetName}' under '{LibDir}', but Win64 Unreal must link MSVC-produced .lib files only. " +
-                    "Repackage with scripts\\dev\\local\\package_unreal_plugin_msvc.ps1 and rebuild the plugin.");
+                    "Repackage with scripts/dev/local/package-unreal-plugin-msvc.sh and rebuild the plugin.");
             }
 
             if (File.Exists(msvcLibNoPrefix))
@@ -327,7 +327,7 @@ public class SmatchetImGuiPlugin : ModuleRules
             throw new BuildException(
                 "SmatchetImGuiPlugin: packaged native lib '" + Path.GetFileName(packagedLib) +
                 "' is older than Source/Core by " + lag.ToString("c") + ". Unreal would load a stale " +
-                "Smatchet host. Run 'scripts\\dev\\local\\package_unreal_plugin_msvc.ps1' to refresh " +
+                "Smatchet host. Run 'scripts/dev/local/package-unreal-plugin-msvc.sh' to refresh " +
                 "ThirdParty libs, then rebuild the plugin.");
         }
         catch (BuildException)

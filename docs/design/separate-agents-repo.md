@@ -56,7 +56,7 @@ Not every upstream agent needs an overlay. Purely generic agents (`mechanic`, `c
 
 ### Merge mechanism (build-time concat)
 
-`scripts/setup-harness.sh` gains a synth step. For each generic agent `<name>` in `agents/`:
+`agents/scripts/core/setup-harness.sh` gains a synth step. For each generic agent `<name>` in `agents/`:
 
 ```text
 .claude/agents/<name>.md  :=  agents/<name>.md  +  ("\n\n---\n\n## Smatchet project addendum\n\n" + agents-local/<name>.smatchet.md  if exists)
@@ -97,15 +97,14 @@ Trade-off: loses today's junction "edit-and-it's-live" property for the upstream
    - `git submodule add -- <upstream-url> agents/_shared`
    - `git commit -m "chore(agents): extract _shared to <agent-lib-name> submodule"`
 2. Create `agents-local/_shared/skills/{grill-with-docs,perf-instrument,perf-measure,perf-gatekeeper}/SMATCHET-NOTES.md` from the equivalents that used to live in `agents/_shared/skills/*/`. Track these.
-3. **Refresh hard links** — `agents/_shared/token-tracking/*.py` files are hard-linked (not junctioned) into `.claude/hooks/` + `.claude/skills/` by today's `setup-harness.sh` (explore confirmed at `scripts/setup-harness.sh:140-143`). Submodule init creates **new inodes**; the existing hard links in `.claude/` point to deleted inodes and are silently broken until re-linked. Run `bash scripts/setup-harness.sh claude-code` immediately after `git submodule add` to recreate the hard links. Verify with `python .claude/hooks/agent-token-log.py --help`.
+3. **Refresh hard links** — `agents/_shared/token-tracking/*.py` files are hard-linked (not junctioned) into `.claude/hooks/` + `.claude/skills/` by today's `setup-harness.sh` (explore confirmed at `agents/scripts/core/setup-harness.sh:140-143`). Submodule init creates **new inodes**; the existing hard links in `.claude/` point to deleted inodes and are silently broken until re-linked. Run `bash agents/scripts/core/setup-harness.sh claude-code` immediately after `git submodule add` to recreate the hard links. Verify with `python .claude/hooks/agent-token-log.py --help`.
 
 ### Slice 1.3 — Wire the overlay merge into setup-harness
 
 Files to modify:
 
-- [`scripts/setup-harness.sh`](../../scripts/setup-harness.sh) — add a `synth_overlay()` helper that reads upstream `agents/_shared/skills/<skill>/SKILL.md` and concatenates `agents-local/_shared/skills/<skill>/SMATCHET-NOTES.md` onto `.claude/skills/<skill>/SKILL.md`. Continue using junctions for purely-generic skills (`scratchpad-recall`, `token-tracking`).
-- [`scripts/setup-harness.ps1`](../../scripts/setup-harness.ps1) — mirror the change for Windows-native PowerShell users.
-- [`scripts/dev/test-setup-harness.sh`](../../scripts/dev/test-setup-harness.sh) — add cases covering the synth step.
+- [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh) — add a `synth_overlay()` helper that reads upstream `agents/_shared/skills/<skill>/SKILL.md` and concatenates `agents-local/_shared/skills/<skill>/SMATCHET-NOTES.md` onto `.claude/skills/<skill>/SKILL.md`. Continue using junctions for purely-generic skills (`scratchpad-recall`, `token-tracking`).
+- [`agents/scripts/core/test-setup-harness.sh`](../../agents/scripts/core/test-setup-harness.sh) — add cases covering the synth step.
 - [`docs/harness/SETUP.md`](../harness/SETUP.md) — document submodule init step (`git submodule update --init --recursive`).
 
 Reuse existing helpers in `setup-harness.sh` (`link_dir`, `link_file`, `copy_template`) — see explore findings.
@@ -126,8 +125,8 @@ If submodule path triggers don't fire on upstream-content changes (they won't �
 ### Phase 1 verification
 
 1. `git submodule update --init --recursive` populates `agents/_shared/` cleanly.
-2. `bash scripts/setup-harness.sh claude-code` regenerates `.claude/agents/` + `.claude/skills/` with merged overlay content visible at the bottom of each `SKILL.md`.
-3. `bash scripts/dev/test-setup-harness.sh` passes.
+2. `bash agents/scripts/core/setup-harness.sh claude-code` regenerates `.claude/agents/` + `.claude/skills/` with merged overlay content visible at the bottom of each `SKILL.md`.
+3. `bash agents/scripts/core/test-setup-harness.sh` passes.
 4. `bash scripts/dev/test-agent-contract.sh` passes (no path regressions).
 5. `python agents/_shared/token-tracking/tests/test_infer_outcome.py` runs from submodule path.
 6. Smoke test the skill-merge mechanism (Phase 1 scope is skills only — agent `.md` files at top level are unchanged this phase). Invoke the `perf-measure` **skill** via `Skill` tool and confirm `SKILL.md` content surfaces both the upstream generic body and the Smatchet `SMATCHET-NOTES.md` addendum (build preset, perf-scope prefix, scenario list). Repeat for `grill-with-docs`.
@@ -164,26 +163,25 @@ Phase 1 touches:
   - `.gitmodules` (new entry)
   - `agents/_shared/` → submodule
   - `agents-local/_shared/skills/{grill-with-docs,perf-instrument,perf-measure,perf-gatekeeper}/SMATCHET-NOTES.md` (new)
-  - [`scripts/setup-harness.sh`](../../scripts/setup-harness.sh) — add `synth_overlay()` helper
-  - [`scripts/setup-harness.ps1`](../../scripts/setup-harness.ps1)
-  - [`scripts/dev/test-setup-harness.sh`](../../scripts/dev/test-setup-harness.sh)
+  - [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh) — add `synth_overlay()` helper
+  - [`agents/scripts/core/test-setup-harness.sh`](../../agents/scripts/core/test-setup-harness.sh)
   - [`docs/harness/SETUP.md`](../harness/SETUP.md)
   - [`.github/workflows/doc-validation.yml`](../../.github/workflows/doc-validation.yml)
   - [`.github/workflows/build-and-test.yml`](../../.github/workflows/build-and-test.yml)
 
 ## Existing utilities to reuse
 
-- `link_dir()` / `link_file()` / `copy_template()` in [`scripts/setup-harness.sh`](../../scripts/setup-harness.sh).
+- `link_dir()` / `link_file()` / `copy_template()` in [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh).
 - Junction-vs-symlink platform branching already in place.
 - `.gitignore` already covers `.claude/`, `.codex/`, `.cursor/` — no change needed for adapter dirs.
 - Existing `SMATCHET-NOTES.md` pattern in `agents/_shared/skills/grill-with-docs/` becomes the template for all overlay notes.
 
 ## Risks
 
-1. **Submodule UX friction**: contributors who skip `git submodule update --init` see broken `agents/_shared`. Mitigate with `scripts/setup-harness.sh` running submodule init unconditionally + a SessionStart hook warning when submodule SHA drifts.
+1. **Submodule UX friction**: contributors who skip `git submodule update --init` see broken `agents/_shared`. Mitigate with `agents/scripts/core/setup-harness.sh` running submodule init unconditionally + a SessionStart hook warning when submodule SHA drifts.
 2. **CI doesn't trigger on upstream-content changes**: by design — submodule SHA pointers don't propagate. Solved by giving upstream its own CI; Smatchet CI only validates the integration.
 3. **Overlay drift**: Smatchet overlays may go stale as upstream agents evolve. Mitigate with `scripts/dev/test-agent-contract.sh` extended to verify each upstream agent has either a current overlay or is explicitly marked `no-overlay`.
-4. **Token-tracking hooks break transiently**: `.claude/settings.json` references `$CLAUDE_PROJECT_DIR/.claude/hooks/agent-token-log.py` + `skill-load-log.py`. These are **hard links** (not junctions) into `agents/_shared/token-tracking/*.py` per `scripts/setup-harness.sh:140-143`. Submodule add creates new inodes for the populated files; the old hard links point to deleted inodes and silently break. Mitigation: Slice 1.2 step 3 mandates re-running `setup-harness.sh` immediately after `git submodule add`. Without that step, token-tracking goes silently dark until the next setup-harness run.
+4. **Token-tracking hooks break transiently**: `.claude/settings.json` references `$CLAUDE_PROJECT_DIR/.claude/hooks/agent-token-log.py` + `skill-load-log.py`. These are **hard links** (not junctions) into `agents/_shared/token-tracking/*.py` per `agents/scripts/core/setup-harness.sh:140-143`. Submodule add creates new inodes for the populated files; the old hard links point to deleted inodes and silently break. Mitigation: Slice 1.2 step 3 mandates re-running `setup-harness.sh` immediately after `git submodule add`. Without that step, token-tracking goes silently dark until the next setup-harness run.
 5. **Loss of live-edit on junction-backed agents**: addressed by overlay-only edits being live-ish; upstream edits require submodule push/pull. Acceptable trade-off; document in `docs/harness/SETUP.md`.
 6. **Plan stress-test not run**: this plan has not been through the `grill-with-docs` skill against `docs/CONTEXT.md` + ADRs. Required before approval per `AGENTS.md` § Project rules § Plan stress-test. Add a pass before implementation begins.
 
@@ -192,8 +190,8 @@ Phase 1 touches:
 End-to-end checklist:
 
 1. `git submodule update --init --recursive` from a fresh Smatchet clone populates `agents/_shared/` from the upstream repo, no errors.
-2. `bash scripts/setup-harness.sh claude-code` regenerates `.claude/agents/`, `.claude/skills/`, `.claude/hooks/`. Synth step merges upstream skill prose + Smatchet `SMATCHET-NOTES.md` overlays.
-3. `bash scripts/dev/test-setup-harness.sh` — green, including new synth-step cases.
+2. `bash agents/scripts/core/setup-harness.sh claude-code` regenerates `.claude/agents/`, `.claude/skills/`, `.claude/hooks/`. Synth step merges upstream skill prose + Smatchet `SMATCHET-NOTES.md` overlays.
+3. `bash agents/scripts/core/test-setup-harness.sh` — green, including new synth-step cases.
 4. `bash scripts/dev/test-agent-contract.sh` — green; no path regressions for non-touched agents.
 5. `python agents/_shared/token-tracking/tests/test_infer_outcome.py` — green from submodule path.
 6. Smoke test the skill-merge mechanism (Phase 1 scope is skills only — agent `.md` files at top level are unchanged this phase). Invoke the `perf-measure` **skill** via `Skill` tool and confirm `SKILL.md` content surfaces both the upstream generic body and the Smatchet `SMATCHET-NOTES.md` addendum (build preset, perf-scope prefix, scenario list). Repeat for `grill-with-docs`.

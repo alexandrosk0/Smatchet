@@ -39,12 +39,17 @@
 set -euo pipefail
 
 # -- dependency preflight ----------------------------------------------------
-if command -v python3 >/dev/null 2>&1; then
-    PY=python3
-elif command -v python >/dev/null 2>&1; then
-    PY=python
-else
-    echo "agent-eval-run: python3 (or python) required" >&2
+# Each candidate must RESOLVE and RUN. On Windows `python3` resolves to the
+# Microsoft Store App Execution Alias stub -- on PATH, but it prints an "install
+# from the Microsoft Store" banner and exits non-zero -- so a resolve-only chain
+# picks the stub over the working `python` behind it and every eval run dies on
+# the first interpreter call.
+PY=""
+for _c in python3 python py; do
+    if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "" >/dev/null 2>&1; then PY="$_c"; break; fi
+done
+if [ -z "$PY" ]; then
+    echo "agent-eval-run: a working python3 (or python) required" >&2
     exit 2
 fi
 

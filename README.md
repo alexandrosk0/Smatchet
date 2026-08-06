@@ -113,22 +113,23 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 
 ### Build Workflows
 
-**One command, ordinary PowerShell** — from the repo root:
+**One command, ordinary bash** (Git Bash on Windows) — from the repo root:
 
-```powershell
-.\build.ps1                 # build + run
-.\build.ps1 -BuildOnly      # build only
+```bash
+./build.sh                 # build + run
+./build.sh --build-only    # build only
 ```
 
-`build.ps1` picks a preset for you (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
-`ninja-iter-clang`), prints which one and why, and imports the MSVC environment itself when it isn't
-already active — **no Visual Studio Developer Command Prompt required**. Pass `-Preset` to override:
+`build.sh` picks a preset for you (`cl.exe` on `PATH` → `ninja-iter-msvc`; only `clang-cl.exe` →
+`ninja-iter-clang`; neither → `ninja-iter-msvc`, because the MSVC environment is imported for
+you), prints which one and why, and imports the MSVC environment itself when it isn't
+already active — **no Visual Studio Developer Command Prompt required**. Pass `--preset` to override:
 
-```powershell
-.\build.ps1 -Preset ninja-debug-msvc -BuildOnly
+```bash
+./build.sh --preset ninja-debug-msvc --build-only
 ```
 
-If no usable Visual Studio install is found it exits `2` with the winget commands to install one.
+If no usable Visual Studio install is found it exits `78` with the winget commands to install one.
 
 > **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /
 > `*-msys2` presets are **retired** — use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl).
@@ -136,8 +137,10 @@ If no usable Visual Studio install is found it exits `2` with the winget command
 
 #### Advanced — raw presets
 
-These are what CI runs, and what you want when the MSVC environment is already active (a VS
-Developer Command Prompt, or inside `scripts/dev/with-msvc.ps1` / `scripts/dev/with-msvc-env.sh`).
+These are what CI runs, and what you want once `cl.exe` is already on `PATH` (a VS Developer
+Command Prompt). `scripts/dev/with-msvc-env.sh` is a command *wrapper*, not a shell — it cannot
+export the environment to your shell, so run each command through it:
+`bash scripts/dev/with-msvc-env.sh cmake --preset ninja-iter-msvc`.
 
 **MSVC:**
 

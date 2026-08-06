@@ -19,12 +19,6 @@ Run:
 bash agents/scripts/core/setup-harness.sh codex
 ```
 
-Or on Windows PowerShell:
-
-```powershell
-pwsh agents/scripts/core/setup-harness.ps1 codex
-```
-
 The setup command:
 
 1. Runs the standard required-tool probe.
