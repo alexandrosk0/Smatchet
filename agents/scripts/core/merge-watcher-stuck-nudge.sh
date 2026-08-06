@@ -24,7 +24,16 @@ esac
 # python is required to read the watcher's JSON state via the CLI module's own
 # watcher_root()/state_dir()/read_registry() (single source of truth for the
 # per-user state path). Absent → degrade to a quiet exit (advisory tool).
-PYBIN="$(command -v python || command -v python3 || true)"
+# Exec-validate each candidate rather than only resolving it: on Windows
+# `python3` resolves to the Microsoft Store App Execution Alias stub, which is
+# on PATH but exits non-zero on run — a resolve-only probe would pick it and the
+# nudge would degrade to silence on a machine that has a working interpreter.
+PYBIN=""
+for _c in python python3 py; do
+    if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "" >/dev/null 2>&1; then
+        PYBIN="$(command -v "$_c")"; break
+    fi
+done
 [ -n "$PYBIN" ] || exit 0
 
 "$PYBIN" - "$MODE" "$SCRIPT_DIR" <<'PY'

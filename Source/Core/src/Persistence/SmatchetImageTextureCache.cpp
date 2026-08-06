@@ -181,6 +181,58 @@ static bool DecodeWithStb(const unsigned char* bytes, size_t byteCount, std::vec
     return true;
 }
 
+static bool RendererHasTextures() {
+    const ImGuiIO& io = ImGui::GetIO();
+    return (io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) != 0;
+}
+
+// Cache prologue shared by every public loader. Returns true when `cacheKey` already holds a live
+// texture (`out` filled, LRU touched). Otherwise drops any dead entry under that key — its texture
+// is already queued for destroy — so the caller may insert fresh.
+static bool TakeLiveOrDropStaleUnlocked(const std::string& cacheKey, SmatchetLoadedIconTexture& out) {
+    const auto it = g_map.find(cacheKey);
+    if (it == g_map.end()) {
+        return false;
+    }
+    if (it->second.Texture != nullptr) {
+        TouchLruUnlocked(cacheKey);
+        out.Texture = it->second.Texture;
+        out.Width = it->second.Width;
+        out.Height = it->second.Height;
+        return true;
+    }
+    g_totalBytes -= EntryBytes(it->second.Width, it->second.Height);
+    g_map.erase(it);
+    const auto lit = std::find(g_lru.begin(), g_lru.end(), cacheKey);
+    if (lit != g_lru.end()) {
+        g_lru.erase(lit);
+    }
+    return false;
+}
+
+// Cache epilogue shared by every public loader: evict to fit, upload, record.
+static Result<SmatchetLoadedIconTexture>
+InsertRgbaUnlocked(const std::string& cacheKey, const std::vector<unsigned char>& rgba, int width, int height) {
+    using R = Result<SmatchetLoadedIconTexture>;
+    EvictToFitUnlocked(EntryBytes(width, height));
+
+    ImTextureData* tex = nullptr;
+    std::string createError;
+    if (!CreateTextureFromRgba(rgba, width, height, tex, createError)) {
+        return R::Err(std::move(createError));
+    }
+
+    g_lru.push_front(cacheKey);
+    g_map[cacheKey] = CacheValue{tex, width, height, g_lru.begin()};
+    g_totalBytes += EntryBytes(width, height);
+    // LruIt is set; TouchLruUnlocked will use it for O(1) splice on subsequent accesses.
+    SmatchetLoadedIconTexture out;
+    out.Texture = tex;
+    out.Width = width;
+    out.Height = height;
+    return R::Ok(out);
+}
+
 } // namespace
 
 namespace SmatchetImageTextureCache {
@@ -225,28 +277,14 @@ Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKe
     if (cacheKey.empty() || bytes == nullptr || byteCount == 0) {
         return R::Err("Invalid cache key or empty image bytes.");
     }
-    const ImGuiIO& io = ImGui::GetIO();
-    if ((io.BackendFlags & ImGuiBackendFlags_RendererHasTextures) == 0) {
+    if (!RendererHasTextures()) {
         return R::Err("Renderer does not support textures.");
     }
 
     std::lock_guard<std::mutex> lock(g_mutex);
-    auto itExisting = g_map.find(cacheKey);
-    if (itExisting != g_map.end() && itExisting->second.Texture != nullptr) {
-        TouchLruUnlocked(cacheKey);
-        SmatchetLoadedIconTexture out;
-        out.Texture = itExisting->second.Texture;
-        out.Width = itExisting->second.Width;
-        out.Height = itExisting->second.Height;
-        return R::Ok(out);
-    }
-    if (itExisting != g_map.end()) {
-        g_totalBytes -= EntryBytes(itExisting->second.Width, itExisting->second.Height);
-        g_map.erase(itExisting);
-        const auto lit = std::find(g_lru.begin(), g_lru.end(), cacheKey);
-        if (lit != g_lru.end()) {
-            g_lru.erase(lit);
-        }
+    SmatchetLoadedIconTexture hit;
+    if (TakeLiveOrDropStaleUnlocked(cacheKey, hit)) {
+        return R::Ok(hit);
     }
 
     std::vector<unsigned char> rgba;
@@ -256,24 +294,33 @@ Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKe
     if (!DecodeWithStb(bytes, byteCount, rgba, w, h, decodeError)) {
         return R::Err(std::move(decodeError));
     }
+    return InsertRgbaUnlocked(cacheKey, rgba, w, h);
+}
 
-    EvictToFitUnlocked(EntryBytes(w, h));
-
-    ImTextureData* tex = nullptr;
-    std::string createError;
-    if (!CreateTextureFromRgba(rgba, w, h, tex, createError)) {
-        return R::Err(std::move(createError));
+Result<SmatchetLoadedIconTexture> GetOrCreateFromRgba(const std::string& cacheKey,
+                                                      const std::vector<unsigned char>& rgba, int width, int height) {
+    using R = Result<SmatchetLoadedIconTexture>;
+    if (cacheKey.empty() || rgba.empty() || width <= 0 || height <= 0) {
+        return R::Err("Invalid cache key or empty RGBA pixels.");
+    }
+    // The upload memcpy's width*height*4 bytes; a caller that mis-sized its buffer would otherwise
+    // read past the end. Checked here, where the dimensions and the buffer are both in hand.
+    if (rgba.size() < static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u) {
+        return R::Err("RGBA pixel buffer is shorter than width * height * 4.");
+    }
+    if (width > kMaxIconDimension || height > kMaxIconDimension) {
+        return R::Err("RGBA image exceeds the icon-cache dimension limit.");
+    }
+    if (!RendererHasTextures()) {
+        return R::Err("Renderer does not support textures.");
     }
 
-    g_lru.push_front(cacheKey);
-    g_map[cacheKey] = CacheValue{tex, w, h, g_lru.begin()};
-    g_totalBytes += EntryBytes(w, h);
-    // LruIt is set; TouchLruUnlocked will use it for O(1) splice on subsequent accesses.
-    SmatchetLoadedIconTexture out;
-    out.Texture = tex;
-    out.Width = w;
-    out.Height = h;
-    return R::Ok(out);
+    std::lock_guard<std::mutex> lock(g_mutex);
+    SmatchetLoadedIconTexture hit;
+    if (TakeLiveOrDropStaleUnlocked(cacheKey, hit)) {
+        return R::Ok(hit);
+    }
+    return InsertRgbaUnlocked(cacheKey, rgba, width, height);
 }
 
 Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath) {

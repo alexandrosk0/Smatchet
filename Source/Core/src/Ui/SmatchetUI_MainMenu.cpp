@@ -168,11 +168,10 @@ void SmatchetUI::drawMainMenuBar(AppController& app, UiDrawSession& d) {
         ImGui::EndDisabled();
     // Tools menu stays enabled when locked — but only the Preferences entry inside.
     drawMenuBarToolsMenu(ctx);
-    if (trackerLocked)
-        ImGui::BeginDisabled();
+    // Help menu likewise: About must stay reachable in exactly the first-launch /
+    // backend-down state where a user most needs to copy build info for a support
+    // thread. The two tracker-dependent items disable themselves inside.
     drawMenuBarHelpMenu(ctx);
-    if (trackerLocked)
-        ImGui::EndDisabled();
 #if !defined(SMATCHET_WITH_LUA_AUTOMATION)
     {
         static bool s_loggedLuaMenuAbsent = false;
@@ -825,12 +824,16 @@ void SmatchetUI::drawMenuBarToolsMenu(MainMenuDrawCtx& ctx) {
     }
 }
 
-// Help menu with the Check-for-Updates and Report-a-Bug items. Owns its own begin-menu
-// and end-menu calls.
+// Help menu with the Check-for-Updates, Report-a-Bug and About items. Owns its own
+// begin-menu and end-menu calls. The menu itself is NOT wrapped in the caller's
+// tracker-locked BeginDisabled bracket — the two tracker-dependent items disable
+// themselves here (same shape as drawMenuBarToolsMenu) so About stays reachable.
 void SmatchetUI::drawMenuBarHelpMenu(MainMenuDrawCtx& ctx) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
     if (ImGui::BeginMenu("Help")) {
+        if (ctx.trackerLocked)
+            ImGui::BeginDisabled();
         if (ImGui::MenuItem("Check for Updates...", nullptr, false, !d.appUpdateCheckInFlight)) {
             smatchet::ui_detail::StartAppUpdateCheck(d, app, true);
         }
@@ -840,6 +843,15 @@ void SmatchetUI::drawMenuBarHelpMenu(MainMenuDrawCtx& ctx) {
             d.bugReportOpenLatch = true;
             // Opener owns the screenshot toggle — seed from config (the modal no longer does).
             d.bugReportInclScreenshot = d.cfg.BugReportScreenshotDefault;
+        }
+        if (ctx.trackerLocked)
+            ImGui::EndDisabled();
+        ImGui::Separator();
+        // Empty fallback, not nullptr: MenuShortcut returns std::string(fallback), and
+        // About ships with no default binding — only a user rebind shows a hint.
+        if (ImGui::MenuItem("About Smatchet...", MenuShortcut(ctx, "app.about.open", "").c_str())) {
+            d.showAbout = true;
+            d.aboutOpenLatch = true;
         }
         ImGui::EndMenu();
     }

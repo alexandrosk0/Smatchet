@@ -53,6 +53,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_pane_windows.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_wheel_route_ownership.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/reset_layout_docking.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/docked_tab_focus.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/duration_inline_edit_commit.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_view_quick_switcher.test.cpp"

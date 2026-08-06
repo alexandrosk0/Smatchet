@@ -20,7 +20,7 @@ Gate with `#if SMATCHET_WITH_LUA_AUTOMATION` / `#if SMATCHET_WITH_MCP`. Lua bind
 
 ## Dual-target
 
-`Source/Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Diverging macros: `SMATCHET_EMBEDDED_IN_UNREAL=1` (DX12 only); `SMATCHET_WITH_MCP=1` (Standalone only — `SMATCHET_WITH_MCP_UNREAL` is OFF). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. In a worktree shell without `cl.exe` on PATH, wrap it: `powershell -ExecutionPolicy Bypass -File scripts/dev/with-msvc.ps1 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (vswhere → vcvars64, toolset-pinned; PowerShell sibling of `scripts/dev/with-msvc-env.sh`). **Don't**: add GLFW/OpenGL includes to `Source/Core/` headers (DX12 compiles them too); redefine `IMGUI_USE_WCHAR32` (PUBLIC on `ImGuiLib`).
+`Source/Core/` compiles into both `SmatchetStandalone` (OpenGL+GLFW) and `SmatchetCore_DX12` (Unreal). Diverging macros: `SMATCHET_EMBEDDED_IN_UNREAL=1` (DX12 only); `SMATCHET_WITH_MCP=1` (Standalone only — `SMATCHET_WITH_MCP_UNREAL` is OFF). Full verify: `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`. In a worktree shell without `cl.exe` on PATH, wrap it: `bash scripts/dev/with-msvc-env.sh cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` (vswhere → vcvars64, toolset-pinned). **Don't**: add GLFW/OpenGL includes to `Source/Core/` headers (DX12 compiles them too); redefine `IMGUI_USE_WCHAR32` (PUBLIC on `ImGuiLib`).
 
 ## Quality
 

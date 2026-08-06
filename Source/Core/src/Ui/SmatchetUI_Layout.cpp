@@ -138,6 +138,33 @@ void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, 
     }
 }
 
+void SmatchetUI::selectDockedTab(const char* windowName) {
+    // ImGui::SetNextWindowFocus() does NOT activate a docked tab: FocusWindow()'s
+    // "select in dock node" lines are commented out upstream (imgui.cpp, issue #2304),
+    // and DockNodeUpdateTabBar only mirrors nav focus when g.NavWindow->RootWindow IS
+    // the node's own window — never true for a window docked into a host node. The tab
+    // bar therefore keeps whatever selection it picked on the frame it was CREATED
+    // (node->SelectedTabId if it resolves, else the last-added tab), which is why a
+    // window sharing a node with a sibling could come up behind it and stay there for
+    // the rest of the session. Write the selection explicitly instead.
+    // Callers pass the SOURCE title they hand to Begin(); the real ImGui window name is
+    // the localized one (SmatchetLocalizedImGui::Begin runs the same transform), so a raw
+    // lookup on the English literal would miss in every non-English locale.
+    ImGuiWindow* window = ImGui::FindWindowByName(SmatchetLocalization::WindowTitleFromSource(windowName));
+    if (window == nullptr || window->DockNode == nullptr || window->DockNode->TabBar == nullptr) {
+        // Not docked (floating / first frame before Begin) — SetNextWindowFocus suffices.
+        return;
+    }
+    window->DockNode->TabBar->NextSelectedTabId = window->TabId;
+    // Selecting the tab is not enough: the node's tab-bar chrome renders in the
+    // UNFOCUSED palette (ImGuiCol_TabDimmed*) unless a window inside the node holds
+    // nav focus. SetNextWindowFocus() cannot supply that either — it is consumed by
+    // the docked child's Begin(), which runs AFTER DockNodeUpdateTabBar has already
+    // picked this frame's colours. Focus the window directly so the node is focused
+    // from the next frame on (the request is re-armed every warm-up frame).
+    ImGui::FocusWindow(window);
+}
+
 void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH) {
     if (ImGui::IsWindowDocked()) {
         return;

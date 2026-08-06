@@ -32,6 +32,7 @@
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetBugReportUi.h"
 #include "SmatchetQuickCreateIssueUi.h"
+#include "SmatchetAboutUi.h"
 #include "ImGuiHotkey.h"
 #include "SmatchetTicketChangeNotifications.h"
 #include "SmatchetUiSession.h"
@@ -115,6 +116,14 @@ void StartAppUpdateCheck(UiDrawSession& d, AppController& app, bool manual) {
 } // namespace ui_detail
 } // namespace smatchet
 
+/// In an ephemeral CLI-spawned session (`d.ephemeralSession`) the "Update Available"
+/// popup must never open: it is raised on whichever frame the async GitHub round-trip
+/// happens to land on, it takes ImGui nav focus, and it keeps that focus even after the
+/// popup itself stops being submitted. A bucket-C capture then renders every dock node
+/// in the unfocused TitleBg palette instead of the golden's TitleBgActive, with no modal
+/// in frame to explain the diff. Second line of defence behind the start-site gate below
+/// (a manual `app.checkUpdate` over MCP can still put a check in flight); the future is
+/// always drained here, only the UI surfacing is skipped.
 static void DrainAppUpdateCheck(UiDrawSession& d) {
     if (!d.appUpdateCheckInFlight || !d.appUpdateFuture.valid()) {
         return;
@@ -160,6 +169,9 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
         return;
     }
 
+    if (d.ephemeralSession) {
+        return;
+    }
     d.appUpdateModalOpen = true;
     ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     if (d.appUpdateCheckManual) {
@@ -493,7 +505,20 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
                 ToastType::Warning, 12000);
         }
     }
-    if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted) {
+    // Never fire the startup update check in an ephemeral CLI-spawned session. The check is
+    // an async GitHub round-trip whose completion frame depends on network latency, and
+    // DrainAppUpdateCheck opens the "Update Available" modal the moment it lands. That
+    // modal takes ImGui nav focus and keeps it even after the popup goes away — so a
+    // bucket-C capture whose golden shows a focused dock node (TitleBgActive) instead
+    // renders the dimmed TitleBg palette: a screenshot-diff flake with no visible modal
+    // in the frame to explain it.
+    // ephemeralSession, not a ScenarioRunner query: `--spawn` launches the child and only
+    // THEN sends `scenario.run` over MCP, so no scenario exists in the child while this
+    // startup branch first runs. Any scenario-state test — Active() or a sticky
+    // ever-started latch — is therefore false here and suppresses nothing (measured: no
+    // change in the flake rate). The process identity is the only signal available this
+    // early, and it covers the whole session by construction.
+    if (d.cfgInitialized && d.cfg.UpdateCheckEnabled && !d.appUpdateStartupCheckStarted && !d.ephemeralSession) {
         d.appUpdateStartupCheckStarted = true;
         smatchet::ui_detail::StartAppUpdateCheck(d, app, false);
     }
@@ -1024,6 +1049,11 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         const bool wantUserInfoFocus = g_ui.requestUserInfoFocus;
         if (g_ui.showUserInfo) {
             prepareTopLevelWindow(g_ui, "user_info", 720.0f, 560.0f, wantUserInfoFocus);
+            if (wantUserInfoFocus) {
+                // User Info shares the bottom-panel dock node with Preferences, and
+                // SetNextWindowFocus() cannot raise a docked tab (see selectDockedTab).
+                selectDockedTab("User Info");
+            }
         }
         // Always called (even hidden) so the close-edge cleanup + future drain run.
         userInfoUi_.DrawWindow(app, g_ui, &g_ui.showUserInfo);
@@ -1112,9 +1142,9 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     }
 }
 
-// Mode-independent floating overlays — toasts + the app-update modal. Drawn by BOTH the
-// desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither mode
-// loses transient notifications or the update prompt. Each owns its own ImGui scope.
+// Mode-independent floating overlays — toasts + the app-update and About modals. Drawn by
+// BOTH the desktop path (head of drawSecondaryWindowsTail) and the mobile fork, so neither
+// mode loses transient notifications or the update prompt. Each owns its own ImGui scope.
 void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     {
         SMATCHET_UI_PERF_SCOPE("SmatchetToastManager::Render");
@@ -1126,6 +1156,9 @@ void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
     // mobile fork) mid-confirm would leave an unsubmitted modal in ImGui's popup stack —
     // invisible, yet blocking all mouse input via GetTopMostPopupModal.
     drawLayoutResetConfirmModal(d);
+    // Global-overlay placement is deliberate: About must be reachable regardless of
+    // docking layout or which panel has focus.
+    DrawAboutModal(app, d);
 }
 
 // Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes

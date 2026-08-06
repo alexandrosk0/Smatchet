@@ -208,6 +208,26 @@ void RegisterAppViewCommands(CommandRegistry& reg, IMainThreadPoster& app) {
     }
 
     RegisterQuickCreateOpen(reg, app);
+
+    {
+        Command c;
+        c.Name = "app.about.open";
+        c.Category = "app";
+        c.Summary = "Open the About Smatchet window.";
+        c.Destructive = false;
+        c.Idempotent = true;
+        c.AsyncSafe = true;
+        c.Handler = [&app](const nlohmann::json& /*args*/, const CommandContext& /*ctx*/) {
+            return RunOnUiThreadAsCommandResult(app, []() {
+                g_ui.showAbout = true;
+                // The latch, not just the flag: GatherAboutInfo runs on the draw thread
+                // and the modal keys its one-shot snapshot + OpenPopup off this.
+                g_ui.aboutOpenLatch = true;
+                return CommandResult::Success(nlohmann::json::object());
+            });
+        };
+        reg.Register(std::move(c));
+    }
 }
 
 } // namespace cmd

@@ -8,7 +8,7 @@
 
 ## Context
 
-Two layout models collide. The vexp installer (v1.2.x) writes `.cursor/rules` as a **single file**; Smatchet's `setup-harness` cursor adapter needs `.cursor/rules/` to be a **directory** of `.mdc` rules. Today `setup_cursor()` / `Setup-Cursor` hard-`exit 1` when `.cursor/rules` is a file ([setup-harness.sh:462](../../../agents/scripts/core/setup-harness.sh#L462), [setup-harness.ps1:229](../../../agents/scripts/core/setup-harness.ps1#L229)). Result: Smatchet's `agents.mdc` never installs, and the five leaf `Source/Core/src/*/AGENTS.md` files are never auto-loaded in Cursor — unlike Claude Code's gitignored `@AGENTS.md` shims from `gen_subsystem_claude_shims()` ([setup-harness.sh:199](../../../agents/scripts/core/setup-harness.sh#L199)).
+Two layout models collide. The vexp installer (v1.2.x) writes `.cursor/rules` as a **single file**; Smatchet's `setup-harness` cursor adapter needs `.cursor/rules/` to be a **directory** of `.mdc` rules. Today `setup_cursor()` hard-`exit 1` when `.cursor/rules` is a file ([setup-harness.sh:462](../../../agents/scripts/core/setup-harness.sh#L462)). Result: Smatchet's `agents.mdc` never installs, and the five leaf `Source/Core/src/*/AGENTS.md` files are never auto-loaded in Cursor — unlike Claude Code's gitignored `@AGENTS.md` shims from `gen_subsystem_claude_shims()` ([setup-harness.sh:199](../../../agents/scripts/core/setup-harness.sh#L199)).
 
 After this lands: one idempotent `bash agents/scripts/core/setup-harness.sh cursor` run auto-migrates the vexp single-file into `.cursor/rules/vexp.mdc`, installs `agents.mdc`, and emits per-subsystem `subsystem-<ctx>.mdc` shims — with vexp + Smatchet search policies reconciled rather than contradictory.
 
@@ -30,12 +30,11 @@ User-data safety is the gating constraint: migration only fires when vexp delimi
 ## Files to modify
 
 1. [agents/scripts/core/setup-harness.sh](../../../agents/scripts/core/setup-harness.sh) — Slice 1: replace `exit 1` block (L462–467) with `migrate_cursor_rules_file()`; Slice 2: add `gen_subsystem_cursor_mdc()` (mirror `gen_subsystem_claude_shims()` @ L199); call both from `setup_cursor()` (L457).
-2. [agents/scripts/core/setup-harness.ps1](../../../agents/scripts/core/setup-harness.ps1) — Slice 1+2 PS1 parity: replace `Setup-Cursor` `exit 1` (L229–232) with `Migrate-CursorRulesFile`; add `Gen-SubsystemCursorMdc`.
-3. `docs/harness/cursor/rules/subsystem-leaf.mdc.tmpl` — **NEW**: glob-scoped pointer template for leaf `AGENTS.md` shims.
-4. [docs/harness/cursor/rules/agents.mdc](../../harness/cursor/rules/agents.mdc) — Slice 3: add 2–3-line semantic-search-exceptions block citing root `AGENTS.md`.
-5. [docs/harness/cursor/setup.md](../../harness/cursor/setup.md) — Slice 4: document auto-migration + generated shims + refresh-after-pull + re-install-heals.
-6. [docs/harness/SETUP.md](../../harness/SETUP.md) — Slice 4: Cursor row in per-subsystem table.
-7. `tests/bats/setup_harness_cursor.bats` — **NEW** (Slice 5): headless fixtures.
+2. `docs/harness/cursor/rules/subsystem-leaf.mdc.tmpl` — **NEW**: glob-scoped pointer template for leaf `AGENTS.md` shims.
+3. [docs/harness/cursor/rules/agents.mdc](../../harness/cursor/rules/agents.mdc) — Slice 3: add 2–3-line semantic-search-exceptions block citing root `AGENTS.md`.
+4. [docs/harness/cursor/setup.md](../../harness/cursor/setup.md) — Slice 4: document auto-migration + generated shims + refresh-after-pull + re-install-heals.
+5. [docs/harness/SETUP.md](../../harness/SETUP.md) — Slice 4: Cursor row in per-subsystem table.
+6. `tests/bats/setup_harness_cursor.bats` — **NEW** (Slice 5): headless fixtures.
 
 Grep confirmed (2026-06-13): `migrate_cursor_rules_file`, `gen_subsystem_cursor_mdc`, `subsystem-leaf.mdc`, `rules.vexp.migrate` — **zero** existing hits; no `vexp.mdc` / `subsystem-*.mdc` tracked; no cursor/vexp branch. Nothing started.
 
@@ -96,9 +95,8 @@ Per `AGENTS.md` § Verification automation — zero manual steps where feasible.
 
 1. Template + migration helper (Slice 1 + Slice 3 body text)
 2. `gen_subsystem_cursor_mdc()` (Slice 2)
-3. PS1 parity (Slice 1–2)
-4. Docs (Slice 4)
-5. Bats fixtures (Slice 5)
+3. Docs (Slice 4)
+4. Bats fixtures (Slice 5)
 
 ## Implementation log
 *(populated post-ship)*

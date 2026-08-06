@@ -525,7 +525,7 @@ jobs:
           # Assert the leg is on a real ARM core before the expensive build —
           # otherwise a misprovisioned/x64 runner would silently build+ctest as x64
           # and green-wash the atomics validation. Resolve the *host* arch the way
-          # the repo's MSVC wrappers do (scripts/dev/with-msvc.ps1): prefer
+          # the repo's MSVC wrapper does (scripts/dev/with-msvc-env.sh): prefer
           # PROCESSOR_ARCHITEW6432 (the native arch when the shell is emulated — e.g.
           # x64 pwsh under Prism on ARM64) and fall back to PROCESSOR_ARCHITECTURE; a
           # bare PROCESSOR_ARCHITECTURE check would false-fail on an emulated shell.
@@ -644,7 +644,7 @@ jobs:
     name: Windows-on-ARM ARM64 installer smoke (runner-gated)
     needs: changes
     # Phase 3 follow-on (dx12-standalone-win-arm64): build the NATIVE ARM64 Inno
-    # installer (release_github.ps1 -Arch arm64 -> ninja-publish-msvc-arm64 LTO
+    # installer (release-github.sh --arch arm64 -> ninja-publish-msvc-arm64 LTO
     # publish + iscc with ArchitecturesAllowed=arm64) and smoke it (silent install
     # + launch under DX12/WARP). Kept SEPARATE from windows-arm64-native because it
     # needs Inno Setup provisioning (choco) and a heavier LTO publish build; the
@@ -714,24 +714,24 @@ jobs:
       - name: Install Inno Setup 6 (ISCC.exe)
         shell: pwsh
         run: |
-          # release_github.ps1 requires Inno Setup's ISCC.exe (x86 binary, runs under
+          # release-github.sh requires Inno Setup's ISCC.exe (x86 binary, runs under
           # emulation on ARM64). Not present on the windows-11-arm image by default.
           choco install innosetup -y --no-progress
           $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
           if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
-          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release-github.sh also searches fixed install dirs + the uninstall registry." }
 
-      - name: Build ARM64 installer (release_github.ps1 -Arch arm64)
-        shell: pwsh
+      - name: Build ARM64 installer (release-github.sh --arch arm64)
+        shell: bash
         run: |
-          # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI). -Arch
-          # arm64 selects the ninja-publish-msvc-arm64 LTO preset, tags artifacts
-          # -arm64, sets the Inno arch to arm64, and force-skips Unreal + light.
-          # -AllowDirty: the Font Awesome fetch above dirties the worktree, which the
-          # script's Assert-CleanGitTree would otherwise reject.
-          ./scripts/publish/release_github.ps1 `
-            -Arch arm64 -Tag arm64-installer-smoke -AllowDirty -SkipSourceZip `
-            -OutDir out/arm64-installer
+          # No --publish (no gh/secrets) and no --sign (no signing cert in CI).
+          # --arch arm64 selects the ninja-publish-msvc-arm64 LTO preset, tags
+          # artifacts -arm64, sets the Inno arch to arm64, and force-skips Unreal +
+          # light. --allow-dirty: the Font Awesome fetch above dirties the worktree,
+          # which the script's clean-tree assert would otherwise reject.
+          bash scripts/publish/release-github.sh \
+            --arch arm64 --tag arm64-installer-smoke --allow-dirty --skip-source-zip \
+            --out-dir out/arm64-installer
 
       - name: Silent-install + launch smoke (DX12/WARP)
         shell: pwsh
@@ -779,7 +779,7 @@ jobs:
   windows-x64-installer:
     name: Windows x64 installer smoke
     needs: changes
-    # Build the x64 Inno installer (release_github.ps1 -> ninja-publish-msvc LTO
+    # Build the x64 Inno installer (release-github.sh -> ninja-publish-msvc LTO
     # publish + iscc with the default x64 arch) and smoke it (silent install +
     # launch under DX12/WARP). Closes the release gap where only the (dormant,
     # runner-gated) ARM64 installer was CI-validated while the x64 installer that
@@ -834,25 +834,26 @@ jobs:
       - name: Install Inno Setup 6 (ISCC.exe)
         shell: pwsh
         run: |
-          # release_github.ps1 requires Inno Setup's ISCC.exe to compile the installer.
+          # release-github.sh requires Inno Setup's ISCC.exe to compile the installer.
           choco install innosetup -y --no-progress
           $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
           if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
-          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release_github.ps1 also searches fixed install dirs + the uninstall registry." }
+          else { Write-Host "::warning::ISCC.exe not on PATH after choco; release-github.sh also searches fixed install dirs + the uninstall registry." }
 
-      - name: Build x64 installer (release_github.ps1)
-        shell: pwsh
+      - name: Build x64 installer (release-github.sh)
+        shell: bash
         run: |
-          # No -Publish (no gh/secrets) and no -Sign (no signing cert in CI) — an
-          # unsigned local bundle is fine for a packaging smoke; -Publish would be
-          # refused without -Sign per the signing-enforcement policy anyway. Default
+          # No --publish (no gh/secrets) and no --sign (no signing cert in CI) — an
+          # unsigned local bundle is fine for a packaging smoke; --publish would be
+          # refused without --sign per the signing-enforcement policy anyway. Default
           # arch is x64 (ninja-publish-msvc). Skip everything but the standalone +
-          # installer: -SkipUnreal (no UE in CI), -SkipLightStandalone, -SkipSourceZip,
-          # -SkipFabBundle. -AllowDirty: the Font Awesome fetch dirties the worktree.
-          ./scripts/publish/release_github.ps1 `
-            -Tag x64-installer-smoke -AllowDirty `
-            -SkipUnreal -SkipLightStandalone -SkipSourceZip -SkipFabBundle `
-            -OutDir out/x64-installer
+          # installer: --skip-unreal (no UE in CI), --skip-light-standalone,
+          # --skip-source-zip, --skip-fab-bundle. --allow-dirty: the Font Awesome
+          # fetch dirties the worktree.
+          bash scripts/publish/release-github.sh \
+            --tag x64-installer-smoke --allow-dirty \
+            --skip-unreal --skip-light-standalone --skip-source-zip --skip-fab-bundle \
+            --out-dir out/x64-installer
 
       - name: Silent-install + launch smoke (DX12/WARP)
         shell: pwsh
@@ -1245,9 +1246,21 @@ jobs:
           attempts=3
           status=broken; passed=0; failed=1
           for attempt in $(seq 1 "$attempts"); do
-            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=3600 --spawn --yes"
+            # frames=5400, not 3600. --spawn derives its whole wall-clock budget
+            # from this one number: CliDispatch.cpp:476 computes the deadline as
+            # ((frames/60)+30)*1000 ms, so 3600 bought 90 s — and the suite
+            # outgrew it. It reached 112 of 115 tests and then tripped the
+            # deadline mid-suite on six consecutive attempts across two runs
+            # (PR #1937); develop cleared 115 only by a hair, with its own
+            # attempt 1 collapsing. 5400 buys 120 s, ~33% headroom.
+            # --timeout is NOT the knob here despite the timeout error's hint:
+            # the --spawn path drops pa.timeoutMs (only the in-process path at
+            # CliCommandRunner.cpp:122 honors it). Filed separately.
+            # The outer `timeout` stays above the derived deadline so the
+            # harness, not coreutils, reports the failure.
+            echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --spawn --yes"
             set +e
-            out="$(timeout 240 ./Smatchet.exe cmd ui_test.run --all --frames=3600 --spawn --yes 2>&1)"
+            out="$(timeout 300 ./Smatchet.exe cmd ui_test.run --all --frames=5400 --spawn --yes 2>&1)"
             rc=$?
             set -e
             printf '%s\n' "$out"

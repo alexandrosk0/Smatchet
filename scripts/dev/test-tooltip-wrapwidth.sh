@@ -20,18 +20,20 @@ if [ ! -d "$SRC_DIR" ]; then
     exit 2
 fi
 
-# Probe order: python first (on Windows, python3 is often the Microsoft
-# Store stub and not the real interpreter).
+# Exec-validate each candidate, don't just resolve it. On Windows `python3`
+# resolves to the Microsoft Store App Execution Alias stub -- on PATH, but it
+# exits non-zero when run. Probe ORDER alone cannot fix that (a box with only
+# the stub aliased for `python` fails the same way); running the candidate can.
 if [ -z "${PYTHON:-}" ]; then
-    for candidate in python python3; do
-        if command -v "$candidate" >/dev/null 2>&1; then
+    for candidate in python python3 py; do
+        if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c "" >/dev/null 2>&1; then
             PYTHON="$candidate"
             break
         fi
     done
 fi
 if [ -z "${PYTHON:-}" ]; then
-    echo "python3 / python not found" >&2
+    echo "no working python3 / python found" >&2
     exit 2
 fi
 

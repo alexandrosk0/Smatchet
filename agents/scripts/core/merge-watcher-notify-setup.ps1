@@ -1,4 +1,5 @@
 # agents/scripts/core/merge-watcher-notify-setup.ps1
+# Last remaining PowerShell file - see docs/harness/SETUP.md section Windows-only shims.
 # ----------------------------------------------------------------------------
 # One-shot setup for merge-watcher Windows desktop notifications.
 #

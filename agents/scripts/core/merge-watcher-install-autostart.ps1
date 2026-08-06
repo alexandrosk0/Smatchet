@@ -1,4 +1,5 @@
 # agents/scripts/core/merge-watcher-install-autostart.ps1
+# Last remaining PowerShell file - see docs/harness/SETUP.md section Windows-only shims.
 # ----------------------------------------------------------------------------
 # Register a Windows Scheduled Task that starts `merge-watcher.py daemon` at
 # user login. Phase 4c of `docs/plans/shipped/smatchet-merge-watcher.md`.
@@ -44,7 +45,7 @@ if (-not (Test-Path $daemonScript)) {
 # only). The daemon shells out to bash + gh + jq via merge-gates.sh; if any
 # of those aren't discoverable at task-start time, polls fail silently with
 # empty status lines. Fail at INSTALL time rather than at first-poll-after-
-# user-logout — much easier to fix in front of the screen.
+# user-logout - much easier to fix in front of the screen.
 $requiredTools = @(
     @{ name = "gh.exe"; install = "winget install GitHub.cli" },
     @{ name = "jq.exe"; install = "winget install jqlang.jq" },

@@ -18,8 +18,8 @@
 # behave exactly as before (no regression) while new entries get instant,
 # accurate liveness + dead+stale pruning.
 #
-# All non-bash readers (merge-watcher.py ctypes OpenProcess, worktree.ps1
-# Get-Process) already handle a real Win32 pid correctly; this only repairs the
+# All non-bash readers (merge-watcher.py ctypes OpenProcess) already handle a
+# real Win32 pid correctly; this only repairs the
 # bash side and centralises the logic so the writer, the guard and the banner
 # agree byte-for-byte (DRY Quality Pillar).
 #

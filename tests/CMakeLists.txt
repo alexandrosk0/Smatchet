@@ -339,6 +339,13 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # about-selectable-values — pin the About modal's chrome strings. They reach the
+    # table through implicit source-string keying (TranslateSource), so a retyped
+    # button label would silently drop to English with nothing else noticing; the
+    # right-click menu items have no other call site in the repo. Also pins the
+    # retired about.check_updates key as absent, and the distinct Help/Preferences
+    # "Check for Updates" literals as still present.
+    Core/AboutLocalization.test.cpp
     # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
     # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
     Core/I18nSweepLocalization.test.cpp
@@ -971,6 +978,21 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
+    # docs/plans/shipped/about-dialog-help-menu.md Slice 3 — Help > About pure data
+    # layer. AboutInfo.cpp takes no AppController (version/repo arrive as strings),
+    # so the rig links it without cpr/SQLite; it does pull HostMachineInfo.cpp (the
+    # OS/arch/emulation probes shared with BugReportService) and ConfigManager,
+    # already linked below. The generated SmatchetBuildInfo.h reaches it through
+    # SmatchetCoreInterface's include dir — a broken CMake codegen fails the
+    # "generated dep manifest is present" case here.
+    Core/AboutInfo.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/AboutInfo.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/HostMachineInfo.cpp"
+    # Help > About app icon — the .ico unpacker behind the baked-in app icon. Pure byte parsing
+    # with no ImGui/texture dependency (the upload half lives in SmatchetImageTextureCache and is
+    # not linked here), so the truncation/malformed-header cases run headless.
+    Core/IcoDecode.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"
@@ -1618,7 +1640,19 @@ target_include_directories(SmatchetTests PRIVATE
     "${CMAKE_SOURCE_DIR}/Source/Plugins/Mcp"
     "${CMAKE_SOURCE_DIR}/Source/Standalone"
     "${CMAKE_SOURCE_DIR}/tests/support"
+    # Generated SmatchetBuildInfo.h (Help > About). This rig does NOT link
+    # SmatchetCoreInterface — it re-lists include dirs by hand — so the path the
+    # production targets inherit from one INTERFACE line must be repeated here or
+    # AboutInfo.cpp silently falls back to its all-"unknown" __has_include branch
+    # and AboutInfo.test.cpp's dep-manifest case fails.
+    "${SMATCHET_BUILDINFO_DIR}"
 )
+
+# Same reason as the include dir above: AboutInfo.cpp reads the build config from
+# a $<CONFIG> compile definition (CMAKE_BUILD_TYPE is empty under multi-config
+# generators), and this rig doesn't inherit SmatchetCoreInterface's copy.
+target_compile_definitions(SmatchetTests PRIVATE
+    "SMATCHET_BUILD_CONFIG=\"$<CONFIG>\"")
 
 # SmatchetTheme links ImGuiLib for ImGui::GetStyle() / CreateContext().
 # SQLiteCpp is linked at runtime as of Phase 3 — LocalCacheManager.cpp pulls SQLite/Statement

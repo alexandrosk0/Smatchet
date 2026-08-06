@@ -161,7 +161,7 @@ esac
 #     checks after the PR opens. That is the top re-push churn class
 #     (`build-verify-shortcut-bypasses-comment-noise-and-lint-gate`, tooling
 #     2026-06-18): the fast build-only verify path (`cmake --build`,
-#     `build_and_run.ps1 -BuildOnly`) skips these gates entirely, so the first
+#     `build-and-run.sh --build-only`) skips these gates entirely, so the first
 #     CI run is where the author learns. Parity matrix + the CI-only (Windows /
 #     Mesa toolchain) residue this can NOT cover: docs/agent-rules/ci-local-parity.md.
 #
