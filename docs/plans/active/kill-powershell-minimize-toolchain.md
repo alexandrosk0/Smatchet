@@ -191,6 +191,19 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
   `test-lint-hook-split.sh` Test 10 — previously a permanent skip on every
   Git-Bash host, since it gated on `command -v flock` — now runs for real
   (21 passed / 0 failed).
+- **2026-08-06 — Slice F (Phase 3, Unreal packaging).** Ported the four
+  `scripts/dev/local/*unreal*.ps1` to bash: `package-unreal-plugin-msvc.sh`
+  (the full port — vswhere by direct path, VS-2022-preferred generator pick,
+  build-dir + FetchContent stale-cache resets, feature-cache drift detection,
+  `--package-only` / `--force-configure` / `--toolset-version`),
+  `build-and-deploy-unreal-plugin.sh`, `build-deploy-and-open-unreal.sh`
+  (UBT `Build.bat` + `start` through `cmd.exe /c`), and
+  `rebuild-testproject-plugin.sh` (EngineAssociation read from the `.uproject`
+  JSON via `smatchet_python`, engine root probed through `reg.exe query` on both
+  registry views). The four `.ps1` are deleted outright — no forwarding shims.
+  Reference sweep in the same commit: `SmatchetImGuiPlugin/README.md` (both
+  troubleshooting recipes) and the three `SmatchetImGuiPlugin.Build.cs`
+  BuildException messages that told the user which script to re-run.
 
 ## Deviations from plan
 
@@ -211,6 +224,9 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
 
 - **Slice B — `scripts/common/SmatchetCMakeCommon.ps1` survives into Slice D.** The plan retires it with the Phase 1 build wrappers, but `scripts/publish/release_github.ps1:545` and `scripts/publish/sync_release_version.ps1:9` still dot-source it. Its bash replacement (`smatchet-cmake-common.sh`) ships in Slice B; the `.ps1` original is deleted in **Slice D**, when those two publish scripts port.
 - **Slice B — `with-msvc.ps1` references left standing.** `agents/core/build-doctor.md`, `docs/agent-rules/cpp-rules.md`, `README.md:140` and `.github/workflows/build-and-test.yml:528` still name `scripts/dev/with-msvc.ps1`. That file is a Slice **C** deletion and remains correct until then; the references are swept in Slice C rather than pre-emptively broken here.
+- **2026-08-06 — Slice F, `build-and-deploy-unreal-plugin.sh` is a wrapper, not a port.** The retired `build_and_deploy_unreal_plugin.ps1` was a drifted copy of `package_unreal_plugin_msvc.ps1` (same configure + build + deploy sequence, but with the generator hardcoded to "Visual Studio 17 2022", no toolset pin and no FetchContent reset). Porting both verbatim would have re-created the drift and tripped Pillar 5; the bash version is a ~20-line flag-translating wrapper that `exec`s the package script. Behaviour change on purpose: it now inherits the generator auto-detect and the stale-cache resets.
+- **2026-08-06 — Slice F, `.uproject` / engine-root resolution without PowerShell cmdlets.** `Get-Content | ConvertFrom-Json` became `smatchet_python` + `json.load` (`utf-8-sig`, so a BOM'd `.uproject` still parses), and the `HKLM:\SOFTWARE\EpicGames\Unreal Engine\<assoc>` / WOW6432Node `Get-ItemProperty` probe became `reg.exe query … /v InstalledDirectory`. Same two-view probe order, same `C:\Program Files\Epic Games\UE_<assoc>` fallback. Also fixed in passing: the newest-engine scan in `build-deploy-and-open-unreal.sh` sorts with `sort -V`, so a future `UE_5.10` no longer loses to `UE_5.7` under the lexical ordering the `.ps1` used.
+- **2026-08-06 — Slice F verification is smoke-level, not a full Unreal build.** `shellcheck -S warning` clean on all four; `--help`, unknown-arg, missing-option-value, bad-`--configuration` and bad-`--configure-preset` paths exercised; `vswhere` confirmed to report a 17.14 install alongside 18.5, i.e. the VS-2022-preferred branch resolves as intended. A real `SmatchetPackageUnrealLibs_DX12` configure+build and a UBT editor rebuild need a local Unreal install and were **not** run in this slice — no CI lane runs UBT (`SmatchetImGuiPlugin.Build.cs` says so itself), so this path stays human-verified on first local use.
 - **Slice D — `release_github.ps1` had three CI consumers, not one.** The plan names only the ARM64 installer job. A grep found two more live callers: the **x64** installer job in the same workflow and `release.yml`'s tagged-release pipeline. All three are ported in this slice; deleting the `.ps1` with either one unported would have broken a release tag push.
 - **Slice D — inline `pwsh` steps with no `.ps1` dependency left alone.** The host-arch assertion, Inno Setup provisioning, the two silent-install/launch smoke steps, and the signing-cert decode/cleanup steps remain `shell: pwsh`. They do Windows-native work (`Start-Process`/`Start-Job`, registry probes, base64 → temp file) and call no script under `scripts/`; the plan's goal is retiring `.ps1` **files**, not all PowerShell in CI.
 - **2026-08-05 — re-audit, no code shipped.** Plan rewritten against the live tree after `split-scripts-build-vs-agentic` invalidated every path. Inventory 20 → **34** (`git ls-files '*.ps1'`, vendored `node_modules` excluded — the first pass globbed only `scripts/**` + `agents/**` and so missed root `build.ps1` and `scripts/dev/verify.ps1`); kept-PS set 4 → **5** (all `agents/scripts/core/`); Phase 4 added (drift twins + worktree launchers, previously unlisted); Phase 2 gained the ARM64 CI workflow; Phase 5 gained `setup-env.sh`; the jq rationale was replaced (the +200ms poll argument no longer holds — the poller uses gh's bundled jq).
