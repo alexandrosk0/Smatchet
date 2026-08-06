@@ -54,7 +54,14 @@
   property the other two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's
   Mesa per-test run) lack for the same reason. Part 2 is the instance ratchet.
 
-  Prerequisite for both: the seven stale goldens need regenerating, which is
+  Prerequisite for both: the stale goldens need regenerating, which is
   approval-gated by
   [`golden-image-approval.md`](../../../agent-rules/golden-image-approval.md) —
-  an unmasked gate over a stale golden is a red check, not a signal.
+  an unmasked gate over a stale golden is a red check, not a signal. PR #1962
+  cleared four of the seven with explicit approval (the `user-info-*` set), so
+  part 2's ratchet is unblocked for that subset. The remaining three
+  (`code-syntax-coloring`, `command-palette-fuzzy`, `dock-gap-sentinel`) are
+  still stale and still masked — they need their own determinism work first,
+  since the `ScenarioRunner::Tick` double-call
+  ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md))
+  double-draws any scenario that renders from `OnFrame`.
