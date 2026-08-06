@@ -68,7 +68,7 @@ endfunction()
 set(_sbi_have_git FALSE)
 if(DEFINED GIT_EXECUTABLE AND GIT_EXECUTABLE AND NOT GIT_EXECUTABLE MATCHES "NOTFOUND")
     # `git rev-parse --git-dir` is the ONLY correct "is this a repo" test here:
-    # under `git worktree` (scripts/dev/worktree.ps1, used by every agent
+    # under `git worktree` (scripts/dev/worktree.sh, used by every agent
     # session) `.git` is a FILE, so `if(IS_DIRECTORY <src>/.git)` would report
     # "not a repo" in most dev trees.
     _sbi_git_out(_sbi_git_dir rev-parse --git-dir)

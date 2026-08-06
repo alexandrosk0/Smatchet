@@ -28,7 +28,7 @@ Close the hole:
 
 | Path | What closes it |
 |---|---|
-| **Recommended launcher** | `nsc <slug>` / `pwsh scripts/dev/worktree.ps1 new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
+| **Recommended launcher** | `nsc <slug>` / `bash scripts/dev/worktree.sh new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
 | **Working directly in the main clone** | Run `bash agents/scripts/core/setup-harness.sh claude-code` **once** before relying on the guard. |
 | **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. `scripts/dev/doctor.sh` runs the same probe as a warn-only preflight check (`[WARN] harness`), so the standard doctor pass surfaces an unprovisioned tree without a hand-run probe. Note the repo-owned git hooks (`scripts/git-hooks/`, e.g. `pre-push`) are ALSO inert in a fresh clone — `core.hooksPath` is set by `setup-harness.sh`, so no git hook can self-report the hole. |
 

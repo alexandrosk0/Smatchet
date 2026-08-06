@@ -7,7 +7,7 @@
 #
 # This is advisory defense-in-depth (registry-dependent, bias-to-allow on
 # uncertainty). The hard net is guard-head-drift.sh, which protects the victim
-# regardless of who moved HEAD. Recovery from a drift is `worktree.ps1 resync` or
+# regardless of who moved HEAD. Recovery from a drift is `worktree.sh resync` or
 # a new worktree, NOT switching the shared HEAD back — so this guard does not
 # exempt "switch back to my baseline".
 #
@@ -147,7 +147,7 @@ NOW="$(date -u +%s)"
 live="$(sr_count_live_siblings "$REGDIR" "$SID" "$NOW")"
 
 if [ "$live" -gt 0 ]; then
-  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: pwsh scripts/dev/worktree.ps1 new <slug>. To act on a worktree FROM here, target it explicitly — \`git -C <ABSOLUTE-worktree-path> <op>\` (a LITERAL path, not a \$VAR — this guard reads the un-expanded command text; a bare \`cd <wt> && git …\` is NOT exempt, the op must carry its own -C). Override: export SMATCHET_ALLOW_SHARED_SWITCH=1 in the session env BEFORE launch (an inline \`SMATCHET_ALLOW_SHARED_SWITCH=1 git …\` prefix does NOT work — the hook reads its own env before your command runs)."
+  reason="${live} concurrent session(s) share this integration tree (${PROJ}); this op would change HEAD/working-tree under them. Do feature work in a worktree: bash scripts/dev/worktree.sh new <slug>. To act on a worktree FROM here, target it explicitly — \`git -C <ABSOLUTE-worktree-path> <op>\` (a LITERAL path, not a \$VAR — this guard reads the un-expanded command text; a bare \`cd <wt> && git …\` is NOT exempt, the op must carry its own -C). Override: export SMATCHET_ALLOW_SHARED_SWITCH=1 in the session env BEFORE launch (an inline \`SMATCHET_ALLOW_SHARED_SWITCH=1 git …\` prefix does NOT work — the hook reads its own env before your command runs)."
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}' "$(json_escape "$reason")"
 fi
 exit 0

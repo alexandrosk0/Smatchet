@@ -93,7 +93,7 @@ if [ -d "$PROJ/.git" ]; then
   live="$(sr_count_live_siblings "$REGDIR" "$SESSION_ID" "$NOW")"
   printf '🌳 Integration tree (%s) on branch %s. ' "$PROJ" "${CUR_BRANCH:-?}"
   [ "$live" -gt 0 ] && printf '⚠ %s other live session(s) share this tree — HEAD/branch changes WILL collide. ' "$live"
-  printf 'Prefer one worktree per session: `nsc <slug>` (or pwsh scripts/dev/worktree.ps1 new <slug>). Direct commits to develop/main here are blocked.\n'
+  printf 'Prefer one worktree per session: `nsc <slug>` (or bash scripts/dev/worktree.sh new <slug>). Direct commits to develop/main here are blocked.\n'
 else
   printf '🌿 Isolated worktree (%s) on branch %s — HEAD is private to this session.\n' "$PROJ" "${CUR_BRANCH:-?}"
 fi

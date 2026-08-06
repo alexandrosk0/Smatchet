@@ -9,7 +9,7 @@ Two tools recover the real stack; neither needs admin.
 Run the target as a child of Sysinternals procdump (`-e` unhandled / `-t` termination / `-ma` full):
 
 ```
-pwsh scripts/dev/run-with-procdump.ps1
+bash scripts/dev/run-with-procdump.sh
 ```
 
 For machine-wide auto-capture of *every* future crash, one elevated one-liner:
@@ -33,6 +33,6 @@ Point `-y` at the build dir for `Smatchet.pdb`. No `cdb` installed? Extract it f
 
 ## Reproduce hands-free — per-frame autocycle harness
 
-For a crash that needs a specific UI interaction (e.g. rapid backend/pane switching), drive it from the per-frame path instead of clicking: a `[temp-debug]` block in `SmatchetUI::drawPerFrameTicksAndHandlers` gated on an env var (e.g. `SMATCHET_AUTOCYCLE_PANES`) that cycles the focused pane every N frames is a deterministic regression harness — it both reproduces the crash and proves the fix (run it for hundreds of cycles). Strip the `[temp-debug]` marker before shipping; `run-with-procdump.ps1 -AutocyclePanes 20` wires the env var through.
+For a crash that needs a specific UI interaction (e.g. rapid backend/pane switching), drive it from the per-frame path instead of clicking: a `[temp-debug]` block in `SmatchetUI::drawPerFrameTicksAndHandlers` gated on an env var (e.g. `SMATCHET_AUTOCYCLE_PANES`) that cycles the focused pane every N frames is a deterministic regression harness — it both reproduces the crash and proves the fix (run it for hundreds of cycles). Strip the `[temp-debug]` marker before shipping; `run-with-procdump.sh --autocycle-panes 20` wires the env var through.
 
 > Worked example: the #1099 grid-on-backend-switch null-`TrackerField` crash was root-caused with exactly this loop — autocycle + cdb first-chance gave the faulting stack in one run, then the same autocycle (422 switches, zero crashes) validated the fix.
