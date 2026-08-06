@@ -152,7 +152,7 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
 - **ARM64 installer CI break (new)** — the only PS in a *required* CI path. Mitigation: land Phase 2's workflow edit alone, on a PR that actually exercises the installer job, before deleting `release_github.ps1`.
 - **PS→bash quoting bugs** — Windows path quoting + spaces in `%USERPROFILE%`. Mitigation: every new `.sh` gets a bats test exercising paths-with-spaces (existing pattern in `tests/bats/`).
 - **Unreal packaging breakage** — UBT from bash via `cmd.exe /c` works in `setup-harness.sh` but is untested under heavy build load. Mitigation: keep the PS in git one PR cycle as `.ps1.bak`, delete in the next.
-- **Lint-hook drift** — `lint-cpp-drain.sh` calls `flock`; update in lockstep with `lockfile.py` landing.
+- **Lint-hook drift** — **resolved in Slice A**: `lint-cpp-drain.sh` no longer calls `flock`; it serialises through `scripts/dev/lockfile.py` and degrades to lock-free when no Python is present. Residual risk is narrower — the drain's python-candidate probe and `lockfile.py`'s CLI (`--nonblock` / `--busy-rc`) must stay in step; `agents/scripts/core/test-lint-hook-split.sh` Test 10 is the gate.
 - **`setup-env.sh` skew (new)** — the installer's package map duplicates the tool list; any tool-floor change must edit it too or a fresh clone re-installs a dropped tool.
 
 ## Verification
@@ -181,8 +181,25 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
 
 ## Implementation log
 
-_To be filled in per shipped commit._
+- **2026-08-05 — Slice A (Phase 5, drop `flock`).** Added `scripts/dev/lockfile.py`
+  (cross-platform `flock(1)` stand-in: `msvcrt.locking` on Windows, `fcntl.flock`
+  on POSIX; `--nonblock` / `--timeout` / `--busy-rc`). `lint-cpp-drain.sh` now
+  re-execs itself under the lock (`SMATCHET_LINT_DRAIN_LOCKED` guard) so the lock
+  spans the whole drain exactly as `flock -n 200` did; with no Python it runs
+  lock-free rather than skipping the drain. Dropped the `flock` rows from
+  `check-required-tools.sh`, `setup-env.sh` and `docs/harness/SETUP.md`.
+  `test-lint-hook-split.sh` Test 10 — previously a permanent skip on every
+  Git-Bash host, since it gated on `command -v flock` — now runs for real
+  (21 passed / 0 failed).
 
 ## Deviations from plan
 
+- **2026-08-05 — Slice A, two corrections.** (1) The plan pinned the `setup-env.sh`
+  `flock` rows at lines 138/148; they are at **156/166** (the file grew since the
+  audit) — removal was by content match, not line number. (2) The drain's queue
+  glob `.lint-queue.*` also matched the lock file `.lint-queue.lock`, so the drain
+  read it as queue content and `rm -f`'d it. Harmless under `flock` (POSIX deletes
+  an open fd fine) but fatal under `lockfile.py` on Windows, where the delete fails
+  while the lock is held. Both the drain and `test-lint-hook-split.sh` now filter
+  `*.lock` out of the glob — a latent bug the port exposed, fixed in the same slice.
 - **2026-08-05 — re-audit, no code shipped.** Plan rewritten against the live tree after `split-scripts-build-vs-agentic` invalidated every path. Inventory 20 → **34** (`git ls-files '*.ps1'`, vendored `node_modules` excluded — the first pass globbed only `scripts/**` + `agents/**` and so missed root `build.ps1` and `scripts/dev/verify.ps1`); kept-PS set 4 → **5** (all `agents/scripts/core/`); Phase 4 added (drift twins + worktree launchers, previously unlisted); Phase 2 gained the ARM64 CI workflow; Phase 5 gained `setup-env.sh`; the jq rationale was replaced (the +200ms poll argument no longer holds — the poller uses gh's bundled jq).

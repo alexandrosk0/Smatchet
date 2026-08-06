@@ -153,7 +153,6 @@ PACKAGES=(
     "gh${SEP}REQUIRED${SEP}GitHub.cli${SEP}-${SEP}gh${SEP}gh${SEP}-"
     "clang-format,clang-tidy${SEP}REQUIRED${SEP}LLVM.LLVM${SEP}mingw-w64-ucrt-x86_64-clang-tools-extra${SEP}clang-format clang-tidy${SEP}llvm${SEP}-"
     "cppcheck${SEP}REQUIRED${SEP}Cppcheck.Cppcheck${SEP}mingw-w64-ucrt-x86_64-cppcheck${SEP}cppcheck${SEP}cppcheck${SEP}-"
-    "flock${SEP}REQUIRED${SEP}-${SEP}util-linux${SEP}util-linux${SEP}util-linux${SEP}-"
     "bats${SEP}REQUIRED${SEP}-${SEP}-${SEP}-${SEP}-${SEP}bats"
     "shellcheck${SEP}REQUIRED${SEP}koalaman.shellcheck${SEP}mingw-w64-ucrt-x86_64-shellcheck${SEP}shellcheck${SEP}shellcheck${SEP}shellcheck"
     "OpenCppCoverage${SEP}OPTIONAL${SEP}-${SEP}-${SEP}-${SEP}-${SEP}-"
@@ -163,7 +162,6 @@ PACKAGES=(
 manual_hint() {
     case "$1" in
         "gcc,g++") echo "MSYS2 UCRT64 toolchain — install MSYS2 (winget install MSYS2.MSYS2), then: pacman -S mingw-w64-ucrt-x86_64-gcc" ;;
-        flock)     echo "MSYS2: pacman -S util-linux (Git-Bash alone does not ship flock)" ;;
         bats)      echo "npm i -g bats (install Node.js first: winget install OpenJS.NodeJS.LTS)" ;;
         OpenCppCoverage) echo "coverage gates only — choco install opencppcoverage, or the GitHub releases installer" ;;
         *)         echo "no package-manager mapping for this platform — see docs/harness/SETUP.md § Required CLI tools" ;;
