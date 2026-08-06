@@ -171,40 +171,22 @@ cd "$repo_root"
 # `--ack-review` records a fingerprint of the changed first-party C++ vs <base-ref>; the gate
 # then fails unless the current fingerprint still matches. Any later edit changes the
 # fingerprint, invalidating the ack and forcing a conscious re-review of what will be pushed.
-review_marker="$repo_root/.review-ack"
-# The C++ trees whose diff content the fingerprint covers (mirrors the format-target globs).
-review_cpp_globs=(
-    'Source/Core/*.cpp' 'Source/Core/*.h'
-    'Source/Plugins/*.cpp' 'Source/Plugins/*.h'
-    'Source/Standalone/*.cpp' 'Source/Standalone/*.h'
-    'tests/*.cpp' 'tests/*.h'
-)
-review_fingerprint() {
-    # Committed-on-branch diff + working-tree diff, restricted to first-party C++. Hashing the
-    # diff (not just file list) means any content change — incl. a clang-format reflow — re-arms.
-    {
-        git diff "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-        git diff HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-    } | sha256sum | cut -d' ' -f1
-}
+#
+# The fingerprint / substantive-diff / marker implementation moved to
+# agents/scripts/core/lib/review-ack.sh so the COMMIT-side gate
+# (scripts/git-hooks/pre-commit, via agents/scripts/core/review-ack.sh) shares exactly
+# one implementation with this PUSH-side gate. This script keeps mode `branch`
+# (<base-ref>...HEAD + working tree); the commit hook uses mode `staged`.
+#
+# Sourced from THIS script's directory, never "$repo_root": --selftest runs the script
+# against a throwaway work tree that has no agents/ tree of its own.
+preship_script_dir="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=agents/scripts/core/lib/review-ack.sh
+. "$preship_script_dir/../../agents/scripts/core/lib/review-ack.sh"
 
-# Resolve a WORKING python interpreter (empty if none). `command -v python3` alone is
-# insufficient on Windows: the python3 "App Execution Alias" stub passes `command -v` but
-# exits 49 ("Python was not found") when actually run — so probe each candidate by executing
-# it. Mirror of resolve_python in agents/scripts/project/lint-rules.d/00-common.sh (kept local
-# so this top-level script stays independent of the lint-rules internals).
-resolve_python() {
-    local cand p
-    for cand in python3 python py; do
-        p="$(command -v "$cand" 2>/dev/null)" || continue
-        if "$p" -c "" >/dev/null 2>&1; then printf '%s\n' "$p"; return 0; fi
-    done
-    return 1
-}
-PRESHIP_PY="$(resolve_python || true)"
-# Selftest hook: force the "no working python" branch so the #1116 fail-closed path is
-# testable in an environment that DOES have python. Never set this in normal use.
-[ "${SMATCHET_PRESHIP_FORCE_NO_PY:-0}" = "1" ] && PRESHIP_PY=""
+# SMATCHET_PRESHIP_FORCE_NO_PY is honoured inside ra_resolve_python (selftest hook that
+# forces the #1116 fail-closed path in an environment that DOES have python).
+PRESHIP_PY="$(ra_resolve_python || true)"
 
 # SMATCHET_PRESHIP_GATE_ONLY=1 (selftest hook): skip the lint stages and run ONLY the
 # code-review gate. Never set this in normal use — the lint stages are the point.
@@ -345,51 +327,19 @@ fi
 # surface, cross-PR build hazards, behaviour drift). A diff is SUBSTANTIVE when it touches a
 # strict zone (project.config.json `lint.zones.strict`) or changes >= REVIEW_LINE_THRESHOLD
 # first-party C++ lines. Substantive ⇒ a fingerprint-pinned review ack is required.
-review_threshold="${REVIEW_LINE_THRESHOLD:-60}"
-review_changed_cpp=()
-mapfile -t review_changed_cpp < <(
-    git diff --name-only --diff-filter=d "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null
-    git diff --name-only --diff-filter=d -- "${review_cpp_globs[@]}" 2>/dev/null
-)
-review_strict_hit=""
-if [ "${#review_changed_cpp[@]}" -gt 0 ]; then
-    # tr -d '\r': native Windows python3 prints CRLF; an un-stripped \r in the zone string
-    # silently defeats the `case "$f" in "$z"*` prefix match (caught by --selftest).
-    review_strict_zones=()
-    if [ -n "$PRESHIP_PY" ]; then
-        mapfile -t review_strict_zones < <(
-            "$PRESHIP_PY" -c "import json;print('\n'.join(json.load(open('project.config.json'))['lint']['zones']['strict']))" \
-                2>/dev/null | tr -d '\r' || true
-        )
-        for f in "${review_changed_cpp[@]}"; do
-            [ -n "$f" ] || continue
-            for z in "${review_strict_zones[@]:-}"; do
-                [ -n "$z" ] || continue
-                case "$f" in "$z"*) review_strict_hit="$f" ;; esac
-            done
-        done
-    else
-        # #1116 fail-CLOSED: no WORKING python (the Windows py-stub passes `command -v` but
-        # exits 49) means the strict-zone list is unreadable. The old code just skipped
-        # detection here, so a sub-threshold strict-zone diff N/A-passed the review gate
-        # (fail-OPEN). Instead, treat the changed C++ as strict-requiring so the gate engages.
-        echo "pre-ship: WARN — no working python; strict-zone list unreadable → requiring review conservatively (fail-closed, #1116)." >&2
-        review_strict_hit="(strict-zone detection unavailable — no working python)"
-    fi
-fi
-review_lines=$(
-    {
-        git diff --numstat "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-        git diff --numstat -- "${review_cpp_globs[@]}" 2>/dev/null || true
-    } | awk '{a+=($1=="-"?0:$1); d+=($2=="-"?0:$2)} END {print a+d+0}'
-)
 review_substantive=0
-if [ -n "$review_strict_hit" ] || [ "${review_lines:-0}" -ge "$review_threshold" ]; then
+if ra_is_substantive branch "$base_ref"; then
     review_substantive=1
 fi
+# The #1116 fail-closed branch lives in ra_strict_hit; surface it here as before.
+case "$RA_SUBSTANTIVE_REASON" in
+    *"no working python"*)
+        echo "pre-ship: WARN — no working python; strict-zone list unreadable → requiring review conservatively (fail-closed, #1116)." >&2
+        ;;
+esac
 
 if [ "$ack_review" -eq 1 ]; then
-    review_fingerprint > "$review_marker"
+    ra_write_marker branch "$(ra_fingerprint branch "$base_ref")"
     echo "pre-ship: review ACK recorded for the current diff vs $base_ref (.review-ack)."
     echo "pre-ship: PASS (ack) — gates clean + review acknowledged. Safe to push."
     exit 0
@@ -398,12 +348,10 @@ fi
 if [ "${SMATCHET_SKIP_REVIEW_GATE:-0}" = "1" ]; then
     echo "pre-ship: WARN — code-review gate bypassed (SMATCHET_SKIP_REVIEW_GATE=1)."
 elif [ "$review_substantive" -eq 1 ]; then
-    have_fp=""
-    [ -f "$review_marker" ] && have_fp="$(cat "$review_marker" 2>/dev/null || true)"
-    want_fp="$(review_fingerprint)"
+    have_fp="$(ra_read_marker branch)"
+    want_fp="$(ra_fingerprint branch "$base_ref")"
     if [ "$have_fp" != "$want_fp" ]; then
-        reason="${review_strict_hit:+strict-zone touch ($review_strict_hit)}"
-        reason="${reason:-$review_lines changed C++ lines >= $review_threshold}"
+        reason="$RA_SUBSTANTIVE_REASON"
         cat >&2 <<EOF
 pre-ship: FAIL — substantive C++ diff ($reason) requires a code review before push.
   No current review ack found (.review-ack ${have_fp:+is stale}${have_fp:-missing}).
@@ -416,7 +364,7 @@ EOF
     fi
     echo "pre-ship: code-review ack current for this diff (.review-ack matches)."
 else
-    echo "pre-ship: code-review gate N/A — diff is not substantive ($review_lines C++ lines, no strict-zone touch)."
+    echo "pre-ship: code-review gate N/A — diff is not substantive ($RA_SUBSTANTIVE_REASON)."
 fi
 
 echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."

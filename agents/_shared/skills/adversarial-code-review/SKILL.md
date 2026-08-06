@@ -123,6 +123,16 @@ Verification
 - <What you inspected or ran.>
 ```
 
+## Record The Ack (staged-diff reviews in this repo)
+
+`scripts/git-hooks/pre-commit` refuses a commit whose staged diff is substantive C++ and carries no review acknowledgement pinned to that exact content (`docs/agent-rules/process-rules.md` § Code-review before every commit). When you reviewed the staged diff (`git diff --cached`) and no P0/P1 finding is outstanding, record it so the commit can proceed:
+
+```bash
+bash agents/scripts/core/review-ack.sh --record --staged
+```
+
+Do not record while a P0/P1 stands, and never record a review you did not run — the fingerprint proves only that the diff is unchanged since something was acknowledged. Any later staged edit re-arms the gate.
+
 ## Review Discipline
 
 Be concise and specific. Do not congratulate, hedge, or pad.
