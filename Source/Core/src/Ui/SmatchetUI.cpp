@@ -11,6 +11,7 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
@@ -652,6 +653,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding (default Ctrl+Shift+T). Drawn unconditionally so its in-flight create
     // future is polled (and toasted) even after the window closes.
     SmatchetQuickCreateIssueUi_Draw(app, g_ui);
+
+    // Deferred scenario unwinds staged by the previous frame's OnFinish. Runs
+    // BEFORE the tick below (and so before a new scenario can start), and — the
+    // point of the deferral — after the post-swap handler captured the frame that
+    // OnFinish staged. See ScenarioCaptureQuiesce.h § QueuePostCaptureRestore.
+    smatchet::cmd::RunPendingPostCaptureRestore();
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.

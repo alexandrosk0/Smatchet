@@ -1,6 +1,8 @@
 #ifndef SMATCHET_COMMANDS_SCENARIOS_SCENARIO_CAPTURE_QUIESCE_H
 #define SMATCHET_COMMANDS_SCENARIOS_SCENARIO_CAPTURE_QUIESCE_H
 
+#include <functional>
+
 namespace smatchet {
 namespace cmd {
 
@@ -40,6 +42,28 @@ void QuiesceCaptureFrame();
 // snapshot is armed, and taking the snapshot is itself first-call-only, so the
 // per-frame re-quiesce never re-captures already-suppressed values.
 void RestoreCaptureQuiesce();
+
+// Defer `fn` to the START of the next drawn frame — i.e. past the post-swap
+// screenshot handler that captures the CURRENT frame.
+//
+// A screenshot scenario's OnFinish runs inside SmatchetUI::drawPreWindowOverlays
+// (the runner tick lives there), which is BEFORE any window draws. So a scenario
+// that unwinds its pinned state directly in OnFinish un-pins it a few hundred
+// lines ahead of the very frame the capture records: the User Info scenarios lost
+// their identity + WhisperSetupCompleted pins that way and captured a first-run
+// whisper-consent banner over an empty pane. Queue the unwind here instead and it
+// lands one frame later, with the capture already on disk.
+//
+// The callback must own everything it touches by value: the runner destroys the
+// scenario (`active_.reset()`) as soon as OnFinish returns, so capturing `this`
+// dangles. Callbacks run once, on the UI thread, then the queue is cleared. A
+// process that exits before the next frame (the --spawn screenshot child) simply
+// never runs them, which is harmless — every field they restore is session-scoped.
+void QueuePostCaptureRestore(std::function<void()> fn);
+
+// Drain the QueuePostCaptureRestore queue. Called once per frame from
+// SmatchetUI::drawPreWindowOverlays, ahead of the scenario tick.
+void RunPendingPostCaptureRestore();
 
 } // namespace cmd
 } // namespace smatchet

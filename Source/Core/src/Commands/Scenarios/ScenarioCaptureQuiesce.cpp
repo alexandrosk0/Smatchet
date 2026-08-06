@@ -5,6 +5,9 @@
 
 #include <imgui.h>
 
+#include <utility>
+#include <vector>
+
 // g_ui — unconditional extern. Defined in SmatchetUI.cpp without a
 // SMATCHET_WITH_LUA_AUTOMATION guard; the header-side extern in
 // SmatchetUiSession.h is gated, so re-declare it here, matching the sibling
@@ -30,6 +33,11 @@ struct QuiescedSession {
 };
 
 QuiescedSession g_savedSession;
+
+// Unwind callbacks staged by QueuePostCaptureRestore, drained one frame later by
+// RunPendingPostCaptureRestore. File-static for the same reason as the snapshot
+// above: the state is global (g_ui) and every touch is on the UI thread.
+std::vector<std::function<void()>> g_pendingPostCaptureRestores;
 
 } // namespace
 
@@ -103,6 +111,26 @@ void RestoreCaptureQuiesce() {
     g_ui.appUpdateCheckInFlight = g_savedSession.checkInFlight;
     g_ui.appUpdateModalOpen = g_savedSession.modalOpen;
     g_savedSession.armed = false;
+}
+
+void QueuePostCaptureRestore(std::function<void()> fn) {
+    if (fn) {
+        g_pendingPostCaptureRestores.push_back(std::move(fn));
+    }
+}
+
+void RunPendingPostCaptureRestore() {
+    if (g_pendingPostCaptureRestores.empty()) {
+        return;
+    }
+    // Swap out before running: a callback is free to queue another one (or to
+    // start a fresh scenario), and mutating the vector we are iterating would
+    // invalidate the iterator.
+    std::vector<std::function<void()>> pending;
+    pending.swap(g_pendingPostCaptureRestores);
+    for (size_t i = 0; i < pending.size(); ++i) {
+        pending[i]();
+    }
 }
 
 } // namespace cmd

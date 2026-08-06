@@ -156,11 +156,16 @@ nlohmann::json UserInfoScreenshotScenario::OnFinish(IAppScenarioHost& /*app*/) {
     out["screenshotPath"] = screenshotPath_;
     out["captureRequested"] = true;
 
-    // Restore config AFTER staging the capture: showUserInfo stays true through
-    // this frame so the window is still drawn when the post-swap capture fires.
-    // The VcsFeedLayout / GitHub / identity fields no longer affect the already-
-    // rendered frame, so restoring them here is safe and leaves the session clean.
-    restoreState();
+    // Restore on the NEXT frame, not here. OnFinish runs from the runner tick
+    // inside SmatchetUI::drawPreWindowOverlays — ahead of every window draw — so an
+    // inline restoreState() un-pins showUserInfo, the identity fields and
+    // WhisperSetupCompleted BEFORE the frame this capture records is drawn, and the
+    // PNG lands showing the first-run whisper-consent banner over an empty User Info
+    // body. (Restoring inline only looked safe while a second Scenarios().Tick ran
+    // post-render in the standalone bootstrap and absorbed OnFinish there; that
+    // duplicate tick is gone.) The runner destroys this scenario via active_.reset()
+    // the moment OnFinish returns, so the closure gets a by-value copy, not `this`.
+    QueuePostCaptureRestore([self = *this]() mutable { self.restoreState(); });
     return out;
 }
 
