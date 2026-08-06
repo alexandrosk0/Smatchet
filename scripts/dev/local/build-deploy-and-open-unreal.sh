@@ -123,10 +123,13 @@ bash "$SCRIPT_DIR/package-unreal-plugin-msvc.sh" "${PACKAGE_ARGS[@]}" \
     || die "packaging/deploy step failed."
 
 echo "==> Rebuilding Unreal editor target..."
-cmd.exe /c "$(winpath "$BUILD_BAT")" "${PROJECT_NAME}Editor" "$UNREAL_PLATFORM" "$UNREAL_CONFIGURATION" \
+# MSYS_NO_PATHCONV: Git Bash rewrites a whole argument that looks like an
+# absolute POSIX path, so a bare `/c` reaches cmd.exe as `C:/` and the batch
+# file never runs. Paths are already Windows-form via winpath().
+MSYS_NO_PATHCONV=1 cmd.exe /c "$(winpath "$BUILD_BAT")" "${PROJECT_NAME}Editor" "$UNREAL_PLATFORM" "$UNREAL_CONFIGURATION" \
     "$(winpath "$PROJECT_FILE")" -WaitMutex || die "Unreal build failed."
 
 echo "==> Opening $PROJECT_FILE ..."
-cmd.exe /c start "" "$(winpath "$PROJECT_FILE")" || die "could not open the .uproject."
+MSYS_NO_PATHCONV=1 cmd.exe /c start "" "$(winpath "$PROJECT_FILE")" || die "could not open the .uproject."
 
 echo "==> Done."

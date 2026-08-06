@@ -274,14 +274,16 @@ fi
 # Merge the two binaries into the final Cobertura (+ optional HTML) report.
 # OpenCppCoverage requires at least one runnable child even on a pure merge; we
 # attach `cmd.exe /c exit 0` as a no-op carrier so the tool runs without
-# re-executing either test exe a third time.
+# re-executing either test exe a third time. MSYS_NO_PATHCONV keeps the bare
+# `/c` from being rewritten to `C:/` by Git Bash argument translation, which
+# would leave the carrier as a cmd.exe with no command switch.
 MERGE_EXPORTS=(--export_type "cobertura:$XML_OUT")
 if [ "$XML_ONLY" -eq 0 ]; then
     MERGE_EXPORTS+=(--export_type "html:$HTML_OUT")
 fi
 echo "[coverage] merging binaries -> $XML_OUT..."
 set +e
-"$OCC" --input_coverage "$BIN_TESTS" --input_coverage "$BIN_LUA" "${MERGE_EXPORTS[@]}" -- cmd.exe /c exit 0
+MSYS_NO_PATHCONV=1 "$OCC" --input_coverage "$BIN_TESTS" --input_coverage "$BIN_LUA" "${MERGE_EXPORTS[@]}" -- cmd.exe /c exit 0
 RC_MERGE=$?
 set -e
 if [ "$RC_MERGE" -ne 0 ]; then

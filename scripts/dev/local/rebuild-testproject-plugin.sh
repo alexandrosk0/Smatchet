@@ -126,7 +126,10 @@ bash "$SCRIPT_DIR/build-and-deploy-unreal-plugin.sh" "${DEPLOY_ARGS[@]}" \
     || die "plugin deploy step failed."
 
 echo "==> Rebuilding ${PROJECT_NAME} (Win64 Development)..."
-cmd.exe /c "$(winpath "$BUILD_BAT")" "$PROJECT_NAME" Win64 Development \
+# MSYS_NO_PATHCONV: Git Bash rewrites a whole argument that looks like an
+# absolute POSIX path, so a bare `/c` reaches cmd.exe as `C:/` and the batch
+# file never runs. Paths are already Windows-form via winpath().
+MSYS_NO_PATHCONV=1 cmd.exe /c "$(winpath "$BUILD_BAT")" "$PROJECT_NAME" Win64 Development \
     "-Project=$(winpath "$UPROJECT_PATH")" -WaitMutex -NoHotReloadFromIDE \
     || die "Unreal build failed."
 
