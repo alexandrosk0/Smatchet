@@ -47,13 +47,19 @@ Usage: bash scripts/dev/verify.sh [options]
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "verify: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --preset)     PRESET="${2:-}"; shift 2 ;;
+        --preset)     need_value $# "$1"; PRESET="$2"; shift 2 ;;
         --preset=*)   PRESET="${1#*=}"; shift ;;
-        --target)     TARGET="${2:-}"; shift 2 ;;
+        --target)     need_value $# "$1"; TARGET="$2"; shift 2 ;;
         --target=*)   TARGET="${1#*=}"; shift ;;
-        --base)       BASE="${2:-}"; shift 2 ;;
+        --base)       need_value $# "$1"; BASE="$2"; shift 2 ;;
         --base=*)     BASE="${1#*=}"; shift ;;
         --skip-build) SKIP_BUILD=1; shift ;;
         -h|--help)    usage; exit 0 ;;

@@ -41,6 +41,12 @@
 set -euo pipefail
 
 _FAIL_RC="${SMATCHET_MSVC_ENV_FAIL_RC:-2}"
+# A zero (or non-numeric) override would report an MSVC-setup failure as success
+# without ever running the wrapped command. Only a real failing status is valid.
+if ! printf '%s' "$_FAIL_RC" | grep -qE '^[1-9][0-9]*$' || [ "$_FAIL_RC" -gt 255 ]; then
+    echo "with-msvc-env: SMATCHET_MSVC_ENV_FAIL_RC must be a decimal exit code in 1-255: $_FAIL_RC" >&2
+    exit 2
+fi
 
 if [ $# -eq 0 ]; then
     echo "Usage: bash scripts/dev/with-msvc-env.sh <command> [args...]" >&2

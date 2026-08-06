@@ -32,8 +32,9 @@ installing so `PATH` picks the tools up.
 ./build.sh
 ```
 
-That's it. `build.sh` picks a preset (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
-`ninja-iter-clang`), prints which one and why, imports the MSVC environment if it isn't already
+That's it. `build.sh` picks a preset (`cl.exe` on `PATH` → `ninja-iter-msvc`; only `clang-cl.exe` →
+`ninja-iter-clang`; neither compiler on `PATH` → `ninja-iter-msvc`, because the MSVC environment is
+imported for you), prints which one and why, imports the MSVC environment if it isn't already
 active, builds, and launches the app. Run it from Git Bash (shipped with Git for Windows).
 
 Useful variants:

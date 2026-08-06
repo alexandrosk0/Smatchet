@@ -29,9 +29,15 @@ Usage: bash scripts/dev/local/build-msvc-asan.sh [options]
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "build-msvc-asan: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --preset)  PRESET="${2:-}"; shift 2 ;;
+        --preset)  need_value $# "$1"; PRESET="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *)
             echo "build-msvc-asan: unknown argument: $1" >&2

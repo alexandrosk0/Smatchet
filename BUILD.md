@@ -90,8 +90,9 @@ Resolves each missing tool to a package on the host's native manager (winget / M
 ./build.sh --preset ninja-debug-msvc --build-only
 ```
 
-`build.sh` auto-detects a preset (`cl.exe` → `ninja-iter-msvc`, else `clang-cl.exe` →
-`ninja-iter-clang`), prints its choice, and imports the MSVC environment via
+`build.sh` auto-detects a preset (`cl.exe` → `ninja-iter-msvc`; only `clang-cl.exe` →
+`ninja-iter-clang`; neither compiler on `PATH` → `ninja-iter-msvc`, because the MSVC environment
+is imported for you), prints its choice, and imports the MSVC environment via
 `scripts/dev/with-msvc-env.sh` when `cl.exe` isn't already on `PATH` — so no VS Developer Command
 Prompt is needed. Exit `78` means no usable Visual Studio install; it prints the winget commands.
 

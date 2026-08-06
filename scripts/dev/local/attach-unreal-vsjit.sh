@@ -23,9 +23,15 @@ Usage: bash scripts/dev/local/attach-unreal-vsjit.sh [options]
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "attach-unreal-vsjit: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --process-name) PROCESS_NAME="${2:-}"; shift 2 ;;
+        --process-name) need_value $# "$1"; PROCESS_NAME="$2"; shift 2 ;;
         -h|--help)      usage; exit 0 ;;
         *)
             echo "attach-unreal-vsjit: unknown argument: $1" >&2

@@ -40,11 +40,17 @@ Usage: bash scripts/dev/local/run-clang-tidy.sh [options]
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "run-clang-tidy: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --build-dir)  BUILD_DIR="${2:-}"; shift 2 ;;
-        --clang-tidy) CLANG_TIDY="${2:-}"; shift 2 ;;
-        --checks)     CHECKS="${2:-}"; shift 2 ;;
+        --build-dir)  need_value $# "$1"; BUILD_DIR="$2"; shift 2 ;;
+        --clang-tidy) need_value $# "$1"; CLANG_TIDY="$2"; shift 2 ;;
+        --checks)     need_value $# "$1"; CHECKS="$2"; shift 2 ;;
         --fix)        FIX=1; shift ;;
         --quiet)      QUIET=1; shift ;;
         -h|--help)    usage; exit 0 ;;

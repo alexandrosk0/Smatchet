@@ -40,10 +40,16 @@ Anything after `--` is forwarded to the standalone app.
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "build-and-run: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --preset)     PRESET="${2:-}"; shift 2 ;;
-        --target)     TARGET="${2:-}"; shift 2 ;;
+        --preset)     need_value $# "$1"; PRESET="$2"; shift 2 ;;
+        --target)     need_value $# "$1"; TARGET="$2"; shift 2 ;;
         --build-only) BUILD_ONLY=1; shift ;;
         --run-only)   RUN_ONLY=1; shift ;;
         --verify)     VERIFY=1; shift ;;

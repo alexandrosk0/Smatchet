@@ -41,10 +41,16 @@ Usage: bash scripts/dev/local/build-standalone.sh [options]
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "build-standalone: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --preset)          PRESET="${2:-}"; shift 2 ;;
-        --target)          TARGET="${2:-}"; shift 2 ;;
+        --preset)          need_value $# "$1"; PRESET="$2"; shift 2 ;;
+        --target)          need_value $# "$1"; TARGET="$2"; shift 2 ;;
         --force-configure) FORCE_CONFIGURE=1; shift ;;
         --clean-first)     CLEAN_FIRST=1; shift ;;
         -h|--help)         usage; exit 0 ;;

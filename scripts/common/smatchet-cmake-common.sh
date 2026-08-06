@@ -166,7 +166,10 @@ smatchet_project_version() {
 # helpers lean on.
 smatchet_version_parts() {
     local version="$1"
-    if [[ ! "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    # Leading zeros are rejected, not tolerated: "08" is a valid-looking
+    # component that bash arithmetic reads as octal and dies on
+    # ("08: value too great for base") in smatchet_version_unreal_number.
+    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
         echo "smatchet-cmake-common: version must be semantic major.minor.patch: $version" >&2
         return 1
     fi

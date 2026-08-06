@@ -120,8 +120,9 @@ Smatchet's build system uses CMake and is designed to require **zero manual depe
 ./build.sh --build-only    # build only
 ```
 
-`build.sh` picks a preset for you (`cl.exe` on `PATH` → `ninja-iter-msvc`, else `clang-cl.exe` →
-`ninja-iter-clang`), prints which one and why, and imports the MSVC environment itself when it isn't
+`build.sh` picks a preset for you (`cl.exe` on `PATH` → `ninja-iter-msvc`; only `clang-cl.exe` →
+`ninja-iter-clang`; neither → `ninja-iter-msvc`, because the MSVC environment is imported for
+you), prints which one and why, and imports the MSVC environment itself when it isn't
 already active — **no Visual Studio Developer Command Prompt required**. Pass `--preset` to override:
 
 ```bash

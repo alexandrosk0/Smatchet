@@ -44,13 +44,19 @@ Anything after `--` is forwarded to the app and makes the launch synchronous.
 EOF
 }
 
+# `shift 2` fails WITHOUT shifting when the option value is missing, which
+# would spin this loop forever (no `set -e` here). Reject that up front.
+need_value() {
+    [ "$1" -ge 2 ] || { echo "run-standalone: $2 requires a value" >&2; exit 2; }
+}
+
 while [ $# -gt 0 ]; do
     case "$1" in
-        --preset)        PRESET="${2:-}"; shift 2 ;;
-        --target)        TARGET="${2:-}"; shift 2 ;;
-        --exe-name)      EXE_NAME="${2:-}"; shift 2 ;;
-        --build-dir)     BUILD_DIR="${2:-}"; shift 2 ;;
-        --configuration) CONFIGURATION="${2:-}"; shift 2 ;;
+        --preset)        need_value $# "$1"; PRESET="$2"; shift 2 ;;
+        --target)        need_value $# "$1"; TARGET="$2"; shift 2 ;;
+        --exe-name)      need_value $# "$1"; EXE_NAME="$2"; shift 2 ;;
+        --build-dir)     need_value $# "$1"; BUILD_DIR="$2"; shift 2 ;;
+        --configuration) need_value $# "$1"; CONFIGURATION="$2"; shift 2 ;;
         -h|--help)       usage; exit 0 ;;
         --)              shift; STANDALONE_ARGS+=("$@"); break ;;
         *)
