@@ -82,23 +82,24 @@ Resolves each missing tool to a package on the host's native manager (winget / M
 
 ## Common Workflows
 
-**The one command** — from the repo root, in an ordinary PowerShell:
+**The one command** — from the repo root, in an ordinary bash (Git Bash on Windows):
 
-```powershell
-.\build.ps1                                      # build + run
-.\build.ps1 -BuildOnly
-.\build.ps1 -Preset ninja-debug-msvc -BuildOnly
+```bash
+./build.sh                                       # build + run
+./build.sh --build-only
+./build.sh --preset ninja-debug-msvc --build-only
 ```
 
-`build.ps1` auto-detects a preset (`cl.exe` → `ninja-iter-msvc`, else `clang-cl.exe` →
-`ninja-iter-clang`), prints its choice, and imports the MSVC environment via
-`scripts/dev/with-msvc.ps1` when `cl.exe` isn't already on `PATH` — so no VS Developer Command
-Prompt is needed. Exit `2` means no usable Visual Studio install; it prints the winget commands.
+`build.sh` auto-detects a preset (`cl.exe` → `ninja-iter-msvc`; only `clang-cl.exe` →
+`ninja-iter-clang`; neither compiler on `PATH` → `ninja-iter-msvc`, because the MSVC environment
+is imported for you), prints its choice, and imports the MSVC environment via
+`scripts/dev/with-msvc-env.sh` when `cl.exe` isn't already on `PATH` — so no VS Developer Command
+Prompt is needed. Exit `78` means no usable Visual Studio install; it prints the winget commands.
 
 Everything below is the **explicit-preset** form: what CI runs, and what to use when the MSVC
 environment is already active.
 
-**MSVC** — run from a VS Developer Command Prompt (or inside `scripts/dev/with-msvc.ps1`):
+**MSVC** — run from a VS Developer Command Prompt (or inside `scripts/dev/with-msvc-env.sh`):
 
 ```powershell
 cmake --preset ninja-iter-msvc
@@ -133,27 +134,27 @@ cmake --preset ninja-iter-unreal-msvc
 cmake --build --preset ninja-iter-unreal-msvc
 ```
 
-`build.ps1` delegates to `scripts/dev/local/build_and_run.ps1`, which can also be called directly
+`build.sh` delegates to `scripts/dev/local/build-and-run.sh`, which can also be called directly
 when the MSVC environment is already active (it does **not** import one itself):
 
-```powershell
-.\scripts\dev\local\build_and_run.ps1
-.\scripts\dev\local\build_and_run.ps1 -Preset ninja-iter-msvc
-.\scripts\dev\local\build_and_run.ps1 -BuildOnly
-.\scripts\dev\local\build_and_run.ps1 -RunOnly -StandaloneArgs '--config','foo'
+```bash
+bash scripts/dev/local/build-and-run.sh
+bash scripts/dev/local/build-and-run.sh --preset ninja-iter-msvc
+bash scripts/dev/local/build-and-run.sh --build-only
+bash scripts/dev/local/build-and-run.sh --run-only -- --config foo
 ```
 
-`scripts/dev/with-msvc.ps1 <command…>` remains the wrapper for running an **ad-hoc** command inside
-the MSVC environment (`with-msvc.ps1 cl /?`, `with-msvc.ps1 cmake --preset …`); `build.ps1` is the
-shortcut for the build case specifically.
+`scripts/dev/with-msvc-env.sh <command…>` remains the wrapper for running an **ad-hoc** command
+inside the MSVC environment (`with-msvc-env.sh cl /?`, `with-msvc-env.sh cmake --preset …`);
+`build.sh` is the shortcut for the build case specifically.
 
 ### MSVC from bash (Git Bash)
 
 **MSYS2 is not required or recommended for building Smatchet.** The `ninja-iter-msys2`
 preset is retired. Use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl) instead.
 
-`scripts/dev/with-msvc.ps1` handles the `vcvars64` env for PowerShell sessions (and `build.ps1`
-routes through it). The bash-side equivalent is `scripts/dev/with-msvc-env.sh` — a wrapper that picks
+`scripts/dev/with-msvc-env.sh` is the single source of truth for the `vcvars64` env (`build.sh`
+routes through it, as do the sanitizer and packaging wrappers) — a wrapper that picks
 the VS install carrying the pinned MSVC toolset (`build.msvc_toolset_pin` in
 `project.config.json`, overridable via `$SMATCHET_VCVARS_VER`) via `vswhere.exe`,
 sources `vcvars64.bat -vcvars_ver=<pin>` through a PowerShell-mediated cmd.exe
