@@ -16,7 +16,7 @@ Per-harness adapter directories (`.claude/`, `.codex/`, `.cursor/`, `.pi/`) are 
 | pi (earendil-works) | `bash agents/scripts/core/setup-harness.sh pi` | [pi/README.md](pi/README.md) |
 | Aider / generic | Manual — paste agent files from `agents/` as needed. No adapter dir. | — |
 
-Windows users can substitute `pwsh agents/scripts/core/setup-harness.ps1 <name>`.
+Windows users run the same command — Git Bash ships with Git for Windows, and the PowerShell twin was deleted (it drifted from the bash original rather than tracking it).
 
 ## Concurrent-session HEAD-drift guard — INACTIVE until first setup
 
@@ -28,7 +28,7 @@ Close the hole:
 
 | Path | What closes it |
 |---|---|
-| **Recommended launcher** | `nsc <slug>` / `pwsh scripts/dev/worktree.ps1 new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
+| **Recommended launcher** | `nsc <slug>` / `bash scripts/dev/worktree.sh new <slug>` provisions the new worktree **and**, on first run, the integration tree's `.claude/` — so using the standard launcher closes the hole automatically, no remembering required. |
 | **Working directly in the main clone** | Run `bash agents/scripts/core/setup-harness.sh claude-code` **once** before relying on the guard. |
 | **Check anytime** | `bash agents/scripts/core/check-harness-provisioned.sh` warns (exit 1) when the current tree's guard hook is missing and prints the fix; exit 0 when wired. `scripts/dev/doctor.sh` runs the same probe as a warn-only preflight check (`[WARN] harness`), so the standard doctor pass surfaces an unprovisioned tree without a hand-run probe. Note the repo-owned git hooks (`scripts/git-hooks/`, e.g. `pre-push`) are ALSO inert in a fresh clone — `core.hooksPath` is set by `setup-harness.sh`, so no git hook can self-report the hole. |
 
@@ -44,12 +44,11 @@ Guard mechanics + recovery: [`process-rules.md`](../agent-rules/process-rules.md
 | `cmake` | every build preset | `winget install Kitware.CMake` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cmake`) |
 | `ninja` | preset generator | `winget install Ninja-build.Ninja` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-ninja`) |
 | `gcc` / `g++` | lint toolchain (clang-format/cppcheck invoke gcc for syntax checks) | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-gcc` — build itself uses MSVC or Clang |
-| `python` | dev scripts (perf-compare, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
+| `python` | dev scripts (perf-compare, `lockfile.py` drain serialisation, etc.) | python.org installer (3.11+) or `pacman -S mingw-w64-ucrt-x86_64-python` |
 | `jq` | test harness only (`merge_gates.bats` mocks `gh` via jq). The merge-gates poller parses via gh's bundled jq (`gh api --jq`) — no standalone jq at runtime. | `winget install jqlang.jq` (or MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-jq`) |
 | `gh` | PR ops + merge-gates poller | `winget install GitHub.cli` then add `C:/Program Files/GitHub CLI` to PATH |
 | `clang-format`, `clang-tidy` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-clang-tools-extra` |
 | `cppcheck` | lint hooks | MSYS2 UCRT64: `pacman -S mingw-w64-ucrt-x86_64-cppcheck` |
-| `flock` | `lint-cpp-drain.sh` queue serialisation | usually built-in (Linux/macOS); MSYS2 needs `pacman -S util-linux` |
 
 Optional (warn-only — not required for the standard ship-loop):
 
@@ -59,16 +58,42 @@ Optional (warn-only — not required for the standard ship-loop):
 
 Ad-hoc invocation: `bash scripts/dev/check-required-tools.sh` (add `--quiet` to suppress PASS lines). Re-run anytime; idempotent.
 
+### Installing the missing ones
+
+`scripts/dev/setup-env.sh` is the write-side companion: it installs whatever the probe reports missing, through the host's native package manager (winget or MSYS2 `pacman` on Windows, `apt` on Debian/Ubuntu, `brew` on macOS, `npm` for `bats` / `shellcheck`), then re-runs `check-required-tools.sh` as its verdict.
+
+```bash
+bash scripts/dev/setup-env.sh --dry-run   # print the install plan, change nothing
+bash scripts/dev/setup-env.sh             # plan, prompt, install, verify
+bash scripts/dev/setup-env.sh --yes       # non-interactive (CI / fresh-clone bootstrap)
+```
+
+Also `--list` (full tool → package map for this host) and `--with-optional` (include the warn-only tools). Idempotent — already-present tools are skipped, so re-running a completed setup is a no-op. It prepends the same known toolchain dirs the probe does, so a tool that is installed but off the inherited `PATH` is not reinstalled.
+
+It does **not** install the C++ build toolchain (Visual Studio / MSVC or Clang-cl) and does not configure or build the project — those stay with [`BUILD.md`](../../BUILD.md) § Prerequisites and `bash scripts/dev/doctor.sh`. Packages with no mapping on the current host (e.g. `bats` with no `npm`, `OpenCppCoverage`) are printed as an explicit manual hint rather than silently skipped.
+
+Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness>`.
+
+## Windows-only shims
+
+The dev toolchain under `scripts/` is **bash-only** — every former `.ps1` helper was ported (see `docs/plans/kill-powershell-minimize-toolchain.md`). Exactly five PowerShell files survive, all under `agents/scripts/core/`, and each carries a `# Last remaining PowerShell file` header comment pointing back here. They stay PowerShell because they call Windows APIs that have no Git-Bash equivalent:
+
+| File | Why it must stay PowerShell |
+|---|---|
+| `merge-watcher-install-autostart.ps1` | `Register-ScheduledTask` — Task Scheduler has no bash-callable equivalent |
+| `merge-watcher-uninstall-autostart.ps1` | `Get-/Stop-/Unregister-ScheduledTask` counterpart to the above |
+| `merge-watcher-install-prune-task.ps1` | registers the log-prune Scheduled Task |
+| `merge-watcher-notify-setup.ps1` | `Install-Module BurntToast` from PSGallery (PowerShellGet is PS-only) |
+| `smatchet-notify-windows.ps1` | fires the WinRT toast via BurntToast |
+
+Rules if you touch one: keep it **ASCII-only, no BOM, LF endings** (Windows PowerShell 5.1 decodes a no-BOM file as ANSI and mis-parses non-ASCII — an em-dash in a string literal silently kills the script), and keep the header marker comment. Adding a **new** `.ps1` anywhere else is a regression — port it to bash instead. Cross-platform primitives with no shell equivalent go to Python: `flock(1)` is util-linux (absent on Git Bash), so drain serialisation uses `scripts/dev/lockfile.py`.
+
 ## VCS mode (git vs Perforce) — per machine
 
 Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".
 
-`scripts/dev/set-vcs-mode.{sh,ps1}` sets **both** layers idempotently — run it **once per machine** to pin the mode you want everywhere:
+`scripts/dev/set-vcs-mode.sh` sets **both** layers idempotently — run it **once per machine** to pin the mode you want everywhere. It is the only implementation on every platform; the PowerShell twin was deleted, since the bash script already writes the Windows User-registry env via `setx`:
 
-```powershell
-# Windows (authoritative — sets the User registry + the ~/.bashrc managed block)
-pwsh scripts/dev/set-vcs-mode.ps1 git    # or: p4
-```
 ```bash
 # git-bash / POSIX (also syncs the Windows registry via setx when on Windows)
 bash scripts/dev/set-vcs-mode.sh git     # or: p4;  no arg prints the current mode
@@ -153,6 +178,6 @@ Reference implementations: [`claude-code/hooks/lint-portable-purity.sh`](claude-
 
 1. Create `docs/harness/<name>/setup.md` with the recreation steps.
 2. If the harness needs template files, place them under `docs/harness/<name>/`.
-3. Add a `setup_<name>()` function to `agents/scripts/core/setup-harness.sh` + `.ps1`.
+3. Add a `setup_<name>()` function to `agents/scripts/core/setup-harness.sh` (single implementation — there is no PowerShell twin to keep in step).
 4. Add a row to the table above.
 5. Add `.<name>/` to `.gitignore`.

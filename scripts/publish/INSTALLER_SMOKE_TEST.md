@@ -18,15 +18,15 @@ This guide documents the Windows installer smoke test used for Smatchet release 
 
 ## Scripts
 
-- `scripts\publish\test_windows_version_info.ps1`
-- `scripts\publish\test_installer_smoke.ps1`
-- `scripts\publish\test_release_smoke.ps1`
+- `scripts/publish/test-windows-version-info.py`
+- `scripts/publish/test-installer-smoke.sh`
+- `scripts/publish/test-release-smoke.sh`
 
 ## Prerequisites
 
 - Windows
-- PowerShell
-- a built release bundle from `scripts\publish\release_github.ps1`
+- Git Bash (ships with Git for Windows) and Python 3
+- a built release bundle from `scripts/publish/release-github.sh`
 - if you want signature checks:
   - signed installer and app payload
   - a certificate chain trusted by the machine, or accept that a temporary/self-signed cert will report as present but untrusted
@@ -35,60 +35,49 @@ This guide documents the Windows installer smoke test used for Smatchet release 
 
 Build a release bundle first:
 
-```powershell
-.\scripts\publish\release_github.ps1 -AllowDirty
+```bash
+bash scripts/publish/release-github.sh --allow-dirty
 ```
 
 Then run the full release smoke test:
 
-```powershell
-.\scripts\publish\test_release_smoke.ps1 `
-  -ReleaseDir .\out\releases\v0.6.7-local-20260510-152130 `
-  -ExpectedVersion 0.6.7
+```bash
+bash scripts/publish/test-release-smoke.sh --release-dir out/releases/v0.6.7-local-20260510-152130 --expected-version 0.6.7
 ```
 
 If you also want Authenticode checks:
 
-```powershell
-.\scripts\publish\test_release_smoke.ps1 `
-  -ReleaseDir .\out\releases\v0.6.7-local-20260510-152130 `
-  -ExpectedVersion 0.6.7 `
-  -CheckInstallerSignatures
+```bash
+bash scripts/publish/test-release-smoke.sh --release-dir out/releases/v0.6.7-local-20260510-152130 --expected-version 0.6.7 --check-installer-signatures
 ```
 
 ## Individual checks
 
 Validate one exe's Windows version resource:
 
-```powershell
-.\scripts\publish\test_windows_version_info.ps1 `
-  -Path .\build\ninja-publish-msvc\Smatchet.exe `
-  -ExpectedVersion 0.6.7
+```bash
+python scripts/publish/test-windows-version-info.py build/ninja-publish-msvc/Smatchet.exe --expected-version 0.6.7
 ```
 
 Run just the installer smoke test:
 
-```powershell
-.\scripts\publish\test_installer_smoke.ps1 `
-  -ReleaseDir .\out\releases\v0.6.7-local-20260510-152130 `
-  -ExpectedVersion 0.6.7
+```bash
+bash scripts/publish/test-installer-smoke.sh --release-dir out/releases/v0.6.7-local-20260510-152130 --expected-version 0.6.7
 ```
 
 Or point directly at an installer:
 
-```powershell
-.\scripts\publish\test_installer_smoke.ps1 `
-  -InstallerPath .\out\releases\v0.6.7-local-20260510-152130\assets\Smatchet-v0.6.7-local-20260510-152130-windows-setup.exe `
-  -ExpectedVersion 0.6.7
+```bash
+bash scripts/publish/test-installer-smoke.sh --installer-path out/releases/v0.6.7-local-20260510-152130/assets/Smatchet-v0.6.7-local-20260510-152130-windows-setup.exe --expected-version 0.6.7
 ```
 
 ## Important options
 
-- `-ClearUserDataBeforeInstall`
+- `--clear-user-data-before-install`
   - deletes `%LocalAppData%\Smatchet` before the test so the run starts from a clean user-data state
-- `-KeepUserDataAfterTest`
+- `--keep-user-data-after-test`
   - leaves `%LocalAppData%\Smatchet` behind for inspection after the run
-- `-CheckInstallerSignatures`
+- `--check-installer-signatures` (`--check-signatures` on `test-installer-smoke.sh`)
   - checks signatures on the installer, installed app exe, and installed uninstaller
 
 ## Expected results
@@ -102,7 +91,7 @@ Success returns JSON that includes:
 - Fab submission version
 - user-data files observed after launch/uninstall
 
-The scripts throw immediately on hard failures such as:
+The scripts exit non-zero immediately on hard failures such as:
 
 - missing assets
 - unreadable Windows version info
@@ -113,7 +102,7 @@ The scripts throw immediately on hard failures such as:
 
 ## Notes
 
-- `test_installer_smoke.ps1` uses silent install and uninstall switches:
+- `test-installer-smoke.sh` uses silent install and uninstall switches:
   - `/VERYSILENT`
   - `/SUPPRESSMSGBOXES`
   - `/NORESTART`

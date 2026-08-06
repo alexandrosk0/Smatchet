@@ -339,6 +339,13 @@ add_executable(SmatchetTests
     # typo (key resolves to English fallback under fr-FR) can't regress.
     # SmatchetLocalization.cpp already linked below.
     Core/PrefsAssistantLocalization.test.cpp
+    # about-selectable-values — pin the About modal's chrome strings. They reach the
+    # table through implicit source-string keying (TranslateSource), so a retyped
+    # button label would silently drop to English with nothing else noticing; the
+    # right-click menu items have no other call site in the repo. Also pins the
+    # retired about.check_updates key as absent, and the distinct Help/Preferences
+    # "Check for Updates" literals as still present.
+    Core/AboutLocalization.test.cpp
     # user-facing-text-i18n-sweep — pin a sample of the keys added for literals that
     # previously bypassed the lookup (toasts, palette, toolbar editor, mobile shell).
     Core/I18nSweepLocalization.test.cpp
@@ -970,6 +977,11 @@ add_executable(SmatchetTests
     Core/AboutInfo.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/AboutInfo.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/HostMachineInfo.cpp"
+    # Help > About app icon — the .ico unpacker behind the baked-in app icon. Pure byte parsing
+    # with no ImGui/texture dependency (the upload half lives in SmatchetImageTextureCache and is
+    # not linked here), so the truncation/malformed-header cases run headless.
+    Core/IcoDecode.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"

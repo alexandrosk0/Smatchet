@@ -835,6 +835,14 @@ struct UiDrawSession {
     bool viewSortDirty = false;
     bool logAutoScroll = true;
 
+    /// True when this process was launched as a CLI-spawned ephemeral instance
+    /// (`--ephemeral`, hidden window, forced MCP) — it exists only to serve one
+    /// scripted command and then exit. Startup UI work whose completion frame is
+    /// wall-clock- or network-dependent must be suppressed for the whole session:
+    /// a scenario-state gate cannot do it, because the child boots and starts that
+    /// work BEFORE the driver sends `scenario.run` over MCP. Set once at bootstrap.
+    bool ephemeralSession = false;
+
     bool appUpdateStartupCheckStarted = false;
     bool appUpdateCheckInFlight = false;
     bool appUpdateCheckManual = false;
@@ -1053,6 +1061,12 @@ struct UiDrawSession {
     /// Snapshot taken once per open (GatherAboutInfo reads the disk-backed config), released
     /// on close. Held by pointer so this 75-includer header never pulls in AboutInfo.h.
     std::shared_ptr<smatchet::diagnostics::AboutInfo> aboutInfo;
+    /// Number of "Copy to Clipboard" presses in the current open. Drives the escalating toast
+    /// text; reset alongside `aboutInfo` on close so every open starts from the plain message.
+    int aboutCopyPresses = 0;
+    /// `ImGui::GetTime()` at which the app-icon rocket launch started, or < 0 when idle.
+    /// Ctrl+Shift+click on the icon arms it; the draw code retires it when the flight ends.
+    double aboutRocketStart = -1.0;
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
     /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive

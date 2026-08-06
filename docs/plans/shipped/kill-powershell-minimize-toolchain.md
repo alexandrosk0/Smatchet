@@ -1,0 +1,256 @@
+# Kill PowerShell + Minimize External Tools
+
+> **Status**: `shipped` — all 7 slices merged (2026-08-05 → 2026-08-06): A #1951, B #1955, C #1956, D #1957, E #1958, F #1959, G. **29 of 34 `.ps1` deleted; the 5 kept Windows-native shims are documented in [`docs/harness/SETUP.md`](../../harness/SETUP.md) § Windows-only shims.** Re-audited 2026-08-05 against the live tree before implementation started.
+
+## Context
+
+Smatchet's dev toolchain sprawls across **34 first-party PowerShell scripts** (audited 2026-08-05 via `git ls-files '*.ps1'` — 27 under `scripts/`, 6 under `agents/scripts/core/`, 1 at the repo root; `tools/bug-report-relay/node_modules/**/*.ps1` are vendored npm shims and out of scope) plus a wide external-tool dependency set (`jq`, `flock`, `gh`, BurntToast, plus the build core). This couples the project to Windows-specific tooling, doubles the maintenance surface (PS↔bash drift — `setup-harness.{ps1,sh}`, `with-msvc.ps1`↔`with-msvc-env.sh`, `set-vcs-mode.{ps1,sh}` are all live twin pairs today), and makes first setup fragile (jq + gh PATH bugs already burned the orchestrator mid-merge-gates-poll).
+
+Goal: **collapse to bash + minimal cross-platform tool set**. Keep PS only where Windows fundamentally requires it (Scheduled Tasks + OS-toast + module install).
+
+### What changed since the original draft (why the re-audit was needed)
+
+- **`scripts/` was split** by [`split-scripts-build-vs-agentic.md`](../shipped/split-scripts-build-vs-agentic.md) (PRs #609/#610): 97 scripts relocated. Every PS path in the old plan is stale — the dev wrappers now live under **`scripts/dev/local/`** (human-run, CI-irrelevant, allow-listed to skip the MSVC build) and the watcher/notify shims under **`agents/scripts/core/`**.
+- **Eight PS files exist that the old plan never listed**: `scripts/dev/{new-session,worktree,run-with-procdump,with-msvc,verify}.ps1`, `scripts/dev/local/{build-msvc-asan,test-build-wrapper}.ps1`, plus `agents/scripts/core/merge-watcher-{install-prune-task,notify-setup}.ps1` — and the repo-root **`build.ps1`** landed later still (`dev-onboarding-first-run-quickstart`). Net PS count went **up**: 20 drafted → 25 counted 2026-06-15 → **34** today.
+- **`jq`'s role shrank**: `check-required-tools.sh` now documents it as **test-harness-only** (`merge_gates.bats` mocks `gh` via jq); the poller + watcher parse through **gh's bundled jq** (`gh api --jq`). The old "+200ms per poll" argument for keeping it no longer applies to the hot path — but it stays anyway (bats suite dependency, zero-cost to keep).
+- **`flock` is still required and still un-replaced** — no `scripts/dev/lockfile.py` exists; `docs/harness/claude-code/hooks/lint-cpp-drain.sh` still calls it. Phase 5 is unchanged and still the cheapest slice.
+- **New consumer of the tool list**: `scripts/dev/setup-env.sh` (PR #1946) *installs* missing tools from its own package map, which carries a `flock` row (line 138) — dropping `flock` now means editing **two** files, not one.
+- **CI PS coupling grew**: `build-and-test.yml` has three `shell: pwsh` steps around the **ARM64 installer** that invoke `scripts/publish/release_github.ps1` directly (lines ~672–738). The old plan only knew about `coverage.yml`'s `shell: powershell` OpenCppCoverage step (still there, line 130).
+
+## Current inventory (audited 2026-08-05)
+
+| Location | Count | Files |
+|---|---|---|
+| `scripts/dev/local/` | 14 | `build_and_run.ps1` + 3 `build_and_run_*` shims, `build_standalone`, `run_standalone`, `run_clang_tidy`, `attach_unreal_vsjit`, `build-msvc-asan`, `test-build-wrapper`, `package_unreal_plugin_msvc`, `build_and_deploy_unreal_plugin`, `build_deploy_and_open_unreal`, `rebuild_testproject_plugin` |
+| `scripts/dev/` | 6 | `worktree`, `new-session`, `with-msvc`, `set-vcs-mode`, `run-with-procdump`, `verify` |
+| repo root | 1 | `build.ps1` (thin dispatcher → `scripts/dev/local/build_and_run.ps1`) |
+| `scripts/publish/` | 6 | `release_github`, `install_unreal_plugin`, `sync_release_version`, `test_installer_smoke`, `test_release_smoke`, `test_windows_version_info` |
+| `scripts/common/` | 1 | `SmatchetCMakeCommon.ps1` |
+| `agents/scripts/core/` | 6 | `setup-harness`, `smatchet-notify-windows`, `merge-watcher-install-autostart`, `merge-watcher-uninstall-autostart`, `merge-watcher-install-prune-task`, `merge-watcher-notify-setup` |
+| **total** | **34** | → target **5 kept**, **29 deleted** |
+
+## Final tool set after this change
+
+| Tool | Reason kept |
+|---|---|
+| bash | universal shell (Git Bash on Windows — already a hard prerequisite) |
+| python (3.11+) | dev scripts + new flock replacement |
+| cmake + ninja + gcc/g++ | build core |
+| git | table stakes |
+| gh | GitHub CLI — kept (curl+REST rewrite of merge-gates not worth the diff size); its **bundled jq** is what the poller actually uses |
+| jq | **kept** — now test-harness-only (`merge_gates.bats` mocks `gh` through it); cheap to keep, and dropping it would mean rewriting the bats mocks |
+| clang-format + clang-tidy + cppcheck | Pillar-3 enforcement |
+| **REMOVED**: flock | → `scripts/dev/lockfile.py` (cross-platform `msvcrt`/`fcntl`) |
+| BurntToast (PS module) | **kept** — sole reliable Windows OS-toast channel when Smatchet isn't running |
+
+## Approach
+
+### Phase 1 — Convert `scripts/dev/local/` build wrappers to bash (no behaviour change)
+
+- `build_and_run.ps1` + `build_and_run_ninja_debug.ps1` + `build_and_run_vs_debug.ps1` + `build_and_run_vs_release.ps1` → single **`scripts/dev/local/build-and-run.sh --preset <preset> [-- args]`** (the three `build_and_run_*` files are thin shims over the first).
+- `build_standalone.ps1` → `build-standalone.sh` (idempotent `CMakeCache.txt` skip).
+- `run_standalone.ps1` → `run-standalone.sh`.
+- `run_clang_tidy.ps1` → `run-clang-tidy.sh` (reads `compile_commands.json` via python).
+- `build-msvc-asan.ps1` → `build-msvc-asan.sh`.
+- `attach_unreal_vsjit.ps1` → `attach-unreal-vsjit.sh` (calls `vswhere.exe` by direct path).
+- `test-build-wrapper.ps1` → `test-build-wrapper.sh`, retargeted at the new `.sh` wrappers, and picked up automatically by `test-all.sh`'s `.sh` glob (today it is invisible to the harness because it is `.ps1`).
+
+MSVC-env sourcing: **do not re-derive** the `vswhere`→`vcvars64` dance — call `scripts/dev/with-msvc-env.sh`, which already exists and is the documented bash wrapper ([`build.md`](../../agent-rules/build.md) § MSVC toolset env). Reuse `scripts/dev/perf-run.sh` for arg-parsing idiom, `agents/scripts/core/setup-harness.sh` for the `uname -s` → `MINGW*/MSYS*/CYGWIN*` Windows detection, and `scripts/dev/check-required-tools.sh` (lines 75-82) for the idempotent MSYS2 PATH-prepend.
+
+Also in scope, and **must move in the same slice** as `build_and_run` (both delegate to it):
+
+- the repo-root **`build.ps1`** (added by [`dev-onboarding-first-run-quickstart`](../shipped/dev-onboarding-first-run-quickstart.md)) — a thin dispatcher (preset auto-detect + `with-msvc.ps1` routing, zero build logic) → **`build.sh`**. Its behaviour is pinned by `test-build-wrapper.ps1` tests 4-8 (five cases on top of the three pre-existing ones), which port with it. Root `build.ps1` is cited from `README.md` / `QUICKSTART.md` / `BUILD.md` — user-facing, so keep a one-line PS shim *or* update all three in the same slice.
+- **`scripts/dev/verify.ps1`** → **`verify.sh`**: build (`build_and_run -BuildOnly`) then `comment_audit.py --diff` + `test-lint-rules.sh --diff`. Steps 2-3 are already bash, so the port is mostly dropping the wrapper; it is cited from `BUILD.md`, `docs/agent-rules/{build,process-rules}.md`, and five agent prompts (`build-doctor`, `debug-detective`, `mechanic`, `test-rig`, `offline-sync`) — grep-sweep all of them.
+
+**Doc coupling**: [`build.md`](../../agent-rules/build.md) § MSYS2 retired + § Dual-target verify + § MSVC toolset env name these `.ps1` paths explicitly — update in the same slice.
+
+### Phase 2 — Convert `scripts/publish/` to bash + fix the CI ARM64 path
+
+- `release_github.ps1` → `scripts/publish/release-github.sh` (uses `gh release create`; must keep the Inno Setup `ISCC.exe` discovery — fixed install dirs + uninstall-registry probe — which the CI step's warning text depends on).
+- `install_unreal_plugin.ps1` → `install-unreal-plugin.sh`; `sync_release_version.ps1` → `sync-release-version.sh`; `test_installer_smoke.ps1` / `test_release_smoke.ps1` → `.sh`.
+- `test_windows_version_info.ps1` → `scripts/publish/test-windows-version-info.py` (PS `Add-Type` has no bash analogue; python `ctypes.windll.version` does).
+- `scripts/common/SmatchetCMakeCommon.ps1` → `scripts/common/smatchet-cmake-common.sh` (preset-name parsing, version extraction) — shared by Phases 1–3, so land it **with Phase 1**.
+- **`.github/workflows/build-and-test.yml`**: the ARM64 installer job's three `shell: pwsh` steps (~672–738) call `release_github.ps1 -Arch arm64`. Convert to `shell: bash` + `release-github.sh --arch arm64`. This is the only *CI-blocking* PS in the whole plan — every other target is human-run.
+
+### Phase 3 — Convert Unreal packaging PS to bash
+
+`package_unreal_plugin_msvc.ps1`, `build_and_deploy_unreal_plugin.ps1`, `build_deploy_and_open_unreal.ps1`, `rebuild_testproject_plugin.ps1` → `.sh` under `scripts/dev/local/`. These wrap `UnrealBuildTool.exe` + `RunUAT.bat`, both callable from bash on Windows via `cmd.exe /c` (already the pattern in `setup-harness.sh` for `mklink`). vswhere by direct path — no `Resolve-MSBuild` cmdlet needed.
+
+### Phase 4 — Session/worktree launchers + drift twins
+
+**Drift twins — delete the PS, bash is already canonical:**
+- `agents/scripts/core/setup-harness.ps1` (twin of `setup-harness.sh`; [`SETUP.md`](../../harness/SETUP.md) line 19 offers it as a Windows substitute and line 159 tells contributors to edit **both** — that instruction is the drift).
+- `scripts/dev/with-msvc.ps1` (twin of `with-msvc-env.sh`).
+- `scripts/dev/set-vcs-mode.ps1` (twin of `set-vcs-mode.sh`).
+
+**Ports (no PS-only capability involved):**
+- `scripts/dev/worktree.ps1` (284 lines — worktree lifecycle: `git worktree`, `.claude/` provisioning, junctions via `mklink`) → `scripts/dev/worktree.sh`.
+- `scripts/dev/new-session.ps1` (66 lines — `nsc` launcher) → `scripts/dev/new-session.sh`.
+- `scripts/dev/run-with-procdump.ps1` (66 lines — procdump child-process wrapper) → `scripts/dev/run-with-procdump.sh`.
+
+⚠ **User-visible workflow change**: `nsc` is a PowerShell-profile alias and `pwsh scripts/dev/worktree.ps1 new <slug>` is quoted in the SessionStart shared-tree banner, [`process-rules.md`](../../agent-rules/process-rules.md) § Concurrent interactive sessions, `SETUP.md`, and the `guard-shared-tree.sh` / `guard-head-drift.sh` hooks. The alias must be re-pointed at `bash …/new-session.sh` and **all** hook/banner strings updated in the same slice — a half-migration here silently breaks the worktree discipline that keeps concurrent sessions from corrupting each other. This is the highest-coordination slice despite being small.
+
+### Phase 5 — Drop `flock` (unchanged; still the cheapest slice)
+
+Sole consumer: `docs/harness/claude-code/hooks/lint-cpp-drain.sh` (queue serialisation).
+
+Replacement: new `scripts/dev/lockfile.py` — cross-platform exclusive lock via `msvcrt.locking` (Windows) / `fcntl.flock` (POSIX). Bash wrapper invokes it as a subprocess holding the lock for a `--cmd` invocation.
+
+```bash
+# before
+flock -x "$lockfile" -- bash drain.sh
+
+# after
+python scripts/dev/lockfile.py --lockfile "$lockfile" --cmd 'bash drain.sh'
+```
+
+Then remove the `flock` row from **both** `scripts/dev/check-required-tools.sh` (line 65) **and** `scripts/dev/setup-env.sh` (package-map line 138 + the hint case at line 148), and the `flock` row in [`SETUP.md`](../../harness/SETUP.md) (line 52).
+
+### Phase 6 — Keep the Windows-native shims (no change)
+
+The 5 kept files all live under `agents/scripts/core/` and all use cmdlets with no clean `.exe` equivalent:
+
+| File | Why PS is mandatory |
+|---|---|
+| `smatchet-notify-windows.ps1` | BurntToast toast — sole reliable OS-toast channel when Smatchet isn't running |
+| `merge-watcher-notify-setup.ps1` | `Install-Module BurntToast` opt-in (the notify path deliberately never auto-installs) |
+| `merge-watcher-install-autostart.ps1` | `Register-ScheduledTask` with XML config — no clean `schtasks.exe` equivalent |
+| `merge-watcher-uninstall-autostart.ps1` | symmetric pair |
+| `merge-watcher-install-prune-task.ps1` | `Register-ScheduledTask` (daily `merge-watch prune` self-heal) |
+
+Add to each: `# Last remaining PowerShell file — see docs/harness/SETUP.md § Windows-only shims.`
+
+### Phase 7 — Sweep leftovers
+
+- `.github/workflows/coverage.yml` line 130 — replace `shell: powershell` (OpenCppCoverage install) with `shell: bash` + choco via `cmd.exe /c choco install …`, or move the install to a setup step.
+- Grep-sweep `docs/**/*.md` + `agents/**/*.md` + `BUILD.md` + the `.claude` hook scripts for `.ps1` / `pwsh` / `powershell` → point at the `.sh` equivalents. Known hits beyond those already named: `BUILD.md`, `README.md`, `QUICKSTART.md`, `docs/plans/shipped/dev-onboarding-first-run-quickstart.md`, `docs/agent-rules/cpp-rules.md`, `docs/plans/INDEX.md`.
+- Update `AGENTS.md` harness-adapter table: note the `flock` → `lockfile.py` replacement.
+- Update `docs/harness/SETUP.md` for the new tool floor + a **§ Windows-only shims** section naming the 5 kept files.
+- Delete the 29 ported `.ps1` files.
+
+## Files modified
+
+**New (bash + python):** ~14 `.sh` under `scripts/dev/local/` (Phases 1+3) · 5 `.sh` + 1 `.py` under `scripts/publish/` (Phase 2) · `scripts/common/smatchet-cmake-common.sh` · `scripts/dev/{worktree,new-session,run-with-procdump}.sh` (Phase 4) · `scripts/dev/lockfile.py` (Phase 5).
+
+**Modified:** `scripts/dev/check-required-tools.sh` + `scripts/dev/setup-env.sh` (drop `flock`) · `docs/harness/claude-code/hooks/lint-cpp-drain.sh` · `.github/workflows/build-and-test.yml` (ARM64 installer → bash) + `coverage.yml` (→ bash) · `AGENTS.md` + `docs/harness/SETUP.md` + `docs/agent-rules/build.md` + `docs/agent-rules/process-rules.md` + `BUILD.md` · `guard-shared-tree.sh` / `guard-head-drift.sh` banner strings.
+
+**Deleted:** 29 `.ps1` files (34 today → 5 kept).
+
+## Pillar 1-3 callouts
+
+- **Pillar 1 (perf)**: N/A — scripts run outside the UI thread; no frame-budget impact. (The old "+200ms per merge-gates poll" jq argument is obsolete — the poller uses gh's bundled jq.)
+- **Pillar 2 (UI never freezes)**: N/A — no UI-thread code touched.
+- **Pillar 3 (never crash)**: N/A — no C++ touched. `lockfile.py` failure modes (lock held > timeout, file unwritable) surface as non-zero exit + stderr, same contract as `flock`.
+
+## Perf-review-system gates
+
+N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scenario covers shell scripts.
+
+## Risks
+
+- **Worktree-launcher half-migration (new, highest)** — `nsc` / `worktree.ps1` is load-bearing for concurrent-session isolation and is referenced from hooks + the SessionStart banner + three docs. Mitigation: Phase 4 lands launcher + every reference in **one** PR; keep `worktree.ps1` as a 3-line pass-through to the `.sh` for one release cycle before deleting.
+- **ARM64 installer CI break (new)** — the only PS in a *required* CI path. Mitigation: land Phase 2's workflow edit alone, on a PR that actually exercises the installer job, before deleting `release_github.ps1`.
+- **PS→bash quoting bugs** — Windows path quoting + spaces in `%USERPROFILE%`. Mitigation: every new `.sh` gets a bats test exercising paths-with-spaces (existing pattern in `tests/bats/`).
+- **Unreal packaging breakage** — UBT from bash via `cmd.exe /c` works in `setup-harness.sh` but is untested under heavy build load. Mitigation: keep the PS in git one PR cycle as `.ps1.bak`, delete in the next.
+- **Lint-hook drift** — **resolved in Slice A**: `lint-cpp-drain.sh` no longer calls `flock`; it serialises through `scripts/dev/lockfile.py` and degrades to lock-free when no Python is present. Residual risk is narrower — the drain's python-candidate probe and `lockfile.py`'s CLI (`--nonblock` / `--busy-rc`) must stay in step; `agents/scripts/core/test-lint-hook-split.sh` Test 10 is the gate.
+- **`setup-env.sh` skew (new)** — the installer's package map duplicates the tool list; any tool-floor change must edit it too or a fresh clone re-installs a dropped tool.
+
+## Verification
+
+- `bash scripts/dev/check-required-tools.sh` — reduced tool set (no `flock` row; jq still required).
+- `bash scripts/dev/setup-env.sh --dry-run` — no `flock` row in the plan output.
+- `bash scripts/dev/local/build-and-run.sh --preset ninja-iter-msvc` — full build + run from bash only; matches prior PS exe output.
+- `bash scripts/dev/local/test-build-wrapper.sh` — wrapper smoke test, now inside `test-all.sh`'s glob.
+- 4 parallel `bash docs/harness/claude-code/hooks/lint-cpp-drain.sh` — confirms `lockfile.py` serialises.
+- `bash scripts/publish/release-github.sh --tag v0.0.0-test --no-publish` — release pipeline without upload; plus a green ARM64 installer job on the Phase-2 PR.
+- `bash scripts/dev/local/build-and-deploy-unreal-plugin.sh` — UBT-from-bash under Windows.
+- `bash scripts/dev/new-session.sh <slug>` from the integration tree — creates the worktree, provisions `.claude/`, launches; guard hooks still fire.
+- `bats tests/bats/` green; `bash scripts/dev/test-all.sh` green; `bash scripts/dev/test-docs.sh` green (doc-link sweep after the `.ps1` → `.sh` repath).
+- `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` — dual-target still clean.
+- Grep sweep: `git grep -nE '\.ps1|powershell|pwsh' -- scripts docs agents .github BUILD.md AGENTS.md` returns only the 5 kept shims + the SETUP.md § Windows-only shims callout.
+
+## Implementation order (suggested PR slices)
+
+1. **Slice A** — `lockfile.py` + drop `flock` (both `check-required-tools.sh` and `setup-env.sh`). Smallest, fully decoupled.
+2. **Slice B** — `smatchet-cmake-common.sh` + Phase 1 build wrappers, **including root `build.ps1` → `build.sh` and `verify.ps1` → `verify.sh`** (both delegate to `build_and_run`, so they cannot be split off) plus the README/QUICKSTART/BUILD + agent-prompt reference sweep. Hot path, visible immediately.
+3. **Slice C** — Phase 4 drift-twin deletions (`setup-harness.ps1`, `with-msvc.ps1`, `set-vcs-mode.ps1`). Pure deletion, no port.
+4. **Slice D** — Phase 2 publish scripts **+ the ARM64 CI workflow edit** (must ship together).
+5. **Slice E** — Phase 4 worktree/new-session/procdump launchers + every hook/doc/banner reference.
+6. **Slice F** — Phase 3 Unreal packaging. Highest blast radius.
+7. **Slice G** — Phase 7 sweep (coverage.yml, docs, final deletions). Kept shims untouched.
+
+## Implementation log
+
+- **2026-08-05 — Slice A (Phase 5, drop `flock`).** Added `scripts/dev/lockfile.py`
+  (cross-platform `flock(1)` stand-in: `msvcrt.locking` on Windows, `fcntl.flock`
+  on POSIX; `--nonblock` / `--timeout` / `--busy-rc`). `lint-cpp-drain.sh` now
+  re-execs itself under the lock (`SMATCHET_LINT_DRAIN_LOCKED` guard) so the lock
+  spans the whole drain exactly as `flock -n 200` did; with no Python it runs
+  lock-free rather than skipping the drain. Dropped the `flock` rows from
+  `check-required-tools.sh`, `setup-env.sh` and `docs/harness/SETUP.md`.
+  `test-lint-hook-split.sh` Test 10 — previously a permanent skip on every
+  Git-Bash host, since it gated on `command -v flock` — now runs for real
+  (21 passed / 0 failed).
+- **2026-08-06 — Slice F (Phase 3, Unreal packaging).** Ported the four
+  `scripts/dev/local/*unreal*.ps1` to bash: `package-unreal-plugin-msvc.sh`
+  (the full port — vswhere by direct path, VS-2022-preferred generator pick,
+  build-dir + FetchContent stale-cache resets, feature-cache drift detection,
+  `--package-only` / `--force-configure` / `--toolset-version`),
+  `build-and-deploy-unreal-plugin.sh`, `build-deploy-and-open-unreal.sh`
+  (UBT `Build.bat` + `start` through `cmd.exe /c`), and
+  `rebuild-testproject-plugin.sh` (EngineAssociation read from the `.uproject`
+  JSON via `smatchet_python`, engine root probed through `reg.exe query` on both
+  registry views). The four `.ps1` are deleted outright — no forwarding shims.
+  Reference sweep in the same commit: `SmatchetImGuiPlugin/README.md` (both
+  troubleshooting recipes) and the three `SmatchetImGuiPlugin.Build.cs`
+  BuildException messages that told the user which script to re-run.
+- **2026-08-06 — Slice G (Phases 6 + 7, final sweep).** Phase 6: each of the five
+  kept `agents/scripts/core/*.ps1` gained a `# Last remaining PowerShell file`
+  header marker pointing at `docs/harness/SETUP.md` § Windows-only shims — the
+  new section that names all five, states why each must stay PowerShell
+  (Scheduled Tasks, PSGallery module install, WinRT toast), and records the
+  ASCII-only / no-BOM / LF editing rule. Phase 7: `coverage.yml`'s
+  OpenCppCoverage step — the last `shell: powershell` step in the repo — became
+  `shell: bash` with `cmd.exe /c "choco install …"`; `BUILD.md` retagged six
+  `powershell` fences to `bash`; the harness-adapter table gained a `file-lock`
+  row (`scripts/dev/lockfile.py` on every harness, since `flock(1)` is
+  util-linux); `docs/design/separate-agents-repo.md` lost its two bullets naming
+  the deleted `setup-harness.ps1`; the markdown-link baseline was regenerated.
+  Final count: **29 deleted, 5 kept**, matching the plan target.
+
+## Deviations from plan
+
+- **2026-08-05 — Slice A, two corrections.** (1) The plan pinned the `setup-env.sh`
+  `flock` rows at lines 138/148; they are at **156/166** (the file grew since the
+  audit) — removal was by content match, not line number. (2) The drain's queue
+  glob `.lint-queue.*` also matched the lock file `.lint-queue.lock`, so the drain
+  read it as queue content and `rm -f`'d it. Harmless under `flock` (POSIX deletes
+  an open fd fine) but fatal under `lockfile.py` on Windows, where the delete fails
+  while the lock is held. Both the drain and `test-lint-hook-split.sh` now filter
+  `*.lock` out of the glob — a latent bug the port exposed, fixed in the same slice.
+- **Slice A — `flock` dropped for `scripts/dev/lockfile.py`** (PR #1951). A stdlib-only cross-platform lock (`fcntl.flock` on POSIX, `msvcrt.locking` byte-range on Windows) with `--nonblock` / `--timeout` / `--busy-rc`; `lint-cpp-drain.sh` serialises through it and degrades to lock-free when no Python is present. `flock` left the tool floor in `check-required-tools.sh` + `setup-env.sh` + `docs/harness/SETUP.md`. Covered by `test-lint-hook-split.sh` Test 10 (contended drain leaves the queue for the holder, post-release drain consumes it).
+- **Slice B — build wrappers ported to bash.** New: `scripts/common/smatchet-cmake-common.sh` (preset → `binaryDir` resolution with `inherits`/`${sourceDir}` handling, project-version helpers, Unreal plugin-manifest helpers — all JSON parsed through embedded python, no jq), root `build.sh`, `scripts/dev/verify.sh`, `scripts/dev/local/{build-and-run,build-standalone,run-standalone,build-msvc-asan,run-clang-tidy,attach-unreal-vsjit,test-build-wrapper}.sh`. `scripts/dev/with-msvc-env.sh` gained `SMATCHET_MSVC_ENV_FAIL_RC` so `build.sh` can force wrapper *setup* failures onto **78**, keeping them distinguishable from a wrapped command's own exit code. Deleted: `build.ps1`, `scripts/dev/verify.ps1`, and the ten `scripts/dev/local/*.ps1` build/run/tidy/attach files (the three `build_and_run_*` preset shims are absorbed into `build-and-run.sh --preset`). Reference sweep: `README.md`, `QUICKSTART.md`, `BUILD.md`, `docs/agent-rules/{build,ci-local-parity,process-rules,ship-loops}.md`, `scripts/git-hooks/pre-push`, `.clang-tidy`, `project.config.schema.json`, and the five agent prompts that named `verify.ps1`. `test-build-wrapper.sh` (the 10-test contract, ported with sandboxed stub delegates — no compiler, no configure): 10 passed, 0 failed.
+- **Slice C — the three drift twins deleted.** `agents/scripts/core/setup-harness.ps1`, `scripts/dev/with-msvc.ps1` and `scripts/dev/set-vcs-mode.ps1` were PowerShell copies of bash scripts that already run under Git Bash on Windows; each had drifted from its original rather than tracking it. Deleted outright — no forwarding shims. Reference sweep in the same commit: `docs/harness/SETUP.md` (install line, § VCS mode now bash-only since `set-vcs-mode.sh` already writes the Windows User-registry env via `setx`, § Adding a new harness), `docs/harness/{claude-code,cursor,codex}/setup.md` (the `pwsh … setup-harness.ps1` alternatives), `README.md`, `agents/core/build-doctor.md`, `docs/agent-rules/cpp-rules.md` and `.github/workflows/build-and-test.yml:528` (all now name `scripts/dev/with-msvc-env.sh`, the wrapper that actually implements the `PROCESSOR_ARCHITEW6432` host-arch fallback that CI comment cites), plus the stale PS1-parity rows in `docs/plans/cursor-vexp-coexistence.md`. `docs/design/separate-agents-repo.md` and `docs/plans/shipped/*` keep their `setup-harness.ps1` mentions — historical records, already grandfathered in `docs/high-integrity/markdown-link-baseline.md`.
+- **Slice D — publish scripts + the CI workflow edit.** New: `scripts/publish/{release-github,sync-release-version,install-unreal-plugin,test-installer-smoke,test-release-smoke}.sh` + `test-windows-version-info.py` (PS `Add-Type` version-resource reads become `ctypes.windll.version`). Deleted: the six `scripts/publish/*.ps1` originals plus `scripts/common/SmatchetCMakeCommon.ps1`, whose last two dot-sourcers were exactly those publish scripts. Every value-taking option carries both a `--flag <v>` and a `--flag=v` branch, and a `need_value` guard rejects a missing value up front (a bare `shift 2` fails *without* shifting, which under `set -e` aborts with no message). CI: three `shell: pwsh` steps ported to `shell: bash` — the ARM64 installer build (`--arch arm64`), the x64 installer build, and `release.yml`'s tagged-release bundle. The release step's PowerShell hashtable-splat becomes a bash array (one element per token, so `--notes`/`--release-name` free text can never word-split into bogus positionals) and keeps the tag-vs-HEAD re-fetch guard before any publish. Docs swept: `SIGNING.md`, `INSTALLER_SMOKE_TEST.md`, `INSTALL_UNREAL_PLUGIN.md`, `CMakePresets.json`'s ARM64 preset description.
+
+## Deviations from plan — carry-overs and re-audit
+
+- **Slice B — `scripts/common/SmatchetCMakeCommon.ps1` survives into Slice D.** The plan retires it with the Phase 1 build wrappers, but `scripts/publish/release_github.ps1:545` and `scripts/publish/sync_release_version.ps1:9` still dot-source it. Its bash replacement (`smatchet-cmake-common.sh`) ships in Slice B; the `.ps1` original is deleted in **Slice D**, when those two publish scripts port.
+- **Slice B — `with-msvc.ps1` references left standing.** `agents/core/build-doctor.md`, `docs/agent-rules/cpp-rules.md`, `README.md:140` and `.github/workflows/build-and-test.yml:528` still name `scripts/dev/with-msvc.ps1`. That file is a Slice **C** deletion and remains correct until then; the references are swept in Slice C rather than pre-emptively broken here.
+- **2026-08-06 — Slice F, `build-and-deploy-unreal-plugin.sh` is a wrapper, not a port.** The retired `build_and_deploy_unreal_plugin.ps1` was a drifted copy of `package_unreal_plugin_msvc.ps1` (same configure + build + deploy sequence, but with the generator hardcoded to "Visual Studio 17 2022", no toolset pin and no FetchContent reset). Porting both verbatim would have re-created the drift and tripped Pillar 5; the bash version is a ~20-line flag-translating wrapper that `exec`s the package script. Behaviour change on purpose: it now inherits the generator auto-detect and the stale-cache resets.
+- **2026-08-06 — Slice F, `.uproject` / engine-root resolution without PowerShell cmdlets.** `Get-Content | ConvertFrom-Json` became `smatchet_python` + `json.load` (`utf-8-sig`, so a BOM'd `.uproject` still parses), and the `HKLM:\SOFTWARE\EpicGames\Unreal Engine\<assoc>` / WOW6432Node `Get-ItemProperty` probe became `reg.exe query … /v InstalledDirectory`. Same two-view probe order, same `C:\Program Files\Epic Games\UE_<assoc>` fallback. Also fixed in passing: the newest-engine scan in `build-deploy-and-open-unreal.sh` sorts with `sort -V`, so a future `UE_5.10` no longer loses to `UE_5.7` under the lexical ordering the `.ps1` used.
+- **2026-08-06 — Slice F verification is smoke-level, not a full Unreal build.** `shellcheck -S warning` clean on all four; `--help`, unknown-arg, missing-option-value, bad-`--configuration` and bad-`--configure-preset` paths exercised; `vswhere` confirmed to report a 17.14 install alongside 18.5, i.e. the VS-2022-preferred branch resolves as intended. A real `SmatchetPackageUnrealLibs_DX12` configure+build and a UBT editor rebuild need a local Unreal install and were **not** run in this slice — no CI lane runs UBT (`SmatchetImGuiPlugin.Build.cs` says so itself), so this path stays human-verified on first local use.
+- **Slice D — `release_github.ps1` had three CI consumers, not one.** The plan names only the ARM64 installer job. A grep found two more live callers: the **x64** installer job in the same workflow and `release.yml`'s tagged-release pipeline. All three are ported in this slice; deleting the `.ps1` with either one unported would have broken a release tag push.
+- **Slice D — inline `pwsh` steps with no `.ps1` dependency left alone.** The host-arch assertion, Inno Setup provisioning, the two silent-install/launch smoke steps, and the signing-cert decode/cleanup steps remain `shell: pwsh`. They do Windows-native work (`Start-Process`/`Start-Job`, registry probes, base64 → temp file) and call no script under `scripts/`; the plan's goal is retiring `.ps1` **files**, not all PowerShell in CI.
+- **2026-08-05 — re-audit, no code shipped.** Plan rewritten against the live tree after `split-scripts-build-vs-agentic` invalidated every path. Inventory 20 → **34** (`git ls-files '*.ps1'`, vendored `node_modules` excluded — the first pass globbed only `scripts/**` + `agents/**` and so missed root `build.ps1` and `scripts/dev/verify.ps1`); kept-PS set 4 → **5** (all `agents/scripts/core/`); Phase 4 added (drift twins + worktree launchers, previously unlisted); Phase 2 gained the ARM64 CI workflow; Phase 5 gained `setup-env.sh`; the jq rationale was replaced (the +200ms poll argument no longer holds — the poller uses gh's bundled jq).
+- **Slice E — worktree/session launchers ported to bash.** New: `scripts/dev/worktree.sh` (`new|resync|list|rm|prune`, slug validation, `SMATCHET_TREES_ROOT` override, first-run integration-tree `.claude/` bootstrap, per-tree `.claude/.active-sessions` liveness read), `scripts/dev/new-session.sh` (the `nsc` launcher — caller-tree detection via `.git` dir-vs-file, `exec claude`), `scripts/dev/run-with-procdump.sh` (`--exe` / `--dump-dir` / `--procdump` / `--autocycle-panes`). Deleted the three matching `.ps1`. Single-PR reference sweep per the Phase 4 ⚠: the SessionStart banner (`session-tree-banner.sh`), both guard hooks (`guard-head-drift.sh` ×3 strings, `guard-shared-tree.sh` ×2), `process-rules.md` § Concurrent interactive sessions (×6, plus the re-pointed `nsc` alias definitions for PowerShell **and** bash), `docs/harness/SETUP.md`, `docs/guides/crash-capture.md`, `cmake/SmatchetGenerateBuildInfo.cmake`, `session-registry-lib.sh`, and the `session-guard-agnostic.md` plan's two `worktree.ps1` rows.
+
+## Deviations from plan
+
+- **Slice E — no `worktree.ps1` pass-through shim.** The risk row proposed keeping `worktree.ps1` as a 3-line forwarder for one release cycle; the user's scope decision for this plan was **delete outright** (no surviving PowerShell forwarders anywhere), so the `.ps1` is gone in the same commit as the port. Mitigated by the full same-PR reference sweep above — the `nsc` alias is the only caller outside the repo, and its new definition is documented in `process-rules.md` § Concurrent interactive sessions.
+- **2026-08-06 — Slice G, the marker comment is ASCII, not the plan's literal.** Phase 6 specifies `# Last remaining PowerShell file — see docs/harness/SETUP.md § Windows-only shims`. Windows PowerShell 5.1 reads these no-BOM UTF-8 files as ANSI and mis-decodes the em-dash and `§`, so the marker is written with ASCII substitutes (`-` and `section`). Same rule the files' own headers already document.
+- **2026-08-06 — Slice G, two `BUILD.md` `powershell` fences kept.** The retag covers the six fences whose bodies are `cmake --preset …` / `bash scripts/dev/doctor.sh`. Lines 22 and 32 stay `powershell`: they are `winget install Git.Git` / `winget install LLVM.LLVM` bootstrap steps that run **before** Git Bash exists on the machine, so labelling them bash would be wrong.
+- **2026-08-06 — Slice G, the remaining `shell: pwsh` steps stay.** Phase 7 names `coverage.yml` only, and the sweep confirms that is the last `shell: powershell` step. The eleven `shell: pwsh` steps in `build-and-test.yml` / `release.yml` all call `release-github.sh` or do inline Windows-native work (registry probes, `Start-Process`, cert decode) with no `.ps1` dependency — same carve-out recorded for Slice D.
+- **2026-08-06 — Slice G, the `flock` row went into `capability-adapter.md`, not `AGENTS.md`.** Phase 7 says "update the `AGENTS.md` harness-adapter table"; that table was extracted to `docs/harness/capability-adapter.md` and `AGENTS.md` § Harness adapter is now a pointer. The new `file-lock` row went to the real table — putting it back in `AGENTS.md` would fight the ≤150-line navigation-only cap.
+- **2026-08-06 — Slice G, the `coverage.yml` port needed `MSYS_NO_PATHCONV=1`.** The first push of the `shell: powershell` → `shell: bash` port ran `cmd.exe /c "choco install opencppcoverage …"` and the `Coverage (windows-2022 + OpenCppCoverage)` check went red — not at the install step (it exited 0 with **zero** output) but 15 minutes later at the coverage run, with `FAIL: OpenCppCoverage not found`. Cause: Git Bash's MSYS path conversion rewrites a lone `/c` argument into `C:/`, so `cmd.exe` received no switch, ran nothing, and returned success. Fixed by prefixing `MSYS_NO_PATHCONV=1` and adding a post-install `command -v OpenCppCoverage.exe` assertion so a future silent no-op fails at the step that caused it instead of a later one. **General rule for any future bash port: a `cmd.exe /c` invocation from Git Bash needs `MSYS_NO_PATHCONV=1`, and an installer step should assert its own artefact.**
+- **Slice E — `mklink` junctions never existed.** The plan describes `worktree.ps1` as provisioning "junctions via `mklink`"; the live script has no junction logic (it runs `setup-harness.sh claude-code` in the new worktree, which copies the adapter). Nothing to port — the bash version reproduces the actual behaviour.

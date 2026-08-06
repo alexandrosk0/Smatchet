@@ -626,6 +626,9 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
     }
 
     ctx.window = window;
+    // Latch the ephemeral-spawn identity for the whole session (see
+    // UiDrawSession::ephemeralSession). forceMcp is set exactly by `--ephemeral`.
+    g_ui.ephemeralSession = forceMcp;
     if (InitAppAndPlugins(ctx, cfg, forceMcp, err)) {
         return true;
     }
@@ -647,7 +650,18 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
 
     while (!glfwWindowShouldClose(ctx.window)) {
         glfwPollEvents();
-        ctx.app->mainThreadDispatcher.Drain();
+        // Gated on cfgInitialized: until SmatchetUI::drawInitConfigOnce has run,
+        // g_ui.cfg holds default-constructed values that its wholesale
+        // `g_ui.cfg = ConfigManager::Load()` is about to overwrite. Draining
+        // before that latch lets a command handler write g_ui.cfg only to have
+        // the load clobber it back to the on-disk values — which is how the
+        // bucket-C user-info-* scenarios intermittently captured the whisper
+        // first-run banner despite setting WhisperSetupCompleted in OnStart.
+        // Skipping the drain for the pre-first-Draw frames only defers the
+        // command by one frame; the in-Draw drain still runs every frame.
+        if (g_ui.cfgInitialized) {
+            ctx.app->mainThreadDispatcher.Drain();
+        }
 
         if (useDx12) {
             ctx.dx12->NewFrame();

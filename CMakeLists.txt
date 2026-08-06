@@ -81,7 +81,7 @@ endif()
 # compiler is known so it fires before any heavy configure work or compile).
 #
 # The repo pins the MSVC toolset (build.msvc_toolset_pin in project.config.json)
-# and both build wrappers (scripts/dev/with-msvc-env.sh / with-msvc.ps1) pass it
+# and the build wrapper (scripts/dev/with-msvc-env.sh) passes it
 # to vcvars64 as -vcvars_ver=<pin>, so a clean configure THROUGH a wrapper picks
 # a cl.exe whose minor version matches the STL headers it sees → consistent.
 #
@@ -162,7 +162,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT DEFINED ENV{CI})
             "-vcvars_ver from project.config.json:\n"
             "  rm -rf \"${CMAKE_BINARY_DIR}\"\n"
             "  scripts/dev/with-msvc-env.sh cmake --preset <preset>\n"
-            "(PowerShell: scripts/dev/with-msvc.ps1 cmake --preset <preset>)\n"
+            "(on Windows, run it from Git Bash)\n"
             "\n"
             "Or, if you deliberately want toolset 14.${_smatchet_cc_minor}: set build.msvc_toolset_pin to\n"
             "match, or pass -DSMATCHET_ALLOW_TOOLSET_MISMATCH=ON to downgrade this to a warning.")
@@ -490,6 +490,7 @@ include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
 include(cmake/Sanitizers.cmake)
 include(cmake/SmatchetDepManifest.cmake)
+include(cmake/SmatchetFontAssets.cmake)
 
 # ---------------------------------------------------------------------------
 # Help > About build-info codegen.
@@ -544,6 +545,40 @@ add_custom_target(SmatchetBuildInfoGen ALL
         BYPRODUCTS "${SMATCHET_BUILDINFO_HEADER}"
         COMMENT "Refreshing SmatchetBuildInfo.h (git provenance)"
         VERBATIM)
+
+# ---------------------------------------------------------------------------
+# Help > About app-icon codegen.
+#
+# Emits build/generated/include/SmatchetIconBytes.h — the bytes of the Win32
+# resource icon, so the About dialog can draw the real app icon with no runtime
+# file lookup (there is no meaningful icon path inside the Unreal plugin) and no
+# second copy of the artwork to drift. Included by EXACTLY ONE TU
+# (Source/Core/src/Ui/SmatchetAboutIcon.cpp); never packaged into the plugin.
+#
+# Configure time only, unlike SmatchetBuildInfo.h: the icon changes on a human
+# edit rather than on every commit, and CMAKE_CONFIGURE_DEPENDS re-runs configure
+# when it does. A missing icon is a WARNING, never a FATAL_ERROR
+# (cmake-local-gate-ci-scope) — the About dialog falls back to a glyph.
+# ---------------------------------------------------------------------------
+set(_smatchet_icon_src "${CMAKE_CURRENT_SOURCE_DIR}/Source/Standalone/smatchet.ico")
+set(SMATCHET_ICON_HEADER "${SMATCHET_BUILDINFO_DIR}/SmatchetIconBytes.h")
+if(EXISTS "${_smatchet_icon_src}")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_smatchet_icon_src}")
+    file(READ "${_smatchet_icon_src}" _smatchet_icon_hex HEX)
+    string(LENGTH "${_smatchet_icon_hex}" _smatchet_icon_nibbles)
+    math(EXPR SMATCHET_ICON_BYTE_COUNT "${_smatchet_icon_nibbles} / 2")
+    # Hex blob -> C initializer, then a line break every 16 bytes so the generated
+    # header stays readable (and diffable) instead of one multi-KB line.
+    string(REGEX REPLACE "(..)" "0x\\1," SMATCHET_ICON_BYTES "${_smatchet_icon_hex}")
+    string(REGEX REPLACE "((0x..,){16})" "\\1\n    " SMATCHET_ICON_BYTES "${SMATCHET_ICON_BYTES}")
+    set(SMATCHET_ICON_AVAILABLE 1)
+else()
+    message(WARNING "Smatchet icon not found at ${_smatchet_icon_src}; About dialog falls back to a glyph")
+    set(SMATCHET_ICON_AVAILABLE 0)
+    set(SMATCHET_ICON_BYTE_COUNT 0)
+    set(SMATCHET_ICON_BYTES "")
+endif()
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SmatchetIconBytes.h.in" "${SMATCHET_ICON_HEADER}" @ONLY)
 
 # /RTC1-vs-/fsanitize=address fix (infra: asan-doctest-rig-not-instrumented).
 # Must run BEFORE any add_library/add_executable so the cleaned Debug flags reach

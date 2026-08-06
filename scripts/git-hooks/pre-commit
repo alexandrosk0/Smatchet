@@ -1,13 +1,24 @@
 #!/usr/bin/env bash
-# pre-commit: cheap staged-file checks shared by harnesses that do not have
-# Claude Code's PostToolUse lint hook surface.
+# pre-commit: two independent staged-file checks.
+#
+# (A) PILLAR-2 STATIC SCAN — cheap staged-file checks shared by harnesses that do
+#     not have Claude Code's PostToolUse lint hook surface. Runs the harness-
+#     agnostic Pillar 2 static scanner on staged first-party C++ files. It
+#     intentionally skips non-C++ commits and deleted paths so docs/plan churn is
+#     not blocked by an empty scanner invocation.
+#
+# (B) CODE-REVIEW ACK — refuse a commit whose STAGED diff is substantive C++ and
+#     carries no review acknowledgement pinned to that exact diff content.
+#     docs/agent-rules/process-rules.md § Code-review before every commit has
+#     mandated a `code-review` pass before every commit since 2026-06-07, but the
+#     only mechanical gate was CodeRabbit — which runs AFTER the commit, on the
+#     PR. A session could stage a substantive diff, commit, and open a PR having
+#     never dispatched `code-review`; an audit found exactly that about to happen.
+#     Override: SMATCHET_SKIP_REVIEW_GATE=1 (logged; the same name the push-side
+#     gate in scripts/dev/pre-ship.sh already uses).
 #
 # Wired via: git config --local core.hooksPath scripts/git-hooks  (installed
 # by `bash agents/scripts/core/setup-harness.sh <harness>` when safe).
-#
-# Today this runs the harness-agnostic Pillar 2 static scanner on staged
-# first-party C++ files. It intentionally skips non-C++ commits and deleted
-# paths so docs/plan churn is not blocked by an empty scanner invocation.
 
 set -euo pipefail
 
@@ -17,18 +28,99 @@ if [[ -z "$repo_root" ]]; then
 fi
 cd "$repo_root"
 
+# --- (A) Pillar 2 static scan ------------------------------------------------
 mapfile -t cpp_files < <(
     git diff --cached --name-only --diff-filter=ACM \
         | grep -E '\.(c|cc|cpp|cxx|h|hh|hpp|hxx)$' \
         || true
 )
 
-if [[ "${#cpp_files[@]}" -eq 0 ]]; then
+if [[ "${#cpp_files[@]}" -gt 0 ]]; then
+    if [[ -x "scripts/dev/pillar2-scan.sh" ]]; then
+        bash scripts/dev/pillar2-scan.sh "${cpp_files[@]}"
+    else
+        echo "pre-commit: WARN scripts/dev/pillar2-scan.sh missing or not executable; skipping Pillar 2 scan." >&2
+    fi
+fi
+
+# --- (B) Code-review ack gate ------------------------------------------------
+# Delegates the substantive-diff test and the fingerprint comparison to
+# agents/scripts/core/review-ack.sh (shared with the push-side gate through
+# agents/scripts/core/lib/review-ack.sh) so there is ONE implementation.
+#   rc 0 = acked, or the staged diff is not substantive -> allow
+#   rc 1 = substantive staged C++ with no current ack   -> BLOCK
+#   rc 2 = infra/usage (not a work tree, bad flag)      -> WARN + allow
+#
+# IN-PROGRESS MERGE / REVERT / CHERRY-PICK / REBASE ARE EXEMPT. Resolving a
+# conflicted `git merge origin/develop` (the § Catch-up sync the ship-loop
+# mandates) stages the ENTIRE merged C++ diff — none of it authored here, all of
+# it already reviewed on its own PR. Gating that commit would wedge every
+# catch-up sync behind either a pointless re-review of develop or the bypass
+# env var, which trains the bypass into muscle memory. `git commit` is the only
+# entry point git runs this hook from during those operations, so keying on the
+# state files is exact.
+git_dir="$(git rev-parse --git-dir 2>/dev/null || echo "")"
+if [[ -n "$git_dir" ]]; then
+    for state in MERGE_HEAD REVERT_HEAD CHERRY_PICK_HEAD; do
+        if [[ -e "$git_dir/$state" ]]; then
+            echo "pre-commit: code-review gate skipped — $state present (in-progress merge/revert/cherry-pick)." >&2
+            exit 0
+        fi
+    done
+    if [[ -d "$git_dir/rebase-merge" || -d "$git_dir/rebase-apply" ]]; then
+        echo "pre-commit: code-review gate skipped — rebase in progress (replaying reviewed commits)." >&2
+        exit 0
+    fi
+fi
+
+review_ack="agents/scripts/core/review-ack.sh"
+if [[ ! -f "$review_ack" ]]; then
+    echo "pre-commit: WARN $review_ack missing; skipping the code-review gate." >&2
     exit 0
 fi
 
-if [[ -x "scripts/dev/pillar2-scan.sh" ]]; then
-    bash scripts/dev/pillar2-scan.sh "${cpp_files[@]}"
-else
-    echo "pre-commit: WARN scripts/dev/pillar2-scan.sh missing or not executable; skipping Pillar 2 scan." >&2
+if [[ "${SMATCHET_SKIP_REVIEW_GATE:-0}" == "1" ]]; then
+    echo "pre-commit: WARN — code-review gate bypassed (SMATCHET_SKIP_REVIEW_GATE=1)." >&2
+    exit 0
 fi
+
+set +e
+review_out="$(bash "$review_ack" --check --staged 2>&1)"
+review_rc=$?
+set -e
+
+case "$review_rc" in
+    0)
+        exit 0
+        ;;
+    1)
+        cat >&2 <<EOF
+
+pre-commit: REFUSING a commit with no code review.
+
+  $review_out
+
+  Every commit's diff gets a 'code-review' agent pass BEFORE it lands
+  (docs/agent-rules/process-rules.md § Code-review before every commit,
+  user-mandated 2026-06-07). Critical/High findings block the commit until
+  fixed or explicitly waived.
+
+  1) run the code-review agent / adversarial-code-review skill on the STAGED
+     diff (git diff --cached),
+  2) fix or waive every Critical/High finding,
+  3) record the ack:  bash agents/scripts/core/review-ack.sh --record --staged
+  4) commit again.
+
+  Any later edit to a staged file re-arms this gate — that is the point.
+
+  Override (trivial/emergency only — logged, discouraged):
+    SMATCHET_SKIP_REVIEW_GATE=1 git commit ...
+EOF
+        exit 1
+        ;;
+    *)
+        echo "pre-commit: WARN — code-review gate could not run (rc=$review_rc); allowing the commit." >&2
+        echo "  $review_out" >&2
+        exit 0
+        ;;
+esac

@@ -121,7 +121,10 @@ const TranslationEntry kEntries[] = {
     {"about.section.runtime", "Runtime", u8"Exécution"},
     {"about.section.third_party", "Third-party", u8"Composants tiers"},
     {"about.open_github", "Open on GitHub", u8"Ouvrir sur GitHub"},
-    {"about.check_updates", "Check for Updates", u8"Rechercher des mises à jour"},
+    {"about.link_open", "Open in Browser", u8"Ouvrir dans le navigateur"},
+    {"about.link_copy", "Copy Link", u8"Copier le lien"},
+    {"about.hint", "Select any value to copy it. Right-click a link for actions.",
+     u8"Sélectionnez une valeur pour la copier. Clic droit sur un lien pour les actions."},
 
     {"window.about", "About Smatchet", u8"À propos de Smatchet"},
     {"window.preferences", "Preferences", u8"Préférences"},

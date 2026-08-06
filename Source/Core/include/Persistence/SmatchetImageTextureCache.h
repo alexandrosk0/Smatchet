@@ -39,6 +39,16 @@ Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKe
 
 Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath);
 
+/**
+ * Upload already-decoded RGBA32 pixels (tightly packed, top-down, `width * height * 4` bytes).
+ * Same cache/LRU/eviction contract as GetOrLoadFromMemory, minus the stb decode step — for images
+ * stb rejects, such as the baked-in 32bpp BMP-in-ICO app icon that SmatchetIcoDecode unpacks.
+ * Err(reason) on an empty key, a short pixel buffer, non-positive dimensions, a renderer without
+ * texture support, or a GPU-upload failure.
+ */
+Result<SmatchetLoadedIconTexture> GetOrCreateFromRgba(const std::string& cacheKey,
+                                                      const std::vector<unsigned char>& rgba, int width, int height);
+
 /** Snapshot-only memory gauges for `perf.memory` (docs/plans/shipped/memory-budget-and-lifetime-hardening.md § S3).
  *  Both take the cache's `g_mutex`; cheap (O(1) and O(entries) respectively). */
 std::size_t IconCacheEntryCount();
