@@ -10,7 +10,7 @@
 # develop/main in the integration tree.
 #
 # When already drifted it ALSO denies further HEAD-moving git ops (pull/reset/
-# merge/rebase/checkout/switch) — recovery is `worktree.ps1 resync` or a new
+# merge/rebase/checkout/switch) — recovery is `worktree.sh resync` or a new
 # worktree, never another shared-tree move. This is what makes resync-head-
 # baseline.sh safe: a HEAD-moving op only succeeds from a clean baseline, so the
 # PostToolUse re-baseline can never mask a pre-existing external drift.
@@ -82,7 +82,7 @@ drifted=0
 short_base="$(printf '%s' "$BASE_SHA" | cut -c1-8)"
 short_cur="$(printf '%s' "$CUR_SHA" | cut -c1-8)"
 
-drift_reason="HEAD moved under this session (started ${BASE_BRANCH}@${short_base}, now ${CUR_BRANCH}@${short_cur}). Re-baseline if intended: pwsh scripts/dev/worktree.ps1 resync. Or isolate: pwsh scripts/dev/worktree.ps1 new <slug>. Do NOT git switch back in a shared tree (it rug-pulls live siblings)."
+drift_reason="HEAD moved under this session (started ${BASE_BRANCH}@${short_base}, now ${CUR_BRANCH}@${short_cur}). Re-baseline if intended: bash scripts/dev/worktree.sh resync. Or isolate: bash scripts/dev/worktree.sh new <slug>. Do NOT git switch back in a shared tree (it rug-pulls live siblings)."
 
 TOOL="$(json_field '.tool_name' 'tool_name')"
 
@@ -170,7 +170,7 @@ case "$TOOL" in
     if printf '%s' "$CMD" | grep -qE "${GIT_INVOKE_RE}${GIT_OPTS_RE}[[:space:]]+commit(\$|[;&|)[:space:]])"; then
       if [ "$IS_INTEGRATION" = "1" ] && { [ "$CUR_BRANCH" = "develop" ] || [ "$CUR_BRANCH" = "main" ]; } \
          && ! all_git_ops_target_safe_worktree 'commit'; then
-        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: pwsh scripts/dev/worktree.ps1 new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Pass a LITERAL absolute path, not a shell variable like \$WT — this guard reads the un-expanded command text, so a \$VAR is rejected. Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
+        deny "No direct commit to ${CUR_BRANCH} in the integration tree (${PROJ}). Feature work belongs in a worktree: bash scripts/dev/worktree.sh new <slug> — then commit with an explicit \`git -C <worktree-path> commit\` (allowed from here). Pass a LITERAL absolute path, not a shell variable like \$WT — this guard reads the un-expanded command text, so a \$VAR is rejected. Override: SMATCHET_ACK_BRANCH_DRIFT=1 (must be exported before session launch)."
       fi
     fi
     # When already drifted, deny any further HEAD-moving git op so the PostToolUse

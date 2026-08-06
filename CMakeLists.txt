@@ -81,7 +81,7 @@ endif()
 # compiler is known so it fires before any heavy configure work or compile).
 #
 # The repo pins the MSVC toolset (build.msvc_toolset_pin in project.config.json)
-# and both build wrappers (scripts/dev/with-msvc-env.sh / with-msvc.ps1) pass it
+# and the build wrapper (scripts/dev/with-msvc-env.sh) passes it
 # to vcvars64 as -vcvars_ver=<pin>, so a clean configure THROUGH a wrapper picks
 # a cl.exe whose minor version matches the STL headers it sees → consistent.
 #
@@ -162,7 +162,7 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND NOT DEFINED ENV{CI})
             "-vcvars_ver from project.config.json:\n"
             "  rm -rf \"${CMAKE_BINARY_DIR}\"\n"
             "  scripts/dev/with-msvc-env.sh cmake --preset <preset>\n"
-            "(PowerShell: scripts/dev/with-msvc.ps1 cmake --preset <preset>)\n"
+            "(on Windows, run it from Git Bash)\n"
             "\n"
             "Or, if you deliberately want toolset 14.${_smatchet_cc_minor}: set build.msvc_toolset_pin to\n"
             "match, or pass -DSMATCHET_ALLOW_TOOLSET_MISMATCH=ON to downgrade this to a warning.")
@@ -490,6 +490,7 @@ include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
 include(cmake/Sanitizers.cmake)
 include(cmake/SmatchetDepManifest.cmake)
+include(cmake/SmatchetFontAssets.cmake)
 
 # ---------------------------------------------------------------------------
 # Help > About build-info codegen.
