@@ -490,6 +490,7 @@ include(FetchContent)
 include(cmake/SmatchetThirdParty.cmake)
 include(cmake/Sanitizers.cmake)
 include(cmake/SmatchetDepManifest.cmake)
+include(cmake/SmatchetFontAssets.cmake)
 
 # ---------------------------------------------------------------------------
 # Help > About build-info codegen.
