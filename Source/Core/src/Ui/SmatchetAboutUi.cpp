@@ -31,6 +31,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <cfloat>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -141,45 +142,83 @@ void FactRow(const char* label, const std::string& value) {
 
 const float kAboutIconSize = 48.0f;
 
-// Rocket-launch easter egg (Ctrl+Shift+click the icon). Three phases: an accelerating climb out
-// of the modal, a beat spent off-frame, then a free-fall back into the slot.
-const double kRocketAscentSecs = 0.55;
-const double kRocketAwaySecs = 0.25;
-const double kRocketReturnSecs = 0.70;
-const double kRocketTotalSecs = kRocketAscentSecs + kRocketAwaySecs + kRocketReturnSecs;
-/// Apex offset. Only the first ~200 px are ever visible — the window clip rect swallows the rest —
-/// but a large value is what makes the exit read as "gone", not "parked above the title bar".
-const float kRocketApexPx = 900.0f;
+// Rocket-launch easter egg (Ctrl+Shift+click the icon). The entire flight stays inside the modal.
+// An earlier take flew straight up and out of the window, which the clip rect simply ate: the icon
+// vanished two frames in, and a launch you cannot watch reads as a disappearing-icon bug.
+const double kRocketFlightSecs = 2.1;
+const float kRocketClimbEnd = 0.20f; // Fraction of the flight spent climbing from the slot...
+const float kRocketLoopEnd = 0.82f;  // ...then looping. The remainder is the descent home.
+const float kRocketLoops = 2.0f;     // Revolutions flown during the loop phase.
+const float kTwoPi = 6.2831853f;
 
-/// Vertical offset above the resting slot at `elapsed` seconds into the launch.
-/// @return false during the coast phase, where the icon is off-frame and must not be drawn at all.
-bool RocketOffsetAt(double elapsed, float& outDy) {
-    if (elapsed < kRocketAscentSecs) {
-        const float u = static_cast<float>(elapsed / kRocketAscentSecs);
-        outDy = kRocketApexPx * u * u; // Quadratic: slow off the pad, fast at the top.
-        return true;
-    }
-    if (elapsed < kRocketAscentSecs + kRocketAwaySecs) {
-        return false;
-    }
-    const float u = static_cast<float>((elapsed - kRocketAscentSecs - kRocketAwaySecs) / kRocketReturnSecs);
-    outDy = kRocketApexPx * (1.0f - u * u); // Mirrored: drifts in, then drops the last stretch fast.
-    return true;
+float EaseOutCubic(float u) {
+    const float v = 1.0f - u;
+    return 1.0f - v * v * v;
 }
 
-/// Exhaust plume under the icon, fading with distance from the nozzle and fading in with speed
-/// (dy stands in for velocity — it is small on the pad and at touchdown, large mid-flight).
-void DrawRocketTrail(ImDrawList* dl, const ImVec2& iconPos, float dy) {
-    float intensity = dy / 240.0f;
-    intensity = intensity > 1.0f ? 1.0f : intensity;
-    const char* flame = SmatchetAreFaIconsLoaded() ? ICON_FA_FIRE : "^";
-    for (int i = 1; i <= 4; ++i) {
-        const float t = static_cast<float>(i) / 4.0f;
-        const ImVec2 p(iconPos.x + kAboutIconSize * 0.34f, iconPos.y + kAboutIconSize * (0.75f + t * 0.9f));
-        const ImU32 col =
-            IM_COL32(255, static_cast<int>(190.0f - 120.0f * t), 40, static_cast<int>(220.0f * intensity * (1.0f - t)));
-        dl->AddText(::ImGui::GetFont(), kAboutIconSize * (0.55f - 0.09f * t), p, col, flame);
+/// Rocket centre at `u` (0..1 of the flight). The loop is a circle sized to `rectMin`..`rectMax`
+/// (the modal's inner area), so a small dialog gets a small loop rather than one that clips, and
+/// the whole path is visible for its whole duration.
+ImVec2 RocketPosAt(float u, const ImVec2& rectMin, const ImVec2& rectMax, const ImVec2& slot) {
+    const ImVec2 centre((rectMin.x + rectMax.x) * 0.5f, (rectMin.y + rectMax.y) * 0.5f);
+    const float halfW = (rectMax.x - rectMin.x) * 0.5f;
+    const float halfH = (rectMax.y - rectMin.y) * 0.5f;
+    const float radius = (halfW < halfH ? halfW : halfH) * 0.72f;
+    // Entry and exit both happen at the bottom of the circle, so the climb out of the slot and the
+    // drop back into it are the two vertical strokes that bracket the loop.
+    const ImVec2 gate(centre.x, centre.y + radius);
+
+    if (u < kRocketClimbEnd) {
+        const float t = EaseOutCubic(u / kRocketClimbEnd);
+        return ImVec2(slot.x + (gate.x - slot.x) * t, slot.y + (gate.y - slot.y) * t);
     }
+    if (u < kRocketLoopEnd) {
+        const float t = (u - kRocketClimbEnd) / (kRocketLoopEnd - kRocketClimbEnd);
+        const float a = 1.5707963f + t * kTwoPi * kRocketLoops; // pi/2 == the gate.
+        return ImVec2(centre.x + radius * std::cos(a), centre.y + radius * std::sin(a));
+    }
+    const float t = (u - kRocketLoopEnd) / (1.0f - kRocketLoopEnd);
+    const float e = t * t; // Ease-in: hangs at the gate, then drops the last stretch fast.
+    return ImVec2(gate.x + (slot.x - gate.x) * e, gate.y + (slot.y - gate.y) * e);
+}
+
+/// Exhaust plume: overlapping discs trailing straight back from the nozzle along -`dir`, shrinking
+/// and cooling with distance. Discs, not a glyph — the plume has to be visible on every renderer and
+/// in a build with no icon font, and it has to bend with the loop instead of always pointing down.
+/// `heat` (0..1) scales it with speed, so it flares mid-loop and dies out on the pad.
+void DrawRocketTrail(ImDrawList* dl, const ImVec2& pos, const ImVec2& dir, float heat) {
+    for (int i = 1; i <= 8; ++i) {
+        const float t = static_cast<float>(i) / 8.0f;
+        const float back = kAboutIconSize * (0.42f + t * 1.7f);
+        const ImVec2 p(pos.x - dir.x * back, pos.y - dir.y * back);
+        const float radius = kAboutIconSize * 0.28f * (1.0f - t * 0.8f);
+        const ImU32 col = IM_COL32(255, static_cast<int>(215.0f - 160.0f * t), static_cast<int>(70.0f - 60.0f * t),
+                                   static_cast<int>(230.0f * heat * (1.0f - t)));
+        dl->AddCircleFilled(p, radius, col);
+    }
+}
+
+/// Draw `tex` (or the fallback glyph) centred on `pos`, rotated so the icon's top faces `dir`.
+void DrawIconRotated(ImDrawList* dl, const ImVec2& pos, const ImVec2& dir) {
+    SmatchetLoadedIconTexture tex;
+    if (!smatchet::ui::TryGetAboutIconTexture(tex)) {
+        const char* glyph = SmatchetAreFaIconsLoaded() ? ICON_FA_CUBE : "[S]";
+        const float size = kAboutIconSize * 0.8f;
+        const ImVec2 extent = ::ImGui::CalcTextSize(glyph);
+        dl->AddText(::ImGui::GetFont(), size, ImVec2(pos.x - extent.x * 0.5f, pos.y - extent.y * 0.5f),
+                    ::ImGui::GetColorU32(ImGuiCol_Text), glyph);
+        return;
+    }
+    // The icon art points up, so its local +Y maps to -dir.
+    const ImVec2 up(-dir.x, -dir.y);
+    const ImVec2 right(-up.y, up.x);
+    const float h = kAboutIconSize * 0.5f;
+    const ImVec2 dx(right.x * h, right.y * h);
+    const ImVec2 dy(up.x * h, up.y * h);
+    dl->AddImageQuad(tex.Texture->GetTexRef(), ImVec2(pos.x - dx.x + dy.x, pos.y - dx.y + dy.y),
+                     ImVec2(pos.x + dx.x + dy.x, pos.y + dx.y + dy.y), ImVec2(pos.x + dx.x - dy.x, pos.y + dx.y - dy.y),
+                     ImVec2(pos.x - dx.x - dy.x, pos.y - dx.y - dy.y), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 0.0f),
+                     ImVec2(1.0f, 1.0f), ImVec2(0.0f, 1.0f));
 }
 
 /// The app icon, drawn from the baked-in .ico via the texture cache, with a Font Awesome glyph
@@ -196,28 +235,41 @@ void DrawAboutIcon(const AboutDrawCtx& ctx) {
         d.aboutRocketStart = ::ImGui::GetTime();
     }
 
-    float dy = 0.0f;
+    const ImVec2 home(slot.x + kAboutIconSize * 0.5f, slot.y + kAboutIconSize * 0.5f);
+    ImVec2 pos = home;
+    ImVec2 dir(0.0f, -1.0f);
+    float heat = 0.0f;
     if (d.aboutRocketStart >= 0.0) {
         const double elapsed = ::ImGui::GetTime() - d.aboutRocketStart;
-        if (elapsed >= kRocketTotalSecs) {
+        if (elapsed >= kRocketFlightSecs) {
             d.aboutRocketStart = -1.0;
-        } else if (!RocketOffsetAt(elapsed, dy)) {
-            return; // Off-frame this beat.
+        } else {
+            // Inset by a full icon so neither the hull nor the plume touches the window edge.
+            const ImVec2 wpos = ::ImGui::GetWindowPos();
+            const ImVec2 wsize = ::ImGui::GetWindowSize();
+            const ImVec2 lo(wpos.x + kAboutIconSize, wpos.y + kAboutIconSize);
+            const ImVec2 hi(wpos.x + wsize.x - kAboutIconSize, wpos.y + wsize.y - kAboutIconSize);
+            const float u = static_cast<float>(elapsed / kRocketFlightSecs);
+            pos = RocketPosAt(u, lo, hi, home);
+            // Heading and speed both come from one finite difference, so a phase change can never
+            // leave the hull pointing one way and the plume trailing another.
+            const ImVec2 next = RocketPosAt(u + 0.012f > 1.0f ? 1.0f : u + 0.012f, lo, hi, home);
+            const float sx = next.x - pos.x;
+            const float sy = next.y - pos.y;
+            const float step = std::sqrt(sx * sx + sy * sy);
+            if (step > 0.001f) {
+                dir = ImVec2(sx / step, sy / step);
+            }
+            heat = step / 14.0f;
+            heat = heat > 1.0f ? 1.0f : heat;
         }
     }
 
-    const ImVec2 p(slot.x, slot.y - dy);
     ImDrawList* dl = ::ImGui::GetWindowDrawList();
-    if (dy > 0.0f) {
-        DrawRocketTrail(dl, p, dy);
+    if (heat > 0.0f) {
+        DrawRocketTrail(dl, pos, dir, heat);
     }
-    SmatchetLoadedIconTexture tex;
-    if (smatchet::ui::TryGetAboutIconTexture(tex)) {
-        dl->AddImage(tex.Texture->GetTexRef(), p, ImVec2(p.x + kAboutIconSize, p.y + kAboutIconSize));
-        return;
-    }
-    const char* glyph = SmatchetAreFaIconsLoaded() ? ICON_FA_CUBE : "[S]";
-    dl->AddText(::ImGui::GetFont(), kAboutIconSize * 0.8f, p, ::ImGui::GetColorU32(ImGuiCol_Text), glyph);
+    DrawIconRotated(dl, pos, dir);
 }
 
 void DrawAboutIdentity(const AboutDrawCtx& ctx) {
