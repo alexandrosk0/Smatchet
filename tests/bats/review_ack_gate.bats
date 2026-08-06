@@ -197,6 +197,24 @@ commit_in_fixture() {
     [ "$status" -eq 0 ]
 }
 
+@test "a missing library is infra (rc 2), not a review refusal" {
+    # Regression: `set -e` turned a failed source into rc 1, which pre-commit
+    # renders as "REFUSING a commit with no code review" — so a half-installed
+    # checkout blocked even docs-only commits, blaming the author.
+    rm -f "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
+    run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --check --staged 2>&1"
+    [ "$status" -eq 2 ]
+}
+
+@test "pre-commit warns and allows when the library is missing" {
+    rm -f "$REPO_TMP/agents/scripts/core/lib/review-ack.sh"
+    echo note > "$REPO_TMP/docs/n.md"
+    git -C "$REPO_TMP" add docs/n.md
+    run commit_in_fixture "docs: note"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"REFUSING"* ]]
+}
+
 @test "--check rejects an unknown flag with rc 2" {
     run bash -c "cd '$REPO_TMP' && bash agents/scripts/core/review-ack.sh --check --bogus 2>&1"
     [ "$status" -eq 2 ]

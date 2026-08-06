@@ -181,8 +181,15 @@ cd "$repo_root"
 # Sourced from THIS script's directory, never "$repo_root": --selftest runs the script
 # against a throwaway work tree that has no agents/ tree of its own.
 preship_script_dir="$(cd "$(dirname "$0")" && pwd)"
+preship_review_lib="$preship_script_dir/../../agents/scripts/core/lib/review-ack.sh"
+if [ ! -r "$preship_review_lib" ]; then
+    # rc 2 is this script's "required tool unavailable" code — not rc 1, which
+    # means "a gate found a real violation".
+    echo "pre-ship: cannot read $preship_review_lib (incomplete checkout?)" >&2
+    exit 2
+fi
 # shellcheck source=agents/scripts/core/lib/review-ack.sh
-. "$preship_script_dir/../../agents/scripts/core/lib/review-ack.sh"
+. "$preship_review_lib"
 
 # SMATCHET_PRESHIP_FORCE_NO_PY is honoured inside ra_resolve_python (selftest hook that
 # forces the #1116 fail-closed path in an environment that DOES have python).

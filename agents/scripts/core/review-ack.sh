@@ -165,8 +165,19 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || {
 # root: --selftest (and any cross-repo use) runs the script from inside a
 # throwaway work tree that has no agents/ tree of its own.
 script_dir="$(cd "$(dirname "$0")" && pwd)"
+# A missing/unreadable library is INFRA (rc 2 — the caller warns and allows), never
+# rc 1 (which pre-commit renders as "you skipped the review" and blocks). Without
+# this guard `set -e` turns a failed source into a bare rc 1, so a half-installed
+# checkout would refuse even a docs-only commit with a message blaming the author.
+if [ ! -r "$script_dir/lib/review-ack.sh" ]; then
+    echo "review-ack: cannot read $script_dir/lib/review-ack.sh (incomplete checkout?)" >&2
+    exit 2
+fi
 # shellcheck source=agents/scripts/core/lib/review-ack.sh
-. "$script_dir/lib/review-ack.sh"
+if ! . "$script_dir/lib/review-ack.sh"; then
+    echo "review-ack: failed to source $script_dir/lib/review-ack.sh" >&2
+    exit 2
+fi
 
 cd "$repo_root"
 
