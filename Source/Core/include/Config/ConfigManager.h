@@ -548,6 +548,9 @@ struct TrackerConfig {
     // VCS feed layout: "unified" (merged newest-first) or "separate" (per-source
     // sections). Normalized to one of the two at load.
     std::string VcsFeedLayout = "unified";
+    // Comma-joined PrefsSection ids the user collapsed in the Preferences window
+    // (e.g. "tracker.backend,appearance.display"). Empty = all sections open.
+    std::string PreferencesCollapsedSections;
 
     // --- Ticket-change monitor (docs/plans/ticket-change-monitor.md) ---
     // Periodically poll the backend for salient changes to the open panes' tracked

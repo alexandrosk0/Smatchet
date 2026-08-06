@@ -46,6 +46,8 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/notification_center.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_window_render_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_preferences_tabs.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/prefs_schema_coverage.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/prefs_search_filter.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_main_ui_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_grid_render.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_pane_windows.test.cpp"

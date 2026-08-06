@@ -53,6 +53,9 @@ done
 
 die() { echo "rebuild-testproject-plugin: $*" >&2; exit 1; }
 
+# shellcheck source=scripts/common/unreal-batch.sh
+. "$SCRIPT_DIR/../../common/unreal-batch.sh" || die "could not source unreal-batch.sh"
+
 winpath() {
     if command -v cygpath >/dev/null 2>&1; then
         cygpath -w "$1"
@@ -126,10 +129,7 @@ bash "$SCRIPT_DIR/build-and-deploy-unreal-plugin.sh" "${DEPLOY_ARGS[@]}" \
     || die "plugin deploy step failed."
 
 echo "==> Rebuilding ${PROJECT_NAME} (Win64 Development)..."
-# MSYS_NO_PATHCONV: Git Bash rewrites a whole argument that looks like an
-# absolute POSIX path, so a bare `/c` reaches cmd.exe as `C:/` and the batch
-# file never runs. Paths are already Windows-form via winpath().
-MSYS_NO_PATHCONV=1 cmd.exe /c "$(winpath "$BUILD_BAT")" "$PROJECT_NAME" Win64 Development \
+run_unreal_batch "$(winpath "$BUILD_BAT")" "$PROJECT_NAME" Win64 Development \
     "-Project=$(winpath "$UPROJECT_PATH")" -WaitMutex -NoHotReloadFromIDE \
     || die "Unreal build failed."
 

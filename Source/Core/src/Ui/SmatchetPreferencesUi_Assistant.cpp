@@ -399,7 +399,8 @@ AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d, Trac
     if (providerIt != providers.end()) {
         providerIdx = static_cast<int>(std::distance(providers.begin(), providerIt));
     }
-    if (ImGui::Combo("AI provider", &providerIdx, providerLabels.data(), static_cast<int>(providerLabels.size()))) {
+    if (d.prefsFilter.ShowSetting("ai_voice.assistant.provider") &&
+        ImGui::Combo("AI provider", &providerIdx, providerLabels.data(), static_cast<int>(providerLabels.size()))) {
         const int newKind = static_cast<int>(providers[providerIdx].Kind);
         LOG_INFO("Preferences: AiProviderKind (working) %d -> %d", work.AiProviderKind, newKind);
         work.AiProviderKind = newKind;
@@ -410,6 +411,9 @@ AiProvider RenderProviderComboAndTest(AppController& app, UiDrawSession& d, Trac
     // --- Test connection button (top, prominent, always enabled). When the
     // configured state can't possibly succeed the probe itself reports a
     // clear server-side error — better UX than disabling the button.
+    if (!d.prefsFilter.ShowSetting("ai_voice.assistant.test_connection")) {
+        return selectedKind;
+    }
     ImGui::Spacing();
     const bool testInFlight = d.assistantPrefsTestInFlight;
     if (testInFlight) {
@@ -559,59 +563,76 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
     if (selectedKind == AiProvider::OpenAi || selectedKind == AiProvider::OllamaOpenAiCompat) {
         const bool isLocalCompat = (selectedKind == AiProvider::OllamaOpenAiCompat);
         const char* keyLabel = isLocalCompat ? "API key (optional for local)" : "OpenAI API key";
-        if (SmatchetSecretInputText(keyLabel, b.openAiKeyBuf, sizeof(b.openAiKeyBuf))) {
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.openai_api_key") &&
+            SmatchetSecretInputText(keyLabel, b.openAiKeyBuf, sizeof(b.openAiKeyBuf))) {
             work.AiApiKey = b.openAiKeyBuf;
             ClearStaleTestResult(d);
         }
         // OllamaOpenAiCompat keeps an empty catalog — the local server
         // names its own models. `RenderModelPicker` falls back to free-form
         // hint in that case. OpenAi has a catalog so the Combo renders.
-        const char* modelComboLabel = isLocalCompat ? "Model" : "OpenAI model";
-        const char* modelFreeFormLabel = modelComboLabel;
-        const char* modelHint = isLocalCompat ? "e.g. local-model, llama3, qwen2.5" : "";
-        RenderModelPicker(d, modelComboLabel, modelFreeFormLabel, modelHint, selectedKind, b.openAiModelBuf,
-                          sizeof(b.openAiModelBuf), work.AiModelOpenAi);
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.model_openai")) {
+            const char* modelComboLabel = isLocalCompat ? "Model" : "OpenAI model";
+            const char* modelFreeFormLabel = modelComboLabel;
+            const char* modelHint = isLocalCompat ? "e.g. local-model, llama3, qwen2.5" : "";
+            RenderModelPicker(d, modelComboLabel, modelFreeFormLabel, modelHint, selectedKind, b.openAiModelBuf,
+                              sizeof(b.openAiModelBuf), work.AiModelOpenAi);
+        }
         const char* urlHint = isLocalCompat ? "http://127.0.0.1:1234 (LM Studio)" : "https://api.openai.com";
-        if (ImGui::InputTextWithHint("Base URL", urlHint, b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.base_url") &&
+            ImGui::InputTextWithHint("Base URL", urlHint, b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
             work.AiBaseUrl = b.baseUrlBuf;
             ClearStaleTestResult(d);
         }
         // Real OpenAi only. The local-compat shim is unpinned - its base URL is the config itself.
-        if (!isLocalCompat) {
+        if (!isLocalCompat && d.prefsFilter.ShowSetting("ai_voice.assistant.allow_custom_openai")) {
             RenderCustomEndpointConsent(d, AiProvider::OpenAi, work.AiAllowCustomEndpointOpenAi, "OpenAI",
                                         "api.openai.com", consentModalProvider);
         }
     } else if (selectedKind == AiProvider::Anthropic) {
-        if (SmatchetSecretInputText("Anthropic API key", b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf))) {
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.anthropic_api_key") &&
+            SmatchetSecretInputText("Anthropic API key", b.anthropicKeyBuf, sizeof(b.anthropicKeyBuf))) {
             work.AiAnthropicApiKey = b.anthropicKeyBuf;
             ClearStaleTestResult(d);
         }
-        RenderModelPicker(d, "Anthropic model", "Anthropic model", "", AiProvider::Anthropic, b.anthropicModelBuf,
-                          sizeof(b.anthropicModelBuf), work.AiModelAnthropic);
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.model_anthropic")) {
+            RenderModelPicker(d, "Anthropic model", "Anthropic model", "", AiProvider::Anthropic, b.anthropicModelBuf,
+                              sizeof(b.anthropicModelBuf), work.AiModelAnthropic);
+        }
         // AiBaseUrl is shared with the OpenAI branch above — the probe + client
         // resolve Anthropic through the same field (see ResolveProbeEndpoint).
-        if (ImGui::InputTextWithHint("Base URL", "https://api.anthropic.com", b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.base_url") &&
+            ImGui::InputTextWithHint("Base URL", "https://api.anthropic.com", b.baseUrlBuf, sizeof(b.baseUrlBuf))) {
             work.AiBaseUrl = b.baseUrlBuf;
             ClearStaleTestResult(d);
         }
-        RenderCustomEndpointConsent(d, AiProvider::Anthropic, work.AiAllowCustomEndpointAnthropic, "Anthropic",
-                                    "api.anthropic.com", consentModalProvider);
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.allow_custom_anthropic")) {
+            RenderCustomEndpointConsent(d, AiProvider::Anthropic, work.AiAllowCustomEndpointAnthropic, "Anthropic",
+                                        "api.anthropic.com", consentModalProvider);
+        }
     } else if (selectedKind == AiProvider::OllamaNative) {
-        RenderModelPicker(d, "Ollama model", "Ollama model", "e.g. llama3, qwen2.5, mistral", AiProvider::OllamaNative,
-                          b.ollamaModelBuf, sizeof(b.ollamaModelBuf), work.AiModelOllama);
-        if (ImGui::InputTextWithHint("Ollama base URL", "http://localhost:11434", b.ollamaBaseUrlBuf,
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.model_ollama")) {
+            RenderModelPicker(d, "Ollama model", "Ollama model", "e.g. llama3, qwen2.5, mistral",
+                              AiProvider::OllamaNative, b.ollamaModelBuf, sizeof(b.ollamaModelBuf), work.AiModelOllama);
+        }
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.ollama_base_url") &&
+            ImGui::InputTextWithHint("Ollama base URL", "http://localhost:11434", b.ollamaBaseUrlBuf,
                                      sizeof(b.ollamaBaseUrlBuf))) {
             work.AiOllamaBaseUrl = b.ollamaBaseUrlBuf;
             ClearStaleTestResult(d);
         }
     } else if (selectedKind == AiProvider::DeepSeek) {
-        if (SmatchetSecretInputText("DeepSeek API key", b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf))) {
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.deepseek_api_key") &&
+            SmatchetSecretInputText("DeepSeek API key", b.deepseekKeyBuf, sizeof(b.deepseekKeyBuf))) {
             work.AiDeepSeekApiKey = b.deepseekKeyBuf;
             ClearStaleTestResult(d);
         }
-        RenderModelPicker(d, "DeepSeek model", "DeepSeek model", "", AiProvider::DeepSeek, b.deepseekModelBuf,
-                          sizeof(b.deepseekModelBuf), work.AiModelDeepSeek);
-        if (ImGui::InputTextWithHint("Base URL", "https://api.deepseek.com", b.deepseekBaseUrlBuf,
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.model_deepseek")) {
+            RenderModelPicker(d, "DeepSeek model", "DeepSeek model", "", AiProvider::DeepSeek, b.deepseekModelBuf,
+                              sizeof(b.deepseekModelBuf), work.AiModelDeepSeek);
+        }
+        if (d.prefsFilter.ShowSetting("ai_voice.assistant.deepseek_base_url") &&
+            ImGui::InputTextWithHint("Base URL", "https://api.deepseek.com", b.deepseekBaseUrlBuf,
                                      sizeof(b.deepseekBaseUrlBuf))) {
             work.AiDeepSeekBaseUrl = b.deepseekBaseUrlBuf;
             ClearStaleTestResult(d);
@@ -625,6 +646,9 @@ void RenderProviderCredentials(UiDrawSession& d, TrackerConfig& work, AiProvider
 // field; providers that don't understand it ignore it. The chat-window has a
 // per-turn Combo that overrides this default for one Send.
 void RenderReasoningEffort(UiDrawSession& d, TrackerConfig& work) {
+    if (!d.prefsFilter.ShowSetting("ai_voice.assistant.reasoning_effort")) {
+        return;
+    }
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::Spacing();
@@ -658,42 +682,52 @@ void RenderReasoningEffort(UiDrawSession& d, TrackerConfig& work) {
 // agents.md edits stage into the working copy; the agents.md cache is
 // invalidated on explicit Save (CommitAssistantWorkingToConfig), not per
 // keystroke. `app` is no longer needed here.
-void RenderAgentsMdHarness(TrackerConfig& work, AssistantPrefsBuffers& b) {
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
-    ImGui::TextUnformatted("agents.md harness (optional)");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.assistant.agents_md.help",
-                               "Layered system prompt injected into every Assistant turn. Global layer "
-                               "defaults to %LOCALAPPDATA%/Smatchet/agents.md when blank. Each layer "
-                               "capped at 64 KB.");
-    ImGui::Spacing();
-    if (ImGui::InputText("Global agents.md path", b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf))) {
-        work.AgentsMdGlobalPath = b.agentsMdGlobalBuf;
+void RenderAgentsMdHarness(UiDrawSession& d, TrackerConfig& work, AssistantPrefsBuffers& b) {
+    // Heading + its help marker are section chrome: no descriptor row, so a
+    // narrowed query drops them rather than padding the result.
+    if (!d.prefsFilter.Active()) {
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextUnformatted("agents.md harness (optional)");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.assistant.agents_md.help",
+                                   "Layered system prompt injected into every Assistant turn. Global layer "
+                                   "defaults to %LOCALAPPDATA%/Smatchet/agents.md when blank. Each layer "
+                                   "capped at 64 KB.");
+        ImGui::Spacing();
     }
-    ImGui::SetItemTooltip("Override the global agents.md location.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.assistant.agents_md_global.help",
-                               "Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point "
-                               "at a checked-in shared file.");
-    if (ImGui::InputText("Project agents.md path (override)", b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf))) {
-        work.ProjectAgentsMdPath = b.projectAgentsMdBuf;
+    if (d.prefsFilter.ShowSetting("ai_voice.agent_context.global_path")) {
+        if (ImGui::InputText("Global agents.md path", b.agentsMdGlobalBuf, sizeof(b.agentsMdGlobalBuf))) {
+            work.AgentsMdGlobalPath = b.agentsMdGlobalBuf;
+        }
+        ImGui::SetItemTooltip("Override the global agents.md location.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.assistant.agents_md_global.help",
+                                   "Default %LOCALAPPDATA%/Smatchet/agents.md when blank. Override to point "
+                                   "at a checked-in shared file.");
     }
-    ImGui::SetItemTooltip("Explicit project-layer path.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.assistant.agents_md_project.help",
-                               "When set, this exact path is used as the project layer. Leave blank to "
-                               "disable the project layer entirely unless Auto-discover is enabled below.");
-    bool autoDiscover = work.AgentsMdAutoDiscoverProject;
-    if (ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)", &autoDiscover)) {
-        work.AgentsMdAutoDiscoverProject = autoDiscover;
+    if (d.prefsFilter.ShowSetting("ai_voice.agent_context.project_path")) {
+        if (ImGui::InputText("Project agents.md path (override)", b.projectAgentsMdBuf, sizeof(b.projectAgentsMdBuf))) {
+            work.ProjectAgentsMdPath = b.projectAgentsMdBuf;
+        }
+        ImGui::SetItemTooltip("Explicit project-layer path.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.assistant.agents_md_project.help",
+                                   "When set, this exact path is used as the project layer. Leave blank to "
+                                   "disable the project layer entirely unless Auto-discover is enabled below.");
     }
-    ImGui::SetItemTooltip("Walk up from cwd looking for agents.md.");
-    ImGui::SameLine();
-    SmatchetHelpMarker::Render("prefs.assistant.agents_md_autodiscover.help",
-                               "OFF (default): only the Global file + explicit Project path are used. ON: "
-                               "walks up the cwd chain looking for agents.md / AGENTS.md.");
+    if (d.prefsFilter.ShowSetting("ai_voice.agent_context.auto_discover")) {
+        bool autoDiscover = work.AgentsMdAutoDiscoverProject;
+        if (ImGui::Checkbox("Auto-discover project agents.md (walk up from cwd)", &autoDiscover)) {
+            work.AgentsMdAutoDiscoverProject = autoDiscover;
+        }
+        ImGui::SetItemTooltip("Walk up from cwd looking for agents.md.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.assistant.agents_md_autodiscover.help",
+                                   "OFF (default): only the Global file + explicit Project path are used. ON: "
+                                   "walks up the cwd chain looking for agents.md / AGENTS.md.");
+    }
 }
 
 // Save: flush the working AI fields into cfg, persist to disk, invalidate the
@@ -774,17 +808,18 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
     TrackerConfig& work = d.assistantPrefsWorking;
     SeedAssistantBuffers(s_bufs, d, work);
 
-    // Dirty must be known BEFORE BeginTabItem so the `*` marker can be part of
-    // the label (the marker shows even when another tab is the active one).
+    // The nav rail owns the dirty `*` marker now (drawPreferencesWindow computes it
+    // via AssistantAiFieldsDiffer before DrawPrefsNav).
     const bool dirty = SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(work, d.cfg);
-    const char* tabLabel = dirty ? "Assistant *###AssistantPrefsTab" : "Assistant###AssistantPrefsTab";
 
-    if (ImGui::BeginTabItem(tabLabel, nullptr, SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Assistant"))) {
-        d.preferencesActiveTab = PreferencesActiveTab::Assistant;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.assistant", [&] {
         // Validator runs against the working copy so the user gets live feedback
-        // for the unsaved text they're typing.
-        const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(work);
-        RenderValidationBanner(validation);
+        // for the unsaved text they're typing. The banner is chrome — it owns no
+        // descriptor, so it stays out of a narrowed result.
+        if (!d.prefsFilter.Active()) {
+            const smatchet::ai::PrefsValidation validation = smatchet::ai::ValidateAiPrefs(work);
+            RenderValidationBanner(validation);
+        }
 
         const AiProvider selectedKind = RenderProviderComboAndTest(app, d, work);
 
@@ -792,12 +827,13 @@ void DrawAssistantPreferencesTab(AppController& app, UiDrawSession& d) {
         RenderProviderCredentials(d, work, selectedKind, s_bufs, s_consentModalProvider);
 
         RenderReasoningEffort(d, work);
-        RenderAgentsMdHarness(work, s_bufs);
 
+        // Save / Discard stays even while filtering: it is the only commit path for
+        // an edit the user just made to a matched field.
         RenderAssistantSaveDiscard(app, d, dirty);
-
-        ImGui::EndTabItem();
-    }
+    });
+    SmatchetPreferencesUiDetail::PrefsSection(d, "ai_voice.agent_context",
+                                              [&] { RenderAgentsMdHarness(d, work, s_bufs); });
 }
 
 #endif // SMATCHET_WITH_AI

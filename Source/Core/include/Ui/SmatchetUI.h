@@ -95,9 +95,10 @@ class SmatchetUI {
 
     // Forwarding shims for split-TU helpers in SmatchetPreferencesUi_*.cpp.
     const ViewsStore& GetViewsStore() const { return ViewState.GetStore(); }
-    void DrawAnnotatePreferencesTabForwarded(const std::vector<TrackerField>& availableFields,
-                                             const IAppTicketMutations& ticketMutations) {
-        annotateAnalysisUi_.DrawAnnotatePreferencesTab(availableFields, ticketMutations);
+    void DrawAnnotatePrefsSectionForwarded(AnnotateAnalysisUi::AnnotatePrefsSection section,
+                                           const std::vector<TrackerField>& availableFields,
+                                           const IAppTicketMutations& ticketMutations, PreferencesFilter& filter) {
+        annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations, filter);
     }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
@@ -370,7 +371,10 @@ class SmatchetUI {
     void resetPreferencesWindowState(UiDrawSession& d);
     bool beginPreferencesWindow(UiDrawSession& d);
     void loadPreferencesBuffers(UiDrawSession& d);
+    void drawPreferencesCategoryBody(AppController& app, UiDrawSession& d);
     void drawPreferencesTrackerTab(AppController& app, UiDrawSession& d);
+    void drawPreferencesConnectionsTab(AppController& app, UiDrawSession& d);
+    void drawPreferencesAnnotateTab(AppController& app, UiDrawSession& d);
     void drawPreferencesUserInfoTab(UiDrawSession& d);
 #if defined(SMATCHET_WITH_MCP)
     void drawPreferencesIntegrationsTab(AppController& app, UiDrawSession& d);

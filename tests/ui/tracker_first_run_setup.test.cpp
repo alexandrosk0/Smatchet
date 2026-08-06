@@ -80,10 +80,10 @@ bool OpenPreferences(ImGuiTestContext* ctx) {
     });
 }
 
-// The Tracker tab is the FIRST BeginTabItem in the "PreferencesTabs" bar, so it
-// is selected on open with no click needed. preferencesActiveTab is assigned
-// inside the tab body, so observing it IS the "the body ran this frame" signal.
-bool TrackerTabBodyRan() { return g_ui.preferencesActiveTab == PreferencesActiveTab::Tracker; }
+// Tracker is the default PreferencesCategory, so it is selected on open with no
+// click needed, and the dispatch switch draws its body every frame the window
+// is live — observing the category is the "the body is ticking" signal.
+bool TrackerTabBodyRan() { return g_ui.preferencesCategory == PreferencesCategory::Tracker; }
 
 // A config the credential-completeness half of NeedsSetup is satisfied by, so
 // BackendHasBeenReachable alone decides the predicate.

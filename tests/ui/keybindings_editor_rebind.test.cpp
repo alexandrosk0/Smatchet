@@ -7,10 +7,11 @@
 //
 //   A. EditorTabRendersWithLiveConflict — seed a deliberate collision into the
 //      live keybinding table (app.dock_debug.toggle rebound onto Ctrl+B, which
-//      view.sidebar.primary already owns by default), open Preferences, click
-//      the "Keyboard Shortcuts" tab, and YieldUntil the editor reports itself
-//      active (d.preferencesActiveTab == Keybindings). Tab-active means
-//      BeginTabItem returned true → DrawKeybindingsPreferencesTab's body ran for
+//      view.sidebar.primary already owns by default), open Preferences, select
+//      the "Keyboard Shortcuts" category via its nav-rail Selectable, and
+//      YieldUntil g_ui.preferencesCategory == Keybindings. Since slice 2a the
+//      dispatch switch draws the selected category's body every frame, so
+//      category-selected means DrawKeybindingsPreferencesTab's body ran for
 //      several frames WITH a live conflict present, so the per-row
 //      FindKeybindingConflict() + the "conflicts with <action>" TextColored
 //      branch + the searchable table + the System-shortcuts CollapsingHeader all
@@ -64,7 +65,7 @@
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
 #include "Config/KeybindingsConfig.h"          // KeybindingsConfig, SetBindingHotkey
-#include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesActiveTab, g_ui
+#include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesCategory, g_ui
 #include "Ui/SmatchetHotkeyCapture.h"          // smatchet::ui::FindKeybindingConflict
 
 #include "imgui.h"
@@ -76,7 +77,7 @@
 
 // g_ui — the shared bag of UI-thread visibility flags + the live TrackerConfig
 // (g_ui.cfg). We set showPreferences / requestPreferencesFocus and read
-// preferencesActiveTab / showDockDebug exactly as the real View menu / dispatch
+// preferencesCategory / showDockDebug exactly as the real View menu / dispatch
 // paths do. Same handle the funcsize_preferences_tabs pilot drives.
 extern UiDrawSession g_ui;
 
@@ -96,6 +97,12 @@ bool WindowIsLive(const char* title) {
     const ImGuiWindow* win = ImGui::FindWindowByName(title);
     return win != nullptr && win->Active;
 }
+
+// The app's update-available modal owns NavWindow and nulls HoveredWindow, so no
+// widget under it can be hovered, clicked or nav-activated — an ItemClick in a
+// replica window silently never lands. BeginPopupModal closes on a false p_open,
+// so clearing the flag every frame dismisses it for the run.
+void DismissAppUpdateModal() { g_ui.appUpdateModalOpen = false; }
 
 // Open Preferences and tick until its window is live (Active). Mirrors the pilot's
 // docked-window open recipe: re-arm the focus latch every frame until the docked
@@ -143,22 +150,26 @@ void RegisterEditorTabRendersWithLiveConflict(ImGuiTestEngine* engine) {
             return;
         }
 
-        // The Keyboard Shortcuts tab carries a locale-stable ###id suffix
-        // ("Keyboard Shortcuts###prefsTabKeybindings"), so the header ref resolves
-        // regardless of UI language (ImHashStr restarts at ###). A tab header is
-        // addressed tab-bar-qualified: "<TabBarID>/<label>".
-        const char* tabRef = "PreferencesTabs/Keyboard Shortcuts###prefsTabKeybindings";
-        const bool tabExists = ctx->ItemExists(tabRef);
-        IM_CHECK_NO_RET(tabExists);
-        if (tabExists) {
-            ctx->ItemClick(tabRef);
-            // Tab-active is the editor's own signal: DrawKeybindingsPreferencesTab
-            // sets d.preferencesActiveTab = Keybindings inside its BeginTabItem body,
-            // so this is true only once the full body (incl. the conflict-render
-            // branch above) has ticked. Locale-independent — set by code, not a label.
-            const bool active =
-                YieldUntil(ctx, [] { return g_ui.preferencesActiveTab == PreferencesActiveTab::Keybindings; });
-            IM_CHECK_NO_RET(active);
+        // The Shortcuts rail Selectable carries a locale-stable ###id suffix
+        // ("Shortcuts###prefsNavShortcuts"), so the ref resolves regardless of UI
+        // language (ImHashStr restarts at ###). It lives inside the "PrefsNavRail"
+        // child window → wildcard ref. Below the narrow-width threshold the rail is
+        // a combo instead; fall back to selecting the category directly — same body
+        // coverage.
+        const char* railRef = "**/Shortcuts###prefsNavShortcuts";
+        if (ctx->ItemExists(railRef)) {
+            ctx->ItemClick(railRef);
+        } else {
+            ctx->LogInfo("nav rail item absent (combo mode) — selecting category directly");
+            g_ui.preferencesCategory = PreferencesCategory::Shortcuts;
+        }
+        // Category-selected means the dispatch switch draws the Shortcuts body
+        // (incl. the conflict-render branch above) every subsequent frame.
+        // Locale-independent — an enum, not a label.
+        const bool active = YieldUntil(ctx, [] { return g_ui.preferencesCategory == PreferencesCategory::Shortcuts; });
+        IM_CHECK_NO_RET(active);
+        for (int i = 0; i < 5; ++i) {
+            ctx->Yield();
         }
 
         // Restore the seeded binding + close Preferences so sibling tests start clean.
@@ -301,6 +312,7 @@ CaptureWidgetState g_captureState;
 void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "CaptureWidgetClickThenKeyCommits");
     t->GuiFunc = [](ImGuiTestContext*) {
+        DismissAppUpdateModal();
         ImGui::SetNextWindowSize(ImVec2(420.0f, 140.0f), ImGuiCond_Appearing);
         if (ImGui::Begin("SmatchetTest::HotkeyCaptureWidget")) {
             if (smatchet::ui::DrawHotkeyRebindControl("captureTest", g_captureState.display, g_captureState.capturing,
@@ -338,6 +350,7 @@ bool g_qbChanged = false;
 void RegisterQuickBindCaptureThenSet(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "QuickBindPopupCaptureThenSetBinds");
     t->GuiFunc = [](ImGuiTestContext*) {
+        DismissAppUpdateModal();
         ImGui::SetNextWindowSize(ImVec2(460.0f, 220.0f), ImGuiCond_Appearing);
         if (ImGui::Begin("SmatchetTest::QuickBindHost")) {
             if (g_qbPopup.Draw(g_ui.cfg)) {

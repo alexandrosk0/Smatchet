@@ -49,6 +49,14 @@ Runs, over first-party C++ changed vs <base-ref>:
      >= REVIEW_LINE_THRESHOLD changed lines, default 60) must have a current review
      ack. Run the code-review skill/agent, then `--ack-review` to record it; any later
      edit re-arms the gate. Bypass: SMATCHET_SKIP_REVIEW_GATE=1 (logged).
+  5. verifier verdict (optional) — when VERIFIER_BASE_URL + VERIFIER_MODEL name an
+     INDEPENDENT backend, `--ack-review` also scores the diff through
+     verifier-produce.py | verifier-sidecar.py and attaches the verdict to the ack.
+     A recorded hard_veto blocks every run; the score is advisory until calibrated
+     (verifier-produce.py never emits hard_veto, so the produced verdict alone cannot
+     veto — even a worst-case score does not block). Unset = no verdict
+     (never a self-score). Backend down = WARN + presence-only ack, never a block.
+     Tunables: VERIFIER_MODE (logprobs|scalar), VERIFIER_REPEATS, VERIFIER_DIFF_MAX_BYTES.
 USAGE
 }
 
@@ -171,40 +179,97 @@ cd "$repo_root"
 # `--ack-review` records a fingerprint of the changed first-party C++ vs <base-ref>; the gate
 # then fails unless the current fingerprint still matches. Any later edit changes the
 # fingerprint, invalidating the ack and forcing a conscious re-review of what will be pushed.
-review_marker="$repo_root/.review-ack"
-# The C++ trees whose diff content the fingerprint covers (mirrors the format-target globs).
-review_cpp_globs=(
-    'Source/Core/*.cpp' 'Source/Core/*.h'
-    'Source/Plugins/*.cpp' 'Source/Plugins/*.h'
-    'Source/Standalone/*.cpp' 'Source/Standalone/*.h'
-    'tests/*.cpp' 'tests/*.h'
-)
-review_fingerprint() {
-    # Committed-on-branch diff + working-tree diff, restricted to first-party C++. Hashing the
-    # diff (not just file list) means any content change — incl. a clang-format reflow — re-arms.
-    {
-        git diff "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-        git diff HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-    } | sha256sum | cut -d' ' -f1
+#
+# The fingerprint / substantive-diff / marker implementation moved to
+# agents/scripts/core/lib/review-ack.sh so the COMMIT-side gate
+# (scripts/git-hooks/pre-commit, via agents/scripts/core/review-ack.sh) shares exactly
+# one implementation with this PUSH-side gate. This script keeps mode `branch`
+# (<base-ref>...HEAD + working tree); the commit hook uses mode `staged`.
+#
+# Sourced from THIS script's directory, never "$repo_root": --selftest runs the script
+# against a throwaway work tree that has no agents/ tree of its own.
+preship_script_dir="$(cd "$(dirname "$0")" && pwd)"
+preship_review_lib="$preship_script_dir/../../agents/scripts/core/lib/review-ack.sh"
+if [ ! -r "$preship_review_lib" ]; then
+    # rc 2 is this script's "required tool unavailable" code — not rc 1, which
+    # means "a gate found a real violation".
+    echo "pre-ship: cannot read $preship_review_lib (incomplete checkout?)" >&2
+    exit 2
+fi
+# shellcheck source=agents/scripts/core/lib/review-ack.sh
+. "$preship_review_lib"
+
+# SMATCHET_PRESHIP_FORCE_NO_PY is honoured inside ra_resolve_python (selftest hook that
+# forces the #1116 fail-closed path in an environment that DOES have python).
+PRESHIP_PY="$(ra_resolve_python || true)"
+
+# --- Verifier verdict production (docs/plans/verifier-scored-code-review-gate.md, slice 2) ---
+# Drives the INDEPENDENT verifier over the branch diff and attaches the verdict to the ack,
+# so the gate can act on review quality and not merely on review presence.
+#
+# THE INDEPENDENCE RULE IS THE WHOLE POINT. A score is only meaningful if it comes from a
+# model other than the one under review; a reviewing agent scoring its own work is
+# self-certification with extra steps, and strictly worse than the honest binary it would
+# replace. So this runs ONLY when an external OpenAI-compatible backend is configured, and
+# is silently absent otherwise — never a self-scored fallback.
+#
+# FAIL-OPEN, LOUDLY. A backend that is down, slow, or misconfigured must never block a push:
+# production failure degrades to a presence-only ack with a WARN. That is the opposite of
+# review-ack.sh's `--verdict <file>` contract (rc 2, refuse) — deliberately, because there
+# the CALLER named a verdict file and would otherwise believe it got a scored ack, whereas
+# here the backend is best-effort infrastructure. The WARN is what keeps the degrade honest.
+preship_verifier_ready() {
+    [ -n "${VERIFIER_BASE_URL:-}" ] && [ -n "${VERIFIER_MODEL:-}" ]
 }
 
-# Resolve a WORKING python interpreter (empty if none). `command -v python3` alone is
-# insufficient on Windows: the python3 "App Execution Alias" stub passes `command -v` but
-# exits 49 ("Python was not found") when actually run — so probe each candidate by executing
-# it. Mirror of resolve_python in agents/scripts/project/lint-rules.d/00-common.sh (kept local
-# so this top-level script stays independent of the lint-rules internals).
-resolve_python() {
-    local cand p
-    for cand in python3 python py; do
-        p="$(command -v "$cand" 2>/dev/null)" || continue
-        if "$p" -c "" >/dev/null 2>&1; then printf '%s\n' "$p"; return 0; fi
-    done
-    return 1
+# preship_produce_verdict <out.json> — write a verifier-sidecar aggregate result for the
+# current branch diff. rc 0 = usable verdict at <out.json>; rc 1 = could not produce one.
+preship_produce_verdict() {
+    local out="$1" jobf tracef rc
+    [ -n "$PRESHIP_PY" ] || return 1
+    jobf="$(mktemp)" || return 1
+    mkdir -p "$repo_root/.verifier-traces" 2>/dev/null || true
+    # The trace is the calibration evidence: verifier-calibrate.py needs recorded runs
+    # paired with outcomes before the score can ever graduate from advisory to blocking
+    # (verifier-sidecar.md § Calibration). Producing verdicts without recording them would
+    # leave the score permanently un-promotable.
+    tracef="$repo_root/.verifier-traces/$(git rev-parse --abbrev-ref HEAD 2>/dev/null | tr '/' '-')-$(date -u +%Y%m%dT%H%M%SZ).json"
+
+    # Cap the candidate text: a large branch diff would blow the context window and the
+    # per-criterion cost. Truncation is disclosed IN the prompt so the model scores what it
+    # actually saw rather than silently judging a fragment as if it were the whole change.
+    "$PRESHIP_PY" - "$jobf" "$base_ref" "${VERIFIER_DIFF_MAX_BYTES:-60000}" <<'PY' || { rm -f "$jobf"; return 1; }
+import json, subprocess, sys
+job_path, base_ref, cap = sys.argv[1], sys.argv[2], int(sys.argv[3])
+diff = subprocess.run(["git", "diff", f"{base_ref}...HEAD"], capture_output=True, text=True,
+                      errors="replace").stdout
+note = ""
+if len(diff) > cap:
+    diff, note = diff[:cap], f"\n\n[TRUNCATED at {cap} bytes — this is a PREFIX of the diff, not the whole change.]"
+if not diff.strip():
+    sys.exit(1)
+json.dump({
+    "problem": ("Review this branch diff for a C++14 desktop app. Judge the CHANGE itself: "
+                "correctness, regression risk, security, project invariants, scope discipline, "
+                "and whether its verification is proportional to its risk." + note),
+    "candidates": [{"id": "branch-diff", "text": diff + note}],
+    "repeats": int(__import__("os").environ.get("VERIFIER_REPEATS", "1")),
+}, open(job_path, "w"))
+PY
+
+    set +e
+    "$PRESHIP_PY" "$repo_root/scripts/dev/verifier-produce.py" "$jobf" \
+        --mode "${VERIFIER_MODE:-logprobs}" --record "$tracef" 2>/dev/null \
+        | "$PRESHIP_PY" "$repo_root/scripts/dev/verifier-sidecar.py" aggregate - > "$out" 2>/dev/null
+    rc=$?
+    set -e
+    rm -f "$jobf"
+    if [ "$rc" -ne 0 ] || [ ! -s "$out" ]; then
+        return 1
+    fi
+    echo "pre-ship: verifier trace recorded at ${tracef#"$repo_root/"} (calibration evidence)."
+    return 0
 }
-PRESHIP_PY="$(resolve_python || true)"
-# Selftest hook: force the "no working python" branch so the #1116 fail-closed path is
-# testable in an environment that DOES have python. Never set this in normal use.
-[ "${SMATCHET_PRESHIP_FORCE_NO_PY:-0}" = "1" ] && PRESHIP_PY=""
 
 # SMATCHET_PRESHIP_GATE_ONLY=1 (selftest hook): skip the lint stages and run ONLY the
 # code-review gate. Never set this in normal use — the lint stages are the point.
@@ -345,52 +410,45 @@ fi
 # surface, cross-PR build hazards, behaviour drift). A diff is SUBSTANTIVE when it touches a
 # strict zone (project.config.json `lint.zones.strict`) or changes >= REVIEW_LINE_THRESHOLD
 # first-party C++ lines. Substantive ⇒ a fingerprint-pinned review ack is required.
-review_threshold="${REVIEW_LINE_THRESHOLD:-60}"
-review_changed_cpp=()
-mapfile -t review_changed_cpp < <(
-    git diff --name-only --diff-filter=d "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null
-    git diff --name-only --diff-filter=d -- "${review_cpp_globs[@]}" 2>/dev/null
-)
-review_strict_hit=""
-if [ "${#review_changed_cpp[@]}" -gt 0 ]; then
-    # tr -d '\r': native Windows python3 prints CRLF; an un-stripped \r in the zone string
-    # silently defeats the `case "$f" in "$z"*` prefix match (caught by --selftest).
-    review_strict_zones=()
-    if [ -n "$PRESHIP_PY" ]; then
-        mapfile -t review_strict_zones < <(
-            "$PRESHIP_PY" -c "import json;print('\n'.join(json.load(open('project.config.json'))['lint']['zones']['strict']))" \
-                2>/dev/null | tr -d '\r' || true
-        )
-        for f in "${review_changed_cpp[@]}"; do
-            [ -n "$f" ] || continue
-            for z in "${review_strict_zones[@]:-}"; do
-                [ -n "$z" ] || continue
-                case "$f" in "$z"*) review_strict_hit="$f" ;; esac
-            done
-        done
-    else
-        # #1116 fail-CLOSED: no WORKING python (the Windows py-stub passes `command -v` but
-        # exits 49) means the strict-zone list is unreadable. The old code just skipped
-        # detection here, so a sub-threshold strict-zone diff N/A-passed the review gate
-        # (fail-OPEN). Instead, treat the changed C++ as strict-requiring so the gate engages.
-        echo "pre-ship: WARN — no working python; strict-zone list unreadable → requiring review conservatively (fail-closed, #1116)." >&2
-        review_strict_hit="(strict-zone detection unavailable — no working python)"
-    fi
-fi
-review_lines=$(
-    {
-        git diff --numstat "$base_ref"...HEAD -- "${review_cpp_globs[@]}" 2>/dev/null || true
-        git diff --numstat -- "${review_cpp_globs[@]}" 2>/dev/null || true
-    } | awk '{a+=($1=="-"?0:$1); d+=($2=="-"?0:$2)} END {print a+d+0}'
-)
 review_substantive=0
-if [ -n "$review_strict_hit" ] || [ "${review_lines:-0}" -ge "$review_threshold" ]; then
+if ra_is_substantive branch "$base_ref"; then
     review_substantive=1
 fi
+# The #1116 fail-closed branch lives in ra_strict_hit; surface it here as before.
+case "$RA_SUBSTANTIVE_REASON" in
+    *"no working python"*)
+        echo "pre-ship: WARN — no working python; strict-zone list unreadable → requiring review conservatively (fail-closed, #1116)." >&2
+        ;;
+esac
 
 if [ "$ack_review" -eq 1 ]; then
-    review_fingerprint > "$review_marker"
-    echo "pre-ship: review ACK recorded for the current diff vs $base_ref (.review-ack)."
+    preship_fp="$(ra_fingerprint branch "$base_ref")"
+    preship_verdict=""
+    if preship_verifier_ready; then
+        preship_vfile="$(mktemp)"
+        if preship_produce_verdict "$preship_vfile"; then
+            preship_verdict="$(ra_verdict_from_json "$preship_vfile" || true)"
+        fi
+        rm -f "$preship_vfile"
+        if [ -z "$preship_verdict" ]; then
+            echo "pre-ship: WARN — verifier backend configured but produced no usable verdict; recording a presence-only ack." >&2
+        fi
+    fi
+    if [ -n "$preship_verdict" ]; then
+        IFS=$'\t' read -r pv_score pv_rec pv_veto pv_reason <<< "$preship_verdict"
+        ra_write_marker branch "$preship_fp" "$pv_score" "$pv_rec" "$pv_veto" "$pv_reason"
+        echo "pre-ship: review ACK + verifier verdict recorded (score=$pv_score recommendation=$pv_rec hard_veto=$pv_veto)."
+        if [ "$pv_veto" = "true" ]; then
+            # Rule 2: veto beats average. Unlike the score, this is categorical and blocks
+            # without waiting on calibration.
+            echo "pre-ship: FAIL — HARD VETO: ${pv_reason:-no reason recorded}. Fix it and re-run the review." >&2
+            exit 1
+        fi
+        echo "pre-ship: the score is ADVISORY — it does not gate until verifier-calibrate.py justifies promoting it."
+    else
+        ra_write_marker branch "$preship_fp"
+        echo "pre-ship: review ACK recorded for the current diff vs $base_ref (.review-ack)."
+    fi
     echo "pre-ship: PASS (ack) — gates clean + review acknowledged. Safe to push."
     exit 0
 fi
@@ -398,12 +456,10 @@ fi
 if [ "${SMATCHET_SKIP_REVIEW_GATE:-0}" = "1" ]; then
     echo "pre-ship: WARN — code-review gate bypassed (SMATCHET_SKIP_REVIEW_GATE=1)."
 elif [ "$review_substantive" -eq 1 ]; then
-    have_fp=""
-    [ -f "$review_marker" ] && have_fp="$(cat "$review_marker" 2>/dev/null || true)"
-    want_fp="$(review_fingerprint)"
+    have_fp="$(ra_read_marker branch)"
+    want_fp="$(ra_fingerprint branch "$base_ref")"
     if [ "$have_fp" != "$want_fp" ]; then
-        reason="${review_strict_hit:+strict-zone touch ($review_strict_hit)}"
-        reason="${reason:-$review_lines changed C++ lines >= $review_threshold}"
+        reason="$RA_SUBSTANTIVE_REASON"
         cat >&2 <<EOF
 pre-ship: FAIL — substantive C++ diff ($reason) requires a code review before push.
   No current review ack found (.review-ack ${have_fp:+is stale}${have_fp:-missing}).
@@ -415,8 +471,23 @@ EOF
         exit 1
     fi
     echo "pre-ship: code-review ack current for this diff (.review-ack matches)."
+    # A recorded veto must block EVERY run, not just the --ack-review invocation that
+    # produced it. Without this the veto is trivially bypassed: `--ack-review` writes the
+    # ack and THEN exits 1 on the veto, so a plain re-run finds a matching fingerprint and
+    # reports "ack current → safe to push". The commit gate already honours the veto
+    # (review-ack.sh --check rc 3); the push gate must not be the weaker of the two.
+    preship_gate_verdict="$(ra_read_verdict branch)"
+    if [ -n "$preship_gate_verdict" ]; then
+        IFS=$'\t' read -r gv_score gv_rec gv_veto gv_reason <<< "$preship_gate_verdict"
+        if [ "$gv_veto" = "true" ]; then
+            echo "pre-ship: FAIL — the recorded review verdict carries a HARD VETO: ${gv_reason:-no reason recorded}." >&2
+            echo "  Fix the vetoed issue, re-review, and re-record the ack. (Emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1.)" >&2
+            exit 1
+        fi
+        echo "pre-ship: recorded verifier score=$gv_score recommendation=$gv_rec (ADVISORY — not a gate until calibrated)."
+    fi
 else
-    echo "pre-ship: code-review gate N/A — diff is not substantive ($review_lines C++ lines, no strict-zone touch)."
+    echo "pre-ship: code-review gate N/A — diff is not substantive ($RA_SUBSTANTIVE_REASON)."
 fi
 
 echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."

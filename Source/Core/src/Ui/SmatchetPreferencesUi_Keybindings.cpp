@@ -22,11 +22,12 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUI.h"
 #include "SmatchetUiSession.h"
+#include "Ui/PreferencesFilter.h"
 #include "Ui/SmatchetHotkeyCapture.h"
 
 #include "imgui.h"
 
-#include <cctype>
+#include <cstddef>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -45,28 +46,18 @@ std::string CommandLabel(IAppCommands& app, const std::string& commandId) {
     return commandId;
 }
 
-std::string ToLowerAscii(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char ch : s) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
-    }
-    return out;
-}
-
-bool ContainsLower(const std::string& haystack, const std::string& needleLower) {
-    return ToLowerAscii(haystack).find(needleLower) != std::string::npos;
-}
-
 // A row matches when the (already-lowercased) filter is a substring of the action
 // label, the command id, or the bound combo. Empty filter matches everything.
+// The ASCII helpers come from PreferencesFilter — this TU used to carry its own
+// copies (Pillar 5).
 bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
                       const std::string& hotkey) {
     if (filterLower.empty()) {
         return true;
     }
-    return ContainsLower(label, filterLower) || ContainsLower(commandId, filterLower) ||
-           ContainsLower(hotkey, filterLower);
+    return PreferencesFilter::ContainsLower(label, filterLower) ||
+           PreferencesFilter::ContainsLower(commandId, filterLower) ||
+           PreferencesFilter::ContainsLower(hotkey, filterLower);
 }
 
 void DrawSystemShortcutRow(const char* label, const char* combo) {
@@ -123,7 +114,7 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
                                  sizeof(buf))) {
         addFilter = buf;
     }
-    const std::string addFilterLower = ToLowerAscii(addFilter);
+    const std::string addFilterLower = PreferencesFilter::ToLowerAscii(addFilter);
 
     bool added = false;
     ImGui::BeginChild("###kbAddList", ImVec2(360.0f, 280.0f), true);
@@ -134,8 +125,8 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
             continue; // already listed in the table
         }
         const std::string label = !c.Summary.empty() ? c.Summary : c.Name;
-        if (!addFilterLower.empty() && !ContainsLower(label, addFilterLower) &&
-            !ContainsLower(c.Name, addFilterLower)) {
+        if (!addFilterLower.empty() && !PreferencesFilter::ContainsLower(label, addFilterLower) &&
+            !PreferencesFilter::ContainsLower(c.Name, addFilterLower)) {
             continue;
         }
         anyShown = true;
@@ -167,44 +158,57 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
     return added;
 }
 
-} // namespace
+// Persistent across frames (single Preferences window): the search filter and the command
+// key of the row currently capturing a combo (empty = none; at most one). File-scope so
+// ResetKeybindingsCaptureState can abandon an armed capture from drawPreferencesWindow
+// when the Keybindings page stops drawing — otherwise the state survives and re-arms
+// that row when the page is reopened.
+std::string s_kbFilter;
+std::string s_kbCapturingKey;
 
-void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
-    // Persistent across frames (single Preferences window): the search filter and the command
-    // key of the row currently capturing a combo (empty = none; at most one). Declared above
-    // BeginTabItem so the inactive-tab early return can abandon an armed capture — otherwise the
-    // static survives and re-arms that row when the tab is reopened.
-    static std::string filter;
-    static std::string capturingKey;
+void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
+    std::string& filter = s_kbFilter;
+    std::string& capturingKey = s_kbCapturingKey;
 
-    const std::string tabLabel =
-        std::string(SmatchetLocalization::T("prefs.tab.keybindings", "Keyboard Shortcuts")) + "###prefsTabKeybindings";
-    if (!ImGui::BeginTabItem(tabLabel.c_str(), nullptr,
-                             SmatchetPreferencesUiDetail::PrefsTabFlags(d, "Keyboard Shortcuts"))) {
-        capturingKey.clear(); // tab switched away / closed mid-capture — drop the armed row
-        return;
+    // Intro is section chrome — no descriptor row of its own, so it drops out of a
+    // narrowed pane.
+    const bool globalActive = d.prefsFilter.Active();
+    if (!globalActive) {
+        ImGui::TextWrapped("%s",
+                           SmatchetLocalization::T("keybindings.editor.intro",
+                                                   "Rebind in-app keyboard shortcuts. Click a shortcut to capture a "
+                                                   "new key combo (Esc cancels). Changes save automatically."));
+        ImGui::Spacing();
     }
-    d.preferencesActiveTab = PreferencesActiveTab::Keybindings;
 
-    ImGui::TextWrapped("%s",
-                       SmatchetLocalization::T("keybindings.editor.intro",
-                                               "Rebind in-app keyboard shortcuts. Click a shortcut to capture a new "
-                                               "key combo (Esc cancels). Changes save automatically."));
-    ImGui::Spacing();
-
-    char searchBuf[160];
-    std::snprintf(searchBuf, sizeof(searchBuf), "%s", filter.c_str());
-    ImGui::SetNextItemWidth(280.0f);
-    if (ImGui::InputTextWithHint("###kbSearch",
-                                 SmatchetLocalization::T("keybindings.editor.searchHint", "Filter shortcuts..."),
-                                 searchBuf, sizeof(searchBuf))) {
-        filter = searchBuf;
+    // The rows are dynamic command entries with no descriptors of their own, so this
+    // table keeps a local filter box. While the global Preferences query is active it
+    // takes the row filter over and the local box is hidden — two live filters over
+    // one table is a trap.
+    if (!globalActive) {
+        char searchBuf[160];
+        std::snprintf(searchBuf, sizeof(searchBuf), "%s", filter.c_str());
+        ImGui::SetNextItemWidth(280.0f);
+        if (ImGui::InputTextWithHint("###kbSearch",
+                                     SmatchetLocalization::T("keybindings.editor.searchHint", "Filter shortcuts..."),
+                                     searchBuf, sizeof(searchBuf))) {
+            filter = searchBuf;
+        }
     }
-    const std::string filterLower = ToLowerAscii(filter);
+    std::string filterLower = PreferencesFilter::ToLowerAscii(globalActive ? std::string(d.prefsSearchBuf) : filter);
 
     bool mutated = false;
 
     std::vector<Keybinding>& binds = d.cfg.Keybindings.Bindings;
+
+    // A global query that reached this section matched the *section* descriptor
+    // ("keyboard shortcut hotkey ...") — narrowing the rows by that same word would
+    // empty the table. Forward it to the rows only when it actually hits one; the
+    // scan already ran this frame in drawPreferencesWindow (the nav rail needs the
+    // same answer), so read its result rather than repeating it.
+    if (globalActive && !d.prefsKeybindRowsMatchQuery) {
+        filterLower.clear();
+    }
     const ImGuiTableFlags tflags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH |
                                    ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_ScrollY;
     if (ImGui::BeginTable("###kbTable", 3, tflags, ImVec2(0.0f, 320.0f))) {
@@ -312,19 +316,60 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
         mutated = true;
     }
 
-    ImGui::Spacing();
-    if (ImGui::CollapsingHeader(
-            SmatchetLocalization::T("keybindings.editor.systemHeader", "System shortcuts (not rebindable)"))) {
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"), "Ctrl+M, Z");
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenExit", "Exit Zen mode"), "Esc Esc");
-        DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
-                              "Up / Down / Enter / Esc");
-    }
-
     if (mutated) {
         ui.MarkKeybindingsDirty();
         MarkPrefsDirty(d);
     }
-
-    ImGui::EndTabItem();
 }
+
+// Shortcuts > System shortcuts body: the fixed, non-rebindable chords. Its own section now —
+// the inner CollapsingHeader it used to carry is the PrefsSection header.
+void DrawSystemShortcutsSectionBody() {
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenToggle", "Toggle Zen mode"), "Ctrl+M, Z");
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.zenExit", "Exit Zen mode"), "Esc Esc");
+    DrawSystemShortcutRow(SmatchetLocalization::T("keybindings.system.paletteNav", "Command palette navigation"),
+                          "Up / Down / Enter / Esc");
+}
+
+} // namespace
+
+void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSession& d) {
+    bool bodyRan = false;
+    SmatchetPreferencesUiDetail::PrefsSection(d, "shortcuts.keyboard", [&] {
+        // One descriptor covers the whole table (its rows are dynamic command
+        // entries); gated at the call site because the body owns capture state.
+        if (!d.prefsFilter.ShowSetting("shortcuts.keyboard.bindings")) {
+            return;
+        }
+        bodyRan = true;
+        DrawKeybindingsSectionBody(ui, app, d);
+    });
+    if (!bodyRan) {
+        // Section collapsed (or filtered out) mid-capture — drop the armed row, matching
+        // the old inactive-tab early-return semantics.
+        s_kbCapturingKey.clear();
+    }
+    SmatchetPreferencesUiDetail::PrefsSection(d, "shortcuts.system", [&] {
+        if (d.prefsFilter.ShowSetting("shortcuts.system.list")) {
+            DrawSystemShortcutsSectionBody();
+        }
+    });
+}
+
+namespace SmatchetPreferencesUiDetail {
+void ResetKeybindingsCaptureState() { s_kbCapturingKey.clear(); }
+
+bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d) {
+    if (!d.prefsFilter.Active()) {
+        return false;
+    }
+    const std::string filterLower = PreferencesFilter::ToLowerAscii(std::string(d.prefsSearchBuf));
+    const std::vector<Keybinding>& binds = d.cfg.Keybindings.Bindings;
+    for (std::size_t i = 0; i < binds.size(); ++i) {
+        if (RowMatchesFilter(filterLower, CommandLabel(app, binds[i].CommandId), binds[i].CommandId, binds[i].Hotkey)) {
+            return true;
+        }
+    }
+    return false;
+}
+} // namespace SmatchetPreferencesUiDetail

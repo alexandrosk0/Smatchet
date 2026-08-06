@@ -65,6 +65,9 @@ done
 
 die() { echo "build-deploy-and-open-unreal: $*" >&2; exit 1; }
 
+# shellcheck source=scripts/common/unreal-batch.sh
+. "$SCRIPT_DIR/../../common/unreal-batch.sh" || die "could not source unreal-batch.sh"
+
 winpath() {
     if command -v cygpath >/dev/null 2>&1; then
         cygpath -w "$1"
@@ -123,13 +126,13 @@ bash "$SCRIPT_DIR/package-unreal-plugin-msvc.sh" "${PACKAGE_ARGS[@]}" \
     || die "packaging/deploy step failed."
 
 echo "==> Rebuilding Unreal editor target..."
-# MSYS_NO_PATHCONV: Git Bash rewrites a whole argument that looks like an
-# absolute POSIX path, so a bare `/c` reaches cmd.exe as `C:/` and the batch
-# file never runs. Paths are already Windows-form via winpath().
-MSYS_NO_PATHCONV=1 cmd.exe /c "$(winpath "$BUILD_BAT")" "${PROJECT_NAME}Editor" "$UNREAL_PLATFORM" "$UNREAL_CONFIGURATION" \
-    "$(winpath "$PROJECT_FILE")" -WaitMutex || die "Unreal build failed."
+run_unreal_batch "$(winpath "$BUILD_BAT")" "${PROJECT_NAME}Editor" "$UNREAL_PLATFORM" \
+    "$UNREAL_CONFIGURATION" "$(winpath "$PROJECT_FILE")" -WaitMutex \
+    || die "Unreal build failed."
 
 echo "==> Opening $PROJECT_FILE ..."
-MSYS_NO_PATHCONV=1 cmd.exe /c start "" "$(winpath "$PROJECT_FILE")" || die "could not open the .uproject."
+# `//c`, not `/c` — same MSYS rewrite as above; `start` is a cmd builtin so this one
+# genuinely needs the wrapper.
+cmd.exe //c start "" "$(winpath "$PROJECT_FILE")" || die "could not open the .uproject."
 
 echo "==> Done."

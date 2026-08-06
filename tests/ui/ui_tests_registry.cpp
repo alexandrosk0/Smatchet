@@ -36,6 +36,8 @@ extern "C" void SmatchetRegisterDataDependentWindowsSmokeTests(ImGuiTestEngine* 
 extern "C" void SmatchetRegisterNotificationCenterTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeWindowRenderSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizePreferencesTabsTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterPrefsSchemaCoverageTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterPrefsSearchFilterTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeMainUiSmokeTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterFuncSizeGridRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine);
@@ -98,6 +100,8 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterNotificationCenterTests(engine);
     SmatchetRegisterFuncSizeWindowRenderSmokeTests(engine);
     SmatchetRegisterFuncSizePreferencesTabsTests(engine);
+    SmatchetRegisterPrefsSchemaCoverageTests(engine);
+    SmatchetRegisterPrefsSearchFilterTests(engine);
     SmatchetRegisterFuncSizeMainUiSmokeTests(engine);
     SmatchetRegisterFuncSizeGridRenderTests(engine);
     SmatchetRegisterGridPaneWindowsTests(engine);
