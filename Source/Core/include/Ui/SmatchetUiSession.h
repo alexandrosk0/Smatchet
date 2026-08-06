@@ -1059,6 +1059,14 @@ struct UiDrawSession {
     /// Filter substring applied via `CommandPaletteUi::SetFilterText` when
     /// `requestCommandPaletteOpen` is consumed. Empty means "open with no filter".
     std::string requestCommandPaletteFilter;
+    /// Transient "re-focus the palette filter input" request, consumed alongside the
+    /// open latch. The palette's own auto-focus fires only when its WINDOW appears, so
+    /// a window that takes focus afterwards (the first-run Preferences surface) leaves
+    /// the input inactive — which is exactly the difference the bucket-C
+    /// `command-palette-fuzzy` golden flip-flopped on (focused input with caret +
+    /// selection vs a plain unfocused box, L_inf 235). The scenario re-arms this every
+    /// warm-up frame so the captured frame always shows the focused state.
+    bool requestCommandPaletteFocus = false;
 
     /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
     bool showDockDebug = false;

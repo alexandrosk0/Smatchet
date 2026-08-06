@@ -8,6 +8,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "Logger.h"
@@ -60,8 +61,20 @@ class CommandPaletteFuzzyScenario : public IScenario {
     }
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
-        // No per-frame mutation needed — the palette stays open until either
-        // the user dismisses it or we tear down at scenario end.
+        // The palette itself stays open until either the user dismisses it or we
+        // tear down at scenario end — no per-frame re-arm needed there. What DOES
+        // need a per-frame reset is the ambient chrome: drop the wall-clock-driven
+        // startup sync toasts so the capture is phase-independent (see
+        // ScenarioCaptureQuiesce.h).
+        QuiesceCaptureFrame();
+        // Re-arm keyboard focus on the palette's filter input every warm-up frame.
+        // The palette auto-focuses only when its window APPEARS; the first-run
+        // Preferences surface opens a couple of frames later under the isolated
+        // empty user-data dir and takes focus, so whether the capture landed on the
+        // focused state (blue border, selected text, caret) or the plain unfocused
+        // box came down to frame ordering — an L_inf 235 flip between runs. Re-arming
+        // pins the focused state, which is also what a user sees after Ctrl+Shift+P.
+        g_ui.requestCommandPaletteFocus = true;
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }

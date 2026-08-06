@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CodeColorView.h"
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "SmatchetImGuiFonts.h"
@@ -78,6 +79,12 @@ class CodeSyntaxColoringScenario : public IScenario {
     }
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
+        // Determinism: the toast overlay draws ABOVE this window (drawGlobalOverlays
+        // runs last), so the opaque full-viewport window below does not shield the
+        // capture from the wall-clock-driven startup sync toasts — dismiss them
+        // every warm-up frame (see ScenarioCaptureQuiesce.h).
+        QuiesceCaptureFrame();
+
         // Draw a fully-opaque window covering the framebuffer so the capture is
         // dominated by the coloured code, not the dock chrome behind it. Fixed
         // pos + size (ImGuiCond_Always) keep the layout deterministic.

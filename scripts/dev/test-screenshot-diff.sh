@@ -162,23 +162,29 @@ run_scenario() {
     echo
     echo "=== Scenario: $scen ==="
 
-    # The user-info-* goldens must be config-INDEPENDENT: the real user-data dir
-    # may carry cached tracker creds, which would load a live backend (populated
-    # grid rows, activity/groups async, sync toasts) whose content varies run to
-    # run and machine to machine. Point those scenarios at a throwaway EMPTY
-    # user-data dir (SMATCHET_USER_DATA, honoured by StandaloneAppBootstrap and
-    # inherited by the --spawn child) so every capture starts from the same clean
-    # first-launch state. The other scenarios are UNTOUCHED — they run with the
-    # ambient env exactly as before, so their committed goldens are unperturbed.
-    local iso_env=()
-    local iso_dir=""
-    case "$scen" in
-    user-info-*)
-        iso_dir="$TMP_DIR/userdata-$scen"
-        mkdir -p "$iso_dir"
-        iso_env=(env "SMATCHET_USER_DATA=$iso_dir")
-        ;;
-    esac
+    # EVERY golden must be config-INDEPENDENT: the real user-data dir may carry
+    # cached tracker creds, which load a live backend (populated grid rows,
+    # activity/groups async, sync toasts, an online-vs-offline status bar, a
+    # relative "-1d" Updated cell that rots with the wall-clock date) whose
+    # content varies run to run and machine to machine. Point every scenario at
+    # a throwaway EMPTY user-data dir (SMATCHET_USER_DATA, honoured by
+    # StandaloneAppBootstrap and inherited by the --spawn child) so every capture
+    # starts from the same clean first-launch state.
+    # The three ambient scenarios (dock-gap-sentinel, command-palette-fuzzy,
+    # code-syntax-coloring) ran with the ambient env until 2026-08-05 and flaked
+    # on exactly that tracker-connectivity race (captures landing in the TRACKER
+    # OFFLINE state at L_inf 200-240); their goldens were re-bootstrapped under
+    # isolation with the flake fix.
+    local iso_dir="$TMP_DIR/userdata-$scen"
+    mkdir -p "$iso_dir"
+    # SMATCHET_UPDATE_CHECK=0 — the startup "newer release on GitHub?" round-trip
+    # is async and network-timed, so its completion frame lands at a different
+    # point in every run. When it landed mid-capture it painted the whole "Update
+    # Available" modal over the frame (whole-frame L_inf ~240, and release-note
+    # text that would rot on every release). The scenario quiesce suppresses that
+    # modal once it exists; disabling the check outright means there is no
+    # completion event to race with in the first place.
+    local iso_env=(env "SMATCHET_USER_DATA=$iso_dir" "SMATCHET_UPDATE_CHECK=0")
 
     # 20 warm-up frames keeps the docking + palette layout settled before the
     # screenshot trigger. Frames argument feeds the spawn-mode timeout calc

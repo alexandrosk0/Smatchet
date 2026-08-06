@@ -174,6 +174,18 @@ static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
         ImGui::OpenPopup("Update Available###AppUpdateAvailable");
     }
+    // appUpdateModalOpen is authoritative for SUBMISSION, not only for opening.
+    // Clearing the flag alone does not close a popup that is already on ImGui's
+    // popup stack — BeginPopupModal would keep returning true and keep painting
+    // the dialog. Not submitting it does close it (ImGui drops a popup whose
+    // Begin* is skipped), which is what lets a screenshot scenario suppress a
+    // modal the async update check opened mid-capture (QuiesceCaptureFrame
+    // clears the flag from the scenario tick, which runs earlier in the frame).
+    // Production behaviour is unchanged: every path that clears the flag (Skip
+    // This Version / Later / the title-bar close) already closes the popup too.
+    if (!d.appUpdateModalOpen) {
+        return;
+    }
     if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
         return;
@@ -593,6 +605,13 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
             } else if (!paletteOpen.Filter.empty()) {
                 commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
+        }
+        // Re-focus request (bucket-C capture determinism — see the field doc). Kept
+        // separate from the open latch so re-arming focus does not also reset the
+        // filter buffer / selection the way a fresh Open() would.
+        if (g_ui.requestCommandPaletteFocus) {
+            g_ui.requestCommandPaletteFocus = false;
+            commandPalette_.FocusFilterInput();
         }
         // Borrow the live keybinding table so palette rows surface their bound combo.
         commandPalette_.SetKeybindings(&d.cfg.Keybindings.Bindings);

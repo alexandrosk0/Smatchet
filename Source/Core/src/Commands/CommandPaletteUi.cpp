@@ -25,6 +25,7 @@ namespace cmd {
 
 void CommandPaletteUi::Open() {
     open_ = true;
+    focusFilterPending_ = true;
     selected_ = 0;
     argFormStep_ = -1;
     categoryPrefix_.clear();
@@ -271,8 +272,14 @@ void CommandPaletteUi::Draw(AppController& app) {
         return;
     }
 
-    // Auto-focus the filter input on first appearance.
-    if (ImGui::IsWindowAppearing()) {
+    // Auto-focus the filter input on first appearance, or whenever a caller
+    // re-armed focus via FocusFilterInput(). SetWindowFocus() comes first: the
+    // re-arm path exists precisely for the case where ANOTHER window holds focus
+    // (the first-run Preferences surface opening after the palette did), and
+    // focusing the item without focusing its window leaves the input inactive.
+    if (ImGui::IsWindowAppearing() || focusFilterPending_) {
+        focusFilterPending_ = false;
+        ImGui::SetWindowFocus();
         ImGui::SetKeyboardFocusHere();
     }
 

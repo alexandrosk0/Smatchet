@@ -14,6 +14,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "Logger.h"
@@ -63,6 +64,10 @@ class DockGapSentinelScenario : public IScenario {
         // through to the captured frame. Any viewport pixel the dock leaves
         // uncovered then renders magenta (255,0,255) instead of the theme bg.
         ArmPinkClear();
+        // Determinism: drop the wall-clock-driven startup sync toasts before the
+        // capture (see ScenarioCaptureQuiesce.h) — their fade phase differed
+        // run-to-run at L_inf 97-113 against a tolerance of 4.
+        QuiesceCaptureFrame();
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }

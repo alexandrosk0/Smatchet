@@ -661,14 +661,20 @@ void RunRenderLoop(BootstrapContext& ctx, const std::function<bool()>& shouldSto
 
         SmatchetDrawFrameWithSeh(*ctx.mainWindow, *ctx.app, *ctx.pluginHost);
 
-        // Scenarios().Tick MUST run INSIDE the NewFrame/Render bracket and after
-        // the app draw, matching SmatchetUI::Draw's production ordering. Scenario
-        // OnFrame may touch per-frame ImGui state (GetForegroundDrawList,
-        // GetWindowDrawList), and ui_test.run completion must observe the frame
-        // after test GuiFunc submission rather than racing ahead of it.
-        bool scenScrollActive = false;
-        int scenScrollTarget = -1;
-        ctx.app->Scenarios().Tick(*ctx.app, scenScrollActive, scenScrollTarget);
+        // Deliberately no scenario-runner tick at this point in the loop.
+        // SmatchetUI::Draw already ticks the runner exactly once per frame
+        // (from drawPreWindowOverlays), inside the
+        // NewFrame/Render bracket, and SmatchetDrawFrameWithSeh above calls it —
+        // so a second tick here drove the active scenario TWICE per rendered
+        // frame on this ephemeral (--spawn / headless scenario) loop while the
+        // production loop in main.cpp drove it once. Both halves of that were
+        // capture-visible: a scenario that submits ImGui content from OnFrame
+        // (CodeSyntaxColoringScenario) appended its widgets twice into the same
+        // window, and frame_ advanced at 2x so the screenshot fired at half the
+        // requested warm-up wall-clock — the two states the bucket-C
+        // code-syntax-coloring / command-palette-fuzzy goldens flip-flopped
+        // between run to run. One tick site keeps spawn captures identical to
+        // what the production loop renders.
 
         ImGui::Render();
 
