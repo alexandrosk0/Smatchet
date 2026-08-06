@@ -574,5 +574,16 @@ class SmatchetUI {
     static void prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                       bool requestFocus = false);
     static void repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH);
+
+  public:
+    // Activate a window's tab inside its dock node. SetNextWindowFocus() alone does NOT
+    // do this — see the implementation comment (upstream ImGui #2304). Call it alongside
+    // the focus request for any window that can share a dock node with a sibling.
+    // Public because the bucket-E regression guard (tests/ui/docked_tab_focus.test.cpp)
+    // drives the real implementation rather than a replica — the imgui#2304 workaround
+    // reaches into imgui_internal.h and would silently rot if the test used a copy.
+    static void selectDockedTab(const char* windowName);
+
+  private:
     void resetWindowLayoutToDefault(UiDrawSession& d);
 };

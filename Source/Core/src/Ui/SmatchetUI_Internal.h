@@ -13,6 +13,9 @@
 #include "SmatchetUiSession.h"
 
 #include "imgui.h"
+// imgui_internal.h MUST be included before the `#define ImGui` alias below — the
+// alias would otherwise rewrite the header's own `namespace ImGui { ... }`.
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
 #define ImGui SmatchetLocalizedImGui
