@@ -130,9 +130,15 @@ jobs:
         shell: bash
         run: |
           # choco is a .bat shim, so it needs cmd.exe rather than a direct exec
-          # from bash. Everything else here is plain bash — this was the last
+          # from bash. MSYS_NO_PATHCONV=1 is load-bearing: Git Bash otherwise
+          # rewrites the `/c` switch into `C:/`, so cmd.exe sees no switch at
+          # all, runs nothing, and exits 0 — a silent no-op install that only
+          # surfaces later as "OpenCppCoverage not found". This was the last
           # `shell: powershell` step in the repo.
-          cmd.exe /c "choco install opencppcoverage -y --no-progress"
+          MSYS_NO_PATHCONV=1 cmd.exe /c "choco install opencppcoverage -y --no-progress"
+          command -v OpenCppCoverage.exe >/dev/null 2>&1 \
+            || test -x "/c/Program Files/OpenCppCoverage/OpenCppCoverage.exe" \
+            || { echo "FAIL: choco install produced no OpenCppCoverage.exe"; exit 1; }
           echo 'C:\Program Files\OpenCppCoverage' >> "$GITHUB_PATH"
 
       - name: Cache FetchContent _deps

@@ -76,7 +76,7 @@ Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness
 
 ## Windows-only shims
 
-The dev toolchain under `scripts/` is **bash-only** — every former `.ps1` helper was ported (see `docs/plans/shipped/kill-powershell-minimize-toolchain.md`). Exactly five PowerShell files survive, all under `agents/scripts/core/`, and each carries a `# Last remaining PowerShell file` header comment pointing back here. They stay PowerShell because they call Windows APIs that have no Git-Bash equivalent:
+The dev toolchain under `scripts/` is **bash-only** — every former `.ps1` helper was ported (see `docs/plans/kill-powershell-minimize-toolchain.md`). Exactly five PowerShell files survive, all under `agents/scripts/core/`, and each carries a `# Last remaining PowerShell file` header comment pointing back here. They stay PowerShell because they call Windows APIs that have no Git-Bash equivalent:
 
 | File | Why it must stay PowerShell |
 |---|---|
