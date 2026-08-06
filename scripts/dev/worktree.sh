@@ -111,13 +111,26 @@ has_ref() { git -C "$REPO_ROOT" rev-parse --verify --quiet "$1" >/dev/null 2>&1;
 # --- Per-tree session registry (same format the bash hooks write) ------------
 registry_dir() { printf '%s/.claude/.active-sessions' "$1"; }
 
-# A session entry counts as live when its heartbeat is fresh (<30 min) or its
-# recorded pid still exists.
+# Liveness comes from the hooks' own primitives so `list` agrees with what the
+# HEAD-drift guards see. That matters on Windows: the registry stores Win32 pids,
+# which `kill -0` in git-bash can never probe (the fallback loop below would call
+# a long-idle-but-open session dead while the guards still count it live).
+SESSION_REGISTRY_LIB="$REPO_ROOT/agents/scripts/core/session-registry-lib.sh"
+if [ -f "$SESSION_REGISTRY_LIB" ]; then
+    # shellcheck source=/dev/null
+    . "$SESSION_REGISTRY_LIB"
+fi
+
+# Fallback (lib absent): fresh heartbeat (<30 min) or a pid `kill -0` can see.
 live_session_count() {
     local dir entry ts pid now live=0
     dir="$(registry_dir "$1")"
     [ -d "$dir" ] || { printf '0'; return; }
     now="$(date +%s)"
+    if command -v sr_count_live_siblings >/dev/null 2>&1; then
+        sr_count_live_siblings "$dir" "" "$now"
+        return
+    fi
     for entry in "$dir"/*; do
         [ -f "$entry" ] || continue
         ts="$(sed -n 's/^ts=\([0-9][0-9]*\).*/\1/p' "$entry" | head -1)"
