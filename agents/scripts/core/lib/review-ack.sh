@@ -185,14 +185,22 @@ ra_is_substantive() {
 }
 
 ra_read_marker() {
-    local mode="$1" marker line
+    local mode="$1" marker line rest
     marker="$(ra_marker_path)"
     [ -n "$marker" ] && [ -f "$marker" ] || return 0
     while IFS= read -r line || [ -n "$line" ]; do
         [ -n "$line" ] || continue
         case "$line" in
             "$mode"[[:space:]]*)
-                printf '%s\n' "${line#"$mode"}" | tr -d '[:space:]'
+                # Take ONLY the fingerprint field. The original implementation ran
+                # `tr -d '[:space:]'` over everything after the mode, which was
+                # correct for a 2-field record but silently concatenates the
+                # verdict fields into the sha once they exist — a stale-ack
+                # comparison that can never match, i.e. a gate that blocks
+                # forever. Field-exact extraction is the fix.
+                rest="${line#"$mode"}"
+                rest="${rest#"${rest%%[![:space:]]*}"}"   # ltrim
+                printf '%s\n' "${rest%%[[:space:]]*}"     # first field only
                 return 0
                 ;;
         esac
@@ -205,8 +213,13 @@ ra_read_marker() {
     return 0
 }
 
+# ra_write_marker <mode> <sha> [score] [recommendation] [hard_veto] [veto_reason]
+# The trailing four are the verifier verdict and are OPTIONAL: a record written
+# without them is byte-identical to the 2-field form, so a gate with no verifier
+# configured behaves exactly as it did before the verdict existed.
 ra_write_marker() {
     local mode="$1" sha="$2" marker line
+    local score="${3:-}" rec="${4:-}" veto="${5:-}" reason="${6:-}"
     marker="$(ra_marker_path)"
     [ -n "$marker" ] || return 1
     local -a kept=()
@@ -224,6 +237,52 @@ ra_write_marker() {
             kept+=("$line")
         done < "$marker"
     fi
-    kept+=("$(printf '%s\t%s' "$mode" "$sha")")
+    if [ -n "$score$rec$veto$reason" ]; then
+        # Tabs are the field separator, so a veto reason containing one would
+        # shift every later field. Fold whitespace to single spaces.
+        reason="$(printf '%s' "$reason" | tr '\t\n' '  ')"
+        kept+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$mode" "$sha" "$score" "$rec" "$veto" "$reason")")
+    else
+        kept+=("$(printf '%s\t%s' "$mode" "$sha")")
+    fi
     printf '%s\n' "${kept[@]}" > "$marker"
+}
+
+# ra_read_verdict <mode> — print the recorded verdict as
+# `<score>\t<recommendation>\t<hard_veto>\t<veto_reason>`, or nothing when the
+# record carries no verdict (the 2-field form, or a legacy bare sha).
+ra_read_verdict() {
+    local mode="$1" marker
+    marker="$(ra_marker_path)"
+    [ -n "$marker" ] && [ -f "$marker" ] || return 0
+    awk -F'\t' -v m="$mode" '$1 == m && NF >= 6 {
+        printf "%s\t%s\t%s\t%s\n", $3, $4, $5, $6; exit
+    }' "$marker"
+}
+
+# ra_verdict_from_json <aggregate.json> — extract the verdict fields from a
+# `verifier-sidecar.py aggregate` result, printed as
+# `<score>\t<recommendation>\t<hard_veto>\t<veto_reason>`. Reads candidates[0]:
+# the commit gate scores exactly one candidate (this diff's review), so a
+# multi-candidate ranking result is out of contract here.
+#
+# Fails (rc 1) rather than guessing when jq is absent or the JSON has no
+# candidate — a gate must not invent a verdict.
+ra_verdict_from_json() {
+    local file="$1"
+    [ -r "$file" ] || return 1
+    command -v jq >/dev/null 2>&1 || return 1
+    # `select` first, and require overall_score: without it an empty
+    # `candidates` array makes .candidates[0] null, the `//` defaults fabricate
+    # `unknown/false`, and MALFORMED INPUT SILENTLY YIELDS A CLEAN VERDICT —
+    # a veto could be dropped by a truncated file. Fail instead.
+    jq -e -r '
+        .candidates[0]
+        | select(type == "object" and has("overall_score"))
+        | [ (.overall_score | tostring),
+            (.recommendation // "unknown"),
+            (if .hard_veto then "true" else "false" end),
+            ((.veto_reasons // []) | if length > 0 then .[0] else "" end)
+          ] | @tsv
+    ' "$file" 2>/dev/null
 }

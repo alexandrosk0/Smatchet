@@ -96,7 +96,14 @@ N/A — the diff touches no `Source/Core/` file; it is shell, Python-adjacent co
 *(populated post-ship)*
 
 ## Deviations from plan
-*(populated post-ship)*
+
+Both were surfaced by the pre-implementation stress-test (§ Verification, `grill-with-docs`), which resolved by running the tooling rather than reading its docs — and both changed the design.
+
+1. **Only `hard_veto` blocks; `recommendation` does not.** The plan's § Approach said the gate would block on "`hard_veto` (or, post-calibration, a sub-threshold score)". Running `verifier-sidecar.py aggregate` shows `recommendation` is `block` for a **low score** as well as for a veto, and `escalate` for an ordinary single sample (a 0.82 score at 0.7 confidence already returns `escalate`). Blocking on `recommendation` would therefore either gate on an uncalibrated score — the exact thing rule 5 forbids — or wedge nearly every commit. The gate keys on `hard_veto` alone.
+
+2. **The veto is self-reported, and that is accepted for this one signal.** The plan's § Approach asserted the verifier "must not be the reviewer". `verifier-produce.py` emits **criterion scores only — it never emits `hard_veto`** (confirmed: no occurrence in the file; the sidecar reads the flag from its input sample). So a veto can only originate from the reviewing agent's own verifier object. Rather than drop veto-blocking, the design adopts an **asymmetric trust rule**: a veto is a *confession* — an agent reporting a security hole in its own change argues against its own interest, which a high score never does — so self-reported **bad** news is trusted while self-reported **good** news is not. The continuous score still requires an independent backend to mean anything, which is why it stays advisory. Recorded in `docs/agent-rules/verifier-sidecar.md` § Where it runs first.
+
+Also fixed in passing, a latent bug in the shipped #1964 code rather than a plan deviation: `ra_read_marker` ran `tr -d '[:space:]'` over everything after the mode field, which was correct for a 2-field record but would have folded the new verdict fields into the fingerprint — producing an ack that could never match, i.e. a gate that blocks forever. Now field-exact.
 
 ## Verification (actual)
 *(populated post-ship)*
