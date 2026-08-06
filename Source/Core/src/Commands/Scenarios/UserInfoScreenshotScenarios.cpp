@@ -183,6 +183,9 @@ void UserInfoScreenshotScenario::restoreState() {
     // Leave showUserInfo restored last so the close-edge cleanup in DrawWindow
     // runs against a valid app on the next frame (matches the bucket-E guard).
     g_ui.showUserInfo = savedShowUserInfo_;
+    // Unwind the shared quiesce too — its update-check suppression is global
+    // state, not per-scenario (see ScenarioCaptureQuiesce.h).
+    RestoreCaptureQuiesce();
 }
 
 } // namespace cmd

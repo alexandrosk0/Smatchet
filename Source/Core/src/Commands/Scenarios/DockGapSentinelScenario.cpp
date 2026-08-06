@@ -72,6 +72,10 @@ class DockGapSentinelScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
+    // The runner calls exactly one of OnCancel / OnFinish, so the quiesce unwind
+    // needs a hook on both paths (see ScenarioCaptureQuiesce.h).
+    void OnCancel(IAppScenarioHost& /*app*/) override { RestoreCaptureQuiesce(); }
+
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot AFTER the warm-up frames have rendered.
         // Source/Standalone/main.cpp's post-swap handler will consume the
@@ -87,6 +91,11 @@ class DockGapSentinelScenario : public IScenario {
 
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;
+        // Undo the update-check suppression now that the capture is staged — the
+        // restored values cannot re-open the modal on this frame (the check is an
+        // async round-trip that lands frames later), and leaving them suppressed
+        // would outlive an in-process run.
+        RestoreCaptureQuiesce();
 
         nlohmann::json out;
         out["scenario"] = Name();

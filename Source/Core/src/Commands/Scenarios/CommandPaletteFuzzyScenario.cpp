@@ -85,6 +85,7 @@ class CommandPaletteFuzzyScenario : public IScenario {
         g_ui.requestCommandPaletteOpen = false;
         g_ui.requestCommandPaletteFilter.clear();
         g_ui.cfg.BackendHasBeenReachable = savedBackendReachable_;
+        RestoreCaptureQuiesce();
     }
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
@@ -96,6 +97,9 @@ class CommandPaletteFuzzyScenario : public IScenario {
         // Restore the backend-reachable latch we forced in OnStart (no-op for
         // an already-reachable session; matches the OnCancel unwind path).
         g_ui.cfg.BackendHasBeenReachable = savedBackendReachable_;
+        // Same unwind for the shared update-check suppression (see
+        // ScenarioCaptureQuiesce.h) — after the capture is staged, as above.
+        RestoreCaptureQuiesce();
 
         nlohmann::json out;
         out["scenario"] = Name();

@@ -120,12 +120,20 @@ class CodeSyntaxColoringScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
+    // The runner calls exactly one of OnCancel / OnFinish, so the quiesce unwind
+    // needs a hook on both paths (see ScenarioCaptureQuiesce.h).
+    void OnCancel(IAppScenarioHost& /*app*/) override { RestoreCaptureQuiesce(); }
+
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot after the warm-up frames have rendered +
         // the colour cache is warm. Source/Standalone/main.cpp's post-swap
         // handler consumes the request and writes the PNG.
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;
+        // Unwind the shared update-check suppression once the capture is staged
+        // (see ScenarioCaptureQuiesce.h) so an in-process run leaves the session's
+        // update checks exactly as it found them.
+        RestoreCaptureQuiesce();
 
         nlohmann::json out;
         out["scenario"] = Name();

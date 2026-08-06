@@ -637,6 +637,15 @@ struct UiDrawSession {
     // 0 = Filter, 1 = Fields, 2 = Columns, 3 = Sort (matches ViewsEditorTab enum in the Views UI .cpp).
     int viewsActiveTab = 0;
     bool viewsDirty = false;
+    /// Frame fence that hides the unsaved-layout strip without touching viewsDirty.
+    /// Screenshot scenarios arm it (ScenarioCaptureQuiesce) because the grid's
+    /// startup width/sort write-back latches viewsDirty on a frame that varies with
+    /// pane-focus + data-arrival timing, so whether the ~33px strip — and the
+    /// downward shift of everything under it — made the captured frame flipped run
+    /// to run. Suppression is purely visual and auto-expires by frame number, so no
+    /// unwind is needed and a real user's pending layout edits keep their Save
+    /// affordance the moment the fence lapses.
+    int suppressUnsavedLayoutStripUntilFrame = -1;
     int viewsKeyboardReorderRow = -1;
     // Sidebar search filter for the saved-views list.
     char viewsSidebarSearchBuf[128]{};
