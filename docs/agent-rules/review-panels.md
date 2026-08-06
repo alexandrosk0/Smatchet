@@ -18,7 +18,9 @@ pass is done.
 
 Review files are named for their author so a panel writes in parallel without collision:
 **`[prefix]review-[round]-[harness]-[model].md`** — prefix per gate (`4-` pre-implementation, `5-`
-post-implementation, `close-` closing), e.g. `4-review-1-claude-opus.md`.
+post-implementation), e.g. `4-review-1-claude-opus.md`. (Whip also names a `close-` closing-review
+prefix; the close here has no panel review, so that prefix is **reserved, not active** — noted so
+the naming grammar still matches the source if a closing review is ever ported.)
 
 **The launcher owns the naming.** It runs one model per invocation from the roster (a
 `review-panel` block in `project.config.json` when the Phase 2 port lands; Whip's source of record
@@ -43,7 +45,7 @@ Problems only, verified — no praise, no restatement
 ([work-items.md → Review](work-items.md#review)). The gate sets the title and the "against …" line;
 the body shape is:
 
-```
+```text
 # <title per the gate> (pass N)
 
 Problems only. Reviewed commit `<hash>` (<subject>) against <what>. No praise, no restatement.

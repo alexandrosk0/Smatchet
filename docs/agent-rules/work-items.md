@@ -7,8 +7,10 @@ carried across verbatim rather than paraphrased. Panel-review mechanics live in
 [process-rules.md](process-rules.md); how the ship-loop behaves inside an item is
 [ship-loops.md](ship-loops.md) exception 7.
 
-One item (feature) at a time. Each item lives in its own numbered folder under `docs/work/items/`,
-named `NN-slug` (two-digit number + kebab-case slug), holding the numbered stages in sequence:
+At most one item (feature) is in **active development** at a time (several may be open at earlier
+stages — see [Current item](#current-item)). Each item lives in its own numbered folder under
+`docs/work/items/`, named `NN-slug` (two-digit number + kebab-case slug), holding the numbered
+stages in sequence:
 
 - `1-specification.md` — what is being built and why
 - `2-design.md` — the technical design / approach
@@ -27,7 +29,7 @@ carried `§QA`** — generated at implementation end; a **script to work through
 it records no results, and nothing gates on it. Each drains at close (`Spawned.md` into the canonical
 ledgers — see [Tracking](#tracking)) and is then deleted with the folder; unlike the staged files
 they aren't reviewed or frozen. (Whip also keeps a *standing* project-wide QA checklist that per-item
-`(durable)` QA lines drain into; Smatchet has no manual-QA checklist yet, so that drain target does
+`(durable)` QA lines drain into; this project has no manual-QA checklist yet, so that drain target does
 not exist here — flagged, not invented. If a manual-QA surface appears, port the standing-checklist
 convention then.)
 
@@ -74,7 +76,7 @@ one holding none, because it implies coverage that did not happen. A defect foun
 steps is captured in `Spawned.md` like any other. An item with nothing to verify manually omits
 `§QA` entirely, and every QA check skips it.
 
-A **bug fix** (taken from a confirmed GitHub Issue — Smatchet tracks product bugs as issues, not a
+A **bug fix** (taken from a confirmed GitHub Issue — this project tracks product bugs as issues, not a
 ledger file) runs the loop **scaled to the fix**: a trivial fix may skip the upfront
 spec/design/plan artifacts and their gate and go straight to implementation → post-implementation
 review → retro → close; a substantial bug carries the full set. Either way it closes to a
@@ -143,7 +145,7 @@ target differing:
 - **After post-implementation review** — resolve into the diff, build-clean.
 
 (Whip has two further entry points — a standing-code *audit* and an itemless *generic review*.
-Neither is ported: Smatchet's ad-hoc commit review is covered by the CodeRabbit + Bugbot merge
+Neither is ported: this project's ad-hoc commit review is covered by the CodeRabbit + Bugbot merge
 gates, and the audit maps to later phases of the absorb plan. If either is ported later, it reuses
 this addresser discipline unchanged.)
 
@@ -153,10 +155,14 @@ The binding disposition for each deduped finding is the checklist a close **diff
 ## Gates
 
 **No implementation begins before the pre-implementation review passes and the user signs off.**
+(The one exception is the **trivial bug fix** of [The loop](#the-loop): it skips the upfront
+spec/design/plan artifacts, so there is no pre-implementation gate to pass — its first gate is the
+post-implementation review.)
 
-These two sign-off points — pre-implementation and post-implementation — are the **only** places the
-ship-loop pauses inside an open work item; everything between them runs autonomously
-([ship-loops.md](ship-loops.md) exception 7).
+These two sign-off points — pre-implementation and post-implementation — are the only places the
+ship-loop pauses **for user sign-off** inside an open work item; everything between them runs
+autonomously, with the global pause exceptions (destructive ops, escalate-don't-assume, …) still in
+force ([ship-loops.md](ship-loops.md) exception 7).
 
 ## Handling changes
 
@@ -196,7 +202,7 @@ enters** and **whether it's approved**:
   **during work items**. Already approved (the item's process vetted the cut); trigger-gated (each
   says *when* to take it on).
 
-Whip's fourth ledger (`Bugs.md`, `BUG-NN` — confirmed defects) is **not** ported: Smatchet tracks
+Whip's fourth ledger (`Bugs.md`, `BUG-NN` — confirmed defects) is **not** ported: this project tracks
 product bugs as GitHub Issues. Where the source lifecycle says "Bugs", read "a confirmed bug issue";
 the reproduce-first rule carries over — no triage gate, reproduce, then log the issue.
 
