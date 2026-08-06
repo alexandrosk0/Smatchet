@@ -74,6 +74,20 @@ It does **not** install the C++ build toolchain (Visual Studio / MSVC or Clang-c
 
 Fresh-clone order: `setup-env.sh` → `doctor.sh` → `setup-harness.sh <harness>`.
 
+## Windows-only shims
+
+The dev toolchain under `scripts/` is **bash-only** — every former `.ps1` helper was ported (see `docs/plans/shipped/kill-powershell-minimize-toolchain.md`). Exactly five PowerShell files survive, all under `agents/scripts/core/`, and each carries a `# Last remaining PowerShell file` header comment pointing back here. They stay PowerShell because they call Windows APIs that have no Git-Bash equivalent:
+
+| File | Why it must stay PowerShell |
+|---|---|
+| `merge-watcher-install-autostart.ps1` | `Register-ScheduledTask` — Task Scheduler has no bash-callable equivalent |
+| `merge-watcher-uninstall-autostart.ps1` | `Get-/Stop-/Unregister-ScheduledTask` counterpart to the above |
+| `merge-watcher-install-prune-task.ps1` | registers the log-prune Scheduled Task |
+| `merge-watcher-notify-setup.ps1` | `Install-Module BurntToast` from PSGallery (PowerShellGet is PS-only) |
+| `smatchet-notify-windows.ps1` | fires the WinRT toast via BurntToast |
+
+Rules if you touch one: keep it **ASCII-only, no BOM, LF endings** (Windows PowerShell 5.1 decodes a no-BOM file as ANSI and mis-parses non-ASCII — an em-dash in a string literal silently kills the script), and keep the header marker comment. Adding a **new** `.ps1` anywhere else is a regression — port it to bash instead. Cross-platform primitives with no shell equivalent go to Python: `flock(1)` is util-linux (absent on Git Bash), so drain serialisation uses `scripts/dev/lockfile.py`.
+
 ## VCS mode (git vs Perforce) — per machine
 
 Smatchet's VCS layer is `git` by default (the GitHub ship-line). The Perforce local layer is opt-in via two env vars (AGENTS.md § Dual-VCS topology): `SMATCHET_AGENT_VCS` (`git` | `p4` — ship-loop variant) and `SMATCHET_LOCK_BACKEND` (`git-ref` | `p4-counter` — plan-lock backend). Both must agree, and on **Windows both layers must agree**: PowerShell inherits the Windows User-registry env while git-bash sources `~/.bashrc`, so a divergence (registry=`git`, `.bashrc`=`p4`) silently routes `lock-claim.sh` to the p4 path and fails "P4USER not set".

@@ -65,6 +65,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`github-tracker-backend`](shipped/github-tracker-backend.md) | 2026-05-21 | Plan — Rip out C++ agentic code + add GitHub as third tracker |
 | [`smatchet-merge-watcher`](shipped/smatchet-merge-watcher.md) | 2026-05-21 | Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon) |
 | [`github-tracker-pr12-prs-in-grid`](shipped/github-tracker-pr12-prs-in-grid.md) | 2026-05-22 | Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend) |
+| [`kill-powershell-minimize-toolchain`](shipped/kill-powershell-minimize-toolchain.md) | 2026-05-22 | Kill PowerShell + Minimize External Tools |
 | [`agents-md-reduction`](shipped/agents-md-reduction.md) | 2026-05-23 | Plan — AGENTS.md size reduction via topical extraction |
 | [`description-tooltip-consolidation`](shipped/description-tooltip-consolidation.md) | 2026-05-23 | Plan — description-field tooltip consolidation |
 | [`deterministic-jira-test-backend`](shipped/deterministic-jira-test-backend.md) | 2026-05-23 | Plan - Deterministic Jira test backend and frontend tests |

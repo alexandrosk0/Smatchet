@@ -101,35 +101,35 @@ environment is already active.
 
 **MSVC** — run from a VS Developer Command Prompt (or inside `scripts/dev/with-msvc-env.sh`):
 
-```powershell
+```bash
 cmake --preset ninja-iter-msvc
 cmake --build --preset ninja-iter-msvc
 ```
 
 **Clang/LLVM** — ensure `clang-cl` is on PATH:
 
-```powershell
+```bash
 cmake --preset ninja-iter-clang
 cmake --build --preset ninja-iter-clang
 ```
 
 Standalone debug:
 
-```powershell
+```bash
 cmake --preset ninja-debug-msvc
 cmake --build --preset ninja-debug-msvc
 ```
 
 Unreal plugin iteration:
 
-```powershell
+```bash
 cmake --preset ninja-iter-unreal-msvc
 cmake --build --preset ninja-iter-unreal-msvc
 ```
 
 Unreal plugin debug:
 
-```powershell
+```bash
 cmake --preset ninja-iter-unreal-msvc
 cmake --build --preset ninja-iter-unreal-msvc
 ```
@@ -180,7 +180,7 @@ nlohmann/json, cpr, SQLiteCpp, cpp-httplib, md4c, ImGui, GLFW, Lua, sol2, and
 ghc::filesystem into `build/<preset>/_deps/`); subsequent configures complete
 in seconds.
 
-```powershell
+```bash
 # 1. Toolchain pre-flight (instant). Prints [PASS] / [FAIL] / [WARN] per check.
 #    Run from Git Bash / WSL; from PowerShell use `bash scripts/dev/doctor.sh`.
 bash scripts/dev/doctor.sh

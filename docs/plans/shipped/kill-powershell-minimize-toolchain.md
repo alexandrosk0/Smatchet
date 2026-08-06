@@ -1,6 +1,6 @@
 # Kill PowerShell + Minimize External Tools
 
-> **Status**: `active` — not started (no slices merged). **Re-audited 2026-08-05** against the live tree; inventory, paths, and phase targets below are the audited state, not the 2026-06 draft.
+> **Status**: `shipped` — all 7 slices merged (2026-08-05 → 2026-08-06): A #1951, B #1955, C #1956, D #1957, E #1958, F #1959, G. **29 of 34 `.ps1` deleted; the 5 kept Windows-native shims are documented in [`docs/harness/SETUP.md`](../../harness/SETUP.md) § Windows-only shims.** Re-audited 2026-08-05 against the live tree before implementation started.
 
 ## Context
 
@@ -204,6 +204,19 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
   Reference sweep in the same commit: `SmatchetImGuiPlugin/README.md` (both
   troubleshooting recipes) and the three `SmatchetImGuiPlugin.Build.cs`
   BuildException messages that told the user which script to re-run.
+- **2026-08-06 — Slice G (Phases 6 + 7, final sweep).** Phase 6: each of the five
+  kept `agents/scripts/core/*.ps1` gained a `# Last remaining PowerShell file`
+  header marker pointing at `docs/harness/SETUP.md` § Windows-only shims — the
+  new section that names all five, states why each must stay PowerShell
+  (Scheduled Tasks, PSGallery module install, WinRT toast), and records the
+  ASCII-only / no-BOM / LF editing rule. Phase 7: `coverage.yml`'s
+  OpenCppCoverage step — the last `shell: powershell` step in the repo — became
+  `shell: bash` with `cmd.exe /c "choco install …"`; `BUILD.md` retagged six
+  `powershell` fences to `bash`; the harness-adapter table gained a `file-lock`
+  row (`scripts/dev/lockfile.py` on every harness, since `flock(1)` is
+  util-linux); `docs/design/separate-agents-repo.md` lost its two bullets naming
+  the deleted `setup-harness.ps1`; the markdown-link baseline was regenerated.
+  Final count: **29 deleted, 5 kept**, matching the plan target.
 
 ## Deviations from plan
 
@@ -235,4 +248,8 @@ N/A — no `Source/Core/` files touched. No CI perf gate fires. No bucket-E scen
 ## Deviations from plan
 
 - **Slice E — no `worktree.ps1` pass-through shim.** The risk row proposed keeping `worktree.ps1` as a 3-line forwarder for one release cycle; the user's scope decision for this plan was **delete outright** (no surviving PowerShell forwarders anywhere), so the `.ps1` is gone in the same commit as the port. Mitigated by the full same-PR reference sweep above — the `nsc` alias is the only caller outside the repo, and its new definition is documented in `process-rules.md` § Concurrent interactive sessions.
+- **2026-08-06 — Slice G, the marker comment is ASCII, not the plan's literal.** Phase 6 specifies `# Last remaining PowerShell file — see docs/harness/SETUP.md § Windows-only shims`. Windows PowerShell 5.1 reads these no-BOM UTF-8 files as ANSI and mis-decodes the em-dash and `§`, so the marker is written with ASCII substitutes (`-` and `section`). Same rule the files' own headers already document.
+- **2026-08-06 — Slice G, two `BUILD.md` `powershell` fences kept.** The retag covers the six fences whose bodies are `cmake --preset …` / `bash scripts/dev/doctor.sh`. Lines 22 and 32 stay `powershell`: they are `winget install Git.Git` / `winget install LLVM.LLVM` bootstrap steps that run **before** Git Bash exists on the machine, so labelling them bash would be wrong.
+- **2026-08-06 — Slice G, the remaining `shell: pwsh` steps stay.** Phase 7 names `coverage.yml` only, and the sweep confirms that is the last `shell: powershell` step. The eleven `shell: pwsh` steps in `build-and-test.yml` / `release.yml` all call `release-github.sh` or do inline Windows-native work (registry probes, `Start-Process`, cert decode) with no `.ps1` dependency — same carve-out recorded for Slice D.
+- **2026-08-06 — Slice G, the `flock` row went into `capability-adapter.md`, not `AGENTS.md`.** Phase 7 says "update the `AGENTS.md` harness-adapter table"; that table was extracted to `docs/harness/capability-adapter.md` and `AGENTS.md` § Harness adapter is now a pointer. The new `file-lock` row went to the real table — putting it back in `AGENTS.md` would fight the ≤150-line navigation-only cap.
 - **Slice E — `mklink` junctions never existed.** The plan describes `worktree.ps1` as provisioning "junctions via `mklink`"; the live script has no junction logic (it runs `setup-harness.sh claude-code` in the new worktree, which copies the adapter). Nothing to port — the bash version reproduces the actual behaviour.

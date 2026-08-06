@@ -127,10 +127,13 @@ jobs:
 
       - name: Install OpenCppCoverage
         if: steps.detect.outputs.run == 'true'
-        shell: powershell
+        shell: bash
         run: |
-          choco install opencppcoverage -y --no-progress
-          echo "C:\Program Files\OpenCppCoverage" >> $env:GITHUB_PATH
+          # choco is a .bat shim, so it needs cmd.exe rather than a direct exec
+          # from bash. Everything else here is plain bash — this was the last
+          # `shell: powershell` step in the repo.
+          cmd.exe /c "choco install opencppcoverage -y --no-progress"
+          echo 'C:\Program Files\OpenCppCoverage' >> "$GITHUB_PATH"
 
       - name: Cache FetchContent _deps
         if: steps.detect.outputs.run == 'true'
