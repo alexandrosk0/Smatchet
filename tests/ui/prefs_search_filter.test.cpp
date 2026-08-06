@@ -1,6 +1,6 @@
 // prefs_search_filter.test.cpp — end-to-end proof that the Preferences search
 // filters LIVE widgets in place rather than rendering a read-only result list
-// (docs/plans/active/preferences-ia-resegmentation-and-search.md, slice 3).
+// (docs/plans/shipped/preferences-ia-resegmentation-and-search.md, slice 3).
 //
 // Typing `vsy` must leave exactly one setting standing — "Enable vsync" — and
 // that survivor must be the real checkbox, still bound to cfg.VsyncEnabled and

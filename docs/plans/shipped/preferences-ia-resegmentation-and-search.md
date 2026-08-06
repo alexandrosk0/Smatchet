@@ -2,7 +2,7 @@
 
 > **Slug**: `preferences-ia-resegmentation-and-search` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -319,18 +319,52 @@ Diff touches `Source/Core/src/Ui/`, `Source/Core/src/Config/`, and `Source/Core/
 - **Adding `preferences-slider-drag` to the PR-fast perf subset** — real coverage gap (see § Perf gates 1) but needs a `ci-windows-latest` baseline landed by a human first; propose separately rather than bootstrapping mid-feature.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+All four slices shipped on one feature branch (`worktree-prefs-ia-grill`) as one PR
+([#1941](https://github.com/alexandrosk0/Smatchet/pull/1941)), per the PR-batching rule.
+
+- `879b0648` · plan doc seeded; `62556c6d` · [ADR-0023](../../adr/0023-preferences-taxonomy-as-static-descriptor-table.md) (static descriptor table over self-registration); `a445998e`–`eeb34f82` · grill Q3–Q8 decisions folded into the plan.
+- `ea974a14` · **slice 1** — `PreferencesSchema.{h,cpp}` (8 categories / 27 sections / ~121 settings) + `PreferencesFilter.{h,cpp}` (substring tier, `FuzzyScore > 0` fallback, language-keyed index rebuild) + bucket-A `PreferencesSchema.test.cpp` / `PreferencesFilter.test.cpp`. No UI touched.
+- `6f51d1f6` · **slice 2a** — category rail + collapsible sections replace `BeginTabBar("PreferencesTabs")`; new `SmatchetPreferencesUi_Shell.cpp` (`DrawPrefsNav`, `PrefsSection`); per-section save-semantics hint replaces the per-tab footer switch; `PreferencesActiveTab` → `PreferencesCategory`; collapsed set persisted as `PreferencesCollapsedSections`.
+- `d0abc1ef` · **slice 2b** — settings re-homed into the 8-category IA; new `SmatchetPreferencesUi_General.cpp`; `Local data` / `Integrations` / `User Info` / `Grid` / `Fields Inputs` dissolved; the nested `BeginTabBar("FieldsInputsSubTabBar")` removed; ~35 new localization rows.
+- `9c9d3a65` · **slice 3** — ~121 `ShowSetting("<dotted.id>")` gates; search clear button + "showing N / M" readout; query-edge auto-switch; zero-match categories disabled; keybinding dynamic-match fold; opt-in observed-id recording; bucket-E `prefs_schema_coverage.test.cpp` + `prefs_search_filter.test.cpp`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+Behavioural (user-directed, after seeing the running UI):
+
+- **Query-edge auto-switch — reverses grill Q8.** Q8 locked "rail dims zero-match categories, **no** auto-switch". The user asked for "switch category live as you search to the first from the top", so `PreferencesFilter::QueryChangedThisUpdate()` was added and `DrawPrefsNav` re-homes selection on the query *edge* only — reacting to the edge rather than to `Active()` keeps a mid-query manual category click from being yanked back the next frame.
+- **Zero-match categories are disabled, not merely dimmed.** Q8's dimming read as clickable, and clicking landed on an empty pane. `CategoryIsEmptyUnderFilter` + `BeginDisabled`/`EndDisabled` wrap both nav loops. The `(n)` badges from Q8 are kept.
+- **Search box gained a clear (`x`) button** — user-requested; drawn *before* the caller's `Update()` so the cleared buffer takes effect the same frame instead of leaving one stale filtered frame behind.
+- **Keybinding rows needed a dynamic-match path.** Q4 said the global query simply "forwards into `RowMatchesFilter`", which is true for the rows but not for everything that *reads* the filter: keybinding rows are dynamic (`cfg.Keybindings.Bindings`) and carry no descriptors, so a command-name query could never make `SectionHasMatch` / `CategoryMatchCount` true — the rail disabled Shortcuts and the auto-switch skipped past it while the section below happily listed hits (the user's "number 6 doesn't seem to work"). Added `PreferencesFilter::AddDynamicMatch` + `AnyKeybindingRowMatchesQuery`, folded in once per frame in `drawPreferencesWindow` between `Update()` and the first reader.
+- **`DrawPrefsSearchBox` split into `DrawPrefsSearchBoxInput` + `DrawPrefsSearchReadout`.** Required by the fold above: the readout must report a count that already includes the dynamic match. Nothing between the halves emits ImGui, so the readout's `SameLine` still attaches to the clear button.
+- **Observed-id recording is opt-in (`SetRecordObservedSettingIds`).** As planned it was an unconditional `std::set<std::string>` insert per drawn setting per frame (~121 nodes) on the steady-state path where the user is not searching at all — a Pillar-1 cost paid for a test-only feature. Only the drift guard turns it on.
+- **`UiDrawSession::prefsKeybindRowsMatchQuery`** caches the per-frame scan; the keybindings table reads it instead of repeating the command-label sweep (Pillar 5).
+
+Deferred / not done:
+
+- **Localizing the existing Annotate preference body strings** — deferred as planned (`AnnotateAnalysisUi_Preferences.cpp` is unlocalized today); only the new section titles were localized. Owes a `docs/self-improvement/categories/debt/` entry.
+- **Per-item filtering inside the list editors** — one descriptor per editor, as designed.
+- **Adding `preferences-slider-drag` to the PR-fast perf subset** — still needs a human-landed `ci-windows-latest` baseline; unchanged from § Out of scope.
+
+One blocking-gate escape accepted with a deviation:
+
+- **`app-controller-fan-in`** — `SmatchetPreferencesUi_General.cpp` is a new `#include "AppController.h"` includer, so the down-only ratchet fails on it. Net tree-wide fan-in is unchanged: the Updates / Storage / Local-database bodies moved here verbatim from `SmatchetPreferencesUi_Local.cpp`, which dropped its own include in the same change, and they call `app.CheckForAppUpdate` / `RequestAppQuit` / `GetResolvedLocalCacheDbPath` / `RecreateLocalCacheDatabase` / `SyncWithBackend` — no narrower header exposes those. `SMATCHET_DEVIATION(rule=app-controller-fan-in; …; revisit=2026-12-01)` sits above the include. Note the grammar trap this hit first: the marker must be **one physical line** — the original wrapped across two comment lines and the gate correctly ignored it, reporting the includer as unexempted.
+
+Advisory lint WARNs accepted (all non-blocking, none new-blocking):
+
+- `tu-line-ceiling` — `SmatchetLocalization.cpp:1610`, `SmatchetPreferencesUi.cpp:1273`. The localization table is an irreducible data wall; the prefs shell is next in line for a companion-TU split but splitting it mid-feature would have doubled the review surface.
+- `func-size` soft tier — `_Assistant.cpp:561` (30 branches), `_Keybindings.cpp:169` (155 lines / 27 branches), `_Shell.cpp:159` `DrawPrefsNav` (21 branches), `_Templates.cpp:82` (101 lines), `_Whisper.cpp:126` (21 branches). Section-izing cut the category functions hard; these five are the residue.
+- `comment-ratio` — `ConfigManager.h` 53% (unchanged), `PreferencesFilter.h` 53% (new; the file is a small API surface with load-bearing rationale comments).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- **Build gate — PASSED.** `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12` EXIT=0 (dual-target) after the final review fixes; `ninja-ui-test-msvc` EXIT=0; `ninja-test-msvc` EXIT=0.
+- **Bucket A — PASSED.** 58 test cases / 1029 assertions, 0 failed (`SmatchetTests.exe -tc="*Preferences*,…"`), covering the new `PreferencesSchema` / `PreferencesFilter` suites plus the pre-existing `PreferencesCredentialTrim`, `PreferencesDateFormatIndex`, `ConfigManager*`, `ConfigMigration` (the `PreferencesCollapsedSections` key round-trips).
+- **Bucket E — PASSED.** `PrefsSchemaCoverage` 1/1, `PrefsSearchFilter` 1/1, `Keybindings` 6/6, `Preferences` 2/2, zero failures, run against an isolated `SMATCHET_USER_DATA` profile.
+- **`scripts/dev/test-all.sh` — 84 failures, diagnosed as environmental, NOT regressions.** Every one is the update-modal inhibition class: an open `Update Available###AppUpdateAvailable` modal owns `g.NavWindow` and nulls `HoveredWindow`, so hover checks, `ItemNavActivate` and item registration all fail *beneath and beside* it. Confirmed by re-running the same suites against a throwaway profile carrying `"update_check_enabled": false` — all green. Written up in `docs/self-improvement/categories/test/2026-08-06-bucket-e-prefs-body-and-modal-inhibition.md`, including the profile-level kill switch and a proposal to seed it in the bucket-E runner by default.
+- **Perf gate — PASSED on re-run.** The first `preferences-slider-drag` run tripped a p99 outlier (artifact `preferences-slider-drag-20260806T143910Z.json`); the re-run was inside policy (`…20260806T144035Z.json`) and sustained cost *improved* ~3.5× versus the tab-bar baseline — the rail draws one category's sections instead of building 11 tab headers each frame. The `ShowSetting` empty-query short-circuit means the non-searching path adds no per-frame work, and the opt-in recording change removed the one allocation that did.
+- **Lint — PASSED.** `test-lint-rules.sh --diff origin/develop` EXIT=0, every gate PASS. One real FAIL was found and fixed en route: a bare `///` separator line in `PreferencesFilter.h` tripped `comment-decorative-banner`. Remaining output is advisory WARNs only (enumerated in § Deviations).
+- **Adversarial code review — run, all findings resolved.** The `code-review` agent audited all four slices. **Critical**: `SmatchetPreferencesUi_Shell.cpp` passed a translated, non-literal string as a *format* to the localized `TextDisabled` — `#define ImGui SmatchetLocalizedImGui` routes the fmt argument through `TranslateSourceAsFormat` with an empty va_list (UB on any `%` in a translation). Fixed with `"%s"` plus a comment at every such site. **High**: the dynamic-match fold ran *after* the readout, so a keybinding-only query rendered "No settings match" for a frame — fixed by the input/readout split. **4 Medium** (per-frame `observed_` allocation; duplicated keybinding scan; `SmatchetUiSession.h` enum-order doc drift; a stale `PreferencesActiveTab::QuickCreate` reference in `docs/plans/active/quick-create-issue-unreal-context.md`) and **1 Low** (`d.githubProjectNumber` clamp sitting inside its `ShowSetting` gate, so a negative value survived whenever the query hid the row) — all fixed. One finding (`forceShow`) was stale, because the review read an uncommitted tree I was still editing.
+- **Feature-OFF build — NOT RUN.** The descriptor rows sit inside the same `SMATCHET_WITH_MCP` / `_AI` / `_WHISPER` guards as their widgets, and the coverage test's `AiVoice` walk is itself guarded, but the without-flags configure was not exercised locally. CI's Lua-OFF / feature-OFF lanes are the backstop on the PR.
+- **Manual visual validation — PASSED (user verdict).** Three pauses with a launched exe: slice 2a (one round of docking/layout defects, fixed and re-verified), slice 2b, slice 3 (the four search behaviours: clear button, live category switch, disabled empty categories, Shortcuts query forwarding).

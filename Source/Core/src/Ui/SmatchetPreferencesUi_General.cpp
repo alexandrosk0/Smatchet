@@ -33,8 +33,7 @@
 // SmatchetPreferencesUi_Local.cpp, which dropped its own AppController.h include in the same
 // change, so tree-wide fan-in is net-unchanged. They call app.CheckForAppUpdate / RequestAppQuit /
 // GetResolvedLocalCacheDbPath / RecreateLocalCacheDatabase / SyncWithBackend — no narrower header.
-// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=include relocated from SmatchetPreferencesUi_Local.cpp, which
-// dropped its own; net fan-in unchanged; owner=prefs-ia; revisit=2026-12-01)
+// SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=include relocated from SmatchetPreferencesUi_Local.cpp which dropped its own, net fan-in unchanged; owner=prefs-ia; revisit=2026-12-01)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "SmatchetHelpMarker.h"

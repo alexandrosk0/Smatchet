@@ -7,7 +7,7 @@
 #include <string>
 
 // Bucket-A structural invariants for the Preferences descriptor table
-// (docs/plans/active/preferences-ia-resegmentation-and-search.md, slice 1).
+// (docs/plans/shipped/preferences-ia-resegmentation-and-search.md, slice 1).
 // Assertions are generic — they hold in every feature-guard configuration
 // (SMATCHET_WITH_MCP / _AI / _WHISPER on or off), so this TU compiles clean in
 // the feature-OFF configure check too. Rendering-side agreement (every

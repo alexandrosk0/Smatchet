@@ -12,7 +12,7 @@
 // translated section/category titles) and answers per-setting "should this
 // widget draw?" queries. No ImGui — bucket-A testable.
 //
-// docs/plans/active/preferences-ia-resegmentation-and-search.md.
+// docs/plans/shipped/preferences-ia-resegmentation-and-search.md.
 //
 // Matching: tier 1 is case-insensitive substring; tier 2 (fuzzy subsequence via
 // smatchet::cmd::FuzzyScore) runs only when tier 1 matched nothing, so exact

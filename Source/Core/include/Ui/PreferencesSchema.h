@@ -7,7 +7,7 @@
 // settings search. Pure data: no ImGui, no ConfigManager, no session state, so
 // the whole surface is bucket-A testable.
 //
-// docs/plans/active/preferences-ia-resegmentation-and-search.md.
+// docs/plans/shipped/preferences-ia-resegmentation-and-search.md.
 //
 // Contract with the draw code (enforced by the bucket-E drift guard,
 // prefs_schema_coverage):

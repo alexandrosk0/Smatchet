@@ -35,6 +35,6 @@
     `tests/ui/prefs_schema_coverage.test.cpp`; `tests/ui/keybindings_editor_rebind.test.cpp`
     (`DismissAppUpdateModal()` in tests E/F); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:185-204`
     (the focus latch); `Source/Core/src/Ui/SmatchetUI.cpp:164,174` (modal open sites);
-    `docs/plans/active/preferences-ia-resegmentation-and-search.md` § Verification.
+    `docs/plans/shipped/preferences-ia-resegmentation-and-search.md` § Verification.
   Status: open
   Last-reviewed: 2026-08-06

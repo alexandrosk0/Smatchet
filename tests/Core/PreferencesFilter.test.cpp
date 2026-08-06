@@ -6,7 +6,7 @@
 #include <string>
 
 // Bucket-A coverage for the Preferences live-search filter
-// (docs/plans/active/preferences-ia-resegmentation-and-search.md, slice 1).
+// (docs/plans/shipped/preferences-ia-resegmentation-and-search.md, slice 1).
 // The rig never calls SmatchetLocalization::SetLanguage — the global language
 // stays at the English default, so TranslateSource is identity here. The
 // language argument to Update() is exercised only as a rebuild trigger.

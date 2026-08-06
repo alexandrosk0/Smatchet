@@ -1,7 +1,7 @@
 // funcsize_preferences_tabs.test.cpp — Phase-0 GREEN batch of the
 // full-function-size-compliance program (docs/plans/shipped/full-function-size-compliance.md),
 // retargeted from the old "PreferencesTabs" tab bar to the category nav rail
-// (docs/plans/active/preferences-ia-resegmentation-and-search.md, slice 2a).
+// (docs/plans/shipped/preferences-ia-resegmentation-and-search.md, slice 2a).
 //
 // PURPOSE — STRUCTURAL coverage for the large Preferences *page* draw
 // functions:

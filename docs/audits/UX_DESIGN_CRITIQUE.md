@@ -97,6 +97,8 @@ Finding a setting means knowing which of 13 tabs owns it — is "compact rows" u
 
 **Fix:** Add a filter box at the top of the Preferences window that live-matches setting labels across all tabs (ImGui makes this cheap — the labels are static strings). Consolidate the long tail: fold *Time Estimates* + *Work Log Templates* + *Fields Inputs* under a single *Issue Defaults* tab, and *Whisper* + *Assistant* + *Integrations* under *AI & Integrations*. Target ~6 top-level tabs.
 
+**Status: Done** (2026-08-06, [`preferences-ia-resegmentation-and-search`](../plans/shipped/preferences-ia-resegmentation-and-search.md)) — the tab bar is gone. 8 categories in a left rail with collapsible sections, a `PreferencesSchema` descriptor table as the taxonomy's single source of truth, and a global search box that filters *live widgets in place* (not just tab chips), so a query narrows to the individual setting rather than landing the user on a parent tab. *User Info*, *Integrations*, *Local data*, *Grid* and *Fields Inputs* — including its nested sub-tab bar — no longer exist as top-level entries. This also closes the sub-tab-jump residue left open under P2-M10.
+
 ### M5 — The status bar surfaces developer telemetry (FPS) to end users by default
 **Severity: Med** · Evidence: `SmatchetStatusBarUi.cpp:110-127` — the right side always reads e.g. `12pt  Modern Dark  60 fps`. FPS is a debugging metric; an issue-tracking user has no use for it and it makes the product feel like a dev tool. It also crowds out space that could show something they *do* care about (e.g., last-synced time, active project).
 
@@ -264,7 +266,8 @@ Three patterns recur across the findings and are worth fixing at the root rather
 
 All pass-2 findings were addressed in one sweep on `claude/ux-design-critique-4vcftn`
 (verified per-cluster with the Linux `posix-core-check` compile of all UI TUs).
-One item — P2-M10's sub-tab jump (Fields Inputs) — is deferred; see its "Mostly done" row below.
+One item — P2-M10's sub-tab jump (Fields Inputs) — was deferred; it is now closed by the
+Preferences IA re-segmentation (2026-08-06), which deleted the nested sub-tab bar outright.
 
 | Finding | Status | Notes |
 |---|---|---|
@@ -286,7 +289,7 @@ One item — P2-M10's sub-tab jump (Fields Inputs) — is deferred; see its "Mos
 | P2-M7 | Done | Palette rows lead with `Title` (shared `TitleCasedSlugFromCommandId` fallback) with the id dimmed; fuzzy match includes Title; args drop `--`; destructive hint names both input paths; "Open View..." uses a category scope ("Showing Views commands only") instead of a raw id prefill. |
 | P2-M8 | Done | Opening the Notification Center calls `DismissAllLive()` (open-edge only). |
 | P2-M9 | Done | `syncLoading` includes a per-pane first-fetch signal (`snapshotRevision == 0 && IsPaneSyncLive`). |
-| P2-M10 | Mostly done | Keyword bags pruned to rendered labels; "theme"/"log level" resolve to lives-elsewhere notes; ≥3-char match. Sub-tab jump (Fields Inputs) deferred — chips still land on the parent tab. |
+| P2-M10 | Done | Keyword bags pruned to rendered labels; "theme"/"log level" resolve to lives-elsewhere notes; ≥3-char match. Sub-tab jump (Fields Inputs) closed 2026-08-06 by [`preferences-ia-resegmentation-and-search`](../plans/shipped/preferences-ia-resegmentation-and-search.md) — the nested sub-tab bar is gone, and in-window search now filters to the individual setting instead of landing on a parent tab. |
 | P2-M11 | Done | Picker renders the stored fetch error with a Retry (clears `fetchDone`); "  -" replaced with real empty-state strings. |
 | P2-M12 | Done | Per-backend "Test connection" probes buffer credentials via a throwaway backend on a worker (`AppController::ProbeTrackerCredentials`); verdict line in semantic colors; buffer→cfg copy factored (`CopyTrackerBuffersToConfig`). |
 | P2-M13 | Done | Stale-preview warning beside Submit when the preview seeded but the description changed since it was built. |

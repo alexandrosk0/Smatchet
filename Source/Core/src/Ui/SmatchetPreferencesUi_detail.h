@@ -22,7 +22,7 @@ enum class PreferencesCategory : std::uint8_t; // full definition in SmatchetUiS
 namespace SmatchetPreferencesUiDetail {
 
 /// Collapsible section chrome for the Preferences right pane (rail IA — see
-/// docs/plans/active/preferences-ia-resegmentation-and-search.md). Begin pushes
+/// docs/plans/shipped/preferences-ia-resegmentation-and-search.md). Begin pushes
 /// the section's ID scope, draws the CollapsingHeader (title from
 /// SmatchetPrefsSchema::FindSection) + per-section save-semantics hint, applies
 /// the persisted collapsed state, and — once the filter goes live in slice 3 —

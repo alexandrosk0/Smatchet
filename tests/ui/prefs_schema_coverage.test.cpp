@@ -1,5 +1,5 @@
 // prefs_schema_coverage.test.cpp — drift guard for the Preferences settings
-// descriptor table (docs/plans/active/preferences-ia-resegmentation-and-search.md,
+// descriptor table (docs/plans/shipped/preferences-ia-resegmentation-and-search.md,
 // slice 3).
 //
 // PROBLEM: PreferencesSchema.cpp is a hand-maintained table. Nothing in the
