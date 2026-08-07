@@ -116,5 +116,9 @@ int ScenarioFramesFromJson(const nlohmann::json& framesValue, int defaultFrames)
     return defaultFrames;
 }
 
+int ScenarioWaitMs(int timeoutMs, int frames) {
+    return (timeoutMs > 0) ? timeoutMs : ((frames / 60 + 30) * 1000);
+}
+
 } // namespace cli
 } // namespace smatchet

@@ -108,6 +108,73 @@ postmortem is owed for it. Filed as
 [`categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md`](categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md)
 (P1, process).
 
+## 2026-08-06 · PR #1941 · squash-merged with `--admin` past 22 required checks that never ran (repo-wide Actions queue jam) — and no detector reads that state
+
+### What escaped
+`docs(plan): preferences IA re-segmentation + global search` (#1941) merged at
+`2026-08-06T19:25:12Z` as `c7fb2236` via `gh pr merge --squash --admin`, with **all 22
+branch-protection-required contexts absent from the head rollup**. The head `4617a034` was
+never built at all — `gh api repos/<o>/<r>/actions/runs?head_sha=4617a034…` returned
+`total_count: 0`. The feature (a ~4-slice rewrite of the Preferences window) landed on
+`develop` with zero CI validation. `postmortem-owed.sh --list` run immediately afterwards
+reported "no gate escapes owed a postmortem (last 20 merges clean)".
+
+### Root cause
+Two independent holes, plus a diagnostic one.
+
+**(a) The ship-loop has no defined move for "CI is structurally unavailable."** Actions was
+jammed repo-wide: 75 runs stuck `queued` since 18:13 UTC, no new run created repo-wide after
+19:16 UTC, and a `gh pr close && gh pr reopen` (to re-fire the `pull_request` event) produced
+0 runs. There was no reachable green head. The loop's only defined behaviour is to keep
+polling, so the available options collapse to "wait indefinitely" or "override" — the second
+being precisely what the gates exist to prevent. The escape is the missing third option, not
+the choice made between the two that existed.
+
+**(b) The class is invisible to the detector.** `postmortem-owed.sh` keys on a non-SUCCESS
+check at merge, an override label, a `Revert` commit, or an overdue deviation. An `--admin`
+merge past *absent* checks emits none of those: no red check (there is no check), no label,
+no revert. This is the **third** recurrence of the same detector hole — `2026-07-10 · PR
+#1698` and `2026-08-05 · PR #1937` both reached it from the other direction (green on the PR
+head, red on develop) and both proposed a develop-tip required-green assertion that never
+landed.
+
+**(c) Diagnostic misdirection, lower severity but it cost the most wall-clock.** An earlier
+poll on the pre-merge head reported 22 `required-missing` checks with the generic hint
+"never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI". The real state was
+`mergeStateStatus: DIRTY` / `mergeable: CONFLICTING` — GitHub will not build a conflicted
+head — from one conflict in `docs/plans/INDEX.md`. `merge-gates.sh` already fetches both
+fields in its existing GraphQL response and does not branch on them, so the actionable cause
+was available on poll 1 and surfaced only after a full 90-poll timeout and manual digging.
+
+### Preventing gate
+1. **`postmortem-owed.sh` fifth signal (primary).** For each merge commit on `develop` in
+   the scanned window, resolve the merged PR's head sha and flag the merge when
+   `actions/runs?head_sha=<sha>` yields `total_count == 0`, or when the head rollup carries
+   fewer contexts than the branch-protection required set. Catches admin merges, zero-rollup
+   merges, and the "CI never triggered" class in one check — and unlike the label-keyed
+   signals it needs no cooperation from whoever performed the merge. Testable in
+   `tests/bats/`.
+2. **`merge-gates.sh` names the real cause.** Branch on `mergeStateStatus == DIRTY` /
+   `mergeable == CONFLICTING` before reporting `required-missing`, emitting a distinct
+   blocked reason ("head is conflicted — CI will not build it; merge origin/develop
+   first"). Same for `BLOCKED` with a zero-length rollup.
+3. **Escalate on an Actions outage.** When the poller observes zero runs created repo-wide
+   inside the poll window, stop polling and escalate with that diagnosis instead of timing
+   out at 90 polls with a per-check message — per [`AI_POLICY.md`](../../AI_POLICY.md)
+   § Escalate, don't assume, an unvalidatable state is an escalation.
+
+Compensating verification actually performed on the merged head, for the record: dual-target
+build (`SmatchetStandalone` + `SmatchetCore_DX12`) EXIT=0 and `test-lint-rules.sh --diff
+origin/develop` EXIT=0 (advisory WARNs only). That is not CI and does not substitute for it;
+the next `develop` post-merge run, once Actions drains, is the backstop to watch.
+
+### Eval case
+none — not agent-reviewable. This is a CI-availability + detector-coverage gap, not a defect
+in a diff that a review agent would score.
+
+### Filed as
+[`categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md`](categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md)
+
 ## 2026-08-05 · PR #1937 · `Doc anchors + agent contract` was GREEN on the PR head and RED on `develop` the instant the squash landed — `test-plan-index` derives row dates from git history the merge itself rewrites
 
 ### What escaped

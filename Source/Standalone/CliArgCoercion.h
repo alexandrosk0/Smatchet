@@ -44,6 +44,14 @@ int ClampScenarioFrames(long long frames);
 /// `defaultFrames`. Shared by the --spawn and in-process scenario drivers.
 int ScenarioFramesFromJson(const nlohmann::json& framesValue, int defaultFrames);
 
+/// Wall-clock wait budget (ms) for a scenario run: an explicit `--timeout` wins;
+/// otherwise the budget is derived from the frame count (frames at 60 fps plus a
+/// 30 s startup/teardown allowance). Shared by the --spawn and in-process
+/// scenario drivers so the two paths cannot diverge — the --spawn path once
+/// inlined only the frames-derived half and silently dropped `--timeout` while
+/// its own timeout hint advertised the flag (issue #1943).
+int ScenarioWaitMs(int timeoutMs, int frames);
+
 } // namespace cli
 } // namespace smatchet
 
