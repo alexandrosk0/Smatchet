@@ -68,3 +68,19 @@ review round gets a new resolution file.
 ```
 
 Scaled to the item: a trivial round's resolution is one line.
+
+6. **Aggregate the panel verdict and record the ack** (post entry point only). Every `5-review-*`
+   leg ends with a `## Verdict` trailer (adversarial-code-review skill § Panel leg). After the
+   `fix` dispositions land and the build is clean, run the pipeline:
+
+   ```bash
+   python agents/scripts/core/panel_verdicts.py --subject NN --round N > samples.json
+   python scripts/dev/verifier-sidecar.py aggregate samples.json > verdict.json
+   bash agents/scripts/core/review-ack.sh --record --branch --verdict verdict.json
+   ```
+
+   `--branch` pins the ack to the committed branch diff as it stands when you record — i.e. after
+   the fixes, which is the state heading into the close. A leg without a trailer is skipped with a
+   warning (the panel degrades); a malformed trailer fails the adapter — fix the leg file, never
+   drop it, it may hide a veto. Only `hard_veto` blocks downstream (`review-ack.sh --check` exits
+   3); the aggregate score is advisory until calibrated.

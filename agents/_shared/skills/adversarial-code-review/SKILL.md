@@ -133,7 +133,20 @@ When launched as a review-panel leg (`agents/scripts/core/run-review.sh --gate p
 - **Review independently** — form your own findings before reading any sibling `5-review-*` file; the panel's worth is independent passes.
 - **Sweep spawned work** — confirm every deferral / idea / backlog entry / bug this item spawned reached its `Spawned.md` (work-items.md § Tracking), including any defect found while working the QA steps.
 - **Output** replaces the § Output Format shape with the panel file: `5-review-[round]-[harness]-[model].md` in the item folder, at the exact path the launcher hands you (never self-named). Title `NN · <item title> — Post-implementation review (pass N)`; the "against …" line names the three artifacts. Problems only, each with a disposition `fix` / `defer (→ Spawned.md)` / `accept`; a pass with nothing actionable is a single line saying so.
-- **No ack recording** — the panel gate's resolution (address-review-feedback skill) and the user's sign-off close the loop, not review-ack.sh.
+- **Verdict trailer.** End the review file with a `## Verdict` heading followed by one fenced `json` block — the panel-verdict adapter (`agents/scripts/core/panel_verdicts.py`) collects it as one verifier sample, so the fields are the sidecar's sample fields: `criteria` (name → score in [0,1] over `task_satisfaction`, `correctness`, `evidence_quality`, `regression_risk`, `security`, `project_invariants`, `scope_discipline`, `verification_completeness`), optional `confidence` in [0,1], `hard_veto` (JSON boolean — never a string), `veto_reason` (say why when vetoing). Set `hard_veto` only for a security hole, an invariant breach, or a break in a deterministic gate — never for stylistic doubt; the continuous score is advisory until calibrated. A findings-free pass still carries a trailer (high scores, `"hard_veto": false`):
+
+  ````markdown
+  ## Verdict
+
+  ```json
+  {"criteria": {"task_satisfaction": 0.9, "correctness": 0.85, "evidence_quality": 0.8,
+    "regression_risk": 0.9, "security": 0.95, "project_invariants": 0.9,
+    "scope_discipline": 0.9, "verification_completeness": 0.8},
+   "confidence": 0.7, "hard_veto": false, "veto_reason": ""}
+  ```
+  ````
+
+- **No ack recording by a leg** — a leg never runs review-ack.sh. The addresser (address-review-feedback skill) aggregates the panel's verdict trailers and records the ack once the round is resolved; the user's sign-off closes the loop.
 
 ## Record The Ack (staged-diff reviews in this repo)
 
