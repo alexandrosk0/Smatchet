@@ -30,21 +30,28 @@ setup() {
 # `exe` is the shell expansion that names the binary; the regex is anchored at
 # the start of a command so mentions inside strings / test expressions (e.g.
 # `[ -n "$ISCC_EXE" ]`) are not mistaken for invocations.
+GUARD_PREFIX_RE='(MSYS_NO_PATHCONV=1[[:space:]]+|native_exec[[:space:]]+)'
+
 assert_guarded() {
     local file="$1" exe="$2"
-    local pattern="^[[:space:]]*(MSYS_NO_PATHCONV=1[[:space:]]+|native_exec[[:space:]]+)?\"\\\$${exe}\"[[:space:]]"
+    # A call site is any command whose first word is the exe expansion; the guard
+    # prefix is optional here so unguarded sites are still collected.
+    local call="^[[:space:]]*${GUARD_PREFIX_RE}?\"\\\$${exe}\"[[:space:]]"
+    # Same pattern with the guard prefix MANDATORY. Matching the guard token
+    # anywhere in the line would pass for a trailing comment or an unrelated
+    # expression, so the check re-anchors on the command's first word.
+    local guarded="^[[:space:]]*${GUARD_PREFIX_RE}\"\\\$${exe}\"[[:space:]]"
     local hits
-    hits="$(grep -nE "$pattern" "$file" || true)"
+    hits="$(grep -nE "$call" "$file" || true)"
     [ -n "$hits" ] || {
-        echo "no call site matching /$pattern/ in $file — test is stale, update it" >&2
+        echo "no call site matching /$call/ in $file — test is stale, update it" >&2
         return 1
     }
     local bad=""
     while IFS= read -r line; do
-        case "$line" in
-            *MSYS_NO_PATHCONV=1*|*native_exec*) ;;
-            *) bad="$bad$file:$line"$'\n' ;;
-        esac
+        # grep -n prefixes `NNN:`; strip it before re-anchoring on the command.
+        printf '%s\n' "${line#*:}" | grep -qE "$guarded" \
+            || bad="$bad$file:$line"$'\n'
     done <<< "$hits"
     if [ -n "$bad" ]; then
         echo "unguarded native-exe /switch invocation (needs MSYS_NO_PATHCONV=1):" >&2
@@ -55,9 +62,13 @@ assert_guarded() {
 }
 
 @test "release-github.sh defines native_exec and it suppresses path conversion" {
+    # Match the body itself (`MSYS_NO_PATHCONV=1 "$@"`), not merely the token
+    # somewhere in the first three lines — a comment would satisfy that.
     run grep -A2 -E '^native_exec\(\)' scripts/publish/release-github.sh
     [ "$status" -eq 0 ]
-    [[ "$output" == *"MSYS_NO_PATHCONV=1"* ]]
+    run bash -c "grep -A2 -E '^native_exec\\(\\)' scripts/publish/release-github.sh \
+        | grep -qE '^[[:space:]]*MSYS_NO_PATHCONV=1[[:space:]]+\"\\\$@\"[[:space:]]*\$'"
+    [ "$status" -eq 0 ]
 }
 
 @test "ISCC invocation is guarded against MSYS argument translation" {
@@ -78,10 +89,11 @@ assert_guarded() {
             case "$line" in
                 \#*|*\#\ *cmd.exe*) continue ;;
             esac
-            case "$line" in
-                *MSYS_NO_PATHCONV=1*|*native_exec*) ;;
-                *) offenders="$offenders$f: $line"$'\n' ;;
-            esac
+            # The guard must PREFIX the command — the token elsewhere on the
+            # line (trailing comment, unrelated expression) does not count.
+            printf '%s\n' "${line#*:}" \
+                | grep -qE "^[[:space:]]*${GUARD_PREFIX_RE}cmd\.exe[[:space:]]" \
+                || offenders="$offenders$f: $line"$'\n'
         done < <(grep -nE '(^|[^#]*[^"'"'"'[:alnum:]])cmd\.exe[[:space:]]+/[A-Za-z]' "$f" \
                  | grep -vE '^[0-9]+:[[:space:]]*#' || true)
     done < <(git ls-files '*.sh')
@@ -93,8 +105,10 @@ assert_guarded() {
 }
 
 @test "MSYS really does mangle a bare /switch (behavioural, Windows-only)" {
+    # MINGW/MSYS only — MSYS_NO_PATHCONV does not control Cygwin's own argument
+    # conversion, so the second assertion below would be a false red there.
     case "$(uname -s)" in
-        MINGW*|MSYS*|CYGWIN*) ;;
+        MINGW*|MSYS*) ;;
         *) skip "MSYS argument translation only exists under Git Bash on Windows" ;;
     esac
     command -v python >/dev/null 2>&1 || skip "python not on PATH"
