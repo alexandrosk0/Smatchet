@@ -67,6 +67,7 @@ STEPS=(
   "test-agent-build-facts|bash $CORE/test-agent-build-facts.sh"
   "test-markdown-links|bash $CORE/test-markdown-links.sh"
   "test-orphan-bats|bash $CORE/test-orphan-bats.sh --selftest && bash $CORE/test-orphan-bats.sh"
+  "work_item_lint|$PY $CORE/work_item_lint.py --selftest && $PY $CORE/work_item_lint.py --all && bash scripts/dev/test-work-item-lint.sh"
 )
 
 declare -a FAILED=()
