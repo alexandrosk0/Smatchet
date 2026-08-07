@@ -172,6 +172,44 @@
     "contract_warn_lines": 120,
     "sink_warn_lines": 400
   },
+  "review-panel": {
+    "_doc": "Review-panel roster (docs/agent-rules/review-panels.md § Roster) — the shared default for WHICH models the panel runs and HOW each harness selects one. Read by agents/scripts/core/run-review.sh, which invokes each harness once per model and names the output file itself, so no skill carries a roster. flag = the harness CLI's model-selection flag; tag = the short name used in <prefix>review-<round>-<harness>-<tag>.md; id = the value passed to <flag> (the harness's real model id); start_dwell_secs = startup stagger between same-harness legs (cursor rewrites its cli-config write-temp-then-rename at startup, so concurrent starts die with EPERM — 25s clears it; others default 3). The Whip-Process original had opencode free/go tiers; here the models list is flat (the paid Go tier) — edit this list to change tiers.",
+    "harnesses": {
+      "claude": {
+        "flag": "--model",
+        "models": [
+          { "tag": "opus", "id": "opus" },
+          { "tag": "sonnet", "id": "sonnet" }
+        ]
+      },
+      "codex": {
+        "flag": "-m",
+        "models": [
+          { "tag": "sol", "id": "gpt-5.6-sol" },
+          { "tag": "terra", "id": "gpt-5.6-terra" },
+          { "tag": "luna", "id": "gpt-5.6-luna" }
+        ]
+      },
+      "cursor": {
+        "flag": "--model",
+        "start_dwell_secs": 25,
+        "models": [
+          { "tag": "composer", "id": "composer-2.5" },
+          { "tag": "grok", "id": "cursor-grok-4.5-high" }
+        ]
+      },
+      "opencode": {
+        "flag": "-m",
+        "models": [
+          { "tag": "deepseek-pro", "id": "opencode-go/deepseek-v4-pro" },
+          { "tag": "mimo-pro", "id": "opencode-go/mimo-v2.5-pro" },
+          { "tag": "minimax", "id": "opencode-go/minimax-m3" },
+          { "tag": "qwen-plus", "id": "opencode-go/qwen3.7-plus" },
+          { "tag": "hy3", "id": "opencode-go/hy3" }
+        ]
+      }
+    }
+  },
   "governance": {
     "_doc": "Human-authority charter defaults (AI_POLICY.md). loop_mode / auto_merge are the committed operator defaults, read at SessionStart by agents/scripts/core/clear-session-context.sh when the matching env var (SMATCHET_LOOP_MODE / SMATCHET_AUTOMERGE) is unset; the env var overrides per session. loop_mode 'on' = action-biased human-on-the-loop, 'in' = plan-gated human-in-the-loop. auto_merge 'on' is a STANDING, revocable grant: the orchestrator auto-merges a PR once the full merge-gates poll passes (safe-merge.sh) WITHOUT the per-PR post-ship merge prompt — the gates still bind; only the asking is removed (set 2026-06-23: solo maintainer, low review availability). session_token_ceiling (tokens; input+output summed per row of the token-tracking JSONL, cache fields excluded; 0 disables) is the ADVISORY per-session delegated-subagent spend ceiling checked at SessionStart by agents/scripts/core/cost-ceiling-nudge.sh -> cost-ceiling-check.py; on a hit it prints an ESCALATE banner (never blocks — WARN-first ramp) per AI_POLICY.md § Cost control. Default 5000000 sized from observed heavy fleet sessions (the 2026-06 audit fleet died at ~4.1M tokens); tune or disable deliberately.",
     "policy": "AI_POLICY.md",
