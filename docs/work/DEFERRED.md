@@ -13,5 +13,6 @@ are deleted.
   into the wait loop (regressing a call site to `ScenarioWaitMs(0, frames)` stays green). Add a
   launch-smoke assertion that `--spawn --timeout=<small>` fails fast, per the in-repo pattern
   (`scripts/dev/test-spawn-mcp-default-auth.sh`); deferred from
-  [01-spawn-honors-timeout](closed/01-spawn-honors-timeout.md); **trigger:** next time bucket-E or
-  the spawn smoke lane is touched.
+  [01-spawn-honors-timeout](closed/01-spawn-honors-timeout.md); **trigger:** the next substantive
+  bucket-E or spawn-smoke change after PR #1982 (the comment-only rewrite that shipped alongside
+  this deferral does not count).
