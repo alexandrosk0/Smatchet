@@ -36,6 +36,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/work-item-owed.sh\" --nudge",
+            "timeout": 10000
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/audit-doc-status-owed.sh\" --nudge",
             "timeout": 10000
           },
