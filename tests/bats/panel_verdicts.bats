@@ -21,8 +21,15 @@
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
     export REPO_ROOT
-    export PV="$REPO_ROOT/agents/scripts/core/panel_verdicts.py"
-    export SIDECAR="$REPO_ROOT/scripts/dev/verifier-sidecar.py"
+    PV="$REPO_ROOT/agents/scripts/core/panel_verdicts.py"
+    SIDECAR="$REPO_ROOT/scripts/dev/verifier-sidecar.py"
+    # Native Windows python rejects MSYS /c/... absolutes — hand it C:/ paths
+    # (verifier_review_gate.bats does the same for these two scripts).
+    if command -v cygpath >/dev/null 2>&1; then
+        PV="$(cygpath -m "$PV")"
+        SIDECAR="$(cygpath -m "$SIDECAR")"
+    fi
+    export PV SIDECAR
     PY=""
     for c in python3 python py; do
         if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi

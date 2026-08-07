@@ -57,7 +57,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 for _stream in (sys.stdout, sys.stderr):
     if isinstance(_stream, io.TextIOWrapper):
@@ -76,7 +76,7 @@ VERDICT_HEADING = re.compile(r"^##\s+Verdict\s*$", re.MULTILINE)
 FENCE = re.compile(r"```json\s*\n(.*?)\n```", re.DOTALL)
 
 
-def fail(message: str) -> "NoReturn":  # type: ignore[name-defined]
+def fail(message: str) -> NoReturn:
     print(f"panel-verdicts: {message}", file=sys.stderr)
     sys.exit(2)
 
