@@ -473,7 +473,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         if (argsToSend.contains("frames")) {
             frames = ScenarioFramesFromJson(argsToSend["frames"], 600);
         }
-        const int scenarioWaitMs = (frames / 60 + 30) * 1000;
+        const int scenarioWaitMs = ScenarioWaitMs(pa.timeoutMs, frames);
 
         // Phase 2: dispatch the command and extract the response envelope.
         httplib::Client cli(host, port);
