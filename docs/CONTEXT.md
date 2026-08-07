@@ -26,7 +26,7 @@ The four roles do not overlap: a `plan-lock` is the object; `lock-slug` is its i
 
 ## Quality Pillars
 
-Five north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § Quality Pillars, in two sub-groups: **UX Pillars** (1-4, user-facing) + **Engineering Pillars** (5: DRY, code-maintainability). UX 1-3 + Engineering 5 are **agent-enforced** (orchestrator + code-review agent + `merge-gates.sh` + per-pillar specialist agents; DRY is WARN-first today per ADR-0015); GitHub-side enforcement of each pillar is partial today (see § Enforcement matrix below). Pillar 4 (Accessibility) is aspirational.
+Five north-star quality invariants documented in [`AGENTS.md`](../AGENTS.md) § Quality Pillars, in two sub-groups: **UX Pillars** (1-4, user-facing) + **Engineering Pillars** (5: DRY, code-maintainability). UX 1-3 + Engineering 5 are **agent-enforced** (orchestrator + code-review agent + `merge-gates.sh` + per-pillar specialist agents; DRY is a blocking delta-gate, graduated from WARN-first 2026-06-21 per ADR-0015); GitHub-side enforcement of each pillar is partial today (see § Enforcement matrix below). Pillar 4 (Accessibility) is aspirational.
 
 ### Enforcement matrix (current state)
 
