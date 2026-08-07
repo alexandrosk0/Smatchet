@@ -57,6 +57,33 @@ mkitem() {
     [[ "$output" == *"10-closing — next: retro + close"* ]]
 }
 
+@test "partial post resolution: review round 2 unresolved stays at resolve, not close" {
+    mkitem 13-post-partial 5-review-1-claude-opus.md 5-review-2-codex-sol.md \
+        5-resolution-1-claude-opus.md
+    run bash "$SCRIPT" --list
+    [[ "$output" == *"13-post-partial — next: resolve the post-implementation review"* ]]
+}
+
+@test "partial pre resolution: review round 2 unresolved stays at resolve, not sign-off" {
+    mkitem 14-pre-partial 3-plan.md 4-review-1-claude-opus.md 4-review-2-codex-sol.md \
+        4-resolution-1-claude-opus.md
+    run bash "$SCRIPT" --list
+    [[ "$output" == *"14-pre-partial — next: resolve the pre-implementation review"* ]]
+}
+
+@test "resolution named for highest round covers earlier rounds: next is retro + close" {
+    mkitem 15-multi-closed 5-review-1-claude-opus.md 5-review-2-codex-sol.md \
+        5-resolution-2-claude-opus.md
+    run bash "$SCRIPT" --list
+    [[ "$output" == *"15-multi-closed — next: retro + close"* ]]
+}
+
+@test "double-digit round compares numerically, not lexically" {
+    mkitem 16-ten-rounds 5-review-10-claude-opus.md 5-resolution-9-claude-opus.md
+    run bash "$SCRIPT" --list
+    [[ "$output" == *"16-ten-rounds — next: resolve the post-implementation review"* ]]
+}
+
 @test "nudge is silent when no item is open" {
     run bash "$SCRIPT" --nudge
     [ "$status" -eq 0 ]

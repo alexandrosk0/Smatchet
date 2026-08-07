@@ -40,19 +40,45 @@ has_file() {
     find "$d" -maxdepth 1 -name "$g" -print -quit 2>/dev/null | grep -q .
 }
 
+# max_round <dir> <stem> — highest [round] among <stem>-<round>-*.md in the
+# folder (review-panels.md naming: [gate]-{review,resolution}-[round]-…), empty
+# when none match. Rounds compare numerically so round 10 beats round 9.
+max_round() {
+    local d="$1" stem="$2" f base r max=""
+    while IFS= read -r f; do
+        base="$(basename "$f")"
+        r="${base#"$stem"-}"
+        r="${r%%[!0-9]*}"
+        [ -n "$r" ] || continue
+        if [ -z "$max" ] || [ "$r" -gt "$max" ]; then max="$r"; fi
+    done < <(find "$d" -maxdepth 1 -name "$stem-*.md" -print 2>/dev/null)
+    printf '%s' "$max"
+}
+
 # next_step <dir> — classify the item's next step from the artifact sequence
 # present. Walked BACKWARDS (latest artifact wins): a folder holding 3-plan.md
 # and 4-review-* is past authoring and inside the pre gate. The two
 # "user sign-off" steps are exactly the two gates of ship-loops.md exception 7.
+# A gate counts as resolved only when the highest resolution round covers the
+# highest review round (a resolution is named for the highest round it drains —
+# address-review-feedback skill), so 5-review-2 with only 5-resolution-1 still
+# classifies to "resolve", never past the gate.
 next_step() {
-    local d="$1"
-    if has_file "$d" "5-resolution-*.md"; then
+    local d="$1" rev res
+    rev="$(max_round "$d" "5-review")"
+    res="$(max_round "$d" "5-resolution")"
+    if [ -n "$res" ] && [ "$res" -ge "${rev:-0}" ]; then
         echo "retro + close (drain Spawned.md, collapse to docs/work/closed/ — close-work-item skill)"
-    elif has_file "$d" "5-review-*.md"; then
+        return
+    elif [ -n "$rev" ]; then
         echo "resolve the post-implementation review (address-review-feedback skill)"
-    elif has_file "$d" "4-resolution-*.md"; then
+        return
+    fi
+    rev="$(max_round "$d" "4-review")"
+    res="$(max_round "$d" "4-resolution")"
+    if [ -n "$res" ] && [ "$res" -ge "${rev:-0}" ]; then
         echo "user sign-off on the pre gate, then implementation"
-    elif has_file "$d" "4-review-*.md"; then
+    elif [ -n "$rev" ]; then
         echo "resolve the pre-implementation review (address-review-feedback skill)"
     elif has_file "$d" "3-plan.md"; then
         echo "pre-implementation review (run-review.sh --gate pre)"
@@ -82,7 +108,8 @@ if [ "$MODE" = "selftest" ]; then
     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
     items="$tmp/items"
     mkdir -p "$items/01-spec-only" "$items/02-plan-ready" "$items/03-pre-gated" \
-             "$items/04-implementing" "$items/05-post-reviewed" "$items/06-closing"
+             "$items/04-implementing" "$items/05-post-reviewed" "$items/06-closing" \
+             "$items/07-post-partial" "$items/08-pre-partial" "$items/09-multi-closed"
     touch "$items/01-spec-only/1-specification.md"
     touch "$items/02-plan-ready/1-specification.md" "$items/02-plan-ready/2-design.md" \
           "$items/02-plan-ready/3-plan.md"
@@ -91,6 +118,19 @@ if [ "$MODE" = "selftest" ]; then
           "$items/04-implementing/4-resolution-1-claude-opus.md"
     touch "$items/05-post-reviewed/3-plan.md" "$items/05-post-reviewed/5-review-1-claude-opus.md"
     touch "$items/06-closing/5-review-1-claude-opus.md" "$items/06-closing/5-resolution-1-claude-opus.md"
+    # Partial resolution: a later review round without a covering resolution
+    # must NOT advance past the gate (resolution is named for the highest round
+    # it drains — address-review-feedback skill).
+    touch "$items/07-post-partial/5-review-1-claude-opus.md" \
+          "$items/07-post-partial/5-review-2-codex-sol.md" \
+          "$items/07-post-partial/5-resolution-1-claude-opus.md"
+    touch "$items/08-pre-partial/3-plan.md" \
+          "$items/08-pre-partial/4-review-1-claude-opus.md" \
+          "$items/08-pre-partial/4-review-2-codex-sol.md" \
+          "$items/08-pre-partial/4-resolution-1-claude-opus.md"
+    touch "$items/09-multi-closed/5-review-1-claude-opus.md" \
+          "$items/09-multi-closed/5-review-2-codex-sol.md" \
+          "$items/09-multi-closed/5-resolution-2-claude-opus.md"
     out="$tmp/out"
     WORK_ITEMS_DIR="$items" bash agents/scripts/core/work-item-owed.sh --list > "$out" || true
     assert_next() {
@@ -105,6 +145,9 @@ if [ "$MODE" = "selftest" ]; then
     assert_next "04-implementing"  "user sign-off on the pre gate, then implementation"
     assert_next "05-post-reviewed" "resolve the post-implementation review (address-review-feedback skill)"
     assert_next "06-closing"       "retro + close (drain Spawned.md, collapse to docs/work/closed/ — close-work-item skill)"
+    assert_next "07-post-partial"  "resolve the post-implementation review (address-review-feedback skill)"
+    assert_next "08-pre-partial"   "resolve the pre-implementation review (address-review-feedback skill)"
+    assert_next "09-multi-closed"  "retro + close (drain Spawned.md, collapse to docs/work/closed/ — close-work-item skill)"
     # Empty items dir → silent nudge (no block emitted).
     empty="$tmp/empty"; mkdir -p "$empty"
     nout="$(WORK_ITEMS_DIR="$empty" bash agents/scripts/core/work-item-owed.sh --nudge)"
@@ -113,7 +156,7 @@ if [ "$MODE" = "selftest" ]; then
     mout="$(WORK_ITEMS_DIR="$tmp/nonexistent" bash agents/scripts/core/work-item-owed.sh --nudge)" \
         || { echo "FAIL: missing items dir must exit 0"; fail=1; }
     [ -z "$mout" ] || { echo "FAIL: nudge not silent on missing items dir"; fail=1; }
-    if [ "$fail" = "0" ]; then echo "work-item-owed --selftest: PASS (8/8)"; exit 0; fi
+    if [ "$fail" = "0" ]; then echo "work-item-owed --selftest: PASS (11/11)"; exit 0; fi
     echo "work-item-owed --selftest: FAIL"; exit 1
 fi
 
