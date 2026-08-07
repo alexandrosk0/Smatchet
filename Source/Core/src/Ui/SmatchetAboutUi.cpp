@@ -18,9 +18,12 @@
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=calls OpenUrl/GetAppVersion; owner=alexk; revisit=2026-12-31)
 #include "AppController.h"
 #include "Diagnostics/AboutInfo.h"
+#include "IconsFontAwesome6.h"
 #include "Privacy/TextRedaction.h"
+#include "SmatchetImGuiFonts.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetAboutIcon.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -28,6 +31,7 @@
 #define ImGui SmatchetLocalizedImGui
 
 #include <cfloat>
+#include <cmath>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -136,17 +140,160 @@ void FactRow(const char* label, const std::string& value) {
     ::ImGui::PopID();
 }
 
+const float kAboutIconSize = 48.0f;
+
+// Rocket-launch easter egg (Ctrl+Shift+click the icon). The entire flight stays inside the modal.
+// An earlier take flew straight up and out of the window, which the clip rect simply ate: the icon
+// vanished two frames in, and a launch you cannot watch reads as a disappearing-icon bug.
+const double kRocketFlightSecs = 2.1;
+const float kRocketClimbEnd = 0.20f; // Fraction of the flight spent climbing from the slot...
+const float kRocketLoopEnd = 0.82f;  // ...then looping. The remainder is the descent home.
+const float kRocketLoops = 2.0f;     // Revolutions flown during the loop phase.
+const float kTwoPi = 6.2831853f;
+
+float EaseOutCubic(float u) {
+    const float v = 1.0f - u;
+    return 1.0f - v * v * v;
+}
+
+/// Rocket centre at `u` (0..1 of the flight). The loop is a circle sized to `rectMin`..`rectMax`
+/// (the modal's inner area), so a small dialog gets a small loop rather than one that clips, and
+/// the whole path is visible for its whole duration.
+ImVec2 RocketPosAt(float u, const ImVec2& rectMin, const ImVec2& rectMax, const ImVec2& slot) {
+    const ImVec2 centre((rectMin.x + rectMax.x) * 0.5f, (rectMin.y + rectMax.y) * 0.5f);
+    const float halfW = (rectMax.x - rectMin.x) * 0.5f;
+    const float halfH = (rectMax.y - rectMin.y) * 0.5f;
+    const float radius = (halfW < halfH ? halfW : halfH) * 0.72f;
+    // Entry and exit both happen at the bottom of the circle, so the climb out of the slot and the
+    // drop back into it are the two vertical strokes that bracket the loop.
+    const ImVec2 gate(centre.x, centre.y + radius);
+
+    if (u < kRocketClimbEnd) {
+        const float t = EaseOutCubic(u / kRocketClimbEnd);
+        return ImVec2(slot.x + (gate.x - slot.x) * t, slot.y + (gate.y - slot.y) * t);
+    }
+    if (u < kRocketLoopEnd) {
+        const float t = (u - kRocketClimbEnd) / (kRocketLoopEnd - kRocketClimbEnd);
+        const float a = 1.5707963f + t * kTwoPi * kRocketLoops; // pi/2 == the gate.
+        return ImVec2(centre.x + radius * std::cos(a), centre.y + radius * std::sin(a));
+    }
+    const float t = (u - kRocketLoopEnd) / (1.0f - kRocketLoopEnd);
+    const float e = t * t; // Ease-in: hangs at the gate, then drops the last stretch fast.
+    return ImVec2(gate.x + (slot.x - gate.x) * e, gate.y + (slot.y - gate.y) * e);
+}
+
+/// Exhaust plume: overlapping discs trailing straight back from the nozzle along -`dir`, shrinking
+/// and cooling with distance. Discs, not a glyph — the plume has to be visible on every renderer and
+/// in a build with no icon font, and it has to bend with the loop instead of always pointing down.
+/// `heat` (0..1) scales it with speed, so it flares mid-loop and dies out on the pad.
+void DrawRocketTrail(ImDrawList* dl, const ImVec2& pos, const ImVec2& dir, float heat) {
+    for (int i = 1; i <= 8; ++i) {
+        const float t = static_cast<float>(i) / 8.0f;
+        const float back = kAboutIconSize * (0.42f + t * 1.7f);
+        const ImVec2 p(pos.x - dir.x * back, pos.y - dir.y * back);
+        const float radius = kAboutIconSize * 0.28f * (1.0f - t * 0.8f);
+        const ImU32 col = IM_COL32(255, static_cast<int>(215.0f - 160.0f * t), static_cast<int>(70.0f - 60.0f * t),
+                                   static_cast<int>(230.0f * heat * (1.0f - t)));
+        dl->AddCircleFilled(p, radius, col);
+    }
+}
+
+/// Draw `tex` (or the fallback glyph) centred on `pos`, rotated so the icon's top faces `dir`.
+void DrawIconRotated(ImDrawList* dl, const ImVec2& pos, const ImVec2& dir) {
+    SmatchetLoadedIconTexture tex;
+    if (!smatchet::ui::TryGetAboutIconTexture(tex)) {
+        const char* glyph = SmatchetAreFaIconsLoaded() ? ICON_FA_CUBE : "[S]";
+        const float size = kAboutIconSize * 0.8f;
+        // CalcTextSize measures at the current font size, but AddText draws at `size` — centre off
+        // the scaled extent or the glyph lands down-right of `pos` on every no-texture renderer.
+        const float scale = size / ::ImGui::GetFontSize();
+        const ImVec2 base = ::ImGui::CalcTextSize(glyph);
+        const ImVec2 extent(base.x * scale, base.y * scale);
+        dl->AddText(::ImGui::GetFont(), size, ImVec2(pos.x - extent.x * 0.5f, pos.y - extent.y * 0.5f),
+                    ::ImGui::GetColorU32(ImGuiCol_Text), glyph);
+        return;
+    }
+    // The icon art points up, so its local +Y maps to -dir.
+    const ImVec2 up(-dir.x, -dir.y);
+    const ImVec2 right(-up.y, up.x);
+    const float h = kAboutIconSize * 0.5f;
+    const ImVec2 dx(right.x * h, right.y * h);
+    const ImVec2 dy(up.x * h, up.y * h);
+    dl->AddImageQuad(tex.Texture->GetTexRef(), ImVec2(pos.x - dx.x + dy.x, pos.y - dx.y + dy.y),
+                     ImVec2(pos.x + dx.x + dy.x, pos.y + dx.y + dy.y), ImVec2(pos.x + dx.x - dy.x, pos.y + dx.y - dy.y),
+                     ImVec2(pos.x - dx.x - dy.x, pos.y - dx.y - dy.y), ImVec2(0.0f, 0.0f), ImVec2(1.0f, 0.0f),
+                     ImVec2(1.0f, 1.0f), ImVec2(0.0f, 1.0f));
+}
+
+/// The app icon, drawn from the baked-in .ico via the texture cache, with a Font Awesome glyph
+/// fallback for renderers with no texture support (and for a build with no icon baked in).
+void DrawAboutIcon(const AboutDrawCtx& ctx) {
+    UiDrawSession& d = ctx.d;
+
+    // The hit target is the resting slot and never moves: the layout below cannot shift mid-flight,
+    // and a re-launch stays clickable while the icon is still in the air.
+    const ImVec2 slot = ::ImGui::GetCursorScreenPos();
+    ::ImGui::InvisibleButton("##about.icon", ImVec2(kAboutIconSize, kAboutIconSize));
+    const ImGuiIO& io = ::ImGui::GetIO();
+    if (::ImGui::IsItemClicked(ImGuiMouseButton_Left) && io.KeyCtrl && io.KeyShift) {
+        d.aboutRocketStart = ::ImGui::GetTime();
+    }
+
+    const ImVec2 home(slot.x + kAboutIconSize * 0.5f, slot.y + kAboutIconSize * 0.5f);
+    ImVec2 pos = home;
+    ImVec2 dir(0.0f, -1.0f);
+    float heat = 0.0f;
+    if (d.aboutRocketStart >= 0.0) {
+        const double elapsed = ::ImGui::GetTime() - d.aboutRocketStart;
+        if (elapsed >= kRocketFlightSecs) {
+            d.aboutRocketStart = -1.0;
+        } else {
+            // Inset by a full icon so neither the hull nor the plume touches the window edge.
+            const ImVec2 wpos = ::ImGui::GetWindowPos();
+            const ImVec2 wsize = ::ImGui::GetWindowSize();
+            const ImVec2 lo(wpos.x + kAboutIconSize, wpos.y + kAboutIconSize);
+            const ImVec2 hi(wpos.x + wsize.x - kAboutIconSize, wpos.y + wsize.y - kAboutIconSize);
+            const float u = static_cast<float>(elapsed / kRocketFlightSecs);
+            pos = RocketPosAt(u, lo, hi, home);
+            // Heading and speed both come from one finite difference, so a phase change can never
+            // leave the hull pointing one way and the plume trailing another.
+            const ImVec2 next = RocketPosAt(u + 0.012f > 1.0f ? 1.0f : u + 0.012f, lo, hi, home);
+            const float sx = next.x - pos.x;
+            const float sy = next.y - pos.y;
+            const float step = std::sqrt(sx * sx + sy * sy);
+            if (step > 0.001f) {
+                dir = ImVec2(sx / step, sy / step);
+            }
+            heat = step / 14.0f;
+            heat = heat > 1.0f ? 1.0f : heat;
+        }
+    }
+
+    // In flight the rocket crosses the fact tables and the credits child, both submitted after this
+    // helper and so painted over it. The foreground list keeps the whole path visible; it is not
+    // clipped to the window, which is why the lo/hi inset above is the real bound.
+    ImDrawList* dl = d.aboutRocketStart >= 0.0 ? ::ImGui::GetForegroundDrawList() : ::ImGui::GetWindowDrawList();
+    if (heat > 0.0f) {
+        DrawRocketTrail(dl, pos, dir, heat);
+    }
+    DrawIconRotated(dl, pos, dir);
+}
+
 void DrawAboutIdentity(const AboutDrawCtx& ctx) {
+    DrawAboutIcon(ctx);
+    ::ImGui::SameLine();
+    ::ImGui::BeginGroup();
     ImGui::Text("%s", ctx.info.AppName.c_str());
     ImGui::SameLine();
     // Width-fitted so the version keeps sitting beside the name; it is the single
     // most-copied value in the dialog, so it is selectable like the rest.
-    SelectableValue("##about.version", ctx.info.Version,
-                    ::ImGui::CalcTextSize(ctx.info.Version.c_str()).x + 4.0f, true);
+    SelectableValue("##about.version", ctx.info.Version, ::ImGui::CalcTextSize(ctx.info.Version.c_str()).x + 4.0f,
+                    true);
     if (!ctx.info.RepoUrl.empty()) {
         SelectableValue("##about.repo", ctx.info.RepoUrl, 0.0f, true);
         LinkContextMenu(ctx, "##about.repo.menu", ctx.info.RepoUrl);
     }
+    ::ImGui::EndGroup();
 }
 
 void DrawAboutBuild(const AboutDrawCtx& ctx) {
@@ -224,6 +371,25 @@ void DrawAboutCredits(const AboutDrawCtx& ctx) {
     ::ImGui::EndChild();
 }
 
+/// Toast text for the Nth "Copy to Clipboard" press of the current open. The clipboard payload is
+/// identical every time, so the message is what escalates. Raw literals on purpose: toast strings do
+/// not route through the localization shim, so this adds no translation rows.
+const char* CopyToastText(int presses) {
+    if (presses <= 1) {
+        return "Build info copied to clipboard.";
+    }
+    if (presses == 2) {
+        return "Copied again.";
+    }
+    if (presses == 3) {
+        return "Still the same build.";
+    }
+    if (presses == 4) {
+        return "Yes, still the same build.";
+    }
+    return "I admire the persistence.";
+}
+
 void DrawAboutActions(const AboutDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
 
@@ -245,7 +411,8 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
         const std::string report =
             smatchet::privacy::RedactLogText(smatchet::diagnostics::BuildAboutReportText(ctx.info));
         ::ImGui::SetClipboardText(report.c_str());
-        SmatchetToastManager::Instance().Push("About", "Build info copied to clipboard.", ToastType::Success, 2500);
+        ++d.aboutCopyPresses;
+        SmatchetToastManager::Instance().Push("About", CopyToastText(d.aboutCopyPresses), ToastType::Success, 2500);
     }
 
     ImGui::SameLine();
@@ -255,11 +422,19 @@ void DrawAboutActions(const AboutDrawCtx& ctx) {
     }
 }
 
+/// Drop everything that only makes sense within one open: the cached snapshot (so the next open
+/// re-reads config), the copy-press counter, and any rocket still in the air.
+void ResetAboutTransient(UiDrawSession& d) {
+    d.aboutInfo.reset();
+    d.aboutCopyPresses = 0;
+    d.aboutRocketStart = -1.0;
+}
+
 } // namespace
 
 void DrawAboutModal(AppController& app, UiDrawSession& d) {
     if (!d.showAbout) {
-        d.aboutInfo.reset();
+        ResetAboutTransient(d);
         return;
     }
 
@@ -282,7 +457,7 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
             // Drop the flag and the snapshot so the next open re-reads config,
             // and so the menu item is not re-opening a popup ImGui already closed.
             d.showAbout = false;
-            d.aboutInfo.reset();
+            ResetAboutTransient(d);
         }
         return;
     }

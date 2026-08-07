@@ -308,7 +308,7 @@ jobs:
           # wrapper-only edit/deletion there must set docs=true so the orphan check
           # runs — else a suite can be un-wired by a scripts/dev-only PR while the
           # required doc job stays green. Mirrors the gate's `--include=test-*.sh`.
-          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^\.github/workflows/doc-validation\.yml$)'; then
+          if printf '%s\n' "$changed" | grep -qE '(\.md$|^AGENTS\.md$|^agents/|^docs/|^tests/bats/|^project\.config\.(json|schema\.json)$|^CONTEXT-MAP\.md$|^scripts/dev/project-config\.sh$|^scripts/dev/test-.*\.sh$|^scripts/dev/test_.*\.py$|^\.github/workflows/doc-validation\.yml$)'; then
             echo "docs=true" >> "$GITHUB_OUTPUT"
             echo "doc-relevant changes detected — running full doc validation."
           else
@@ -429,6 +429,13 @@ jobs:
         run: |
           bash agents/scripts/core/test-orphan-bats.sh --selftest
           bash agents/scripts/core/test-orphan-bats.sh
+
+      - name: work_item_lint — work-item close shape + ledger-citation sweep
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          python3 agents/scripts/core/work_item_lint.py --selftest
+          python3 agents/scripts/core/work_item_lint.py --all
+          bash scripts/dev/test-work-item-lint.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         if: steps.detect.outputs.docs == 'true'

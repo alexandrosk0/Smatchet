@@ -476,6 +476,17 @@ add_executable(SmatchetTests
     # dirty-tab flow. Inline in the same _detail header (guarded by
     # SMATCHET_WITH_AI, which this target defines); no extra .cpp link.
     Core/PreferencesAssistantWorkingCopy.test.cpp
+    # Preferences IA re-segmentation slice 1
+    # (docs/plans/preferences-ia-resegmentation-and-search.md) — the
+    # settings-descriptor table (pure data) + the live search filter. The filter
+    # pulls the already-linked SmatchetLocalization.cpp (TranslateSource) and
+    # FuzzyMatch.cpp (tier-2 fallback); only the two new source TUs need links.
+    # Feature-guarded descriptor blocks follow this rig's defines, so counts are
+    # asserted as lower bounds that hold in every guard configuration.
+    Core/PreferencesSchema.test.cpp
+    Core/PreferencesFilter.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/PreferencesSchema.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/PreferencesFilter.cpp"
     # Function-size decomposition (feat/funcsize-annotate-analysis) — pure
     # display-classification helpers extracted from AnnotateAnalysisUi::DrawContent
     # (the largest function in the tree) to cut its branch count. The _detail TU is
@@ -977,6 +988,11 @@ add_executable(SmatchetTests
     Core/AboutInfo.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/AboutInfo.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/HostMachineInfo.cpp"
+    # Help > About app icon — the .ico unpacker behind the baked-in app icon. Pure byte parsing
+    # with no ImGui/texture dependency (the upload half lives in SmatchetImageTextureCache and is
+    # not linked here), so the truncation/malformed-header cases run headless.
+    Core/IcoDecode.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/SmatchetIcoDecode.cpp"
     # log-a-bug-github Phase 2 — crash marker survival + next-launch consume.
     Core/CrashSink.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/CrashSink.cpp"

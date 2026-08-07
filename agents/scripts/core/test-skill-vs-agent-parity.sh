@@ -44,6 +44,9 @@ SKILL_ONLY_HELPERS=(
     test-authoring
     coderabbit-handoff
     historical-code-review
+    pre-implementation-review
+    address-review-feedback
+    close-work-item
 )
 
 is_skill_only() {

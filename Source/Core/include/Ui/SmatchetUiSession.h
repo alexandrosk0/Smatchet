@@ -23,6 +23,7 @@
 #include "IssueTableSerializer.h"
 #include "TrackerGridFieldDisplay.h"
 #include "NavigationHistory.h"
+#include "PreferencesFilter.h"
 #include "SpreadsheetState.h"
 #include "FieldCatalogCache.h"
 #include "TrackerFieldSchema.h"
@@ -45,6 +46,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -174,22 +176,21 @@ enum class CellWriteState { Saving, Success, Error };
 /// name it in member signatures against the forward-declared session.
 enum class PendingLayoutResetAction { None, PanelBottom, PanelRight, SwapPrimarySideBar, ResetLayoutOnly };
 
-/// Which top-level Preferences tab is selected this frame. Recorded by each
-/// tab's BeginTabItem-true branch so the shared footer under the tab bar can
-/// show only the save-semantics line relevant to the active tab. Nested
-/// sub-tabs (Fields Inputs children) map to their top-level parent.
-enum class PreferencesActiveTab : std::uint8_t {
+/// Which Preferences category the left nav rail (or the narrow-width combo)
+/// has selected. Set by the rail/combo click handler in drawPreferencesWindow;
+/// the right pane switches on it to draw that category's sections. Values are
+/// the 8 categories of SmatchetPrefsSchema::Categories(); the enumerator order
+/// is NOT the rail order (the rail's own entry table owns that) — Tracker leads
+/// here only so the zero value is the first-run backend gate's category.
+enum class PreferencesCategory : std::uint8_t {
     Tracker = 0,
-    Integrations,
-    Assistant,
-    Whisper,
-    LocalData,
+    General,
     Appearance,
-    Templates,
+    Connections,
+    AiVoice,
+    Editing,
+    Shortcuts,
     Annotate,
-    Keybindings,
-    UserInfo,
-    QuickCreate,
 };
 
 struct CellWriteFeedback {
@@ -302,14 +303,30 @@ struct UiDrawSession {
     bool openLayoutResetConfirm = false;
 
     bool showPreferences = false;
-    /// Active Preferences tab this frame (footer save-semantics line). Persists
-    /// across frames; defaults to the first tab.
-    PreferencesActiveTab preferencesActiveTab = PreferencesActiveTab::Tracker;
+    /// Selected Preferences category (left nav rail / narrow-width combo).
+    /// Persists across frames; defaults to Tracker.
+    PreferencesCategory preferencesCategory = PreferencesCategory::Tracker;
     /// Settings-search box atop the Preferences window (UX critique M4). The query
-    /// live-matches a per-tab keyword index; clicking a match chip sets the jump request
-    /// consumed by SmatchetPreferencesUiDetail::PrefsTabFlags at that tab's BeginTabItem.
+    /// feeds prefsFilter, which hides non-matching widgets in place across every
+    /// category — no jump chips, no per-tab keyword index.
     char prefsSearchBuf[64] = {};
-    std::string prefsSelectTabRequest;
+    /// Live in-place settings filter, driven by prefsSearchBuf each frame from
+    /// drawPreferencesWindow. Inactive (shows everything) while the query is empty.
+    PreferencesFilter prefsFilter;
+    /// Does the live global query hit at least one keybinding row? Computed once per
+    /// frame in drawPreferencesWindow (the answer is needed before the nav rail draws,
+    /// and again later by the keybindings table itself — scanning twice would double
+    /// the per-frame command-label lookups). False while the filter is inactive.
+    bool prefsKeybindRowsMatchQuery = false;
+    /// Collapsed PrefsSection ids, persisted as the comma-joined
+    /// cfg.PreferencesCollapsedSections string. Parsed lazily on first
+    /// Preferences draw (prefsCollapsedLoaded latch) — cfg is loaded after
+    /// session construction.
+    std::set<std::string> prefsCollapsedSections;
+    bool prefsCollapsedLoaded = false;
+    /// Nav presentation this frame: false = left rail, true = category combo
+    /// (narrow width / mobile). Hysteresis state for ResolvePrefsNavUseCombo.
+    bool prefsNavCombo = false;
     /// Set when the Preferences window is closed while the Tracker tab holds unsaved
     /// credential edits (P2-H3): the window reopens and this opens the Save & Sync /
     /// Discard / Keep-editing guard modal.
@@ -1067,6 +1084,12 @@ struct UiDrawSession {
     /// Snapshot taken once per open (GatherAboutInfo reads the disk-backed config), released
     /// on close. Held by pointer so this 75-includer header never pulls in AboutInfo.h.
     std::shared_ptr<smatchet::diagnostics::AboutInfo> aboutInfo;
+    /// Number of "Copy to Clipboard" presses in the current open. Drives the escalating toast
+    /// text; reset alongside `aboutInfo` on close so every open starts from the plain message.
+    int aboutCopyPresses = 0;
+    /// `ImGui::GetTime()` at which the app-icon rocket launch started, or < 0 when idle.
+    /// Ctrl+Shift+click on the icon arms it; the draw code retires it when the flight ends.
+    double aboutRocketStart = -1.0;
 
     /// Transient request consumed once per frame in `SmatchetUI::Draw` right before the
     /// command-palette draw call. Lets the bucket-C `CommandPaletteFuzzyScenario` drive
