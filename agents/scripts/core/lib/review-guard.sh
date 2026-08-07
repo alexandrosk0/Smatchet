@@ -45,8 +45,12 @@ get_dirty_state() {
     # -uall lists untracked FILES; the default collapses an untracked directory
     # to its name, which would hide a stray file written inside one (an item
     # folder is untracked for its whole life).
+    # core.quotePath=false: git C-quotes non-ASCII/backslash paths by default,
+    # which would divorce the status line from the on-disk file — the hash
+    # would fall back to 'absent', the signature would go constant, and a
+    # re-edit of such an already-dirty path would read as clean.
     local status_out
-    status_out="$(git -C "$root" status --porcelain --untracked-files=all 2>/dev/null)" || return 1
+    status_out="$(git -C "$root" -c core.quotePath=false status --porcelain --untracked-files=all 2>/dev/null)" || return 1
 
     # Status letters plus the worktree hash still miss a path whose staged
     # content changed while its status letters and its on-disk bytes stayed put
@@ -58,7 +62,7 @@ get_dirty_state() {
         if [[ $line =~ ^[0-9]+\ ([0-9a-f]+)\ [0-9]+[[:space:]](.*)$ ]]; then
             index_blob["${BASH_REMATCH[2]}"]="${BASH_REMATCH[1]}"
         fi
-    done < <(git -C "$root" ls-files -s 2>/dev/null)
+    done < <(git -C "$root" -c core.quotePath=false ls-files -s 2>/dev/null)
 
     local -a out=()
     local xy rel src full hash idx
@@ -66,8 +70,6 @@ get_dirty_state() {
         [ "${#line}" -gt 3 ] || continue
         xy="${line:0:2}"
         rel="${line:3}"
-        while [[ $rel == \"* ]]; do rel="${rel#\"}"; done
-        while [[ $rel == *\" ]]; do rel="${rel%\"}"; done
 
         # A rename arrives as `R  old -> new`, so the raw substring is BOTH
         # paths in one key — which would hash nothing and mask any later edit

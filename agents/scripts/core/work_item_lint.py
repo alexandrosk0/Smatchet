@@ -154,7 +154,7 @@ def glob_to_re(glob):
     return re.compile("^" + "".join(out) + "$")
 
 
-def load_code_globs(root):
+def load_code_globs(root, notes=None):
     """Source-file classification comes from project.config.json
     ci.path_filters.code_globs - the project-specific value table - so this
     portable file carries no project directory literals."""
@@ -162,7 +162,14 @@ def load_code_globs(root):
         with open(os.path.join(root, "project.config.json"), encoding="utf-8") as f:
             cfg = json.load(f)
         return [glob_to_re(g) for g in cfg["ci"]["path_filters"]["code_globs"]]
-    except (OSError, KeyError, ValueError):
+    except (OSError, KeyError, ValueError) as e:
+        # A config break must weaken the gate VISIBLY, not silently.
+        if notes is not None:
+            notes.append(
+                "note: code-globs-unreadable: project.config.json"
+                f" ci.path_filters.code_globs unavailable ({e}) - source"
+                " citation rule not applied."
+            )
         return []
 
 
@@ -257,7 +264,7 @@ def run_citations(root, strict):
     saw_doc_cite = False
     src_hits = []
 
-    code_res = load_code_globs(root)
+    code_res = load_code_globs(root, notes)
 
     # Tracked files only: walking the tree would drag in gitignored build
     # output (multi-MB generated sources).
@@ -597,6 +604,8 @@ def selftest():
         sh("init", "--quiet", "-b", "develop")
         sh("config", "user.email", "t@t")
         sh("config", "user.name", "t")
+        # A global commit.gpgsign=true would make the throwaway commits fail.
+        sh("config", "commit.gpgsign", "false")
         w(f"{WORK}/DEFERRED.md", "# Deferred\n\n- **DEF-12 - real entry**\n")
         w(f"{WORK}/BACKLOG.md", "# Backlog\n\n*(No open entries.)*\n")
         w(f"{WORK}/IDEAS.md", "# Ideas\n\n*(No open entries.)*\n")

@@ -57,6 +57,16 @@ EOF
     done
     RESTRICTED_PATH="$RESTRICTED_PATH:/usr/bin:/bin"
     export RESTRICTED_PATH
+
+    # /usr/bin:/bin is load-bearing (cut/mktemp/date/stat/seq/touch), so the
+    # PATH is not fully sealed. Fail loudly if a real harness lives there —
+    # otherwise the missing-CLI cases fail with an unrelated-looking message.
+    local real
+    for real in claude codex opencode cursor-agent; do
+        if PATH="/usr/bin:/bin" command -v "$real" >/dev/null 2>&1; then
+            skip "a real '$real' is in /usr/bin or /bin; the missing-CLI cases cannot be isolated"
+        fi
+    done
 }
 
 teardown() {
@@ -122,14 +132,14 @@ rr() {
     all_stubs
     run rr --gate pre --subject 07 --round 1 --dry-run
     [ "$status" -eq 0 ]
-    [[ "$output" == *"codex exec -a never -s workspace-write -m gpt-5.6-sol"* ]]
+    [[ "$output" == *"codex exec -a never -s workspace-write '-m' 'gpt-5.6-sol'"* ]]
 }
 
 @test "cursor leg is a brandless prose ask citing the shared skill file" {
     all_stubs
     run rr --gate pre --subject 07 --round 1 --dry-run
     [ "$status" -eq 0 ]
-    [[ "$output" == *"cursor-agent --force -p --model composer-2.5"* ]]
+    [[ "$output" == *"cursor-agent --force -p '--model' 'composer-2.5'"* ]]
     [[ "$output" == *"agents/_shared/skills/pre-implementation-review/SKILL.md"* ]]
     # No slash command in the cursor ask: cursor has no skill loader.
     cursor_line="$(grep 'cursor-agent --force' <<< "$output")"
@@ -243,6 +253,7 @@ rr() {
     [ "$status" -eq 0 ]
     # The claude stub re-wrote its file fresh; both legs must be counted from
     # THIS launch, not seeded by the stale file.
-    [[ "$output" == *"legs wrote a file"* ]]
+    [[ "$output" == *"2/2 legs wrote a file"* ]]
+    [[ "$output" != *"No file from:"* ]]
     grep -q "stub review" "$FIX/docs/work/items/07-test-item/4-review-1-claude-opus.md"
 }

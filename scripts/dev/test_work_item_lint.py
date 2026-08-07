@@ -69,6 +69,8 @@ def init_repo(root):
     git(root, "config", "user.email", "t@t")
     git(root, "config", "user.name", "t")
     git(root, "config", "core.autocrlf", "false")
+    # A global commit.gpgsign=true would make the throwaway commits fail.
+    git(root, "config", "commit.gpgsign", "false")
 
 
 class TempRepoCase(unittest.TestCase):

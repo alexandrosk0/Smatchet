@@ -114,6 +114,20 @@ dirty() {
     [ "$output" = "tracked.txt" ]
 }
 
+@test "non-ASCII path re-edited during round: stray (C-quoting must not blind the signature)" {
+    # Default git C-quotes non-ASCII paths in status output; without
+    # core.quotePath=false the on-disk file is never found, the signature goes
+    # constant, and this re-edit would read as clean.
+    echo "in-flight work" > "$REPO_TMP/naïve-résumé.txt"
+    dirty "$STATE_TMP/before"
+    echo "leg overwrote it" > "$REPO_TMP/naïve-résumé.txt"
+    dirty "$STATE_TMP/after"
+    : > "$STATE_TMP/expected"
+    run get_stray_paths "$STATE_TMP/before" "$STATE_TMP/after" "$STATE_TMP/expected"
+    [ "$status" -eq 0 ]
+    [ "$output" = "naïve-résumé.txt" ]
+}
+
 @test "dirty-at-launch path reverted during round: stray (reverted in-flight work)" {
     echo "in-flight work" > "$REPO_TMP/tracked.txt"
     dirty "$STATE_TMP/before"

@@ -56,6 +56,9 @@ set -uo pipefail
 
 die()  { echo "run-review: $*" >&2; exit 2; }
 note() { echo "$*"; }
+# `shift 2` with one arg left shifts NOTHING (rc 1, set -e off), so a
+# value-taking flag with no value would spin the parse loop forever.
+need_val() { [ $# -ge 2 ] || die "$1 requires a value"; }
 
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || die "not inside a git work tree"
 cd "$ROOT" || die "cannot cd to repo root"
@@ -76,15 +79,15 @@ GATE="" SUBJECT="" ROUND="" LEGS="" TIMEOUT_MINUTES=45
 DRY_RUN=0 SMOKE_TEST=0 PANES=0
 while [ $# -gt 0 ]; do
     case "$1" in
-        --gate)              GATE="${2:-}"; shift 2 ;;
+        --gate)              need_val "$@"; GATE="$2"; shift 2 ;;
         --gate=*)            GATE="${1#*=}"; shift ;;
-        --subject)           SUBJECT="${2:-}"; shift 2 ;;
+        --subject)           need_val "$@"; SUBJECT="$2"; shift 2 ;;
         --subject=*)         SUBJECT="${1#*=}"; shift ;;
-        --round)             ROUND="${2:-}"; shift 2 ;;
+        --round)             need_val "$@"; ROUND="$2"; shift 2 ;;
         --round=*)           ROUND="${1#*=}"; shift ;;
-        --legs)              LEGS="${2:-}"; shift 2 ;;
+        --legs)              need_val "$@"; LEGS="$2"; shift 2 ;;
         --legs=*)            LEGS="${1#*=}"; shift ;;
-        --timeout-minutes)   TIMEOUT_MINUTES="${2:-}"; shift 2 ;;
+        --timeout-minutes)   need_val "$@"; TIMEOUT_MINUTES="$2"; shift 2 ;;
         --timeout-minutes=*) TIMEOUT_MINUTES="${1#*=}"; shift ;;
         --panes)           PANES=1; shift ;;
         --dry-run)         DRY_RUN=1; shift ;;
@@ -105,6 +108,10 @@ esac
 [ -n "$SUBJECT" ] || die "--subject is required for the '$GATE' gate"
 [[ "$ROUND" =~ ^[0-9]+$ ]] && [ "$ROUND" -ge 1 ] && [ "$ROUND" -le 999 ] \
     || die "--round is required (1-999): naming is always explicit, never inferred from folder state"
+# Bash arithmetic resolves a non-number to 0, which would silently make the
+# deadline instant. 0 stays legal — it is the explicit instant-deadline case.
+[[ "$TIMEOUT_MINUTES" =~ ^[0-9]+$ ]] \
+    || die "--timeout-minutes must be a non-negative integer (got '$TIMEOUT_MINUTES')"
 
 # --- resolve subject + output folder ---------------------------------------
 ITEMS_DIR="docs/work/items"
@@ -137,6 +144,9 @@ for h in sorted(rp["harnesses"]):
         print("\t".join([h, e["flag"], str(e.get("start_dwell_secs", 3)), m["tag"], m["id"]]))
 PYEOF
 )" || die "roster parse failed"
+# A Windows python emits CRLF line ends; a stray \r would ride the last field
+# (the model id) into the leg command line.
+ROSTER_TSV="${ROSTER_TSV//$'\r'/}"
 
 mapfile -t ROSTER_HARNESSES < <(printf '%s\n' "$ROSTER_TSV" | cut -f1 | sort -u)
 
@@ -202,7 +212,10 @@ quote_sh() {
 
 get_leg_command() {
     local harness="$1" flag="$2" id="$3" outfile="$4"
-    local sel="$flag $id"
+    # flag and id come from the roster config; the schema barely constrains
+    # them, and they land in an executed script — quote them like the prompt.
+    local sel
+    sel="$(quote_sh "$flag") $(quote_sh "$id")"
     local prompt
     prompt="$(quote_sh "/$SKILL $SUBJ_ARG out=$outfile")"
     case "$harness" in
@@ -220,7 +233,9 @@ get_leg_command() {
         # on Windows — a no-op elsewhere.
         opencode)
             if [ -n "${LOCALAPPDATA:-}" ]; then
-                echo "TEMP='$LOCALAPPDATA/Temp' TMP='$LOCALAPPDATA/Temp' opencode run $sel $prompt"
+                local tmpdir
+                tmpdir="$(quote_sh "$LOCALAPPDATA/Temp")"
+                echo "TEMP=$tmpdir TMP=$tmpdir opencode run $sel $prompt"
             else
                 echo "opencode run $sel $prompt"
             fi ;;
@@ -238,7 +253,10 @@ for i in $(seq 0 $((N_LEGS - 1))); do
     if [ "$SMOKE_TEST" -eq 1 ]; then
         LEG_CMD+=("echo 'SMOKE-TEST [${LEG_NAME[$i]}] - no real work; sleeping 25s'; sleep 25")
     else
-        LEG_CMD+=("$(get_leg_command "${LEG_HARNESS[$i]}" "${LEG_FLAG[$i]}" "${LEG_ID[$i]}" "${LEG_OUT[$i]}")")
+        # `die` inside the substitution exits only the subshell; check the rc
+        # so a roster error stops the launch instead of running an empty leg.
+        _cmd="$(get_leg_command "${LEG_HARNESS[$i]}" "${LEG_FLAG[$i]}" "${LEG_ID[$i]}" "${LEG_OUT[$i]}")" || exit 2
+        LEG_CMD+=("$_cmd")
     fi
 done
 
@@ -389,12 +407,13 @@ declare -A SEEN=()
 for f in "$OUT_DIR/${PREFIX}review-"*.md; do
     [ -f "$f" ] && SEEN["$(basename "$f")"]=1
 done
-START_COUNT=${#SEEN[@]}
 
 leg_landed() {
     local p="$ROOT/$1" m
     [ -f "$p" ] || return 1
-    m="$(stat -c %Y "$p" 2>/dev/null)" || return 1
+    # GNU stat takes -c %Y; BSD/macOS stat takes -f %m. Probe both so a
+    # macOS run does not report every leg unlanded.
+    m="$(stat -c %Y "$p" 2>/dev/null)" || m="$(stat -f %m "$p" 2>/dev/null)" || return 1
     [ "$m" -ge "$LAUNCH_EPOCH" ]
 }
 
@@ -446,9 +465,10 @@ while [ "$(date +%s)" -lt "$DEADLINE" ]; do
     # Quiet only counts as stalled if nothing is still working. Without the
     # liveness check a fast first leg plus a slow field ends the watch
     # mid-round, and the summary then reads like a result rather than what it
-    # is (legs still going).
-    if [ "${#SEEN[@]}" -gt "$START_COUNT" ] \
-        && [ $(( $(date +%s) - LAST_NEW )) -ge "$QUIET_SECS" ] \
+    # is (legs still going). No new-filename precondition: a refill of the
+    # same round re-writes an EXISTING name, so SEEN never grows and gating
+    # on it would make a dead refill wait out the full timeout.
+    if [ $(( $(date +%s) - LAST_NEW )) -ge "$QUIET_SECS" ] \
         && ! panel_busy; then
         break
     fi
@@ -476,9 +496,9 @@ fi
 
 # --- write guard: report ----------------------------------------------------
 # Any path whose state changed during the round and is not an expected review
-# file was written by something other than a leg doing its job. Reported, not
-# blocked: the findings may still be good, but the strays must be reviewed and
-# reverted before the diff is judged.
+# file was written by something other than a leg doing its job. This FAILS the
+# round (exit 1): the findings may still be good, but the strays must be
+# reviewed and reverted before the diff is judged.
 : > "$RUN_DIR/guard.expected"
 for i in $(seq 0 $((N_LEGS - 1))); do
     echo "${LEG_OUT[$i]}" >> "$RUN_DIR/guard.expected"
