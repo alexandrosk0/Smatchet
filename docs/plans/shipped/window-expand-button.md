@@ -246,3 +246,44 @@ One bucket-E assertion was dropped as unobservable rather than fixed: `BeginDock
 rewrites `ImGuiWindowFlags_NoTitleBar` from the *node's* shape (set when the node has no
 tab bar, cleared when it has one), so a post-restore `window->Flags` check tests ImGui, not
 this code. The floating-frame check plus `PlacementRestored` (exact node identity) cover it.
+
+## Post-ship follow-ups (PR #1966, after user manual-verify)
+
+The user verified the running exe and found one gap; PR review bots found three more. All
+four are fixed on the same PR because each is this feature's own logic applied
+inconsistently — not adjacent pre-existing debt.
+
+| Finding | Source | Mechanism | Fix |
+|---|---|---|---|
+| First bottom-panel tab (Scripts) had no expand icon | user, manual verify | `DrawToggle` bails on `window->SkipItems`, which is what `Begin` returning false leaves behind — including an **unselected dock tab**. Each node therefore queues exactly one button per frame, from the selected tab only; a window whose `Begin` never returns true contributes none. | queue per **node**, not per window |
+| MAJOR: a real tab can lay out under the manual toggle | CodeRabbit `3730764590` | `TabBarLayout` clips the central section only by the trailing section's width (`imgui_widgets.cpp` — central width = `BarRect.W - sections[0].W - sections[2].W - sections[1].Spacing`; `ScrollingRectMaxX = BarRect.Max.x - sections[2].Width`). Nothing reserved the slot the toggle paints over, so on a full bar a tab owned the clicks under it. | `ReserveTabBarSlot` — a fully transparent trailing `TabItemButton` submitted through `DockNodeBeginAmendTabBar`, purely to shrink the central section. The visible control stays the manual right-aligned draw, because a trailing item right-*aligns* only on overflow (deviation *d* above). Takes effect the next frame: amend re-enters an already-laid-out bar. |
+| Medium: `RepairMcpWindowLayout` re-docks an expanded window | Bugbot `3730763798` | An expanded window is deliberately undocked and pinned every frame by `BeginWindow`; without an expand test the repair reads "undocked" as "broken", arms the latch and force-writes pos/size against the pin. | same `IsCurrentWindowExpanded` guard `RepairLuaWindowLayout` already carried |
+| Medium: assistant `s_assistantNeedsReDock` armed while expanded | Bugbot `3730763815` | Same shape — arming makes `ApplyAssistantDocking` issue `SetNextWindowDockID` competing with the fullscreen pin. | same guard |
+
+**HIGH `3730763805` refuted, not fixed.** The claim was that `BeginWindow` /
+`IsWindowExpanded` hash the full `"display###StableId"` string while ImGui window IDs hash
+only the `###` suffix, so expand/restore/`SelfHeal` never line up for Annotate, Views and
+grid panes. `ImHashStr` (`imgui.cpp:2496-2545`) **skips the `###` characters themselves** in
+both its sized and zero-terminated branches — its own doc comment states *"label###id"
+outputs the same hash as "id"* — and an ImGui window ID is `ImHashStr(name)`
+(`imgui.cpp:4675`) with the same default seed 0 this code uses. All three named call sites
+pass the identical string to `BeginWindow` and to `ImGui::Begin`, and `FindWindowByName` is
+itself hash-based. The same mechanism retires a previously-backlogged Low about
+source-vs-localized titles: `BuildLabelFromSource` emits `translated + "###" + source`
+precisely so the ID survives localization.
+
+Verification for these four: `cmake --build build/ninja-ui-test-msvc --target
+SmatchetStandalone` → exit 0; `bash scripts/dev/test-ui-window-expand.sh` (ephemeral home)
+→ **passed=9 failed=0 tested=9** (two cases added since the 7 above).
+
+**That is a no-regression result, not coverage of the four fixes.** All 9 registered cases
+predate them, and none puts a tab under the toggle slot or drives an expanded MCP/Assistant
+window through its repair path — so the MAJOR-severity tab/toggle overlap fix in particular
+ships green but untested. Both gaps are automatable and are backlogged for `test-author` at
+[`categories/test/2026-08-07-window-expand-overlap-and-redock-guards.md`](../../self-improvement/categories/test/2026-08-07-window-expand-overlap-and-redock-guards.md).
+
+**Spun out, not fixed here.** The user asked for an audit of the class *"restore can't
+re-dock and falls back to a floating window at the old rect — looks docked, isn't; the
+splitter drag exposes it."* Five findings landed; they are pre-existing dock-liveness bugs
+independent of this feature, so they ship on `fix/dock-slot-liveness` behind a shared
+`SmatchetDockNodeIds::EnsureDockSlotAlive(ImGuiID)` guard rather than widening this PR.

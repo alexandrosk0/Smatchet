@@ -178,6 +178,25 @@ void DrawTitleBarToggle(WindowExpandState& s, ImGuiWindow* window, unsigned int 
     }
 }
 
+/// Claims `width` at the right edge of `node`'s tab bar so no tab can lay out under the
+/// manually-drawn toggle. Layout-only: a trailing tab item is the ONLY thing that shrinks
+/// the central section (TabBarLayout caps it at BarRect.Max.x - sections[2].Width), and
+/// there is no API to widen that section without submitting one.
+/// TabItemSpacing is that submission with none of the side effects: ImGuiTabItemFlags_Invisible
+/// gates out the whole render block, and it also forces hovered/held/pressed to false, so the
+/// spacer can never contend for HoveredId with the real toggle drawn later in EndFrame. The
+/// width goes through SetNextItemWidth, i.e. straight into the tab's RequestedWidth.
+/// Takes effect on the NEXT frame: DockNodeBeginAmendTabBar re-enters an already-laid-out
+/// tab bar. One frame of overlap on the very first submission is not worth a pre-pass that
+/// would have to guess which windows are about to dock.
+void ReserveTabBarSlot(ImGuiDockNode* node, float width) {
+    if (!ImGui::DockNodeBeginAmendTabBar(node)) {
+        return;
+    }
+    ImGui::TabItemSpacing("###SmatchetWindowExpandReserve", ImGuiTabItemFlags_Trailing, width);
+    ImGui::DockNodeEndAmendTabBar();
+}
+
 } // namespace
 
 void BeginWindow(UiDrawSession& d, const char* windowName) {
@@ -328,17 +347,25 @@ void EndFrame(UiDrawSession& d) {
         if (node == NULL || node->TabBar == NULL || node->HostWindow == NULL) {
             continue;
         }
-        // NOT a trailing TabItemButton: TabBarLayout right-aligns the trailing section
-        // only when the tabs already overflow (`tab_offset = ImMin(BarRect.W - section.W,
-        // tab_offset)`), so with room to spare it packs left, against the last tab. Drawn
-        // manually instead, off BarRect.Max.x — DockNodeCalcTabBarLayout has already
-        // shrunk that edge by the node's close X, so this lands exactly one slot left of it.
+        // The VISIBLE control is NOT a trailing TabItemButton: TabBarLayout right-aligns
+        // the trailing section only when the tabs already overflow (`tab_offset =
+        // ImMin(BarRect.W - section.W, tab_offset)`), so with room to spare it packs left,
+        // against the last tab, instead of glued to the node's close X. Drawn manually
+        // instead, off BarRect.Max.x — DockNodeCalcTabBarLayout has already shrunk that
+        // edge by the close X, so this lands exactly one slot left of it.
         const ImRect bar = node->TabBar->BarRect;
         const float buttonSz = ImGui::GetFontSize();
         const ImVec2 pos(bar.Max.x - buttonSz, bar.Min.y + ImGui::GetStyle().FramePadding.y);
         if (pos.x <= bar.Min.x) {
             continue;
         }
+        // Drawing after layout cannot un-overlap anything: the central tabs are only ever
+        // clipped by the TRAILING section's width (imgui_widgets.cpp — ScrollingRectMaxX =
+        // BarRect.Max.x - sections[2].Width), so with a full bar a real tab occupies the
+        // slot this button paints over and owns its clicks. The reservation below is what
+        // makes the slot ours; it is a layout-only spacer, so the manual draw above keeps
+        // the right-aligned placement the trailing section would not give us.
+        ReserveTabBarSlot(node, buttonSz);
         ImGuiWindow* host = node->HostWindow;
         bool clicked = false;
         if (ImGui::Begin(host->Name)) {

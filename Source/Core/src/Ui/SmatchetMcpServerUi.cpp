@@ -104,7 +104,11 @@ void PrepareMcpWindowLayout(UiDrawSession& d) {
 }
 
 void RepairMcpWindowLayout(UiDrawSession& d) {
-    if (ImGui::IsWindowDocked()) {
+    // An expanded window is deliberately undocked and is pinned to the work area every
+    // frame by SmatchetWindowExpand::BeginWindow. Without the second test the branch below
+    // reads "undocked" as "broken": it arms the re-dock latch to fire after the minimize
+    // and force-writes pos/size against that pin. Same guard as RepairLuaWindowLayout.
+    if (ImGui::IsWindowDocked() || SmatchetWindowExpand::IsCurrentWindowExpanded(d)) {
         return;
     }
     if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
