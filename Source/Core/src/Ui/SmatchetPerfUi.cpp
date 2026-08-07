@@ -223,11 +223,19 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
     }
     updateSmoothedFps();
     static bool s_needsReDock = false;
-    if (s_needsReDock) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
-        s_needsReDock = false;
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    // 0 once the bottom panel is gone; docking to it then produces an orphan node that only
+    // looks docked (EnsureDockSlotAlive).
+    const ImGuiID slot = SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::kBottomPanel);
+    if (slot != 0) {
+        if (s_needsReDock) {
+            // Consumed only against a live slot. The re-arm below sits inside `if (Begin(...))`,
+            // so it does not run for a collapsed window or an unselected tab — consuming the
+            // latch on a dead node would drop the request with nothing left to restore it.
+            s_needsReDock = false;
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_Always);
+        } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_FirstUseEver);
+        }
     }
     ImGui::SetNextWindowSize(ImVec2(580, 380), ImGuiCond_FirstUseEver);
     if (wantFocus) {

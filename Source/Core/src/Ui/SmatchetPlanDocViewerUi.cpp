@@ -308,9 +308,8 @@ void DrawPlanDocViewer(UiDrawSession& d) {
     PollLoadResult(s);
     StartLoadSelected(s);
 
-    if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
-    }
+    // No-op when the bottom panel is gone — see EnsureDockSlotAlive.
+    SmatchetDockNodeIds::DockNextWindowOnFirstUse(SmatchetDockNodeIds::kBottomPanel);
     ImGui::SetNextWindowSize(ImVec2(720.0f, 540.0f), ImGuiCond_FirstUseEver);
     const bool wantFocus = d.requestPlanDocViewerFocus;
     if (wantFocus) {

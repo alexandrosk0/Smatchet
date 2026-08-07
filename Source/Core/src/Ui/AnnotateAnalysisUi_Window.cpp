@@ -127,9 +127,9 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
     ImGui::Text("Callstack Frames: %zu", ctx.NRow);
     const ImGuiStyle& stBtn = ImGui::GetStyle();
     const float padH = stBtn.FramePadding.x * 2.f;
-    const float callstackViewBtnW = (std::max)(
-        ImGui::CalcTextSize("Show Raw Text").x + padH,
-        (std::max)(ImGui::CalcTextSize("Show Table").x + padH, ImGui::CalcTextSize("Show raw callstack…").x + padH));
+    const float callstackViewBtnW = (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
+                                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
+                                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
     if (!streamlinedHide) {
         ImGui::SameLine();
         PushAnnotateLinkButtonColors(theme);
@@ -1138,9 +1138,8 @@ void AnnotateAnalysisUi::DrawWindow(AppController& app, bool* pOpen, const std::
         return;
     }
     constexpr ImGuiWindowFlags kPanelFlags = ImGuiWindowFlags_NoCollapse;
-    if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
-    }
+    // No-op when the bottom panel is gone — see EnsureDockSlotAlive.
+    SmatchetDockNodeIds::DockNextWindowOnFirstUse(SmatchetDockNodeIds::kBottomPanel);
     ImGui::SetNextWindowSize(ImVec2(640.0f, 480.0f), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Annotate###AnnotateAnalysisModal", pOpen, kPanelFlags)) {
         if (!*pOpen) {

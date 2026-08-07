@@ -60,11 +60,16 @@ ImVec2 ClampLuaWindowPos(const ImVec2& pos, const ImVec2& size) {
 }
 
 void PrepareLuaWindowLayout(UiDrawSession& d) {
-    const bool needsForce = d.pendingReDockWindows.erase("scripting") > 0;
-    if (needsForce) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    // 0 when the bottom panel is gone; docking there would mint an orphan node that only
+    // looks docked (EnsureDockSlotAlive). The arm below is left unconsumed in that case so
+    // the redock still fires once the node is back.
+    const ImGuiID slot = SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::kBottomPanel);
+    if (slot != 0) {
+        if (d.pendingReDockWindows.erase("scripting") > 0) {
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_Always);
+        } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_FirstUseEver);
+        }
     }
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
