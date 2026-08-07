@@ -229,8 +229,8 @@ ledger holds only **open** and **`Promoted → NN-slug`** work — a completed e
 left as a `Done`/`Dropped` tombstone**.
 
 **Citing a resolved or renumbered id.** Every `DEF/BL/IDEA` id cited in a doc must still exist in
-its ledger. To mention an id that is gone, use one of exactly two accepted forms (a lint enforcing
-them lands with the Phase 2 tooling):
+its ledger. To mention an id that is gone, use one of exactly two accepted forms (enforced by
+`agents/scripts/core/work_item_lint.py`):
 
 - A closed-item link — `[DEF-NNN](<path to docs/work/closed/NN-slug.md>)` — the id is the **link
   text**, the target path contains `closed/`, and **the file must exist**; a link that doesn't

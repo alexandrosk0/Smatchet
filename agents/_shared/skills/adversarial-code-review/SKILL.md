@@ -1,7 +1,7 @@
 ---
 name: adversarial-code-review
 version: 1
-description: Adversarial code review of a diff or PR to surface real bugs the author would actually want to fix, with a high bar and no theater. Use when the user asks to "review this", "review the diff", "review my changes", "review this PR", "any bugs in this?", "adversarial review", "tear this apart", "code review", or similar. Also use proactively before opening a PR or after a substantial set of changes.
+description: Adversarial code review of a diff or PR to surface real bugs the author would actually want to fix, with a high bar and no theater. Use when the user asks to "review this", "review the diff", "review my changes", "review this PR", "any bugs in this?", "adversarial review", "tear this apart", "code review", or similar. Also use proactively before opening a PR or after a substantial set of changes. Also the reviewer procedure for a work item's post-implementation review gate (run-review.sh --gate post) — see § Panel leg.
 ---
 
 # Adversarial Code Review
@@ -122,6 +122,18 @@ Findings
 Verification
 - <What you inspected or ran.>
 ```
+
+## Panel Leg: Post-Implementation Review Of A Work Item
+
+When launched as a review-panel leg (`agents/scripts/core/run-review.sh --gate post --subject <NN|slug> --round N`) — or asked to post-implementation-review an open item under `docs/work/items/NN-slug/` — the steps above run with these deltas (ported from Whip-Process `Procedures/PostImplementationReview.md`; mechanics: `docs/agent-rules/review-panels.md`):
+
+- **The intent is the artifact set.** Step 1's intent source is the item's `1-specification.md` + `2-design.md` + `3-plan.md`; the review judges the implementation diff against them. Start from `git show HEAD` and read the changed files **in full**, not just the hunks — judge the code as it now stands, in context. If the diff doesn't point to a single `docs/work/items/NN-slug/`, ask rather than guess.
+- **Read-only pass.** No builds, no test runs — judge test coverage by reading the tests, verify findings by reading the code.
+- **Extra lenses on top of Step 4:** **plan fidelity** (delivers the full scope, nothing silently dropped, no drift), **match to spec/design**, and **test coverage for new or reshaped behaviour**.
+- **Review independently** — form your own findings before reading any sibling `5-review-*` file; the panel's worth is independent passes.
+- **Sweep spawned work** — confirm every deferral / idea / backlog entry / bug this item spawned reached its `Spawned.md` (work-items.md § Tracking), including any defect found while working the QA steps.
+- **Output** replaces the § Output Format shape with the panel file: `5-review-[round]-[harness]-[model].md` in the item folder, at the exact path the launcher hands you (never self-named). Title `NN · <item title> — Post-implementation review (pass N)`; the "against …" line names the three artifacts. Problems only, each with a disposition `fix` / `defer (→ Spawned.md)` / `accept`; a pass with nothing actionable is a single line saying so.
+- **No ack recording** — the panel gate's resolution (address-review-feedback skill) and the user's sign-off close the loop, not review-ack.sh.
 
 ## Record The Ack (staged-diff reviews in this repo)
 
