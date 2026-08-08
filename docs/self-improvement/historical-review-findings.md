@@ -11,6 +11,48 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Reconcile + targeted pass (2026-08-08) — NOT a batch; the frontier is unchanged
+
+**Reconcile.** `historical-review-ledger-reconcile.sh --reconcile` over the 18 still-open rows
+(~11 unique PRs; several are listed in both a batch section and the sweep-status section):
+**0 of 18 flagged as likely superseded.** Unlike the 2026-07-10 pass, the probes found nothing to
+drop and no manual re-verification was performed, so every open finding stays open. This section
+exists partly to reset the 14-day staleness nudge with an honest dated result.
+
+**Targeted pass — deliberately NOT numbered as a batch.** This session reviewed the surviving
+product C++ of **4 PRs only** (#1941, #1952, #1954, #1962 — the code-bearing commits in the newest
+~30 on develop), ~3,000 of their 3,614 `Source/` survivor lines. It is not a contiguous sweep and
+**does not advance the frontier**: Batch 19 ended at #1876 and the lowest PR touched here is #1941,
+so **#1877–#1940 (~60 PRs) remains entirely unswept and the next sweep still resumes from #1877.**
+Recording it here so the coverage claim is not overstated by a later reader.
+
+Also worth knowing: the newest-30 slice yielded a **~0% supersede rate** — 30 PRs is about 48 hours
+at this repo's merge velocity, so the blame-survivor filter had nothing to subtract and the pass
+degraded into an ordinary re-review. Age, not count, is what makes the technique pay.
+
+### MEDIUM (2) — both FIXED, shipped in #1989 (`c00197d4`)
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:262`** — `TrackerBackendIndexFromBuf` documented itself as a "defensive case-insensitive match" for hand-edited `smatchet_config.json` but matched exactly two spellings per backend (`"GitHub" || "github"`). `"Github"` matched neither and fell through to the Jira default, so Preferences drew the **Jira** credential rows while `DefaultTrackerBackendFactory` — always properly lowercased — built a `GitHubClient` from the same value; the user edits Jira fields against a GitHub backend with nothing on screen saying so. `userVisible:true`. Fixed by moving the mapping to one shared `Tracker/TrackerBackendKind.h` over the canonical `ToLowerAsciiCopy`, so the UI and the factory cannot diverge again.
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/PreferencesFilter.cpp:25`** — the search haystack is built from `TranslateSource` output (translated text) but folded with an ASCII-only lowercase, so `É` (`C3 89`) and `é` (`C3 A9`) stayed unequal and typing `PRÉ` never matched `préférences` in the French UI the search exists to serve. `userVisible:true`. Fixed: `ToLowerAscii` → `ToLowerFold`, additionally folding the Latin-1 Supplement letters (flat `+0x20` on the trail byte; `U+00D7` excluded). Stops at Latin-1 on purpose — Latin Extended-A needs real case tables.
+
+### LOW (2) — open, not filed
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp:284`** — `d.cfg.TrackerType == "Plane"` is the same exact-match-on-hand-editable-config class as the MEDIUM above; a config saying `"plane"` skips the guard and lets the async user-search path run for a backend that does not support it. Wasted async work, not corruption. Left unfixed deliberately: different subsystem, async behaviour not exercisable in the review container.
+- **#1954 (1f4a6b74) · `Source/Core/src/Ui/SmatchetAboutIcon.cpp:31`** — `g_aboutIconFailed` latches on *any* failure, justified by "if they fail once they fail every frame". True of the decode; **not** of the upload, which can fail on `!RendererHasTextures()` — an environmental backend flag. One early call latches a glyph-only About icon for the whole session. Unlikely to fire (the flag is set at backend init, long before a user opens About).
+
+**Reviewed clean (surviving lines read, no findings):** `SmatchetIcoDecode.cpp` (binary parser — every bound traced), `SmatchetImageTextureCache.cpp` (a suspected Pillar-3 race was disproved: every caller is a UI-thread draw path and the async icon route hops back via `PostToMainThread` so the upload stays UI-thread-only), `PreferencesSchema.cpp`, `ScenarioCaptureQuiesce.cpp`, `SmatchetPreferencesUi_Templates.cpp` (all six reorder/delete loops correctly bounded), `SmatchetPreferencesUi_Shell.cpp`, `SmatchetPreferencesUi_General.cpp` (`readlink`/`GetModuleFileNameA` correct on all three platforms; the `fork`/`setsid`/`execl` child touches only async-signal-safe calls), `SmatchetAboutUi.cpp`.
+
+**Not reviewed (same slice, ~600 lines):** the draw bodies of `_Local`, `_Assistant`, `_Whisper`, `_QuickCreate`, and two headers — the same filter-gated shape cleared four times above.
+
+### Tooling: the extractor was reviewing against the wrong baseline
+Found by *running* the sweep; both fixed in #1987 (`34526b5c`).
+`historical-review-survivors.sh` resolved its review ref via `git rev-parse --abbrev-ref origin/HEAD`, which **echoes its unresolvable argument on stdout while exiting 128**. The `origin/develop` fallback was guarded on that string being empty, so it was skipped and `REVIEW_REF` fell through to **local HEAD** — the stale-baseline case the surrounding comment calls CRITICAL, because a line a newer PR already fixed is absent from a behind-by-N tree and **reappears as a false survivor**. The "local HEAD is behind" warning is gated on `REVIEW_REF != HEAD`, so it never printed. Any clone without `origin/HEAD` set (`git remote add` + fetch — how the remote-session clone is built) was affected. Separately, binary files were emitted as reviewable: a golden PNG scored **1173 surviving "lines"** and outranked every source file, and totals could read alive > introduced.
+
+> **Open question for whoever runs the next batch:** if Batches 13–19 were produced in a clone
+> without `origin/HEAD` set, their survivor sets may contain false survivors — findings against
+> lines a later PR had already fixed. Nothing here proves that happened; the runs may well have had
+> `origin/HEAD` (a plain `git clone` sets it). Worth confirming before trusting a spot-check that
+> contradicts one of those batches, and worth passing `--against origin/develop` explicitly from now
+> on regardless.
+
 ## Remediation pass (2026-07-12) — Batch 17's 4 findings, all fixed
 
 The 4 findings from the latest sweep (Batch 17, #1737–#1696) — all `userVisible:false`,
