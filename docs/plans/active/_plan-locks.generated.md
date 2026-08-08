@@ -8,7 +8,36 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `bucket-c-screenshot-determinism`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/interesting-kilby-73b16d`
+- **Started**: 2026-08-06T16:44:11Z
+- **Updated**: 2026-08-06T16:51:43Z
+- **Write set** (23 paths):
+  - `Source/Core/include/Commands/CommandPaletteUi.h`
+  - `Source/Core/include/Commands/Scenarios/ScenarioCaptureQuiesce.h`
+  - `Source/Core/include/Commands/Scenarios/UserInfoScreenshotScenario.h`
+  - `Source/Core/include/Ui/SmatchetUiSession.h`
+  - `Source/Core/src/Commands/CommandPaletteUi.cpp`
+  - `Source/Core/src/Commands/Scenarios/CodeSyntaxColoringScenario.cpp`
+  - `Source/Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp`
+  - `Source/Core/src/Commands/Scenarios/DockGapSentinelScenario.cpp`
+  - `Source/Core/src/Commands/Scenarios/ScenarioCaptureQuiesce.cpp`
+  - `Source/Core/src/Commands/Scenarios/UserInfoScreenshotScenarios.cpp`
+  - `Source/Core/src/Config/ConfigManager_Load.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp`
+  - `Source/Core/src/Ui/SmatchetUI.cpp`
+  - `Source/Standalone/StandaloneAppBootstrap.cpp`
+  - `docs/harness/claude-code/hooks/lint-syntax-both.py`
+  - `docs/self-improvement/categories/tooling/2026-08-05-dual-target-syntax-hook-vacuous-without-clang-preset.md`
+  - `scripts/dev/test-screenshot-diff.sh`
+  - `tests/Core/ConfigManager.test.cpp`
+  - `tests/golden/code-syntax-coloring.png`
+  - `tests/golden/command-palette-fuzzy.png`
+  - `tests/golden/dock-gap-sentinel.png`
+  - `docs/self-improvement/categories/debt/2026-08-06-scenario-onfinish-inline-restore-precedes-capture.md`
+  - `docs/self-improvement/categories/test/2026-08-06-bucket-c-goldens-env-dependent-on-icon-font.md`
+
