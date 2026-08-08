@@ -64,8 +64,10 @@ TEST_CASE("PreferencesFilter — ToLowerFold folds accented letters, not just AS
         CHECK(PreferencesFilter::ToLowerFold("\xC3\x80\xC3\x87\xC3\x9C") == "\xC3\xA0\xC3\xA7\xC3\xBC");
     }
     SUBCASE("already-lowercase accented text is unchanged (idempotent)") {
-        const std::string lowered = PreferencesFilter::ToLowerFold("pr\xC3\xA9f\xC3\xA9rences");
-        CHECK(lowered == "pr\xC3\xA9f\xC3\xA9rences");
+        const std::string lowered = PreferencesFilter::ToLowerFold("pr\xC3\xA9"
+                                                                   "f\xC3\xA9rences");
+        CHECK(lowered == "pr\xC3\xA9"
+                         "f\xC3\xA9rences");
         CHECK(PreferencesFilter::ToLowerFold(lowered) == lowered);
     }
     SUBCASE("ASCII still folds exactly as before") {
@@ -78,8 +80,10 @@ TEST_CASE("PreferencesFilter — ToLowerFold folds accented letters, not just AS
     }
     SUBCASE("a lone 0xC3 at the end is not read past") { CHECK(PreferencesFilter::ToLowerFold("ab\xC3") == "ab\xC3"); }
     SUBCASE("ContainsLower matches through the fold") {
-        CHECK(PreferencesFilter::ContainsLower("Pr\xC3\x89f\xC3\x89rences g\xC3\x89n\xC3\x89rales",
-                                               PreferencesFilter::ToLowerFold("PR\xC3\x89F")));
+        CHECK(PreferencesFilter::ContainsLower("Pr\xC3\x89"
+                                               "f\xC3\x89rences g\xC3\x89n\xC3\x89rales",
+                                               PreferencesFilter::ToLowerFold("PR\xC3\x89"
+                                                                              "F")));
     }
 }
 
