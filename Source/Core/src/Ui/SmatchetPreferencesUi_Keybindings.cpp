@@ -114,7 +114,7 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
                                  sizeof(buf))) {
         addFilter = buf;
     }
-    const std::string addFilterLower = PreferencesFilter::ToLowerAscii(addFilter);
+    const std::string addFilterLower = PreferencesFilter::ToLowerFold(addFilter);
 
     bool added = false;
     ImGui::BeginChild("###kbAddList", ImVec2(360.0f, 280.0f), true);
@@ -195,7 +195,7 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
             filter = searchBuf;
         }
     }
-    std::string filterLower = PreferencesFilter::ToLowerAscii(globalActive ? std::string(d.prefsSearchBuf) : filter);
+    std::string filterLower = PreferencesFilter::ToLowerFold(globalActive ? std::string(d.prefsSearchBuf) : filter);
 
     bool mutated = false;
 
@@ -363,7 +363,7 @@ bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d) {
     if (!d.prefsFilter.Active()) {
         return false;
     }
-    const std::string filterLower = PreferencesFilter::ToLowerAscii(std::string(d.prefsSearchBuf));
+    const std::string filterLower = PreferencesFilter::ToLowerFold(std::string(d.prefsSearchBuf));
     const std::vector<Keybinding>& binds = d.cfg.Keybindings.Bindings;
     for (std::size_t i = 0; i < binds.size(); ++i) {
         if (RowMatchesFilter(filterLower, CommandLabel(app, binds[i].CommandId), binds[i].CommandId, binds[i].Hotkey)) {

@@ -54,6 +54,39 @@ TEST_CASE("PreferencesFilter — matching is case-insensitive") {
     CHECK(filter.ShowSetting(kVsyncId));
 }
 
+TEST_CASE("PreferencesFilter — ToLowerFold folds accented letters, not just ASCII") {
+    // The haystack is built from TranslateSource output, i.e. TRANSLATED text, so
+    // an ASCII-only fold left "É" (0xC3 0x89) and "é" (0xC3 0xA9) unequal and a
+    // French user typing "PRÉ" never matched "préférences". Byte-level here
+    // because the fold is a byte rule over the Latin-1 Supplement block.
+    SUBCASE("uppercase accented input folds to the lowercase bytes") {
+        CHECK(PreferencesFilter::ToLowerFold("PR\xC3\x89") == "pr\xC3\xA9");
+        CHECK(PreferencesFilter::ToLowerFold("\xC3\x80\xC3\x87\xC3\x9C") == "\xC3\xA0\xC3\xA7\xC3\xBC");
+    }
+    SUBCASE("already-lowercase accented text is unchanged (idempotent)") {
+        const std::string lowered = PreferencesFilter::ToLowerFold("pr\xC3\xA9"
+                                                                   "f\xC3\xA9rences");
+        CHECK(lowered == "pr\xC3\xA9"
+                         "f\xC3\xA9rences");
+        CHECK(PreferencesFilter::ToLowerFold(lowered) == lowered);
+    }
+    SUBCASE("ASCII still folds exactly as before") {
+        CHECK(PreferencesFilter::ToLowerFold("VSYNC") == "vsync");
+        CHECK(PreferencesFilter::ToLowerFold("") == "");
+    }
+    SUBCASE("U+00D7 multiplication sign is punctuation, not a letter — never shifted") {
+        // It sits inside 0xC3 0x80-0x9E but +0x20 would turn it into U+00F7 (÷).
+        CHECK(PreferencesFilter::ToLowerFold("\xC3\x97") == "\xC3\x97");
+    }
+    SUBCASE("a lone 0xC3 at the end is not read past") { CHECK(PreferencesFilter::ToLowerFold("ab\xC3") == "ab\xC3"); }
+    SUBCASE("ContainsLower matches through the fold") {
+        CHECK(PreferencesFilter::ContainsLower("Pr\xC3\x89"
+                                               "f\xC3\x89rences g\xC3\x89n\xC3\x89rales",
+                                               PreferencesFilter::ToLowerFold("PR\xC3\x89"
+                                                                              "F")));
+    }
+}
+
 TEST_CASE("PreferencesFilter — keywords keep old-tab muscle memory working") {
     PreferencesFilter filter;
     // "Check for updates automatically" moved Appearance -> General; its

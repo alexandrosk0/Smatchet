@@ -24,11 +24,17 @@
 
 class PreferencesFilter {
   public:
-    // Shared ASCII helpers, absorbed from SmatchetPreferencesUi_Keybindings.cpp
-    // (same semantics; the keybindings TU switches to these when slice 3 wires
-    // the global query into its row filter — Pillar 5).
-    static std::string ToLowerAscii(const std::string& s);
-    /// True when `needleLower` (already lowercased) occurs in `haystack`.
+    // Shared case-folding helpers, absorbed from SmatchetPreferencesUi_Keybindings.cpp
+    // (the keybindings TU shares these so its row filter folds identically to the
+    // global query — Pillar 5).
+    //
+    /// Case-fold for search matching: ASCII plus the Latin-1 Supplement letters.
+    /// NOT the repo-wide `ToLowerAsciiCopy` — the haystack here is built from
+    /// TranslateSource output, i.e. *translated* text, and a byte-wise ASCII fold
+    /// leaves "É" and "é" as different bytes, so a French user typing "PRÉ" would
+    /// never match "préférences". Latin-1 is where this stops; see the .cpp.
+    static std::string ToLowerFold(const std::string& s);
+    /// True when `needleLower` (already ToLowerFold'ed) occurs in `haystack`.
     static bool ContainsLower(const std::string& haystack, const std::string& needleLower);
 
     /// Refresh for this frame. Rebuilds the haystack index when `uiLanguage`

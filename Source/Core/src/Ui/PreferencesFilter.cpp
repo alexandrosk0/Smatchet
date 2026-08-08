@@ -3,6 +3,7 @@
 #include "Commands/FuzzyMatch.h"
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
+#include "StringUtil.h"
 
 #include <cctype>
 
@@ -22,17 +23,40 @@ std::string VisibleLabel(const char* labelEn) {
 
 } // namespace
 
-std::string PreferencesFilter::ToLowerAscii(const std::string& s) {
-    std::string out;
-    out.reserve(s.size());
-    for (char ch : s) {
-        out.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+// Search fold: ASCII via the canonical repo helper, plus the Latin-1 Supplement
+// letters (U+00C0-U+00DE, encoded as 0xC3 0x80-0x9E). In that block the
+// upper->lower offset is a flat +0x20 on the trail byte, so folding needs no
+// table. U+00D7 (0xC3 0x97, the multiplication sign) sits inside the range but
+// is punctuation, not a letter, so it is skipped.
+//
+// A plain ASCII fold is wrong HERE specifically because the haystack is built
+// from TranslateSource output — translated text. "É" is 0xC3 0x89 and "é" is
+// 0xC3 0xA9, so byte-wise ASCII folding left them unequal and typing "PRÉ" never
+// matched "préférences" in the French UI this search exists to serve.
+//
+// It deliberately stops at Latin-1 rather than reaching for full Unicode
+// folding: this covers French, Spanish, Portuguese, German and Italian with one
+// two-byte rule and no dependency, whereas Latin Extended-A and beyond need real
+// case tables. Un-folded is honest; half a table would be a subtler version of
+// the bug being fixed. A 0xC3 byte is always a lead byte (continuation bytes are
+// 0x80-0xBF), so the scan cannot mistake one for the other.
+std::string PreferencesFilter::ToLowerFold(const std::string& s) {
+    std::string out = ToLowerAsciiCopy(s);
+    for (std::size_t i = 0; i + 1 < out.size(); ++i) {
+        if (static_cast<unsigned char>(out[i]) != 0xC3u) {
+            continue;
+        }
+        const unsigned char trail = static_cast<unsigned char>(out[i + 1]);
+        if (trail >= 0x80u && trail <= 0x9Eu && trail != 0x97u) {
+            out[i + 1] = static_cast<char>(trail + 0x20u);
+        }
+        ++i; // trail byte consumed
     }
     return out;
 }
 
 bool PreferencesFilter::ContainsLower(const std::string& haystack, const std::string& needleLower) {
-    return ToLowerAscii(haystack).find(needleLower) != std::string::npos;
+    return ToLowerFold(haystack).find(needleLower) != std::string::npos;
 }
 
 void PreferencesFilter::Update(const char* query, const std::string& uiLanguage) {
@@ -45,7 +69,7 @@ void PreferencesFilter::Update(const char* query, const std::string& uiLanguage)
     queryChanged_ = incoming != queryRaw_;
     if (languageChanged || queryChanged_) {
         queryRaw_ = incoming;
-        queryLower_ = ToLowerAscii(incoming);
+        queryLower_ = ToLowerFold(incoming);
         RecomputeMatches();
     }
 }
@@ -136,7 +160,7 @@ void PreferencesFilter::RebuildIndex() {
                 haystack += VisibleLabel(category->TitleEn);
             }
         }
-        entry.Haystack = ToLowerAscii(haystack);
+        entry.Haystack = ToLowerFold(haystack);
         index_.push_back(entry);
     }
     indexBuilt_ = true;

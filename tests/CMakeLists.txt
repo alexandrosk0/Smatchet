@@ -1280,6 +1280,11 @@ add_executable(SmatchetTests
     # lives in ConfigManager_Views.cpp (already listed in this block).
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerSetupPure.cpp"
     Core/TrackerSetupPure.test.cpp
+    # Tracker-type -> backend ordinal (Tracker/TrackerBackendKind.h, header-only): the single
+    # case-insensitive rule the Preferences combo and DefaultTrackerBackendFactory both follow.
+    # The UI used to keep a weaker two-spelling copy, so a hand-edited "Github" drew the Jira
+    # credential rows while the factory built a GitHubClient.
+    Core/TrackerBackendKind.test.cpp
     # ticket-change-monitor S1c-1 — pure poll gate (PaneSyncKickPolicy.h ShouldPollForChanges,
     # header-only) + the tickets.monitor decision helper and its config interval clamp (the
     # latter round-trips through ConfigManager, already linked in this pure block).
