@@ -11,6 +11,76 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 20 (SCREENED) — #1940–#1878 (53-PR sweep, 2026-08-08)
+
+Coverage: **53 reviewed — 0 with findings, 51 clean, 2 fully superseded, 0 errored.** Net: **0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW.** Closes the gap Batch 19 left: everything merged after #1876 up to #1940, joining this run to the targeted pass above. **The frontier is now #1–#1940 contiguous; the next sweep resumes from #1941.** Survivor-filtered against `origin/develop` @ `c00197d4`, with the extractor's review-ref bug fixed (see the caveat below) and `--against origin/develop` passed explicitly.
+
+**Supersede rate 19%** (~3,200 of 16,442 introduced lines gone), against ~0% for the newest-30 slice in the pass above. These PRs are 3–4 weeks old (2026-07-15 → 08-04), which is the age at which the blame-survivor filter starts doing real work. Worth remembering when choosing the next slice: **age, not count.**
+
+> **Method differs from Batches 13–19 — read this before trusting the zero.** Those batches ran a
+> `code-review` agent (opus/high) over every surviving hunk. This one was **screened, not fully
+> read**: all 53 digests were extracted, the 2,882 surviving **product-C++** lines were swept with a
+> 13-pattern hazard scan (raw `new`, empty `catch(...)`, bare `json::parse`, C string functions,
+> `[i±1]` index math, `.size()-1`, unchecked `front()`/`back()`/`->second`, unguarded
+> `future::get()`, `detach`, `sleep_for`, unterminated hex escapes, `.at()`), every hit was then
+> read in full context, and `TicketGridSortPure.cpp` was read end-to-end as the highest-risk unit.
+> The other ~10,400 surviving lines (tests, scripts, agents, docs) were **not** reviewed. So this
+> batch's zero means "no defect of the screened classes in product C++", which is a weaker claim
+> than Batch 19's. The frontier advances anyway — but a future reader wanting Batch-19-grade
+> assurance over #1878–#1940 should re-run the full agent pass rather than read this as equivalent.
+
+**Five candidates surfaced by the scan, all cleared on inspection** (recorded so the next screen does not re-flag them):
+- `SmatchetPlanDocViewerUi.cpp:254` and `LuaConsolePlugin.cpp:371` — `future::get()` in UI paths, the Pillar-2 shape. Both are correctly preceded by `wait_for(0ms) != ready → return`; the Lua one additionally clears `scriptLoadInFlight_` **before** `get()` so a worker exception cannot latch the flag and wedge Save for the session.
+- `LocalCacheManager.cpp:186` — `sleep_for` backoff inside the SQLite busy-retry. The `lock_guard` scope ends before the sleep (a contending writer never sleeps holding the mutex), and no UI TU calls `LocalCacheManager` — the two `Ui/` files that name it do so only in comments.
+- `AboutInfo.cpp:105-106` — `line[line.size() - 1]` guarded by `!line.empty()` on the same condition.
+- `AppController_LocalCacheDb.cpp:135` — `raw-new` false positive; the match is the words "new database" inside an error string.
+
+**Clean (51, surviving lines screened, no findings):** #1940, #1939, #1938, #1937, #1936, #1935, #1934, #1933, #1931, #1930, #1929, #1928, #1926, #1924, #1917, #1916, #1914, #1913, #1912, #1911, #1910, #1909, #1908, #1907, #1906, #1905, #1904, #1903, #1902, #1901, #1900, #1899, #1898, #1896, #1895, #1894, #1893, #1892, #1891, #1890, #1889, #1888, #1887, #1886, #1885, #1884, #1882, #1881, #1880, #1879, #1878.
+
+**Fully superseded (2, no review surface):** #1922, #1918 — every introduced line was changed or removed by a later PR; excluded by construction.
+
+## Reconcile + targeted pass (2026-08-08) — NOT a batch; the frontier is unchanged
+
+**Reconcile.** `historical-review-ledger-reconcile.sh --reconcile` over the 18 still-open rows
+(~11 unique PRs; several are listed in both a batch section and the sweep-status section):
+**0 of 18 flagged as likely superseded.** Unlike the 2026-07-10 pass, the probes found nothing to
+drop and no manual re-verification was performed, so every open finding stays open. This section
+exists partly to reset the 14-day staleness nudge with an honest dated result.
+
+**Targeted pass — deliberately NOT numbered as a batch.** This session reviewed the surviving
+product C++ of **4 PRs only** (#1941, #1952, #1954, #1962 — the code-bearing commits in the newest
+~30 on develop), ~3,000 of their 3,614 `Source/` survivor lines. It is not a contiguous sweep and
+**does not advance the frontier**: Batch 19 ended at #1876 and the lowest PR touched here is #1941,
+so **#1877–#1940 (~60 PRs) remains entirely unswept and the next sweep still resumes from #1877.**
+Recording it here so the coverage claim is not overstated by a later reader.
+
+Also worth knowing: the newest-30 slice yielded a **~0% supersede rate** — 30 PRs is about 48 hours
+at this repo's merge velocity, so the blame-survivor filter had nothing to subtract and the pass
+degraded into an ordinary re-review. Age, not count, is what makes the technique pay.
+
+### MEDIUM (2) — both FIXED, shipped in #1989 (`c00197d4`)
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:262`** — `TrackerBackendIndexFromBuf` documented itself as a "defensive case-insensitive match" for hand-edited `smatchet_config.json` but matched exactly two spellings per backend (`"GitHub" || "github"`). `"Github"` matched neither and fell through to the Jira default, so Preferences drew the **Jira** credential rows while `DefaultTrackerBackendFactory` — always properly lowercased — built a `GitHubClient` from the same value; the user edits Jira fields against a GitHub backend with nothing on screen saying so. `userVisible:true`. Fixed by moving the mapping to one shared `Tracker/TrackerBackendKind.h` over the canonical `ToLowerAsciiCopy`, so the UI and the factory cannot diverge again.
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/PreferencesFilter.cpp:25`** — the search haystack is built from `TranslateSource` output (translated text) but folded with an ASCII-only lowercase, so `É` (`C3 89`) and `é` (`C3 A9`) stayed unequal and typing `PRÉ` never matched `préférences` in the French UI the search exists to serve. `userVisible:true`. Fixed: `ToLowerAscii` → `ToLowerFold`, additionally folding the Latin-1 Supplement letters (flat `+0x20` on the trail byte; `U+00D7` excluded). Stops at Latin-1 on purpose — Latin Extended-A needs real case tables.
+
+### LOW (2) — open, not filed
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp:284`** — `d.cfg.TrackerType == "Plane"` is the same exact-match-on-hand-editable-config class as the MEDIUM above; a config saying `"plane"` skips the guard and lets the async user-search path run for a backend that does not support it. Wasted async work, not corruption. Left unfixed deliberately: different subsystem, async behaviour not exercisable in the review container.
+- **#1954 (1f4a6b74) · `Source/Core/src/Ui/SmatchetAboutIcon.cpp:31`** — `g_aboutIconFailed` latches on *any* failure, justified by "if they fail once they fail every frame". True of the decode; **not** of the upload, which can fail on `!RendererHasTextures()` — an environmental backend flag. One early call latches a glyph-only About icon for the whole session. Unlikely to fire (the flag is set at backend init, long before a user opens About).
+
+**Reviewed clean (surviving lines read, no findings):** `SmatchetIcoDecode.cpp` (binary parser — every bound traced), `SmatchetImageTextureCache.cpp` (a suspected Pillar-3 race was disproved: every caller is a UI-thread draw path and the async icon route hops back via `PostToMainThread` so the upload stays UI-thread-only), `PreferencesSchema.cpp`, `ScenarioCaptureQuiesce.cpp`, `SmatchetPreferencesUi_Templates.cpp` (all six reorder/delete loops correctly bounded), `SmatchetPreferencesUi_Shell.cpp`, `SmatchetPreferencesUi_General.cpp` (`readlink`/`GetModuleFileNameA` correct on all three platforms; the `fork`/`setsid`/`execl` child touches only async-signal-safe calls), `SmatchetAboutUi.cpp`.
+
+**Not reviewed (same slice, ~600 lines):** the draw bodies of `_Local`, `_Assistant`, `_Whisper`, `_QuickCreate`, and two headers — the same filter-gated shape cleared four times above.
+
+### Tooling: the extractor was reviewing against the wrong baseline
+Found by *running* the sweep; both fixed in #1987 (`34526b5c`).
+`historical-review-survivors.sh` resolved its review ref via `git rev-parse --abbrev-ref origin/HEAD`, which **echoes its unresolvable argument on stdout while exiting 128**. The `origin/develop` fallback was guarded on that string being empty, so it was skipped and `REVIEW_REF` fell through to **local HEAD** — the stale-baseline case the surrounding comment calls CRITICAL, because a line a newer PR already fixed is absent from a behind-by-N tree and **reappears as a false survivor**. The "local HEAD is behind" warning is gated on `REVIEW_REF != HEAD`, so it never printed. Any clone without `origin/HEAD` set (`git remote add` + fetch — how the remote-session clone is built) was affected. Separately, binary files were emitted as reviewable: a golden PNG scored **1173 surviving "lines"** and outranked every source file, and totals could read alive > introduced.
+
+> **Open question for whoever runs the next batch:** if Batches 13–19 were produced in a clone
+> without `origin/HEAD` set, their survivor sets may contain false survivors — findings against
+> lines a later PR had already fixed. Nothing here proves that happened; the runs may well have had
+> `origin/HEAD` (a plain `git clone` sets it). Worth confirming before trusting a spot-check that
+> contradicts one of those batches, and worth passing `--against origin/develop` explicitly from now
+> on regardless.
+
 ## Remediation pass (2026-07-12) — Batch 17's 4 findings, all fixed
 
 The 4 findings from the latest sweep (Batch 17, #1737–#1696) — all `userVisible:false`,
