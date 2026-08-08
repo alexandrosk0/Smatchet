@@ -101,12 +101,31 @@ REVIEW_REF="$AGAINST"
 STALE_NOTE=""
 if [ -z "$REVIEW_REF" ]; then
     git fetch -q origin 2>/dev/null || true
-    DEFREF="$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)"   # e.g. origin/develop
-    [ -z "$DEFREF" ] && git rev-parse --verify -q origin/develop >/dev/null 2>&1 && DEFREF="origin/develop"
-    if [ -n "$DEFREF" ] && git rev-parse --verify -q "$DEFREF" >/dev/null 2>&1; then
+    # Take the first candidate that actually RESOLVES. `git rev-parse
+    # --abbrev-ref origin/HEAD` ECHOES its unresolvable argument on stdout
+    # ("origin/HEAD") while exiting 128, so a non-empty result proves nothing —
+    # it has to be verified before use. Guarding the origin/develop fallback on
+    # `[ -z "$DEFREF" ]` (as this did) meant that echoed string suppressed the
+    # fallback and the whole block fell through to local HEAD: in any clone
+    # without origin/HEAD set, every run silently reviewed against whatever
+    # branch was checked out — the stale baseline this block exists to avoid,
+    # and the one that makes already-fixed lines reappear as false survivors.
+    DEFREF=""
+    for _cand in "$(git rev-parse --abbrev-ref origin/HEAD 2>/dev/null || true)" origin/develop; do
+        [ -n "$_cand" ] || continue
+        if git rev-parse --verify -q "${_cand}^{commit}" >/dev/null 2>&1; then
+            DEFREF="$_cand"
+            break
+        fi
+    done
+    if [ -n "$DEFREF" ]; then
         REVIEW_REF="$DEFREF"
     else
+        # No origin ref resolved (test sandbox, or a remote-less checkout).
+        # Reviewing against local HEAD is still the only option, but it is NOT
+        # the canonical latest — say so rather than degrade quietly.
         REVIEW_REF="HEAD"
+        STALE_NOTE="# NOTE: no origin ref resolved; survivors computed against LOCAL HEAD, not the canonical latest — lines a newer commit already fixed may reappear here."
     fi
 fi
 if ! git rev-parse --verify -q "${REVIEW_REF}^{commit}" >/dev/null 2>&1; then
@@ -234,7 +253,22 @@ for f in "${FILES[@]}"; do
     fi
 
     # Net lines this commit added to this file (for the supersede ratio).
-    added="$(git log -1 --format= --numstat "$SHA" -- "$f" | awk 'NF>=3 && $1!="-"{s+=$1} END{print s+0}')"
+    numstat="$(git log -1 --format= --numstat "$SHA" -- "$f")"
+
+    # A BINARY path carries no reviewable lines. numstat reports it as "-  -",
+    # so it already contributed 0 to `added` — but `git blame` still emits a
+    # "line" per chunk of bytes, so the file landed in the digest with a large
+    # survivor count anyway. That is how a golden PNG scored 1173 surviving
+    # "lines" and outranked every source file, and why the totals could read
+    # alive > introduced. Skip it: there is nothing a reviewer can act on.
+    # Flag, not `exit 0` in the rule: awk still runs END after a rule-level
+    # exit, and END's own exit status wins — so `{exit 0} END{exit 1}` is
+    # always 1 and the branch never fires.
+    if printf '%s\n' "$numstat" | awk 'NF>=3 && $1=="-"{found=1} END{exit !found}'; then
+        continue
+    fi
+
+    added="$(printf '%s\n' "$numstat" | awk 'NF>=3 && $1!="-"{s+=$1} END{print s+0}')"
     total_introduced=$((total_introduced + added))
 
     # Surviving lines: blame the review ref, keep lines still attributed to $SHA.

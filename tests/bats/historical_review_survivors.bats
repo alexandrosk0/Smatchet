@@ -26,7 +26,11 @@ setup() {
 }
 
 teardown() {
-    rm -rf "$SANDBOX"
+    # Cleanup belongs HERE, never as a tail command inside a @test: a trailing
+    # `rm -rf` succeeds unconditionally and becomes the test's exit status,
+    # masking an assertion that failed above it (the fail-open authoring gate's
+    # G-bats-cleanup-tail shape).
+    rm -rf "$SANDBOX" "${REMOTE_TMP:-}"
 }
 
 @test "surviving line included, later-modified line excluded" {
@@ -147,4 +151,61 @@ teardown() {
     echo "$output" | grep -q "survive1"
     echo "$output" | grep -q "survive2"
     echo "$output" | grep -q "2/2 introduced line(s) still alive"
+}
+
+@test "origin without origin/HEAD: reviews against origin/develop, not local HEAD" {
+    # Regression: `git rev-parse --abbrev-ref origin/HEAD` ECHOES "origin/HEAD"
+    # on stdout while failing, so the old `[ -z "$DEFREF" ]` guard skipped the
+    # origin/develop fallback and fell through to local HEAD. A clone made by
+    # `git remote add` + fetch (this session's shape) has no origin/HEAD, so
+    # every run silently used a stale baseline and re-flagged fixed lines.
+    printf 'alpha\nbravo\n' > f.txt
+    git add f.txt && git commit -qm "A: add two lines"
+    A="$(git rev-parse HEAD)"
+    # A later commit rewrites 'bravo' — it must NOT survive.
+    printf 'alpha\nBRAVO-REWRITTEN\n' > f.txt
+    git add f.txt && git commit -qm "B: rewrite bravo"
+
+    # Publish B as origin/develop, then park local HEAD back on A so local HEAD
+    # is genuinely behind the canonical ref.
+    REMOTE_TMP="$(mktemp -d)"
+    export REMOTE_TMP
+    git init -q --bare "$REMOTE_TMP"
+    git remote add origin "$REMOTE_TMP"
+    git push -q origin HEAD:develop
+    git fetch -q origin
+    git checkout -q "$A"
+    # The bug's precondition: no origin/HEAD in this clone.
+    run git rev-parse --verify -q origin/HEAD
+    [ "$status" -ne 0 ]
+
+    run bash "$SCRIPT" "$A" --context 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Reviewed against: origin/develop"* ]]
+    # bravo was rewritten by B, so against origin/develop it is superseded.
+    ! echo "$output" | grep -q "bravo"
+}
+
+@test "no origin at all: falls back to HEAD but SAYS the baseline is local" {
+    printf 'alpha\n' > f.txt
+    git add f.txt && git commit -qm "A: add a line"
+    A="$(git rev-parse HEAD)"
+    run bash "$SCRIPT" "$A" --context 0
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Reviewed against: HEAD"* ]]
+    # Degrading silently is what made the fallback dangerous.
+    [[ "$output" == *"not the canonical latest"* ]]
+}
+
+@test "binary file contributes no survivors (golden PNGs must not outrank source)" {
+    printf 'alpha\nbravo\n' > f.txt
+    printf '\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR\x00\x01\x02\x03binary\x00bytes\n' > img.png
+    git add f.txt img.png && git commit -qm "A: add source and a binary"
+    A="$(git rev-parse HEAD)"
+    run bash "$SCRIPT" "$A" --context 0
+    [ "$status" -eq 0 ]
+    # The source file is still reviewed...
+    [[ "$output" == *"=== f.txt ==="* ]]
+    # ...but the binary never appears as a reviewable file.
+    ! echo "$output" | grep -q "=== img.png ==="
 }

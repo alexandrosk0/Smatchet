@@ -42,9 +42,19 @@
 #   * Zero usable samples is FATAL (exit 2): the adapter never invents a
 #     verdict.
 #
+# Independence (--authoring-harness): the legs are independent of the authoring
+# agent only BY ROSTER, and a degraded panel routinely leaves just the author's
+# own harness standing — the pilot item ran 2/2 claude legs under a claude
+# author and recorded their score. The verifier plan forbids exactly that
+# ("must never fall back to self-scoring"), so same-harness legs are dropped
+# from the score while their vetoes are kept (see apply_independence).
+#
 # Exit codes:
 #   0 — samples emitted on stdout
 #   2 — usage error, unresolvable subject, malformed trailer, or no samples
+#   3 — every leg belongs to the authoring harness and none vetoes: nothing
+#       independent to score, so nothing is emitted. Not an error — record a
+#       presence-only ack (review-ack.sh --record --branch, no --verdict).
 #
 # Portable layer: no project literals; paths resolve relative to the git root.
 
@@ -173,8 +183,22 @@ def check_sample(blob: Dict[str, Any], name: str) -> Dict[str, Any]:
     return blob
 
 
-def collect(folder: Path, round_no: int) -> Tuple[List[Dict[str, Any]], List[str]]:
-    samples: List[Dict[str, Any]] = []
+def harness_of(name: str, round_no: int) -> Optional[str]:
+    """The harness tag out of `5-review-<round>-<harness>-<model>.md`, or None.
+
+    None means the name does not match the launcher's grammar, so the leg's
+    provenance is unknown — callers must treat that as NOT independent rather
+    than guess (review-panels.md § Reviewer identity owns the grammar).
+    """
+    m = re.match(
+        r"^" + re.escape(PREFIX) + r"review-" + str(round_no) + r"-([a-z0-9]+)-(.+)\.md$",
+        name,
+    )
+    return m.group(1) if m else None
+
+
+def collect(folder: Path, round_no: int) -> Tuple[List[Tuple[str, Dict[str, Any]]], List[str]]:
+    legs_out: List[Tuple[str, Dict[str, Any]]] = []
     skipped: List[str] = []
     legs = sorted(folder.glob(f"{PREFIX}review-{round_no}-*.md"))
     if not legs:
@@ -185,8 +209,40 @@ def collect(folder: Path, round_no: int) -> Tuple[List[Dict[str, Any]], List[str
         if blob is None:
             skipped.append(leg.name)
             continue
-        samples.append(check_sample(blob, leg.name))
-    return samples, skipped
+        legs_out.append((leg.name, check_sample(blob, leg.name)))
+    return legs_out, skipped
+
+
+def apply_independence(
+    legs: List[Tuple[str, Dict[str, Any]]], round_no: int, authoring: str
+) -> List[Dict[str, Any]]:
+    """Keep the score independent of the authoring harness; keep every veto.
+
+    verifier-scored-code-review-gate.md § Approach: "The verifier must not be
+    the reviewer ... If no independent backend is configured, the gate records
+    *no score* ... it must never fall back to self-scoring." A panel leg run on
+    the AUTHORING harness is that case — a different context and a different
+    model tag, but not an independent backend.
+
+    That plan's deviation 2 carves out the veto and only the veto: a veto is a
+    confession, and self-reported bad news is trusted where self-reported good
+    news is not. So a same-harness leg is dropped from the score but retained
+    when it vetoes.
+    """
+    auth = authoring.lower()
+    kept: List[Dict[str, Any]] = []
+    for name, blob in legs:
+        tag = harness_of(name, round_no)
+        if tag is not None and tag != auth:
+            kept.append(blob)
+            continue
+        why = "same harness as the author" if tag == auth else "harness tag unreadable"
+        if blob.get("hard_veto") is True:
+            warn(f"leg NOT independent ({why}) but VETOES — kept: {name}")
+            kept.append(blob)
+        else:
+            warn(f"leg DROPPED from the score — {why}: {name}")
+    return kept
 
 
 def main(argv: List[str]) -> int:
@@ -200,6 +256,11 @@ def main(argv: List[str]) -> int:
                         help="review round whose leg files are read (1-999)")
     parser.add_argument("--items-dir", default=None,
                         help=f"items tree (default: <git root>/{DEFAULT_ITEMS_DIR})")
+    parser.add_argument("--authoring-harness", default=None,
+                        help="harness tag of the agent that WROTE the diff (e.g. 'claude'). "
+                             "Legs from that harness are dropped from the score — they are "
+                             "not an independent backend — but are kept when they veto. "
+                             "Omit only when no leg could share the author's harness.")
     args = parser.parse_args(argv)
 
     if not 1 <= args.round_no <= 999:
@@ -207,10 +268,38 @@ def main(argv: List[str]) -> int:
 
     items_dir = Path(args.items_dir) if args.items_dir else git_root() / DEFAULT_ITEMS_DIR
     folder = resolve_item_folder(items_dir, args.subject)
-    samples, skipped = collect(folder, args.round_no)
+    legs, skipped = collect(folder, args.round_no)
 
     for name in skipped:
         warn(f"leg SKIPPED — no '## Verdict' trailer: {name}")
+
+    if args.authoring_harness:
+        samples = apply_independence(legs, args.round_no, args.authoring_harness)
+        # `legs and` is load-bearing: rc 3 means "legs existed, none could
+        # score". Zero PARSED legs is the different, FATAL case — every trailer
+        # was missing — and must fall through to the 0-usable-verdicts failure
+        # below. Without the guard, a round where the panel produced no verdicts
+        # at all would report as a routine degraded roster and the caller would
+        # record a presence-only ack for a round that never actually reviewed.
+        if legs and not samples:
+            # Not fail(): "every leg was the author's own" is a legitimate,
+            # expected panel outcome (roster degradation routinely leaves one
+            # harness standing), and it has a defined answer — record a
+            # presence-only ack, exactly as the gate does with no independent
+            # backend. rc 3 lets the caller tell that apart from a broken run.
+            print(
+                f"panel-verdicts: no independent leg in {folder} round "
+                f"{args.round_no} (authoring harness '{args.authoring_harness}', "
+                f"{len(legs)} leg(s), none vetoing) — refusing to emit a "
+                "self-scored verdict; record a presence-only ack instead",
+                file=sys.stderr,
+            )
+            return 3
+    else:
+        warn("independence UNCHECKED — pass --authoring-harness to keep the "
+             "author's own legs out of the score")
+        samples = [blob for _name, blob in legs]
+
     if not samples:
         fail(
             f"0 usable verdicts in {folder} round {args.round_no} "
@@ -225,7 +314,7 @@ def main(argv: List[str]) -> int:
         sys.stdout, indent=2,
     )
     print()
-    warn(f"{len(samples)} sample(s) from {len(samples) + len(skipped)} leg file(s)")
+    warn(f"{len(samples)} sample(s) from {len(legs) + len(skipped)} leg file(s)")
     return 0
 
 

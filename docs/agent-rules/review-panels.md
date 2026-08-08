@@ -78,9 +78,20 @@ would trip the stray-path report. Pre-implementation legs (`4-`) carry no traile
 gate scores code diffs, not artifacts.
 
 The flow (run by the addresser after the round is resolved — address-review-feedback skill
-step 6): `agents/scripts/core/panel_verdicts.py --subject NN --round N` collects one sample per
-leg → `scripts/dev/verifier-sidecar.py aggregate` merges the samples into one verdict →
-`review-ack.sh --record --branch --verdict` pins it to the branch content. Degradation is
+step 6): `agents/scripts/core/panel_verdicts.py --subject NN --round N --authoring-harness <tag>`
+collects one sample per leg → `scripts/dev/verifier-sidecar.py aggregate` merges the samples into
+one verdict → `review-ack.sh --record --branch --verdict` pins it to the branch content.
+
+**Only independent legs may score.** The panel's legs are independent of the authoring agent *by
+roster*, and a degraded roster routinely leaves only the author's own harness standing — which is
+the self-scoring
+[verifier-scored-code-review-gate.md](../plans/shipped/verifier-scored-code-review-gate.md)
+§ Approach forbids ("if no independent backend is configured, the gate records *no score*"). So
+`--authoring-harness` drops the author's own legs from the score, keeping a leg only when it
+vetoes — a veto is a confession, and that plan's deviation 2 already trusts self-reported bad news
+where it refuses self-reported good news. A leg whose filename does not parse counts as *not*
+independent. When nothing independent remains and nothing vetoed, the adapter emits no verdict and
+exits 3: record a presence-only ack. Degradation is
 asymmetric by design: a leg with *no* trailer is skipped with a warning (one lost sample, not a
 lost round); a trailer that exists but is malformed is fatal (it may hide a veto); zero usable
 samples is fatal (the adapter never invents a verdict). The panel is the first real producer of
@@ -107,5 +118,12 @@ expected set: new paths, re-edited (signature-changed) paths, deleted paths, and
 **Git failure returns UNVERIFIED — the guard must not fail open.** When `.git` is missing or the
 `git status` call itself fails, the guard returns null/UNVERIFIED, **never** an empty "clean"
 result: null means *could not verify*, an empty set means *verified clean*, and conflating them
-turns every git outage into a silent pass. While legs are still running, a clean interim report is
+turns every git outage into a silent pass. The same answer covers every other way a signature could
+be *fabricated* rather than measured: a dirty file that exists but will not hash (no `sha256sum` on
+PATH, permission denied, a lock) is UNVERIFIED, not `absent` — writing `absent` there would be a
+constant signature, so a leg rewriting that path would compare equal before/after and read clean.
+Paths are read NUL-delimited (`-z`), because git C-quotes a path containing a quote, a backslash or
+a control character whatever `core.quotePath` says, and a quoted path is never found on disk — the
+same fabricated-signature route. A path whose bytes the guard's own line/tab output cannot carry is
+likewise UNVERIFIED. While legs are still running, a clean interim report is
 stated as "clean **so far**", not "clean" — the verdict is only final once every leg has landed.

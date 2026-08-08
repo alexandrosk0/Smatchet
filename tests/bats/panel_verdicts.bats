@@ -272,3 +272,74 @@ assert doc["candidates"][0]["id"].startswith("07-sample-item-")
     run "$PY" "$PV" --subject 7 --items-dir items
     [ "$status" -eq 2 ]
 }
+
+# ---------- independence (--authoring-harness) ----------
+
+@test "authoring-harness leg is dropped from the score; independent leg survives" {
+    _leg 5-review-1-claude-opus.md "$OK_VERDICT"
+    _leg 5-review-1-codex-sol.md "$OK_VERDICT"
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DROPPED from the score"*"5-review-1-claude-opus.md"* ]]
+    echo "$output" | grep -v '^panel-verdicts:' | "$PY" -c '
+import json, sys
+samples = json.load(sys.stdin)["candidates"][0]["samples"]
+assert len(samples) == 1, samples
+'
+}
+
+@test "all legs from the authoring harness, none vetoing -> exit 3, no score emitted" {
+    # The pilot item shape: 2/2 live legs on the author own harness. Scoring
+    # those is the self-scoring the verifier plan forbids.
+    _leg 5-review-1-claude-opus.md "$OK_VERDICT"
+    _leg 5-review-1-claude-sonnet.md "$OK_VERDICT"
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"no independent leg"* ]]
+    [[ "$output" == *"presence-only ack"* ]]
+    # `! grep -q`, not `grep -qv`: -v inverts PER LINE, so the diagnostic lines
+    # would satisfy it even if a candidates blob were emitted alongside them.
+    ! echo "$output" | grep -q '"candidates"'
+}
+
+@test "authoring-harness leg that VETOES is kept (self-reported bad news is trusted)" {
+    _leg 5-review-1-claude-opus.md "$VETO_VERDICT"
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"VETOES — kept"* ]]
+    echo "$output" | grep -v '^panel-verdicts:' | "$PY" -c '
+import json, sys
+samples = json.load(sys.stdin)["candidates"][0]["samples"]
+assert len(samples) == 1 and samples[0]["hard_veto"] is True, samples
+'
+}
+
+@test "unreadable harness tag counts as NOT independent (fail closed)" {
+    # Off-grammar name: provenance unknown, so it must not be trusted as an
+    # independent backend just because it fails to match the author tag.
+    _leg 5-review-1-weird_name.md "$OK_VERDICT"
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"harness tag unreadable"* ]]
+}
+
+@test "without --authoring-harness: back-compatible, but says independence is unchecked" {
+    _leg 5-review-1-claude-opus.md "$OK_VERDICT"
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"independence UNCHECKED"* ]]
+}
+
+@test "all legs missing trailers WITH --authoring-harness -> exit 2, not the rc-3 degraded path" {
+    # rc 3 means "legs existed, none independent" (record a presence-only ack).
+    # Zero PARSED legs is the FATAL case and must stay exit 2 — otherwise a
+    # round where the panel wrote no verdicts at all reads as a routine
+    # degraded roster. Only reachable with the flag set, which is why the
+    # no-flag sibling case above did not catch it.
+    _leg 5-review-1-claude-opus.md ""
+    _leg 5-review-1-codex-sol.md ""
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"0 usable verdicts"* ]]
+    [[ "$output" != *"no independent leg"* ]]
+}
