@@ -287,3 +287,27 @@ re-dock and falls back to a floating window at the old rect — looks docked, is
 splitter drag exposes it."* Five findings landed; they are pre-existing dock-liveness bugs
 independent of this feature, so they ship on `fix/dock-slot-liveness` behind a shared
 `SmatchetDockNodeIds::EnsureDockSlotAlive(ImGuiID)` guard rather than widening this PR.
+
+That branch is [PR #1984](https://github.com/alexandrosk0/Smatchet/pull/1984). `3a8114b3`
+adds the helper and routes every forced dock write through it. It rejects on two
+conditions, and both are load-bearing. First, `DockBuilderGetNode` is a plain lookup that
+creates nothing on a miss, whereas `SetNextWindowDockID(deadId, ImGuiCond_Always)` does not
+fail — it mints an orphan root node at the window's current rect, which is exactly the "looks
+docked, isn't" state the user reported. Second, existence alone is not enough: an orphan minted
+by an earlier build is persisted to `imgui.ini` under `[Docking][Data]` and reloaded on the
+next launch, so a bare existence check would pass for precisely the ids the guard exists to
+reject. Every header constant names a node the default layout cuts as a *child* of the
+dockspace root, so the helper also requires a non-null `ParentNode`.
+
+The remaining commits file twelve backlog entries for residue the audit surfaced but did not
+fix — 1 `debt`, 6 `process`, 2 `test`, 3 `tooling`. The two the reader of this plan is most
+likely to hit: five `Always`/`FirstUseEver` sites hand-roll the guard rather than routing
+through the helper (correct today — each skips the write when the helper returns 0 — but the
+invariant now lives in six places), and the bucket-E "no app booted → skip" guard fails open at
+50 of its 56 sites, so a fully-unbooted run reports all-green. `372d5255` also corrects a stale
+WARN-first description of the `duplication` / DRY gate in three docs plus `dup_audit.py`'s own
+docstring — it graduated to BLOCKING on 2026-06-21
+([ADR-0015](../../adr/0015-dry-quality-pillar-duplication-gate.md)).
+
+Neither PR is merged. The user chose **manual verify first** at the post-ship prompt, so no
+merge authorisation exists for #1966 or #1984.
