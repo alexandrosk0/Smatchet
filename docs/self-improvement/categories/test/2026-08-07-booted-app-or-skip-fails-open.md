@@ -1,4 +1,4 @@
-- 2026-08-07 · claude-code · [test] · P2 — the bucket-E "no app booted → skip" guard fails **open** at 56 call sites, so a fully-unbooted run reports all-green instead of red
+- 2026-08-07 · claude-code · [test] · P2 — the bucket-E "no app booted → skip" guard fails **open** at 50 of its 56 call sites, so a fully-unbooted run reports all-green instead of red
 
   Nearly every bucket-E case that needs a live app opens with the same guard and *skips* when
   the app is not up. Verbatim from `tests/ui/ai_chat_panel.test.cpp:138-142`:
@@ -29,7 +29,16 @@
   `tests/ui/linear_deterministic_backend.test.cpp:70,113`,
   `tests/ui/preferences_tracker_switch.test.cpp:110`, all
   `IM_CHECK_NO_RET(app != nullptr);` before the return. Whatever reasoning made those six
-  fail closed applies to the other 56.
+  fail closed applies to the other **50**.
+
+  Those six are *inside* the 56, not additional to it — 56 is the count of the assignment shape,
+  which every site shares regardless of what it does next. A first draft of this entry said the
+  guard fails open "at 56 sites" and, four paragraphs later, that six of them fail closed; the
+  two numbers were derived from one grep whose match set contains both populations, so the entry
+  contradicted itself in its own text (6 + 56 ≠ 56). Review caught it. The generalisable check —
+  when a claim reads "N do X, M do not-X" off one grep, assert the two sets are disjoint before
+  writing the numbers down — is filed separately at
+  [`categories/process/2026-08-07-two-counts-from-one-grep-must-be-disjoint.md`](../process/2026-08-07-two-counts-from-one-grep-must-be-disjoint.md).
 
   The mechanism is in [`Source/Core/src/Commands/Scenarios/UiTestScenario.cpp`](../../../../Source/Core/src/Commands/Scenarios/UiTestScenario.cpp)
   lines 381 and 402-403: `passed_` comes from `ImGuiTestEngine_GetResult` and
