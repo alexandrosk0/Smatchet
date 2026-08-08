@@ -1498,14 +1498,16 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
         }
     }
     if (d.assistantPendingSideSwap || needsReDock) {
+        // Cleared only once a live slot has actually accepted the move. targetDockId is 0
+        // only when BOTH side bars are dead, and Reset Layout re-cuts them — dropping the
+        // request there would silently lose a swap the user asked for and make them click
+        // again. Both flags live on UiDrawSession (session-only, never persisted), so the
+        // cost of holding one is two map lookups a frame until a slot exists.
         if (targetDockId != 0) {
             ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
+            d.assistantPendingSideSwap = false;
+            needsReDock = false;
         }
-        // Cleared even when nothing was docked: with no side bar at all in the layout there is
-        // nothing the request could ever be honoured against, so holding it costs a re-check
-        // every frame and buys nothing.
-        d.assistantPendingSideSwap = false;
-        needsReDock = false;
     } else if (targetDockId != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
     }
