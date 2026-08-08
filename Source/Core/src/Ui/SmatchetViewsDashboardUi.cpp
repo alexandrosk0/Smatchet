@@ -6,6 +6,7 @@
 #include "Views.h"
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 #include "Ui/SmatchetDestructiveButton.h"
 #include "StringUtil.h"
@@ -926,7 +927,9 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
         std::string viewsWinTitle =
             SmatchetLocalization::Format("window.views_backend", "Views - %s", backendName.c_str());
         viewsWinTitle += "###SmatchetViewsDashboard";
+        SmatchetWindowExpand::BeginWindow(d, viewsWinTitle.c_str());
         ImGui::Begin(viewsWinTitle.c_str(), &d.showViewsDashboard);
+        SmatchetWindowExpand::DrawToggle(d);
         repairTopLevelWindow(d, "views", 520.0f, 320.0f);
         if (bFocusViews) {
             ImGui::SetWindowFocus();

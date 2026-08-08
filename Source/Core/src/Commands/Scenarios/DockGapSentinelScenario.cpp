@@ -14,6 +14,7 @@
 #include "Commands/Scenarios/IScenario.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "Logger.h"
@@ -63,9 +64,17 @@ class DockGapSentinelScenario : public IScenario {
         // through to the captured frame. Any viewport pixel the dock leaves
         // uncovered then renders magenta (255,0,255) instead of the theme bg.
         ArmPinkClear();
+        // Determinism: drop the wall-clock-driven startup sync toasts before the
+        // capture (see ScenarioCaptureQuiesce.h) — their fade phase differed
+        // run-to-run at L_inf 97-113 against a tolerance of 4.
+        QuiesceCaptureFrame();
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
+
+    // The runner calls exactly one of OnCancel / OnFinish, so the quiesce unwind
+    // needs a hook on both paths (see ScenarioCaptureQuiesce.h).
+    void OnCancel(IAppScenarioHost& /*app*/) override { RestoreCaptureQuiesce(); }
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot AFTER the warm-up frames have rendered.
@@ -82,6 +91,11 @@ class DockGapSentinelScenario : public IScenario {
 
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;
+        // Undo the update-check suppression now that the capture is staged — the
+        // restored values cannot re-open the modal on this frame (the check is an
+        // async round-trip that lands frames later), and leaving them suppressed
+        // would outlive an in-process run.
+        RestoreCaptureQuiesce();
 
         nlohmann::json out;
         out["scenario"] = Name();

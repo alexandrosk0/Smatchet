@@ -244,3 +244,87 @@ commit_in_fixture() {
     run env SMATCHET_SKIP_REVIEW_GATE=1 bash -c "cd '$REPO_TMP' && git commit --quiet -m bypass 2>&1"
     [ "$status" -eq 0 ]
 }
+# ---------- panel verdicts end-to-end (Phase 4, absorb-whip-process) ----------
+# The full pipeline the addresser runs (address-review-feedback skill step 6):
+# panel leg trailers -> panel_verdicts.py -> the REAL verifier-sidecar.py
+# aggregate -> review-ack --record --verdict -> gate/pre-commit. This is the
+# proof for plan item 21: review-ack consumes the panel verdict with ZERO code
+# changes, because the adapter+sidecar emit exactly the shape it validates.
+
+# Probe-execute a python interpreter (agent_size.bats:25-29 canonical form) and
+# resolve native-python-safe C:/ paths for the two scripts (cygpath -m — native
+# python rejects MSYS /c/... arguments, agent_eval_score.bats:55 precedent).
+_panel_py() {
+    PY=""
+    for c in python3 python py; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" -c "" >/dev/null 2>&1; then PY="$c"; break; fi
+    done
+    [ -n "$PY" ] || skip "no working python interpreter"
+    PV="$ROOT/agents/scripts/core/panel_verdicts.py"
+    SIDECAR="$ROOT/scripts/dev/verifier-sidecar.py"
+    if command -v cygpath >/dev/null 2>&1; then
+        PV="$(cygpath -m "$PV")"; SIDECAR="$(cygpath -m "$SIDECAR")"
+    fi
+    export PY PV SIDECAR
+}
+
+# _panel_leg <file> <verdict-json> — a panel review file with a Verdict trailer
+# inside the fixture repo's item folder.
+_panel_leg() {
+    mkdir -p "$REPO_TMP/docs/work/items/07-sample-item"
+    {
+        printf '# 07 · Sample — Post-implementation review (pass 1)\n\n'
+        printf 'Problems only. Reviewed commit `abc1234`.\n\n'
+        printf '## Verdict\n\n```json\n%s\n```\n' "$2"
+    } > "$REPO_TMP/docs/work/items/07-sample-item/$1"
+}
+
+@test "panel pipeline end-to-end: leg veto -> adapter -> sidecar -> record -> rc 3" {
+    _panel_py
+    _panel_leg 5-review-1-claude-opus.md \
+        '{"criteria": {"correctness": 0.9, "security": 0.9}, "confidence": 0.8, "hard_veto": false}'
+    _panel_leg 5-review-1-codex-sol.md \
+        '{"criteria": {"correctness": 0.3, "security": 0.2}, "confidence": 0.9, "hard_veto": true, "veto_reason": "auth bypass in new endpoint"}'
+    run bash -c "cd '$REPO_TMP' \
+        && \"\$PY\" \"\$PV\" --subject 7 --round 1 --items-dir docs/work/items > samples.json 2>adapter.err \
+        && \"\$PY\" \"\$SIDECAR\" aggregate samples.json > verdict.json \
+        && bash agents/scripts/core/review-ack.sh --record --staged --verdict verdict.json"
+    [ "$status" -eq 0 ]
+    run check
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"HARD VETO"* ]]
+    [[ "$output" == *"auth bypass in new endpoint"* ]]
+}
+
+@test "panel pipeline end-to-end: clean legs pass the gate and pre-commit" {
+    _panel_py
+    _panel_leg 5-review-1-claude-opus.md \
+        '{"criteria": {"correctness": 0.9, "security": 0.95, "project_invariants": 0.9}, "confidence": 0.8, "hard_veto": false}'
+    _panel_leg 5-review-1-codex-sol.md \
+        '{"criteria": {"correctness": 0.85, "security": 0.9, "project_invariants": 0.85}, "confidence": 0.7, "hard_veto": false}'
+    run bash -c "cd '$REPO_TMP' \
+        && \"\$PY\" \"\$PV\" --subject 7 --round 1 --items-dir docs/work/items > samples.json 2>/dev/null \
+        && \"\$PY\" \"\$SIDECAR\" aggregate samples.json > verdict.json \
+        && bash agents/scripts/core/review-ack.sh --record --staged --verdict verdict.json"
+    [ "$status" -eq 0 ]
+    run check
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ADVISORY"* ]]
+    run commit_in_fixture "feat: panel-scored"
+    [ "$status" -eq 0 ]
+}
+
+@test "panel veto reaches pre-commit as a veto refusal" {
+    _panel_py
+    _panel_leg 5-review-1-claude-opus.md \
+        '{"criteria": {"correctness": 0.8}, "hard_veto": true, "veto_reason": "gate script fails open"}'
+    run bash -c "cd '$REPO_TMP' \
+        && \"\$PY\" \"\$PV\" --subject 7 --round 1 --items-dir docs/work/items 2>/dev/null \
+        | \"\$PY\" \"\$SIDECAR\" aggregate - > verdict.json \
+        && bash agents/scripts/core/review-ack.sh --record --staged --verdict verdict.json"
+    [ "$status" -eq 0 ]
+    run commit_in_fixture "feat: vetoed by panel"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"HARD VETO"* ]]
+    [[ "$output" != *"REFUSING a commit with no code review"* ]]
+}

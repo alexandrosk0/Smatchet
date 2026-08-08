@@ -119,7 +119,7 @@ static int RunAsyncScenarioInProcess(standalone::BootstrapContext& boot, const s
     if (argsToSend.contains("frames")) {
         frames = ScenarioFramesFromJson(argsToSend["frames"], 600);
     }
-    const int scenarioWaitMs = (pa.timeoutMs > 0) ? pa.timeoutMs : ((frames / 60 + 30) * 1000);
+    const int scenarioWaitMs = ScenarioWaitMs(pa.timeoutMs, frames);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
 
     standalone::RunRenderLoop(boot, [&boot, deadline]() {

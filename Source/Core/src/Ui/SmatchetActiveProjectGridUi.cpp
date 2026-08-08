@@ -16,6 +16,7 @@
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -156,13 +157,18 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         // applies the actual close after the pane loop).
         bool* paneOpen = (d.gridPanes.size() > 1) ? &pane.open : nullptr;
         ImGuiWindowFlags paneFlags = ImGuiWindowFlags_NoCollapse;
-        if (pane.id == "main") {
+        // The main pane normally hides its title bar (docked, it shows only its tab).
+        // Expanded it is floating, and a floating window with no title bar has nowhere
+        // to put the minimize half of the toggle — so the flag lifts for those frames.
+        if (pane.id == "main" && !SmatchetWindowExpand::IsWindowExpanded(d, pane.cachedWindowName.c_str())) {
             paneFlags |= ImGuiWindowFlags_NoTitleBar;
         }
+        SmatchetWindowExpand::BeginWindow(d, pane.cachedWindowName.c_str());
         if (!ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags)) {
             ImGui::End();
             return;
         }
+        SmatchetWindowExpand::DrawToggle(d);
         repairTopLevelWindow(d, "active", 420.0f, 300.0f);
         if (wantFocus) {
             ImGui::SetWindowFocus();
@@ -542,7 +548,10 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
     // Appears whenever d.viewsDirty OR d.viewSortDirty is true — fed by grid column
     // reorder, sort changes, OR buffer edits made in the Views editor window. Lets
     // the user commit, discard, or fork the in-memory edits without leaving the grid.
-    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid) {
+    // The frame fence lets a screenshot scenario hide the strip for its capture window
+    // without clearing the dirty flags (see UiDrawSession::suppressUnsavedLayoutStripUntilFrame).
+    const bool stripFenced = ImGui::GetFrameCount() <= d.suppressUnsavedLayoutStripUntilFrame;
+    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid && !stripFenced) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.27f, 0.10f, 0.35f));
         ImGui::BeginChild("##UnsavedLayoutStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
                           ImGuiWindowFlags_NoScrollbar);

@@ -3,7 +3,7 @@
 
 > **Slug**: `absorb-whip-process`
 >
-> **Status**: `active` — blocked-on precondition: `docs/plans/verifier-scored-code-review-gate.md` implemented + archived (Phase 4 extends its ack-verdict machinery; Phases 1–3 could start earlier but landing them against a moving ack schema would churn).
+> **Status**: `shipped` — all five phases merged 2026-08-06..07 (PRs #1978–#1982); Whip repo stamped and frozen.
 
 ## Context
 
@@ -17,7 +17,7 @@ After this lands: a Smatchet agent can run a full human-gated work item (spec th
 
 Port by *role*, not by file. Whip's docs split into two agent-rules docs (the loop; panel mechanics), its per-gate procedures become skills (or fold into existing skills where Smatchet already has the analog), and its three tools are rewritten in the portable layer with their contract semantics preserved. Work items live in a new `docs/work/items/NN-slug/` tree — deliberately **not** under `docs/plans/` — so the existing plan gates (naming, index, ref-integrity, archival nudge) stay untouched and a parallel work-item linter owns the new tree. Boundary rule: product features and multi-gate product work → work items; agent-system / tooling / process changes → plan docs (this tree).
 
-The one genuinely new capability is Phase 4: the panel doubles as the verifier's independent input. `docs/plans/verifier-scored-code-review-gate.md` requires "the verifier must not be the reviewer" — an independent backend, else presence-only fallback. A panel's non-Claude legs (codex, cursor, opencode) are independent of the authoring agent *by construction*, so their structured verdicts can feed `scripts/dev/verifier-produce.py` → `verifier-sidecar.py` aggregate → `review-ack --verdict` with zero new scoring machinery. The panel stays advisory to the addresser for content; only the aggregate score/veto enters the gate.
+The one genuinely new capability is Phase 4: the panel doubles as the verifier's independent input. `docs/plans/verifier-scored-code-review-gate.md` requires "the verifier must not be the reviewer" — an independent backend, else presence-only fallback. A panel's non-Claude legs (codex, cursor, opencode) are independent of the authoring agent *by construction*, so their structured verdicts can feed `verifier-sidecar.py aggregate` → `review-ack --verdict`. **Not** via `verifier-produce.py`: that is the model-*calling* half — its input is a job (`problem` + `candidates[].text` + `criteria`) which it scores by calling a backend, so it cannot consume verdicts that already exist. Panel legs have already done the scoring, so they bypass it and emit sidecar *input samples* directly (`{"candidates":[{"id":…,"samples":[{"criteria":{…},"confidence":…,"hard_veto":…}]}]}`; the sidecar reads `hard_veto` straight off the sample, `verifier-sidecar.py:367`). The aggregation, reward math and veto propagation are all reused unchanged — the one genuinely new piece is a small panel-verdict→sample adapter. **Upside the earlier draft undersold:** `verifier-produce.py` never emits `hard_veto` at all (verified — a worst-case run, every criterion pinned to `T`, yields `overall_score` 0.0108, `recommendation: block`, `hard_veto: false`), so today the veto path is only reachable via a hand-attached agent-authored verdict. A panel would be the **first real producer of vetoes** in the system, which is a stronger argument for this phase than "zero new machinery". The panel stays advisory to the addresser for content; only the aggregate score/veto enters the gate.
 
 Human sign-off at the spec and design gates conflicts with the ship-loop's do-not-pause rule; resolved by a scoped exception (ship-loops exception 7): inside a work item, the loop pauses **only** at the two sign-off gates, and everything between them runs autonomously.
 
@@ -124,7 +124,7 @@ Non-goals:
 - **Bash-driver scenario / screenshot / sanitizer**: bats suites for `run-review.sh` (stubbed leg CLIs; roster degradation; `--legs` refill) and `review-guard.sh` (already-dirty-file edit detected; git failure reports unverified, not clean); pytest for `work_item_lint.py` over the ported `qa-mini-item` fixture.
 - **Build gate**: N/A — no `Source/` changes; dual-target build untouched.
 - **Doc validation (blocks plan-doc PRs — keep this bullet)**: the canonical `scripts/dev/test-docs.sh` suite green (it enumerates the doc-validation steps — anchors / agent-contract / plan-index / ref-integrity / portable-purity / md_lint; defer to the script, don't hardcode the sub-step list here). A red doc-validation job blocks merge even though non-required.
-- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome. Outcome: pending — to be run and recorded here before Phase 1 implementation starts.
+- **Plan stress-test — `grill-with-docs` (keep this bullet)**: stress-test this plan against the domain model + sharpen terms before finalising; record the outcome. Outcome: not run — see § Deviations from plan.
 - **Manual residue**: the live panel smoke (real model CLIs, real auth) is operator-run by design — CI can't hold the credentials. Deferred-automation action: none planned (accepted residue); add a `docs/self-improvement/categories/tooling.md` entry recording the residue in the Phase 2 PR.
 
 ## Out of scope (flagged, not designed)
@@ -137,28 +137,23 @@ Non-goals:
 - **Migrating existing active plans into work items** — the boundary rule applies to new work only; nothing is reclassified.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `8e133e76` · Phase 1 (PR #1978) — `work-items.md`, `review-panels.md`, `docs/work/` scaffold + ledgers, process-rules boundary rule, ship-loops exception 7, AGENTS.md nav line.
+- `d2d4835f` · Phase 2 (PR #1979) — `run-review.sh` (headless default, `--panes`/`--legs`/`--round`), `lib/review-guard.sh` (content-signature dirty check; git failure → unverified), `work_item_lint.py`, roster in `project.config.json`, bats + pytest, `test-docs.sh` wiring.
+- `5423edbf` · Phase 3 (PR #1980) — `pre-implementation-review` / `address-review-feedback` / `close-work-item` skills, panel deltas folded into `adversarial-code-review` + `historical-code-review`, `work-item-owed.sh` nudge.
+- `3d123185` · Phase 4 (PR #1981) — `panel_verdicts.py` verdict→sample adapter, `## Verdict` trailer contract in review-panels.md + skills, sidecar aggregation + `review-ack.sh --verdict` path, bats end-to-end.
+- `60f1db66` · Phase 5 pilot (PR #1982) — work item `01-spawn-honors-timeout` end-to-end through the absorbed loop (trivial-bug lane, post-impl panel round, addresser resolution, verdict pipeline, ack, close-collapse to `docs/work/closed/01-spawn-honors-timeout.md`); fixed issue #1943.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Item 20 (verifier-produce.py accepts panel verdicts) superseded** — implemented per § Approach instead: panel legs bypass `verifier-produce.py` (the model-*calling* half) and a new adapter `agents/scripts/core/panel_verdicts.py` emits sidecar input samples directly; aggregation/veto reused unchanged.
+- **`grill-with-docs` stress-test never run** — the § Verification bullet's outcome stayed "pending"; phases shipped against the plan as written. Process miss, recorded here rather than backfilled.
+- **Pilot ran the trivial-bug lane, not the full spec→design→plan lane** — goal-setting found no backlog/deferred candidates; confirmed bug issue #1943 was the best real item. The full-lane gates (pre-impl panel, cascade) remain exercised only by bats/fixtures until a substantial item arrives.
+- **Panel roster degradation in practice** — pilot panel ran 2/11 legs live (claude-opus, claude-sonnet); codex/cursor/opencode CLIs absent on the pilot machine. Degradation + reporting behaved as designed, but single-harness rounds are a known thinness (see self-improvement tooling note from Phase 2).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+- Bats suites green at each phase merge: run-review 21/21, review-guard, panel_verdicts 23/23, verifier_review_gate end-to-end; pytest `test_work_item_lint.py` green; `work_item_lint.py --selftest` green.
+- `scripts/dev/test-docs.sh` 17/17 green on every phase PR and the pilot (includes `work_item_lint --all` + `--citations` wiring).
+- Phase 5 pilot (the plan's own end-to-end verification): fix + tests built and passed on `ninja-debug-msvc` (10 doctest cases / 60 assertions); post-impl panel produced 3 deduped findings (1 fix landed, 2 deferred with owners); verdict pipeline aggregated 0.8518 / no veto and the ack recorded `--branch`; item closed with `work_item_lint --item` PASS; merge-gates fully green before squash.
+- Manual residue as planned: live multi-harness panel smoke stays operator-run; not executed with non-Claude harnesses in CI or the pilot (CLIs unavailable — see Deviations).

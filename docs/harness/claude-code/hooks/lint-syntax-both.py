@@ -77,7 +77,9 @@ _FP_PATTERNS = re.compile(
     r"functional|utility|type_traits|cassert|cstring|cstdlib|cstdio|cmath|"
     r"climits|cwchar|stdexcept|iostream|sstream|fstream|chrono|mutex|thread|"
     r"atomic|tuple|array|map|set|unordered_map|unordered_set|deque|list|"
-    r"iterator|numeric|bitset|locale|codecvt|regex|random|complex|valarray)')"
+    r"iterator|numeric|bitset|locale|codecvt|regex|random|complex|valarray|"
+    r"limits|ctime|iomanip|initializer_list|exception|new|typeinfo|"
+    r"condition_variable|future|forward_list|stack|queue|ratio|system_error)')"
 )
 
 
@@ -97,6 +99,11 @@ def _selftest() -> int:
         "fatal error: Cannot open precompiled header file: 'x.pch'",
         "error: PCH file 'core.pch' not found",
         "fatal error C1083: Cannot open include file: 'vector': No such file",
+        # <limits> reached the allow-list late: without it every syntax-check of
+        # a TU transitively including AppController.h reported a failure whose
+        # only surviving line was cl.exe's filename banner.
+        "AppController.h(5): fatal error C1083: Cannot open include file: "
+        "'limits': No such file or directory",
     ]
     real_lines = [
         r"AppController.cpp(42): error C2065: 'undeclared_symbol': "
@@ -184,7 +191,15 @@ def main() -> int:
         if result.returncode != 0:
             diag = (result.stderr or result.stdout).strip()
             # Filter false-positive lines; only report if real diagnostics remain.
-            real_lines = [ln for ln in diag.splitlines() if not _FP_PATTERNS.search(ln)]
+            # cl.exe echoes the TU's bare filename on its own line before any
+            # diagnostics — never a diagnostic itself. Left unfiltered it is the
+            # residue that turns every fully-false-positive run into a reported
+            # failure with an empty body (the whole file's real lines get FP-
+            # filtered, the banner survives, `real_lines` is truthy).
+            real_lines = [
+                ln for ln in diag.splitlines()
+                if ln.strip() != src.name and not _FP_PATTERNS.search(ln)
+            ]
             if real_lines:
                 failures.append((target, "\n".join(real_lines)))
 

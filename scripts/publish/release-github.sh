@@ -188,6 +188,17 @@ winpath() {
     fi
 }
 
+# Run a native Windows exe without MSYS argument translation. Load-bearing for
+# the Windows `/switch` convention: Git Bash rewrites a whole argument that
+# looks like an absolute POSIX path, so `/DMyAppVersion=0.1.0` reaches the exe
+# as `C:/Program Files/Git/DMyAppVersion=0.1.0` — no longer a switch. ISCC then
+# counts it as a second script filename and aborts ("You may not specify more
+# than one script filename"); signtool would see `/fd` as a file path. Values
+# are already Windows-form via winpath(), so suppressing translation is safe.
+native_exec() {
+    MSYS_NO_PATHCONV=1 "$@"
+}
+
 require_tool() {
     command -v "$1" >/dev/null 2>&1 || die "Required tool not found on PATH: $1"
 }
@@ -424,7 +435,7 @@ signtool_argv() {
 }
 
 assert_signature_present() {
-    "$SIGN_TOOL" verify /pa "$(winpath "$1")" >/dev/null 2>&1 \
+    native_exec "$SIGN_TOOL" verify /pa "$(winpath "$1")" >/dev/null 2>&1 \
         || die "File is not authenticode signed: $1"
 }
 
@@ -433,7 +444,7 @@ sign_files() {
     for file in "$@"; do
         [ -f "$file" ] || die "Cannot sign missing file: $file"
         mapfile -t argv < <(signtool_argv "$file")
-        "$SIGN_TOOL" "${argv[@]}" || die "signtool failed for $file"
+        native_exec "$SIGN_TOOL" "${argv[@]}" || die "signtool failed for $file"
         assert_signature_present "$file"
     done
 }
@@ -686,7 +697,7 @@ if [ "$SKIP_STANDALONE" -eq 0 ]; then
             iscc_args+=("/Ssmatchetsigntool=$(inno_signtool_definition 'Smatchet Installer')")
         fi
         iscc_args+=("$(winpath "$INSTALLER_SCRIPT")")
-        "$ISCC_EXE" "${iscc_args[@]}"
+        native_exec "$ISCC_EXE" "${iscc_args[@]}"
         INSTALLER_PATH="$ASSETS_DIR/$INSTALLER_BASE.exe"
         [ -f "$INSTALLER_PATH" ] || die "Expected installer missing: $INSTALLER_PATH"
         [ "$SIGN" -eq 1 ] && assert_signature_present "$INSTALLER_PATH"

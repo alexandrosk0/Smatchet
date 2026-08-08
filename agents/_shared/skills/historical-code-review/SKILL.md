@@ -62,6 +62,29 @@ internal maintainability with no observable defect → **`docs/self-improvement/
 When sweeping many PRs, batch the log (e.g. all of one 5-PR batch into one
 `debt.md` commit) and elevate only clear user-visible bugs to Issues.
 
+### Audit mode (work-item era)
+
+When the sweep runs as a **standing-code audit** under the work-item process (Whip-Process
+`Procedures/Audit.md` maps here; the itemful loop is `docs/agent-rules/work-items.md`), route into
+`docs/work/` instead:
+
+- **Debt already tracked is cited, not re-reported** — check `docs/work/DEFERRED.md` /
+  `BACKLOG.md` and open bug issues before flagging; an existing `DEF/BL-NN` covering the finding is
+  a citation, not a new entry.
+- **Defers** become `docs/work/DEFERRED.md` entries with a Source line —
+  `**Source:** <target> audit (YYYY-MM-DD).` — canonical `DEF-NN` assigned at the drain, and every
+  `DEF/BL-NN` the audit *resolved* is retired (removed, cross-references repointed), per
+  work-items.md § Tracking.
+- **User-visible product defects** stay GitHub Issues (ADR-0014) — the audit does not change that
+  boundary.
+- **No re-litigation of choices** — settled decisions (closed summaries' *Key decisions*, existing
+  ledger entries, prior resolutions) are the oracle, not findings; verifying a choice's
+  **execution** is exactly the audit's job.
+
+Findings from an audit round are resolved by the single addresser discipline
+(`address-review-feedback` skill), and the drain above runs **after the user's sign-off** on the
+resolution.
+
 ## Notes / limits
 
 - The target commit must be an **ancestor of HEAD** (else "alive at HEAD" is

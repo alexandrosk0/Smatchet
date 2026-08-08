@@ -11,6 +11,7 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
@@ -36,6 +37,7 @@
 #include "ImGuiHotkey.h"
 #include "SmatchetTicketChangeNotifications.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "SmatchetMcpServerUi.h"
@@ -184,6 +186,18 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
         ImGui::OpenPopup("Update Available###AppUpdateAvailable");
+    }
+    // appUpdateModalOpen is authoritative for SUBMISSION, not only for opening.
+    // Clearing the flag alone does not close a popup that is already on ImGui's
+    // popup stack — BeginPopupModal would keep returning true and keep painting
+    // the dialog. Not submitting it does close it (ImGui drops a popup whose
+    // Begin* is skipped), which is what lets a screenshot scenario suppress a
+    // modal the async update check opened mid-capture (QuiesceCaptureFrame
+    // clears the flag from the scenario tick, which runs earlier in the frame).
+    // Production behaviour is unchanged: every path that clears the flag (Skip
+    // This Version / Later / the title-bar close) already closes the popup too.
+    if (!d.appUpdateModalOpen) {
+        return;
     }
     if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -618,6 +632,13 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
                 commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
+        // Re-focus request (bucket-C capture determinism — see the field doc). Kept
+        // separate from the open latch so re-arming focus does not also reset the
+        // filter buffer / selection the way a fresh Open() would.
+        if (g_ui.requestCommandPaletteFocus) {
+            g_ui.requestCommandPaletteFocus = false;
+            commandPalette_.FocusFilterInput();
+        }
         // Borrow the live keybinding table so palette rows surface their bound combo.
         commandPalette_.SetKeybindings(&d.cfg.Keybindings.Bindings);
         commandPalette_.Draw(app);
@@ -633,6 +654,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding (default Ctrl+Shift+T). Drawn unconditionally so its in-flight create
     // future is polled (and toasted) even after the window closes.
     SmatchetQuickCreateIssueUi_Draw(app, g_ui);
+
+    // Deferred scenario unwinds staged by the previous frame's OnFinish. Runs
+    // BEFORE the tick below (and so before a new scenario can start), and — the
+    // point of the deferral — after the post-swap handler captured the frame that
+    // OnFinish staged. See ScenarioCaptureQuiesce.h § QueuePostCaptureRestore.
+    smatchet::cmd::RunPendingPostCaptureRestore();
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.
@@ -1286,6 +1313,10 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // the force-redock pass then runs against a freshly-built tree. Runs before the
     // layoutForceDefaultsFrames countdown below so the freshly-armed 8 frames take effect.
     SmatchetUI_ApplyDeferredLayoutReset(d);
+    // Every window has ended by now, which is the only safe point to amend a dock node's
+    // tab bar (it re-Begins the dock HOST window). Also runs the expand self-heal, so it
+    // must come AFTER the layout reset above cleared its state on a reset frame.
+    SmatchetWindowExpand::EndFrame(d);
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
     // through to disk until the user commits.

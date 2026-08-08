@@ -4,8 +4,9 @@ Shared mechanics for the multi-model panel reviews that gate work items — the 
 post-implementation reviews of [work-items.md](work-items.md), plus the addresser that resolves
 them. Ported from Whip-Process (`Procedures/ReviewBasics.md`); contract wording carried verbatim.
 Review *policy* (problems only, verify then stop, dispositions) lives in
-[work-items.md → Review](work-items.md#review). The launcher tool itself lands with Phase 2 of the
-absorb plan (see docs/plans/absorb-whip-process.md); the contracts below bind that port.
+[work-items.md → Review](work-items.md#review). The launcher is
+`agents/scripts/core/run-review.sh` (Phase 2 of docs/plans/absorb-whip-process.md); the contracts
+below bind that port.
 
 ## Review independently
 
@@ -66,6 +67,25 @@ code/artifact.>
 ```
 
 If the pass finds nothing actionable, the body is a single line saying so — that is the stop signal.
+
+## Verdict trailer → verifier gate
+
+A post-implementation leg (`5-` prefix) ends its review file with a machine-readable trailer: a
+`## Verdict` heading followed by one fenced `json` object (fields and veto policy:
+adversarial-code-review skill § Panel leg). The verdict lives *inside* the leg's review file
+because the write guard's expected set is exactly the review file paths — a sibling verdict file
+would trip the stray-path report. Pre-implementation legs (`4-`) carry no trailer: the verifier
+gate scores code diffs, not artifacts.
+
+The flow (run by the addresser after the round is resolved — address-review-feedback skill
+step 6): `agents/scripts/core/panel_verdicts.py --subject NN --round N` collects one sample per
+leg → `scripts/dev/verifier-sidecar.py aggregate` merges the samples into one verdict →
+`review-ack.sh --record --branch --verdict` pins it to the branch content. Degradation is
+asymmetric by design: a leg with *no* trailer is skipped with a warning (one lost sample, not a
+lost round); a trailer that exists but is malformed is fatal (it may hide a veto); zero usable
+samples is fatal (the adapter never invents a verdict). The panel is the first real producer of
+`hard_veto` — only a veto blocks (`review-ack.sh --check` exits 3); the aggregate score stays
+advisory until calibrated.
 
 ## Write-guard contracts
 

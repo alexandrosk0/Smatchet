@@ -14,6 +14,7 @@
 #include "MarkdownPreviewRender.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 
 #include "imgui.h"
 
@@ -318,6 +319,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         ImGui::SetNextWindowFocus();
     }
     bool open = d.showPlanDocViewer;
+    SmatchetWindowExpand::BeginWindow(d, "Plan Docs");
     if (!ImGui::Begin("Plan Docs", &open)) {
         d.showPlanDocViewer = open;
         if (wantFocus) {
@@ -326,6 +328,7 @@ void DrawPlanDocViewer(UiDrawSession& d) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     if (wantFocus) {
         ImGui::SetWindowFocus();
         d.requestPlanDocViewerFocus = false;

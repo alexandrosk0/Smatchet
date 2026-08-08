@@ -149,3 +149,22 @@ TEST_CASE("ScenarioFramesFromJson reads + clamps, falling back on bad input") {
     CHECK(ScenarioFramesFromJson(json(true), 600) == 600);
     CHECK(ScenarioFramesFromJson(json(2147483647LL), 600) <= 2000000);
 }
+
+TEST_CASE("ScenarioWaitMs: explicit --timeout wins over the frames-derived budget") {
+    using smatchet::cli::ScenarioWaitMs;
+    // A deliberately small timeout must shorten the budget — the --spawn path
+    // once ignored it entirely (issue #1943), so this is the divergence guard.
+    CHECK(ScenarioWaitMs(500, 3600) == 500);
+    // And a large one must lengthen it past the frames-derived value.
+    CHECK(ScenarioWaitMs(600000, 600) == 600000);
+}
+
+TEST_CASE("ScenarioWaitMs: characterization of the frames-derived fallback") {
+    using smatchet::cli::ScenarioWaitMs;
+    // Anchor to the known-good in-process behaviour: (frames / 60 + 30) * 1000.
+    CHECK(ScenarioWaitMs(0, 600) == 40000);   // default frames -> 40 s
+    CHECK(ScenarioWaitMs(0, 3600) == 90000);  // the CI bucket-E derivation
+    CHECK(ScenarioWaitMs(0, 0) == 30000);     // startup/teardown floor
+    // Unset and nonsensical timeouts both fall back.
+    CHECK(ScenarioWaitMs(-1, 600) == 40000);
+}

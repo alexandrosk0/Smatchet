@@ -2,17 +2,21 @@
 #include "LuaConsolePlugin_detail.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-// SMATCHET_DEVIATION(rule=duplication; reason=the prologue below (project headers + SmatchetLocalizedImGui #define +
-// std-library include block) is the shared preamble every panel/plugin TU carries — SmatchetAiAssistantUi /
-// SmatchetBulkTicketsUi / SmatchetOfflineQueueUi / SmatchetPreferencesUi*; adding <future> for the Issue #1925 async
-// script load lengthened that already-common run past the clone threshold rather than introducing new copy-paste, and
-// there is no shared prologue header to factor into without worse coupling (the DRY gate doc endorses an exemption over
-// cross-context abstraction); owner=orchestrator; revisit=when a shared UI-TU prologue header lands)
+// The prologue below (project headers + SmatchetLocalizedImGui #define + std-library include block) is the shared
+// preamble every panel/plugin TU carries — SmatchetAiAssistantUi / SmatchetBulkTicketsUi / SmatchetOfflineQueueUi /
+// SmatchetPreferencesUi*. Every edit that lengthens it (<future> for the Issue #1925 async script load, the
+// SmatchetWindowExpand pair for the tab-bar toggle) re-flags an already-common run rather than introducing new
+// copy-paste, and there is no shared prologue header to factor into without worse coupling — the DRY gate doc
+// endorses an exemption over cross-context abstraction. dup_audit._suppressed accepts a marker on the nearest
+// non-blank line above the clone start OR anywhere inside the span — this one sits directly above, since the
+// token-run start drifts and only that position is stable for a prologue clone that begins at the includes.
+// SMATCHET_DEVIATION(rule=duplication; reason=shared panel/plugin TU prologue; owner=orchestrator; revisit=2026-12-01)
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetThemedTextEditorPalette.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization/wrapper namespace.
@@ -84,7 +88,15 @@ void PrepareLuaWindowLayout(UiDrawSession& d) {
 }
 
 void RepairLuaWindowLayout(UiDrawSession& d) {
-    if (ImGui::IsWindowDocked()) {
+    // An expanded window is deliberately undocked, and it is pinned fullscreen every frame
+    // by SmatchetWindowExpand::BeginWindow. Arming the re-dock latch here would fight that
+    // pin and also strand a forced redock that fires after the minimize.
+    // The re-dock-latch + off-screen-rect repair below is the same shape every dockable panel carries
+    // (RepairMcpWindowLayout, RepairPlanDocWindowLayout, …) with per-window ids and clamps; adding the guard
+    // above re-flagged that long-standing run. Consolidation is tracked as the EnsureDockSlotAlive audit item —
+    // factoring it here would couple a plugin TU to Core's UI layer for no behavioural gain.
+    // SMATCHET_DEVIATION(rule=duplication; reason=per-window dock-repair shape; owner=orchestrator; revisit=2026-12-01)
+    if (ImGui::IsWindowDocked() || SmatchetWindowExpand::IsCurrentWindowExpanded(d)) {
         return;
     }
     if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
@@ -541,6 +553,7 @@ bool LuaConsolePlugin::BeginLuaWindow(bool wantFocus) {
     PrepareLuaWindowLayout(g_ui);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12, 12));
 
+    SmatchetWindowExpand::BeginWindow(g_ui, "Scripting");
     if (!ImGui::Begin("Scripting", &g_ui.showLuaAutomationWindow)) {
         onScriptsTabLastFrame_ = false;
         ImGui::End();
@@ -551,6 +564,7 @@ bool LuaConsolePlugin::BeginLuaWindow(bool wantFocus) {
         return false;
     }
 
+    SmatchetWindowExpand::DrawToggle(g_ui);
     if (wantFocus) {
         ImGui::SetWindowFocus();
         g_ui.requestLuaAutomationFocus = false;

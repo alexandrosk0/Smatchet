@@ -34,6 +34,222 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-07 · PR #1962 · Merged past a CodeRabbit review that never happened (`cr-out-of-band` + `cr-disposition:cr-rate-limited`), and the escape detector reported the window clean
+
+### What escaped
+`fix(screenshot): make bucket-C user-info captures deterministic` (#1962) merged
+at `2026-08-06T13:50:08Z` as `a7fa2a32` with 34 checks green and **zero
+CodeRabbit review of the diff** — CR's account quota was exhausted, so it
+returned a status-only SUCCESS with no inline findings. The merge-gate poller
+correctly refused (`BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR
+to re-review on quota recovery`), the block was escalated to the user, and the
+user authorised the documented escape hatch: `cr-out-of-band` +
+`cr-disposition:cr-rate-limited`. Gate behaviour was exactly as designed.
+
+The escape is the **second** gate: an override label on a merged PR is trigger 2
+of `postmortem-owed.sh`, which exists to nudge for this postmortem. It reported
+`no gate escapes owed a postmortem (last 20 merges clean)`. Four consecutive
+invocations agree — a deterministic miss, not a flake. Had the user not asked,
+the escape would have gone unrecorded and the CR-quota class would have shipped
+again with no ledger trace.
+
+### Root cause
+Two independent holes, only the second of which is a gate defect.
+
+**1. CR quota exhaustion has no lane.** The poller's rate-limit pause assumes
+quota recovers and CR re-reviews. When the account budget is spent for the
+period, "wait for CR" is unbounded, so the only terminal moves are *block
+indefinitely* or *override*. The override is the right call under
+`AI_POLICY.md` § Escalate-when-unvalidatable, and it was made with explicit user
+attestation — but it means a CODE diff reached `develop` with no bot review, and
+nothing downstream distinguishes that from a reviewed one.
+
+**2. The detector false-dedups on prose.** `has_entry()`
+([`postmortem-owed.sh:240-251`](../../agents/scripts/core/postmortem-owed.sh))
+runs two probes. Probe 2 is deliberately scoped to a heading line, its comment
+stating the intent — *"scoped to `^#+ …` so a #N mention in prose body can't
+false-suppress a real owe"*. Probe 1 is unscoped and scans the whole file:
+
+```
+grep -cE "PR #1962([^0-9]|$)"        → 2     # prose, inside an unrelated entry
+grep -cE "^#+ .*PR #1962([^0-9]|$)"  → 0     # no entry is actually filed
+```
+
+Both hits are body prose in the 2026-08-05 `#1937` entry (lines 2171, 2184),
+which cites #1962 as the determinism work its instance ratchet rests on. Citing
+a sibling PR is how these entries are normally written, so the failure mode is
+general: **any PR named in an existing entry's prose is permanently and silently
+exempted from ever being nudged.** The output is indistinguishable from a clean
+window — the same "mask discards the verdict rather than downgrading it" shape
+as the bucket-C golden mask. Because this is the detector *for* escapes, the
+hole doesn't leak one defect; it suppresses the mechanism that turns escapes
+into gates, and the exempted set grows as entries accumulate cross-references.
+
+### Preventing gate
+Scope probe 1 to entry headings exactly as probe 2 already is
+(`^#+ .*PR #N([^0-9]|$)`, matching the documented `## <date> · PR #N …` shape),
+splitting the `commit <sha>` alternation out to stay whole-file — `has_sha_entry`
+documents bare-sha matching as deliberate for triggers 3+4. Back it with a
+`tests/bats/` case asserting that a ledger containing only a *prose* `PR #N`
+mention still reports #N as owed while a real heading dedupes it — the property
+both probes are trying to express and neither tests. Optionally add an explicit
+`### Escaped PRs: #A, #B` field per entry and dedup on that, so heading prose
+style can drift without re-opening the hole.
+
+For hole 1 the override was legitimate — no gate is owed for the merge decision
+itself, but the CR-quota state deserves a distinct poller verdict
+(`cr-quota-exhausted`) separate from the recoverable rate-limit pause, so the
+attestation path is reached deliberately instead of by waiting out a timeout.
+
+### Eval case
+None — not agent-reviewable. Both holes are shell-level detector logic and
+CI-config gaps; there is no code smell or policy violation in a diff for a
+review agent to score. The regression is expressible as a bats case (above),
+which is the stronger form here.
+
+### Filed as
+[`categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md`](categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md)
+## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
+
+### What escaped
+`fix(build): resolve font assets from the main worktree when a linked worktree lacks them` (#1948)
+merged to `develop` 2026-08-05 (`2602340e`) carrying `cr-out-of-band`. The label was strictly
+**load-bearing**: the required StatusContext `CR findings (0 actionable)` sat PENDING with every other
+check green (22/22), `mergeStateStatus=BLOCKED`, and re-running the workflow re-posted PENDING. No
+CodeRabbit review of the merged diff ever completed — the override, not a verdict, cleared the gate.
+Two gates missed it: the CR finding gate (no terminal state for this input) and `postmortem-owed.sh`,
+whose `--list` reports "no gate escapes owed" for this PR.
+
+### Root cause
+Blameless — two independent holes on the same CR path.
+
+**(1) The gate cannot terminate.** `.github/actions/cr-finding-gate/action.yml` `decide()` takes the
+`n_reviews > 0` branch as soon as any CR review node exists on the head, which skips the
+`n_reviews == 0` disambiguation via CR's own `CodeRabbit` StatusContext (which *was* SUCCESS). It then
+greps the review body for `Actionable comments posted:[[:space:]]*[0-9]+`. CR's last on-head review was
+its post-resolve acknowledgement — an **empty body** — so `n` is empty and `decide()` returns
+non-terminal (correctly fail-closed since #524, where a preamble line above the header produced a
+fail-*open*). After 12×15 s the action posts `pending — awaiting CodeRabbit review on current head`.
+No path leads from "CR's final word on this head is body-less" to a terminal verdict, and the state is
+not self-healing: only a new push or a fresh CR review clears it, and neither is guaranteed to arrive.
+The fail-closed instinct is right; the missing piece is a terminal arm for the one input where
+fail-closed can never resolve.
+
+**(2) The nudge that should have flagged the override is scope-gated, not evidence-gated.**
+`postmortem-owed.sh:156-163` drops the trigger `override: cr-out-of-band` whenever
+`pr_touches_core_cpp()` is false, on the rationale (:149-155) that the label "only waives the
+(advisory) CodeRabbit review", making a non-Core diff a false positive. #1948 touched CMake, a bats
+file, a wrapper script and a README — zero `Source/Core/src/*.cpp` — so it was dropped. That rationale
+holds for an advisory-verdict waiver but not for a **wedged required gate**, where diff scope says
+nothing about whether the override mattered. The script already owns the right test
+(`override_is_moot()` / `gate_conclusion()`, applied to `tests-out-of-band` / `perf-out-of-band` /
+`coverage-out-of-band` / `intent-out-of-band`); `cr-out-of-band` is the one override routed to the
+scope heuristic instead.
+
+### Preventing gate
+Two, one per hole.
+
+**(a) Terminal arm in the CR finding gate** — in the `n_reviews > 0` / empty-`n` path, disambiguate the
+way the `n_reviews == 0` path already does, but only for a **body-less** review: if the latest on-head
+CR review body is empty/whitespace **and** CR's `CodeRabbit` StatusContext on that head is SUCCESS,
+post success ("CR settled with nothing actionable"); keep the non-terminal retry for a **non-empty**
+body that merely lacks the header, so the #524 fail-open (a preamble line *above* a real header, i.e. a
+non-empty body) stays closed. An empty body cannot hide a finding count. Pin the empty-body +
+StatusContext-SUCCESS combination in the harness covering the action's decision table.
+
+**(b) Evidence-gate the nudge's `cr-out-of-band` drop** — replace the `pr_touches_core_cpp()` scope
+heuristic with `gate_conclusion "$pr" 'CR findings'`: SUCCESS on its own → moot, drop; PENDING /
+non-SUCCESS / absent → load-bearing, keep and owe a postmortem, whatever the diff touches. This folds
+`cr-out-of-band` into the `override_is_moot()` machinery the other four labels already use and deletes
+the special case. Without (b), future regressions of (a) would ship equally invisibly.
+
+### Eval case
+none — not agent-reviewable. Both holes are CI-config / gate-logic gaps (a GitHub Action's decision
+table and a nudge script's trigger filter), not a code smell or logic bug in a reviewable diff. No
+reviewer reading #1948's diff — CMake, a bats file and a README — could have surfaced either; the
+defect lives in the gate machinery, not the change under review.
+
+### Filed as
+(a) [`categories/process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](categories/process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md)
+(P1, process — shipped in PR #1953, `ec41fe86`) ·
+(b) [`categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md`](categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md)
+(P2, process).
+
+Sibling hole found while auditing this one — a poller **false-block**, opposite sign, **not** an escape
+(no unsafe merge; masked on current `develop` by the 2026-06-20 self-improvement auto-exemption), so no
+postmortem is owed for it. Filed as
+[`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
+(P2, tooling) plus the stale-checkout hazard that made it visible,
+[`categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md`](categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md)
+(P1, process).
+
+## 2026-08-06 · PR #1941 · squash-merged with `--admin` past 22 required checks that never ran (repo-wide Actions queue jam) — and no detector reads that state
+
+### What escaped
+`docs(plan): preferences IA re-segmentation + global search` (#1941) merged at
+`2026-08-06T19:25:12Z` as `c7fb2236` via `gh pr merge --squash --admin`, with **all 22
+branch-protection-required contexts absent from the head rollup**. The head `4617a034` was
+never built at all — `gh api repos/<o>/<r>/actions/runs?head_sha=4617a034…` returned
+`total_count: 0`. The feature (a ~4-slice rewrite of the Preferences window) landed on
+`develop` with zero CI validation. `postmortem-owed.sh --list` run immediately afterwards
+reported "no gate escapes owed a postmortem (last 20 merges clean)".
+
+### Root cause
+Two independent holes, plus a diagnostic one.
+
+**(a) The ship-loop has no defined move for "CI is structurally unavailable."** Actions was
+jammed repo-wide: 75 runs stuck `queued` since 18:13 UTC, no new run created repo-wide after
+19:16 UTC, and a `gh pr close && gh pr reopen` (to re-fire the `pull_request` event) produced
+0 runs. There was no reachable green head. The loop's only defined behaviour is to keep
+polling, so the available options collapse to "wait indefinitely" or "override" — the second
+being precisely what the gates exist to prevent. The escape is the missing third option, not
+the choice made between the two that existed.
+
+**(b) The class is invisible to the detector.** `postmortem-owed.sh` keys on a non-SUCCESS
+check at merge, an override label, a `Revert` commit, or an overdue deviation. An `--admin`
+merge past *absent* checks emits none of those: no red check (there is no check), no label,
+no revert. This is the **third** recurrence of the same detector hole — `2026-07-10 · PR
+#1698` and `2026-08-05 · PR #1937` both reached it from the other direction (green on the PR
+head, red on develop) and both proposed a develop-tip required-green assertion that never
+landed.
+
+**(c) Diagnostic misdirection, lower severity but it cost the most wall-clock.** An earlier
+poll on the pre-merge head reported 22 `required-missing` checks with the generic hint
+"never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI". The real state was
+`mergeStateStatus: DIRTY` / `mergeable: CONFLICTING` — GitHub will not build a conflicted
+head — from one conflict in `docs/plans/INDEX.md`. `merge-gates.sh` already fetches both
+fields in its existing GraphQL response and does not branch on them, so the actionable cause
+was available on poll 1 and surfaced only after a full 90-poll timeout and manual digging.
+
+### Preventing gate
+1. **`postmortem-owed.sh` fifth signal (primary).** For each merge commit on `develop` in
+   the scanned window, resolve the merged PR's head sha and flag the merge when
+   `actions/runs?head_sha=<sha>` yields `total_count == 0`, or when the head rollup carries
+   fewer contexts than the branch-protection required set. Catches admin merges, zero-rollup
+   merges, and the "CI never triggered" class in one check — and unlike the label-keyed
+   signals it needs no cooperation from whoever performed the merge. Testable in
+   `tests/bats/`.
+2. **`merge-gates.sh` names the real cause.** Branch on `mergeStateStatus == DIRTY` /
+   `mergeable == CONFLICTING` before reporting `required-missing`, emitting a distinct
+   blocked reason ("head is conflicted — CI will not build it; merge origin/develop
+   first"). Same for `BLOCKED` with a zero-length rollup.
+3. **Escalate on an Actions outage.** When the poller observes zero runs created repo-wide
+   inside the poll window, stop polling and escalate with that diagnosis instead of timing
+   out at 90 polls with a per-check message — per [`AI_POLICY.md`](../../AI_POLICY.md)
+   § Escalate, don't assume, an unvalidatable state is an escalation.
+
+Compensating verification actually performed on the merged head, for the record: dual-target
+build (`SmatchetStandalone` + `SmatchetCore_DX12`) EXIT=0 and `test-lint-rules.sh --diff
+origin/develop` EXIT=0 (advisory WARNs only). That is not CI and does not substitute for it;
+the next `develop` post-merge run, once Actions drains, is the backstop to watch.
+
+### Eval case
+none — not agent-reviewable. This is a CI-availability + detector-coverage gap, not a defect
+in a diff that a review agent would score.
+
+### Filed as
+[`categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md`](categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md)
+
 ## 2026-08-05 · PR #1937 · `Doc anchors + agent contract` was GREEN on the PR head and RED on `develop` the instant the squash landed — `test-plan-index` derives row dates from git history the merge itself rewrites
 
 ### What escaped
@@ -2127,6 +2343,71 @@ race is one upstream cause).
 This entry + the #1705 wrapper (instance) + a follow-up backlog item for the develop-tip
 health assertion (class).
 
+## 2026-08-05 · PR #1957 · red-check: Windows x64 / ARM64 installer smoke red on develop for 3 merges
+
+### What escaped
+Slice E of the kill-PowerShell plan (#1957, `1ec9fb0c`) ported `scripts/publish/release_github.ps1`
+to `scripts/publish/release-github.sh`. The port builds Inno Setup's argv as
+`/DMyAppVersion=$PROJECT_VERSION`, `/DMySourceDir=…` etc. Git Bash rewrites a *whole* argument
+that looks like an absolute POSIX path, so `/DMyAppVersion=0.1.0` reached ISCC.exe as
+`C:/Program Files/Git/DMyAppVersion=0.1.0` — no longer a switch. ISCC counted it as a second
+script filename and aborted:
+
+```
+You may not specify more than one script filename.
+```
+
+Both `Windows x64 installer smoke` and `Windows-on-ARM ARM64 installer smoke (runner-gated)`
+have been RED on develop since #1957. #1959 and #1960 then merged on top of a red develop.
+
+### Root cause
+Three independent failures compounded:
+
+1. **The bug itself is a knowledge gap, not a slip.** The author *half*-anticipated it — the
+   surviving comment reads "MSYS argument translation is not dependable for /D-style switches,
+   so convert explicitly" — but converted only the *values* via `winpath()`. The leading `/D`
+   is what triggers the rewrite; converting the value cannot help. (An argument whose value
+   already looks like a Windows path, e.g. `/DMySourceDir=D:\a\x`, survives — which is exactly
+   why the failure looked arbitrary.) The same exposure applies to `signtool`'s
+   `/fd /td /tr /f /p /sm /sha1 /n /pa` and to a bare `cmd.exe /c` (`/c` → `C:/`).
+2. **No pre-merge gate could see it.** The installer-smoke jobs are deliberate POST-MERGE
+   BACKSTOPS — `if: github.event_name == 'push' || 'workflow_dispatch'`, never on
+   `pull_request` or `merge_group`, because the LTO publish build costs ~20–30 min. So a break
+   in `release-github.sh` is structurally invisible to PR checks.
+3. **The post-merge red was never surfaced.** #1957's own develop run was *cancelled* by a
+   superseding push, so the failure did not even announce itself on the PR. Nothing asserts
+   develop-tip health at the next merge, so two more PRs merged on top of a red develop
+   without any signal.
+
+Failure 3 is the **same class** the 2026-07-10 / #1698 entry already proposed a gate for
+(develop-tip health assertion) and which was filed as backlog rather than landed. This
+incident is that backlog item's second occurrence — evidence to promote it.
+
+### Preventing gate
+Instance + class fixed in this PR:
+
+- `scripts/publish/release-github.sh` gains `native_exec()` (`MSYS_NO_PATHCONV=1 "$@"`), applied
+  at the ISCC invocation and both signtool call sites. The signtool sites were latent
+  release-blockers: CI has no signing cert, so they would only have bitten on a real signed
+  release.
+- Same guard applied to the three sibling `cmd.exe /c` call sites the sweep surfaced —
+  `scripts/dev/local/build-deploy-and-open-unreal.sh` (×2, Unreal `Build.bat` never ran),
+  `scripts/dev/local/rebuild-testproject-plugin.sh`, and `scripts/dev/coverage.sh` (the merge
+  carrier was silently a `cmd.exe` with no command switch).
+- **New gate**: `tests/bats/msys_argv_switches.bats` +
+  `scripts/dev/test-msys-argv-switches-bats.sh` (auto-enrolled by `test-all.sh`, so it runs on
+  every PR — closing failure 2 for this bug class without paying the publish-build cost). It
+  asserts statically that every native-Windows-exe `/switch` invocation across all tracked
+  `*.sh` carries `MSYS_NO_PATHCONV=1` / `native_exec`, and behaviourally (Windows-only) that
+  MSYS really does mangle a bare `/switch` and that the guard restores it. All five cases are
+  mutation-proven: removing each guard turns the matching case red.
+
+Still open (class, failure 3): the develop-tip health assertion proposed in the 2026-07-10
+entry. Second occurrence now recorded; backlogged rather than landed here to keep this PR
+scoped to the break.
+
+### Filed as
+This entry + the `native_exec` / `MSYS_NO_PATHCONV` fixes + the new bats gate in this PR.
 ## 2026-08-06 · PR #1937 · masked gate: bucket-C golden diff swallowed a stale-golden verdict
 
 ### What escaped

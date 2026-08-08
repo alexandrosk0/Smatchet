@@ -12,6 +12,7 @@
 #include "SmatchetToast.h"
 #include "SmatchetTheme.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -315,10 +316,12 @@ void SmatchetBugReportUi_Draw(IAppThreading& app, IAppMeta& meta, UiDrawSession&
     }
 
     ImGui::SetNextWindowSize(ImVec2(620, 560), ImGuiCond_FirstUseEver);
+    SmatchetWindowExpand::BeginWindow(d, "Report a Bug");
     if (!ImGui::Begin("Report a Bug", &d.showBugReport)) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
 
     DrawDestination(d);
 

@@ -44,6 +44,7 @@ extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridWheelRouteOwnershipTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterResetLayoutDockingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDockSlotLivenessTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterWindowExpandTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDockedTabFocusTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDurationInlineEditCommitTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMobileViewsConfirmModalTests(ImGuiTestEngine* engine);
@@ -109,6 +110,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterGridWheelRouteOwnershipTests(engine);
     SmatchetRegisterResetLayoutDockingTests(engine);
     SmatchetRegisterDockSlotLivenessTests(engine);
+    SmatchetRegisterWindowExpandTests(engine);
     SmatchetRegisterDockedTabFocusTests(engine);
     SmatchetRegisterDurationInlineEditCommitTests(engine);
     SmatchetRegisterMobileViewsConfirmModalTests(engine);

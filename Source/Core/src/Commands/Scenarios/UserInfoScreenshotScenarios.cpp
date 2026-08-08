@@ -20,8 +20,8 @@
 
 #include <memory>
 
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "SmatchetUiSession.h"
-#include "Ui/SmatchetToast.h"
 
 // g_ui — unconditional extern. Defined in SmatchetUI.cpp without a
 // SMATCHET_WITH_LUA_AUTOMATION guard; the header-side extern in SmatchetUiSession.h
@@ -79,6 +79,14 @@ void UserInfoScreenshotScenario::OnStart(IAppScenarioHost& /*app*/, const nlohma
     savedWhisperSetupCompleted_ = g_ui.cfg.WhisperSetupCompleted;
 #endif
 
+    applyPinnedState();
+    // Stage the open request; DrawWindow adopts it on the next frame.
+    g_ui.userInfoRequestPending = true;
+    g_ui.showUserInfo = true;
+    g_ui.requestUserInfoFocus = true;
+}
+
+void UserInfoScreenshotScenario::applyPinnedState() {
     // Deterministic identity: fixed display name + account id, EMPTY email so
     // the p4 feed fast-fails without a `p4 users` subprocess (see header).
     g_ui.userInfoSourcePaneId = "main";
@@ -108,10 +116,6 @@ void UserInfoScreenshotScenario::OnStart(IAppScenarioHost& /*app*/, const nlohma
 #endif
     // The layout under test.
     g_ui.cfg.VcsFeedLayout = vcsFeedLayout_;
-    // Stage the open request; DrawWindow adopts it on the next frame.
-    g_ui.userInfoRequestPending = true;
-    g_ui.showUserInfo = true;
-    g_ui.requestUserInfoFocus = true;
 }
 
 void UserInfoScreenshotScenario::OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) {
@@ -119,14 +123,19 @@ void UserInfoScreenshotScenario::OnFrame(IAppScenarioHost& /*app*/, int /*frameI
     // so re-arm it every warm-up frame to keep the window open + focused right
     // through to the captured frame (mirrors the sibling bucket-E open recipe).
     g_ui.requestUserInfoFocus = true;
+    // Re-assert the identity + config pins every warm-up frame. They are
+    // idempotent, and re-applying them keeps a late write to g_ui.cfg (a
+    // first-launch config load landing after OnStart) from reaching the
+    // captured frame as the first-run whisper-consent banner plus an empty
+    // User Info body.
+    applyPinnedState();
     // Determinism: the startup connectivity poll pushes timed "Syncing..." /
     // "Sync Warning" toasts whose fade animation is wall-clock-driven and so
     // differs frame-to-frame between two captures (the exact transient-state
-    // hazard ThemeSwitchRoundtripScenario documents). Dismiss every live toast
-    // each warm-up frame so the captured frame carries none — the toast draw in
-    // drawGlobalOverlays runs AFTER this scenario tick within SmatchetUI::Draw,
-    // so a same-frame clear keeps them off the capture. History is untouched.
-    SmatchetToastManager::Instance().DismissAllLive();
+    // hazard ThemeSwitchRoundtripScenario documents). The shared chokepoint
+    // dismisses every live toast; the three ambient bucket-C scenarios call the
+    // same helper (see ScenarioCaptureQuiesce.h). History is untouched.
+    QuiesceCaptureFrame();
 }
 
 void UserInfoScreenshotScenario::OnCancel(IAppScenarioHost& /*app*/) { restoreState(); }
@@ -147,11 +156,16 @@ nlohmann::json UserInfoScreenshotScenario::OnFinish(IAppScenarioHost& /*app*/) {
     out["screenshotPath"] = screenshotPath_;
     out["captureRequested"] = true;
 
-    // Restore config AFTER staging the capture: showUserInfo stays true through
-    // this frame so the window is still drawn when the post-swap capture fires.
-    // The VcsFeedLayout / GitHub / identity fields no longer affect the already-
-    // rendered frame, so restoring them here is safe and leaves the session clean.
-    restoreState();
+    // Restore on the NEXT frame, not here. OnFinish runs from the runner tick
+    // inside SmatchetUI::drawPreWindowOverlays — ahead of every window draw — so an
+    // inline restoreState() un-pins showUserInfo, the identity fields and
+    // WhisperSetupCompleted BEFORE the frame this capture records is drawn, and the
+    // PNG lands showing the first-run whisper-consent banner over an empty User Info
+    // body. (Restoring inline only looked safe while a second Scenarios().Tick ran
+    // post-render in the standalone bootstrap and absorbed OnFinish there; that
+    // duplicate tick is gone.) The runner destroys this scenario via active_.reset()
+    // the moment OnFinish returns, so the closure gets a by-value copy, not `this`.
+    QueuePostCaptureRestore([self = *this]() mutable { self.restoreState(); });
     return out;
 }
 
@@ -174,6 +188,9 @@ void UserInfoScreenshotScenario::restoreState() {
     // Leave showUserInfo restored last so the close-edge cleanup in DrawWindow
     // runs against a valid app on the next frame (matches the bucket-E guard).
     g_ui.showUserInfo = savedShowUserInfo_;
+    // Unwind the shared quiesce too — its update-check suppression is global
+    // state, not per-scenario (see ScenarioCaptureQuiesce.h).
+    RestoreCaptureQuiesce();
 }
 
 } // namespace cmd

@@ -32,6 +32,13 @@ class CommandPaletteUi {
     /// so typing into the bar opens + pre-filters the palette.
     void SetFilterText(const char* query);
 
+    /// Re-arm keyboard focus on the filter input for the next Draw. Open() already
+    /// does this, but the auto-focus is otherwise tied to the palette WINDOW
+    /// appearing: once another window (the first-run Preferences surface, a modal)
+    /// takes focus afterwards, the input goes inactive and never regains focus on
+    /// its own. Idempotent, and a no-op while the palette is closed.
+    void FocusFilterInput() { focusFilterPending_ = true; }
+
     /// Restrict the palette to commands whose id starts with `prefix`, shown to the
     /// user as `label` (e.g. "Views") — the "Open View..." funnel pre-scopes with this
     /// instead of stuffing the literal `view.toggle.` id into the search box (P2-M7).
@@ -59,6 +66,8 @@ class CommandPaletteUi {
 
   private:
     bool open_ = false;
+    /// Pending "focus the filter input on the next Draw" latch (see FocusFilterInput()).
+    bool focusFilterPending_ = false;
 
     /// Borrowed (non-owning) keybinding table for combo surfacing; re-pointed each frame.
     const std::vector<Keybinding>* keybindings_ = nullptr;

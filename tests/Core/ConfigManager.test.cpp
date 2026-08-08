@@ -347,6 +347,71 @@ TEST_CASE("ConfigManager SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK env override") {
     ConfigManager::InvalidateCache();
 }
 
+TEST_CASE("ConfigManager SMATCHET_UPDATE_CHECK env override") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Clear explicitly before the default assertion: the screenshot-diff driver
+    // (scripts/dev/test-screenshot-diff.sh) exports SMATCHET_UPDATE_CHECK=0 for
+    // every scenario child, so a developer running the test suite from a shell
+    // that inherited it would otherwise see a false "default" here.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "");
+#else
+    ::unsetenv("SMATCHET_UPDATE_CHECK");
+#endif
+
+    // Default ON — the startup update check is opt-out, not opt-in.
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().UpdateCheckEnabled == true);
+
+    // "0" disables — the form the screenshot-diff driver uses to keep the async
+    // "Update Available" modal off a deterministic capture.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "0");
+#else
+    ::setenv("SMATCHET_UPDATE_CHECK", "0", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().UpdateCheckEnabled == false);
+
+    // "false" is the long spelling of the same thing.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "false");
+#else
+    ::setenv("SMATCHET_UPDATE_CHECK", "false", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().UpdateCheckEnabled == false);
+
+    // "1" / "true" force it back on even when the stored config says otherwise.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "1");
+#else
+    ::setenv("SMATCHET_UPDATE_CHECK", "1", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().UpdateCheckEnabled == true);
+
+    // A malformed value keeps the configured value rather than guessing — this
+    // knob is a capture/CI convenience, so an unparsable override must not
+    // silently disable a user's update checks.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "garbage");
+#else
+    ::setenv("SMATCHET_UPDATE_CHECK", "garbage", 1);
+#endif
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().UpdateCheckEnabled == true);
+
+    // Cleanup.
+#if defined(_WIN32)
+    ::_putenv_s("SMATCHET_UPDATE_CHECK", "");
+#else
+    ::unsetenv("SMATCHET_UPDATE_CHECK");
+#endif
+    ConfigManager::InvalidateCache();
+}
+
 // --- Save/Load round-trip regression net for the field-registration-table refactor. -------
 //
 // decompose-top-20-monoliths § ConfigManager::Load/Save. These are the

@@ -31,6 +31,7 @@
 #include "IssueDraft.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerSetupPure.h"
 #include "SmatchetImGuiFonts.h"
@@ -191,6 +192,10 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
     if (wantFocus) {
         selectDockedTab("Preferences");
     }
+    // After selectDockedTab, never before: an expanded Preferences is deliberately undocked,
+    // so selectDockedTab early-returns on it, and BeginWindow's SetNextWindowDockID(0, Always)
+    // must be the LAST next-window write before Begin or prepareTopLevelWindow's slot wins.
+    SmatchetWindowExpand::BeginWindow(d, "Preferences");
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
         if (wantFocus) {
             d.requestPreferencesFocus = false;
@@ -198,6 +203,7 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
         ImGui::End();
         return false;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
     if (wantFocus) {
         ImGui::SetWindowFocus();

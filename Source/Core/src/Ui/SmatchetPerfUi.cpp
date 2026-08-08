@@ -4,6 +4,8 @@
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetHelpMarker.h"
 #include "SmatchetLocalization.h"
+#include "SmatchetUiSession.h" // g_ui — this TU has no UiDrawSession& parameter to thread through
+#include "SmatchetWindowExpand.h"
 #include "UiPerfMonitor.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -241,8 +243,13 @@ void SmatchetPerfUi::DrawWindow(bool* pOpen, bool wantFocus) {
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
+    SmatchetWindowExpand::BeginWindow(g_ui, "Performance");
     if (ImGui::Begin("Performance", pOpen)) {
-        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        SmatchetWindowExpand::DrawToggle(g_ui);
+        // An expanded window is deliberately undocked; arming the re-dock latch here would
+        // make it fight the per-frame fullscreen pin in SmatchetWindowExpand::BeginWindow.
+        if (!ImGui::IsWindowDocked() && !SmatchetWindowExpand::IsCurrentWindowExpanded(g_ui) &&
+            !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
             s_needsReDock = true;
         }
         if (wantFocus) {
