@@ -1472,6 +1472,12 @@ add_executable(SmatchetTests
     Core/PaneAddRequest.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetGridPaneWindows_detail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/PaneCommands_detail.cpp"
+    # window-expand-button.md — pure transition core behind the per-window Expand /
+    # Minimize control: save-on-expand, consume-once restore replay, second-expand
+    # hand-off, and the closed-while-expanded self-heal. The _detail TU is ImGui-free
+    # (mirrors SmatchetGridHeaderUi_detail.cpp); SmatchetWindowExpand.cpp stays OUT.
+    Core/WindowExpand.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetWindowExpand_detail.cpp"
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.

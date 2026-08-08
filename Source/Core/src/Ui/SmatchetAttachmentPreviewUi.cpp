@@ -9,6 +9,7 @@
 #include "SmatchetAttachmentPreviewUi.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
 
 // SMATCHET_DEVIATION(rule=duplication; reason=idiomatic per-TU ImGui-localization preamble (imgui
@@ -855,8 +856,10 @@ void SmatchetUI::drawAttachmentPreviewWindow(AppController& app, UiDrawSession& 
     QueuePriorityAttachmentPreviewRequests(app, d.attachmentWindowEntries, d.attachmentWindowSelectedIndex, 2);
 
     prepareTopLevelWindow(d, "attachment", 1040.0f, 560.0f);
+    SmatchetWindowExpand::BeginWindow(d, "Attachment Preview");
     if (ImGui::Begin("Attachment Preview", &d.attachmentPreviewWindowOpen,
                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoCollapse)) {
+        SmatchetWindowExpand::DrawToggle(d);
         repairTopLevelWindow(d, "attachment", 520.0f, 320.0f);
         ImGui::Text("Attachments: %d", static_cast<int>(d.attachmentWindowEntries.size()));
         if (!thumbnailSupport.CanRenderBitmapThumbnails) {

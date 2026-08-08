@@ -11,6 +11,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "StringUtil.h"
@@ -598,6 +599,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestBulkImportFocus;
     // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
     prepareTopLevelWindow(d, "bulk_import", 900.0f, 600.0f, wantFocus);
+    SmatchetWindowExpand::BeginWindow(d, "Bulk Import Issues");
     if (!ImGui::Begin("Bulk Import Issues", &d.showBulkImport)) { // P2-M15: one name everywhere
         if (wantFocus) {
             d.requestBulkImportFocus = false;
@@ -605,6 +607,7 @@ void SmatchetUI::drawBulkImportWindow(AppController& app, UiDrawSession& d) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "bulk_import", 520.0f, 360.0f);
     if (wantFocus) {
         ImGui::SetWindowFocus();
@@ -716,6 +719,7 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
     const bool wantFocus = d.requestBulkExportFocus;
     // 4th arg = wantFocus → SetNextWindowFocus before Begin → activates docked tab. See Log fix.
     prepareTopLevelWindow(d, "bulk_export", 720.0f, 480.0f, wantFocus);
+    SmatchetWindowExpand::BeginWindow(d, "Bulk export tickets");
     if (!ImGui::Begin("Bulk export tickets", &d.showBulkExport)) {
         if (wantFocus) {
             d.requestBulkExportFocus = false;
@@ -723,6 +727,7 @@ void SmatchetUI::drawBulkExportWindow(AppController& app, UiDrawSession& d) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "bulk_export", 420.0f, 320.0f);
     if (wantFocus) {
         ImGui::SetWindowFocus();

@@ -37,6 +37,7 @@
 #include "ImGuiHotkey.h"
 #include "SmatchetTicketChangeNotifications.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "Win32PickFiles.h"
 #if defined(SMATCHET_WITH_MCP)
 #include "SmatchetMcpServerUi.h"
@@ -1312,6 +1313,10 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // the force-redock pass then runs against a freshly-built tree. Runs before the
     // layoutForceDefaultsFrames countdown below so the freshly-armed 8 frames take effect.
     SmatchetUI_ApplyDeferredLayoutReset(d);
+    // Every window has ended by now, which is the only safe point to amend a dock node's
+    // tab bar (it re-Begins the dock HOST window). Also runs the expand self-heal, so it
+    // must come AFTER the layout reset above cleared its state on a reset frame.
+    SmatchetWindowExpand::EndFrame(d);
     // Skip the debounced auto-save while a view edit is pending an explicit Save —
     // widths / sort specs mutated under the unsaved-layout strip must not bleed
     // through to disk until the user commits.

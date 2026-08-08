@@ -2,6 +2,7 @@
 
 #if defined(SMATCHET_WITH_MCP)
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue, not copy-paste; owner=ui; revisit=2026-12-01)
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "McpServerStatus.h"
@@ -9,6 +10,7 @@
 #include "McpServerInfoTextPure.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -102,7 +104,11 @@ void PrepareMcpWindowLayout(UiDrawSession& d) {
 }
 
 void RepairMcpWindowLayout(UiDrawSession& d) {
-    if (ImGui::IsWindowDocked()) {
+    // An expanded window is deliberately undocked and is pinned to the work area every
+    // frame by SmatchetWindowExpand::BeginWindow. Without the second test the branch below
+    // reads "undocked" as "broken": it arms the re-dock latch to fire after the minimize
+    // and force-writes pos/size against that pin. Same guard as RepairLuaWindowLayout.
+    if (ImGui::IsWindowDocked() || SmatchetWindowExpand::IsCurrentWindowExpanded(d)) {
         return;
     }
     if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
@@ -239,6 +245,7 @@ void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
+    SmatchetWindowExpand::BeginWindow(d, "MCP Server");
     if (!ImGui::Begin("MCP Server", &d.showMcpServerWindow)) {
         ImGui::End();
         if (wantFocus) {
@@ -246,6 +253,7 @@ void SmatchetDrawMcpServerWindow(const AppController& app, UiDrawSession& d) {
         }
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     if (wantFocus) {
         ImGui::SetWindowFocus();
         d.requestMcpServerFocus = false;

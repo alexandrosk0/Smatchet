@@ -139,6 +139,8 @@ const TranslationEntry kEntries[] = {
     {"window.watchers", "Watchers", u8"Observateurs"},
     {"window.votes", "Votes", u8"Votes"},
     {"window.mcp_server", "MCP Server", u8"Serveur MCP"},
+    {"window.expand.tooltip", "Expand over the whole workspace", u8"Agrandir sur tout l'espace de travail"},
+    {"window.minimize.tooltip", "Minimize (restore previous position)", u8"Réduire (restaurer la position précédente)"},
 
     // Preferences navigation rail + section headers. These mirror the TitleEn strings in
     // PreferencesSchema.cpp verbatim: the rail and PrefsSection render them through the

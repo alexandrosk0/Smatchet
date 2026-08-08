@@ -1,7 +1,9 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include prologue, not copy-paste; owner=ui; revisit=2026-12-01)
 #include "SmatchetUI.h"
 #include "BackendAuditTrail.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "StringUtil.h"
 #include "Ui/SmatchetAudit_detail.h"
 #include "Ui/SmatchetIconButtons.h"
@@ -282,6 +284,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
     const bool pollDue = (d.auditLastFilePoll.time_since_epoch().count() == 0) ||
                          (nowPoll - d.auditLastFilePoll >= kAuditFilePollInterval);
     (void)TryCompleteAuditReload(d);
+    SmatchetWindowExpand::BeginWindow(d, "Backend Audit");
     if (!ImGui::Begin("Backend Audit", &d.showAuditTrail)) {
         if (pollDue) {
             d.auditLastFilePoll = nowPoll;
@@ -290,6 +293,7 @@ void SmatchetUI::drawAuditWindow(AppController& app, UiDrawSession& d) {
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
     repairTopLevelWindow(d, "audit", 420.0f, 300.0f);
     ImGui::Text("Audit file: %s", BackendAuditTrail::GetAuditFilePath().c_str());
     ImGui::SameLine();

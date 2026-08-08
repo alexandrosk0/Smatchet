@@ -19,6 +19,7 @@
 #include "SmatchetProjectPicker.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
@@ -325,11 +326,13 @@ void SmatchetQuickCreateIssueUi_Draw(AppController& app, UiDrawSession& d) {
     }
 
     ImGui::SetNextWindowSize(ImVec2(580, 520), ImGuiCond_FirstUseEver);
+    SmatchetWindowExpand::BeginWindow(d, "Quick Create Issue");
     if (!ImGui::Begin("Quick Create Issue", &d.showQuickCreateIssue)) {
         d.quickCreateOpenLatch = false;
         ImGui::End();
         return;
     }
+    SmatchetWindowExpand::DrawToggle(d);
 
     DrawProjectRow(app, d);
     DrawIssueTypeRow(app, d);

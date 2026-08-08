@@ -30,6 +30,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
+#include "SmatchetWindowExpand.h"
 #include "SpreadsheetState.h"
 #include "UiPerfMonitor.h"
 // Vendored Font Awesome 6 icon-name macros (zlib licence). Pulled in
@@ -1508,6 +1509,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
         // kept because dock-tab collapse fights the open/close persistence contract.
         const ImGuiWindowFlags kFlags = ImGuiWindowFlags_NoCollapse;
 
+        SmatchetWindowExpand::BeginWindow(d, "Smatchet Assistant");
         if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
             ImGui::End();
             if (d.requestAssistantFocus) {
@@ -1524,11 +1526,16 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             PersistOpenStateImmediate(d);
             return;
         }
+        SmatchetWindowExpand::DrawToggle(d);
         if (d.requestAssistantFocus) {
             ImGui::SetWindowFocus();
             d.requestAssistantFocus = false;
         }
-        if (!ImGui::IsWindowDocked() && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        // Expanded is undocked ON PURPOSE — arming here would make ApplyAssistantDocking
+        // issue SetNextWindowDockID before the next BeginWindow, competing with the
+        // fullscreen pin (the same reason SmatchetPerfUi guards its own latch).
+        if (!ImGui::IsWindowDocked() && !SmatchetWindowExpand::IsCurrentWindowExpanded(d) && !ImGui::IsMouseDown(0) &&
+            !ImGui::IsMouseReleased(0)) {
             s_assistantNeedsReDock = true;
         }
     }
