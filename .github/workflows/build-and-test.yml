@@ -1246,16 +1246,17 @@ jobs:
           attempts=3
           status=broken; passed=0; failed=1
           for attempt in $(seq 1 "$attempts"); do
-            # frames=5400, not 3600. --spawn derives its whole wall-clock budget
-            # from this one number: CliDispatch.cpp:476 computes the deadline as
-            # ((frames/60)+30)*1000 ms, so 3600 bought 90 s — and the suite
-            # outgrew it. It reached 112 of 115 tests and then tripped the
-            # deadline mid-suite on six consecutive attempts across two runs
-            # (PR #1937); develop cleared 115 only by a hair, with its own
-            # attempt 1 collapsing. 5400 buys 120 s, ~33% headroom.
-            # --timeout is NOT the knob here despite the timeout error's hint:
-            # the --spawn path drops pa.timeoutMs (only the in-process path at
-            # CliCommandRunner.cpp:122 honors it). Filed separately.
+            # frames=5400, not 3600. Without an explicit --timeout, --spawn
+            # derives its wall-clock budget from the frame count:
+            # ScenarioWaitMs (CliArgCoercion.cpp) computes ((frames/60)+30)*1000
+            # ms, so 3600 bought 90 s — and the suite outgrew it. It reached 112
+            # of 115 tests and then tripped the deadline mid-suite on six
+            # consecutive attempts across two runs (PR #1937); develop cleared
+            # 115 only by a hair, with its own attempt 1 collapsing. 5400 buys
+            # 120 s, ~33% headroom. Since #1943, --timeout=<ms> overrides the
+            # derived budget on the --spawn path too and is the direct dial if
+            # this lane needs more wall-clock without inflating the suite's
+            # frame allowance.
             # The outer `timeout` stays above the derived deadline so the
             # harness, not coreutils, reports the failure.
             echo "bucket-E: attempt ${attempt}/${attempts} — ui_test.run --all --frames=5400 --spawn --yes"
