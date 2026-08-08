@@ -18,7 +18,7 @@ not at the merge-base) fire; all pre-existing duplication is grandfathered. A cl
 
 Delta semantics (grandfathering): a clone is keyed by the content-hash of its normalized token
 run. All duplication that already exists at the merge-base is grandfathered (its content-hashes
-populate the base set); a clone WARNs only when its normalized content is duplicated at HEAD but
+populate the base set); a clone FAILs only when its normalized content is duplicated at HEAD but
 was not duplicated at base — i.e. a genuinely new copy-paste. A `// SMATCHET_DEVIATION(rule=
 duplication; ...)` on the nearest non-blank line above either clone occurrence suppresses it
 (cheap exemption — the plan prefers an exemption over abstracting across unrelated contexts).

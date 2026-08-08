@@ -72,6 +72,12 @@ void SaveMcpWindowLayoutDebounced(UiDrawSession& d) {
     ConfigManager::Save(d.cfg);
 }
 
+// SMATCHET_DEVIATION(rule=duplication; reason=the MCP and Lua-console window-layout helpers are
+// long-standing structural twins (debounced save, clamp-to-work-area, prepare/repair); the dock
+// -liveness guard only made the delta gate re-notice them. Unifying would make Source/Plugins/
+// LuaConsole depend on Source/Core/src/Ui window-layout internals, which AGENTS.md calls out as
+// the CRITICAL kind of DRY refactor — coupling independent subsystems; owner=ui-host;
+// revisit=2026-12-31)
 ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
@@ -84,12 +90,30 @@ ImVec2 ClampMcpWindowPos(const ImVec2& pos, const ImVec2& size) {
 }
 
 void PrepareMcpWindowLayout(UiDrawSession& d) {
-    const bool needsForce = d.pendingReDockWindows.erase("mcp") > 0 || d.layoutForceDefaultsFrames > 0;
-    if (needsForce) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_Always);
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
-        ImGui::SetNextWindowDockID(SmatchetDockNodeIds::kBottomPanel, ImGuiCond_FirstUseEver);
+    // 0 when the bottom panel no longer exists — see EnsureDockSlotAlive. Docking to it then
+    // would mint an orphan node instead of failing, so the write is skipped and the window
+    // stays visibly floating.
+    const ImGuiID slot = SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::kBottomPanel);
+    const bool docked = slot != 0;
+    // The pending entry is only consumed when there is a live slot to honour it; on a dead slot
+    // it is left in place so the redock still fires once the node comes back. Same policy as
+    // PrepareLuaWindowLayout and repairTopLevelWindow — all three latches agree.
+    const bool requested = d.pendingReDockWindows.count("mcp") > 0 || d.layoutForceDefaultsFrames > 0;
+    if (docked) {
+        if (requested) {
+            d.pendingReDockWindows.erase("mcp");
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_Always);
+        } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+            ImGui::SetNextWindowDockID(slot, ImGuiCond_FirstUseEver);
+        }
     }
+    // The forced dock owns the geometry; an Always pos write alongside it sets PosUndock and
+    // cancels the dock outright (taking the node with it if this was its last tab). Only the
+    // floating fallback may force a rect.
+    const bool forceRect = requested && !docked;
+    // Structural twin of PrepareLuaWindowLayout's default-rect/clamp block; see the note above
+    // ClampMcpWindowPos for why unifying the two would couple independent subsystems.
+    // SMATCHET_DEVIATION(rule=duplication; reason=twin of PrepareLuaWindowLayout; owner=ui-host; revisit=2026-12-31)
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp) {
         ImGui::SetNextWindowSize(ImVec2(480.0f, 520.0f), ImGuiCond_FirstUseEver);
@@ -98,7 +122,7 @@ void PrepareMcpWindowLayout(UiDrawSession& d) {
     const ImVec2 size((std::min)(520.0f, (std::max)(420.0f, vp->WorkSize.x * 0.34f)),
                       (std::min)(640.0f, (std::max)(420.0f, vp->WorkSize.y * 0.70f)));
     const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - size.x - 24.0f, vp->WorkPos.y + 48.0f);
-    const ImGuiCond cond = needsForce ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
+    const ImGuiCond cond = forceRect ? ImGuiCond_Always : ImGuiCond_FirstUseEver;
     ImGui::SetNextWindowPos(ClampMcpWindowPos(pos, size), cond);
     ImGui::SetNextWindowSize(size, cond);
 }

@@ -1281,6 +1281,13 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
         // because clicking moves it to the right. Tooltip clarifies the action.
         const bool onRight = d.cfg.AssistantPanelOnSecondarySide;
         const char* swapLabel = onRight ? "<- Left" : "Right ->";
+        // The destination slot is not guaranteed to exist: kSecondarySideBar in particular is
+        // cut by no DockBuilder call and is absent from the embedded default ini, so on a stock
+        // layout there is nothing on the right to move into. Offering the swap anyway would flip
+        // the config (and this label) while the panel stayed put — disable it instead.
+        const ImGuiID swapTarget = SmatchetDockNodeIds::EnsureDockSlotAlive(
+            onRight ? SmatchetDockNodeIds::kPrimarySideBar : SmatchetDockNodeIds::kSecondarySideBar);
+        ImGui::BeginDisabled(swapTarget == 0);
         if (ImGui::SmallButton(swapLabel)) {
             d.cfg.AssistantPanelOnSecondarySide = !onRight;
             d.assistantPendingSideSwap = true;
@@ -1293,8 +1300,18 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
             }
             ScheduleConfigSaveDetached(d.cfg);
         }
-        ImGui::SetItemTooltip(onRight ? "Move panel to the left primary side bar."
-                                      : "Move panel to the right secondary side bar.");
+        ImGui::EndDisabled();
+        // SetItemTooltip skips disabled items, and the disabled case is precisely the one that
+        // needs explaining, so hover is tested with AllowWhenDisabled.
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (swapTarget == 0) {
+                ImGui::SetTooltip("This layout has no %s side bar for the panel to move into.",
+                                  onRight ? "left primary" : "right secondary");
+            } else {
+                ImGui::SetTooltip(onRight ? "Move panel to the left primary side bar."
+                                          : "Move panel to the right secondary side bar.");
+            }
+        }
     }
     ImGui::SameLine();
     {
@@ -1459,12 +1476,40 @@ void RegisterAssistantDictationInput() {
 void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
     const ImGuiID primaryDockId = SmatchetDockNodeIds::kPrimarySideBar;
     const ImGuiID secondaryDockId = SmatchetDockNodeIds::kSecondarySideBar;
-    const ImGuiID targetDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
+    const ImGuiID wantDockId = d.cfg.AssistantPanelOnSecondarySide ? secondaryDockId : primaryDockId;
+    // kSecondarySideBar is the sharp case: no DockBuilder call cuts it and the embedded
+    // default ini never contained it, so the swap-to-right request docks into an orphan node
+    // on a stock layout — the panel looks docked on the right but owns no dockspace slot and
+    // pops out on the first splitter drag. Fall back to the side that does exist; if neither
+    // does, drop the request rather than mint a fake node.
+    ImGuiID targetDockId = SmatchetDockNodeIds::EnsureDockSlotAlive(wantDockId);
+    if (targetDockId == 0) {
+        targetDockId =
+            SmatchetDockNodeIds::EnsureDockSlotAlive(wantDockId == secondaryDockId ? primaryDockId : secondaryDockId);
+    }
+    if (targetDockId != 0 && targetDockId != wantDockId) {
+        // The fallback fired, so the panel is about to land on the side the user did NOT ask for.
+        // Record where it actually went: leaving the flag as requested would make the swap button
+        // label, its tooltip, and the persisted config all describe a move that never happened,
+        // and the wrong state would survive a restart.
+        const bool onSecondary = targetDockId == secondaryDockId;
+        if (d.cfg.AssistantPanelOnSecondarySide != onSecondary) {
+            d.cfg.AssistantPanelOnSecondarySide = onSecondary;
+            ScheduleConfigSaveDetached(d.cfg);
+        }
+    }
     if (d.assistantPendingSideSwap || needsReDock) {
-        ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
-        d.assistantPendingSideSwap = false;
-        needsReDock = false;
-    } else if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        // Cleared only once a live slot has actually accepted the move. targetDockId is 0
+        // only when BOTH side bars are dead, and Reset Layout re-cuts them — dropping the
+        // request there would silently lose a swap the user asked for and make them click
+        // again. Both flags live on UiDrawSession (session-only, never persisted), so the
+        // cost of holding one is two map lookups a frame until a slot exists.
+        if (targetDockId != 0) {
+            ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
+            d.assistantPendingSideSwap = false;
+            needsReDock = false;
+        }
+    } else if (targetDockId != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
     }
 }

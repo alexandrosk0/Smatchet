@@ -101,8 +101,8 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - No `using namespace` in headers
 - `LOG_TRACE` / `LOG_DEBUG` in non-trivial branches
 
-**DRY (Engineering Quality Pillar 5; ADR-0015)** — you are the reviewer-of-record for duplication findings + exemption sign-off. The `dup_audit.py --diff` gate is WARN-first (advisory, never blocks yet), so duplication review is **yours**, not the gate's:
-- A `[dup] WARN` on the diff is a finding to triage — confirm it is real copy-paste (the gate flags token-normalized clones, so it already excludes mere structural similarity) and decide: de-duplicate, or sign off an exemption.
+**DRY (Engineering Quality Pillar 5; ADR-0015)** — you are the reviewer-of-record for duplication findings + exemption sign-off. The `dup_audit.py --diff` gate is **blocking** (graduated from WARN-first 2026-06-21), so it stops a NEW clone on its own; your job is the judgement the gate cannot make — whether the right resolution is de-duplication or an exemption:
+- A `[dup] FAIL` on the diff is a finding to triage — confirm it is real copy-paste (the gate flags token-normalized clones, so it already excludes mere structural similarity) and decide: de-duplicate, or sign off an exemption. The gate fails closed either way until one of the two lands.
 - **An exemption is cheap and is the DEFAULT for unrelated contexts.** Prefer `SMATCHET_DEVIATION(rule=duplication; reason=…; owner=…; revisit=…)` over forcing a shared helper. Standing-exempt classes: dual-target forward-decls, per-backend `*Client` boilerplate, generated code.
 - **Guardrail (co-equal with the gate) — a DRY-motivated refactor that introduces a shared helper coupling two otherwise-independent subsystems is a `## Critical` finding, not an improvement.** Over-abstraction + cross-subsystem coupling is the opposite failure of "small focused functions"; flag it as CRITICAL the same way you flag a missed invariant.
 

@@ -1,5 +1,7 @@
 #include "SmatchetDockNodeIds.h"
 
+#include "imgui_internal.h"
+
 #include <cstring>
 
 namespace SmatchetDockNodeIds {
@@ -33,6 +35,35 @@ ImGuiID DefaultDockSlotForLayoutKey(const char* layoutKey) {
         }
     }
     return 0;
+}
+
+ImGuiID EnsureDockSlotAlive(ImGuiID slot) {
+    if (slot == 0 || ImGui::GetCurrentContext() == nullptr) {
+        return 0;
+    }
+    // DockBuilderGetNode is a plain lookup in the dock context — no node is created on a
+    // miss, unlike SetNextWindowDockID, which is exactly the asymmetry this guard exists for.
+    const ImGuiDockNode* node = ImGui::DockBuilderGetNode(slot);
+    if (node == nullptr) {
+        return 0;
+    }
+    // Existence alone is not enough. An orphan root node minted by an earlier build is persisted
+    // to imgui.ini under [Docking][Data] and reloaded on the next launch, so the lookup above
+    // would succeed for exactly the ids this guard exists to reject. Every constant in the header
+    // names a node the default layout cuts as a CHILD of the dockspace root, so a null ParentNode
+    // means the id resolved to a detached node rather than to a slot inside the dockspace.
+    if (node->ParentNode == nullptr) {
+        return 0;
+    }
+    return slot;
+}
+
+void DockNextWindowOnFirstUse(ImGuiID slot) {
+    const ImGuiID live = EnsureDockSlotAlive(slot);
+    if (live == 0 || ImGui::IsMouseDown(0) || ImGui::IsMouseReleased(0)) {
+        return;
+    }
+    ImGui::SetNextWindowDockID(live, ImGuiCond_FirstUseEver);
 }
 
 size_t DefaultDockLayoutKeyCount() { return sizeof(kEntries) / sizeof(kEntries[0]); }

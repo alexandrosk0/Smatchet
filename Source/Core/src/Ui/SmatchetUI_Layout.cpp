@@ -113,7 +113,10 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
 
 void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, float defaultW, float defaultH,
                                        bool requestFocus) {
-    const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
+    // EnsureDockSlotAlive collapses a registered-but-dead slot to 0, so the branch below is
+    // skipped rather than docking into an orphan node that only LOOKS like the real panel.
+    const ImGuiID slot =
+        SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey));
     if (slot != 0) {
         // Re-force the redock EVERY frame while the reset is settling (mirrors
         // SmatchetMcpServerUi.cpp). The bare erase() consumes the arm once on the reset
@@ -176,8 +179,12 @@ void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, f
         // per-frame fullscreen pin in SmatchetWindowExpand::BeginWindow.
         return;
     }
-    // Window is floating — schedule force-dock on next frame if it has a registered slot.
-    const ImGuiID slot = SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey);
+    // Window is floating — schedule force-dock on next frame if it has a LIVE registered slot.
+    // Arming against a dead node would return early forever and leave the off-screen/degenerate
+    // rect repair below unreachable, while prepareTopLevelWindow declines to act on the arm:
+    // the window would sit floating at a broken rect with nothing left to fix it.
+    const ImGuiID slot =
+        SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::DefaultDockSlotForLayoutKey(layoutKey));
     if (slot != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         d.pendingReDockWindows.insert(layoutKey);
         return;

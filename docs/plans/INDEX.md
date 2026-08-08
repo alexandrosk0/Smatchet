@@ -209,7 +209,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`bucket-c-screenshot-determinism`](shipped/bucket-c-screenshot-determinism.md) | 2026-08-06 | Plan — bucket-C screenshot-diff determinism (user-info-* flake) |
 | [`preferences-ia-resegmentation-and-search`](shipped/preferences-ia-resegmentation-and-search.md) | 2026-08-06 | Plan — Preferences IA re-segmentation + global in-place search |
 | [`verifier-scored-code-review-gate`](shipped/verifier-scored-code-review-gate.md) | 2026-08-06 | Plan — Verifier-scored code-review gate |
-| [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-06 | Plan — Window Expand Button |
+| [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-07 | Plan — Window Expand Button |
 <!-- END auto-plan-index -->
 
 ### Notes
