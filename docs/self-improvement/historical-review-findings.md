@@ -11,6 +11,34 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 20 (SCREENED) — #1940–#1878 (53-PR sweep, 2026-08-08)
+
+Coverage: **53 reviewed — 0 with findings, 51 clean, 2 fully superseded, 0 errored.** Net: **0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW.** Closes the gap Batch 19 left: everything merged after #1876 up to #1940, joining this run to the targeted pass above. **The frontier is now #1–#1940 contiguous; the next sweep resumes from #1941.** Survivor-filtered against `origin/develop` @ `c00197d4`, with the extractor's review-ref bug fixed (see the caveat below) and `--against origin/develop` passed explicitly.
+
+**Supersede rate 19%** (~3,200 of 16,442 introduced lines gone), against ~0% for the newest-30 slice in the pass above. These PRs are 3–4 weeks old (2026-07-15 → 08-04), which is the age at which the blame-survivor filter starts doing real work. Worth remembering when choosing the next slice: **age, not count.**
+
+> **Method differs from Batches 13–19 — read this before trusting the zero.** Those batches ran a
+> `code-review` agent (opus/high) over every surviving hunk. This one was **screened, not fully
+> read**: all 53 digests were extracted, the 2,882 surviving **product-C++** lines were swept with a
+> 13-pattern hazard scan (raw `new`, empty `catch(...)`, bare `json::parse`, C string functions,
+> `[i±1]` index math, `.size()-1`, unchecked `front()`/`back()`/`->second`, unguarded
+> `future::get()`, `detach`, `sleep_for`, unterminated hex escapes, `.at()`), every hit was then
+> read in full context, and `TicketGridSortPure.cpp` was read end-to-end as the highest-risk unit.
+> The other ~10,400 surviving lines (tests, scripts, agents, docs) were **not** reviewed. So this
+> batch's zero means "no defect of the screened classes in product C++", which is a weaker claim
+> than Batch 19's. The frontier advances anyway — but a future reader wanting Batch-19-grade
+> assurance over #1878–#1940 should re-run the full agent pass rather than read this as equivalent.
+
+**Five candidates surfaced by the scan, all cleared on inspection** (recorded so the next screen does not re-flag them):
+- `SmatchetPlanDocViewerUi.cpp:254` and `LuaConsolePlugin.cpp:371` — `future::get()` in UI paths, the Pillar-2 shape. Both are correctly preceded by `wait_for(0ms) != ready → return`; the Lua one additionally clears `scriptLoadInFlight_` **before** `get()` so a worker exception cannot latch the flag and wedge Save for the session.
+- `LocalCacheManager.cpp:186` — `sleep_for` backoff inside the SQLite busy-retry. The `lock_guard` scope ends before the sleep (a contending writer never sleeps holding the mutex), and no UI TU calls `LocalCacheManager` — the two `Ui/` files that name it do so only in comments.
+- `AboutInfo.cpp:105-106` — `line[line.size() - 1]` guarded by `!line.empty()` on the same condition.
+- `AppController_LocalCacheDb.cpp:135` — `raw-new` false positive; the match is the words "new database" inside an error string.
+
+**Clean (51, surviving lines screened, no findings):** #1940, #1939, #1938, #1937, #1936, #1935, #1934, #1933, #1931, #1930, #1929, #1928, #1926, #1924, #1917, #1916, #1914, #1913, #1912, #1911, #1910, #1909, #1908, #1907, #1906, #1905, #1904, #1903, #1902, #1901, #1900, #1899, #1898, #1896, #1895, #1894, #1893, #1892, #1891, #1890, #1889, #1888, #1887, #1886, #1885, #1884, #1882, #1881, #1880, #1879, #1878.
+
+**Fully superseded (2, no review surface):** #1922, #1918 — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Reconcile + targeted pass (2026-08-08) — NOT a batch; the frontier is unchanged
 
 **Reconcile.** `historical-review-ledger-reconcile.sh --reconcile` over the 18 still-open rows
