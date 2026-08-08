@@ -88,6 +88,15 @@ class UserInfoScreenshotScenario : public IScenario {
     nlohmann::json OnFinish(IAppScenarioHost& app) override;
 
   private:
+    // Write the deterministic identity + config pins into g_ui. Called from
+    // OnStart AND from every OnFrame: the pins are idempotent, and re-applying
+    // them each frame makes the capture immune to anything that lands on
+    // g_ui.cfg after OnStart (a late first-launch config load, a Preferences
+    // default write). A capture that lost the pins renders the first-run
+    // whisper-consent banner over the top of the frame and an empty User Info
+    // body — the exact off-state one bucket-C golden was bootstrapped from.
+    void applyPinnedState();
+
     void restoreState();
 
     std::string name_;

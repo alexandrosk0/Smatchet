@@ -654,6 +654,15 @@ struct UiDrawSession {
     // 0 = Filter, 1 = Fields, 2 = Columns, 3 = Sort (matches ViewsEditorTab enum in the Views UI .cpp).
     int viewsActiveTab = 0;
     bool viewsDirty = false;
+    /// Frame fence that hides the unsaved-layout strip without touching viewsDirty.
+    /// Screenshot scenarios arm it (ScenarioCaptureQuiesce) because the grid's
+    /// startup width/sort write-back latches viewsDirty on a frame that varies with
+    /// pane-focus + data-arrival timing, so whether the ~33px strip — and the
+    /// downward shift of everything under it — made the captured frame flipped run
+    /// to run. Suppression is purely visual and auto-expires by frame number, so no
+    /// unwind is needed and a real user's pending layout edits keep their Save
+    /// affordance the moment the fence lapses.
+    int suppressUnsavedLayoutStripUntilFrame = -1;
     int viewsKeyboardReorderRow = -1;
     // Sidebar search filter for the saved-views list.
     char viewsSidebarSearchBuf[128]{};
@@ -1090,6 +1099,14 @@ struct UiDrawSession {
     /// Filter substring applied via `CommandPaletteUi::SetFilterText` when
     /// `requestCommandPaletteOpen` is consumed. Empty means "open with no filter".
     std::string requestCommandPaletteFilter;
+    /// Transient "re-focus the palette filter input" request, consumed alongside the
+    /// open latch. The palette's own auto-focus fires only when its WINDOW appears, so
+    /// a window that takes focus afterwards (the first-run Preferences surface) leaves
+    /// the input inactive — which is exactly the difference the bucket-C
+    /// `command-palette-fuzzy` golden flip-flopped on (focused input with caret +
+    /// selection vs a plain unfocused box, L_inf 235). The scenario re-arms this every
+    /// warm-up frame so the captured frame always shows the focused state.
+    bool requestCommandPaletteFocus = false;
 
     /// When true, render the dock-node debug overlay (toggled by Ctrl+Alt+D).
     bool showDockDebug = false;

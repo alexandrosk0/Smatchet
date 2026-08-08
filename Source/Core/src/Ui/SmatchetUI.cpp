@@ -11,6 +11,7 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/PaletteOpenLatch.h"
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/PaneCommands.h"
 #include "Commands/ViewCommands.h"
 #include "ConfigManager.h"
@@ -184,6 +185,18 @@ static void DrainAppUpdateCheck(UiDrawSession& d) {
 static void DrawAppUpdateModal(AppController& app, UiDrawSession& d) {
     if (d.appUpdateModalOpen) {
         ImGui::OpenPopup("Update Available###AppUpdateAvailable");
+    }
+    // appUpdateModalOpen is authoritative for SUBMISSION, not only for opening.
+    // Clearing the flag alone does not close a popup that is already on ImGui's
+    // popup stack — BeginPopupModal would keep returning true and keep painting
+    // the dialog. Not submitting it does close it (ImGui drops a popup whose
+    // Begin* is skipped), which is what lets a screenshot scenario suppress a
+    // modal the async update check opened mid-capture (QuiesceCaptureFrame
+    // clears the flag from the scenario tick, which runs earlier in the frame).
+    // Production behaviour is unchanged: every path that clears the flag (Skip
+    // This Version / Later / the title-bar close) already closes the popup too.
+    if (!d.appUpdateModalOpen) {
+        return;
     }
     if (!ImGui::BeginPopupModal("Update Available###AppUpdateAvailable", &d.appUpdateModalOpen,
                                 ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -618,6 +631,13 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
                 commandPalette_.SetFilterText(paletteOpen.Filter.c_str());
             }
         }
+        // Re-focus request (bucket-C capture determinism — see the field doc). Kept
+        // separate from the open latch so re-arming focus does not also reset the
+        // filter buffer / selection the way a fresh Open() would.
+        if (g_ui.requestCommandPaletteFocus) {
+            g_ui.requestCommandPaletteFocus = false;
+            commandPalette_.FocusFilterInput();
+        }
         // Borrow the live keybinding table so palette rows surface their bound combo.
         commandPalette_.SetKeybindings(&d.cfg.Keybindings.Bindings);
         commandPalette_.Draw(app);
@@ -633,6 +653,12 @@ void SmatchetUI::drawPreWindowOverlays(AppController& app, UiDrawSession& d) {
     // binding (default Ctrl+Shift+T). Drawn unconditionally so its in-flight create
     // future is polled (and toasted) even after the window closes.
     SmatchetQuickCreateIssueUi_Draw(app, g_ui);
+
+    // Deferred scenario unwinds staged by the previous frame's OnFinish. Runs
+    // BEFORE the tick below (and so before a new scenario can start), and — the
+    // point of the deferral — after the post-swap handler captured the frame that
+    // OnFinish staged. See ScenarioCaptureQuiesce.h § QueuePostCaptureRestore.
+    smatchet::cmd::RunPendingPostCaptureRestore();
 
     // Scenario tick: drive the active scenario one frame and propagate scroll state
     // into the session so SmatchetActiveProjectGridUi can honor it.

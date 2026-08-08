@@ -17,6 +17,7 @@
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "CodeColorView.h"
+#include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "Commands/Scenarios/ScenarioScreenshotPath.h"
 #include "SmatchetImGuiFonts.h"
@@ -78,6 +79,12 @@ class CodeSyntaxColoringScenario : public IScenario {
     }
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
+        // Determinism: the toast overlay draws ABOVE this window (drawGlobalOverlays
+        // runs last), so the opaque full-viewport window below does not shield the
+        // capture from the wall-clock-driven startup sync toasts — dismiss them
+        // every warm-up frame (see ScenarioCaptureQuiesce.h).
+        QuiesceCaptureFrame();
+
         // Draw a fully-opaque window covering the framebuffer so the capture is
         // dominated by the coloured code, not the dock chrome behind it. Fixed
         // pos + size (ImGuiCond_Always) keep the layout deterministic.
@@ -113,12 +120,20 @@ class CodeSyntaxColoringScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= warmupFrames_; }
 
+    // The runner calls exactly one of OnCancel / OnFinish, so the quiesce unwind
+    // needs a hook on both paths (see ScenarioCaptureQuiesce.h).
+    void OnCancel(IAppScenarioHost& /*app*/) override { RestoreCaptureQuiesce(); }
+
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         // Trigger the screenshot after the warm-up frames have rendered +
         // the colour cache is warm. Source/Standalone/main.cpp's post-swap
         // handler consumes the request and writes the PNG.
         g_ui.requestScreenshotPath = screenshotPath_;
         g_ui.requestScreenshot = true;
+        // Unwind the shared update-check suppression once the capture is staged
+        // (see ScenarioCaptureQuiesce.h) so an in-process run leaves the session's
+        // update checks exactly as it found them.
+        RestoreCaptureQuiesce();
 
         nlohmann::json out;
         out["scenario"] = Name();

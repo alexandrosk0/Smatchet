@@ -542,7 +542,10 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
     // Appears whenever d.viewsDirty OR d.viewSortDirty is true — fed by grid column
     // reorder, sort changes, OR buffer edits made in the Views editor window. Lets
     // the user commit, discard, or fork the in-memory edits without leaving the grid.
-    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid) {
+    // The frame fence lets a screenshot scenario hide the strip for its capture window
+    // without clearing the dirty flags (see UiDrawSession::suppressUnsavedLayoutStripUntilFrame).
+    const bool stripFenced = ImGui::GetFrameCount() <= d.suppressUnsavedLayoutStripUntilFrame;
+    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid && !stripFenced) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.27f, 0.10f, 0.35f));
         ImGui::BeginChild("##UnsavedLayoutStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
                           ImGuiWindowFlags_NoScrollbar);

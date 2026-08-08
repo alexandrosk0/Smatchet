@@ -515,6 +515,25 @@ static void RouteTrackerEnvCredentials(TrackerConfig& cfg) {
     }
 }
 
+// Tri-state boolean env override: "true"/"1" enables, "false"/"0" disables, unset or
+// empty leaves `target` untouched, anything else warns and keeps the current value.
+// Factored out of ApplyOverridesAndClamps so a new boolean knob costs that function
+// no decision points — it sits against the 30-branch lint cap.
+static void ApplyEnvBoolOverride(const char* envName, bool& target, const char* keepMsg) {
+    const char* raw = std::getenv(envName);
+    if (!raw) {
+        return;
+    }
+    std::string s(raw);
+    if (s == "true" || s == "1") {
+        target = true;
+    } else if (s == "false" || s == "0") {
+        target = false;
+    } else if (!s.empty()) {
+        LOG_WARN("ConfigManager: ignoring invalid %s=%s (%s)", envName, s.c_str(), keepMsg);
+    }
+}
+
 // Env-var + CLI overrides applied post-disk-read, plus the final post-override safety clamps.
 void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConfig& cfg) {
     if (const char* envDbPath = std::getenv("SMATCHET_DB_PATH")) {
@@ -555,6 +574,18 @@ void ApplyOverridesAndClamps(const ConfigManager::CliOverrides& cli, TrackerConf
                 s.c_str());
         }
     }
+
+    // SMATCHET_UPDATE_CHECK=0 — opt the whole process out of the startup
+    // "check GitHub for a newer release" round-trip. The screenshot-diff driver
+    // (scripts/dev/test-screenshot-diff.sh) sets it for every bucket-C capture:
+    // the check is async and network-timed, so on some runs its completion lands
+    // between the child's first frame and the scenario's, painting the "Update
+    // Available" modal over the capture (whole-frame diff, plus release-note text
+    // that would rot on every release). The scenario-side quiesce suppresses the
+    // modal once it exists; this knob kills it at the source, so there is no
+    // completion frame to race at all. Only an explicit "false"/"0" disables the
+    // check; anything else keeps the default-on behaviour.
+    ApplyEnvBoolOverride("SMATCHET_UPDATE_CHECK", cfg.UpdateCheckEnabled, "keeping configured value");
 
     // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's cfg slots.
     RouteTrackerEnvCredentials(cfg);
