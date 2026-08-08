@@ -26,7 +26,11 @@ setup() {
 }
 
 teardown() {
-    rm -rf "$SANDBOX"
+    # Cleanup belongs HERE, never as a tail command inside a @test: a trailing
+    # `rm -rf` succeeds unconditionally and becomes the test's exit status,
+    # masking an assertion that failed above it (the fail-open authoring gate's
+    # G-bats-cleanup-tail shape).
+    rm -rf "$SANDBOX" "${REMOTE_TMP:-}"
 }
 
 @test "surviving line included, later-modified line excluded" {
@@ -164,9 +168,10 @@ teardown() {
 
     # Publish B as origin/develop, then park local HEAD back on A so local HEAD
     # is genuinely behind the canonical ref.
-    REMOTE="$(mktemp -d)"
-    git init -q --bare "$REMOTE"
-    git remote add origin "$REMOTE"
+    REMOTE_TMP="$(mktemp -d)"
+    export REMOTE_TMP
+    git init -q --bare "$REMOTE_TMP"
+    git remote add origin "$REMOTE_TMP"
     git push -q origin HEAD:develop
     git fetch -q origin
     git checkout -q "$A"
@@ -179,7 +184,6 @@ teardown() {
     [[ "$output" == *"Reviewed against: origin/develop"* ]]
     # bravo was rewritten by B, so against origin/develop it is superseded.
     ! echo "$output" | grep -q "bravo"
-    rm -rf "$REMOTE"
 }
 
 @test "no origin at all: falls back to HEAD but SAYS the baseline is local" {
