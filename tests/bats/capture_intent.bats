@@ -374,3 +374,41 @@ line two	tabbed"
     [[ "$if_expr" != *"user.type"* ]]
     [[ "$if_expr" != *"user.login =="* ]]
 }
+
+# A workflow-generated PR (locks-render.yml's `bot/plan-locks-sync`) is opened
+# through a fine-grained PAT, so GitHub records the PAT OWNER as the author — a
+# login allow-list can never see it. #1942 sat permanently red on a body no human
+# wrote and no human can keep written (the workflow force-pushes and re-opens on a
+# schedule). The exemption is therefore keyed on the `bot/` head-branch namespace,
+# restricted to same-repo heads so a fork cannot forge it.
+@test "doc-validation: pr-intent-lint exempts same-repo bot/ generated branches" {
+    wf="$REPO_ROOT/.github/workflows/doc-validation.yml"
+    [ -f "$wf" ]
+    if_expr="$(
+        awk '/^  pr-intent-lint:/{f=1;next} f&&/^  [^ ]/{exit} f' "$wf" |
+        awk '/^    if:/{f=1; sub(/^    if:[[:space:]]*[>|]?[+-]?[[:space:]]*/,"");
+                        if ($0 != "") print; next}
+             f&&/^    [^ ]/{exit}
+             f{sub(/^[[:space:]]+/,""); print}' |
+        tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//'
+    )"
+    [ -n "$if_expr" ]
+    [[ "$if_expr" == *"startsWith(github.event.pull_request.head.ref, 'bot/')"* ]]
+    # Same-repo guard: the branch-namespace exemption must not be claimable from a fork.
+    [[ "$if_expr" == *"github.event.pull_request.head.repo.full_name == github.repository"* ]]
+}
+
+# The generated mirror lives three levels deep (docs/plans/active/), so every
+# repo-root-relative link the renderer emits needs `../../../`. A `../../` prefix
+# resolves into docs/ and reds test-markdown-links.sh on the sync PR (#1942) — a
+# failure that only ever surfaces on the bot PR, since the link checker is
+# diff-scoped and nothing else touches this file.
+@test "locks-render-markdown: root-relative links use the docs/plans/active depth" {
+    renderer="$REPO_ROOT/agents/scripts/core/locks-render-markdown.sh"
+    [ -f "$renderer" ]
+    # No emitted link may use the too-shallow `../../` prefix (grep excludes the
+    # correct `../../../` by requiring a non-dot char after the second `../`).
+    run grep -nE '\]\(\.\./\.\./[^.]' "$renderer"
+    [ "$status" -ne 0 ]
+    grep -q '\](\.\./\.\./\.\./\.github/workflows/locks-render\.yml)' "$renderer"
+}
