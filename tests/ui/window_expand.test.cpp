@@ -678,8 +678,14 @@ bool SweepSplittersAround(ImGuiTestContext* ctx, const char* title, const char* 
         LOG_INFO("SplitterDrag[%s]: '%s' node=%08X split=%08X moved=%d docked=%d", phase, title, dockId,
                  static_cast<unsigned int>(splits[i]), moved ? 1 : 0, docked ? 1 : 0);
         IM_CHECK_NO_RET(docked);
-        // Put it back so the next drag starts from the same layout.
-        DragSplitter(ctx, splits[i], -delta);
+        // Put it back so the next drag starts from the same layout. Not asserted — the
+        // forward drag may have pushed a sibling to its minimum, which legitimately
+        // refuses the reverse. Logged so a silently un-restored layout is diagnosable
+        // when a later phase in this sweep starts from an unexpected geometry.
+        if (!DragSplitter(ctx, splits[i], -delta)) {
+            LOG_WARN("SplitterDrag[%s]: '%s' split=%08X did not restore — later phases start from a drifted layout",
+                     phase, title, static_cast<unsigned int>(splits[i]));
+        }
         IM_CHECK_NO_RET(StillDocked(title, dockId));
     }
     // Asserted, not merely logged: if every grab point missed its splitter (geometry
