@@ -32,6 +32,7 @@
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
+#include "Tracker/TrackerBackendKind.h"
 #include "TrackerFieldValueUtils.h"
 #include "TrackerSetupPure.h"
 #include "SmatchetImGuiFonts.h"
@@ -266,17 +267,11 @@ namespace {
 // while the Backend & credentials section is collapsed (its body — and the combo's
 // return value — doesn't run then).
 int TrackerBackendIndexFromBuf(const UiDrawSession& d) {
-    const std::string trackerTypeStr(d.trackerTypeBuf);
-    if (trackerTypeStr == "Plane" || trackerTypeStr == "plane") {
-        return 1;
-    }
-    if (trackerTypeStr == "GitHub" || trackerTypeStr == "github") {
-        return 2;
-    }
-    if (trackerTypeStr == "Linear" || trackerTypeStr == "linear") {
-        return 3;
-    }
-    return 0;
+    // Delegates to the shared rule so this can no longer drift from the factory:
+    // the local copy listed two spellings per backend ("GitHub" || "github"), so
+    // "Github" fell through to the Jira default and drew the WRONG backend's
+    // credential rows while the factory built a GitHubClient from the same value.
+    return smatchet::tracker::BackendIndexFromType(std::string(d.trackerTypeBuf));
 }
 
 // Backend-selection section of the Tracker tab: read-only toggle + the Jira/Plane/GitHub/Linear combo.
