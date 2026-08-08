@@ -2343,6 +2343,71 @@ race is one upstream cause).
 This entry + the #1705 wrapper (instance) + a follow-up backlog item for the develop-tip
 health assertion (class).
 
+## 2026-08-05 · PR #1957 · red-check: Windows x64 / ARM64 installer smoke red on develop for 3 merges
+
+### What escaped
+Slice E of the kill-PowerShell plan (#1957, `1ec9fb0c`) ported `scripts/publish/release_github.ps1`
+to `scripts/publish/release-github.sh`. The port builds Inno Setup's argv as
+`/DMyAppVersion=$PROJECT_VERSION`, `/DMySourceDir=…` etc. Git Bash rewrites a *whole* argument
+that looks like an absolute POSIX path, so `/DMyAppVersion=0.1.0` reached ISCC.exe as
+`C:/Program Files/Git/DMyAppVersion=0.1.0` — no longer a switch. ISCC counted it as a second
+script filename and aborted:
+
+```
+You may not specify more than one script filename.
+```
+
+Both `Windows x64 installer smoke` and `Windows-on-ARM ARM64 installer smoke (runner-gated)`
+have been RED on develop since #1957. #1959 and #1960 then merged on top of a red develop.
+
+### Root cause
+Three independent failures compounded:
+
+1. **The bug itself is a knowledge gap, not a slip.** The author *half*-anticipated it — the
+   surviving comment reads "MSYS argument translation is not dependable for /D-style switches,
+   so convert explicitly" — but converted only the *values* via `winpath()`. The leading `/D`
+   is what triggers the rewrite; converting the value cannot help. (An argument whose value
+   already looks like a Windows path, e.g. `/DMySourceDir=D:\a\x`, survives — which is exactly
+   why the failure looked arbitrary.) The same exposure applies to `signtool`'s
+   `/fd /td /tr /f /p /sm /sha1 /n /pa` and to a bare `cmd.exe /c` (`/c` → `C:/`).
+2. **No pre-merge gate could see it.** The installer-smoke jobs are deliberate POST-MERGE
+   BACKSTOPS — `if: github.event_name == 'push' || 'workflow_dispatch'`, never on
+   `pull_request` or `merge_group`, because the LTO publish build costs ~20–30 min. So a break
+   in `release-github.sh` is structurally invisible to PR checks.
+3. **The post-merge red was never surfaced.** #1957's own develop run was *cancelled* by a
+   superseding push, so the failure did not even announce itself on the PR. Nothing asserts
+   develop-tip health at the next merge, so two more PRs merged on top of a red develop
+   without any signal.
+
+Failure 3 is the **same class** the 2026-07-10 / #1698 entry already proposed a gate for
+(develop-tip health assertion) and which was filed as backlog rather than landed. This
+incident is that backlog item's second occurrence — evidence to promote it.
+
+### Preventing gate
+Instance + class fixed in this PR:
+
+- `scripts/publish/release-github.sh` gains `native_exec()` (`MSYS_NO_PATHCONV=1 "$@"`), applied
+  at the ISCC invocation and both signtool call sites. The signtool sites were latent
+  release-blockers: CI has no signing cert, so they would only have bitten on a real signed
+  release.
+- Same guard applied to the three sibling `cmd.exe /c` call sites the sweep surfaced —
+  `scripts/dev/local/build-deploy-and-open-unreal.sh` (×2, Unreal `Build.bat` never ran),
+  `scripts/dev/local/rebuild-testproject-plugin.sh`, and `scripts/dev/coverage.sh` (the merge
+  carrier was silently a `cmd.exe` with no command switch).
+- **New gate**: `tests/bats/msys_argv_switches.bats` +
+  `scripts/dev/test-msys-argv-switches-bats.sh` (auto-enrolled by `test-all.sh`, so it runs on
+  every PR — closing failure 2 for this bug class without paying the publish-build cost). It
+  asserts statically that every native-Windows-exe `/switch` invocation across all tracked
+  `*.sh` carries `MSYS_NO_PATHCONV=1` / `native_exec`, and behaviourally (Windows-only) that
+  MSYS really does mangle a bare `/switch` and that the guard restores it. All five cases are
+  mutation-proven: removing each guard turns the matching case red.
+
+Still open (class, failure 3): the develop-tip health assertion proposed in the 2026-07-10
+entry. Second occurrence now recorded; backlogged rather than landed here to keep this PR
+scoped to the break.
+
+### Filed as
+This entry + the `native_exec` / `MSYS_NO_PATHCONV` fixes + the new bats gate in this PR.
 ## 2026-08-06 · PR #1937 · masked gate: bucket-C golden diff swallowed a stale-golden verdict
 
 ### What escaped
