@@ -297,7 +297,9 @@ assert len(samples) == 1, samples
     [ "$status" -eq 3 ]
     [[ "$output" == *"no independent leg"* ]]
     [[ "$output" == *"presence-only ack"* ]]
-    echo "$output" | grep -qv '"candidates"'
+    # `! grep -q`, not `grep -qv`: -v inverts PER LINE, so the diagnostic lines
+    # would satisfy it even if a candidates blob were emitted alongside them.
+    ! echo "$output" | grep -q '"candidates"'
 }
 
 @test "authoring-harness leg that VETOES is kept (self-reported bad news is trusted)" {
@@ -326,4 +328,18 @@ assert len(samples) == 1 and samples[0]["hard_veto"] is True, samples
     run "$PY" "$PV" --subject 7 --round 1 --items-dir items
     [ "$status" -eq 0 ]
     [[ "$output" == *"independence UNCHECKED"* ]]
+}
+
+@test "all legs missing trailers WITH --authoring-harness -> exit 2, not the rc-3 degraded path" {
+    # rc 3 means "legs existed, none independent" (record a presence-only ack).
+    # Zero PARSED legs is the FATAL case and must stay exit 2 — otherwise a
+    # round where the panel wrote no verdicts at all reads as a routine
+    # degraded roster. Only reachable with the flag set, which is why the
+    # no-flag sibling case above did not catch it.
+    _leg 5-review-1-claude-opus.md ""
+    _leg 5-review-1-codex-sol.md ""
+    run "$PY" "$PV" --subject 7 --round 1 --items-dir items --authoring-harness claude
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"0 usable verdicts"* ]]
+    [[ "$output" != *"no independent leg"* ]]
 }

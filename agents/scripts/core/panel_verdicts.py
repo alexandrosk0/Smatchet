@@ -275,7 +275,13 @@ def main(argv: List[str]) -> int:
 
     if args.authoring_harness:
         samples = apply_independence(legs, args.round_no, args.authoring_harness)
-        if not samples:
+        # `legs and` is load-bearing: rc 3 means "legs existed, none could
+        # score". Zero PARSED legs is the different, FATAL case — every trailer
+        # was missing — and must fall through to the 0-usable-verdicts failure
+        # below. Without the guard, a round where the panel produced no verdicts
+        # at all would report as a routine degraded roster and the caller would
+        # record a presence-only ack for a round that never actually reviewed.
+        if legs and not samples:
             # Not fail(): "every leg was the author's own" is a legitimate,
             # expected panel outcome (roster degradation routinely leaves one
             # harness standing), and it has a defined answer — record a
