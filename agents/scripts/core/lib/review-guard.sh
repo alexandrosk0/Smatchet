@@ -16,7 +16,10 @@
 #   get_dirty_state <root>
 #     stdout — one line per dirty path: "<path>\t<signature>", sorted by path
 #     rc 0  — scan performed (zero lines = VERIFIED clean)
-#     rc 1  — scan could NOT be performed (the original's $null; see below)
+#     rc 1  — scan could NOT be performed (the original's $null; see below).
+#             Three ways in: no work tree / git failed; a dirty file that
+#             exists but will not hash; a path whose bytes this line-and-tab
+#             output cannot represent. All three are UNVERIFIED, never clean.
 #   get_stray_paths <before-file> <after-file> <expected-file>
 #     args  — files of get_dirty_state lines (expected-file: one path per line)
 #     stdout — sorted unique stray paths
@@ -42,58 +45,95 @@ get_dirty_state() {
     # and both shapes are a repo.
     [ -e "$root/.git" ] || return 1
 
+    # NUL-delimited (-z), not line-delimited. core.quotePath=false alone is not
+    # enough: it suppresses C-quoting of non-ASCII bytes only, while git quotes
+    # a path containing a quote, a backslash or a control character no matter
+    # what that knob says. Such a path would arrive quoted, never be found on
+    # disk, and take the fabricated-signature route below — the same false-clean
+    # the signature exists to prevent. -z emits every path raw, so there is
+    # nothing left to unquote.
     # -uall lists untracked FILES; the default collapses an untracked directory
     # to its name, which would hide a stray file written inside one (an item
     # folder is untracked for its whole life).
-    # core.quotePath=false: git C-quotes non-ASCII/backslash paths by default,
-    # which would divorce the status line from the on-disk file — the hash
-    # would fall back to 'absent', the signature would go constant, and a
-    # re-edit of such an already-dirty path would read as clean.
-    local status_out
-    status_out="$(git -C "$root" -c core.quotePath=false status --porcelain --untracked-files=all 2>/dev/null)" || return 1
+    #
+    # Both scans land in temp files rather than command substitution: $(...)
+    # DISCARDS NUL bytes, which would splice every -z record into one string.
+    local status_file index_file
+    status_file="$(mktemp)" || return 1
+    index_file="$(mktemp)" || { rm -f "$status_file"; return 1; }
+
+    if ! git -C "$root" status --porcelain -z --untracked-files=all > "$status_file" 2>/dev/null; then
+        rm -f "$status_file" "$index_file"; return 1
+    fi
 
     # Status letters plus the worktree hash still miss a path whose staged
     # content changed while its status letters and its on-disk bytes stayed put
     # (an `MM` path re-staged from a different blob) — so the index entry is
     # part of the signature.
+    if ! git -C "$root" ls-files -s -z > "$index_file" 2>/dev/null; then
+        rm -f "$status_file" "$index_file"; return 1
+    fi
     local -A index_blob=()
-    local line
-    while IFS= read -r line; do
-        if [[ $line =~ ^[0-9]+\ ([0-9a-f]+)\ [0-9]+[[:space:]](.*)$ ]]; then
+    local entry
+    while IFS= read -r -d '' entry; do
+        if [[ $entry =~ ^[0-9]+\ ([0-9a-f]+)\ [0-9]+[[:space:]](.*)$ ]]; then
             index_blob["${BASH_REMATCH[2]}"]="${BASH_REMATCH[1]}"
         fi
-    done < <(git -C "$root" -c core.quotePath=false ls-files -s 2>/dev/null)
+    done < "$index_file"
 
     local -a out=()
     local xy rel src full hash idx
-    while IFS= read -r line; do
-        [ "${#line}" -gt 3 ] || continue
-        xy="${line:0:2}"
-        rel="${line:3}"
+    while IFS= read -r -d '' entry; do
+        [ "${#entry}" -gt 3 ] || continue
+        xy="${entry:0:2}"
+        rel="${entry:3}"
 
-        # A rename arrives as `R  old -> new`, so the raw substring is BOTH
-        # paths in one key — which would hash nothing and mask any later edit
-        # of the new path. Record the destination (the path that exists on
-        # disk) and the source separately.
-        if [[ $rel == *" -> "* ]]; then
-            src="${rel%% -> *}"
-            out+=("$src"$'\t'"$xy:absent")
-            rel="${rel#* -> }"
+        # -z hands over raw bytes, so a path may now contain a newline or a tab
+        # — and this function's own output is line-delimited with a tab between
+        # path and signature, which cannot carry either. Rather than emit a
+        # record that get_stray_paths would re-split into the wrong keys, say
+        # UNVERIFIED. Legal on POSIX, impossible on Windows, vanishingly rare
+        # in a repo — but the failure it replaces was silent.
+        if [[ $rel == *$'\n'* || $rel == *$'\t'* ]]; then
+            rm -f "$status_file" "$index_file"; return 1
+        fi
+
+        # Under -z a rename drops the ` -> ` and REVERSES the field order: the
+        # entry carries the destination and the source follows as its own
+        # NUL-terminated field. Consuming that field here is also what keeps the
+        # loop aligned — left in the stream it would parse as a bare entry whose
+        # first two characters are read as status letters.
+        if [[ ${xy:0:1} == [RC] || ${xy:1:1} == [RC] ]]; then
+            if IFS= read -r -d '' src && [ -n "$src" ]; then
+                if [[ $src == *$'\n'* || $src == *$'\t'* ]]; then
+                    rm -f "$status_file" "$index_file"; return 1
+                fi
+                out+=("$src"$'\t'"$xy:absent")
+            fi
         fi
 
         # A deleted path has no content to hash; 'absent' still distinguishes
         # it from any later state.
         full="$root/$rel"
         if [ -f "$full" ]; then
-            hash="$(sha256sum "$full" 2>/dev/null | cut -d' ' -f1)" || hash="absent"
-            [ -n "$hash" ] || hash="absent"
+            hash="$(sha256sum "$full" 2>/dev/null | cut -d' ' -f1)"
+            # An existing file that will not hash (sha256sum absent from PATH,
+            # permission denied, a Windows lock, an I/O error) is UNVERIFIED,
+            # not 'absent'. Writing 'absent' here would be a fabricated
+            # signature — and a CONSTANT one, so a leg rewriting this path
+            # compares equal before/after and the guard reports clean. That is
+            # the fail-open this whole file exists to refuse, so it is rc 1.
+            if [ -z "$hash" ]; then
+                rm -f "$status_file" "$index_file"; return 1
+            fi
         else
             hash="absent"
         fi
         idx="${index_blob[$rel]:--}"
         out+=("$rel"$'\t'"$xy:$hash:$idx")
-    done <<< "$status_out"
+    done < "$status_file"
 
+    rm -f "$status_file" "$index_file"
     if [ "${#out[@]}" -gt 0 ]; then
         printf '%s\n' "${out[@]}" | sort
     fi

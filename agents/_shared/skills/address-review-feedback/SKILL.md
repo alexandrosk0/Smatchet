@@ -74,10 +74,19 @@ Scaled to the item: a trivial round's resolution is one line.
    `fix` dispositions land and the build is clean, run the pipeline:
 
    ```bash
-   python agents/scripts/core/panel_verdicts.py --subject NN --round N > samples.json
+   python agents/scripts/core/panel_verdicts.py --subject NN --round N \
+       --authoring-harness <your harness tag, e.g. claude> > samples.json
    python scripts/dev/verifier-sidecar.py aggregate samples.json > verdict.json
    bash agents/scripts/core/review-ack.sh --record --branch --verdict verdict.json
    ```
+
+   `--authoring-harness` is **not optional in practice** — pass the harness you are running on. A
+   leg on that harness is not an independent backend no matter which model tag it carries, so it is
+   dropped from the score (its veto is still kept: self-reported bad news is trusted, good news is
+   not). If the adapter exits **3**, every leg was your own harness and none vetoed — there is
+   nothing independent to score, so skip the two lines below and record a presence-only ack
+   (`review-ack.sh --record --branch`, no `--verdict`). That is a normal degraded-roster outcome,
+   not a failure; note it in the close.
 
    `--branch` pins the ack to the committed branch diff as it stands when you record — i.e. after
    the fixes, which is the state heading into the close. A leg without a trailer is skipped with a

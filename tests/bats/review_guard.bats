@@ -34,7 +34,7 @@ setup() {
 }
 
 teardown() {
-    rm -rf "${REPO_TMP:-}" "${STATE_TMP:-}" "${NOREPO_TMP:-}"
+    rm -rf "${REPO_TMP:-}" "${STATE_TMP:-}" "${NOREPO_TMP:-}" "${STUB_TMP:-}"
 }
 
 # dirty <out-file> — run get_dirty_state on the fixture repo into a file.
@@ -165,6 +165,56 @@ dirty() {
     run get_stray_paths "$STATE_TMP/before" "$STATE_TMP/after" "$STATE_TMP/expected"
     [ "$status" -eq 0 ]
     [ "$output" = "tracked.txt" ]
+}
+
+@test "unhashable existing file: rc 1 (UNVERIFIED), never a fabricated 'absent'" {
+    # An existing dirty file that will not hash used to be recorded as 'absent'
+    # — the same CONSTANT signature a deleted path gets — so a leg rewriting it
+    # compared equal before/after and the guard reported clean. Simulated by
+    # taking sha256sum off PATH, which is exactly the real-world shape (a host
+    # without coreutils hashes NOTHING and every signature goes constant).
+    echo "in-flight work" > "$REPO_TMP/tracked.txt"
+    # Shadow sha256sum alone — taking all of PATH away would break bash itself
+    # and prove nothing about the guard.
+    STUB_TMP="$(mktemp -d)"
+    export STUB_TMP
+    printf '#!/bin/sh\nexit 1\n' > "$STUB_TMP/sha256sum"
+    chmod +x "$STUB_TMP/sha256sum"
+    PATH="$STUB_TMP:$PATH" run get_dirty_state "$REPO_TMP"
+    [ "$status" -eq 1 ]
+    # Must not have emitted a clean-looking scan on the way out.
+    [ -z "$output" ]
+}
+
+@test "path with a control character re-edited during round: stray (-z, not C-quoting)" {
+    # git C-quotes a path containing a quote/backslash/control char REGARDLESS of
+    # core.quotePath, so the pre--z parse never found it on disk, its signature
+    # went constant, and this re-edit read as clean. Windows cannot create such a
+    # name at all.
+    if ! touch "$REPO_TMP/we$(printf '\t')ird.txt" 2>/dev/null; then
+        skip "filesystem rejects control characters in filenames"
+    fi
+    rm -f "$REPO_TMP/we$(printf '\t')ird.txt"
+    weird="$REPO_TMP/quo\"te.txt"
+    if ! touch "$weird" 2>/dev/null; then
+        skip "filesystem rejects quotes in filenames"
+    fi
+    echo "in-flight work" > "$weird"
+    dirty "$STATE_TMP/before"
+    echo "leg overwrote it" > "$weird"
+    dirty "$STATE_TMP/after"
+    : > "$STATE_TMP/expected"
+    run get_stray_paths "$STATE_TMP/before" "$STATE_TMP/after" "$STATE_TMP/expected"
+    [ "$status" -eq 0 ]
+    [ "$output" = 'quo"te.txt' ]
+}
+
+@test "path containing a newline: rc 1 (output format cannot represent it)" {
+    if ! touch "$REPO_TMP/$(printf 'two\nlines').txt" 2>/dev/null; then
+        skip "filesystem rejects newlines in filenames"
+    fi
+    run get_dirty_state "$REPO_TMP"
+    [ "$status" -eq 1 ]
 }
 
 @test "rename records both sides as separate keys" {
