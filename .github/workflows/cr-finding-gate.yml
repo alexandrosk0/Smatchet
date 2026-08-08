@@ -41,9 +41,11 @@ permissions:
 
 concurrency:
   # Do NOT cancel in-progress: review/comment events fire in bursts, and a
-  # cancelled run leaves a red "cancelled" check on the commit. Each run is a
-  # few seconds and only posts a status (last write wins), so let them all
-  # complete rather than cancel.
+  # cancelled run leaves a red "cancelled" check on the commit. Each run only
+  # posts a status (last write wins), so let them all complete rather than
+  # cancel. NB "each run is a few seconds" was never true — a run that has to
+  # wait on CodeRabbit polls for up to POLL_BUDGET_SECONDS (see the action), so
+  # the timeouts below are sized against that, not against a few seconds.
   group: cr-finding-gate-${{ github.event.pull_request.number || github.event.issue.number }}
   cancel-in-progress: false
 
@@ -57,7 +59,12 @@ jobs:
   cr-gate:
     name: CR finding gate
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    # Sized against the action's poll budget (POLL_BUDGET_SECONDS, 180 s), NOT
+    # against a "few seconds" run: job > Evaluate step > poll budget, so a slow
+    # runner cannot kill the job before the gate posts a status. The old value
+    # was 5, which left the ~3 min poll loop sharing a 5 min budget with setup +
+    # checkout — congestion killed the step mid-poll and wedged the PR (#1954).
+    timeout-minutes: 12
     # PR events carry a pull_request payload (scope to develop). issue_comment
     # has only an issue payload — accept it ONLY when it's a CodeRabbit-authored
     # comment on a PR (that's exactly when CR signals "0 actionable" with no
@@ -96,9 +103,37 @@ jobs:
           echo "base=${base}" >> "$GITHUB_OUTPUT"
 
       - name: Evaluate CR findings
+        id: eval
         if: steps.pr.outputs.base == 'develop' && steps.pr.outputs.sha != ''
+        # STEP-level (not job-level) timeout is load-bearing: a step timeout
+        # cancels only this step, so the fallback poster below still runs. A
+        # job-level kill would take the fallback down with it.
+        timeout-minutes: 6
         uses: ./.github/actions/cr-finding-gate
         with:
           github-token: ${{ github.token }}
           pr-number: ${{ steps.pr.outputs.num }}
           head-sha: ${{ steps.pr.outputs.sha }}
+
+      # The whole point of this gate is that it always leaves a status behind.
+      # If the Evaluate step is killed by its own timeout-minutes (or dies on a
+      # runner fault) it posts nothing, and the PR wedges: the StatusContext
+      # keeps whatever value it had and nothing re-triggers this workflow. Post
+      # PENDING on its behalf so a later CR review event or a re-run still has a
+      # path to resolve it. The action runs `set +e` and exits 0 on every
+      # terminal verdict (incl. `post failure`), so outcome != success/skipped
+      # genuinely means "did not conclude".
+      - name: Post PENDING if the evaluation could not conclude
+        if: >-
+          always() && steps.eval.outcome != 'success' && steps.eval.outcome != 'skipped'
+          && steps.pr.outputs.base == 'develop' && steps.pr.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          gh api "repos/${{ github.repository }}/statuses/${{ steps.pr.outputs.sha }}" \
+            -f state=pending \
+            -f context='CR findings (0 actionable)' \
+            -f description='gate evaluation did not conclude (timeout/runner fault) — re-run or await CR' \
+            >/dev/null || echo "WARN: fallback status POST failed" >&2

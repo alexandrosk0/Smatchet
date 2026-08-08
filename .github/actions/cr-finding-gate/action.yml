@@ -285,11 +285,34 @@ runs:
         # StatusContext (no review/comment event re-triggers this workflow).
         # ~3 min total — long enough for a skip decision, short of a real
         # review (those re-trigger via pull_request_review events anyway).
+        #
+        # Bounded by a WALL-CLOCK deadline, not a fixed attempt count. The
+        # previous `ATTEMPTS=12` + `sleep 15` form only bounded the *sleeping*
+        # (165 s); its true cost was that plus 12 GraphQL round-trips, which is
+        # unbounded from this step's point of view. On a congested runner the
+        # job's timeout-minutes fired first and killed the step mid-`sleep`,
+        # BEFORE either terminal `post` ran — so the required check went
+        # non-terminal, the StatusContext kept whatever value it already had,
+        # and nothing re-triggered the workflow: the PR wedged with no
+        # self-healing path (observed on PR #1954). A deadline makes the exit
+        # time an invariant of this step rather than a consequence of API
+        # latency.
+        #
+        # POLL_BUDGET_SECONDS must stay below the Evaluate step's
+        # timeout-minutes, which must stay below the job's — asserted by
+        # tests/bats/cr_finding_gate.bats. The step-level timeout is what lets
+        # the workflow's `if: always()` fallback poster still run; a job-level
+        # kill would take the fallback down with it.
+        POLL_BUDGET_SECONDS="${POLL_BUDGET_SECONDS:-180}"
+        POLL_INTERVAL_SECONDS="${POLL_INTERVAL_SECONDS:-15}"
         any_fetch_ok=false   # set true by decide() on any successful fetch
-        ATTEMPTS=12
-        for i in $(seq 1 "$ATTEMPTS"); do
+        deadline=$(( SECONDS + POLL_BUDGET_SECONDS ))
+        while :; do
           decide   # exits on a terminal verdict; falls through on retry
-          if [ "$i" -lt "$ATTEMPTS" ]; then sleep 15; fi
+          # Stop once another interval plus the pass after it would not fit in
+          # the budget, so the window always closes with time left to post.
+          [ $(( SECONDS + POLL_INTERVAL_SECONDS )) -lt "$deadline" ] || break
+          sleep "$POLL_INTERVAL_SECONDS"
         done
         # Window exhausted. If not a single fetch succeeded, the GraphQL API was
         # down the whole time -> surface error. Otherwise CR simply hasn't
