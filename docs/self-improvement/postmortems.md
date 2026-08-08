@@ -34,6 +34,81 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-07 · PR #1962 · Merged past a CodeRabbit review that never happened (`cr-out-of-band` + `cr-disposition:cr-rate-limited`), and the escape detector reported the window clean
+
+### What escaped
+`fix(screenshot): make bucket-C user-info captures deterministic` (#1962) merged
+at `2026-08-06T13:50:08Z` as `a7fa2a32` with 34 checks green and **zero
+CodeRabbit review of the diff** — CR's account quota was exhausted, so it
+returned a status-only SUCCESS with no inline findings. The merge-gate poller
+correctly refused (`BLOCK: CodeRabbit rate-limited on a CODE PR — pausing for CR
+to re-review on quota recovery`), the block was escalated to the user, and the
+user authorised the documented escape hatch: `cr-out-of-band` +
+`cr-disposition:cr-rate-limited`. Gate behaviour was exactly as designed.
+
+The escape is the **second** gate: an override label on a merged PR is trigger 2
+of `postmortem-owed.sh`, which exists to nudge for this postmortem. It reported
+`no gate escapes owed a postmortem (last 20 merges clean)`. Four consecutive
+invocations agree — a deterministic miss, not a flake. Had the user not asked,
+the escape would have gone unrecorded and the CR-quota class would have shipped
+again with no ledger trace.
+
+### Root cause
+Two independent holes, only the second of which is a gate defect.
+
+**1. CR quota exhaustion has no lane.** The poller's rate-limit pause assumes
+quota recovers and CR re-reviews. When the account budget is spent for the
+period, "wait for CR" is unbounded, so the only terminal moves are *block
+indefinitely* or *override*. The override is the right call under
+`AI_POLICY.md` § Escalate-when-unvalidatable, and it was made with explicit user
+attestation — but it means a CODE diff reached `develop` with no bot review, and
+nothing downstream distinguishes that from a reviewed one.
+
+**2. The detector false-dedups on prose.** `has_entry()`
+([`postmortem-owed.sh:240-251`](../../agents/scripts/core/postmortem-owed.sh))
+runs two probes. Probe 2 is deliberately scoped to a heading line, its comment
+stating the intent — *"scoped to `^#+ …` so a #N mention in prose body can't
+false-suppress a real owe"*. Probe 1 is unscoped and scans the whole file:
+
+```
+grep -cE "PR #1962([^0-9]|$)"        → 2     # prose, inside an unrelated entry
+grep -cE "^#+ .*PR #1962([^0-9]|$)"  → 0     # no entry is actually filed
+```
+
+Both hits are body prose in the 2026-08-05 `#1937` entry (lines 2171, 2184),
+which cites #1962 as the determinism work its instance ratchet rests on. Citing
+a sibling PR is how these entries are normally written, so the failure mode is
+general: **any PR named in an existing entry's prose is permanently and silently
+exempted from ever being nudged.** The output is indistinguishable from a clean
+window — the same "mask discards the verdict rather than downgrading it" shape
+as the bucket-C golden mask. Because this is the detector *for* escapes, the
+hole doesn't leak one defect; it suppresses the mechanism that turns escapes
+into gates, and the exempted set grows as entries accumulate cross-references.
+
+### Preventing gate
+Scope probe 1 to entry headings exactly as probe 2 already is
+(`^#+ .*PR #N([^0-9]|$)`, matching the documented `## <date> · PR #N …` shape),
+splitting the `commit <sha>` alternation out to stay whole-file — `has_sha_entry`
+documents bare-sha matching as deliberate for triggers 3+4. Back it with a
+`tests/bats/` case asserting that a ledger containing only a *prose* `PR #N`
+mention still reports #N as owed while a real heading dedupes it — the property
+both probes are trying to express and neither tests. Optionally add an explicit
+`### Escaped PRs: #A, #B` field per entry and dedup on that, so heading prose
+style can drift without re-opening the hole.
+
+For hole 1 the override was legitimate — no gate is owed for the merge decision
+itself, but the CR-quota state deserves a distinct poller verdict
+(`cr-quota-exhausted`) separate from the recoverable rate-limit pause, so the
+attestation path is reached deliberately instead of by waiting out a timeout.
+
+### Eval case
+None — not agent-reviewable. Both holes are shell-level detector logic and
+CI-config gaps; there is no code smell or policy violation in a diff for a
+review agent to score. The regression is expressible as a bats case (above),
+which is the stronger form here.
+
+### Filed as
+[`categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md`](categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md)
 ## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
 
 ### What escaped
