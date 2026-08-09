@@ -100,7 +100,7 @@ bool DrawAllProjectsSection(State& state, AppController& app, const std::string&
                     projects = backend->Connectivity().ListProjects();
                 } catch (const std::exception& ex) {
                     err = ex.what();
-                } catch (...) {
+                } catch (...) { // catch-all-ok: surfaced via statePtr->fetchError, not swallowed
                     err = "unknown exception";
                 }
                 {
