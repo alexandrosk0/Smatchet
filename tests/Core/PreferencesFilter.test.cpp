@@ -191,7 +191,7 @@ TEST_CASE("PreferencesFilter — observed-id set accumulates and resets") {
 }
 
 TEST_CASE("PreferencesFilter — RecomputeMatchesNow drops a stale dynamic match") {
-    // Regression (PR #1993 review): a dynamic match injected for the keybindings
+    // Regression: a dynamic match injected for the keybindings
     // rows persists in the match set until the next query/language recompute —
     // Update() with an unchanged query skips RecomputeMatches(). If the mutation
     // that invalidated the injection (clearing the last matching hotkey) happens
