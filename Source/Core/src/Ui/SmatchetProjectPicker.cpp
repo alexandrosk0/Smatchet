@@ -8,6 +8,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "SmatchetProjectPicker_detail.h"
+#include "Tracker/TrackerBackendKind.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -23,12 +24,12 @@
 namespace SmatchetProjectPicker {
 
 void ResolveBackendKindAndEndpoint(const TrackerConfig& cfg, std::string& outBackendKind, std::string& outEndpoint) {
-    if (cfg.TrackerType == "Plane") {
+    if (smatchet::tracker::IsPlaneBackendType(cfg.TrackerType)) {
         outBackendKind = "Plane";
         outEndpoint = cfg.PlaneUrl + "|" + cfg.PlaneWorkspaceSlug;
         return;
     }
-    if (cfg.TrackerType == "Linear") {
+    if (smatchet::tracker::BackendIndexFromType(cfg.TrackerType) == smatchet::tracker::kBackendLinear) {
         outBackendKind = "Linear";
         outEndpoint = cfg.LinearBaseUrl + "|" + cfg.LinearTeamId;
         return;

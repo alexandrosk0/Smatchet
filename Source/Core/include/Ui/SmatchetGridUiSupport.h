@@ -4,6 +4,7 @@
 #include "SmatchetUiSession.h"
 #include "SpreadsheetState.h"
 #include "TicketGridModel.h"
+#include "Tracker/NewIssueInheritFields.h"
 #include "TrackerFieldSchema.h"
 
 #include <cstdint>

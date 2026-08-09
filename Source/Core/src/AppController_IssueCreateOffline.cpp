@@ -25,6 +25,7 @@
 #include "IssueDraft.h"
 #include "JiraClient.h"
 #include "ProjectResolver.h"
+#include "Tracker/NewIssueInheritFields.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
 #include "LocalCacheManager.h"
@@ -60,10 +61,7 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
     if (!tickets.empty()) {
         lastTicket = tickets.back();
     }
-    const std::vector<std::string>& inheritIds =
-        (cfg.TrackerType == "Plane")
-            ? cfg.NewIssueInheritFieldIdsPlane
-            : (cfg.TrackerType == "Linear") ? cfg.NewIssueInheritFieldIdsLinear : cfg.NewIssueInheritFieldIds;
+    const std::vector<std::string>& inheritIds = smatchet::tracker::NewIssueInheritFieldIdsFor(cfg);
     // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
     const std::string resolvedProject = smatchet::ResolveProjectForDraft(
         focusedContext().Backend ? &focusedContext().Backend->Connectivity() : nullptr, cfg.JqlQuery, lastTicket.id,
@@ -77,8 +75,8 @@ IssueDraft AppController::BuildDraftFromLastTicket(const TrackerConfig& cfg) con
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
         availableFieldsCopy = cat.AvailableFields;
     }
-    return IssueDraftHelpers::FromCachedTicket(lastTicket, availableFieldsCopy, resolvedProject,
-                                               cfg.DefaultIssueTypeId, cfg.DefaultIssueTypeName, inheritIds);
+    return IssueDraftHelpers::FromCachedTicket(lastTicket, availableFieldsCopy, resolvedProject, cfg.DefaultIssueTypeId,
+                                               cfg.DefaultIssueTypeName, inheritIds);
 }
 
 RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKey, const std::string& issueTypeId,
@@ -105,7 +103,7 @@ RequiredFieldSet AppController::GetRequiredFieldSet(const std::string& projectKe
         }
     }
     const auto cfg = ConfigManager::Load();
-    if (cfg.TrackerType == "Plane") {
+    if (smatchet::tracker::IsPlaneBackendType(cfg.TrackerType)) {
         result.RequiresIssueType = false;
     }
     return result; // empty -> hard minimum only

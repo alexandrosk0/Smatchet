@@ -437,10 +437,7 @@ void StartNewIssueDraft(AppController& app, UiDrawSession& d, ViewDefinition* ac
             }
         }
 
-        const std::vector<std::string>& inheritIds =
-            (d.cfg.TrackerType == "Plane")
-                ? d.cfg.NewIssueInheritFieldIdsPlane
-                : (d.cfg.TrackerType == "Linear") ? d.cfg.NewIssueInheritFieldIdsLinear : d.cfg.NewIssueInheritFieldIds;
+        const std::vector<std::string>& inheritIds = smatchet::tracker::NewIssueInheritFieldIdsFor(d.cfg);
         if (lastVisibleTicket) {
             const std::string activeViewQuery = activeViewForGrid ? activeViewForGrid->Jql : std::string();
             // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
