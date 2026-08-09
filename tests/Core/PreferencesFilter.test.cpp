@@ -189,3 +189,38 @@ TEST_CASE("PreferencesFilter — observed-id set accumulates and resets") {
     filter.ResetObservedSettingIds();
     CHECK(filter.ObservedSettingIds().empty());
 }
+
+TEST_CASE("PreferencesFilter — RecomputeMatchesNow drops a stale dynamic match") {
+    // Regression: a dynamic match injected for the keybindings
+    // rows persists in the match set until the next query/language recompute —
+    // Update() with an unchanged query skips RecomputeMatches(). If the mutation
+    // that invalidated the injection (clearing the last matching hotkey) happens
+    // without a query edit, the caller must be able to rebuild the base match set
+    // so the section does not stay visible with zero matching rows.
+    PreferencesFilter filter;
+    const char* const kBindingsId = "shortcuts.keyboard.bindings";
+    // A query that hits no schema descriptor (substring AND fuzzy tiers), so the
+    // dynamic injection is the only thing keeping the section alive.
+    filter.Update("zzzzqqqq", "en");
+    REQUIRE(filter.Active());
+    REQUIRE_FALSE(filter.ShowSetting(kBindingsId));
+
+    filter.AddDynamicMatch(kBindingsId);
+    CHECK(filter.ShowSetting(kBindingsId));
+    CHECK(filter.CategoryMatchCount("shortcuts") == 1);
+
+    // Same query, same language: Update() must NOT drop the injection (this is
+    // the steady-state the draw loop relies on between edits)...
+    filter.Update("zzzzqqqq", "en");
+    CHECK_FALSE(filter.MatchesRecomputedThisUpdate());
+    CHECK(filter.ShowSetting(kBindingsId));
+
+    // ...which is exactly why the mutation edge needs the explicit rebuild.
+    filter.RecomputeMatchesNow();
+    CHECK_FALSE(filter.ShowSetting(kBindingsId));
+    CHECK(filter.CategoryMatchCount("shortcuts") == 0);
+
+    // The caller's follow-up scan re-injects when rows still match.
+    filter.AddDynamicMatch(kBindingsId);
+    CHECK(filter.ShowSetting(kBindingsId));
+}

@@ -314,11 +314,17 @@ struct UiDrawSession {
     /// Live in-place settings filter, driven by prefsSearchBuf each frame from
     /// drawPreferencesWindow. Inactive (shows everything) while the query is empty.
     PreferencesFilter prefsFilter;
-    /// Does the live global query hit at least one keybinding row? Computed once per
-    /// frame in drawPreferencesWindow (the answer is needed before the nav rail draws,
-    /// and again later by the keybindings table itself — scanning twice would double
-    /// the per-frame command-label lookups). False while the filter is inactive.
+    /// Does the live global query hit at least one keybinding row? Cached in
+    /// drawPreferencesWindow (the answer is needed before the nav rail draws, and
+    /// again later by the keybindings table itself). Recomputed only on the edges
+    /// that can change it — a filter recompute (query edit / language switch) or a
+    /// binding mutation (prefsKeybindRowsMatchDirty) — because the scan takes the
+    /// command-registry lock and folds every row's label, which is real per-frame
+    /// cost while a query is merely *held*. False while the filter is inactive.
     bool prefsKeybindRowsMatchQuery = false;
+    /// Set by the keybindings editor whenever it mutates the binding list (rebind,
+    /// clear, enable toggle, add, reset) so the cached scan above reruns next frame.
+    bool prefsKeybindRowsMatchDirty = true;
     /// Collapsed PrefsSection ids, persisted as the comma-joined
     /// cfg.PreferencesCollapsedSections string. Parsed lazily on first
     /// Preferences draw (prefsCollapsedLoaded latch) — cfg is loaded after

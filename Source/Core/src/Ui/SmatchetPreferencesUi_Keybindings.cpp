@@ -319,6 +319,10 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
     if (mutated) {
         ui.MarkKeybindingsDirty();
         MarkPrefsDirty(d);
+        // Bindings changed under an active query: the cached "any row matches"
+        // answer in drawPreferencesWindow may now be stale (e.g. the last matching
+        // hotkey was just cleared). Force a rescan next frame.
+        d.prefsKeybindRowsMatchDirty = true;
     }
 }
 

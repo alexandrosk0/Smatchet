@@ -112,3 +112,23 @@ TEST_CASE("i18n-sweep quick-create popup keys resolve to French under fr-FR") {
               u8"Création rapide de ticket");
     }
 }
+
+TEST_CASE("preferences nav rail categories translate by English source under fr-FR") {
+    LanguageResetGuard restore;
+    SmatchetLocalization::SetLanguage("fr-FR");
+
+    // DrawPrefsNav renders each category label through the localized-ImGui wrappers,
+    // which resolve by English reverse lookup — the TitleEn string IS the key. Pin
+    // every rail entry so a deleted/renamed row can't silently drop a category back
+    // to English (the IA re-segmentation regression: the prefs.tab.* rows were the
+    // only exact-match "Appearance"/"Annotate" entries and their deletion left those
+    // two untranslated).
+    CHECK(std::string(SmatchetLocalization::TranslateSource("General")) == u8"Général");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Appearance")) == u8"Apparence");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Tracker")) == u8"Suivi");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Connections")) == u8"Connexions");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("AI & Voice")) == u8"IA et voix");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Editing")) == u8"Édition");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Shortcuts")) == u8"Raccourcis");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Annotate")) == u8"Annoter");
+}
