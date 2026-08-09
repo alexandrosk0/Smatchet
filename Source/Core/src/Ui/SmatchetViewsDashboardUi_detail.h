@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Views.h"
+#include "Tracker/TrackerBackendKind.h"
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>

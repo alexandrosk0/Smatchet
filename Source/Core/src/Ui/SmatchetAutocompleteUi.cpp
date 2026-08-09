@@ -217,8 +217,8 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                                const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
                                const std::vector<QuerySuggestion>& mergedItems) {
     const bool showList = !mergedItems.empty();
-    const bool waitingUser =
-        d.cfg.TrackerType != "Plane" && st.jqlAcpUserSearchFireAt > 0.0 && ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
+    const bool waitingUser = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) &&
+                             st.jqlAcpUserSearchFireAt > 0.0 && ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
     const bool showFooterOnly = !showList && (!st.jqlAcpAsyncUserError.empty() || waitingUser);
     if (!showList && !showFooterOnly) {
         return;
@@ -281,7 +281,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
                                              const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild) {
     (void)syncBuild;
-    if (d.cfg.TrackerType == "Plane" || !meta.UserValueToken) {
+    if (smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) || !meta.UserValueToken) {
         st.jqlAcpAsyncUserItems.clear();
         st.jqlAcpAsyncUserError.clear();
         st.jqlAcpUserSearchFireAt = 0.0;

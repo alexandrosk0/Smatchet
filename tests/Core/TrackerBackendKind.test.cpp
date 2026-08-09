@@ -11,6 +11,7 @@
 // than the one actually running.
 
 using smatchet::tracker::BackendIndexFromType;
+using smatchet::tracker::IsPlaneBackendType;
 using smatchet::tracker::kBackendGitHub;
 using smatchet::tracker::kBackendJira;
 using smatchet::tracker::kBackendLinear;
@@ -47,4 +48,21 @@ TEST_CASE("BackendIndexFromType — unknown/empty falls back to Jira, as the fac
     // No trimming by design: the factory does not trim either, so a padded value
     // must resolve the same way in both places rather than diverge again.
     CHECK(BackendIndexFromType(" github ") == kBackendJira);
+}
+
+TEST_CASE("IsPlaneBackendType — the JQL-editor gates classify Plane identically at every site") {
+    // The query editor, its autocomplete and the project pill all gate on "is this Plane?". They
+    // used to compare the raw string independently, so a hand-edited "plane" could select the JQL
+    // suggest-kind in the editor while the autocomplete suppressed user search — one config value
+    // classified two ways on one screen.
+    CHECK(IsPlaneBackendType("Plane"));
+    CHECK(IsPlaneBackendType("plane"));
+    CHECK(IsPlaneBackendType("PLANE"));
+    CHECK(IsPlaneBackendType("pLaNe"));
+    CHECK_FALSE(IsPlaneBackendType("Jira"));
+    CHECK_FALSE(IsPlaneBackendType("GitHub"));
+    CHECK_FALSE(IsPlaneBackendType("Linear"));
+    CHECK_FALSE(IsPlaneBackendType(""));
+    // Agrees with the ordinal mapping by construction.
+    CHECK(IsPlaneBackendType("plane") == (BackendIndexFromType("plane") == kBackendPlane));
 }
