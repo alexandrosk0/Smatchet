@@ -1192,6 +1192,14 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // answer (filter recompute, binding mutation); between edges the cached bool is
     // reused, and re-adding the dynamic match is an idempotent no-op.
     if (d.prefsFilter.MatchesRecomputedThisUpdate() || d.prefsKeybindRowsMatchDirty) {
+        if (d.prefsKeybindRowsMatchDirty && !d.prefsFilter.MatchesRecomputedThisUpdate()) {
+            // Binding mutation without a query/language edit: Update() skipped its
+            // recompute, so a previously injected dynamic match would survive even
+            // if the mutation removed the last matching row (e.g. its hotkey was
+            // just cleared). Rebuild the base match set first; the scan below
+            // re-injects the dynamic match only if a row still matches.
+            d.prefsFilter.RecomputeMatchesNow();
+        }
         d.prefsKeybindRowsMatchQuery = SmatchetPreferencesUiDetail::AnyKeybindingRowMatchesQuery(app, d);
         d.prefsKeybindRowsMatchDirty = false;
     }

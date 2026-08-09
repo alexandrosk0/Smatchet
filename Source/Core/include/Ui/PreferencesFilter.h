@@ -78,6 +78,14 @@ class PreferencesFilter {
     /// (it stands in for the dynamic content), otherwise this is a no-op.
     void AddDynamicMatch(const char* settingId);
 
+    /// Rebuild the match set from the schema index for the CURRENT query,
+    /// discarding any AddDynamicMatch injections. Call when the dynamic content
+    /// behind an injected match mutates without a query/language edit (e.g. the
+    /// last matching hotkey is cleared): Update() skips its recompute then, so
+    /// the stale injection would otherwise keep the section visible until the
+    /// next query change. Follow with a fresh scan + AddDynamicMatch.
+    void RecomputeMatchesNow() { RecomputeMatches(); }
+
     /// Matched / total descriptor counts for the "(showing N of M)" readout.
     /// MatchCount() is 0 while inactive.
     std::size_t MatchCount() const { return matched_.size(); }

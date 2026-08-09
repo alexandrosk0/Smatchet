@@ -146,9 +146,9 @@ const TranslationEntry kEntries[] = {
     // PreferencesSchema.cpp verbatim: the rail and PrefsSection render them through the
     // SmatchetLocalizedImGui wrappers, which resolve by English reverse lookup, so the
     // English column here IS the lookup key. Titles whose English text already appears
-    // earlier in this table (Tracker, Updates, Storage, Local database) are
-    // intentionally absent — first entry wins the reverse lookup and those existing
-    // rows already carry the right translation. Appearance and Annotate have no such
+    // elsewhere in this table (Tracker, Updates, Storage, Local database) are
+    // intentionally absent — those existing rows already carry the right translation,
+    // and duplicating them here would just add a redundant reverse-lookup entry. Appearance and Annotate have no such
     // earlier exact-match row (menu.* only has "Annotate..." with an ellipsis), so
     // they need their own entries here.
     {"prefs.cat.general", "General", u8"Général"},
