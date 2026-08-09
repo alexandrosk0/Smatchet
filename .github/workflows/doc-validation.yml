@@ -471,11 +471,25 @@ jobs:
   # anything. The exemption is an explicit login allow-list, NOT
   # `user.type == 'Bot'`: a future bot that opens *product* PRs must stay gated
   # by default. Guarded by tests/bats/capture_intent.bats.
+  #
+  # WORKFLOW-GENERATED PRs are exempt on the same reasoning, but keyed on the
+  # HEAD BRANCH rather than the login: a PR opened by a workflow through a
+  # fine-grained PAT is authored by the PAT's *human* owner (locks-render.yml's
+  # `bot/plan-locks-sync` shows as `alexandrosk0`), so a login allow-list can
+  # never catch it — #1942 sat permanently red on a body no human wrote and no
+  # human can keep written (locks-render force-pushes and re-opens the PR on a
+  # schedule; any hand-added `## Intent` is transient). `bot/` is the reserved
+  # namespace for workflow-generated branches, and the head must be in THIS repo
+  # — a fork can name a branch `bot/anything`, and while skipping a lint is not a
+  # privileged action, the exemption should still not be forgeable from outside.
+  # Product PRs never live under `bot/`, so the default stays gated.
   pr-intent-lint:
     name: Intent section
     if: >-
       github.event_name == 'pull_request'
       && github.event.pull_request.user.login != 'dependabot[bot]'
+      && !(startsWith(github.event.pull_request.head.ref, 'bot/')
+      && github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
