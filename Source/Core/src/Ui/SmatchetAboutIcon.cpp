@@ -2,6 +2,7 @@
 
 #include "Logger.h"
 #include "Persistence/SmatchetIcoDecode.h"
+#include "Ui/AboutIconLatchPure.h"
 
 #include <string>
 #include <vector>
@@ -26,16 +27,9 @@ namespace {
 
 const char* const kAboutIconCacheKey = "builtin:about-icon";
 
-// The DECODE is deterministic — the same baked bytes fail identically every frame — so a decode
-// failure latches permanently and costs one log line, not one per frame.
-bool g_aboutIconDecodeFailed = false;
-
-// The UPLOAD is not. GetOrCreateFromRgba refuses while the renderer has not yet advertised
-// ImGuiBackendFlags_RendererHasTextures, which is a property of the backend's state rather than of
-// the icon; the cache can also evict this entry and be re-asked later. Latching on that traded one
-// unlucky frame for a glyph-only icon for the whole session, so the retry stays live and only the
-// LOG is suppressed after the first failure.
-bool g_aboutIconUploadWarned = false;
+// Failure-latch state. The policy — which failures are permanent and when to log — lives in
+// Ui/AboutIconLatchPure.h so it is testable without ImGui or a live texture backend.
+AboutIconLatch g_aboutIconLatch;
 
 // Decoded bytes held ONLY while an upload has yet to succeed, so a renderer that never gains
 // texture support costs one decode rather than one per frame on a draw path. Released as soon as
@@ -50,7 +44,7 @@ bool TryGetAboutIconTexture(SmatchetLoadedIconTexture& out) {
     if (SmatchetImageTextureCache::TryGetCached(kAboutIconCacheKey, out)) {
         return true;
     }
-    if (g_aboutIconDecodeFailed) {
+    if (AboutIconAttemptsBlocked(g_aboutIconLatch)) {
         return false;
     }
 
@@ -59,9 +53,11 @@ bool TryGetAboutIconTexture(SmatchetLoadedIconTexture& out) {
         std::string error;
         if (!smatchet::icons::DecodeIcoToRgba(kSmatchetIconIcoBytes, sizeof(kSmatchetIconIcoBytes), g_aboutIconRgba,
                                               g_aboutIconWidth, g_aboutIconHeight, error)) {
-            g_aboutIconDecodeFailed = true;
+            const AboutIconFailureAction action = OnAboutIconFailure(IconLoadStep::Decode, g_aboutIconLatch);
             g_aboutIconRgba.clear(); // DecodeIcoToRgba clears on entry, but do not rely on that here
-            LOG_WARN("About: app icon decode failed (%s); falling back to a glyph.", error.c_str());
+            if (action.shouldLog) {
+                LOG_WARN("About: app icon decode failed (%s); falling back to a glyph.", error.c_str());
+            }
             return false;
         }
     }
@@ -69,10 +65,10 @@ bool TryGetAboutIconTexture(SmatchetLoadedIconTexture& out) {
     Result<SmatchetLoadedIconTexture> uploaded = SmatchetImageTextureCache::GetOrCreateFromRgba(
         kAboutIconCacheKey, g_aboutIconRgba, g_aboutIconWidth, g_aboutIconHeight);
     if (!uploaded) {
-        // No latch: the usual cause is the renderer not yet advertising texture support, which a
+        // Not a latch: the usual cause is the renderer not yet advertising texture support, which a
         // later frame can satisfy. Warn once so a genuinely permanent failure is not silent either.
-        if (!g_aboutIconUploadWarned) {
-            g_aboutIconUploadWarned = true;
+        const AboutIconFailureAction action = OnAboutIconFailure(IconLoadStep::Upload, g_aboutIconLatch);
+        if (action.shouldLog) {
             LOG_WARN("About: app icon upload failed (%s); falling back to a glyph (will retry).",
                      uploaded.error().c_str());
         }
@@ -83,9 +79,11 @@ bool TryGetAboutIconTexture(SmatchetLoadedIconTexture& out) {
     out = uploaded.value();
     return true;
 #else
-    // No bytes were baked into this build — that never changes, so latch it.
-    g_aboutIconDecodeFailed = true;
-    LOG_WARN("About: no app icon was baked into this build; falling back to a glyph.");
+    // No bytes were baked into this build — that never changes, so it latches.
+    const AboutIconFailureAction action = OnAboutIconFailure(IconLoadStep::NoBytesBaked, g_aboutIconLatch);
+    if (action.shouldLog) {
+        LOG_WARN("About: no app icon was baked into this build; falling back to a glyph.");
+    }
     return false;
 #endif
 }

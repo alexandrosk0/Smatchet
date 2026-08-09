@@ -432,7 +432,7 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         }
 
         ImGui::Spacing();
-        const bool isPlane = d.cfg.TrackerType == "Plane";
+        const bool isPlane = smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType);
         ImGui::AlignTextToFramePadding();
         ImGui::TextUnformatted(isPlane ? "Plane filter" : "JQL");
         ImGui::SameLine();
@@ -892,7 +892,8 @@ void SmatchetUI::drawViewsModals(ViewsDashboardDrawCtx& ctx) {
         // empty target falls back to the active view (back-compat for callers that only set the
         // show flag).
         const std::string targetId = d.viewsPendingDeleteId.empty() ? activeView->Id : d.viewsPendingDeleteId;
-        const std::string targetName = SmatchetViewsDashboardUiDetail::FindViewName(ctx.store, targetId, activeView->Name);
+        const std::string targetName =
+            SmatchetViewsDashboardUiDetail::FindViewName(ctx.store, targetId, activeView->Name);
         ImGui::Text("Delete view \"%s\"? This cannot be undone.", targetName.c_str());
         ImGui::Spacing();
         SmatchetPushDestructiveButtonColors();

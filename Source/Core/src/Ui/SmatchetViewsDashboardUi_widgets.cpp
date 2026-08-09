@@ -244,7 +244,7 @@ namespace {
 void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
     const std::string currentJql(d.viewJqlEditor.buf);
     const ITrackerBackend* backend = app.GetTrackerBackend();
-    const bool isPlane = d.cfg.TrackerType == "Plane";
+    const bool isPlane = smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType);
     const std::string backendKind = isPlane ? std::string("Plane") : std::string("Jira");
     const std::string endpoint =
         isPlane ? (d.cfg.PlaneUrl + std::string("|") + d.cfg.PlaneWorkspaceSlug) : d.cfg.Domain;
@@ -322,7 +322,8 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     jqlCb.users = &app.GetAvailableUsers();
     jqlCb.suggestBuild = &jqlSuggestBuild;
     jqlCb.meta = &jqlMeta;
-    jqlCb.kind = d.cfg.TrackerType == "Plane" ? TrackerQuerySuggestKind::PlaneFilter : TrackerQuerySuggestKind::JiraJql;
+    jqlCb.kind = smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) ? TrackerQuerySuggestKind::PlaneFilter
+                                                                          : TrackerQuerySuggestKind::JiraJql;
 
     if (st.jqlAcpWantsJqlInputFocus) {
         ImGui::SetKeyboardFocusHere(0);
@@ -380,7 +381,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
                      [&](const auto& a) { return seen.insert(a.Insert).second; });
     }
 
-    const bool waitingUser = d.cfg.TrackerType != "Plane" && jqlMeta.UserValueToken &&
+    const bool waitingUser = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) && jqlMeta.UserValueToken &&
                              jqlMeta.UserSearchPrefix.size() >= 2 && st.jqlAcpUserSearchFireAt > 0.0 &&
                              ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
     const bool jqlAcpOpen =

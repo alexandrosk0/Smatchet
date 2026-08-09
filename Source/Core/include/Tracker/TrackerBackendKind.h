@@ -37,5 +37,12 @@ inline int BackendIndexFromType(const std::string& trackerType) {
     return kBackendJira;
 }
 
+/// Convenience for the many "is this Plane?" gates (Plane has no user-search endpoint and uses a
+/// filter grammar rather than JQL). Same rule as BackendIndexFromType, so a hand-edited "plane"
+/// cannot classify one way in the query editor and another in the autocomplete it drives.
+inline bool IsPlaneBackendType(const std::string& trackerType) {
+    return BackendIndexFromType(trackerType) == kBackendPlane;
+}
+
 } // namespace tracker
 } // namespace smatchet

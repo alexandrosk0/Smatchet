@@ -5,7 +5,6 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
-#include "Tracker/TrackerBackendKind.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -22,15 +21,6 @@
 #include <unordered_set>
 
 namespace {
-
-/// Plane exposes no user-search endpoint, so both gates below key on "is this Plane?".
-/// Routed through the shared rule rather than comparing the raw string: `TrackerType` is
-/// hand-editable in smatchet_config.json, and an exact match let "plane" take the non-Plane
-/// branch and fire a user search the backend cannot serve. Same class as the Preferences
-/// backend-index defect fixed in #1989.
-bool IsPlaneBackend(const std::string& trackerType) {
-    return smatchet::tracker::BackendIndexFromType(trackerType) == smatchet::tracker::kBackendPlane;
-}
 
 static void MergeAsyncUserSuggestionsIntoBuild(const JqlEditorState& st, QuerySuggestBuild& b) {
     std::unordered_set<std::string> seen;
@@ -227,8 +217,8 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                                const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
                                const std::vector<QuerySuggestion>& mergedItems) {
     const bool showList = !mergedItems.empty();
-    const bool waitingUser = !IsPlaneBackend(d.cfg.TrackerType) && st.jqlAcpUserSearchFireAt > 0.0 &&
-                             ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
+    const bool waitingUser = !smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) &&
+                             st.jqlAcpUserSearchFireAt > 0.0 && ImGui::GetTime() < st.jqlAcpUserSearchFireAt;
     const bool showFooterOnly = !showList && (!st.jqlAcpAsyncUserError.empty() || waitingUser);
     if (!showList && !showFooterOnly) {
         return;
@@ -291,7 +281,7 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
                                              const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild) {
     (void)syncBuild;
-    if (IsPlaneBackend(d.cfg.TrackerType) || !meta.UserValueToken) {
+    if (smatchet::tracker::IsPlaneBackendType(d.cfg.TrackerType) || !meta.UserValueToken) {
         st.jqlAcpAsyncUserItems.clear();
         st.jqlAcpAsyncUserError.clear();
         st.jqlAcpUserSearchFireAt = 0.0;
