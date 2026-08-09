@@ -67,7 +67,8 @@ void PreferencesFilter::Update(const char* query, const std::string& uiLanguage)
     }
     const std::string incoming = query != nullptr ? query : "";
     queryChanged_ = incoming != queryRaw_;
-    if (languageChanged || queryChanged_) {
+    matchesRecomputed_ = languageChanged || queryChanged_;
+    if (matchesRecomputed_) {
         queryRaw_ = incoming;
         queryLower_ = ToLowerFold(incoming);
         RecomputeMatches();

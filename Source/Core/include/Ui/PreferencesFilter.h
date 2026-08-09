@@ -53,6 +53,14 @@ class PreferencesFilter {
     /// without being yanked back on the next frame.
     bool QueryChangedThisUpdate() const { return queryChanged_; }
 
+    /// True when the most recent Update() rebuilt the match set (query edit or
+    /// language change). Broader than QueryChangedThisUpdate(): a language
+    /// switch re-indexes translated labels without the query text changing.
+    /// Callers that cache derived match state (the keybindings dynamic-row
+    /// scan) key their recompute off this edge so the cache never outlives the
+    /// match set it was derived from.
+    bool MatchesRecomputedThisUpdate() const { return matchesRecomputed_; }
+
     /// True when the setting should draw. Always true on an empty query (no
     /// lookup on the non-searching hot path). Unknown ids fail OPEN — a widget
     /// whose id is missing from the schema must stay visible, and the drift
@@ -107,6 +115,7 @@ class PreferencesFilter {
     std::string indexedLanguage_;
     bool indexBuilt_ = false;
     bool queryChanged_ = false;
+    bool matchesRecomputed_ = false;
     bool recordObserved_ = false;
     std::vector<Entry> index_;
     std::unordered_set<std::string> matched_;

@@ -1188,8 +1188,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // filter cannot see a command-name query. Fold the answer back in here — after
     // Update(), before anything reads the result — so the match readout, the rail's
     // enabled state, the auto-switch target and the section's own visibility all agree
-    // on the same frame.
-    d.prefsKeybindRowsMatchQuery = SmatchetPreferencesUiDetail::AnyKeybindingRowMatchesQuery(app, d);
+    // on the same frame. The scan itself only reruns on the edges that can change its
+    // answer (filter recompute, binding mutation); between edges the cached bool is
+    // reused, and re-adding the dynamic match is an idempotent no-op.
+    if (d.prefsFilter.MatchesRecomputedThisUpdate() || d.prefsKeybindRowsMatchDirty) {
+        d.prefsKeybindRowsMatchQuery = SmatchetPreferencesUiDetail::AnyKeybindingRowMatchesQuery(app, d);
+        d.prefsKeybindRowsMatchDirty = false;
+    }
     if (d.prefsKeybindRowsMatchQuery) {
         d.prefsFilter.AddDynamicMatch("shortcuts.keyboard.bindings");
     }
