@@ -7,23 +7,27 @@
   skill says to use it "proactively before opening a PR". On PR #1996 the gate's
   other steps were either run or genuinely n/a (no strict-zone C++ touched, so
   the dual-target `/WX` build, `ctest`, and the leaf-`AGENTS.md` self-review did
-  not apply). **The review step was simply not run.** It happened ~15 commits
+  not apply). **The review step was simply not run.** It happened 14 commits
   later, only because the user asked "have you code reviewed the changes?".
 
   **Measured cost on that one PR**, all of it the churn `reduce-coderabbit-review-spend`
   Slice 1 exists to prevent:
 
-  - ~8 CodeRabbit review cycles across 15 commits.
+  - ~8 completed CodeRabbit review cycles across the PR's 16 commits.
   - CodeRabbit's adaptive per-developer limit hit repeatedly (27–49 min waits,
     three `@coderabbitai review` requests answered only by the plan/rate-limit
     note). The rate-limiting that dominated the session was substantially
     self-inflicted by this PR's own churn.
   - Cursor Bugbot's usage cap hit on at least three separate heads.
   - **Four locally-knowable defects reached CI/CR** that the review found the
-    moment it finally ran: the CWD-relative glob expansion, the develop-side
-    half-set enumeration, the silently-dead grace cutoff, and two docs this PR
-    itself falsified. None needed CI, a reviewer, or a running gate to find —
-    only reading the diff.
+    moment it finally ran: the develop-side half-set glob enumeration, the
+    silently-dead grace cutoff, and two docs this PR itself falsified. None
+    needed CI, a reviewer, or a running gate to find — only reading the diff.
+    (A fifth of the same class, the CWD-relative glob expansion, was caught by
+    CodeRabbit as a *trivial* nitpick and escalated on inspection. A pre-push
+    review would plausibly have found it too, but the credit is CodeRabbit's,
+    not the self-review's — and this entry got that attribution wrong on its
+    first draft, caught only by re-checking before merge.)
 
   **The structural point, which outlives this PR.** The automatic backstop
   (`scripts/git-hooks/pre-push` step D) mirrors the *mechanical* required checks
