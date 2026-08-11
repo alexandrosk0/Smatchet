@@ -260,6 +260,46 @@ _add_devonly_rule() {
     [[ "$output" == "stale" ]]
 }
 
+@test "glob: matching honours bash's leading-dot rule, like pathname expansion" {
+    # `case` matches a dot-prefixed segment against `*`; pathname expansion does
+    # not. Left unequal, the develop side would admit `rules/.hidden/rule.sh` that
+    # the local glob can never produce, and a checkout with nothing wrong would
+    # read `stale` permanently (CodeRabbit, PR #1996). Neither `*` nor `[.]`
+    # matches a leading dot — only a literal one does.
+    run bash -c '. "$LIB"
+        script_freshness_glob_match "rules/*/*.sh"       "rules/.hidden/rule.sh"  && echo DOT_VIA_STAR
+        script_freshness_glob_match "rules/[.]hidden/*.sh" "rules/.hidden/rule.sh" && echo DOT_VIA_BRACKET
+        script_freshness_glob_match "rules/.hidden/*.sh" "rules/.hidden/rule.sh"  && echo DOT_VIA_LITERAL
+        script_freshness_glob_match "rules/*/*.sh"       "rules/visible/rule.sh"  && echo VISIBLE_OK
+        true'
+    [ "$status" -eq 0 ]
+    # Both must be absent: `*` and `[.]` do not match a leading dot.
+    [[ "$output" != *"DOT_VIA_STAR"* ]]
+    [[ "$output" != *"DOT_VIA_BRACKET"* ]]
+    # An explicit literal dot does match, and ordinary segments are unaffected.
+    [[ "$output" == *"DOT_VIA_LITERAL"* ]]
+    [[ "$output" == *"VISIBLE_OK"* ]]
+}
+
+@test "glob: matcher and real pathname expansion agree on a hidden directory" {
+    # The property that actually matters is AGREEMENT between the two sides, so
+    # assert it against the shell rather than against my model of the shell.
+    mkdir -p "$TMP/agree/rules/.hidden" "$TMP/agree/rules/visible"
+    : > "$TMP/agree/rules/.hidden/rule.sh"
+    : > "$TMP/agree/rules/visible/rule.sh"
+    run bash -c 'cd "$TMP/agree"; . "$LIB"
+        for f in rules/*/*.sh; do
+            script_freshness_glob_match "rules/*/*.sh" "$f" || echo "DISAGREE_LOCAL:$f"
+        done
+        # The hidden path exists but pathname expansion excluded it; the matcher
+        # must exclude it too.
+        script_freshness_glob_match "rules/*/*.sh" "rules/.hidden/rule.sh" && echo DISAGREE_DEV
+        true'
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"DISAGREE_LOCAL"* ]]
+    [[ "$output" != *"DISAGREE_DEV"* ]]
+}
+
 @test "glob: matching treats / as a hard boundary, like pathname expansion" {
     # `case "$path" in $pattern)` lets `*` swallow `/`, which would make the develop
     # side match paths the local shell glob never produces — the two halves of the

@@ -113,6 +113,20 @@ script_freshness_glob_match() {  # <pattern> <relpath>
     while :; do
         case "$_pat" in */*) _ps="${_pat%%/*}"; _pat="${_pat#*/}" ;; *) _ps="$_pat"; _pat="" ;; esac
         case "$_pth" in */*) _hs="${_pth%%/*}"; _pth="${_pth#*/}" ;; *) _hs="$_pth"; _pth="" ;; esac
+        # Bash's leading-dot rule, which `case` does NOT implement: pathname
+        # expansion never matches a segment beginning with `.` unless the pattern
+        # segment begins with a LITERAL dot. `*` does not match it, and neither
+        # does `[.]` — verified, not assumed.
+        #
+        # Without this the two sides of the comparison disagree: the local side is
+        # produced by real pathname expansion (hidden files excluded), while the
+        # develop side ran through this matcher (hidden files included). A
+        # develop-only `rules/.hidden/rule.sh` would then be appended as a
+        # develop-side component the local glob can never produce, and the verdict
+        # would read `stale` forever on a checkout that is perfectly current.
+        case "$_hs" in
+            .*) case "$_ps" in .*) ;; *) return 1 ;; esac ;;
+        esac
         # shellcheck disable=SC2254  # $_ps is a glob pattern here, by design.
         case "$_hs" in $_ps) ;; *) return 1 ;; esac
         if [ -z "$_pat" ] && [ -z "$_pth" ]; then return 0; fi
