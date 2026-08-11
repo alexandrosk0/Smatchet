@@ -708,12 +708,12 @@ JSON
     [[ "$output" == *"no gate escapes owed"* ]]
 }
 
-@test "required-absent: PRESENT-but-queued is NOT absent (absent != pending)" {
-    # The whole point of the signal is that it distinguishes "never reported" from
-    # "reported and failed" AND from "still running". A required context sitting in
-    # QUEUED has produced a rollup row, so it is present — not an absence escape.
-    # (It is also not red, so it owes nothing here; blocking on pending is
-    # merge-gates.sh's job, pre-merge.)
+@test "required-absent: PRESENT-but-queued is NOT absent (it is the never-terminal signal instead)" {
+    # The absent signal distinguishes "never reported" from "reported and failed" AND
+    # from "still running". A required context sitting in QUEUED has produced a rollup
+    # row, so it is present — not an ABSENCE escape. It is still an escape, just a
+    # differently-named one: see § required-never-terminal below. Asserting both here
+    # is the point — the two signals must partition this case, not overlap on it.
     export POSTMORTEM_ABSENT_GRACE_SECONDS=0
     prlist <<'JSON'
 [{"number":8003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f3"},"labels":[],
@@ -724,6 +724,104 @@ JSON
 JSON
     run_detector
     [[ "$output" != *"required-absent"* ]]
+    [[ "$output" == *"required-never-terminal: Perf PR-fast (windows-2022)"* ]]
+}
+
+# ============================================================================
+# required-never-terminal — #1964's actual shape (infra P1). A required context
+# can be PRESENT and still never have reported: #1964 merged with ten contexts
+# non-green, six still `queued`. Invisible to every other signal — the absence
+# check sees it as present, and the red-check curation requires a TERMINAL
+# verdict, so QUEUED/IN_PROGRESS is neither red nor absent.
+# ============================================================================
+
+@test "never-terminal: the #1964 shape (merged with required contexts still queued) owes" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8101,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8101"* ]]
+    [[ "$output" == *"required-never-terminal: Test-delta gate, Windows + MSVC"* ]]
+    # The one that DID finish must not be named.
+    [[ "$output" != *"required-never-terminal: Test-delta gate, Windows + MSVC, Perf"* ]]
+}
+
+@test "never-terminal: an all-terminal rollup owes nothing (negative canary)" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8102,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"NEUTRAL","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "never-terminal: a NON-required context left queued is not an escape" {
+    # Only branch-protection-required contexts can block a merge, so only they owe
+    # a postmortem for never finishing. An advisory lane left queued is normal.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8103,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Some advisory lane","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+}
+
+@test "never-terminal: a PENDING StatusContext (not a CheckRun) counts" {
+    # The rollup mixes CheckRun and StatusContext nodes; a required context supplied
+    # as a status (CodeRabbit's `CR findings` shape) stuck at PENDING never reported
+    # either, and must not slip through on node type.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,CR findings (0 actionable)"
+    prlist <<'JSON'
+[{"number":8104,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g4"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: CR findings (0 actionable)"* ]]
+}
+
+@test "never-terminal: a merge inside the grace window is NOT judged (mid-flight != stuck)" {
+    # A check that was merely running at merge reaches a terminal state within
+    # minutes. Judging inside the lag window would flag every healthy fast merge.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=3600
+    printf '[{"number":8105,"mergedAt":"%s","mergeCommit":{"oid":"g5"},"labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},{"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    [[ "$output" != *"PR #8105"* ]]
+}
+
+@test "never-terminal: latest-run dedupe — a QUEUED rerun beside an earlier SUCCESS still counts" {
+    # Same dedupe rule the red-check curation uses: the LATEST run per context wins.
+    # A re-run sitting queued means the context's current state never reported, even
+    # though an older run of it did.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8106,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g6"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T08:00:00Z"},
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:30:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: Test-delta gate"* ]]
 }
 
 @test "required-absent: the #1941 --admin merge (zero rollup, no red, no label) owes" {

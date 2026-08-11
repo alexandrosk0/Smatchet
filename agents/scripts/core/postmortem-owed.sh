@@ -527,7 +527,25 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
         | select(length > 0)
       ] | unique | join("|||") ),
     ( if ((.mergedAt // "") | length) == 0 then "1"
-      elif (.mergedAt < "__CUTOFF__") then "1" else "0" end )
+      elif (.mergedAt < "__CUTOFF__") then "1" else "0" end ),
+    ( (__REQ_CTX__) as $reqNames
+      | [ ( (.statusCheckRollup // [])
+            | group_by(if .__typename == "CheckRun" then "C " + (.name // "")
+                       else "S " + (.context // "") end)
+            | map(sort_by(.startedAt // .completedAt // .createdAt // "") | .[-1])
+            | .[] )
+          | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $n
+          | select(
+              ($reqNames | any(. == $n))
+              and
+              (
+                (.__typename == "CheckRun" and ((.status // "") != "COMPLETED"))
+                or
+                (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED")))
+              )
+            )
+          | $n
+        ] | unique | join(", ") )
   ] | @tsv'
 JQ_ROWS="${JQ_ROWS//__SCAN_N__/$SCAN_N}"
 JQ_ROWS="${JQ_ROWS//__REQ_CTX__/$REQ_CTX_JSON}"
@@ -540,15 +558,17 @@ while IFS= read -r row; do
     # fields — a row with empty labels but a real red-check ("num⇥mc⇥⇥check")
     # would shift the check into `labels` and blank `redchecks`, silently missing
     # the single most common escape (red required check, no override label).
-    # Parameter expansion preserves empty fields. @tsv always emits 6 fields
+    # Parameter expansion preserves empty fields. @tsv always emits 7 fields
     # (field 5 = the `|||`-joined PRESENT context names, for the absence checks;
     # field 6 = "1" when the merge is older than the run-creation grace window,
-    # i.e. old enough to judge absence — see $ABSENT_GRACE_SECONDS).
+    # i.e. old enough to judge absence — see $ABSENT_GRACE_SECONDS;
+    # field 7 = required contexts PRESENT but never terminal — see below).
     num="${row%%$'\t'*}";         row="${row#*$'\t'}"
     mergecommit="${row%%$'\t'*}"; row="${row#*$'\t'}"
     labels="${row%%$'\t'*}";      row="${row#*$'\t'}"
     redchecks="${row%%$'\t'*}";   row="${row#*$'\t'}"
-    present_names="${row%%$'\t'*}"; absent_judgeable="${row#*$'\t'}"
+    present_names="${row%%$'\t'*}";   row="${row#*$'\t'}"
+    absent_judgeable="${row%%$'\t'*}"; req_nonterminal="${row#*$'\t'}"
     [ -z "$num" ] && continue
     [ -n "$mergecommit" ] && merged_commits="$merged_commits $mergecommit"
     has_entry "$num" && continue
@@ -627,6 +647,27 @@ while IFS= read -r row; do
         if [ -n "$req_absent_names" ]; then
             trigger="${trigger:+$trigger; }required-absent: ${req_absent_names}"
         fi
+    fi
+    # Required-context NEVER-TERMINAL cross-check — the OTHER half of the same hole
+    # (required-check-that-never-reports-is-invisible, infra P1; #1964's actual shape).
+    # A required context can be PRESENT in the rollup and still never have reported:
+    # #1964 merged with ten contexts non-green, six of them still `queued`. That is
+    # invisible to every signal here — the absent check above sees it as present, and
+    # the red-check curation deliberately requires a TERMINAL verdict, so a run stuck
+    # in QUEUED/IN_PROGRESS is neither. The merge went past a check that never produced
+    # a conclusion, which is the same escape as absence wearing a different mask.
+    #
+    # Judged only outside the grace window, where it becomes unambiguous: a check that
+    # was merely mid-flight at merge reaches a terminal state within minutes, so one
+    # still non-terminal an hour later never finished at all. That is why this needs no
+    # timing heuristic of its own — it reuses $absent_judgeable and reads a fact, not a
+    # guess. (The infra entry proposed a head_sha-mismatch probe for #1964 instead;
+    # that does not fit the mechanism — the rollup is fetched via `commits(last: 1)`,
+    # so it is scoped to the PR's current head by construction and a foreign-sha run
+    # cannot appear in it. Non-terminality is the property that actually distinguishes
+    # the #1964 rollup from a healthy one.)
+    if [ "$absent_judgeable" = "1" ] && [ -n "$req_nonterminal" ]; then
+        trigger="${trigger:+$trigger; }required-never-terminal: ${req_nonterminal}"
     fi
     # Absence-present cross-check (merge-gate-absence-blind-nonrequired-allowlist,
     # PR-3): an allow-listed NON-required check that is configured to always run on
