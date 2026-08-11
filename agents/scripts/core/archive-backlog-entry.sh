@@ -223,11 +223,55 @@ MD
     check "](process/2026-08-07-other.md)"
     check "](https://example.com/a.md)"
     check "](#z)"
-    if [ "$fail" -ne 0 ]; then
+    # selftest: asserts-failure — the positive checks above only prove the happy
+    # path, and a re-depth that silently no-ops would satisfy every one of them if
+    # the harness itself were broken. These feed known-bad input and require a
+    # REFUSAL, so the selftest can distinguish "the transform works" from "nothing
+    # is being checked". (Same false-green shape this script exists to close: a
+    # check that reports success without verifying anything.)
+    neg_fail=0
+    # Assert the REASON, not just a non-zero exit. A bare "it exited non-zero"
+    # negative is vacuous here: remove any one guard and the script still dies
+    # further downstream for an unrelated reason, so the assertion passes while
+    # testing nothing. (Verified: all three of these passed with their own guard
+    # deleted, until they were pinned to the specific refusal message.)
+    expect_refusal() {  # <label> <stderr-fragment> <args...>
+        local _label="$1" _want="$2"; shift 2
+        local _err _rc=0
+        _err="$( ( "$@" ) 2>&1 >/dev/null )" || _rc=$?
+        if [ "$_rc" -eq 0 ]; then
+            echo "  selftest NEGATIVE MISS: $_label was accepted, expected refusal" >&2
+            neg_fail=1
+            return
+        fi
+        case "$_err" in
+            *"$_want"*) ;;
+            *) echo "  selftest NEGATIVE MISS: $_label refused for the WRONG reason (wanted '$_want', got: ${_err%%$'\n'*})" >&2
+               neg_fail=1 ;;
+        esac
+    }
+    expect_refusal "path outside categories/<cat>/" "expected docs/self-improvement/categories" \
+        bash "$ARCHIVE_DIR/archive-backlog-entry.sh" docs/self-improvement/categories/applied.md
+    expect_refusal "missing entry file" "not found" \
+        bash "$ARCHIVE_DIR/archive-backlog-entry.sh" docs/self-improvement/categories/process/no-such-entry.md
+    expect_refusal "two entries at once" "one entry at a time" \
+        bash "$ARCHIVE_DIR/archive-backlog-entry.sh" \
+            docs/self-improvement/categories/process/a.md \
+            docs/self-improvement/categories/process/b.md
+    # The positive harness must itself be falsifiable: if `rebase` stopped
+    # normalizing, this un-normalized form would survive and every check() above
+    # would still pass, since they only look for the correct strings.
+    case "$got" in
+        *"](process/../../agent-rules/ship-loops.md)"*)
+            echo "  selftest NEGATIVE MISS: un-normalized path present; rebase did not normalize" >&2
+            neg_fail=1 ;;
+    esac
+
+    if [ "$fail" -ne 0 ] || [ "$neg_fail" -ne 0 ]; then
         echo "archive-backlog-entry --selftest: FAIL" >&2
         exit 1
     fi
-    echo "archive-backlog-entry --selftest: PASS — re-depth correct for parent-escaping, sibling-category, same-dir, applied.md, external and anchor links."
+    echo "archive-backlog-entry --selftest: PASS — re-depth correct for parent-escaping, sibling-category, same-dir, applied.md, external and anchor links; bad paths, missing files and multi-entry invocations all refused."
     exit 0
 fi
 
