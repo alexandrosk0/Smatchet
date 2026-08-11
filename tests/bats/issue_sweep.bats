@@ -112,3 +112,59 @@ JSON
     [[ "$output" == *"removed 1"* ]]
     grep -q "gh pr edit 555 --repo .* --remove-label cr-out-of-band" "$GH_LOG"
 }
+
+# ── Gate-logic staleness wiring (script-freshness-remaining-callers, P3) ──────
+# These assert the CALL, not the library — script_freshness.bats already covers
+# fresh/stale/unverifiable classification and the print policy. What is untested
+# elsewhere, and what actually regressed on the other callers, is the wiring:
+# whether the script locates the lib RELATIVE TO ITSELF and passes its real
+# declared set. A hook that is present but never reached is the same invisible
+# no-op this whole line of work exists to close, so it gets a live assertion
+# rather than a grep over the source.
+#
+# Method: run a COPY of the script beside a stub lib. ISSUE_SWEEP_DIR is derived
+# from BASH_SOURCE, so the copy sources the stub instead of the real library,
+# and the stub records exactly what it was called with.
+_mk_sweep_copy() {   # -> $COPY_DIR with issue-sweep.sh + lib/script-freshness.sh stub
+    COPY_DIR="$WORK/copy"; export COPY_DIR
+    mkdir -p "$COPY_DIR/lib"
+    cp "$SCRIPT" "$COPY_DIR/issue-sweep.sh"
+    export STALE_LOG="$WORK/stale.log"
+    cat > "$COPY_DIR/lib/script-freshness.sh" <<STUB
+warn_if_script_stale() { printf '%s\n' "\$*" >> "$STALE_LOG"; return 0; }
+STUB
+}
+
+@test "freshness: the sweep calls warn_if_script_stale with its own declared set" {
+    _mk_sweep_copy
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    [ -f "$STALE_LOG" ]
+    # The label, plus BOTH members of the declared set: the entry point alone is
+    # not enough once the verdict depends on sourced logic — a stale helper beside
+    # a current entry point is exactly as wrong, and invisible.
+    grep -q "issue-sweep triage logic" "$STALE_LOG"
+    grep -q "agents/scripts/core/issue-sweep.sh" "$STALE_LOG"
+    grep -q "agents/scripts/core/lib/script-freshness.sh" "$STALE_LOG"
+}
+
+@test "freshness: the warning is emitted AFTER the sweep's own verdicts" {
+    # Ordering is the contract: the note qualifies the verdicts above it, so it
+    # must not print before there is anything to qualify.
+    _mk_sweep_copy
+    cat > "$COPY_DIR/lib/script-freshness.sh" <<'STUB'
+warn_if_script_stale() { echo "FRESHNESS-MARKER"; return 0; }
+STUB
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RELABEL #734"*"FRESHNESS-MARKER"* ]]
+}
+
+@test "freshness: a missing lib degrades to silence, never an error" {
+    # A partial checkout must not turn an advisory nudge into a hard failure.
+    _mk_sweep_copy
+    rm -f "$COPY_DIR/lib/script-freshness.sh"
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RELABEL #734"* ]]
+}

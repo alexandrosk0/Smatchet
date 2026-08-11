@@ -97,11 +97,29 @@ Mandatory on every `open` entry.
    the pre-push gate stays green by construction.
 4. When evidence accumulates (mentioned by ≥2 agents OR blocks the same
    workflow ≥3 times), apply: edit the relevant agent prompt(s) in `agents/`
-   or AGENTS.md; flip Status to `applied`; archive the entry — **append** the
-   per-entry file's body to the union-merged `applied.md` then `git rm` the
-   per-entry file (`cat docs/self-improvement/categories/<cat>/<file>.md >> docs/self-improvement/categories/applied.md && git rm docs/self-improvement/categories/<cat>/<file>.md && git add docs/self-improvement/categories/applied.md`),
-   or for a legacy monolith entry move the block as before. (NOT `git mv` — that
-   renames the file, it cannot append one file's content into another.)
+   or AGENTS.md; flip Status to `applied`; archive the entry with
+
+   ```
+   bash agents/scripts/core/archive-backlog-entry.sh docs/self-improvement/categories/<cat>/<file>.md
+   ```
+
+   which appends the body to the union-merged `applied.md`, `git rm`s the
+   per-entry file, and stages both. For a legacy monolith entry, move the block
+   as before. (NOT `git mv` — that renames the file, it cannot append one file's
+   content into another.)
+
+   **Do not hand-roll this with `cat >> … && git rm`.** That recipe breaks links
+   in both directions, silently. Per-entry files live at `categories/<cat>/`
+   while `applied.md` lives one level up at `categories/`, so every relative link
+   in the body is off by one directory the moment it is appended — and `cat`
+   cannot fail, so nothing says so. The `git rm` half is worse: it orphans links
+   from *other* documents that cited the entry, and those files are unmodified,
+   so a diff-scoped check cannot see it. Archiving one entry this way cost 7
+   outbound and 2 inbound dangling links, the latter surfacing as a red required
+   check. The script re-depths the body, repoints inbound links at `applied.md`
+   at each referrer's own depth, and re-runs `test-markdown-links.sh --all` as a
+   self-check — the `--all` is load-bearing, since the default diff scope sees
+   neither half. Use `--dry-run` to preview.
    **If the edited agent has eval coverage** (currently `code-review`), score
    the edit base-vs-head per § Optimize against evals before flipping to
    `applied` — attach the advisory delta to the PR.
