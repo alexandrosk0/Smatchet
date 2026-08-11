@@ -548,7 +548,27 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
     ( if ((.mergedAt // "") | length) == 0 then "1"
       elif (.mergedAt < "__CUTOFF__") then "1" else "0" end ),
     ( (__REQ_CTX__) as $reqNames
+      | (.mergedAt // "") as $merged
       | [ ( (.statusCheckRollup // [])
+            # NOTE: no apostrophes in these comments. JQ_ROWS is a single-quoted
+            # shell string, so one would terminate it and silently mangle the whole
+            # filter (40 bats failures, found by running them).
+            #
+            # Only runs that existed AT THE MERGE are evidence about the merge.
+            # Without this, the latest run in a group can be a POST-merge re-run: a
+            # green required run satisfies the merge, someone re-runs it, and that
+            # re-run sitting QUEUED inside the grace window reads as
+            # required-never-terminal — a phantom escape on a PR that merged
+            # correctly. Re-runs are routine, so this fires on ordinary PRs.
+            #
+            # A run with NO timestamp at all is KEPT: it cannot be placed relative
+            # to the merge, and dropping it would blind the detector to exactly the
+            # #1964 shape it exists for. Unknown is not the same as after.
+            | map(select(
+                ($merged == "")
+                or ((.startedAt // .createdAt // .completedAt // "") == "")
+                or ((.startedAt // .createdAt // .completedAt // "") <= $merged)
+              ))
             | group_by(if .__typename == "CheckRun" then "C " + (.name // "")
                        else "S " + (.context // "") end)
             | map(sort_by(.startedAt // .completedAt // .createdAt // "") | .[-1])

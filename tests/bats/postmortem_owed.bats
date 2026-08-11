@@ -824,6 +824,44 @@ JSON
     [[ "$output" == *"required-never-terminal: Test-delta gate"* ]]
 }
 
+@test "never-terminal: a POST-merge rerun is not evidence about the merge" {
+    # The distinction the test above does not cover. There the QUEUED rerun starts
+    # at 09:30 against a 10:00 merge — pre-merge, so at merge time the latest run
+    # genuinely had not reported, and flagging it is correct.
+    #
+    # Here the rerun starts AFTER the merge. A green required run satisfied the
+    # merge; someone re-ran it afterwards and that rerun is still queued inside the
+    # grace window. Taking the latest run unconditionally read that as
+    # `required-never-terminal` — a phantom escape on a PR that merged correctly,
+    # and re-runs are routine rather than exotic.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8107,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g7"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T10:30:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+}
+
+@test "never-terminal: a run with NO timestamp is still judged (unknown is not 'after')" {
+    # Dropping untimestamped runs would be the over-eager version of the fix above
+    # and would blind the detector to the #1964 shape it exists for.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8108,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g8"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: Test-delta gate"* ]]
+}
+
 @test "required-absent: the #1941 --admin merge (zero rollup, no red, no label) owes" {
     # The reported escape: PR #1941 squash-merged via `gh pr merge --squash --admin`
     # with all 22 required contexts absent and its head never built at all
