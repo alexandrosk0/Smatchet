@@ -98,8 +98,14 @@ import os, posixpath, re, sys
 
 MODE = sys.argv[1]
 
-# Markdown inline links: [text](target).  Reference definitions: [id]: target
-LINK_RE = re.compile(r'(\]\()([^)\s]+)(\))')
+# Markdown inline links: [text](target) and the CommonMark titled form
+# [text](target "Title"). The title is captured separately and preserved
+# verbatim — matching only `([^)\s]+)\)` silently SKIPS every titled link, which
+# means the outbound half leaves it at the wrong depth and the inbound half
+# leaves it dangling after the git rm, both at exit 0. test-markdown-links.sh
+# does handle titles, so a stricter parser here would disagree with the gate that
+# judges the result.
+LINK_RE = re.compile(r'(\]\()([^)\s]+)((?:\s+"[^"]*"|\s+\'[^\']*\')?\))')
 REFDEF_RE = re.compile(r'(^\s*\[[^\]]+\]:\s+)(\S+)', re.MULTILINE)
 
 def is_relative(t):
@@ -242,9 +248,30 @@ APPLIED="$(dirname "$CAT_DIR")/applied.md"
 
 echo "archive-backlog-entry: $ENTRY -> $APPLIED (re-depth prefix '$CAT/')"
 
+# ── Step 0: everything that can REFUSE, before anything is written ────────────
+# The inbound pass rewrites referrers on disk and the append is not reversible by
+# this script, so every refusal has to happen before either. Ordering these after
+# the first write is what leaves a tree half-archived, which is worse than any
+# clean failure: a retry double-appends.
+body="$(archive_py redepth "$ENTRY" "$CAT")"
+[ -n "$body" ] || { echo "archive-backlog-entry: re-depth produced an empty body — refusing to archive" >&2; exit 2; }
+
+entry_tracked=true
+git ls-files --error-unmatch -- "$ENTRY" >/dev/null 2>&1 || entry_tracked=false
+
 # ── Step 1: inbound references ───────────────────────────────────────────────
-# Done BEFORE the append/delete so a blocked archival leaves the tree untouched.
-mapfile -t md_files < <(git ls-files '*.md' 2>/dev/null || find . -name '*.md' -not -path './.git/*')
+# UNTRACKED markdown counts: a doc written and archived in the same session is
+# not in `git ls-files` yet, and silently orphaning it is the exact failure this
+# script exists to prevent. `--others --exclude-standard` adds untracked files
+# while still honouring .gitignore.
+mapfile -t md_files < <(
+    { git ls-files '*.md' 2>/dev/null
+      git ls-files --others --exclude-standard '*.md' 2>/dev/null
+    } | sort -u
+)
+if [ "${#md_files[@]}" -eq 0 ]; then
+    mapfile -t md_files < <(find . -name '*.md' -not -path './.git/*' | sed 's|^\./||')
+fi
 inbound_mode="inbound-fix"
 [ "$DRY_RUN" = true ] && inbound_mode="inbound-scan"
 inbound="$(archive_py "$inbound_mode" "$ENTRY" "$APPLIED" "${md_files[@]}")"
@@ -265,9 +292,6 @@ while IFS=$'\t' read -r kind f rest; do
         MENTION)
             n_mentions=$((n_mentions+1))
             echo "  INBOUND-PROSE $f:$rest" >&2 ;;
-        UNRESOLVED)
-            echo "archive-backlog-entry: UNRESOLVED inbound reference in $f — refusing to delete" >&2
-            exit 3 ;;
     esac
 done <<< "$inbound"
 
@@ -278,23 +302,23 @@ fi
 
 if [ "$DRY_RUN" = true ]; then
     echo "archive-backlog-entry: --dry-run — nothing written. Re-depthed body would be:"
-    archive_py redepth "$ENTRY" "$CAT"
+    printf '%s\n' "$body"
     exit 0
 fi
 
+# VERIFY the guarantee rather than assume it. The fix pass above rewrites what it
+# recognises; this re-scans and refuses to delete if any inbound LINK still
+# resolves to the entry — a link shape the parser missed would otherwise be
+# orphaned silently at exit 0, which is the original bug wearing a new mask.
+residual="$(archive_py inbound-scan "$ENTRY" "$APPLIED" "${md_files[@]}" | grep '^LINK' || true)"
+if [ -n "$residual" ]; then
+    echo "archive-backlog-entry: inbound link(s) still resolve to $ENTRY after the rewrite pass — refusing to delete:" >&2
+    printf '%s\n' "$residual" >&2
+    exit 3
+fi
+
 # ── Step 2: append the re-depthed body, then remove the source ───────────────
-# Pre-flight BEFORE the first write. The append is not reversible by this script,
-# so anything that can refuse the removal has to refuse it now — otherwise a late
-# failure leaves the tree half-archived: body already in applied.md, source still
-# present, and re-running would append it twice. (Hit exactly this on the first
-# real run: `git rm` refuses a file with local modifications, which is the NORMAL
-# case here, since flipping Status to `applied` and archiving happen together.)
-entry_tracked=true
-git ls-files --error-unmatch -- "$ENTRY" >/dev/null 2>&1 || entry_tracked=false
-
-body="$(archive_py redepth "$ENTRY" "$CAT")"
-[ -n "$body" ] || { echo "archive-backlog-entry: re-depth produced an empty body — refusing to archive" >&2; exit 2; }
-
+# $body and $entry_tracked were computed in Step 0, before anything was written.
 # A blank separator line keeps entries from running together in the ledger.
 printf '\n%s\n' "$body" >> "$APPLIED"
 if [ "$entry_tracked" = true ]; then

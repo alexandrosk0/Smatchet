@@ -252,3 +252,58 @@ MD
     [ "$status" -ne 0 ]
     [ "$(cat "$WORK/docs/self-improvement/categories/applied.md")" = "$before" ]
 }
+
+# ── Regressions from the pre-first-push review ───────────────────────────────
+
+@test "titled links [x](path \"Title\") are re-depthed, not skipped" {
+    # A parser that matches only `([^)\s]+)\)` silently SKIPS the CommonMark
+    # titled form, leaving the target at the wrong depth at exit 0. The repo's own
+    # test-markdown-links.sh does handle titles, so the two would disagree.
+    cat > "$WORK/$ENTRY" <<'MD'
+- entry
+
+  See [ship-loops](../../../agent-rules/ship-loops.md "The Ship Loops") for detail.
+MD
+    run _run_archive "$ENTRY"
+    [ "$status" -eq 0 ]
+    grep -q '](../../agent-rules/ship-loops.md "The Ship Loops")' "$WORK/docs/self-improvement/categories/applied.md"
+}
+
+@test "a titled inbound link is repointed, not orphaned" {
+    cat > "$WORK/docs/self-improvement/postmortems.md" <<'MD'
+See [the entry](categories/process/2026-01-02-subject.md "Subject") for detail.
+MD
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm ref
+    run _run_archive "$ENTRY"
+    [ "$status" -eq 0 ]
+    grep -q '](categories/applied.md "Subject")' "$WORK/docs/self-improvement/postmortems.md"
+    ! grep -q '2026-01-02-subject.md' "$WORK/docs/self-improvement/postmortems.md"
+}
+
+@test "an UNTRACKED referrer is repointed too" {
+    # A doc written and archived in the same session is not in git ls-files yet.
+    # Missing it orphans exactly the link this script exists to protect.
+    cat > "$WORK/docs/self-improvement/brand-new.md" <<'MD'
+See [the entry](categories/process/2026-01-02-subject.md).
+MD
+    run _run_archive "$ENTRY"
+    [ "$status" -eq 0 ]
+    grep -q '](categories/applied.md)' "$WORK/docs/self-improvement/brand-new.md"
+}
+
+@test "a refusal happens before ANY file is written" {
+    # The inbound pass rewrites referrers on disk; ordering it before the refusal
+    # checks leaves the tree half-mutated at a non-zero exit.
+    cat > "$WORK/docs/self-improvement/postmortems.md" <<'MD'
+See [the entry](categories/process/2026-01-02-subject.md).
+MD
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm ref
+    : > "$WORK/$ENTRY"          # empty body -> refused
+    before_ref="$(cat "$WORK/docs/self-improvement/postmortems.md")"
+    before_applied="$(cat "$WORK/docs/self-improvement/categories/applied.md")"
+    run _run_archive "$ENTRY"
+    [ "$status" -ne 0 ]
+    [ -e "$WORK/$ENTRY" ]
+    [ "$(cat "$WORK/docs/self-improvement/postmortems.md")" = "$before_ref" ]
+    [ "$(cat "$WORK/docs/self-improvement/categories/applied.md")" = "$before_applied" ]
+}

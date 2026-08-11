@@ -3646,3 +3646,82 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 
   Status: applied
   Last-reviewed: 2026-08-11
+
+- 2026-08-11 · claude-code · [tooling] · P2 — `required-absent` judges every historical merge against TODAY's required-context set, so promoting a context retroactively flags PRs that merged before it existed and can hard-fail `--blocking` at SessionStart
+
+  Details: `postmortem-owed.sh` reads the required set once
+  (`REQ_CTX_JSON`, from `project.config.json`) and applies it uniformly to every PR
+  in the scan window. A context that became required *after* a PR merged is absent
+  from that PR's rollup **by design** — nothing was wrong with the merge — but the
+  cross-check cannot tell that apart from a genuine escape and reports
+  `required-absent`.
+
+  Consequence: the first sweep after any required-context promotion or rename flags
+  up to `SCAN_N` historical PRs at once. With `POSTMORTEM_BLOCKING_GRACE=0` that
+  hard-fails `--blocking`, which runs at SessionStart — so a routine branch-protection
+  change can wedge every new session until someone notices the flags are phantom.
+
+  Found by an explicit self-review of the diff in PR #1996 and independently
+  confirmed by CodeRabbit on the same PR. Both landed on the same two candidate
+  fixes:
+
+  - **Record the required set at merge time.** Most correct, most work: the sweep
+    would need a per-PR snapshot of what was required when it merged, which nothing
+    currently persists.
+  - **Apply each context only from its effective date.** Cheaper and self-contained:
+    derive a per-context "earliest observed present" from the scan window itself and
+    skip any PR merged before it. Needs the row stream buffered — the loop is
+    currently single-pass over a process substitution — so it is a real restructure
+    of `postmortem-owed.sh:573-719`, not a patch.
+
+  Deliberately **not** fixed in #1996. It fails LOUD and rarely (only on a
+  required-set change), which is the opposite of the silent false-green class that
+  PR exists to close; picking between the two designs is a judgement call rather
+  than a defect fix, and doing it badly would put noise into the one gate that is
+  supposed to be trustworthy. The sibling defect on the same detector — a POST-merge
+  re-run reading as `required-never-terminal` — WAS fixed there, because it fires on
+  ordinary PRs and the fix is local (ignore runs that started after `mergedAt`).
+
+  Escape hatch until fixed: `POSTMORTEM_ABSENT_GRACE_SECONDS` does not help (the
+  merges are old, so the grace has long elapsed). Either raise
+  `POSTMORTEM_BLOCKING_GRACE` or narrow `SCAN_N` past the promotion date for one
+  sweep.
+
+  **Applied 2026-08-11**, via the second (cheaper) option. The row stream is now
+  buffered into `ROWS` before judging — the loop was single-pass over a process
+  substitution, which is why this needed a restructure rather than a patch — and a
+  first pass derives `REQ_FIRST_SEEN[ctx]`, the earliest merge in the window on
+  which each required context was observed PRESENT. A PR that merged before its
+  first observation is not judged for that context.
+
+  Two cases the original write-up did not anticipate, both found by running the
+  existing suite against the change rather than by re-reading the plan:
+
+  - **A context observed on NO PR in the window is undatable**, and the two
+    explanations point opposite ways: a promotion so recent nothing has run it yet
+    (benign), or a context that never reports at all (the #1941 shape, and
+    serious). They are genuinely indistinguishable from the window alone. Flagging
+    per-PR would rebuild the exact wedge this fixes, so it is reported ONCE as a
+    WARN naming the context and the ambiguity. Signal preserved, wedge removed —
+    and critically it does not hard-fail `--blocking`.
+  - **An EMPTY rollup must stay exempt from the dating entirely.** The first
+    implementation suppressed it, which broke the #1941 regression test — correctly.
+    "Nothing reported at all" cannot be explained by a late promotion: had the
+    context merely been added since, the OTHER required contexts would still be in
+    the rollup. Empty rollups (#1941, #1972-#1974) now bypass the effective-date
+    gate and always flag.
+
+  Two existing tests changed shape rather than intent: their single-PR fixtures had
+  the missing context observed nowhere, so under the new rule they were undatable.
+  Both gained an earlier corroborating PR carrying the context — which is what a
+  real window looks like, since a required context reports on many PRs — and still
+  assert the escape is caught. Five new cases cover the boundary in both directions,
+  the whole-window promotion wedge, the once-only undatable report, and the
+  empty-rollup exemption; reverting the gate fails two of them.
+
+  The other candidate — persisting the required set at merge time — remains the
+  more correct fix and is still unbuilt. This one is derivable from data already
+  fetched, which is why it went first.
+
+  Status: applied
+  Last-reviewed: 2026-08-11
