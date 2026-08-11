@@ -101,6 +101,26 @@ script_freshness_fingerprint_one() {  # <root> <relpath>
     return 0
 }
 
+# Does <relpath> match <pattern>, with `/` as a HARD boundary?
+#
+# `case "$path" in $pattern)` will not do: in a case pattern `*` matches `/`
+# too, so `rules/*.sh` would swallow `rules/a/b.sh` — the develop side would
+# then see matches shell pathname expansion never produces on the local side,
+# and the two halves of the comparison would be over different sets. Compare
+# segment by segment instead, which is what pathname expansion actually does.
+script_freshness_glob_match() {  # <pattern> <relpath>
+    local _pat="$1" _pth="$2" _ps _hs
+    while :; do
+        case "$_pat" in */*) _ps="${_pat%%/*}"; _pat="${_pat#*/}" ;; *) _ps="$_pat"; _pat="" ;; esac
+        case "$_pth" in */*) _hs="${_pth%%/*}"; _pth="${_pth#*/}" ;; *) _hs="$_pth"; _pth="" ;; esac
+        # shellcheck disable=SC2254  # $_ps is a glob pattern here, by design.
+        case "$_hs" in $_ps) ;; *) return 1 ;; esac
+        if [ -z "$_pat" ] && [ -z "$_pth" ]; then return 0; fi
+        # Ran out of one side but not the other → different depth → no match.
+        if [ -z "$_pat" ] || [ -z "$_pth" ]; then return 1; fi
+    done
+}
+
 script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>...
     local _run_override="${1:-}" _dev_override="${2:-}"
     shift 2 || true
@@ -134,7 +154,7 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>.
             # file or a missing develop blob leaves an empty component; any such
             # gap blanks BOTH sides so the result is `unverifiable` rather than a
             # comparison of partial fingerprints that could coincidentally match.
-            local _rp _m _matched _rel _seen _dir _base _dn _drel _devlist _dhash
+            local _rp _m _matched _rel _seen _drel _devlist _dhash _prefix _rest _seg
             SCRIPT_FRESHNESS_INCOMPLETE=false
             for _rp in "$@"; do
                 case "$_rp" in
@@ -175,16 +195,36 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>.
                         # dir from basename keeps the match honest: `ls-tree` on the
                         # dir yields plain names, so `case` sees no `/` and cannot
                         # over-match across directories the way a bare `*` would.
-                        _dir="${_rp%/*}"
-                        if [ "$_dir" = "$_rp" ]; then _dir=""; fi
-                        _base="${_rp##*/}"
-                        _devlist="$(git -C "$_root" ls-tree --name-only "origin/develop:${_dir}" 2>/dev/null)" || _devlist=""
+                        # Bound the listing by the pattern's LITERAL leading
+                        # segments — everything up to the first segment containing a
+                        # wildcard — then match the full pattern per path.
+                        #
+                        # The obvious shortcut (strip the last component and hand
+                        # that to `ls-tree` as a tree-ish) is wrong for any pattern
+                        # with more than one wildcard level: `rules/*/*.sh` yields
+                        # `origin/develop:rules/*`, and git does NOT expand wildcards
+                        # in a rev:path — it resolves nothing, the develop side comes
+                        # back empty, and the verdict silently returns to `fresh`.
+                        # That was the first cut of this fix; it closed the hole for
+                        # single-level patterns only.
+                        _prefix=""
+                        _rest="$_rp"
+                        while [ -n "$_rest" ]; do
+                            case "$_rest" in */*) _seg="${_rest%%/*}" ;; *) _seg="$_rest" ;; esac
+                            case "$_seg" in *[*?[]*) break ;; esac
+                            if [ -n "$_prefix" ]; then _prefix="$_prefix/$_seg"; else _prefix="$_seg"; fi
+                            case "$_rest" in */*) _rest="${_rest#*/}" ;; *) _rest="" ;; esac
+                        done
+                        if [ -n "$_prefix" ]; then
+                            _devlist="$(git -C "$_root" ls-tree -r --name-only origin/develop -- "$_prefix" 2>/dev/null)" || _devlist=""
+                        else
+                            _devlist="$(git -C "$_root" ls-tree -r --name-only origin/develop 2>/dev/null)" || _devlist=""
+                        fi
                         # Heredoc, not a pipe: a `| while` runs in a subshell and the
                         # fingerprint accumulation below would be discarded silently.
-                        while IFS= read -r _dn; do
-                            [ -n "$_dn" ] || continue
-                            case "$_dn" in $_base) ;; *) continue ;; esac
-                            if [ -n "$_dir" ]; then _drel="$_dir/$_dn"; else _drel="$_dn"; fi
+                        while IFS= read -r _drel; do
+                            [ -n "$_drel" ] || continue
+                            script_freshness_glob_match "$_rp" "$_drel" || continue
                             case " $_seen " in *" $_drel "*) continue ;; esac
                             # Present on develop, absent here. That is unambiguous
                             # drift, not an unknown — so it must read `stale`, not

@@ -222,8 +222,14 @@ setup_jq() {
     # An empty extraction would make every assertion below vacuous.
     grep -q 'headRefOid' "$BATS_TEST_TMPDIR/count.jq"
     grep -q 'headRefOid' "$BATS_TEST_TMPDIR/body.jq"
+    # `StatusContext` alone cannot tell ctx.jq and desc.jq apart — both select it.
+    # If the extraction markers drifted and desc.jq came back as the STATE program,
+    # the vacuity check would still pass while the rate-limit tests silently
+    # compared state against state. Assert the distinguishing selector in each.
     grep -q 'StatusContext' "$BATS_TEST_TMPDIR/ctx.jq"
+    grep -q '\.state'       "$BATS_TEST_TMPDIR/ctx.jq"
     grep -q 'StatusContext' "$BATS_TEST_TMPDIR/desc.jq"
+    grep -q '\.description' "$BATS_TEST_TMPDIR/desc.jq"
 }
 
 CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'

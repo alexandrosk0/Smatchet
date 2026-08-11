@@ -228,6 +228,53 @@ _add_devonly_rule() {
     [[ "$output" == "stale" ]]
 }
 
+@test "glob: a MULTI-LEVEL pattern sees develop-only files too" {
+    # The first cut of the develop-side fix stripped the last component and handed
+    # the remainder to `ls-tree` as a tree-ish. For `rules/*/*.sh` that is
+    # `origin/develop:rules/*` — git does NOT expand wildcards in a rev:path, so it
+    # resolved nothing, the develop side came back empty, and the verdict silently
+    # returned to `fresh`. Single-level patterns hid it (CodeRabbit, PR #1996).
+    (
+        set -e
+        mkdir -p "$TMP/origin"
+        git init -q --bare -b develop "$TMP/origin"
+        git clone -q "$TMP/origin" "$TMP/work"
+        cd "$TMP/work"
+        git config user.email t@l; git config user.name t
+        mkdir -p rules/one
+        echo entry > entry.sh
+        echo a > rules/one/local.sh
+        git add -A; git commit -qm base; git push -q origin HEAD:develop
+        git clone -q "$TMP/origin" "$TMP/other"
+        cd "$TMP/other"
+        git config user.email t@l; git config user.name t
+        mkdir -p rules/two
+        echo devonly > rules/two/develop-only.sh
+        git add -A; git commit -qm nested; git push -q origin HEAD:develop
+    )
+    git -C "$TMP/work" fetch -q origin develop
+    run bash -c 'cd "$TMP/work"; . "$LIB"
+        script_freshness_verdict "" "" entry.sh "rules/*/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == "stale" ]]
+}
+
+@test "glob: matching treats / as a hard boundary, like pathname expansion" {
+    # `case "$path" in $pattern)` lets `*` swallow `/`, which would make the develop
+    # side match paths the local shell glob never produces — the two halves of the
+    # comparison would then be over different sets.
+    run bash -c '. "$LIB"
+        script_freshness_glob_match "rules/*.sh"   "rules/a/b.sh"             && echo CROSSED
+        script_freshness_glob_match "rules/*/*.sh" "rules/two/develop-only.sh" && echo NESTED_OK
+        script_freshness_glob_match "rules/*/*.sh" "rules/x.sh"               && echo DEPTH_BAD
+        true'
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"CROSSED"* ]]
+    [[ "$output" == *"NESTED_OK"* ]]
+    [[ "$output" != *"DEPTH_BAD"* ]]
+}
+
 @test "glob: a pattern matching NOTHING is unverifiable, never a silently smaller set" {
     # The hole one level up: dropping an unmatched pattern would shrink the
     # declared set and let the remaining files compare clean — a false 'fresh'.
