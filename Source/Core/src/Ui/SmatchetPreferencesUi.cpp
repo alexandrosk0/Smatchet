@@ -997,14 +997,16 @@ void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) 
         app.AppendMcpActivity("MCP: no runtime plugin host — restart app to load MCP plugin.");
     }
 #endif
-    if (d.cfg.TrackerType == "Plane") {
+    // Diagnostic only, but a support log naming the wrong backend is worse than none.
+    const int savedBackendKind = smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType);
+    if (savedBackendKind == smatchet::tracker::kBackendPlane) {
         LOG_INFO("Updated tracker config (Plane). URL='%s', Workspace='%s' (project is per-operation)",
                  d.cfg.PlaneUrl.c_str(), d.cfg.PlaneWorkspaceSlug.c_str());
-    } else if (d.cfg.TrackerType == "GitHub") {
+    } else if (savedBackendKind == smatchet::tracker::kBackendGitHub) {
         LOG_INFO("Updated tracker config (GitHub). BaseUrl='%s' Owner='%s' Repo='%s' (PAT length=%zu)",
                  d.cfg.GitHubBaseUrl.c_str(), d.cfg.GitHubOwner.c_str(), d.cfg.GitHubRepo.c_str(),
                  d.cfg.GitHubPat.size());
-    } else if (d.cfg.TrackerType == "Linear") {
+    } else if (savedBackendKind == smatchet::tracker::kBackendLinear) {
         LOG_INFO("Updated tracker config (Linear). BaseUrl='%s' TeamKey='%s' TeamId='%s' (API key length=%zu)",
                  d.cfg.LinearBaseUrl.c_str(), d.cfg.LinearTeamKey.c_str(), d.cfg.LinearTeamId.c_str(),
                  d.cfg.LinearApiKey.size());

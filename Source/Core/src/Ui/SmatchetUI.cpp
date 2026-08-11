@@ -17,6 +17,7 @@
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "Json/BoundedJsonParse.h"
+#include "Tracker/TrackerBackendKind.h"
 #include "TrackerGridFieldDisplay.h"
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetImageTextureCache.h"
@@ -297,7 +298,9 @@ StartFieldCatalogFetchAsync(AppController& app, const TrackerConfig& fetchCfg, c
         result.BackendKey = ConfigManager::NormalizeViewsBackendKey(fetchCfg.TrackerType);
         std::string projectKey;
         const std::shared_ptr<ITrackerBackend> backend = latchedBackend;
-        if (fetchCfg.TrackerType == "Plane" && backend != nullptr) {
+        // Same value the line above normalises via NormalizeViewsBackendKey; comparing it
+        // exactly here meant "plane" got a Plane BackendKey but skipped the Plane resolver.
+        if (smatchet::tracker::IsPlaneBackendType(fetchCfg.TrackerType) && backend != nullptr) {
             projectKey =
                 smatchet::ResolvePlaneOperationProject(&backend->Connectivity(), activeViewJql, fetchCfg.JqlQuery);
         } else {

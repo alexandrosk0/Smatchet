@@ -1285,6 +1285,12 @@ add_executable(SmatchetTests
     # The UI used to keep a weaker two-spelling copy, so a hand-edited "Github" drew the Jira
     # credential rows while the factory built a GitHubClient.
     Core/TrackerBackendKind.test.cpp
+    # Per-backend new-issue inherit list (Tracker/NewIssueInheritFields.h, header-only): the one
+    # rule the grid header, the inactive-row cell and the offline create path all follow. Each
+    # used to carry its own exact-match ternary, so a hand-edited "plane" inherited the JIRA list
+    # on all three. Also pins the known GitHub gap — NewIssueInheritFieldIdsGitHub is saved by the
+    # Preferences UI but read by no draft path, so a future fix must update the test, not drift.
+    Core/NewIssueInheritFields.test.cpp
     # About-icon failure latch (Ui/AboutIconLatchPure.h, header-only): decode failures latch for the
     # session, upload failures stay retryable because the texture cache refuses while the renderer
     # has not yet advertised texture support. Latching both left a glyph-only icon for the session.

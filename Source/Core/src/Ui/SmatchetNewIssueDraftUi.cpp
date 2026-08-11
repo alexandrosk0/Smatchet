@@ -202,10 +202,7 @@ void DrawNewIssueInactiveCell(AppController& app, UiDrawSession& d, const Tracke
     ImGui::TableSetColumnIndex(0);
     if (ImGui::SmallButton("+ New Issue")) { // P2-L5: match the header button label
         if (lastVisibleTicket) {
-            const std::vector<std::string>& inheritIds = (cfg.TrackerType == "Plane") ? cfg.NewIssueInheritFieldIdsPlane
-                                                         : (cfg.TrackerType == "Linear")
-                                                             ? cfg.NewIssueInheritFieldIdsLinear
-                                                             : cfg.NewIssueInheritFieldIds;
+            const std::vector<std::string>& inheritIds = smatchet::tracker::NewIssueInheritFieldIdsFor(cfg);
             // No global cfg.ProjectKey exists — pass "" as the legacy fallback.
             const ITrackerBackend* b = app.GetTrackerBackend();
             const std::string resolvedProject = smatchet::ResolveProjectForDraft(
