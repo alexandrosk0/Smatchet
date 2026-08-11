@@ -98,11 +98,16 @@
     caveat. Both are still BLOCKs — only the diagnosis differs. Cases in
     `tests/bats/merge_gates.bats` § required-missing cause attribution, incl. a negative
     canary that a DIRTY head with nothing absent emits no conflict line.
-    *Observed while testing, not changed:* the `mergeStateStatus` guard blocks on
-    `BLOCKED|BEHIND` only, so an all-green **DIRTY** head still reaches `GATES_PASSED`
-    and the conflict surfaces later as a failed merge attempt. Left as-is deliberately
-    (this entry asked for diagnosis, not a new block); pinned by a test so it is
-    recorded as observed rather than assumed.
+    *Adjacent false-pass found while testing, and fixed:* the `mergeStateStatus`
+    guard blocked on `BLOCKED|BEHIND` only, so an all-green **DIRTY** head — one whose
+    required contexts DID report before the conflict appeared — reached `GATES_PASSED`
+    and failed later at the REST merge. Initially left alone on the reasoning that this
+    entry asked for diagnosis rather than a new block; that was too narrow, since an
+    unmergeable head passing the gate is the same false-pass class the entry is about.
+    `DIRTY` now joins the blocking set. Safe because `DIRTY` is a *computed* verdict —
+    GitHub reports `UNKNOWN` while mergeability is still being determined — so it
+    cannot fire on a pending computation, and `MERGE_GATES_IGNORE_MERGESTATE` still
+    covers a positively-confirmed stale `DIRTY` (pinned by its own test).
   - **(3) Give "CI is unavailable" a defined move — NOT DONE, unchanged.** Still needs
     the design call on what the ship-loop does with an escalation, which this entry
     said should not be bundled. This is the entry's whole remaining scope.
