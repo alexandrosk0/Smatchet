@@ -298,10 +298,18 @@ _mk_repo_with_origin() {
         grep -q "\"$rel\"" "$REPO_ROOT/scripts/dev/pre-ship.sh"
         [ -e "$REPO_ROOT/$rel" ]
     done
-    # …and the glob resolves to a non-empty set.
-    run bash -c 'set -- "$REPO_ROOT"/agents/scripts/project/lint-rules.d/*.sh; echo "$#"'
-    [ "$status" -eq 0 ]
-    [ "$output" -gt 0 ]
+    # …and the glob resolves to a non-empty set. Counting positional parameters
+    # would NOT establish that: with no match bash retains the pattern as one
+    # literal word, so `set -- <pattern>; [ $# -gt 0 ]` passes on zero matches —
+    # the very unmatched-glob-survives-as-a-literal behaviour this suite exists
+    # to pin, reproduced in the assertion meant to catch it. Count paths that
+    # actually EXIST, the same test the library itself applies.
+    local matched=0 f
+    for f in "$REPO_ROOT"/agents/scripts/project/lint-rules.d/*.sh; do
+        [ -e "$f" ] || continue
+        matched=$((matched + 1))
+    done
+    [ "$matched" -gt 0 ]
 }
 
 @test "wiring: pre-ship.sh warns before its PASS line, not at startup" {
