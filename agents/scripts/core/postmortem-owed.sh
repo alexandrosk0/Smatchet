@@ -196,6 +196,25 @@ ABSENT_CUTOFF_ISO=""
 if command -v jq >/dev/null 2>&1; then
     ABSENT_CUTOFF_ISO=$(jq -n --argjson e "$(date +%s)" --argjson g "$ABSENT_GRACE_SECONDS" \
         '($e - $g) | todate' 2>/dev/null | tr -d '"') || ABSENT_CUTOFF_ISO=""
+    # An empty cutoff here does NOT degrade safely, and the failure is silent in
+    # the worst possible way. `__CUTOFF__` is substituted literally into the row
+    # filter, so an empty value makes the test `.mergedAt < ""` — false in jq for
+    # every real timestamp — which sets `absent_judgeable` to "0" on EVERY row and
+    # switches both required-context detectors off while the script goes on to
+    # report `no gate escapes owed`. A detector that reports nothing looks exactly
+    # like a clean bill of health: the precise escape class this script exists to
+    # catch, in the script itself.
+    #
+    # jq being ABSENT is not this case — `REQ_CTX_JSON` is `[]` without jq and the
+    # `absent` block is separately guarded on `command -v jq`, so that path is off
+    # consistently and visibly. The reachable case is jq PRESENT and the cutoff
+    # computation failing (a `date +%s` fault, or a jq without `todate`): the
+    # guards all pass and only the row filter quietly zeroes.
+    if [ -z "$ABSENT_CUTOFF_ISO" ]; then
+        echo "WARN: could not compute the required-context grace cutoff (date/jq)." >&2
+        echo "WARN: required-absent and required-never-terminal are DISABLED for this run —" >&2
+        echo "WARN: a clean result below does NOT mean those checks passed." >&2
+    fi
 fi
 
 # Expected-present allow-listed NON-required checks (merge-gate-absence-blind-
