@@ -307,3 +307,51 @@ MD
     [ "$(cat "$WORK/docs/self-improvement/postmortems.md")" = "$before_ref" ]
     [ "$(cat "$WORK/docs/self-improvement/categories/applied.md")" = "$before_applied" ]
 }
+
+@test "reference-definition links [id]: path are re-depthed too" {
+    # REFDEF_RE rewrites these, but nothing pinned the shape — an untested branch
+    # of the parser is exactly where the depth bug reappears.
+    cat > "$WORK/$ENTRY" <<'MD'
+- entry
+
+  See [ship-loops][sl] and [sibling][sib].
+
+  [sl]: ../../../agent-rules/ship-loops.md
+  [sib]: ../tooling/2026-01-01-sibling.md
+MD
+    run _run_archive "$ENTRY"
+    [ "$status" -eq 0 ]
+    grep -q '\[sl\]: ../../agent-rules/ship-loops.md' "$WORK/docs/self-improvement/categories/applied.md"
+    grep -q '\[sib\]: tooling/2026-01-01-sibling.md' "$WORK/docs/self-improvement/categories/applied.md"
+}
+
+@test "an inbound reference-definition link is repointed too" {
+    cat > "$WORK/docs/self-improvement/postmortems.md" <<'MD'
+See [the entry][e] for detail.
+
+[e]: categories/process/2026-01-02-subject.md
+MD
+    git -C "$WORK" add -A && git -C "$WORK" commit -qm ref
+    run _run_archive "$ENTRY"
+    [ "$status" -eq 0 ]
+    grep -q '\[e\]: categories/applied.md' "$WORK/docs/self-improvement/postmortems.md"
+}
+
+@test "exit 4: a post-archive link check failure is reported, not swallowed" {
+    # The self-check is the backstop that would have caught both halves of the
+    # original bug. If it can fail without changing the exit code, it is
+    # decorative. Runs WITHOUT ARCHIVE_SKIP_LINK_CHECK, against a stub checker, so
+    # this pins the script's handling of a red self-check rather than the
+    # checker's own logic. (Verified non-vacuous: a stub that exits 0 makes the
+    # whole archival exit 0, so the 4 genuinely comes from the check.)
+    mkdir -p "$WORK/fake"
+    cat > "$WORK/fake/test-markdown-links.sh" <<'STUB'
+#!/usr/bin/env bash
+echo "FAKE-LINK-CHECK: dangling"
+exit 1
+STUB
+    cp "$SCRIPT" "$WORK/fake/archive-backlog-entry.sh"
+    run bash -c "cd '$WORK' && bash '$WORK/fake/archive-backlog-entry.sh' '$ENTRY'"
+    [ "$status" -eq 4 ]
+    [[ "$output" == *"post-archive link check FAILED"* ]]
+}

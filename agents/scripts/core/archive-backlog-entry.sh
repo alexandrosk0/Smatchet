@@ -150,7 +150,6 @@ elif MODE in ("inbound-scan", "inbound-fix"):
     applied = sys.argv[3]
     files = sys.argv[4:]
     entry_base = posixpath.basename(entry)
-    unresolved = []
     for f in files:
         if os.path.abspath(f) == os.path.abspath(entry):
             continue
@@ -192,8 +191,6 @@ elif MODE in ("inbound-scan", "inbound-fix"):
         for i, line in enumerate(new_text.splitlines(), 1):
             if entry_base in line:
                 print("MENTION\t%s\t%s\t%s" % (f, i, line.strip()[:160]))
-    for u in unresolved:
-        print("UNRESOLVED\t%s" % u)
 PY
 }
 
@@ -331,7 +328,17 @@ while IFS=$'\t' read -r kind f rest; do
             # Track the exact referrers so staging can name them. `git add -u`
             # would stage every modified tracked file in the tree, sweeping
             # unrelated in-progress work into the archival commit.
-            case " ${touched[*]-} " in *" $f "*) ;; *) touched+=("$f") ;; esac
+            #
+            # Element-wise, not a flattened `" ${touched[*]} "` substring test:
+            # that joins on spaces, so a path CONTAINING a space would match a
+            # different pair of entries and the referrer would silently not be
+            # staged — a rewritten-but-uncommitted file, which is the quiet half
+            # of the bug this script exists to fix.
+            _seen=false
+            for _t in ${touched[@]+"${touched[@]}"}; do
+                if [ "$_t" = "$f" ]; then _seen=true; break; fi
+            done
+            [ "$_seen" = true ] || touched+=("$f")
             echo "  INBOUND-LINK  $f -> repointed at applied.md (was '$rest')" ;;
         MENTION)
             n_mentions=$((n_mentions+1))

@@ -140,12 +140,12 @@ STUB
     ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
     [ "$status" -eq 0 ]
     [ -f "$STALE_LOG" ]
-    # The label, plus BOTH members of the declared set: the entry point alone is
-    # not enough once the verdict depends on sourced logic — a stale helper beside
-    # a current entry point is exactly as wrong, and invisible.
-    grep -q "issue-sweep triage logic" "$STALE_LOG"
-    grep -q "agents/scripts/core/issue-sweep.sh" "$STALE_LOG"
-    grep -q "agents/scripts/core/lib/script-freshness.sh" "$STALE_LOG"
+    # ONE exact line, not three loose greps. The stub records each call's "$*" on
+    # its own line, so three independent substring searches would also pass if the
+    # label and the two paths arrived on DIFFERENT calls, or as substrings of
+    # longer paths — neither of which is the contract. -F -x pins the complete
+    # argument list of a single call, in order.
+    grep -Fqx "issue-sweep triage logic agents/scripts/core/issue-sweep.sh agents/scripts/core/lib/script-freshness.sh" "$STALE_LOG"
 }
 
 @test "freshness: the warning is emitted AFTER the sweep's own verdicts" {
@@ -157,7 +157,14 @@ warn_if_script_stale() { echo "FRESHNESS-MARKER"; return 0; }
 STUB
     ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"RELABEL #734"*"FRESHNESS-MARKER"* ]]
+    # The marker must be LAST, not merely after the first verdict. Asserting only
+    # `RELABEL ... FRESHNESS-MARKER` still passes when a later verdict, the summary
+    # line, or the out-of-band strip prints after it — and "qualifies everything
+    # above" is the actual contract.
+    [ "$(printf '%s\n' "$output" | tail -1)" = "FRESHNESS-MARKER" ]
+    # And there is genuinely verdict output above it to qualify.
+    [[ "$output" == *"RELABEL #734"* ]]
+    [ "$(printf '%s\n' "$output" | grep -c 'FRESHNESS-MARKER')" -eq 1 ]
 }
 
 @test "freshness: a missing lib degrades to silence, never an error" {
@@ -167,4 +174,9 @@ STUB
     ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
     [ "$status" -eq 0 ]
     [[ "$output" == *"RELABEL #734"* ]]
+    # SILENCE is half the contract and was untested: exit 0 alone would also be
+    # satisfied by a fallback warning about the missing library, which is exactly
+    # the noise a partial checkout must not produce.
+    [ ! -e "$STALE_LOG" ]
+    ! grep -qi "freshness\|stale" <<<"$output"
 }
