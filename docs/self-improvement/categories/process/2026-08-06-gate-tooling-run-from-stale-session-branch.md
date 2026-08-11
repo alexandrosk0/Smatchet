@@ -55,3 +55,43 @@
     (phantom block) vs PR #1961 (same class, passes from a fresh worktree);
     [`process-rules.md`](../../../agent-rules/process-rules.md) § Concurrent interactive sessions
     (`nsc <slug>` one-worktree-per-session rule this extends from correctness to *freshness*).
+
+  **Update 2026-08-11 — (1), (3), (4) shipped; (2) is the remaining scope.**
+
+  - **(1) Version self-check in the poller — DONE, by fixing its default rather than
+    building it.** The machinery already existed (`MERGE_GATES_FRESHNESS`, added for
+    #1428: fingerprints `merge-gates.sh` + both `merge-gates.d/` modules against
+    `origin/develop` and warns or fails closed). It was **defaulted `off`**, and a repo
+    sweep found `merge-watcher.py` to be its only setter (`block`) — so the caveat
+    reached the one caller that is never stale, and never reached the human-invoked
+    poll this entry is about. The default is now **`warn`**: a BLOCK can no longer be
+    read without the "differs from origin/develop" line when the checkout is behind.
+    `warn` never sets `self_stale`, so no caller's verdict changes and offline /
+    detached / no-remote stay usable, exactly as this entry required. The bats suite
+    now sets `MERGE_GATES_FRESHNESS=off` explicitly (its ~170 cases would otherwise each
+    attempt a real `git fetch` and warn about the branch under development), and the
+    old "freshness OFF by default" test is replaced by one pinning the `warn` default
+    plus an explicit-off canary.
+  - **(2) Same check in the shared helper — NOT DONE. This is the entry's remaining
+    scope, and it is the more valuable half.** The guard is still inline in
+    `merge-gates.sh` and covers only the merge poller. `pre-ship.sh`,
+    `postmortem-owed.sh`, `issue-sweep.sh` and the lint gates have no self-check, and
+    as this entry notes staleness there fails in the **worse** direction — a stale
+    `pre-ship.sh` produces false **greens**. Extracting it is real work, not a lift:
+    ~80 lines including a network `git fetch`, a multi-file combined fingerprint and a
+    fail-closed unverifiable branch, and the per-invocation fetch cost has to be
+    weighed for SessionStart-frequency callers (measurably slow — it is what made the
+    bats suite hang before the explicit off). Wants its own PR.
+  - **(3) Rule text — DONE.** `process-rules.md` § Concurrent interactive sessions
+    carries "Run gate tooling from a tree freshly based on `origin/develop`, never from
+    a long-lived session branch", stating that a BLOCK from a stale checkout is not
+    evidence about `develop`, that the WARN is a stop-and-re-run signal, and that the
+    other core gates have no such guard yet.
+  - **(4) Evidence rule for the ledger — DONE.** The
+    [`gate-escape-postmortem`](../../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+    skill's step 1 now requires recording the tree + commit any cited gate-tool output
+    ran from, and to reproduce from an `origin/develop`-based worktree before the
+    finding enters the ledger.
+
+  Status: open (partial — (1)/(3)/(4) shipped 2026-08-11; (2) shared `warn_if_script_stale` helper remains)
+  Last-reviewed: 2026-08-11

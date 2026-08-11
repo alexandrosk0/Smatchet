@@ -90,8 +90,8 @@
 #                                  for the documented admin-merge escape (AGENTS.md
 #                                  § Merge gates: a positively-confirmed STALE-BLOCKED
 #                                  PR where everything is actually green).
-#   MERGE_GATES_FRESHNESS        — gate-logic self-freshness guard. off (default) |
-#                                  warn | block. When "block", refuse GATES_PASSED if
+#   MERGE_GATES_FRESHNESS        — gate-logic self-freshness guard. off |
+#                                  warn (default) | block. When "block", refuse GATES_PASSED if
 #                                  THIS script's on-disk blob differs from
 #                                  origin/develop:agents/scripts/core/merge-gates.sh
 #                                  (fail-closed) — an unattended merger running a
@@ -99,9 +99,21 @@
 #                                  gate logic (the #1428 gate escape: a host tree
 #                                  parked behind develop merged past a RED non-required
 #                                  "Intent section" its old allow-list lacked).
-#                                  smatchet-merge-watcher sets "block"; "warn" prints
-#                                  the divergence without blocking (local-dev default
-#                                  if opted in); "off" disables the check entirely.
+#                                  smatchet-merge-watcher sets "block"; "warn" (the
+#                                  default) prints the divergence without blocking;
+#                                  "off" disables the check entirely.
+#                                  Default is "warn", NOT "off"
+#                                  (gate-tooling-run-from-stale-session-branch, process
+#                                  P1): the failure mode is a HUMAN-invoked poll out of a
+#                                  long-lived session tree, where nothing in the output
+#                                  distinguishes a stale-script BLOCK from a real one. A
+#                                  7-week-old copy hard-blocked PR #1953 on a CR rule
+#                                  that current develop auto-exempts, and the phantom
+#                                  block was written up as a product-gate defect before a
+#                                  fresh-worktree re-run disproved it. Defaulting to off
+#                                  meant only the watcher ever got the caveat — precisely
+#                                  the caller that is never stale. warn never blocks, so
+#                                  offline / detached / no-remote stays usable.
 #                                  Test-only overrides MERGE_GATES_FRESH_RUN_BLOB /
 #                                  MERGE_GATES_FRESH_DEV_BLOB bypass the git compare.
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
@@ -225,9 +237,12 @@ poll_merge_gates() {
     # file's on-disk blob to origin/develop's blob; in block mode refuse a pass when
     # they differ OR the comparison can't be made (fail-closed). Computed ONCE here
     # (before the poll loop) and consulted in the GATES_PASSED conjunction below.
-    # Default off so existing callers + local dev are unaffected unless they opt in;
-    # the watcher sets MERGE_GATES_FRESHNESS=block.
-    local fresh_mode="${MERGE_GATES_FRESHNESS:-off}"
+    # Default "warn": a BLOCK must never be readable without a staleness caveat when
+    # the checkout is behind (see the header note). warn never sets self_stale, so no
+    # caller's pass/fail verdict changes — only the operator's ability to distrust a
+    # stale one. The watcher still sets "block"; "off" remains available for callers
+    # that must avoid the ref-refresh entirely.
+    local fresh_mode="${MERGE_GATES_FRESHNESS:-warn}"
     # Reject typos up front — an unrecognised value would otherwise fall through the
     # "!= off" gate into warn-only handling, silently weakening enforcement (#1428 CR).
     case "$fresh_mode" in
@@ -983,8 +998,20 @@ poll_merge_gates() {
         # context that never ran on the head (absent from the rollup). Printed
         # like ci_fail/ci_pend so the operator sees exactly which required check
         # is missing a run — the false-pass signal that scored CI: 0/0 on #856.
-        if [ "$req_absent" -gt 0 ]; then
-            echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI)." >&2
+        #
+        # CAUSE ATTRIBUTION (admin-merge-past-absent-checks-undetected, process P1):
+        # a CONFLICTED head produces this same all-contexts-absent shape, because
+        # GitHub declines to build a head whose mergeStateStatus is DIRTY at all.
+        # Reporting the generic "never ran" hint for it sent one session through a
+        # full 90-poll timeout before the real cause (a conflict in
+        # docs/plans/INDEX.md) was found by hand — while the actionable field was in
+        # the poller's own GraphQL response from poll 1. Branch on it and name the
+        # fix. Still a BLOCK either way: the merge is refused for the same reason
+        # (required contexts have no terminal conclusion); only the diagnosis differs.
+        if [ "$req_absent" -gt 0 ] && [ "${fields[17]:-UNKNOWN}" = "DIRTY" ]; then
+            echo "BLOCK: required-missing: ${req_absent_names} (head is CONFLICTED — mergeStateStatus=DIRTY, so GitHub will not build it and these contexts can never report. Merge origin/develop into the branch and resolve the conflict; CI re-fires on the new head. This is NOT a CI fault and polling will not clear it)." >&2
+        elif [ "$req_absent" -gt 0 ]; then
+            echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence on an early poll may still be pending; it is blocked until the contexts actually report, never merged on the assumption they will." >&2
         elif [ "$req_absent" -lt 0 ]; then
             echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
         fi

@@ -42,6 +42,16 @@ setup() {
     export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,Windows + MSVC,Perf PR-fast (windows-2022)"
     export POSTMORTEM_OVERRIDE_LABELS="tests-out-of-band perf-out-of-band cr-out-of-band coverage-out-of-band intent-out-of-band"
     export POSTMORTEM_DIRECTPUSH_SINCE="7 days ago"
+    # Required-ABSENT detector OFF by default in this suite. Every fixture below is
+    # a MINIMAL synthetic rollup carrying only the one or two contexts its own test
+    # is about — none of them model the full POSTMORTEM_REQUIRED_CONTEXTS set above,
+    # so the absence detector would (correctly, per production semantics) fire on
+    # all of them and drown the signal each test is actually asserting. An absurd
+    # grace makes every fixture "still inside the run-creation lag window" and so
+    # not judged for absence. This is a TEST-fixture accommodation, NOT a production
+    # default (production default is 3600s, exercised live) — the § required-absent
+    # tests below opt back in with POSTMORTEM_ABSENT_GRACE_SECONDS=0.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=99999999999
 
     # --- fixture defaults (tests overwrite as needed) -----------------------
     export PM_PRLIST_FIXTURE="$PM_DATA/prlist.json"
@@ -659,5 +669,127 @@ JSON
 JSON
     run bash "$SCRIPT" --list
     [ "$status" -eq 0 ]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+# ============================================================================
+# required-check-that-never-reports-is-invisible (infra P1) +
+# admin-merge-past-absent-checks-undetected (process P1) — the required-ABSENT
+# cross-check. A required context missing from a merged PR's rollup never ran;
+# that escape emits no red check, no override label and no revert, so before
+# this it was invisible to every trigger in this script. These tests opt back
+# into the detector (setup() parks it behind an absurd grace — see there).
+# ============================================================================
+
+@test "required-absent: a required context missing from the rollup owes a postmortem" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8001"* ]]
+    [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: a rollup carrying every required context owes nothing" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #8002"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: PRESENT-but-queued is NOT absent (absent != pending)" {
+    # The whole point of the signal is that it distinguishes "never reported" from
+    # "reported and failed" AND from "still running". A required context sitting in
+    # QUEUED has produced a rollup row, so it is present — not an absence escape.
+    # (It is also not red, so it owes nothing here; blocking on pending is
+    # merge-gates.sh's job, pre-merge.)
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-absent"* ]]
+}
+
+@test "required-absent: the #1941 --admin merge (zero rollup, no red, no label) owes" {
+    # The reported escape: PR #1941 squash-merged via `gh pr merge --squash --admin`
+    # with all 22 required contexts absent and its head never built at all
+    # (actions/runs?head_sha= -> total_count 0). No red check, no override label,
+    # no revert -> the four legacy triggers all read "clean". This is the
+    # regression test for "postmortem-owed.sh --list reported no gate escapes owed".
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8004,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f4"},"labels":[],
+  "statusCheckRollup":[]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8004"* ]]
+    [[ "$output" == *"required-absent: Test-delta gate, Windows + MSVC, Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: a merge inside the run-creation grace window is NOT judged" {
+    # Check-suite creation LAGS the push (measured ~27 min on #1976), and no API
+    # field distinguishes "not created yet" from "never created". A merge younger
+    # than the grace is deferred to the next sweep rather than false-flagged.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=3600
+    printf '[{"number":8005,"mergedAt":"%s","mergeCommit":{"oid":"f5"},"labels":[],"statusCheckRollup":[]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    [[ "$output" != *"PR #8005"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: a non-numeric grace falls back to the 3600s default" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS="not-a-number"
+    printf '[{"number":8006,"mergedAt":"%s","mergeCommit":{"oid":"f6"},"labels":[],"statusCheckRollup":[]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    # Fresh merge + default 3600s grace -> deferred, not flagged (proves the
+    # fallback parsed as a number rather than degrading to 0 / an empty compare).
+    [[ "$output" != *"PR #8006"* ]]
+}
+
+@test "required-absent: flagged on the snapshot path too (snapshots record red, not membership)" {
+    # A merge-instant snapshot records redChecks/overrideLabels — it does NOT record
+    # which contexts were PRESENT in the rollup, so absence is only ever observable
+    # from the live rollup. The cross-check must therefore run on both paths, or an
+    # instrumented merge would be exempt from the one signal snapshots cannot carry.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8007,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f7"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8007,"mergeCommit":"f7","redChecks":[],"overrideLabels":[]}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" == *"PR #8007"* ]]
+    [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: empty required set (jq absent / unset) is inert" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":8008,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f8"},"labels":[],
+  "statusCheckRollup":[]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #8008"* ]]
     [[ "$output" == *"no gate escapes owed"* ]]
 }

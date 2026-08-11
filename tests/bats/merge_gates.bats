@@ -31,6 +31,18 @@ setup() {
     # required-absent tests opt into a fixture-matching set explicitly.
     export MERGE_GATES_REQUIRED_CONTEXTS=""
 
+    # Freshness guard OFF for the suite. The production default is "warn"
+    # (gate-tooling-run-from-stale-session-branch — a human-invoked poll must never
+    # print a BLOCK without a staleness caveat), but the guard's data layer is a real
+    # `git fetch origin develop` + blob compare against the CHECKOUT UNDER TEST. Left
+    # at the default, every one of the ~170 tests below would attempt a network fetch
+    # and then legitimately WARN that the working tree differs from origin/develop —
+    # which is true of any branch mid-development, including the one adding these
+    # tests. That is unrelated I/O and unrelated output in every unrelated test.
+    # The dedicated freshness tests drive the guard explicitly via
+    # MERGE_GATES_FRESHNESS + the MERGE_GATES_FRESH_*_BLOB injection seams.
+    export MERGE_GATES_FRESHNESS=off
+
     # Stub gh on PATH
     STUB_BIN_DIR="$(mktemp -d)"
     export STUB_BIN_DIR
@@ -196,16 +208,31 @@ set_fixture() {
 # MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB test overrides bypass git so the guard is
 # exercised deterministically (no git/network dependency in the bats sandbox).
 
-@test "freshness OFF by default -> divergent blobs do NOT block (opt-in guard)" {
+@test "freshness WARN by default -> divergent blobs warn but do NOT block" {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
-    # Inject divergent blobs but leave MERGE_GATES_FRESHNESS unset (→ off): the
-    # guard must be inert so every legacy caller + local-dev run is unaffected.
+    # Unset the suite-wide off (setup()) to exercise the PRODUCTION default, which is
+    # "warn" (gate-tooling-run-from-stale-session-branch, process P1): a human-invoked
+    # poll out of a long-lived session tree must not be able to print a verdict without
+    # the staleness caveat. Verdict is unchanged — warn never sets self_stale.
+    unset MERGE_GATES_FRESHNESS
     export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
     export MERGE_GATES_FRESH_DEV_BLOB="bbbbbbbbbbbb2222"
     run poll_merge_gates org repo 1
     [ "$status" -eq 0 ]
     [[ "$output" == *"GATES_PASSED"* ]]
-    [[ "$output" != *"STALE"* ]]
+    [[ "$output" == *"WARN"* ]]
+    [[ "$output" == *"differs from origin/develop"* ]]
+    [[ "$output" != *"Refusing GATES_PASSED"* ]]
+}
+
+@test "freshness explicit OFF -> divergent blobs are fully inert (no warn, no block)" {
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    export MERGE_GATES_FRESHNESS=off
+    export MERGE_GATES_FRESH_RUN_BLOB="aaaaaaaaaaaa1111"
+    export MERGE_GATES_FRESH_DEV_BLOB="bbbbbbbbbbbb2222"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
     [[ "$output" != *"differs from origin/develop"* ]]
 }
 
@@ -1921,6 +1948,70 @@ CFG
     [ "$status" -eq 1 ]
     [[ "$output" != *"GATES_PASSED"* ]]
     [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    rm -f "$f"
+}
+
+# ---------- required-missing cause attribution (process P1: DIRTY vs "never ran") ----------
+# A CONFLICTED head produces the same all-contexts-absent shape as a CI miss —
+# GitHub declines to build a DIRTY head at all — so the generic "never ran" hint
+# sent one session through a full 90-poll timeout before the real cause (a
+# conflict in docs/plans/INDEX.md) was found by hand. mergeStateStatus is already
+# in the poller's GraphQL response, so the actionable cause is available on poll 1.
+
+@test "required-missing on a DIRTY head names the CONFLICT, not the generic never-ran hint [P1]" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    [[ "$output" == *"CONFLICTED"* ]]
+    [[ "$output" == *"mergeStateStatus=DIRTY"* ]]
+    # The misleading hint must NOT appear for this cause.
+    [[ "$output" != *"GITHUB_TOKEN bot push"* ]]
+    rm -f "$f"
+}
+
+@test "required-missing on a NON-dirty head keeps the never-ran hint + lag caveat [P1]" {
+    # Negative canary for the branch above: BLOCKED (not DIRTY) is the ordinary
+    # absent-required shape and must keep the original diagnosis, now carrying the
+    # creation-lag caveat so an early-poll absence is not read as permanent.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-missing: Doc anchors + agent contract"* ]]
+    [[ "$output" == *"GITHUB_TOKEN bot push"* ]]
+    [[ "$output" == *"LAGS"* ]]
+    [[ "$output" != *"CONFLICTED"* ]]
+    rm -f "$f"
+}
+
+@test "a DIRTY head with NO absent required context does not emit the conflict hint [P1]" {
+    # The attribution rides on the required-missing block, so it must stay silent
+    # when nothing is absent — no spurious required-missing/CONFLICTED line on a
+    # DIRTY head whose required contexts all reported.
+    #
+    # Note this fixture PASSES: the mergeStateStatus guard blocks on BLOCKED|BEHIND
+    # only, and DIRTY is not in that set, so an all-green conflicted head reaches
+    # GATES_PASSED and the conflict surfaces later as a failed merge attempt. That
+    # is pre-existing behaviour this change deliberately does not alter (the entry's
+    # fix is diagnosis, not a new block); asserted here so the pass is recorded as
+    # observed rather than assumed.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"required-missing"* ]]
+    [[ "$output" != *"CONFLICTED"* ]]
     rm -f "$f"
 }
 
