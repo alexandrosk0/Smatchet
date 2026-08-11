@@ -682,9 +682,18 @@ JSON
 # ============================================================================
 
 @test "required-absent: a required context missing from the rollup owes a postmortem" {
+    # PR #8000 establishes that "Perf PR-fast" WAS reporting before #8001 merged.
+    # That evidence is load-bearing since the effective-date gate landed: absence
+    # only means "escape" once the context is known to have existed, and the only
+    # available evidence for that is having observed it in the window.
     export POSTMORTEM_ABSENT_GRACE_SECONDS=0
     prlist <<'JSON'
-[{"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
+[{"number":8000,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"f0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
   "statusCheckRollup":[
     {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
     {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
@@ -692,6 +701,8 @@ JSON
     run_detector
     [[ "$output" == *"PR #8001"* ]]
     [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+    # The corroborating PR itself is clean.
+    [[ "$output" != *"PR #8000"* ]]
 }
 
 @test "required-absent: a rollup carrying every required context owes nothing" {
@@ -907,7 +918,12 @@ JSON
     # instrumented merge would be exempt from the one signal snapshots cannot carry.
     export POSTMORTEM_ABSENT_GRACE_SECONDS=0
     prlist <<'JSON'
-[{"number":8007,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f7"},"labels":[],
+[{"number":8000,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"f0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8007,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f7"},"labels":[],
   "statusCheckRollup":[
     {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
     {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
@@ -928,4 +944,120 @@ JSON
     run_detector
     [[ "$output" != *"PR #8008"* ]]
     [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+# ── required-absent effective dates (required-absent-judges-history-by-todays-
+# required-set, tooling P2) ──────────────────────────────────────────────────
+# $REQ_CTX_JSON is TODAY's required set applied to every PR in the window, so a
+# context promoted after a PR merged is absent from that PR BY DESIGN. The old
+# behaviour flagged all of them at once, and with POSTMORTEM_BLOCKING_GRACE=0
+# that hard-fails `--blocking` at SessionStart — a routine branch-protection
+# change could wedge every new session with phantom flags.
+
+@test "required-absent: a PR that merged BEFORE a context first reported is not flagged" {
+    # #8010 merged on the 9th without "Perf PR-fast"; the context is first observed
+    # on #8011 the next day. #8010 predates it -> not an escape.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8010,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"g0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8011,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #8010"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: a PR merged AFTER the context first reported is still flagged" {
+    # The other side of the same boundary — the fix must not blind the detector to
+    # a real escape that happens to sit later in the window.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8012,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"g2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8013,"mergedAt":"2026-06-11T10:00:00Z","mergeCommit":{"oid":"g3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-11T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-11T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8013"* ]]
+    [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+    [[ "$output" != *"PR #8012"* ]]
+}
+
+@test "required-absent: promoting a context does not flag the whole window" {
+    # THE WEDGE, directly. Three historical PRs, none carrying the newly-required
+    # context. Previously: three phantom required-absent flags, enough to hard-fail
+    # --blocking at SessionStart. Now: nothing owed, one diagnostic.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8020,"mergedAt":"2026-06-08T10:00:00Z","mergeCommit":{"oid":"h0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-08T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-08T09:00:00Z"}]},
+ {"number":8021,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"h1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8022,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"h2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-absent"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: an undatable context is reported once, not per PR" {
+    # Signal preserved, wedge removed: the never-observed context is still named
+    # loudly — it may be the #1941 shape rather than a fresh promotion — but as a
+    # single diagnostic rather than one flag per PR.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8030,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"i0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-09T09:00:00Z"}]},
+ {"number":8031,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"i1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"Perf PR-fast (windows-2022)"* ]]
+    [[ "$output" == *"present on NO merged PR"* ]]
+    # Exactly one mention, not one per PR.
+    [ "$(printf '%s\n' "$output" | grep -c 'present on NO merged PR')" -eq 1 ]
+}
+
+@test "required-absent: an EMPTY rollup is flagged regardless of dating" {
+    # The #1941 / #1972-#1974 shape survives the effective-date gate untouched.
+    # "Nothing reported at all" cannot be explained by a late promotion — had the
+    # context merely been added since, the OTHER required contexts would still be
+    # in the rollup. This is the case the gate must never suppress.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8040,"mergedAt":"2026-06-09T10:00:00Z","mergeCommit":{"oid":"j0"},"labels":[],
+  "statusCheckRollup":[]},
+ {"number":8041,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    # #8040 merged with an empty rollup and predates every observation — still owed.
+    [[ "$output" == *"PR #8040"* ]]
+    [[ "$output" == *"required-absent"* ]]
 }

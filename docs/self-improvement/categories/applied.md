@@ -3499,3 +3499,229 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 
   Status: applied (2026-08-11 — absent-required both halves + never-terminal; the proposed head_sha probe was investigated and does not apply, see above)
   Last-reviewed: 2026-08-11
+
+- 2026-08-11 · claude-code · [process] · P3 — the shared staleness helper exists but only three of the core gates call it; `issue-sweep.sh` still runs whatever logic its checkout happens to hold, with nothing saying so
+
+  Details: carried forward from
+  [`2026-08-06-gate-tooling-run-from-stale-session-branch`](applied.md) (applied
+  2026-08-11), whose thesis — make staleness self-announcing instead of silent — is
+  shipped. [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
+  now provides `script_freshness_verdict` + `warn_if_script_stale`, and three callers
+  use it: `merge-gates.sh` (off/warn/block, default warn), `pre-ship.sh` (advisory,
+  printed immediately before its `Safe to push` line), and `postmortem-owed.sh`
+  (qualifying its `no gate escapes owed` clean result).
+
+  What is left is breadth, and it is deliberately P3 rather than P1 because the
+  highest-stakes surfaces are already covered:
+  - **`issue-sweep.sh`** — genuinely unwired. Lower stakes than the three above (it is
+    triage assistance, not a merge or push gate), but it is the last core script whose
+    verdict a stale checkout can silently change.
+  - **The lint gates** — covered *indirectly* and probably sufficiently:
+    `pre-ship.sh`'s declared set already fingerprints
+    `agents/scripts/project/test-lint-rules.sh` plus `lint-rules.d/*.sh`, so a stale
+    rule module is reported at the push gate, which is where it would do harm. A
+    direct call inside `test-lint-rules.sh` would additionally cover invoking it
+    standalone — worth it only if that turns out to be a common path.
+
+  Concrete next action: add the two-line `warn_if_script_stale` call to
+  `issue-sweep.sh` over its own declared set (itself + the helper), following the
+  `postmortem-owed.sh` shape. Then decide, from actual usage, whether
+  `test-lint-rules.sh` needs its own direct call or whether the `pre-ship.sh` coverage
+  is enough — do not add it reflexively; every call site pays a bounded `git fetch`
+  (~0.8s measured), which is immaterial for a push gate and less obviously so for
+  something invoked in a loop.
+
+  **Applied 2026-08-11.** `issue-sweep.sh` is wired: it resolves its own directory
+  before the `cd` (so the lib is locatable when invoked outside a checkout), sources
+  the helper, and calls `warn_if_script_stale` LAST — after both the Issue verdicts
+  and the out-of-band-label strip, since a stale checkout can change either. Missing
+  lib degrades to silence rather than an error. Three tests in
+  [`issue_sweep.bats`](../../../tests/bats/issue_sweep.bats) pin the wiring by
+  running a copy of the script beside a stub lib, so they assert the call actually
+  fires with the real declared set rather than grepping the source; removing the call
+  fails two of them.
+
+  **`test-lint-rules.sh` deliberately NOT wired**, and the reason is stronger than
+  "not worth it". Its two real invocation paths are `pre-ship.sh` — which already
+  fingerprints it plus `lint-rules.d/*.sh` in its own declared set, at the push gate
+  where staleness would do harm — and CI, where the warning would be actively WRONG:
+  CI checks out the PR head on purpose, so a freshness-vs-develop note would fire on
+  every PR that touches a lint rule and train readers to ignore it. Standalone
+  invocation is not a common path. Re-open only if that changes.
+
+  Status: applied
+  Last-reviewed: 2026-08-11
+
+- 2026-08-11 · claude-code · [tooling] · P2 — the documented archival command re-parents a per-entry file one directory UP, silently breaking every relative link in it; the docs gate catches it only after the fact, and only if someone runs it
+
+  Details: [`AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) § workflow
+  step 4 prescribes archiving a per-entry file with
+
+  ```
+  cat docs/self-improvement/categories/<cat>/<file>.md >> docs/self-improvement/categories/applied.md
+  git rm docs/self-improvement/categories/<cat>/<file>.md
+  ```
+
+  The entry was authored at `categories/<cat>/` depth; `applied.md` lives one level up
+  at `categories/`. Every relative link in the body is therefore off by one directory
+  the instant it is appended. Hit live archiving
+  `2026-08-06-gate-tooling-run-from-stale-session-branch`: **7 dangling links** in one
+  entry — `../../../../agents/...` (correct from `categories/process/`) resolved to
+  `../agents/...` from `categories/`, `../../../agent-rules/...` to `agent-rules/...`,
+  and a sibling-category link `../tooling/<slug>.md` to `docs/self-improvement/tooling/`.
+
+  Two properties make this worse than a one-off:
+
+  1. **It fails silently at the moment of the mistake.** `cat` cannot fail here. The
+     only signal is `test-markdown-links.sh` reporting on `applied.md` later — and a
+     PR that archives an entry may not otherwise touch a file that trips the docs gate
+     locally, so the author's first notice can be CI.
+  2. **It degrades the archive specifically.** `applied.md` is the durable record read
+     months later; the whole value of an archived entry is that its cited paths still
+     resolve. This mechanically guarantees the opposite for exactly the entries that
+     carried the most cross-references.
+
+  **The same command breaks links in the mirror direction too, and that half bites
+  harder.** The `git rm` deletes a path other documents cite. Caught live in CI on this
+  very branch (PR #1996, `Agentic self-tests (bats)`): archiving
+  `2026-08-06-gate-tooling-run-from-stale-session-branch` left **2 inbound dangling
+  links** — from [`postmortems.md`](../postmortems.md) and from the sibling entry
+  [`2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md),
+  both of which had correctly linked a file that existed when they were written.
+
+  Inbound is the worse half for two reasons. The outbound breakage is confined to the
+  archived entry and is repairable by re-depthing, mechanically, inside one file. The
+  inbound breakage is scattered across files the archiver never opened, has no
+  mechanical fix — `applied.md` is a 3000-line append-only ledger with no per-entry
+  anchors, so there is no equivalent link to rewrite *to*, only prose to restate — and
+  it is invisible to any check scoped to the diff, because the referring files are
+  unmodified. Only a repo-wide `--all` sweep sees it. That is exactly why this surfaced
+  as a red required check rather than as a local pre-ship failure.
+
+  The 550+ legacy entries already in `applied.md` were largely moved from monolith
+  `categories/<cat>.md` files, which sit at the SAME depth as `applied.md` — so the
+  bug is new-ish, arriving with the one-file-per-entry convention, and will recur on
+  every per-entry archival from here.
+
+  Concrete next action: replace the raw `cat` in the § workflow step with a small
+  `archive-backlog-entry.sh` that appends AND re-depths — mechanically, `../../../../`
+  → `../../../` and `../../../` → `../../` for links leaving `docs/`, and
+  `../<sibling-cat>/` → `<sibling-cat>/` — then `git rm`s the source and re-runs
+  `test-markdown-links.sh` as a self-check. A script is the right shape rather than a
+  documented sed: the transform depends on the source entry's depth, which is exactly
+  the detail a human copying a command from a doc will not re-derive. The same script
+  must also handle the inbound half **before** the `git rm`: grep the repo for the
+  entry's slug and rewrite each referring link to prose naming the entry plus a link to
+  `applied.md`, refusing to delete while any inbound reference remains. Until it exists,
+  the doc should at minimum say "re-run `test-markdown-links.sh --all` after archiving" —
+  that one line would have caught both halves, and the `--all` is load-bearing: default
+  mode is diff-scoped and sees neither the re-parented body nor the orphaned referrers.
+
+  **Applied 2026-08-11.** [`archive-backlog-entry.sh`](../../../agents/scripts/core/archive-backlog-entry.sh)
+  replaces the raw recipe, and § workflow step 4 now calls it and says explicitly
+  not to hand-roll the `cat`. Two things came out different from the plan above:
+
+  - **The outbound transform is one rule, not a table.** The entry enumerated the
+    rewrites by hand (`../../../../` → `../../../`, `../<cat>/` → `<cat>/`). Those
+    are all instances of: a link `X` written at `categories/<cat>/` resolves to
+    `categories/<cat>/X`, so from `applied.md`'s home the equivalent is
+    `normalize("<cat>/" + X)`. Implementing the rule rather than the table also
+    covers same-dir links and stays correct if the convention ever nests deeper.
+  - **Prose mentions are advisory, not blocking.** The entry proposed refusing to
+    delete while any inbound reference remains. That is right for markdown links
+    (which dangle) but wrong for code spans and bare-path prose, which the link
+    gate does not follow — blocking on those would make some entries unarchivable
+    for a cosmetic reason. Links are repointed at `applied.md` at each referrer's
+    own depth; prose mentions are reported as WARN for a human to restate.
+
+  Nineteen tests in [`archive_backlog_entry.bats`](../../../tests/bats/archive_backlog_entry.bats)
+  drive a throwaway repo laid out like the real docs tree, and assert on the
+  RESULTING LINK TARGETS rather than exit status — reverting the fix fails 8 of
+  them. One test exists only because the first real run hit it: `git rm` refuses a
+  file with local modifications, which is the *normal* case here (you flip Status
+  to `applied` and archive in the same session), and it refused AFTER the append
+  had landed — leaving the tree half-archived, where a retry would double-append.
+  The removal is now forced (the working-tree body is what was preserved) and the
+  pre-flight happens before the first write.
+
+  Status: applied
+  Last-reviewed: 2026-08-11
+
+- 2026-08-11 · claude-code · [tooling] · P2 — `required-absent` judges every historical merge against TODAY's required-context set, so promoting a context retroactively flags PRs that merged before it existed and can hard-fail `--blocking` at SessionStart
+
+  Details: `postmortem-owed.sh` reads the required set once
+  (`REQ_CTX_JSON`, from `project.config.json`) and applies it uniformly to every PR
+  in the scan window. A context that became required *after* a PR merged is absent
+  from that PR's rollup **by design** — nothing was wrong with the merge — but the
+  cross-check cannot tell that apart from a genuine escape and reports
+  `required-absent`.
+
+  Consequence: the first sweep after any required-context promotion or rename flags
+  up to `SCAN_N` historical PRs at once. With `POSTMORTEM_BLOCKING_GRACE=0` that
+  hard-fails `--blocking`, which runs at SessionStart — so a routine branch-protection
+  change can wedge every new session until someone notices the flags are phantom.
+
+  Found by an explicit self-review of the diff in PR #1996 and independently
+  confirmed by CodeRabbit on the same PR. Both landed on the same two candidate
+  fixes:
+
+  - **Record the required set at merge time.** Most correct, most work: the sweep
+    would need a per-PR snapshot of what was required when it merged, which nothing
+    currently persists.
+  - **Apply each context only from its effective date.** Cheaper and self-contained:
+    derive a per-context "earliest observed present" from the scan window itself and
+    skip any PR merged before it. Needs the row stream buffered — the loop is
+    currently single-pass over a process substitution — so it is a real restructure
+    of `postmortem-owed.sh:573-719`, not a patch.
+
+  Deliberately **not** fixed in #1996. It fails LOUD and rarely (only on a
+  required-set change), which is the opposite of the silent false-green class that
+  PR exists to close; picking between the two designs is a judgement call rather
+  than a defect fix, and doing it badly would put noise into the one gate that is
+  supposed to be trustworthy. The sibling defect on the same detector — a POST-merge
+  re-run reading as `required-never-terminal` — WAS fixed there, because it fires on
+  ordinary PRs and the fix is local (ignore runs that started after `mergedAt`).
+
+  Escape hatch until fixed: `POSTMORTEM_ABSENT_GRACE_SECONDS` does not help (the
+  merges are old, so the grace has long elapsed). Either raise
+  `POSTMORTEM_BLOCKING_GRACE` or narrow `SCAN_N` past the promotion date for one
+  sweep.
+
+  **Applied 2026-08-11**, via the second (cheaper) option. The row stream is now
+  buffered into `ROWS` before judging — the loop was single-pass over a process
+  substitution, which is why this needed a restructure rather than a patch — and a
+  first pass derives `REQ_FIRST_SEEN[ctx]`, the earliest merge in the window on
+  which each required context was observed PRESENT. A PR that merged before its
+  first observation is not judged for that context.
+
+  Two cases the original write-up did not anticipate, both found by running the
+  existing suite against the change rather than by re-reading the plan:
+
+  - **A context observed on NO PR in the window is undatable**, and the two
+    explanations point opposite ways: a promotion so recent nothing has run it yet
+    (benign), or a context that never reports at all (the #1941 shape, and
+    serious). They are genuinely indistinguishable from the window alone. Flagging
+    per-PR would rebuild the exact wedge this fixes, so it is reported ONCE as a
+    WARN naming the context and the ambiguity. Signal preserved, wedge removed —
+    and critically it does not hard-fail `--blocking`.
+  - **An EMPTY rollup must stay exempt from the dating entirely.** The first
+    implementation suppressed it, which broke the #1941 regression test — correctly.
+    "Nothing reported at all" cannot be explained by a late promotion: had the
+    context merely been added since, the OTHER required contexts would still be in
+    the rollup. Empty rollups (#1941, #1972-#1974) now bypass the effective-date
+    gate and always flag.
+
+  Two existing tests changed shape rather than intent: their single-PR fixtures had
+  the missing context observed nowhere, so under the new rule they were undatable.
+  Both gained an earlier corroborating PR carrying the context — which is what a
+  real window looks like, since a required context reports on many PRs — and still
+  assert the escape is caught. Five new cases cover the boundary in both directions,
+  the whole-window promotion wedge, the once-only undatable report, and the
+  empty-rollup exemption; reverting the gate fails two of them.
+
+  The other candidate — persisting the required set at merge time — remains the
+  more correct fix and is still unbuilt. This one is derivable from data already
+  fetched, which is why it went first.
+
+  Status: applied
+  Last-reviewed: 2026-08-11

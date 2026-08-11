@@ -27,7 +27,23 @@
 # Exit codes: 0 ok · 2 gh missing / bad args.
 
 set -euo pipefail
+# Resolved before the `cd` so the freshness lib is locatable by absolute path
+# even when the `cd` below no-ops (invoked outside a git checkout).
+ISSUE_SWEEP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$(git rev-parse --show-toplevel)" 2>/dev/null || true
+
+# Gate-logic staleness guard (script-freshness-remaining-callers, process P3).
+# This sweep's verdicts are only as current as the checkout it runs from, and
+# `claude/<id>/*` session branches drift for days with nothing pulling
+# `agents/scripts/**` forward. Lower stakes than the merge/push gates — triage
+# assistance, not a gate — but it was the last core script whose verdict a stale
+# checkout could silently change. Advisory only; never affects the exit code.
+# Missing lib → skip, so a partial checkout degrades rather than errors.
+issue_sweep_freshness_lib="$ISSUE_SWEEP_DIR/lib/script-freshness.sh"
+if [ -r "$issue_sweep_freshness_lib" ]; then
+    # shellcheck source=agents/scripts/core/lib/script-freshness.sh
+    . "$issue_sweep_freshness_lib"
+fi
 
 MODE="dry-run"
 case "${1:-}" in
@@ -218,5 +234,15 @@ PY
     fi
 }
 strip_merged_oob_labels
+
+# Emitted LAST so it qualifies everything above — both the Issue verdicts and the
+# out-of-band strip are computed by this script's logic, so a stale checkout can
+# change either. Guarded so an older/partial checkout degrades rather than errors.
+if command -v warn_if_script_stale >/dev/null 2>&1; then
+    SCRIPT_FRESHNESS_ROOT_HINT="$ISSUE_SWEEP_DIR" \
+        warn_if_script_stale "issue-sweep triage logic" \
+            "agents/scripts/core/issue-sweep.sh" \
+            "agents/scripts/core/lib/script-freshness.sh"
+fi
 
 exit 0

@@ -61,6 +61,19 @@
 #                                 GitHub's check-suite creation lag; non-numeric →
 #                                 default. Notification threshold only — see the
 #                                 $ABSENT_GRACE_SECONDS comment.
+#
+# REQUIRED-CONTEXT EFFECTIVE DATES. The required set read from branch protection
+# is TODAY's, but the scan window is historical, so applying it uniformly would
+# flag every PR that merged before a context was promoted — merges that were
+# entirely correct. Since a promotion date is not persisted anywhere, each
+# context is dated from the window itself: the earliest merge on which it was
+# observed PRESENT. A PR that merged before that is not judged for it. A context
+# observed on NO PR in the window cannot be dated at all — that is either a fresh
+# promotion (benign) or a context that never reports (the #1941 escape), and the
+# two are indistinguishable — so it is reported ONCE as a WARN rather than as one
+# owed escape per PR, which is what would hard-fail `--blocking` at SessionStart.
+# An EMPTY rollup is exempt from all of this and always flags: "no check of any
+# kind ran" cannot be explained by a late promotion.
 
 set -euo pipefail
 # Resolve our own dir BEFORE the repo-root cd (BASH_SOURCE still resolves here)
@@ -584,30 +597,111 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
               )
             )
           | $n
-        ] | unique | join(", ") )
+        ] | unique | join(", ") ),
+    (.mergedAt // "")
   ] | @tsv'
 JQ_ROWS="${JQ_ROWS//__SCAN_N__/$SCAN_N}"
 JQ_ROWS="${JQ_ROWS//__REQ_CTX__/$REQ_CTX_JSON}"
 JQ_ROWS="${JQ_ROWS//__ALLOW__/$ALLOW_LIST_RE}"
 JQ_ROWS="${JQ_ROWS//__CUTOFF__/$ABSENT_CUTOFF_ISO}"
+# --- Buffer the rows before judging (required-absent-judges-history-by-todays-
+# required-set, tooling P2) ---------------------------------------------------
+# The loop below used to consume this stream directly, one pass. It cannot any
+# more: `required-absent` needs to know WHEN each required context started
+# reporting, and that is only derivable by looking across the whole window first.
+# Judging a PR against TODAYS required set flags every PR that merged before a
+# context was promoted — nothing was wrong with those merges — and with
+# POSTMORTEM_BLOCKING_GRACE=0 that hard-fails `--blocking` at SessionStart, so a
+# routine branch-protection change could wedge every new session.
+#
+# Buffering is bounded by SCAN_N (default small, tens of rows), so holding the
+# window in memory costs nothing meaningful.
+ROWS=()
 while IFS= read -r row; do
+    [ -n "$row" ] && ROWS+=("$row")
+done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
+            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null \
+            | tr -d '\r' || true)
+
+# The required-context list, decoded ONCE. It is loop-invariant, and re-spawning
+# jq per row put SCAN_N extra processes on a SessionStart hook path for an answer
+# that never changes.
+REQ_NAMES=()
+if [ "$REQ_CTX_JSON" != "[]" ] && command -v jq >/dev/null 2>&1; then
+    while IFS= read -r _rq; do
+        _rq="${_rq%$'\r'}"   # strip a trailing CR (git-bash jq on Windows)
+        [ -n "$_rq" ] && REQ_NAMES+=("$_rq")
+    done < <(printf '%s\n' "$REQ_CTX_JSON" | jq -r '.[]' 2>/dev/null || true)
+fi
+
+# Earliest merge in the window at which each required context was OBSERVED
+# PRESENT. A context absent from a PR that merged BEFORE that date is not an
+# escape — the context did not exist (or was not yet wired) then.
+declare -A REQ_FIRST_SEEN=()
+for _r in "${ROWS[@]}"; do
+    [ "${#REQ_NAMES[@]}" -gt 0 ] || break
+    # Fields 5 (present names) and 8 (mergedAt) only — cheap re-split.
+    _rest="${_r#*$'\t'}"; _rest="${_rest#*$'\t'}"; _rest="${_rest#*$'\t'}"; _rest="${_rest#*$'\t'}"
+    _present="${_rest%%$'\t'*}"
+    _merged="${_r##*$'\t'}"
+    [ -n "$_merged" ] || continue
+    for _rq in "${REQ_NAMES[@]}"; do
+        case "|||${_present}|||" in
+            *"|||${_rq}|||"*)
+                _prev="${REQ_FIRST_SEEN[$_rq]:-}"
+                # ISO-8601 UTC timestamps compare correctly as strings.
+                if [ -z "$_prev" ] || [ "$_merged" \< "$_prev" ]; then
+                    REQ_FIRST_SEEN[$_rq]="$_merged"
+                fi ;;
+        esac
+    done
+done
+
+# A required context present on NO PR in the window cannot be dated, and the two
+# explanations point opposite ways: it was promoted so recently nothing has run
+# it yet (benign), or it never reports at all (the #1941 escape, and serious).
+# Flagging it per-PR would manufacture exactly the SCAN_N-wide phantom sweep this
+# fix exists to stop, so it is reported ONCE, loudly, as its own diagnostic —
+# signal preserved, wedge removed.
+#
+# KNOWN GAP, deliberate: `warns` never affects the exit code, so a required
+# workflow that stops reporting on EVERY PR leaves `--blocking` green. That is a
+# real loss against the previous behaviour, accepted because the alternative
+# re-creates the SessionStart wedge, and because the two causes are
+# indistinguishable from the window alone. Closing it properly needs the other
+# candidate fix — persisting the required set at merge time — which is filed.
+REQ_UNDATABLE=""
+if [ "${#ROWS[@]}" -gt 0 ] && [ "${#REQ_NAMES[@]}" -gt 0 ]; then
+    for _rq in "${REQ_NAMES[@]}"; do
+        if [ -z "${REQ_FIRST_SEEN[$_rq]:-}" ]; then
+            REQ_UNDATABLE="${REQ_UNDATABLE:+$REQ_UNDATABLE, }$_rq"
+        fi
+    done
+fi
+if [ -n "$REQ_UNDATABLE" ]; then
+    warns+=("required context(s) present on NO merged PR in the last ${SCAN_N}: ${REQ_UNDATABLE} — either just promoted (benign; re-check next sweep) or never reporting at all (the #1941 shape). Not counted as a per-PR escape: undatable, so every PR in the window would flag.")
+fi
+
+for row in "${ROWS[@]}"; do
     [ -z "$row" ] && continue
-    # Split the 6-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
+    # Split the 8-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
     # IFS-whitespace, so `read` collapses consecutive tabs and DROPS empty middle
     # fields — a row with empty labels but a real red-check ("num⇥mc⇥⇥check")
     # would shift the check into `labels` and blank `redchecks`, silently missing
     # the single most common escape (red required check, no override label).
-    # Parameter expansion preserves empty fields. @tsv always emits 7 fields
+    # Parameter expansion preserves empty fields. @tsv always emits 8 fields
     # (field 5 = the `|||`-joined PRESENT context names, for the absence checks;
     # field 6 = "1" when the merge is older than the run-creation grace window,
     # i.e. old enough to judge absence — see $ABSENT_GRACE_SECONDS;
-    # field 7 = required contexts PRESENT but never terminal — see below).
+    # field 7 = required contexts PRESENT but never terminal — see below;
+    # field 8 = mergedAt, for the required-context effective-date check).
     num="${row%%$'\t'*}";         row="${row#*$'\t'}"
     mergecommit="${row%%$'\t'*}"; row="${row#*$'\t'}"
     labels="${row%%$'\t'*}";      row="${row#*$'\t'}"
     redchecks="${row%%$'\t'*}";   row="${row#*$'\t'}"
     present_names="${row%%$'\t'*}";   row="${row#*$'\t'}"
-    absent_judgeable="${row%%$'\t'*}"; req_nonterminal="${row#*$'\t'}"
+    absent_judgeable="${row%%$'\t'*}"; row="${row#*$'\t'}"
+    req_nonterminal="${row%%$'\t'*}";  merged_at="${row#*$'\t'}"
     [ -z "$num" ] && continue
     [ -n "$mergecommit" ] && merged_commits="$merged_commits $mergecommit"
     has_entry "$num" && continue
@@ -678,6 +772,28 @@ while IFS= read -r row; do
         while IFS= read -r reqname; do
             reqname="${reqname%$'\r'}"   # strip a trailing CR (git-bash jq on Windows)
             [ -z "$reqname" ] && continue
+            # EFFECTIVE-DATE GATE (required-absent-judges-history-by-todays-
+            # required-set). $REQ_CTX_JSON is TODAYs required set, applied
+            # uniformly to every PR in the window. A context promoted after this
+            # PR merged is absent from its rollup BY DESIGN — nothing was wrong
+            # with the merge — but absence alone cannot tell that apart from a
+            # genuine escape.
+            #
+            # EXCEPT when the rollup is EMPTY. "Nothing reported at all" cannot be
+            # explained by a late promotion: had the context merely been added
+            # since, the OTHER required contexts would still be sitting in the
+            # rollup. An empty rollup is the #1941 / #1972-#1974 shape (merged with
+            # zero workflow runs) and stays unconditionally flagged — dating is
+            # irrelevant when the answer is "no check of any kind ran".
+            if [ -n "$present_names" ]; then
+                _first_seen="${REQ_FIRST_SEEN[$reqname]:-}"
+                # Never observed anywhere in the window: undatable. Reported once,
+                # above, rather than manufacturing SCAN_N identical flags here.
+                if [ -z "$_first_seen" ]; then continue; fi
+                # Merged before the context was first observed reporting: the
+                # context did not exist yet. Not an escape.
+                if [ -n "$merged_at" ] && [ "$merged_at" \< "$_first_seen" ]; then continue; fi
+            fi
             case "|||${present_names}|||" in
                 *"|||${reqname}|||"*) ;;   # present (any state — absence is the signal)
                 *) req_absent_names="${req_absent_names:+$req_absent_names, }$reqname" ;;
@@ -736,9 +852,7 @@ while IFS= read -r row; do
         continue
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
-done < <(gh pr list --repo "$REPO" --base develop --state merged --limit "$FETCH_N" \
-            --json number,labels,mergedAt,mergeCommit,statusCheckRollup --jq "$JQ_ROWS" 2>/dev/null \
-            | tr -d '\r' || true)
+done
 
 # --- Trigger 3: Revert commits on develop ------------------------------------
 while IFS= read -r line; do

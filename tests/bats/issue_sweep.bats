@@ -112,3 +112,71 @@ JSON
     [[ "$output" == *"removed 1"* ]]
     grep -q "gh pr edit 555 --repo .* --remove-label cr-out-of-band" "$GH_LOG"
 }
+
+# ── Gate-logic staleness wiring (script-freshness-remaining-callers, P3) ──────
+# These assert the CALL, not the library — script_freshness.bats already covers
+# fresh/stale/unverifiable classification and the print policy. What is untested
+# elsewhere, and what actually regressed on the other callers, is the wiring:
+# whether the script locates the lib RELATIVE TO ITSELF and passes its real
+# declared set. A hook that is present but never reached is the same invisible
+# no-op this whole line of work exists to close, so it gets a live assertion
+# rather than a grep over the source.
+#
+# Method: run a COPY of the script beside a stub lib. ISSUE_SWEEP_DIR is derived
+# from BASH_SOURCE, so the copy sources the stub instead of the real library,
+# and the stub records exactly what it was called with.
+_mk_sweep_copy() {   # -> $COPY_DIR with issue-sweep.sh + lib/script-freshness.sh stub
+    COPY_DIR="$WORK/copy"; export COPY_DIR
+    mkdir -p "$COPY_DIR/lib"
+    cp "$SCRIPT" "$COPY_DIR/issue-sweep.sh"
+    export STALE_LOG="$WORK/stale.log"
+    cat > "$COPY_DIR/lib/script-freshness.sh" <<STUB
+warn_if_script_stale() { printf '%s\n' "\$*" >> "$STALE_LOG"; return 0; }
+STUB
+}
+
+@test "freshness: the sweep calls warn_if_script_stale with its own declared set" {
+    _mk_sweep_copy
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    [ -f "$STALE_LOG" ]
+    # ONE exact line, not three loose greps. The stub records each call's "$*" on
+    # its own line, so three independent substring searches would also pass if the
+    # label and the two paths arrived on DIFFERENT calls, or as substrings of
+    # longer paths — neither of which is the contract. -F -x pins the complete
+    # argument list of a single call, in order.
+    grep -Fqx "issue-sweep triage logic agents/scripts/core/issue-sweep.sh agents/scripts/core/lib/script-freshness.sh" "$STALE_LOG"
+}
+
+@test "freshness: the warning is emitted AFTER the sweep's own verdicts" {
+    # Ordering is the contract: the note qualifies the verdicts above it, so it
+    # must not print before there is anything to qualify.
+    _mk_sweep_copy
+    cat > "$COPY_DIR/lib/script-freshness.sh" <<'STUB'
+warn_if_script_stale() { echo "FRESHNESS-MARKER"; return 0; }
+STUB
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    # The marker must be LAST, not merely after the first verdict. Asserting only
+    # `RELABEL ... FRESHNESS-MARKER` still passes when a later verdict, the summary
+    # line, or the out-of-band strip prints after it — and "qualifies everything
+    # above" is the actual contract.
+    [ "$(printf '%s\n' "$output" | tail -1)" = "FRESHNESS-MARKER" ]
+    # And there is genuinely verdict output above it to qualify.
+    [[ "$output" == *"RELABEL #734"* ]]
+    [ "$(printf '%s\n' "$output" | grep -c 'FRESHNESS-MARKER')" -eq 1 ]
+}
+
+@test "freshness: a missing lib degrades to silence, never an error" {
+    # A partial checkout must not turn an advisory nudge into a hard failure.
+    _mk_sweep_copy
+    rm -f "$COPY_DIR/lib/script-freshness.sh"
+    ISSUES_JSON="$ISSUES_JSON" run bash "$COPY_DIR/issue-sweep.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"RELABEL #734"* ]]
+    # SILENCE is half the contract and was untested: exit 0 alone would also be
+    # satisfied by a fallback warning about the missing library, which is exactly
+    # the noise a partial checkout must not produce.
+    [ ! -e "$STALE_LOG" ]
+    ! grep -qi "freshness\|stale" <<<"$output"
+}
