@@ -1993,25 +1993,39 @@ CFG
     rm -f "$f"
 }
 
-@test "a DIRTY head with NO absent required context does not emit the conflict hint [P1]" {
-    # The attribution rides on the required-missing block, so it must stay silent
-    # when nothing is absent — no spurious required-missing/CONFLICTED line on a
-    # DIRTY head whose required contexts all reported.
-    #
-    # Note this fixture PASSES: the mergeStateStatus guard blocks on BLOCKED|BEHIND
-    # only, and DIRTY is not in that set, so an all-green conflicted head reaches
-    # GATES_PASSED and the conflict surfaces later as a failed merge attempt. That
-    # is pre-existing behaviour this change deliberately does not alter (the entry's
-    # fix is diagnosis, not a new block); asserted here so the pass is recorded as
-    # observed rather than assumed.
+@test "a DIRTY head with NO absent required context blocks on mergeStateStatus, no conflict hint [P1]" {
+    # Two assertions in one shape. (a) The required-missing attribution rides on the
+    # required-missing block, so it stays silent when nothing is absent — no spurious
+    # required-missing/CONFLICTED line. (b) The head is STILL blocked, by the
+    # mergeStateStatus guard: DIRTY joined BLOCKED|BEHIND (CR #1996) because a
+    # conflicted head is unmergeable by construction, so an all-green DIRTY head
+    # reaching GATES_PASSED was a false pass that only surfaced as a failed REST
+    # merge later.
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
     set_fixture "$f"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 0 ]
+    [ "$status" -eq 1 ]
+    ! grep -qx 'GATES_PASSED' <<<"$output"
+    [[ "$output" == *"mergeStateStatus=DIRTY"* ]]
     [[ "$output" != *"required-missing"* ]]
     [[ "$output" != *"CONFLICTED"* ]]
+    rm -f "$f"
+}
+
+@test "mergeStateStatus=DIRTY + MERGE_GATES_IGNORE_MERGESTATE=true -> escape still works [P1]" {
+    # The documented escape must still cover the newly-blocked DIRTY state, so a
+    # positively-confirmed stale-DIRTY PR is not wedged with no way out.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
+    export MERGE_GATES_IGNORE_MERGESTATE=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    unset MERGE_GATES_IGNORE_MERGESTATE
     rm -f "$f"
 }
 

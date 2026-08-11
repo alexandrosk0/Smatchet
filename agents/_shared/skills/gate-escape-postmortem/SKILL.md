@@ -27,7 +27,7 @@ triage) is the **applier**. No second system.
    a missing required check, an override used, a check that doesn't exist yet).
    Run `bash agents/scripts/core/postmortem-owed.sh --list` to see the open set.
    **Record the provenance of any gate-tool output you cite** — the tree and commit
-   the tool ran from (e.g. "`merge-gates.sh` from `C:/Dev/Smatchet` @ `ff0ee7a6`").
+   the tool ran from (e.g. "`merge-gates.sh` from `<integration-tree>` @ `ff0ee7a6`").
    Gate scripts live in the repo, so a long-lived session branch runs a *months-old*
    copy that emits plausible, correctly-formatted verdicts about rules `develop` no
    longer has. One postmortem asserted the sanctioned merge path was structurally

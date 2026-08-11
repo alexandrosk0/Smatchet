@@ -279,8 +279,34 @@ poll_merge_gates() {
                 # Bounded ref refresh (refs only; never touches the worktree). A failed
                 # fetch must NOT silently compare against a stale local origin/develop —
                 # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
+                #
+                # HARD REQUIREMENT that this can never hang (CR #1996): since the
+                # freshness default flipped off→warn, this fetch runs on EVERY poll,
+                # including human-invoked ones, and it happens BEFORE TIMEOUT_SECONDS is
+                # even initialised — so a hang here is unbounded by the poll budget and
+                # wedges the whole merge flow. Three independent stops, because no single
+                # one is portable across the git-bash / Linux-CI split:
+                #   - GIT_TERMINAL_PROMPT=0 + SSH BatchMode: never block on a credential
+                #     or host-key prompt (the classic silent hang on a fresh checkout).
+                #   - http.lowSpeedLimit/Time: abort a stalled HTTP transfer after 10s of
+                #     <1KB/s. Pure git config, works everywhere, no external binary.
+                #   - `timeout 30` when coreutils provides it (Linux CI, most git-bash):
+                #     a hard wall-clock cap over everything above.
+                # Every failure path lands on _fetch_ok=false → blanked blobs → the
+                # "freshness unverifiable" branch, which in the default warn mode prints
+                # a WARN and does NOT block. So a broken/offline remote degrades to
+                # "cannot verify freshness", never to a stall and never to a false verdict.
                 local _fetch_ok=true
-                git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
+                local -a _fetch_cmd=(git -C "$_root"
+                    -c "http.lowSpeedLimit=1000" -c "http.lowSpeedTime=10"
+                    fetch -q --no-tags origin develop)
+                if command -v timeout >/dev/null 2>&1; then
+                    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}" \
+                        timeout 30 "${_fetch_cmd[@]}" >/dev/null 2>&1 || _fetch_ok=false
+                else
+                    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}" \
+                        "${_fetch_cmd[@]}" >/dev/null 2>&1 || _fetch_ok=false
+                fi
                 # Combined fingerprint over the whole gate-file set. Any missing local
                 # file or missing develop blob leaves an empty component and blanks the
                 # side → the unverifiable branch below fails closed (#1428).
@@ -1242,11 +1268,22 @@ poll_merge_gates() {
         # MERGE_GATES_IGNORE_MERGESTATE=true skips this guard for the documented
         # admin-merge escape (a positively-confirmed STALE-BLOCKED PR that is
         # actually all-green — AGENTS.md § Merge gates).
+        #
+        # DIRTY joins the set (CR #1996): a conflicted head is unmergeable by
+        # construction — GitHub refuses the merge AND declines to build the head, so
+        # its required contexts can never report. Previously only the required-absent
+        # cross-check caught it, and then only when that detector was armed: an
+        # all-green DIRTY head (one whose contexts DID report before the conflict
+        # appeared) reached GATES_PASSED, and the merge then failed at the REST call.
+        # That is the same false-pass class this change exists to close. DIRTY is a
+        # COMPUTED verdict, not a not-yet-known one — GitHub reports UNKNOWN while
+        # mergeability is still being determined — so this cannot fire on a pending
+        # computation. MERGE_GATES_IGNORE_MERGESTATE remains the escape.
         local gh_merge_state="${fields[17]:-UNKNOWN}"
         local mergestate_blocks=false
         if [ "${MERGE_GATES_IGNORE_MERGESTATE:-}" != "true" ]; then
             case "$gh_merge_state" in
-                BLOCKED|BEHIND) mergestate_blocks=true ;;
+                BLOCKED|BEHIND|DIRTY) mergestate_blocks=true ;;
             esac
         fi
 
