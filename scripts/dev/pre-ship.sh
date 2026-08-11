@@ -512,13 +512,17 @@ fi
 # the entry point, the delta-lint gate it shells out to plus that gate's rule
 # modules, the shared review-ack logic, and the detector itself (a stale detector
 # is the one blind spot that would hide all the others).
+# The rules glob stays QUOTED on purpose: the detector expands it against the
+# repo root. Unquoted, the shell expands it against the invoking CWD, and from
+# any subdirectory it matches nothing, passes the literal pattern through, and
+# silently degrades the whole check to `unverifiable` — which prints nothing.
 if command -v warn_if_script_stale >/dev/null 2>&1; then
     warn_if_script_stale "pre-ship gate logic" \
         "scripts/dev/pre-ship.sh" \
         "agents/scripts/project/test-lint-rules.sh" \
         "agents/scripts/core/lib/review-ack.sh" \
         "agents/scripts/core/lib/script-freshness.sh" \
-        agents/scripts/project/lint-rules.d/*.sh
+        "agents/scripts/project/lint-rules.d/*.sh"
 fi
 
 echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."

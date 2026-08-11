@@ -86,7 +86,22 @@ script_freshness_fetch() {  # script_freshness_fetch <repo_root> → 0 ok / 1 fa
     return 0
 }
 
-script_freshness_verdict() {  # <run_override> <dev_override> <relpath>...
+# Fingerprints ONE declared relpath into the running pair. Split out of the loop
+# below so the literal and glob-expanded branches cannot drift apart; sets the
+# shared `SCRIPT_FRESHNESS_INCOMPLETE` flag rather than returning, because a gap
+# has to blank BOTH sides and a `return 1` here would kill `set -e` callers.
+script_freshness_fingerprint_one() {  # <root> <relpath>
+    local _root="$1" _rp="$2" _rh _dh
+    # Same `|| var=""` discipline as the caller — see the note there.
+    _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)" || _rh=""
+    _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)" || _dh=""
+    if [ -z "$_rh" ] || [ -z "$_dh" ]; then SCRIPT_FRESHNESS_INCOMPLETE=true; fi
+    SCRIPT_FRESHNESS_RUN_BLOB="$SCRIPT_FRESHNESS_RUN_BLOB $_rh"
+    SCRIPT_FRESHNESS_DEV_BLOB="$SCRIPT_FRESHNESS_DEV_BLOB $_dh"
+    return 0
+}
+
+script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>...
     local _run_override="${1:-}" _dev_override="${2:-}"
     shift 2 || true
 
@@ -119,14 +134,36 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath>...
             # file or a missing develop blob leaves an empty component; any such
             # gap blanks BOTH sides so the result is `unverifiable` rather than a
             # comparison of partial fingerprints that could coincidentally match.
-            local _rp _rh _dh _incomplete=false
+            local _rp _m _matched
+            SCRIPT_FRESHNESS_INCOMPLETE=false
             for _rp in "$@"; do
-                _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)" || _rh=""
-                _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)" || _dh=""
-                if [ -z "$_rh" ] || [ -z "$_dh" ]; then _incomplete=true; fi
-                SCRIPT_FRESHNESS_RUN_BLOB="$SCRIPT_FRESHNESS_RUN_BLOB $_rh"
-                SCRIPT_FRESHNESS_DEV_BLOB="$SCRIPT_FRESHNESS_DEV_BLOB $_dh"
+                case "$_rp" in
+                    *[*?[]*)
+                        # A declared GLOB is expanded HERE, against the repo root —
+                        # never at the call site, where it would expand against
+                        # whatever CWD the gate happened to be invoked from. On a
+                        # miss the shell passes the pattern through literally, which
+                        # fingerprints as a missing file and degrades the verdict to
+                        # `unverifiable` — and `unverifiable` is SILENT by default.
+                        # That is a false green inside the detector whose entire job
+                        # is to prevent one: pre-ship.sh run from any subdirectory
+                        # printed "Safe to push" with this guard quietly dead.
+                        _matched=false
+                        for _m in "$_root"/$_rp; do
+                            [ -e "$_m" ] || continue
+                            _matched=true
+                            script_freshness_fingerprint_one "$_root" "${_m#"$_root"/}"
+                        done
+                        # A pattern matching NOTHING must not silently shrink the
+                        # declared set — that is the same hole one level up.
+                        if [ "$_matched" != true ]; then SCRIPT_FRESHNESS_INCOMPLETE=true; fi
+                        ;;
+                    *)
+                        script_freshness_fingerprint_one "$_root" "$_rp"
+                        ;;
+                esac
             done
+            local _incomplete="$SCRIPT_FRESHNESS_INCOMPLETE"
             # A failed fetch is treated exactly like a missing blob: without it the
             # local origin/develop may be arbitrarily old, so a "matches" result
             # would be meaningless and a "differs" result unattributable.
