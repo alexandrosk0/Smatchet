@@ -162,6 +162,72 @@ _mk_repo_with_origin() {
     [[ "$output" == "stale" ]]
 }
 
+# Push a file to origin/develop that the work checkout will NOT have, then make
+# origin/develop visible locally without merging it — the shape of a session
+# branch that predates a newly added lint rule.
+_add_devonly_rule() {
+    (
+        set -e
+        git clone -q "$TMP/origin" "$TMP/other"
+        cd "$TMP/other"
+        git config user.email t@l; git config user.name t
+        mkdir -p rules.d
+        echo brandnew > rules.d/30-new.sh
+        git add -A; git commit -qm "develop gains a rule"
+        git push -q origin HEAD:develop
+    )
+    git -C "$TMP/work" fetch -q origin develop
+}
+
+@test "glob: a file develop has and the checkout LACKS reads stale, not fresh" {
+    # The half-set bug: expanding the pattern over the local worktree only means a
+    # develop-only file is enumerated on neither side, so both fingerprints omit it
+    # equally and the verdict was `fresh` — pre-ship printing "Safe to push" while
+    # running a rule set develop had already moved past. One layer below the CWD
+    # fix: that corrected WHERE the pattern expands, this corrects what it expands
+    # OVER. The unmatched-pattern guard never fired here — the glob matched a
+    # strict SUBSET, not nothing.
+    _mk_repo_with_origin
+    _add_devonly_rule
+    # Precondition, so the test cannot pass by the file being absent from develop too.
+    run git -C "$TMP/work" cat-file -e origin/develop:rules.d/30-new.sh
+    [ "$status" -eq 0 ]
+    [ ! -e "$TMP/work/rules.d/30-new.sh" ]
+
+    run bash -c 'cd "$TMP/work"; . "$LIB"
+        script_freshness_verdict "" "" entry.sh "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    # `stale`, NOT `unverifiable`: this is known drift, and unverifiable is silent
+    # by default, which would leave the operator with the same false green.
+    [[ "$output" == "stale" ]]
+}
+
+@test "glob: syncing the missing file back makes it fresh again (no false positive)" {
+    # The failure mode a too-eager fix would introduce: every checkout permanently
+    # stale. Same fixture, drift resolved.
+    _mk_repo_with_origin
+    _add_devonly_rule
+    git -C "$TMP/work" merge -q origin/develop
+    run bash -c 'cd "$TMP/work"; . "$LIB"
+        script_freshness_verdict "" "" entry.sh "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == "fresh" ]]
+}
+
+@test "glob: a develop-only file is seen from a subdirectory too" {
+    # Both halves of the glob handling have to hold at once: root-relative
+    # expansion AND develop-side enumeration.
+    _mk_repo_with_origin
+    _add_devonly_rule
+    run bash -c 'cd "$TMP/work/sub"; . "$LIB"
+        script_freshness_verdict "" "" entry.sh "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    [[ "$output" == "stale" ]]
+}
+
 @test "glob: a pattern matching NOTHING is unverifiable, never a silently smaller set" {
     # The hole one level up: dropping an unmatched pattern would shrink the
     # declared set and let the remaining files compare clean — a false 'fresh'.

@@ -134,7 +134,7 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>.
             # file or a missing develop blob leaves an empty component; any such
             # gap blanks BOTH sides so the result is `unverifiable` rather than a
             # comparison of partial fingerprints that could coincidentally match.
-            local _rp _m _matched
+            local _rp _m _matched _rel _seen _dir _base _dn _drel _devlist _dhash
             SCRIPT_FRESHNESS_INCOMPLETE=false
             for _rp in "$@"; do
                 case "$_rp" in
@@ -149,11 +149,57 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>.
                         # is to prevent one: pre-ship.sh run from any subdirectory
                         # printed "Safe to push" with this guard quietly dead.
                         _matched=false
+                        _seen=""
                         for _m in "$_root"/$_rp; do
                             [ -e "$_m" ] || continue
                             _matched=true
-                            script_freshness_fingerprint_one "$_root" "${_m#"$_root"/}"
+                            _rel="${_m#"$_root"/}"
+                            _seen="$_seen $_rel"
+                            script_freshness_fingerprint_one "$_root" "$_rel"
                         done
+
+                        # The worktree is only HALF the set. Expanding the pattern
+                        # over the local checkout alone means a file that exists on
+                        # origin/develop and NOT here is never enumerated — so it is
+                        # fingerprinted on neither side, both sides omit it equally,
+                        # and the verdict is `fresh`. A checkout predating a newly
+                        # added lint rule therefore reported itself current and
+                        # pre-ship printed "Safe to push" while running the old rule
+                        # set: the exact false green this detector exists to prevent,
+                        # one layer below the CWD fix (which corrected where the
+                        # pattern expands, not what it expands OVER). The `_matched`
+                        # guard below does not cover it — that fires only when the
+                        # glob matches NOTHING, never on a strict subset.
+                        #
+                        # So enumerate develop's side of the pattern too. Splitting
+                        # dir from basename keeps the match honest: `ls-tree` on the
+                        # dir yields plain names, so `case` sees no `/` and cannot
+                        # over-match across directories the way a bare `*` would.
+                        _dir="${_rp%/*}"
+                        if [ "$_dir" = "$_rp" ]; then _dir=""; fi
+                        _base="${_rp##*/}"
+                        _devlist="$(git -C "$_root" ls-tree --name-only "origin/develop:${_dir}" 2>/dev/null)" || _devlist=""
+                        # Heredoc, not a pipe: a `| while` runs in a subshell and the
+                        # fingerprint accumulation below would be discarded silently.
+                        while IFS= read -r _dn; do
+                            [ -n "$_dn" ] || continue
+                            case "$_dn" in $_base) ;; *) continue ;; esac
+                            if [ -n "$_dir" ]; then _drel="$_dir/$_dn"; else _drel="$_dn"; fi
+                            case " $_seen " in *" $_drel "*) continue ;; esac
+                            # Present on develop, absent here. That is unambiguous
+                            # drift, not an unknown — so it must read `stale`, not
+                            # `unverifiable`, which is SILENT by default and would
+                            # leave the operator with the same false green. Append a
+                            # placeholder run-side component against develop's real
+                            # hash so the two fingerprints differ, WITHOUT setting
+                            # INCOMPLETE (which would blank both sides).
+                            _matched=true
+                            _dhash="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_drel" 2>/dev/null)" || _dhash=""
+                            SCRIPT_FRESHNESS_RUN_BLOB="$SCRIPT_FRESHNESS_RUN_BLOB -"
+                            SCRIPT_FRESHNESS_DEV_BLOB="$SCRIPT_FRESHNESS_DEV_BLOB $_dhash"
+                        done <<EOF
+$_devlist
+EOF
                         # A pattern matching NOTHING must not silently shrink the
                         # declared set — that is the same hole one level up.
                         if [ "$_matched" != true ]; then SCRIPT_FRESHNESS_INCOMPLETE=true; fi
