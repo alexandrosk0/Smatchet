@@ -160,7 +160,8 @@ extract_jq() {
     ' "$ACTION" | sed "1s/.*jq -r '//; \$s/' 2>.*//"
 }
 
-# payload <reviews-json-array> <cr-status-state> -> fixture file path
+# payload <reviews-json-array> <cr-status-state> [cr-status-description]
+#   -> fixture file path. Description defaults to CR's real settled wording.
 payload() {
     local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json"
     cat > "$f" <<EOF
@@ -168,22 +169,43 @@ payload() {
  "headRefOid":"HEAD",
  "reviews":{"nodes":$1},
  "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
-   {"__typename":"StatusContext","context":"CodeRabbit","state":"$2"}]}}}}]}
+   {"__typename":"StatusContext","context":"CodeRabbit","state":"$2",
+    "description":"${3:-Review completed}"}]}}}}]}
 }}}}
 EOF
     printf '%s' "$f"
 }
 
-# verdict <fixture> -> one of: not-reviewed | fail-closed | findings:N | clean
+# The not-a-review marker decide() refuses to treat as review evidence. Restated
+# here for readability, then asserted to still exist in the action verbatim (see
+# the "guard is present" test) so this cannot drift into testing a pattern the
+# gate no longer uses.
+RATE_LIMIT_RE='rate.?limit|limit reached'
+
+# verdict <fixture> -> not-reviewed | unsettled | fail-closed | findings:N | clean
 # Mirrors decide()'s control flow using the action's own jq + header regex.
+#   not-reviewed = no verdict-carrying review, CR status SUCCESS -> gate passes
+#   unsettled    = retry -> PENDING at window exhaustion (never green)
 verdict() {
-    local f="$1" n body num
+    local f="$1" n body num state desc
     n=$(jq -r -f "$BATS_TEST_TMPDIR/count.jq" "$f")
+    if [ "$n" -eq 0 ]; then
+        state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
+        desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+        if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"; then
+            printf 'unsettled'; return
+        fi
+        case "$state" in
+            SUCCESS)       printf 'not-reviewed' ;;
+            FAILURE|ERROR) printf 'cr-failed' ;;
+            *)             printf 'unsettled' ;;
+        esac
+        return
+    fi
     body=$(jq -r -f "$BATS_TEST_TMPDIR/body.jq" "$f")
     num=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
             | grep -oE '[0-9]+' | head -1 || true)
-    if [ "$n" -eq 0 ]; then printf 'not-reviewed'
-    elif [ -z "$num" ]; then printf 'fail-closed'
+    if [ -z "$num" ]; then printf 'fail-closed'
     elif [ "$num" -gt 0 ]; then printf 'findings:%s' "$num"
     else printf 'clean'; fi
 }
@@ -193,11 +215,15 @@ setup_jq() {
         echo "jq is required by this suite and is not installed" >&2
         return 1
     }
-    extract_jq 'n_reviews=$(printf' '|| n_reviews=0' > "$BATS_TEST_TMPDIR/count.jq"
-    extract_jq 'body=$(printf'      '|| body=""'     > "$BATS_TEST_TMPDIR/body.jq"
+    extract_jq 'n_reviews=$(printf' '|| n_reviews=0'    > "$BATS_TEST_TMPDIR/count.jq"
+    extract_jq 'body=$(printf'      '|| body=""'        > "$BATS_TEST_TMPDIR/body.jq"
+    extract_jq 'cr_ctx=$(printf'    '|| cr_ctx="ABSENT"' > "$BATS_TEST_TMPDIR/ctx.jq"
+    extract_jq 'cr_desc=$(printf'   '|| cr_desc=""'      > "$BATS_TEST_TMPDIR/desc.jq"
     # An empty extraction would make every assertion below vacuous.
     grep -q 'headRefOid' "$BATS_TEST_TMPDIR/count.jq"
     grep -q 'headRefOid' "$BATS_TEST_TMPDIR/body.jq"
+    grep -q 'StatusContext' "$BATS_TEST_TMPDIR/ctx.jq"
+    grep -q 'StatusContext' "$BATS_TEST_TMPDIR/desc.jq"
 }
 
 CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
@@ -239,6 +265,52 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
     # proof of zero findings. It must never reach the StatusContext pass.
     f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"unexpected prose, no header\"}]" SUCCESS)"
     [ "$(verdict "$f")" = "fail-closed" ]
+}
+
+@test "verdict: a rate-limited SUCCESS is NOT review evidence" {
+    setup_jq
+    # CodeRabbit publishes state=SUCCESS with description "Review rate limited"
+    # for a review that never ran (observed on this PR, head 51c74fe 03:28:01).
+    # Reading only .state, this head — with no review node at all — would pass
+    # as "completed with no review (skipped/clean)": an unreviewed green.
+    f="$(payload '[]' SUCCESS 'Review rate limited')"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "verdict: a genuinely completed SUCCESS with no review node still passes" {
+    setup_jq
+    # The CR-skipped-review case (trivial/docs/workflow diffs) must keep working;
+    # over-tightening here wedges every skipped PR, the #536/#1718 failure.
+    f="$(payload '[]' SUCCESS 'Review completed')"
+    [ "$(verdict "$f")" = "not-reviewed" ]
+}
+
+@test "verdict: rate-limited SUCCESS beside a blank reply is still not evidence" {
+    setup_jq
+    # The exact live shape: CR rate limited on the head AND a blank thread reply
+    # present. Both defects at once — must not resolve to green.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS 'Review rate limited')"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "the rate-limit guard is present in the action, not just in this suite" {
+    # verdict() restates the marker for readability; if the action stopped using
+    # it these tests would keep passing against a gate that no longer checks.
+    # -F: the stored pattern is an ERE; matching it as a basic-grep regex would
+    # silently fail on the alternation and read as "guard missing".
+    grep -qF "$RATE_LIMIT_RE" "$ACTION"
+    # The guard is inert unless the GraphQL query actually selects description.
+    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+}
+
+@test "selftest: without the guard, a rate-limited SUCCESS would pass" {
+    setup_jq
+    # Proves the guard is load-bearing: same fixture, guard bypassed.
+    f="$(payload '[]' SUCCESS 'Review rate limited')"
+    state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
+    desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+    [ "$state" = "SUCCESS" ]                                   # old code: -> pass
+    printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"           # new code: -> unsettled
 }
 
 @test "selftest: the pre-fix selection reproduces the wedge" {
