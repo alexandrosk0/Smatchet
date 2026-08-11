@@ -199,6 +199,21 @@ fi
 # shellcheck source=agents/scripts/core/lib/review-ack.sh
 . "$preship_review_lib"
 
+# Self-staleness detector (gate-tooling-run-from-stale-session-branch, process P1).
+# This gate runs from whatever checkout the author happens to be on, and
+# `claude/<id>/*` session branches live for days with nothing pulling
+# `agents/scripts/**` forward. A stale pre-ship is worse than a stale merge poller:
+# the poller fails LOUD (a phantom BLOCK someone investigates), while this one fails
+# SILENT — it prints "Safe to push" using lint rules `develop` has since tightened,
+# and nobody re-examines a green. Advisory only; a freshness note must never be the
+# reason a lint gate fails. Missing lib → skip (an incomplete checkout already trips
+# the review-ack guard above; this must not become a second hard dependency).
+preship_freshness_lib="$preship_script_dir/../../agents/scripts/core/lib/script-freshness.sh"
+if [ -r "$preship_freshness_lib" ]; then
+    # shellcheck source=agents/scripts/core/lib/script-freshness.sh
+    . "$preship_freshness_lib"
+fi
+
 # SMATCHET_PRESHIP_FORCE_NO_PY is honoured inside ra_resolve_python (selftest hook that
 # forces the #1116 fail-closed path in an environment that DOES have python).
 PRESHIP_PY="$(ra_resolve_python || true)"
@@ -488,6 +503,22 @@ EOF
     fi
 else
     echo "pre-ship: code-review gate N/A — diff is not substantive ($RA_SUBSTANTIVE_REASON)."
+fi
+
+# Staleness caveat is emitted HERE, immediately before the PASS line, not at
+# startup: a caveat printed ahead of several minutes of gate output has scrolled
+# away by the time the verdict lands, and the verdict is the thing it qualifies.
+# The declared set is every file whose content can change this script's verdict —
+# the entry point, the delta-lint gate it shells out to plus that gate's rule
+# modules, the shared review-ack logic, and the detector itself (a stale detector
+# is the one blind spot that would hide all the others).
+if command -v warn_if_script_stale >/dev/null 2>&1; then
+    warn_if_script_stale "pre-ship gate logic" \
+        "scripts/dev/pre-ship.sh" \
+        "agents/scripts/project/test-lint-rules.sh" \
+        "agents/scripts/core/lib/review-ack.sh" \
+        "agents/scripts/core/lib/script-freshness.sh" \
+        agents/scripts/project/lint-rules.d/*.sh
 fi
 
 echo "pre-ship: PASS — formatted + delta lint gate + markdown lint + test-list + doc suite + review gate clean. Safe to push."

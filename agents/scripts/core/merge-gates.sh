@@ -174,8 +174,14 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
 # that cannot be threaded through a function boundary without a subtle
 # behaviour change — the exact risk this split must not take (bats is the net).
+# lib/script-freshness.sh is loaded on the same fail-closed terms as the gate
+# modules: it supplies the self-staleness detector, and a merger that silently
+# lost its ability to notice it is running out-of-date gate logic is exactly the
+# failure this guard exists to prevent — so a missing helper must stop the script,
+# not degrade to "fresh".
 MERGE_GATES_D="$SCRIPT_DIR/merge-gates.d"
-for _mg_mod in "$MERGE_GATES_D"/00-common.sh "$MERGE_GATES_D"/10-gate-filter.sh; do
+for _mg_mod in "$SCRIPT_DIR"/lib/script-freshness.sh \
+               "$MERGE_GATES_D"/00-common.sh "$MERGE_GATES_D"/10-gate-filter.sh; do
     if [ ! -f "$_mg_mod" ]; then
         echo "merge-gates: ERROR: missing module $_mg_mod" >&2
         # sourced (bats) → return; executed → exit. Fail-closed either way.
@@ -260,74 +266,37 @@ poll_merge_gates() {
         # gate logic while the entry file still matches origin/develop — so freshness
         # must fingerprint all three, not just BASH_SOURCE[0] (#1428 CR follow-up:
         # the merge-gates.d/ split moved load-bearing logic out of the entry file).
-        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules)"
+        # lib/script-freshness.sh is in the set for the same reason and one sharper
+        # one: it IS the detector, so a stale copy of it is the single blind spot
+        # that could hide every other file's staleness. Self-fingerprinting closes
+        # that — a behind-develop detector reports itself behind.
+        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules, lib/script-freshness.sh)"
         local _fresh_relpaths=(
             "agents/scripts/core/merge-gates.sh"
             "agents/scripts/core/merge-gates.d/00-common.sh"
             "agents/scripts/core/merge-gates.d/10-gate-filter.sh"
+            "agents/scripts/core/lib/script-freshness.sh"
         )
+        # Detection is delegated to lib/script-freshness.sh (the bounded fetch, the
+        # combined fingerprint, the fail-closed blanking) so `pre-ship.sh` and the
+        # other core gates inherit the same logic instead of each hand-rolling it —
+        # staleness there fails in the WORSE direction, producing false GREENS.
+        # The MESSAGES stay here: this gate names its own remedy and cites its own
+        # history (#1428), which a shared helper cannot do for every caller.
+        # MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB remain this script's documented
+        # test seam; they are mapped onto the helper's positional override.
         local _run_blob _dev_blob
-        if [ -n "${MERGE_GATES_FRESH_RUN_BLOB:-}" ]; then
-            # Test-only override — bypass git, use injected blobs so the bats suite
-            # exercises the guard deterministically without a git/network dependency.
-            _run_blob="$MERGE_GATES_FRESH_RUN_BLOB"
-            _dev_blob="${MERGE_GATES_FRESH_DEV_BLOB:-}"
-        else
-            local _root
-            _root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
-            if [ -n "$_root" ]; then
-                # Bounded ref refresh (refs only; never touches the worktree). A failed
-                # fetch must NOT silently compare against a stale local origin/develop —
-                # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
-                #
-                # HARD REQUIREMENT that this can never hang (CR #1996): since the
-                # freshness default flipped off→warn, this fetch runs on EVERY poll,
-                # including human-invoked ones, and it happens BEFORE TIMEOUT_SECONDS is
-                # even initialised — so a hang here is unbounded by the poll budget and
-                # wedges the whole merge flow. Three independent stops, because no single
-                # one is portable across the git-bash / Linux-CI split:
-                #   - GIT_TERMINAL_PROMPT=0 + SSH BatchMode: never block on a credential
-                #     or host-key prompt (the classic silent hang on a fresh checkout).
-                #   - http.lowSpeedLimit/Time: abort a stalled HTTP transfer after 10s of
-                #     <1KB/s. Pure git config, works everywhere, no external binary.
-                #   - `timeout 30` when coreutils provides it (Linux CI, most git-bash):
-                #     a hard wall-clock cap over everything above.
-                # Every failure path lands on _fetch_ok=false → blanked blobs → the
-                # "freshness unverifiable" branch, which in the default warn mode prints
-                # a WARN and does NOT block. So a broken/offline remote degrades to
-                # "cannot verify freshness", never to a stall and never to a false verdict.
-                local _fetch_ok=true
-                local -a _fetch_cmd=(git -C "$_root"
-                    -c "http.lowSpeedLimit=1000" -c "http.lowSpeedTime=10"
-                    fetch -q --no-tags origin develop)
-                if command -v timeout >/dev/null 2>&1; then
-                    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}" \
-                        timeout 30 "${_fetch_cmd[@]}" >/dev/null 2>&1 || _fetch_ok=false
-                else
-                    GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -oBatchMode=yes}" \
-                        "${_fetch_cmd[@]}" >/dev/null 2>&1 || _fetch_ok=false
-                fi
-                # Combined fingerprint over the whole gate-file set. Any missing local
-                # file or missing develop blob leaves an empty component and blanks the
-                # side → the unverifiable branch below fails closed (#1428).
-                local _rp _rh _dh _incomplete=false
-                _run_blob=""
-                _dev_blob=""
-                for _rp in "${_fresh_relpaths[@]}"; do
-                    _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)"
-                    _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)"
-                    if [ -z "$_rh" ] || [ -z "$_dh" ]; then _incomplete=true; fi
-                    _run_blob="$_run_blob $_rh"
-                    _dev_blob="$_dev_blob $_dh"
-                done
-                if [ "$_incomplete" = true ] || [ "$_fetch_ok" != true ]; then
-                    _run_blob=""
-                    _dev_blob=""
-                fi
-            else
-                _run_blob=""
-                _dev_blob=""
-            fi
+        SCRIPT_FRESHNESS_ROOT_HINT="$SCRIPT_DIR" \
+            script_freshness_verdict "${MERGE_GATES_FRESH_RUN_BLOB:-}" "${MERGE_GATES_FRESH_DEV_BLOB:-}" \
+                "${_fresh_relpaths[@]}"
+        _run_blob="$SCRIPT_FRESHNESS_RUN_BLOB"
+        _dev_blob="$SCRIPT_FRESHNESS_DEV_BLOB"
+        # The helper reports `unverifiable` by blanking both fingerprints, which is
+        # exactly the shape the two branches below already discriminate on — so the
+        # fail-closed policy stays expressed here, in the gate that owns it.
+        if [ "$SCRIPT_FRESHNESS_VERDICT" = "unverifiable" ]; then
+            _run_blob=""
+            _dev_blob=""
         fi
         if [ -z "$_run_blob" ] || [ -z "$_dev_blob" ]; then
             if [ "$fresh_mode" = "block" ]; then

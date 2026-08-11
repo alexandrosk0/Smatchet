@@ -742,6 +742,22 @@ if [ "${#warns[@]}" -gt 0 ]; then
 fi
 
 if [ "${#owed[@]}" -eq 0 ]; then
+    # Qualify the CLEAN result specifically (gate-tooling-run-from-stale-session-
+    # branch, process P1). "no gate escapes owed" from a checkout running months-old
+    # detector logic is a false GREEN — the exact reading that let #1941 pass as
+    # clean — and unlike a stale BLOCK nobody re-examines it. Advisory: never
+    # changes the exit code, and silent unless the logic is verifiably behind.
+    # warn_if_script_stale comes from lib/script-freshness.sh via the merge-gates.sh
+    # source above; guarded so an older/partial checkout degrades rather than errors.
+    if command -v warn_if_script_stale >/dev/null 2>&1; then
+        case "$MODE" in
+            list|blocking)
+                warn_if_script_stale "postmortem-owed detector logic" \
+                    "agents/scripts/core/postmortem-owed.sh" \
+                    "agents/scripts/core/lib/script-freshness.sh"
+                ;;
+        esac
+    fi
     case "$MODE" in
         list|blocking) echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)." ;;
     esac
