@@ -3333,3 +3333,169 @@ to the ship-loop commit step in `docs/agent-rules/process-rules.md` (or the
 worktree commit recipe) that the `@'…'@` form is PowerShell-only and the Bash
 path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 `%s` readback catches.
+
+- 2026-08-06 · orchestrator · [process] · P1 — gate tooling invoked from a long-lived session branch runs a **months-old** copy of the gate logic and manufactures phantom blocks: `merge-gates.sh` run out of the integration tree (branch `claude/peaceful-faraday-6jm1w5` @ `ff0ee7a6`) predated the CR auto-exemption on `develop`, so it hard-blocked a PR that current `develop` passes — and the block was misdiagnosed as a product-gate defect, nearly costing a spurious ledger entry
+  Details: While auditing PR #1953 I ran
+    `bash agents/scripts/core/merge-gates.sh 1953` from `C:/Dev/Smatchet` — the shared integration
+    tree, sitting on session branch `claude/peaceful-faraday-6jm1w5` at `ff0ee7a6` (2026-08-05). That
+    copy hard-blocked on `CodeRabbit: NONE+size-skip`. The same PR class run from a fresh
+    `develop`-based worktree prints
+    `WARN: self-improvement doc PR — CR gate auto-skipped` and reaches `GATES_PASSED` (verified on
+    PR #1961, poll 12/90). The difference is commit `4685997d` — "feat(merge-gates): auto-exempt pure
+    self-improvement doc PRs from CR + Bugbot review" (#1468), merged **2026-06-20**, adding the
+    downgrade at :1201-1202. `grep -c "self-improvement doc PR — CR gate auto-skipped"` in the
+    integration tree returns **0**. The session branch was ~7 weeks behind on this file.
+    The failure mode is not "the script was wrong" — it is that **nothing in the output distinguishes
+    a stale-script block from a real one**. Every line the stale run emitted was a plausible, correctly
+    formatted BLOCK. I took it as evidence about `develop`'s gate behaviour, wrote a postmortem
+    asserting the sanctioned merge path was structurally unusable for self-improvement PRs, and only
+    caught it because a later run from a fresh worktree printed a WARN line the first run never had.
+    The withdrawn entry and the corrected finding are in
+    [`tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md).
+    Two properties make this recur rather than be a one-off:
+      1. **Session branches are long-lived by design.** `claude/<id>/*` branches persist across many
+         days; nothing pulls `agents/scripts/**` forward on them. The longer a session lives, the more
+         the gate logic it runs diverges from the logic that actually guards `develop`.
+      2. **The tree that tempts this is the shared one.** The SessionStart banner already warns that
+         `C:/Dev/Smatchet` is shared and that HEAD changes collide — so a session is *discouraged from
+         updating it*, which is exactly what keeps the scripts stale. The safe-for-siblings move and
+         the fresh-tooling move point in opposite directions.
+    Blast radius beyond this incident: every script under `agents/scripts/core/` has the same exposure
+    — `postmortem-owed.sh`, `issue-sweep.sh`, `pre-ship.sh` and the lint gates all encode rules that
+    change on `develop`. A stale `pre-ship.sh` is the worse direction: it can pass a diff that current
+    `develop` gates would fail, i.e. it produces false **greens**, not just false reds.
+  Concrete next action — make staleness self-announcing rather than silent:
+    (1) **Version self-check in the poller.** At startup `merge-gates.sh` compares the merge-base of
+    `HEAD` against `origin/develop` for its own path: if `git log --oneline HEAD..origin/develop --
+    agents/scripts/core/merge-gates.sh` is non-empty, print
+    `WARN: merge-gates.sh is N commit(s) behind origin/develop — re-run from a fresh worktree before
+    trusting a BLOCK` and echo the newest such commit's subject. Never fail on it (offline / detached
+    / no-remote must stay usable) — the point is that the operator can no longer read a BLOCK without
+    seeing the caveat. Cheap: one `git log` against an already-fetched ref, no network if
+    `origin/develop` is current, silently skipped when it is not.
+    (2) **Same check in the shared helper, not per-script.** Put it in a `warn_if_script_stale
+    <path>` helper (sourced by `merge-gates.sh`, `postmortem-owed.sh`, `pre-ship.sh`) so the other
+    gate scripts inherit it — `pre-ship.sh` especially, where staleness yields false greens.
+    (3) **Rule text.** Add to [`process-rules.md`](../../agent-rules/process-rules.md)
+    § Concurrent interactive sessions: *"Run gate tooling from a worktree freshly based on
+    `origin/develop`, never from a long-lived session branch. A BLOCK observed from a stale checkout
+    is not evidence about `develop`; reproduce from a fresh worktree before filing anything against a
+    gate."* This is the rule that would have stopped the bad entry with zero code.
+    (4) **Evidence rule for the ledger.** A postmortem or backlog entry whose central evidence is
+    gate-tool output must record the tree + commit the tool ran from. Fold into the
+    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+    skill's evidence checklist — the discipline generalises past this bug.
+    Est ~0.5d ((1)+(2) helper + 2 bats cases; (3)+(4) doc edits).
+  Cross-ref: `agents/scripts/core/merge-gates.sh` (:1201-1202 the downgrade absent from the stale
+    copy); `4685997d` / PR #1468 (2026-06-20, the commit the session branch predates); PR #1953
+    (phantom block) vs PR #1961 (same class, passes from a fresh worktree);
+    [`process-rules.md`](../../agent-rules/process-rules.md) § Concurrent interactive sessions
+    (`nsc <slug>` one-worktree-per-session rule this extends from correctness to *freshness*).
+
+  **Update 2026-08-11 — (1), (3), (4) shipped; (2) is the remaining scope.**
+
+  - **(1) Version self-check in the poller — DONE, by fixing its default rather than
+    building it.** The machinery already existed (`MERGE_GATES_FRESHNESS`, added for
+    #1428: fingerprints `merge-gates.sh` + both `merge-gates.d/` modules against
+    `origin/develop` and warns or fails closed). It was **defaulted `off`**, and a repo
+    sweep found `merge-watcher.py` to be its only setter (`block`) — so the caveat
+    reached the one caller that is never stale, and never reached the human-invoked
+    poll this entry is about. The default is now **`warn`**: a BLOCK can no longer be
+    read without the "differs from origin/develop" line when the checkout is behind.
+    `warn` never sets `self_stale`, so no caller's verdict changes and offline /
+    detached / no-remote stay usable, exactly as this entry required. The bats suite
+    now sets `MERGE_GATES_FRESHNESS=off` explicitly (its ~170 cases would otherwise each
+    attempt a real `git fetch` and warn about the branch under development), and the
+    old "freshness OFF by default" test is replaced by one pinning the `warn` default
+    plus an explicit-off canary.
+  - **(2) Same check in the shared helper — DONE.** Extracted to
+    [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh):
+    `script_freshness_verdict` (the bounded fetch, the multi-file combined
+    fingerprint, the fail-closed blanking) plus the advisory `warn_if_script_stale`
+    wrapper. `merge-gates.sh` now delegates detection to it while keeping its own
+    message prose — the split is deliberate: prose duplication is cheap and lets each
+    gate cite its own history, whereas a second hand-rolled fetch is where hangs and
+    silent stale-compares come from. Behaviour-preserving, proven by the poller's
+    171-case suite passing unchanged across the extraction.
+    Wired into **`pre-ship.sh`**, the false-**greens** case this entry called the worse
+    direction: the caveat prints immediately before the `Safe to push` line (a startup
+    banner would have scrolled away behind minutes of gate output, and the verdict is
+    what it qualifies), over a declared set covering the entry point, the delta-lint
+    gate, its rule modules, the review-ack lib and the detector itself. Also wired into
+    **`postmortem-owed.sh`**, qualifying specifically its `no gate escapes owed` clean
+    result — a false green there is exactly the reading that let #1941 pass as clean.
+    `issue-sweep.sh` and the lint gates are still unwired; the helper is in place, so
+    each is now a two-line call rather than a re-implementation.
+    Three design points worth keeping: `unverifiable` is a verdict DISTINCT from
+    `stale` (a failed fetch must not be reported as drift, nor drift hidden when
+    offline); no fetch caching (measured 0.79s against the real remote, immaterial
+    beside what these gates already do, and caching would mean comparing against a
+    possibly-stale ref — the exact bug being fixed); and each caller's declared set
+    includes the detector itself, closing the one blind spot that could hide all the
+    others.
+    **Extraction bug worth recording**, caught by `pre-ship.sh --selftest` on first
+    wiring: the inline original used `local var="$(cmd)"`, where `local`'s own success
+    MASKS the command substitution's exit status. Plain assignments in a sourced lib
+    lose that mask, so under the `set -euo pipefail` its callers run, a missing file
+    killed the calling gate outright instead of degrading to `unverifiable`. Every
+    substitution now carries an explicit `|| var=""`, and
+    [`tests/bats/script_freshness.bats`](../../../tests/bats/script_freshness.bats)
+    pins it with four `set -e`/`set -u` survival cases (16 cases total).
+  - **(3) Rule text — DONE.** `process-rules.md` § Concurrent interactive sessions
+    carries "Run gate tooling from a tree freshly based on `origin/develop`, never from
+    a long-lived session branch", stating that a BLOCK from a stale checkout is not
+    evidence about `develop`, that the WARN is a stop-and-re-run signal, and that the
+    other core gates have no such guard yet.
+  - **(4) Evidence rule for the ledger — DONE.** The
+    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
+    skill's step 1 now requires recording the tree + commit any cited gate-tool output
+    ran from, and to reproduce from an `origin/develop`-based worktree before the
+    finding enters the ledger.
+
+  All four proposals are shipped, so this entry is closed. The one leftover — wiring
+  the remaining callers (`issue-sweep.sh`; the lint gates, already covered indirectly
+  because `pre-ship.sh` fingerprints `test-lint-rules.sh` + `lint-rules.d/`) — is
+  breadth over a helper that now exists, not this entry's thesis, and is carried
+  forward as its own P3: `2026-08-11-script-freshness-remaining-callers`.
+
+  Status: applied (2026-08-11 — (1)/(2)/(3)/(4) all shipped)
+  Last-reviewed: 2026-08-11
+
+- 2026-08-06 · orchestrator · [infra] · P1 — `required-check-that-never-reports-is-invisible`: the merge-gate poller and the gate-escape detector both key on RED checks; a required context that reports NOTHING is indistinguishable from a slow one at the merge box, and merges past silently.
+  Details: observed live on #1964 and #1970. `Agentic self-tests (bats)` is a branch-protection REQUIRED context (`project.config.json` § branch_protection.required_contexts). On #1964 its only run was created at 15:48, sat `queued` from 16:21 for ~2h20m, and was pinned to `6244d02b` — which then MERGED as part of that very PR, so the run could never have reported on the merged code. #1964 merged with ten contexts in a non-green terminal state, six of them still `queued`. Recorded losslessly in `merge-snapshots.jsonl` (PR #1969, `gates: GATES_INCOMPLETE`). On #1970 it was worse: after the stale run was cancelled, pushes of `000abdd9` and `216f1fbd` created NO run at all, and a close/reopen (the only lever — the workflow has no `workflow_dispatch`) still left `get_check_runs` at **total_count 0**. The PR merged with zero check runs in existence. Run creation was NOT broken repo-wide at the time (#1969 got a full set at 18:13), so this is per-PR/per-branch, not a global outage — which is exactly why "it's just the outage, it'll report eventually" was the wrong read for hours. `merge-gates.sh` GATE_FILTER and `postmortem-owed.sh` both enumerate *red* contexts; neither asserts that every required context has produced a terminal conclusion at all, so absence reads as "nothing to block on".
+  Concrete next action: add an ABSENT-REQUIRED-CONTEXT assertion to the merge-gate poller — enumerate `project.config.json` § branch_protection.required_contexts, intersect with the contexts present in the PR's `statusCheckRollup`, and BLOCK on any required name with no check-run/status at all (or one still `queued`/`in_progress` past a staleness cutoff), reported distinctly from a red check (e.g. `GATES_ABSENT` vs the existing red-check block) so an operator can tell "never ran" from "ran and failed". Mirror the same assertion in `postmortem-owed.sh` so an absent-required merge owes a postmortem the way a red-check merge does — today it owes nothing. Cheap sub-case worth doing first: flag a check-run whose `head_sha` is not the PR's current head (the #1964 phantom — a queued run pinned to an already-merged sha), which is detectable with no timing heuristic at all. Est ~3-4 h. Cross-ref: `merge-snapshots.jsonl` row for #1964 (the lossless capture); PR #1969; PR #1970 § comment "The `Agentic self-tests (bats)` lane has never run on this PR".
+  Recurrences (all 2026-08-06, same day the entry was filed):
+  - #1964 — merged with 10 contexts non-green, 6 still `queued`. Ledger row: `GATES_INCOMPLETE`.
+  - #1970 — merged with `get_check_runs` at **total_count 0**; a stale run pinned to an already-merged sha was cancelled, then two pushes AND a close/reopen produced no check suite. Ledger row: `GATES_ABSENT`.
+  - #1972, #1973, #1974 — each merged with exactly ONE check run (Bugbot) and **zero workflow runs**. #1974 carried real shell logic plus 9 new tests, none of which executed in CI. Queried directly: `list_workflow_runs` for `claude/verifier-slice2-preship` returned `total_count: 0` across ALL workflows.
+  - #1941 — independently reached by another session and written up as a full postmortem: an `--admin` merge past 22 required contexts that never ran, after which `postmortem-owed.sh --list` reported "no gate escapes owed (last 20 merges clean)". See [`postmortems.md`](../postmortems.md) 2026-08-06 · PR #1941, and the `process` entry `2026-08-06-admin-merge-past-absent-checks-undetected` landing in PR #1975 (not linked as a path — it is not on develop yet).
+
+  **Cross-link — this is the same hole as `2026-07-10 · PR #1698` and `2026-08-05 · PR #1937`, reached from a third direction.** Those two describe a check green on the PR head and red on develop; this entry describes a required context that never reports at all; #1941 describes an `--admin` merge past absent checks. All three are the same missing assertion — *no consumer verifies that every required context actually produced a terminal conclusion* — and both prior entries proposed a develop-tip required-green assertion that never landed. That is now **three prior proposals plus six observed occurrences**, which is the argument for building it rather than filing it a fourth time.
+
+  **Converge on ONE gate, not two.** PR #1975 proposes the strongest form: extend `postmortem-owed.sh` with a fifth signal that, for each merge commit on develop, resolves the merged PR's head sha and flags `actions/runs?head_sha=<sha>` returning `total_count == 0`, or a head rollup carrying fewer contexts than the branch-protection required set. That subsumes this entry's proposed cheap sub-case (flag a check-run whose `head_sha` is not the PR's current head) and needs no cooperation from the merge actor, which the label-keyed signals do. Build #1975's version; keep this entry's merge-gate-side assertion (block, don't merely detect) as the second half, since detection after the fact does not stop the merge.
+
+  **A likely mechanical cause for the zero-run PRs, from #1975's finding.** GitHub will not build a head whose `mergeStateStatus` is `DIRTY` / `mergeable` is `CONFLICTING`. #1972-#1974 all touched files with concurrent churn (`docs/plans/INDEX.md`, `merge-snapshots.jsonl`), so a conflicted head is the leading explanation for "no runs created" as distinct from the repo-wide queue jam — two different failures that present identically at the merge box. Unverified retroactively (the PRs are merged); worth confirming when the next zero-run PR appears.
+
+  **Confirmed against the next zero-run PR — and DIRTY does NOT explain it.** #1976 (this entry's own PR, seventh occurrence) sat at `total_count: 1` (Bugbot only, zero workflow runs) for over an hour, while its `mergeable_state` read **`blocked`**, not `dirty` — blocked precisely *because* the required contexts were absent. So a conflicted head is at most a contributing cause, not the mechanism. **The mechanism, measured: run creation LAGS by tens of minutes under backlog — it does not drop.** Tracking #1976's head continuously produced the number this entry was missing: a push at 21:20Z showed `total_count: 0` at 21:21Z and again at 21:25Z, and its full 15-run set was created at **21:46:58Z — a ~27-minute creation lag.** Two earlier readings that looked like permanent absence were simply taken inside that window. Those 15 runs subsequently all completed **success**.
+
+  **But BOTH failure modes are real, and the very next push proved it.** The successor head `92553244` (pushed 22:10Z) had **zero** runs at 23:16Z — 66 minutes, more than double the measured lag — while the queue was fully drained and healthy (1 queued, 3 in-progress, 12 successes repo-wide, newest run created 23:15:57Z, other branches getting suites within seconds). With a healthy queue as the control, that is not lag: for this head, runs were genuinely **never created**. The push was not lost — CodeRabbit posted against `92553244` minutes after it landed — so GitHub received the ref update and Actions alone did not act on it.
+
+  **That pair of observations is the actual requirement, and it is harder than either failure alone.** Consecutive pushes on the *same branch, same day* produced one head that lagged ~27 min and then succeeded, and one that never got a suite at all. The two are indistinguishable at every instant before the lagging one recovers. So no timeout constant can be *correct* — it can only trade false alarms against missed escapes. The gate must therefore **block on absent regardless of cause** (never merge a head whose rollup carries fewer contexts than the required set, with no time-based escape hatch), and treat the timeout purely as the threshold for *notifying a human*, not for deciding the merge is safe.
+
+  **This retracts two confident explanations recorded above, and both retractions matter.** An "Actions outage window; GitHub never retroactively creates a suite" claim was written on the 20:23Z/20:33Z recovery, then disproved by a re-push showing zero. A follow-on "creation is intermittently failing; a fresh head is not a reliable remedy" was written on that, then disproved by the 21:46:58Z creation. The lesson is methodological and belongs in the gate design: **`total_count == 0` at an instant does not distinguish "will never be created" from "not created yet",** and there is no API field that does. Any check keyed on a point-in-time zero — including #1975's proposed `actions/runs?head_sha=` signal — needs a lag tolerance, and (per the next paragraph) that tolerance can only ever be a heuristic for *when to shout*, never a proof that the checks are absent for good.
+
+  **Leading explanation for the merged zero-run PRs, and it is partly on the merge actor, not on GitHub.** #1972-#1974 were each merged within a few minutes of PR creation — well inside a lag window this large. So "zero runs at merge" was plausibly "runs not created yet", and the operative defect is **merging before the required contexts have had time to appear.** That is a materially more actionable finding than an Actions fault, because it is entirely within our control: the merge-gate half must refuse to merge while the head's rollup carries *fewer contexts than the required set*, treating absent-so-far exactly as it treats red — and must never interpret an empty rollup as "nothing to wait for". Unverified retroactively for those three PRs (they are merged and their creation timestamps cannot be recovered); verified prospectively on #1976.
+
+  **Auto-merge is the one consumer that behaves correctly here, and it is worth saying why.** Auto-merge armed on a head with an empty rollup simply waits, and once the lagged contexts are created and pass it fires normally — observed on #1976. The hazard is not that it breaks; it is that *waiting on absent contexts* and *waiting on pending contexts* are indistinguishable in every UI GitHub offers, so an operator watching a genuinely-stuck PR has no signal and an operator watching a merely-lagged one has no reassurance. That asymmetry is what the merge-gate-side half must fix: report **absent** distinctly from **pending**, block on both, and let elapsed-time-since-push decide when absent has stopped being lag and started being a fault.
+
+  **Update 2026-08-11 — the detector half landed; the entry narrows to one sub-case.** Both halves of "converge on ONE gate" are now in tree, from different directions:
+  - *Merge-gate side (block)* — already shipped before this sweep and re-verified: `merge-gates.d/10-gate-filter.sh` computes `$reqAbsent` (config `required_contexts` minus the head rollup's context names), `merge-gates.sh` BLOCKs on `req_absent > 0`, fails closed on a parse miss (`req_absent < 0`), and `req_absent -eq 0` is a conjunct of `GATES_PASSED`. It is reported distinctly from a red check (`required-missing:` vs the red-check block) and has **no time-based escape hatch**, which is the property this entry argued for. A required context that is PRESENT-but-`QUEUED` is correctly not "absent".
+  - *Detector side (after the fact)* — NEW: `postmortem-owed.sh` gained a required-ABSENT cross-check (field 5 `present_names` vs `$reqNames`), running on **both** the snapshot and live paths because a merge-instant snapshot records the red set, not rollup membership. This is the fifth signal PR #1975 proposed, and it closes the "`--admin` merge past absent checks owes nothing" hole for #1941 / #1972-#1974. Guarded by `POSTMORTEM_ABSENT_GRACE_SECONDS` (default 3600, ~2x the measured 27-min creation lag) so a merge still inside the lag window is deferred to the next sweep rather than false-flagged — per this entry's own methodological lesson, that grace is a *notification* threshold only and deliberately does NOT exist on the blocking side. Suite: `tests/bats/postmortem_owed.bats` § required-absent (8 cases, incl. the #1941 zero-rollup shape and the absent-vs-pending distinction).
+
+  **The last sub-case is closed too, but NOT as this entry proposed it — the `head_sha`-mismatch probe does not fit the mechanism.** This entry named "flag a check-run whose `head_sha` is not the PR's *current* head" as the cheap #1964 sub-case, detectable "with no timing heuristic at all". Checked against the actual query: the rollup is fetched via `commits(last: 1) { commit { statusCheckRollup … } }`, i.e. it is scoped to the PR's current head **by construction** — GitHub aggregates check runs whose `head_sha` IS that commit, so a foreign-sha run cannot appear in it and there is nothing for the probe to find. Re-reading this entry's own #1964 evidence confirms it: the run was pinned to `6244d02b`, which *was* the head at the time and then merged as part of that PR. It was never a mismatched sha; it was a run that **never reached a terminal conclusion**.
+  So the property that actually distinguishes the #1964 rollup from a healthy one is **non-terminality**, and that is what shipped: `postmortem-owed.sh` now also emits `required-never-terminal: <names>` for a required context PRESENT in a merged PR's rollup whose latest run is still `QUEUED`/`IN_PROGRESS` (or a `StatusContext` still `PENDING`). This is genuinely invisible to every other signal — the absence check sees it as present, and the red-check curation deliberately requires a terminal verdict, so it is neither absent nor red. It reuses the same `$absent_judgeable` grace gate and so needs no timing heuristic of its own: a check merely mid-flight at merge goes terminal within minutes, so one still non-terminal an hour later never finished at all. That reads a fact rather than guessing. Same latest-run-per-context dedupe as the red curation, so a queued *re-run* beside an older SUCCESS counts (the context's current state never reported). 6 cases in `tests/bats/postmortem_owed.bats` § required-never-terminal, including #1964's exact shape and the absent-vs-never-terminal partition.
+
+  **Nothing is left of this entry.** Both halves of the merge-box assertion (block pre-merge, detect post-merge) and both masks the escape wears (absent, present-but-never-terminal) are covered.
+
+  Status: applied (2026-08-11 — absent-required both halves + never-terminal; the proposed head_sha probe was investigated and does not apply, see above)
+  Last-reviewed: 2026-08-11

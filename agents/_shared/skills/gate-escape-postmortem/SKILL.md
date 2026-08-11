@@ -26,6 +26,14 @@ triage) is the **applier**. No second system.
    gate should have caught — and *which gate* (a non-required CI job that was red,
    a missing required check, an override used, a check that doesn't exist yet).
    Run `bash agents/scripts/core/postmortem-owed.sh --list` to see the open set.
+   **Record the provenance of any gate-tool output you cite** — the tree and commit
+   the tool ran from (e.g. "`merge-gates.sh` from `<integration-tree>` @ `ff0ee7a6`").
+   Gate scripts live in the repo, so a long-lived session branch runs a *months-old*
+   copy that emits plausible, correctly-formatted verdicts about rules `develop` no
+   longer has. One postmortem asserted the sanctioned merge path was structurally
+   unusable off exactly such a run (`gate-tooling-run-from-stale-session-branch`).
+   Undated tool output is not evidence; reproduce from a worktree based on
+   `origin/develop` before the finding goes in the ledger.
 2. **Blameless root cause.** Why did the gate not catch it? Name the *gate hole*,
    never an agent/person. If the root cause needs deep C++ investigation (a
    product bug a check should have caught), **escalate to `debug-detective`** and

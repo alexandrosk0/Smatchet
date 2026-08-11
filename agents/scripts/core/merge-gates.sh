@@ -90,8 +90,8 @@
 #                                  for the documented admin-merge escape (AGENTS.md
 #                                  § Merge gates: a positively-confirmed STALE-BLOCKED
 #                                  PR where everything is actually green).
-#   MERGE_GATES_FRESHNESS        — gate-logic self-freshness guard. off (default) |
-#                                  warn | block. When "block", refuse GATES_PASSED if
+#   MERGE_GATES_FRESHNESS        — gate-logic self-freshness guard. off |
+#                                  warn (default) | block. When "block", refuse GATES_PASSED if
 #                                  THIS script's on-disk blob differs from
 #                                  origin/develop:agents/scripts/core/merge-gates.sh
 #                                  (fail-closed) — an unattended merger running a
@@ -99,9 +99,21 @@
 #                                  gate logic (the #1428 gate escape: a host tree
 #                                  parked behind develop merged past a RED non-required
 #                                  "Intent section" its old allow-list lacked).
-#                                  smatchet-merge-watcher sets "block"; "warn" prints
-#                                  the divergence without blocking (local-dev default
-#                                  if opted in); "off" disables the check entirely.
+#                                  smatchet-merge-watcher sets "block"; "warn" (the
+#                                  default) prints the divergence without blocking;
+#                                  "off" disables the check entirely.
+#                                  Default is "warn", NOT "off"
+#                                  (gate-tooling-run-from-stale-session-branch, process
+#                                  P1): the failure mode is a HUMAN-invoked poll out of a
+#                                  long-lived session tree, where nothing in the output
+#                                  distinguishes a stale-script BLOCK from a real one. A
+#                                  7-week-old copy hard-blocked PR #1953 on a CR rule
+#                                  that current develop auto-exempts, and the phantom
+#                                  block was written up as a product-gate defect before a
+#                                  fresh-worktree re-run disproved it. Defaulting to off
+#                                  meant only the watcher ever got the caveat — precisely
+#                                  the caller that is never stale. warn never blocks, so
+#                                  offline / detached / no-remote stays usable.
 #                                  Test-only overrides MERGE_GATES_FRESH_RUN_BLOB /
 #                                  MERGE_GATES_FRESH_DEV_BLOB bypass the git compare.
 #   MERGE_GATES_CR_GRACE_POLLS   — CR review grace window (default 10 polls)
@@ -162,8 +174,14 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
 # that cannot be threaded through a function boundary without a subtle
 # behaviour change — the exact risk this split must not take (bats is the net).
+# lib/script-freshness.sh is loaded on the same fail-closed terms as the gate
+# modules: it supplies the self-staleness detector, and a merger that silently
+# lost its ability to notice it is running out-of-date gate logic is exactly the
+# failure this guard exists to prevent — so a missing helper must stop the script,
+# not degrade to "fresh".
 MERGE_GATES_D="$SCRIPT_DIR/merge-gates.d"
-for _mg_mod in "$MERGE_GATES_D"/00-common.sh "$MERGE_GATES_D"/10-gate-filter.sh; do
+for _mg_mod in "$SCRIPT_DIR"/lib/script-freshness.sh \
+               "$MERGE_GATES_D"/00-common.sh "$MERGE_GATES_D"/10-gate-filter.sh; do
     if [ ! -f "$_mg_mod" ]; then
         echo "merge-gates: ERROR: missing module $_mg_mod" >&2
         # sourced (bats) → return; executed → exit. Fail-closed either way.
@@ -225,9 +243,12 @@ poll_merge_gates() {
     # file's on-disk blob to origin/develop's blob; in block mode refuse a pass when
     # they differ OR the comparison can't be made (fail-closed). Computed ONCE here
     # (before the poll loop) and consulted in the GATES_PASSED conjunction below.
-    # Default off so existing callers + local dev are unaffected unless they opt in;
-    # the watcher sets MERGE_GATES_FRESHNESS=block.
-    local fresh_mode="${MERGE_GATES_FRESHNESS:-off}"
+    # Default "warn": a BLOCK must never be readable without a staleness caveat when
+    # the checkout is behind (see the header note). warn never sets self_stale, so no
+    # caller's pass/fail verdict changes — only the operator's ability to distrust a
+    # stale one. The watcher still sets "block"; "off" remains available for callers
+    # that must avoid the ref-refresh entirely.
+    local fresh_mode="${MERGE_GATES_FRESHNESS:-warn}"
     # Reject typos up front — an unrecognised value would otherwise fall through the
     # "!= off" gate into warn-only handling, silently weakening enforcement (#1428 CR).
     case "$fresh_mode" in
@@ -245,48 +266,37 @@ poll_merge_gates() {
         # gate logic while the entry file still matches origin/develop — so freshness
         # must fingerprint all three, not just BASH_SOURCE[0] (#1428 CR follow-up:
         # the merge-gates.d/ split moved load-bearing logic out of the entry file).
-        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules)"
+        # lib/script-freshness.sh is in the set for the same reason and one sharper
+        # one: it IS the detector, so a stale copy of it is the single blind spot
+        # that could hide every other file's staleness. Self-fingerprinting closes
+        # that — a behind-develop detector reports itself behind.
+        local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules, lib/script-freshness.sh)"
         local _fresh_relpaths=(
             "agents/scripts/core/merge-gates.sh"
             "agents/scripts/core/merge-gates.d/00-common.sh"
             "agents/scripts/core/merge-gates.d/10-gate-filter.sh"
+            "agents/scripts/core/lib/script-freshness.sh"
         )
+        # Detection is delegated to lib/script-freshness.sh (the bounded fetch, the
+        # combined fingerprint, the fail-closed blanking) so `pre-ship.sh` and the
+        # other core gates inherit the same logic instead of each hand-rolling it —
+        # staleness there fails in the WORSE direction, producing false GREENS.
+        # The MESSAGES stay here: this gate names its own remedy and cites its own
+        # history (#1428), which a shared helper cannot do for every caller.
+        # MERGE_GATES_FRESH_RUN_BLOB / _DEV_BLOB remain this script's documented
+        # test seam; they are mapped onto the helper's positional override.
         local _run_blob _dev_blob
-        if [ -n "${MERGE_GATES_FRESH_RUN_BLOB:-}" ]; then
-            # Test-only override — bypass git, use injected blobs so the bats suite
-            # exercises the guard deterministically without a git/network dependency.
-            _run_blob="$MERGE_GATES_FRESH_RUN_BLOB"
-            _dev_blob="${MERGE_GATES_FRESH_DEV_BLOB:-}"
-        else
-            local _root
-            _root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null)"
-            if [ -n "$_root" ]; then
-                # Bounded ref refresh (refs only; never touches the worktree). A failed
-                # fetch must NOT silently compare against a stale local origin/develop —
-                # blank _dev_blob so the unverifiable branch below fails closed (#1428 CR).
-                local _fetch_ok=true
-                git -C "$_root" fetch -q --no-tags origin develop >/dev/null 2>&1 || _fetch_ok=false
-                # Combined fingerprint over the whole gate-file set. Any missing local
-                # file or missing develop blob leaves an empty component and blanks the
-                # side → the unverifiable branch below fails closed (#1428).
-                local _rp _rh _dh _incomplete=false
-                _run_blob=""
-                _dev_blob=""
-                for _rp in "${_fresh_relpaths[@]}"; do
-                    _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)"
-                    _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)"
-                    if [ -z "$_rh" ] || [ -z "$_dh" ]; then _incomplete=true; fi
-                    _run_blob="$_run_blob $_rh"
-                    _dev_blob="$_dev_blob $_dh"
-                done
-                if [ "$_incomplete" = true ] || [ "$_fetch_ok" != true ]; then
-                    _run_blob=""
-                    _dev_blob=""
-                fi
-            else
-                _run_blob=""
-                _dev_blob=""
-            fi
+        SCRIPT_FRESHNESS_ROOT_HINT="$SCRIPT_DIR" \
+            script_freshness_verdict "${MERGE_GATES_FRESH_RUN_BLOB:-}" "${MERGE_GATES_FRESH_DEV_BLOB:-}" \
+                "${_fresh_relpaths[@]}"
+        _run_blob="$SCRIPT_FRESHNESS_RUN_BLOB"
+        _dev_blob="$SCRIPT_FRESHNESS_DEV_BLOB"
+        # The helper reports `unverifiable` by blanking both fingerprints, which is
+        # exactly the shape the two branches below already discriminate on — so the
+        # fail-closed policy stays expressed here, in the gate that owns it.
+        if [ "$SCRIPT_FRESHNESS_VERDICT" = "unverifiable" ]; then
+            _run_blob=""
+            _dev_blob=""
         fi
         if [ -z "$_run_blob" ] || [ -z "$_dev_blob" ]; then
             if [ "$fresh_mode" = "block" ]; then
@@ -983,8 +993,20 @@ poll_merge_gates() {
         # context that never ran on the head (absent from the rollup). Printed
         # like ci_fail/ci_pend so the operator sees exactly which required check
         # is missing a run — the false-pass signal that scored CI: 0/0 on #856.
-        if [ "$req_absent" -gt 0 ]; then
-            echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI)." >&2
+        #
+        # CAUSE ATTRIBUTION (admin-merge-past-absent-checks-undetected, process P1):
+        # a CONFLICTED head produces this same all-contexts-absent shape, because
+        # GitHub declines to build a head whose mergeStateStatus is DIRTY at all.
+        # Reporting the generic "never ran" hint for it sent one session through a
+        # full 90-poll timeout before the real cause (a conflict in
+        # docs/plans/INDEX.md) was found by hand — while the actionable field was in
+        # the poller's own GraphQL response from poll 1. Branch on it and name the
+        # fix. Still a BLOCK either way: the merge is refused for the same reason
+        # (required contexts have no terminal conclusion); only the diagnosis differs.
+        if [ "$req_absent" -gt 0 ] && [ "${fields[17]:-UNKNOWN}" = "DIRTY" ]; then
+            echo "BLOCK: required-missing: ${req_absent_names} (head is CONFLICTED — mergeStateStatus=DIRTY, so GitHub will not build it and these contexts can never report. Merge origin/develop into the branch and resolve the conflict; CI re-fires on the new head. This is NOT a CI fault and polling will not clear it)." >&2
+        elif [ "$req_absent" -gt 0 ]; then
+            echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence on an early poll may still be pending; it is blocked until the contexts actually report, never merged on the assumption they will." >&2
         elif [ "$req_absent" -lt 0 ]; then
             echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
         fi
@@ -1215,11 +1237,22 @@ poll_merge_gates() {
         # MERGE_GATES_IGNORE_MERGESTATE=true skips this guard for the documented
         # admin-merge escape (a positively-confirmed STALE-BLOCKED PR that is
         # actually all-green — AGENTS.md § Merge gates).
+        #
+        # DIRTY joins the set (CR #1996): a conflicted head is unmergeable by
+        # construction — GitHub refuses the merge AND declines to build the head, so
+        # its required contexts can never report. Previously only the required-absent
+        # cross-check caught it, and then only when that detector was armed: an
+        # all-green DIRTY head (one whose contexts DID report before the conflict
+        # appeared) reached GATES_PASSED, and the merge then failed at the REST call.
+        # That is the same false-pass class this change exists to close. DIRTY is a
+        # COMPUTED verdict, not a not-yet-known one — GitHub reports UNKNOWN while
+        # mergeability is still being determined — so this cannot fire on a pending
+        # computation. MERGE_GATES_IGNORE_MERGESTATE remains the escape.
         local gh_merge_state="${fields[17]:-UNKNOWN}"
         local mergestate_blocks=false
         if [ "${MERGE_GATES_IGNORE_MERGESTATE:-}" != "true" ]; then
             case "$gh_merge_state" in
-                BLOCKED|BEHIND) mergestate_blocks=true ;;
+                BLOCKED|BEHIND|DIRTY) mergestate_blocks=true ;;
             esac
         fi
 

@@ -42,6 +42,16 @@ setup() {
     export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,Windows + MSVC,Perf PR-fast (windows-2022)"
     export POSTMORTEM_OVERRIDE_LABELS="tests-out-of-band perf-out-of-band cr-out-of-band coverage-out-of-band intent-out-of-band"
     export POSTMORTEM_DIRECTPUSH_SINCE="7 days ago"
+    # Required-ABSENT detector OFF by default in this suite. Every fixture below is
+    # a MINIMAL synthetic rollup carrying only the one or two contexts its own test
+    # is about — none of them model the full POSTMORTEM_REQUIRED_CONTEXTS set above,
+    # so the absence detector would (correctly, per production semantics) fire on
+    # all of them and drown the signal each test is actually asserting. An absurd
+    # grace makes every fixture "still inside the run-creation lag window" and so
+    # not judged for absence. This is a TEST-fixture accommodation, NOT a production
+    # default (production default is 3600s, exercised live) — the § required-absent
+    # tests below opt back in with POSTMORTEM_ABSENT_GRACE_SECONDS=0.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=99999999999
 
     # --- fixture defaults (tests overwrite as needed) -----------------------
     export PM_PRLIST_FIXTURE="$PM_DATA/prlist.json"
@@ -659,5 +669,263 @@ JSON
 JSON
     run bash "$SCRIPT" --list
     [ "$status" -eq 0 ]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+# ============================================================================
+# required-check-that-never-reports-is-invisible (infra P1) +
+# admin-merge-past-absent-checks-undetected (process P1) — the required-ABSENT
+# cross-check. A required context missing from a merged PR's rollup never ran;
+# that escape emits no red check, no override label and no revert, so before
+# this it was invisible to every trigger in this script. These tests opt back
+# into the detector (setup() parks it behind an absurd grace — see there).
+# ============================================================================
+
+@test "required-absent: a required context missing from the rollup owes a postmortem" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8001,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8001"* ]]
+    [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: a rollup carrying every required context owes nothing" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8002,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #8002"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: PRESENT-but-queued is NOT absent (it is the never-terminal signal instead)" {
+    # The absent signal distinguishes "never reported" from "reported and failed" AND
+    # from "still running". A required context sitting in QUEUED has produced a rollup
+    # row, so it is present — not an ABSENCE escape. It is still an escape, just a
+    # differently-named one: see § required-never-terminal below. Asserting both here
+    # is the point — the two signals must partition this case, not overlap on it.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-absent"* ]]
+    [[ "$output" == *"required-never-terminal: Perf PR-fast (windows-2022)"* ]]
+}
+
+# ============================================================================
+# required-never-terminal — #1964's actual shape (infra P1). A required context
+# can be PRESENT and still never have reported: #1964 merged with ten contexts
+# non-green, six still `queued`. Invisible to every other signal — the absence
+# check sees it as present, and the red-check curation requires a TERMINAL
+# verdict, so QUEUED/IN_PROGRESS is neither red nor absent.
+# ============================================================================
+
+@test "never-terminal: the #1964 shape (merged with required contexts still queued) owes" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8101,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"IN_PROGRESS","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8101"* ]]
+    [[ "$output" == *"required-never-terminal: Test-delta gate, Windows + MSVC"* ]]
+    # The one that DID finish must not be named.
+    [[ "$output" != *"required-never-terminal: Test-delta gate, Windows + MSVC, Perf"* ]]
+}
+
+@test "never-terminal: an all-terminal rollup owes nothing (negative canary)" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8102,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SKIPPED","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"NEUTRAL","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "never-terminal: a NON-required context left queued is not an escape" {
+    # Only branch-protection-required contexts can block a merge, so only they owe
+    # a postmortem for never finishing. An advisory lane left queued is normal.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8103,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Some advisory lane","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+}
+
+@test "never-terminal: a PENDING StatusContext (not a CheckRun) counts" {
+    # The rollup mixes CheckRun and StatusContext nodes; a required context supplied
+    # as a status (CodeRabbit's `CR findings` shape) stuck at PENDING never reported
+    # either, and must not slip through on node type.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,CR findings (0 actionable)"
+    prlist <<'JSON'
+[{"number":8104,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g4"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","createdAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: CR findings (0 actionable)"* ]]
+}
+
+@test "never-terminal: a merge inside the grace window is NOT judged (mid-flight != stuck)" {
+    # A check that was merely running at merge reaches a terminal state within
+    # minutes. Judging inside the lag window would flag every healthy fast merge.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=3600
+    printf '[{"number":8105,"mergedAt":"%s","mergeCommit":{"oid":"g5"},"labels":[],"statusCheckRollup":[{"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:00:00Z"},{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},{"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    [[ "$output" != *"PR #8105"* ]]
+}
+
+@test "never-terminal: latest-run dedupe - a QUEUED rerun beside an earlier SUCCESS still counts" {
+    # Same dedupe rule the red-check curation uses: the LATEST run per context wins.
+    # A re-run sitting queued means the context's current state never reported, even
+    # though an older run of it did.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8106,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g6"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T08:00:00Z"},
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T09:30:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: Test-delta gate"* ]]
+}
+
+@test "never-terminal: a POST-merge rerun is not evidence about the merge" {
+    # The distinction the test above does not cover. There the QUEUED rerun starts
+    # at 09:30 against a 10:00 merge — pre-merge, so at merge time the latest run
+    # genuinely had not reported, and flagging it is correct.
+    #
+    # Here the rerun starts AFTER the merge. A green required run satisfied the
+    # merge; someone re-ran it afterwards and that rerun is still queued inside the
+    # grace window. Taking the latest run unconditionally read that as
+    # `required-never-terminal` — a phantom escape on a PR that merged correctly,
+    # and re-runs are routine rather than exotic.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8107,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g7"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null,"startedAt":"2026-06-10T10:30:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"required-never-terminal"* ]]
+}
+
+@test "never-terminal: a run with NO timestamp is still judged (unknown is not 'after')" {
+    # Dropping untimestamped runs would be the over-eager version of the fix above
+    # and would blind the detector to the #1964 shape it exists for.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8108,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"g8"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"QUEUED","conclusion":null},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"required-never-terminal: Test-delta gate"* ]]
+}
+
+@test "required-absent: the #1941 --admin merge (zero rollup, no red, no label) owes" {
+    # The reported escape: PR #1941 squash-merged via `gh pr merge --squash --admin`
+    # with all 22 required contexts absent and its head never built at all
+    # (actions/runs?head_sha= -> total_count 0). No red check, no override label,
+    # no revert -> the four legacy triggers all read "clean". This is the
+    # regression test for "postmortem-owed.sh --list reported no gate escapes owed".
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8004,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f4"},"labels":[],
+  "statusCheckRollup":[]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #8004"* ]]
+    [[ "$output" == *"required-absent: Test-delta gate, Windows + MSVC, Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: a merge inside the run-creation grace window is NOT judged" {
+    # Check-suite creation LAGS the push (measured ~27 min on #1976), and no API
+    # field distinguishes "not created yet" from "never created". A merge younger
+    # than the grace is deferred to the next sweep rather than false-flagged.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=3600
+    printf '[{"number":8005,"mergedAt":"%s","mergeCommit":{"oid":"f5"},"labels":[],"statusCheckRollup":[]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    [[ "$output" != *"PR #8005"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "required-absent: a non-numeric grace falls back to the 3600s default" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS="not-a-number"
+    printf '[{"number":8006,"mergedAt":"%s","mergeCommit":{"oid":"f6"},"labels":[],"statusCheckRollup":[]}]\n' \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$PM_PRLIST_FIXTURE"
+    run_detector
+    # Fresh merge + default 3600s grace -> deferred, not flagged (proves the
+    # fallback parsed as a number rather than degrading to 0 / an empty compare).
+    [[ "$output" != *"PR #8006"* ]]
+}
+
+@test "required-absent: flagged on the snapshot path too (snapshots record red, not membership)" {
+    # A merge-instant snapshot records redChecks/overrideLabels — it does NOT record
+    # which contexts were PRESENT in the rollup, so absence is only ever observable
+    # from the live rollup. The cross-check must therefore run on both paths, or an
+    # instrumented merge would be exempt from the one signal snapshots cannot carry.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8007,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f7"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8007,"mergeCommit":"f7","redChecks":[],"overrideLabels":[]}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" == *"PR #8007"* ]]
+    [[ "$output" == *"required-absent: Perf PR-fast (windows-2022)"* ]]
+}
+
+@test "required-absent: empty required set (jq absent / unset) is inert" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    prlist <<'JSON'
+[{"number":8008,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"f8"},"labels":[],
+  "statusCheckRollup":[]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #8008"* ]]
     [[ "$output" == *"no gate escapes owed"* ]]
 }

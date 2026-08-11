@@ -31,7 +31,32 @@
 # and one with the fallback step removed) MUST be flagged — proves the checks
 # fire rather than passing vacuously.
 #
-# Requires: bash, grep, sed, bats.
+# ----------------------------------------------------------------------------
+# A SECOND wedge class, pinned below (observed on PR #1996, head 51c74fe).
+#
+# The two invariants above keep the loop ALIVE; they say nothing about the
+# verdict it computes. decide() wedged anyway on a head CodeRabbit had fully
+# reviewed and marked SUCCESS, because replying to a review thread creates a
+# review node with an EMPTY body. That reply satisfied "a CR review exists on
+# this head", which skips the StatusContext disambiguation, and then the
+# body-parse branch found no "Actionable comments posted:" header in an empty
+# body and fail-closed to a retry — every pass, forever. Not a race: nothing
+# ever displaces the reply as the latest on-head review, so PENDING was the
+# terminal state. Exactly the required-never-terminal class this branch adds
+# detection for, in the gate itself.
+#
+# The fix makes blank-bodied nodes invisible to both selections. These tests run
+# the REAL jq programs, extracted from action.yml, against synthetic payloads —
+# a copy pasted in here would drift from the action and pass while it broke.
+# Both directions are covered, since the dangerous fix is one that clears the
+# wedge by waving findings through:
+#   - blank reply only            -> not a review     (clears the wedge)
+#   - findings + a LATER reply    -> still FAILURE    (no fail-open)
+#   - non-blank body, no header   -> still fail-closed (#524 preserved)
+#
+# Requires: bash, grep, sed, jq, bats. jq is NOT optional and the suite does not
+# skip when it is absent: a skipped test reads as a green, which is the failure
+# mode this whole branch exists to remove.
 # ----------------------------------------------------------------------------
 
 setup() {
@@ -115,4 +140,192 @@ step_timeout() {
     tmp="$BATS_TEST_TMPDIR/no-fallback.yml"
     grep -v 'state=pending' "$WF" > "$tmp"
     ! grep -q "state=pending" "$tmp"
+}
+
+# ============================================================================
+# decide() verdict logic — blank-bodied review nodes must not wedge the gate
+# ============================================================================
+
+# Extract a jq program from action.yml rather than restating it, so the tests
+# fail if the real expression drifts instead of validating a stale copy.
+# Markers are matched with index() as LITERAL substrings — the surrounding shell
+# is dense with regex metacharacters ($ ( " \) and an escaping slip here would
+# yield an empty program and a vacuously passing suite.
+#   extract_jq <start-literal> <end-literal> -> jq program on stdout
+extract_jq() {
+    awk -v s="$1" -v e="$2" '
+        index($0, s) { inblock = 1 }
+        inblock      { print }
+        inblock && index($0, e) { exit }
+    ' "$ACTION" | sed "1s/.*jq -r '//; \$s/' 2>.*//"
+}
+
+# payload <reviews-json-array> <cr-status-state> [cr-status-description]
+#   -> fixture file path. Description defaults to CR's real settled wording.
+payload() {
+    local f="$BATS_TEST_TMPDIR/resp.$RANDOM.json"
+    cat > "$f" <<EOF
+{"data":{"repository":{"pullRequest":{
+ "headRefOid":"HEAD",
+ "reviews":{"nodes":$1},
+ "commits":{"nodes":[{"commit":{"statusCheckRollup":{"contexts":{"nodes":[
+   {"__typename":"StatusContext","context":"CodeRabbit","state":"$2",
+    "description":"${3:-Review completed}"}]}}}}]}
+}}}}
+EOF
+    printf '%s' "$f"
+}
+
+# The not-a-review marker decide() refuses to treat as review evidence. Restated
+# here for readability, then asserted to still exist in the action verbatim (see
+# the "guard is present" test) so this cannot drift into testing a pattern the
+# gate no longer uses.
+RATE_LIMIT_RE='rate.?limit|limit reached'
+
+# verdict <fixture> -> not-reviewed | unsettled | fail-closed | findings:N | clean
+# Mirrors decide()'s control flow using the action's own jq + header regex.
+#   not-reviewed = no verdict-carrying review, CR status SUCCESS -> gate passes
+#   unsettled    = retry -> PENDING at window exhaustion (never green)
+verdict() {
+    local f="$1" n body num state desc
+    n=$(jq -r -f "$BATS_TEST_TMPDIR/count.jq" "$f")
+    if [ "$n" -eq 0 ]; then
+        state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
+        desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+        if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"; then
+            printf 'unsettled'; return
+        fi
+        case "$state" in
+            SUCCESS)       printf 'not-reviewed' ;;
+            FAILURE|ERROR) printf 'cr-failed' ;;
+            *)             printf 'unsettled' ;;
+        esac
+        return
+    fi
+    body=$(jq -r -f "$BATS_TEST_TMPDIR/body.jq" "$f")
+    num=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
+            | grep -oE '[0-9]+' | head -1 || true)
+    if [ -z "$num" ]; then printf 'fail-closed'
+    elif [ "$num" -gt 0 ]; then printf 'findings:%s' "$num"
+    else printf 'clean'; fi
+}
+
+setup_jq() {
+    command -v jq >/dev/null || {
+        echo "jq is required by this suite and is not installed" >&2
+        return 1
+    }
+    extract_jq 'n_reviews=$(printf' '|| n_reviews=0'    > "$BATS_TEST_TMPDIR/count.jq"
+    extract_jq 'body=$(printf'      '|| body=""'        > "$BATS_TEST_TMPDIR/body.jq"
+    extract_jq 'cr_ctx=$(printf'    '|| cr_ctx="ABSENT"' > "$BATS_TEST_TMPDIR/ctx.jq"
+    extract_jq 'cr_desc=$(printf'   '|| cr_desc=""'      > "$BATS_TEST_TMPDIR/desc.jq"
+    # An empty extraction would make every assertion below vacuous.
+    grep -q 'headRefOid' "$BATS_TEST_TMPDIR/count.jq"
+    grep -q 'headRefOid' "$BATS_TEST_TMPDIR/body.jq"
+    # `StatusContext` alone cannot tell ctx.jq and desc.jq apart — both select it.
+    # If the extraction markers drifted and desc.jq came back as the STATE program,
+    # the vacuity check would still pass while the rate-limit tests silently
+    # compared state against state. Assert the distinguishing selector in each.
+    grep -q 'StatusContext' "$BATS_TEST_TMPDIR/ctx.jq"
+    grep -q '\.state'       "$BATS_TEST_TMPDIR/ctx.jq"
+    grep -q 'StatusContext' "$BATS_TEST_TMPDIR/desc.jq"
+    grep -q '\.description' "$BATS_TEST_TMPDIR/desc.jq"
+}
+
+CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
+
+@test "verdict: a blank-bodied thread reply is NOT a review (the #1996 wedge)" {
+    setup_jq
+    # CR replied to a resolved thread on the head and reported SUCCESS. Before
+    # the fix this counted as a review, blanked the body, and fail-closed on
+    # every pass — PENDING was terminal.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "not-reviewed" ]   # -> StatusContext SUCCESS -> pass
+}
+
+@test "verdict: whitespace-only body is treated as a reply artifact too" {
+    setup_jq
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"  \\n\\t \"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "not-reviewed" ]
+}
+
+@test "verdict: findings survive a LATER blank reply (no fail-open)" {
+    setup_jq
+    # The dangerous regression: `last` is by submittedAt, so a reply posted
+    # after a real review must not blank the body and hide its count.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"**Actionable comments posted: 2**\"},
+                   {$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "findings:2" ]
+}
+
+@test "verdict: a clean review followed by a blank reply still passes" {
+    setup_jq
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"**Actionable comments posted: 0**\"},
+                   {$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "clean" ]
+}
+
+@test "verdict: non-blank body with no count header stays fail-closed (#524)" {
+    setup_jq
+    # A real review whose header we cannot find is an unsettled state, not
+    # proof of zero findings. It must never reach the StatusContext pass.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"unexpected prose, no header\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "fail-closed" ]
+}
+
+@test "verdict: a rate-limited SUCCESS is NOT review evidence" {
+    setup_jq
+    # CodeRabbit publishes state=SUCCESS with description "Review rate limited"
+    # for a review that never ran (observed on this PR, head 51c74fe 03:28:01).
+    # Reading only .state, this head — with no review node at all — would pass
+    # as "completed with no review (skipped/clean)": an unreviewed green.
+    f="$(payload '[]' SUCCESS 'Review rate limited')"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "verdict: a genuinely completed SUCCESS with no review node still passes" {
+    setup_jq
+    # The CR-skipped-review case (trivial/docs/workflow diffs) must keep working;
+    # over-tightening here wedges every skipped PR, the #536/#1718 failure.
+    f="$(payload '[]' SUCCESS 'Review completed')"
+    [ "$(verdict "$f")" = "not-reviewed" ]
+}
+
+@test "verdict: rate-limited SUCCESS beside a blank reply is still not evidence" {
+    setup_jq
+    # The exact live shape: CR rate limited on the head AND a blank thread reply
+    # present. Both defects at once — must not resolve to green.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS 'Review rate limited')"
+    [ "$(verdict "$f")" = "unsettled" ]
+}
+
+@test "the rate-limit guard is present in the action, not just in this suite" {
+    # verdict() restates the marker for readability; if the action stopped using
+    # it these tests would keep passing against a gate that no longer checks.
+    # -F: the stored pattern is an ERE; matching it as a basic-grep regex would
+    # silently fail on the alternation and read as "guard missing".
+    grep -qF "$RATE_LIMIT_RE" "$ACTION"
+    # The guard is inert unless the GraphQL query actually selects description.
+    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+}
+
+@test "selftest: without the guard, a rate-limited SUCCESS would pass" {
+    setup_jq
+    # Proves the guard is load-bearing: same fixture, guard bypassed.
+    f="$(payload '[]' SUCCESS 'Review rate limited')"
+    state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
+    desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+    [ "$state" = "SUCCESS" ]                                   # old code: -> pass
+    printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"           # new code: -> unsettled
+}
+
+@test "selftest: the pre-fix selection reproduces the wedge" {
+    setup_jq
+    # Strip the blank-body predicate to recreate the old expression; the blank
+    # reply must then be counted as a review, which is what wedged the gate.
+    sed 's/ *and ((.body \/\/ "") | test("\\\\S"))//' "$BATS_TEST_TMPDIR/count.jq" \
+        > "$BATS_TEST_TMPDIR/count.jq.old"
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS)"
+    [ "$(jq -r -f "$BATS_TEST_TMPDIR/count.jq.old" "$f")" -eq 1 ]
+    [ "$(jq -r -f "$BATS_TEST_TMPDIR/count.jq" "$f")" -eq 0 ]
 }

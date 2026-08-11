@@ -55,6 +55,12 @@
 #   SNAPSHOT_LEDGER               override merge-snapshots.jsonl path.
 #   POSTMORTEM_DIRECTPUSH_SINCE   git-log window for trigger 4 (default 7 days).
 #   POSTMORTEM_DIRECTPUSH_MAX     cap on pulls-confirmation gh calls (default 40).
+#   POSTMORTEM_ABSENT_GRACE_SECONDS
+#                                 age a merge must reach before it is judged by the
+#                                 required-ABSENT cross-check (default 3600). Covers
+#                                 GitHub's check-suite creation lag; non-numeric →
+#                                 default. Notification threshold only — see the
+#                                 $ABSENT_GRACE_SECONDS comment.
 
 set -euo pipefail
 # Resolve our own dir BEFORE the repo-root cd (BASH_SOURCE still resolves here)
@@ -160,6 +166,55 @@ elif [ -f "$CONFIG_FILE" ] && command -v jq >/dev/null 2>&1; then
 fi
 if [ -n "$req_ctx_raw" ] && command -v jq >/dev/null 2>&1; then
     REQ_CTX_JSON=$(printf '%s\n' "$req_ctx_raw" | jq -R . | jq -sc 'map(select(length>0))') || REQ_CTX_JSON='[]'
+fi
+
+# Run-creation grace window for the required-ABSENT detector (below). GitHub
+# creates a head's check suite LAGGING the push — measured at ~27 min on #1976
+# under backlog (push 21:20Z, `total_count: 0` at 21:25Z, full 15-run set created
+# 21:46:58Z, all subsequently green). So a rollup read shortly after a merge can
+# show a required context absent that is merely NOT CREATED YET, and there is no
+# API field that distinguishes "not yet" from "never" at an instant. A PR merged
+# inside this window is therefore NOT judged for absence; it is judged on the next
+# sweep once it ages out (this is an after-the-fact detector run at SessionStart —
+# reporting an escape one sweep late costs nothing, false-nagging every active
+# session costs the detector's credibility). The window is deliberately ~2x the
+# measured lag. NOTE this is a *notification* threshold only — it must never be
+# read as "absent for < grace is safe to merge"; refusing the merge itself is
+# merge-gates.sh's $reqAbsent block, which has no time-based escape hatch.
+ABSENT_GRACE_SECONDS="${POSTMORTEM_ABSENT_GRACE_SECONDS:-3600}"
+case "$ABSENT_GRACE_SECONDS" in
+    ''|*[!0-9]*) ABSENT_GRACE_SECONDS=3600 ;;
+esac
+# Resolve the window to an absolute ISO-8601 UTC cutoff HERE, with the local jq, so
+# the row filter compares plain STRINGS. ISO-8601 UTC sorts lexicographically in
+# time order, so `.mergedAt < $cutoff` needs no date builtins in the filter — which
+# matters because that filter is executed by `gh`'s EMBEDDED jq, not this one, and
+# keeping it to string compare + field selection avoids depending on `now` /
+# `fromdateiso8601` being present and identically-behaved there. `date +%s` is POSIX;
+# jq's `todate` renders the same `…Z` shape GitHub returns for mergedAt.
+ABSENT_CUTOFF_ISO=""
+if command -v jq >/dev/null 2>&1; then
+    ABSENT_CUTOFF_ISO=$(jq -n --argjson e "$(date +%s)" --argjson g "$ABSENT_GRACE_SECONDS" \
+        '($e - $g) | todate' 2>/dev/null | tr -d '"') || ABSENT_CUTOFF_ISO=""
+    # An empty cutoff here does NOT degrade safely, and the failure is silent in
+    # the worst possible way. `__CUTOFF__` is substituted literally into the row
+    # filter, so an empty value makes the test `.mergedAt < ""` — false in jq for
+    # every real timestamp — which sets `absent_judgeable` to "0" on EVERY row and
+    # switches both required-context detectors off while the script goes on to
+    # report `no gate escapes owed`. A detector that reports nothing looks exactly
+    # like a clean bill of health: the precise escape class this script exists to
+    # catch, in the script itself.
+    #
+    # jq being ABSENT is not this case — `REQ_CTX_JSON` is `[]` without jq and the
+    # `absent` block is separately guarded on `command -v jq`, so that path is off
+    # consistently and visibly. The reachable case is jq PRESENT and the cutoff
+    # computation failing (a `date +%s` fault, or a jq without `todate`): the
+    # guards all pass and only the row filter quietly zeroes.
+    if [ -z "$ABSENT_CUTOFF_ISO" ]; then
+        echo "WARN: could not compute the required-context grace cutoff (date/jq)." >&2
+        echo "WARN: required-absent and required-never-terminal are DISABLED for this run —" >&2
+        echo "WARN: a clean result below does NOT mean those checks passed." >&2
+    fi
 fi
 
 # Expected-present allow-listed NON-required checks (merge-gate-absence-blind-
@@ -428,12 +483,13 @@ merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigg
 # back to the (lossy) live labels/statusCheckRollup columns.
 #
 # CURATION (the red-checks column) follows merge-gates.sh's GATE_FILTER so the
-# escape detector and the merge gate agree on what "red" means. One deliberate
-# divergence from merge-gates.sh, noted inline: there is NO required-context-ABSENT
-# detector — a required check that NEVER RAN produces no rollup row, so a
-# "merged with a required check absent" escape is invisible on this live path
-# (merge-gates' $reqAbsent catches it pre-merge; here it would only surface via a
-# recorded snapshot). That gap is pre-existing and left as a follow-up.
+# escape detector and the merge gate agree on what "red" means. The red-checks
+# column alone is absence-BLIND — a required check that NEVER RAN produces no
+# rollup row at all, so it is neither red nor pending, and a "merged with a
+# required check absent" escape emits none of the four label/red/revert/deviation
+# signals. That is now covered separately by the required-ABSENT cross-check
+# below (field 5 vs $reqNames), mirroring merge-gates' pre-merge $reqAbsent block
+# so the same escape is caught both before and after the merge.
 #   (a) dedupe to the LATEST run per context (group_by name, max startedAt) — a
 #       CANCELLED concurrency twin beside a later SUCCESS for the SAME context is
 #       dropped (the dominant false positive: every perf/coverage workflow sets
@@ -488,24 +544,70 @@ JQ_ROWS='(sort_by(.mergedAt) | reverse | .[0:__SCAN_N__]) | .[] | [
           | .[] )
         | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
         | select(length > 0)
-      ] | unique | join("|||") )
+      ] | unique | join("|||") ),
+    ( if ((.mergedAt // "") | length) == 0 then "1"
+      elif (.mergedAt < "__CUTOFF__") then "1" else "0" end ),
+    ( (__REQ_CTX__) as $reqNames
+      | (.mergedAt // "") as $merged
+      | [ ( (.statusCheckRollup // [])
+            # NOTE: no apostrophes in these comments. JQ_ROWS is a single-quoted
+            # shell string, so one would terminate it and silently mangle the whole
+            # filter (40 bats failures, found by running them).
+            #
+            # Only runs that existed AT THE MERGE are evidence about the merge.
+            # Without this, the latest run in a group can be a POST-merge re-run: a
+            # green required run satisfies the merge, someone re-runs it, and that
+            # re-run sitting QUEUED inside the grace window reads as
+            # required-never-terminal — a phantom escape on a PR that merged
+            # correctly. Re-runs are routine, so this fires on ordinary PRs.
+            #
+            # A run with NO timestamp at all is KEPT: it cannot be placed relative
+            # to the merge, and dropping it would blind the detector to exactly the
+            # #1964 shape it exists for. Unknown is not the same as after.
+            | map(select(
+                ($merged == "")
+                or ((.startedAt // .createdAt // .completedAt // "") == "")
+                or ((.startedAt // .createdAt // .completedAt // "") <= $merged)
+              ))
+            | group_by(if .__typename == "CheckRun" then "C " + (.name // "")
+                       else "S " + (.context // "") end)
+            | map(sort_by(.startedAt // .completedAt // .createdAt // "") | .[-1])
+            | .[] )
+          | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $n
+          | select(
+              ($reqNames | any(. == $n))
+              and
+              (
+                (.__typename == "CheckRun" and ((.status // "") != "COMPLETED"))
+                or
+                (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED")))
+              )
+            )
+          | $n
+        ] | unique | join(", ") )
   ] | @tsv'
 JQ_ROWS="${JQ_ROWS//__SCAN_N__/$SCAN_N}"
 JQ_ROWS="${JQ_ROWS//__REQ_CTX__/$REQ_CTX_JSON}"
 JQ_ROWS="${JQ_ROWS//__ALLOW__/$ALLOW_LIST_RE}"
+JQ_ROWS="${JQ_ROWS//__CUTOFF__/$ABSENT_CUTOFF_ISO}"
 while IFS= read -r row; do
     [ -z "$row" ] && continue
-    # Split the 5-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
+    # Split the 6-field @tsv row by tab MANUALLY (not `IFS=$'\t' read`): tab is
     # IFS-whitespace, so `read` collapses consecutive tabs and DROPS empty middle
     # fields — a row with empty labels but a real red-check ("num⇥mc⇥⇥check")
     # would shift the check into `labels` and blank `redchecks`, silently missing
     # the single most common escape (red required check, no override label).
-    # Parameter expansion preserves empty fields. @tsv always emits 5 fields
-    # (field 5 = the `|||`-joined PRESENT context names, for the absence check).
+    # Parameter expansion preserves empty fields. @tsv always emits 7 fields
+    # (field 5 = the `|||`-joined PRESENT context names, for the absence checks;
+    # field 6 = "1" when the merge is older than the run-creation grace window,
+    # i.e. old enough to judge absence — see $ABSENT_GRACE_SECONDS;
+    # field 7 = required contexts PRESENT but never terminal — see below).
     num="${row%%$'\t'*}";         row="${row#*$'\t'}"
     mergecommit="${row%%$'\t'*}"; row="${row#*$'\t'}"
     labels="${row%%$'\t'*}";      row="${row#*$'\t'}"
-    redchecks="${row%%$'\t'*}";   present_names="${row#*$'\t'}"
+    redchecks="${row%%$'\t'*}";   row="${row#*$'\t'}"
+    present_names="${row%%$'\t'*}";   row="${row#*$'\t'}"
+    absent_judgeable="${row%%$'\t'*}"; req_nonterminal="${row#*$'\t'}"
     [ -z "$num" ] && continue
     [ -n "$mergecommit" ] && merged_commits="$merged_commits $mergecommit"
     has_entry "$num" && continue
@@ -553,6 +655,58 @@ while IFS= read -r row; do
     if [ -n "$trigger" ] && is_broken_lane "$trigger"; then
         warns+=("PR #$num — broken-lane (auditable WARN, not an escape): $trigger")
         trigger=""
+    fi
+    # Required-context ABSENT cross-check (required-check-that-never-reports-is-
+    # invisible, infra P1; admin-merge-past-absent-checks-undetected, process P1).
+    # Every name in branch_protection.required_contexts MUST appear on a merged
+    # PR's rollup: the always-report invariant
+    # (docs/agent-rules/ci-required-check-pattern.md) forbids a workflow-level
+    # `on.pull_request.paths:` filter on any required check precisely so absence is
+    # never legitimate — a required context missing from the rollup means it never
+    # reported, and the PR merged past it. That escape emits NO red check, NO
+    # override label and NO revert, so it is invisible to every other trigger here;
+    # it is exactly how #1941 (`--admin` merge past 22 absent contexts) and
+    # #1972-#1974 (merged with zero workflow runs) read as "clean" to this script.
+    # Runs on BOTH the snapshot and live paths — a snapshot records the merge-instant
+    # red set, not rollup MEMBERSHIP, so absence is only ever observable here.
+    # Gated on $absent_judgeable so a merge still inside the run-creation lag window
+    # is deferred to the next sweep rather than false-flagged (see
+    # $ABSENT_GRACE_SECONDS). Fail-closed: jq absent → REQ_CTX_JSON is '[]' → inert,
+    # same degradation as the required-by-name red scope above.
+    if [ "$absent_judgeable" = "1" ] && [ "$REQ_CTX_JSON" != "[]" ] && command -v jq >/dev/null 2>&1; then
+        req_absent_names=""
+        while IFS= read -r reqname; do
+            reqname="${reqname%$'\r'}"   # strip a trailing CR (git-bash jq on Windows)
+            [ -z "$reqname" ] && continue
+            case "|||${present_names}|||" in
+                *"|||${reqname}|||"*) ;;   # present (any state — absence is the signal)
+                *) req_absent_names="${req_absent_names:+$req_absent_names, }$reqname" ;;
+            esac
+        done < <(printf '%s\n' "$REQ_CTX_JSON" | jq -r '.[]' 2>/dev/null || true)
+        if [ -n "$req_absent_names" ]; then
+            trigger="${trigger:+$trigger; }required-absent: ${req_absent_names}"
+        fi
+    fi
+    # Required-context NEVER-TERMINAL cross-check — the OTHER half of the same hole
+    # (required-check-that-never-reports-is-invisible, infra P1; #1964's actual shape).
+    # A required context can be PRESENT in the rollup and still never have reported:
+    # #1964 merged with ten contexts non-green, six of them still `queued`. That is
+    # invisible to every signal here — the absent check above sees it as present, and
+    # the red-check curation deliberately requires a TERMINAL verdict, so a run stuck
+    # in QUEUED/IN_PROGRESS is neither. The merge went past a check that never produced
+    # a conclusion, which is the same escape as absence wearing a different mask.
+    #
+    # Judged only outside the grace window, where it becomes unambiguous: a check that
+    # was merely mid-flight at merge reaches a terminal state within minutes, so one
+    # still non-terminal an hour later never finished at all. That is why this needs no
+    # timing heuristic of its own — it reuses $absent_judgeable and reads a fact, not a
+    # guess. (The infra entry proposed a head_sha-mismatch probe for #1964 instead;
+    # that does not fit the mechanism — the rollup is fetched via `commits(last: 1)`,
+    # so it is scoped to the PR's current head by construction and a foreign-sha run
+    # cannot appear in it. Non-terminality is the property that actually distinguishes
+    # the #1964 rollup from a healthy one.)
+    if [ "$absent_judgeable" = "1" ] && [ -n "$req_nonterminal" ]; then
+        trigger="${trigger:+$trigger; }required-never-terminal: ${req_nonterminal}"
     fi
     # Absence-present cross-check (merge-gate-absence-blind-nonrequired-allowlist,
     # PR-3): an allow-listed NON-required check that is configured to always run on
@@ -668,6 +822,22 @@ if [ "${#warns[@]}" -gt 0 ]; then
 fi
 
 if [ "${#owed[@]}" -eq 0 ]; then
+    # Qualify the CLEAN result specifically (gate-tooling-run-from-stale-session-
+    # branch, process P1). "no gate escapes owed" from a checkout running months-old
+    # detector logic is a false GREEN — the exact reading that let #1941 pass as
+    # clean — and unlike a stale BLOCK nobody re-examines it. Advisory: never
+    # changes the exit code, and silent unless the logic is verifiably behind.
+    # warn_if_script_stale comes from lib/script-freshness.sh via the merge-gates.sh
+    # source above; guarded so an older/partial checkout degrades rather than errors.
+    if command -v warn_if_script_stale >/dev/null 2>&1; then
+        case "$MODE" in
+            list|blocking)
+                warn_if_script_stale "postmortem-owed detector logic" \
+                    "agents/scripts/core/postmortem-owed.sh" \
+                    "agents/scripts/core/lib/script-freshness.sh"
+                ;;
+        esac
+    fi
     case "$MODE" in
         list|blocking) echo "postmortem-owed: no gate escapes owed a postmortem (last $SCAN_N merges clean)." ;;
     esac

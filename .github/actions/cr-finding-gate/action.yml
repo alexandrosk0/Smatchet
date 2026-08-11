@@ -175,7 +175,7 @@ runs:
               }
               commits(last:1){
                 nodes{ commit{ statusCheckRollup{ contexts(first:100){
-                  nodes{ __typename ... on StatusContext{ context state } }
+                  nodes{ __typename ... on StatusContext{ context state description } }
                 } } } }
               }
             }
@@ -199,15 +199,33 @@ runs:
           fi
           any_fetch_ok=true
 
-          # Count CR reviews on the current head — distinguishes "not reviewed
-          # yet" (0) from "reviewed, empty body" (>0). Conflating them wedged on
-          # PENDING after an empty-body incremental review.
+          # Count CR reviews on the current head that actually CARRY A VERDICT —
+          # i.e. have a non-blank top-level body.
+          #
+          # Replying to a review thread creates a review node with an EMPTY body
+          # (true for CR and for humans alike). Such a node is a reply artifact,
+          # not a review result. Counting it was a permanent wedge, not a race:
+          # n_reviews>0 skips the StatusContext disambiguation below, then the
+          # body-parse branch finds no "Actionable comments posted:" header in an
+          # empty body and fail-closes to a retry — every pass, forever, because
+          # nothing ever displaces that reply as the latest on-head review. The
+          # gate sat PENDING on a head CR had fully reviewed and marked SUCCESS
+          # (PR #1996, head 51c74fe: CR replied to a resolved thread at 03:28:20,
+          # and the 04:30 run still reported "awaiting CodeRabbit review").
+          #
+          # Blank-bodied nodes are therefore invisible here: they are evidence of
+          # neither "reviewed" nor "findings". With only replies on the head the
+          # count is 0 and CR's own StatusContext decides, which is exactly the
+          # no-review-node case. This does NOT loosen the #524 fail-closed rule —
+          # a review with a NON-blank body but no count header still fail-closes
+          # below, and a review with findings always carries the header.
           n_reviews=$(printf '%s' "$resp" | jq -r '
             .data.repository.pullRequest as $pr
             | ($pr.headRefOid // "") as $oid
             | [ $pr.reviews.nodes[]
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                         and (.commit.oid // "") == $oid) ] | length
+                         and (.commit.oid // "") == $oid
+                         and ((.body // "") | test("\\S"))) ] | length
             ' 2>/dev/null) || n_reviews=0
           n_reviews="${n_reviews//[^0-9]/}"; n_reviews="${n_reviews:-0}"
 
@@ -241,6 +259,39 @@ runs:
                 | select(.__typename == "StatusContext" and .context == "CodeRabbit") | .state ] | (.[0] // "ABSENT")
               ' 2>/dev/null) || cr_ctx="ABSENT"
             cr_ctx="${cr_ctx//[^A-Z]/}"
+
+            # SUCCESS alone is NOT proof a review happened. When CodeRabbit is
+            # rate limited it posts state=SUCCESS with description "Review rate
+            # limited" — a review that never ran, published as a green (observed
+            # on this PR, head 51c74fe, 03:28:01). Reading only .state, the
+            # branch below would translate that into "completed with no review
+            # on head (skipped/clean)" and pass an entirely unreviewed commit.
+            #
+            # That fail-open was previously masked: the blank-reply wedge fixed
+            # alongside this kept the gate PENDING and never reached here. Fixing
+            # the wedge without this would have TURNED a stuck check INTO a false
+            # green — strictly worse, and precisely the escape class this gate
+            # exists to prevent. The two changes must ship together.
+            #
+            # Scoped to the known not-a-review marker rather than a whitelist of
+            # acceptable descriptions: this gate's history is a string of wedges
+            # (#536, #1718, #1724, #1954), so an unrecognised description must
+            # keep its existing pass behaviour instead of hanging every PR. CR
+            # itself recorded this rule as a repo learning on 2026-08-11.
+            cr_desc=$(printf '%s' "$resp" | jq -r '
+              [ .data.repository.pullRequest.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+                | select(.__typename == "StatusContext" and .context == "CodeRabbit")
+                | (.description // "") ] | (.[0] // "")
+              ' 2>/dev/null) || cr_desc=""
+            if [ "$cr_ctx" = "SUCCESS" ] \
+               && printf '%s' "$cr_desc" | grep -qiE 'rate.?limit|limit reached'; then
+              # Not settled: CR has not reviewed this head yet. The poll window
+              # will not outlive a multi-minute limit, so this resolves to
+              # PENDING and the workflow's CR-comment trigger re-runs it once the
+              # real review lands. Never green on an unreviewed head.
+              return 1
+            fi
+
             case "$cr_ctx" in
               SUCCESS)       post success "CodeRabbit completed with no review on head (skipped/clean)"; exit 0 ;;
               FAILURE|ERROR) post failure "CodeRabbit check reported ${cr_ctx} on current head"; exit 0 ;;
@@ -248,17 +299,24 @@ runs:
             esac
           fi
 
-          # FULL body of the latest on-head CR review (may be empty). #524: the
+          # FULL body of the latest VERDICT-CARRYING on-head CR review. #524: the
           # previous parse looked at only the FIRST body line, so a CR preamble
           # line above the "Actionable comments posted: N" header hid it → the
           # empty-n branch posted SUCCESS and waved findings through (fail open).
           # Search the whole body instead.
+          #
+          # The blank-body filter must match the n_reviews selection above, and
+          # for a second reason: `last` is by submittedAt, so a thread reply
+          # posted AFTER a real review would otherwise be selected, blanking the
+          # body and fail-closing a head that genuinely reported its count. Both
+          # selections therefore skip blank-bodied reply nodes.
           body=$(printf '%s' "$resp" | jq -r '
             .data.repository.pullRequest as $pr
             | ($pr.headRefOid // "") as $oid
             | [ $pr.reviews.nodes[]
                 | select((.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-                         and (.commit.oid // "") == $oid) ]
+                         and (.commit.oid // "") == $oid
+                         and ((.body // "") | test("\\S"))) ]
             | sort_by(.submittedAt) | last
             | if . == null then "" else (.body // "") end
             ' 2>/dev/null) || body=""
