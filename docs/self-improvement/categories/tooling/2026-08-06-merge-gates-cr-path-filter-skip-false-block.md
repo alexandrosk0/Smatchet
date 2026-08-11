@@ -30,7 +30,8 @@
     withdrawn. (1) That poller was invoked from the long-lived integration tree
     (`C:/Dev/Smatchet` @ `ff0ee7a6`), whose `merge-gates.sh` predates `4685997d` and has no downgrade
     — the block was an artefact of a stale checkout, not of current `develop`; filed separately as
-    [`process/2026-08-06-gate-tooling-run-from-stale-session-branch.md`](../process/2026-08-06-gate-tooling-run-from-stale-session-branch.md).
+    `2026-08-06 · [process] · P1 — gate tooling run from a long-lived session branch`, since
+    archived as applied in [`applied.md`](../applied.md).
     (2) That run did **not** end in `GATES_TIMEOUT` at 60/60 as first reported — both poll logs end
     `PR_MERGED` at poll 49, i.e. the poller observed the merge and exited normally. No gate was
     escaped on #1953: CI was 22/22, `CR findings (0 actionable)` was SUCCESS with description

@@ -27,6 +27,23 @@
      resolve. This mechanically guarantees the opposite for exactly the entries that
      carried the most cross-references.
 
+  **The same command breaks links in the mirror direction too, and that half bites
+  harder.** The `git rm` deletes a path other documents cite. Caught live in CI on this
+  very branch (PR #1996, `Agentic self-tests (bats)`): archiving
+  `2026-08-06-gate-tooling-run-from-stale-session-branch` left **2 inbound dangling
+  links** — from [`postmortems.md`](../../postmortems.md) and from the sibling entry
+  [`2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](2026-08-06-merge-gates-cr-path-filter-skip-false-block.md),
+  both of which had correctly linked a file that existed when they were written.
+
+  Inbound is the worse half for two reasons. The outbound breakage is confined to the
+  archived entry and is repairable by re-depthing, mechanically, inside one file. The
+  inbound breakage is scattered across files the archiver never opened, has no
+  mechanical fix — `applied.md` is a 3000-line append-only ledger with no per-entry
+  anchors, so there is no equivalent link to rewrite *to*, only prose to restate — and
+  it is invisible to any check scoped to the diff, because the referring files are
+  unmodified. Only a repo-wide `--all` sweep sees it. That is exactly why this surfaced
+  as a red required check rather than as a local pre-ship failure.
+
   The 550+ legacy entries already in `applied.md` were largely moved from monolith
   `categories/<cat>.md` files, which sit at the SAME depth as `applied.md` — so the
   bug is new-ish, arriving with the one-file-per-entry convention, and will recur on
@@ -38,9 +55,13 @@
   `../<sibling-cat>/` → `<sibling-cat>/` — then `git rm`s the source and re-runs
   `test-markdown-links.sh` as a self-check. A script is the right shape rather than a
   documented sed: the transform depends on the source entry's depth, which is exactly
-  the detail a human copying a command from a doc will not re-derive. Until it exists,
-  the doc should at minimum say "re-run `test-markdown-links.sh` after archiving" —
-  that one line would have caught this.
+  the detail a human copying a command from a doc will not re-derive. The same script
+  must also handle the inbound half **before** the `git rm`: grep the repo for the
+  entry's slug and rewrite each referring link to prose naming the entry plus a link to
+  `applied.md`, refusing to delete while any inbound reference remains. Until it exists,
+  the doc should at minimum say "re-run `test-markdown-links.sh --all` after archiving" —
+  that one line would have caught both halves, and the `--all` is load-bearing: default
+  mode is diff-scoped and sees neither the re-parented body nor the orphaned referrers.
 
   Status: open
   Last-reviewed: 2026-08-11

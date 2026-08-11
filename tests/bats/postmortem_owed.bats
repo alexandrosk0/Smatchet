@@ -807,7 +807,7 @@ JSON
     [[ "$output" != *"PR #8105"* ]]
 }
 
-@test "never-terminal: latest-run dedupe — a QUEUED rerun beside an earlier SUCCESS still counts" {
+@test "never-terminal: latest-run dedupe - a QUEUED rerun beside an earlier SUCCESS still counts" {
     # Same dedupe rule the red-check curation uses: the LATEST run per context wins.
     # A re-run sitting queued means the context's current state never reported, even
     # though an older run of it did.

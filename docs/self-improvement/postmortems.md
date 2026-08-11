@@ -180,8 +180,8 @@ Sibling hole found while auditing this one — a poller **false-block**, opposit
 postmortem is owed for it. Filed as
 [`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
 (P2, tooling) plus the stale-checkout hazard that made it visible,
-[`categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md`](categories/process/2026-08-06-gate-tooling-run-from-stale-session-branch.md)
-(P1, process).
+`2026-08-06 · [process] · P1 — gate tooling run from a long-lived session branch`,
+since archived as applied in [`categories/applied.md`](categories/applied.md).
 
 ## 2026-08-06 · PR #1941 · squash-merged with `--admin` past 22 required checks that never ran (repo-wide Actions queue jam) — and no detector reads that state
 
