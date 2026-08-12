@@ -1,4 +1,5 @@
 # Plan — Dev onboarding, first-run tracker setup, QUICKSTART
+<!-- plan-date: 2026-08-03 -->
 
 > **Slug**: `dev-onboarding-first-run-quickstart` (matches this file's basename without `.md`).
 >
