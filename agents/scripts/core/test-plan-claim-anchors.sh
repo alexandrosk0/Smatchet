@@ -144,6 +144,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   first-substring revisit match -> (13) goes red
     #   unguarded quarter date()      -> (14) goes red (escaped ValueError)
     #   digit-leading -> fail closed  -> (15) goes red
+    #   empty value -> return True    -> (16) and (17) go red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -272,6 +273,36 @@ if [ "$SCOPE" = "selftest" ]; then
 <!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2026-roadmap) -->
 - branch protection already had reviews disabled.
 '
+
+    # (16) `revisit=` typed but EMPTY must fail closed — a malformed attempt,
+    #      not the sanctioned absent-field case (deliberate divergence from
+    #      the C++ rule, which folds empty into unset).
+    _case escape-empty-revisit 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-empty-revisit]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (17) an empty FINAL duplicate field wins over a valid earlier one
+    #      (last-field-wins, matching 10-line-rules.sh) and must fail closed
+    #      — else appending `; revisit=` would blank out a real expiry.
+    _case escape-empty-final-dup 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"'; revisit=) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-empty-final-dup]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
 
     # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
     #      parse — a `revisit=` embedded in reason= prose must not shadow the
@@ -417,6 +448,12 @@ def escape_active(comment_line):
             value = field[len('revisit='):].strip()
     if value is None:
         return True
+    if not value:
+        # `revisit=` typed but left EMPTY: a malformed attempt, not the
+        # sanctioned absent-field case — fail CLOSED. Deliberate divergence
+        # from the C++ rule (which folds empty into unset): an empty field
+        # must not mint a permanent suppression.
+        return False
     qm = QUARTER_RE.match(value)
     if qm:
         year, quarter = int(qm.group(1)), int(qm.group(2))
