@@ -92,7 +92,7 @@ _selfexec_hits() {
             # the single quote through the shell single-quoted awk program.
             strip = "^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+" \
                     "|[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]*)[[:space:]]+" \
-                    "|[0-9]*(<|>>|>)[^[:space:]]*[[:space:]]+)"
+                    "|([0-9]*|&)(<|>>|>)[^[:space:]]*[[:space:]]+)"
         }
         /^[[:space:]]*#/ { next }
         {
@@ -290,6 +290,23 @@ SH
     case "$out" in
         *"raw self-exec"*) ;;
         *) echo "test-gate-selftests selftest: FAIL — tab-separated exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec behind a bash &>-style redirection must be flagged — the
+    # numeric-fd strip did not cover the & form and & is not a segment split
+    # (CodeRabbit round-4 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) &>/dev/null "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind &> redirection was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — &>-redirection exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
 

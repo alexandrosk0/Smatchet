@@ -140,6 +140,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   prefix-capture REVISIT_RE     -> (9) and (10) go red
     #   deleting the quarter branch   -> (11) goes red
     #   dropping the DATE_RE gate     -> (12) goes red (python >= 3.11)
+    #   first-substring revisit match -> (13) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -244,6 +245,21 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
+    #      parse — a `revisit=` embedded in reason= prose must not shadow the
+    #      real (expired) field, else prose mints a permanent exemption.
+    _case escape-embedded-revisit 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=see revisit=never note; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-embedded-revisit]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
     # (10) a PAST quarter must expire at quarter end, mirroring the C++
     #      revisit_overdue() semantics the grammar promises.
     _case escape-past-quarter 1 '# P
@@ -327,10 +343,12 @@ CLAIM_RE = re.compile(
 ANCHOR_RE = re.compile(r':\d+\b|#\d{2,}|\b[0-9a-f]{7,40}\b')
 
 DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
-# The WHOLE field, not a date-shaped prefix: revisit=2027-08-11typo must not
-# ride on its first ten characters. Value grammar (AGENTS.md deviation spec):
+# The deviation BODY parses as ;-delimited fields and the FINAL revisit= field
+# wins, mirroring 10-line-rules.sh's `IFS=';' read -ra kvs` loop — a substring
+# match would let `reason=see revisit=never note; revisit=<past>` ride on the
+# embedded first occurrence. Value grammar (AGENTS.md deviation spec):
 # YYYY-MM-DD | YYYY-Qn | slug | never.
-REVISIT_RE = re.compile(r'revisit=([^;)]*)')
+DEV_BODY_RE = re.compile(r'SMATCHET_DEVIATION\(([^)]*)\)')
 QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 # Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
 # BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
@@ -355,10 +373,19 @@ def escape_active(comment_line):
     — 2026-02-30, 2027-08-11typo, 2026-Q5 — stops suppressing. Fail closed,
     so the typo surfaces instead of minting a permanent exemption.
     """
-    m = REVISIT_RE.search(comment_line)
+    m = DEV_BODY_RE.search(comment_line)
     if not m or not TODAY:
         return True
-    value = m.group(1).strip()
+    value = None
+    for field in m.group(1).split(';'):
+        field = field.strip()
+        if field.startswith('revisit='):
+            value = field[len('revisit='):].strip()
+    if value is None:
+        return True
+    # (value may be the empty string: `revisit=` with nothing after it — that
+    # falls through to the no-calendar-expiry arm below, like the C++ rule's
+    # empty prev_dev_revisit.)
     if not value or not value[0].isdigit():
         # slug / never / empty: no calendar expiry (the C++ rule's
         # "slug / never / unknown -> never overdue" arm).
