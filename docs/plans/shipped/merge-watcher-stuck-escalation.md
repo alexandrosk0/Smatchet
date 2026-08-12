@@ -1,4 +1,5 @@
 # Plan — smatchet-merge-watcher stuck-PR escalation
+<!-- plan-date: 2026-06-11 -->
 
 > **Slug**: `merge-watcher-stuck-escalation` (matches this file's basename without `.md`).
 >

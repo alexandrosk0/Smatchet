@@ -1,4 +1,6 @@
 # Remove global `projectKey` — multi-project design
+
+<!-- plan-date: 2026-05-12 -->
 <!-- index-summary: Multi-project design — remove the singleton `TrackerConfig::ProjectKey` / Plane equivalent; resolve project per call site (view JQL, selection prefix, explicit picker). -->
 
 Status: design / not yet started

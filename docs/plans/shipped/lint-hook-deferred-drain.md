@@ -1,4 +1,5 @@
 # Reduce build / cppcheck / test invocations during multi-edit changes
+<!-- plan-date: 2026-05-16 -->
 
 ## Context
 

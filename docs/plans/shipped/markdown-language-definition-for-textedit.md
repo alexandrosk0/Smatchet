@@ -1,4 +1,5 @@
 # Extend ImGuiColorTextEdit — `LanguageDefinition::Markdown()` + 3 consumers
+<!-- plan-date: 2026-05-19 -->
 
 ## Context
 

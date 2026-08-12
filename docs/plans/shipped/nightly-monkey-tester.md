@@ -1,4 +1,5 @@
 # Plan — Nightly "code monkey" tester
+<!-- plan-date: 2026-07-06 -->
 
 > **Slug**: `nightly-monkey-tester` (matches this file's basename without `.md`).
 >

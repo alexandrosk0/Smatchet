@@ -1,4 +1,5 @@
 # Plan — Rebindable keyboard shortcuts (unified, all shortcuts listed + changeable)
+<!-- plan-date: 2026-06-14 -->
 
 > **Slug**: `keyboard-shortcuts-rebindable` (matches this file's basename without `.md`).
 >

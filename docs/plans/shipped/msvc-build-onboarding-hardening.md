@@ -1,4 +1,5 @@
 # Plan - MSVC build onboarding hardening
+<!-- plan-date: 2026-05-28 -->
 
 > **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
 >

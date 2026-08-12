@@ -1,4 +1,6 @@
 # Lua recorded ImGui command list — cached cell + window bindings
+
+<!-- plan-date: 2026-05-14 -->
 <!-- index-summary: Lua recorded ImGui command list — cached cell + window bindings (PR #66 `5b740e9`). Replaces per-frame Lua dispatch with cached command replay (~390 µs/cell → ~5 µs/cell). -->
 
 > **Status**: shipped on `develop` via PR #66 (squash `5b740e9`). See `## Implementation log`, `## Deviations from plan`, and `## Verification` near the bottom of this doc.
