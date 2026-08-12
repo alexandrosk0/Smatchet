@@ -158,6 +158,11 @@ if [ "$MODE" = "selftest" ]; then
     # --fix can never replace it) and REPLACED in place rather than joined by a
     # second marker.
     printf '# Plan — Bad\n\n<!-- plan-date: 2026-99-99 -->\n\nBody.\n' > "$_shipped/bad.md" || exit 90
+    # A MALFORMED declaration (not even date-shaped) must also be normalised to a
+    # single valid marker. Only shape-matching values were replaced before, so
+    # 2026-99-99 was fixed while `invalid` was left beside a second inserted
+    # marker — the same contradiction, reached by a different payload.
+    printf '# Plan — Junk\n\n<!-- plan-date: invalid -->\n\nBody.\n' > "$_shipped/junk.md" || exit 90
     printf '# INDEX\n\n<!-- BEGIN auto-plan-index -->\n<!-- END auto-plan-index -->\n' > "$_pd/INDEX.md" || exit 90
     git add -A || exit 90
     git commit -qm only-commit-is-today || exit 90
@@ -169,6 +174,8 @@ if [ "$MODE" = "selftest" ]; then
     grep -q '2026-99-99' "$_pd/INDEX.md" && exit 94
     [ "$(grep -c 'plan-date' "$_shipped/bad.md")" = "1" ] || exit 95
     grep -q 'plan-date: 2026-99-99' "$_shipped/bad.md" && exit 95
+    [ "$(grep -c 'plan-date' "$_shipped/junk.md")" = "1" ] || exit 96
+    grep -q 'plan-date: invalid' "$_shipped/junk.md" && exit 96
     # (4b) DISAGREEMENT: a marker that no longer matches its committed row must
     # FAIL --check rather than be silently re-derived from git.
     sed -i.bak 's/plan-date: 2020-01-02/plan-date: 2019-05-05/' "$_shipped/marked.md" || exit 90
@@ -185,6 +192,7 @@ if [ "$MODE" = "selftest" ]; then
     93) echo "test-plan-index --selftest: FAIL — a marker disagreeing with its committed row did not fail --check" >&2; fail=1 ;;
     94) echo "test-plan-index --selftest: FAIL — an impossible plan-date (2026-99-99) was treated as authoritative" >&2; fail=1 ;;
     95) echo "test-plan-index --selftest: FAIL — an impossible plan-date was not REPLACED in place (duplicate or surviving marker)" >&2; fail=1 ;;
+    96) echo "test-plan-index --selftest: FAIL — a MALFORMED plan-date declaration was not replaced in place (duplicate or surviving marker)" >&2; fail=1 ;;
     *)  echo "test-plan-index --selftest: FAIL — marker fixture exited $_st_rc" >&2; fail=1 ;;
   esac
   rm -rf "$_st_tmp"
@@ -225,6 +233,13 @@ def _git_first_date_at(git_path):
         return ""
 
 DATE_RE = re.compile(r'^\s*<!--\s*plan-date:\s*(\d{4}-\d{2}-\d{2})\s*-->\s*$')
+# Any plan-date DECLARATION, whatever its payload. Reading uses DATE_RE (a valid
+# calendar date or nothing); REPLACING uses this, so a malformed marker is
+# normalised rather than left beside a freshly inserted one. Without the split,
+# `2026-99-99` was replaced (it matches the digit shape) but `invalid` was not —
+# an arbitrary difference that left the same two-marker contradiction the
+# in-place replacement exists to prevent.
+PLAN_DATE_DECL_RE = re.compile(r'^\s*<!--\s*plan-date:.*?-->\s*$')
 
 def marker_date(path):
     """The plan's own stamped date, or "" — the AUTHORITATIVE source when present.
@@ -358,7 +373,7 @@ def stamp_markers():
         # even though the first (valid) one would win.
         replaced = False
         for i, line in enumerate(lines):
-            if DATE_RE.match(line):
+            if PLAN_DATE_DECL_RE.match(line):
                 lines[i] = marker
                 replaced = True
                 break
