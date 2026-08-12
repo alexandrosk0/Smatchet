@@ -140,7 +140,7 @@ _selfexec_hits() {
 
 # run_check <root> — assert every exposer carries the marker. Exit 0/1/2.
 run_check() {
-    local root="$1" list rc=0 f missing=()
+    local root="$1" list rc=0 f missing=() _mode _nonexec
     if ! command -v grep >/dev/null 2>&1; then
         echo "test-gate-selftests: grep not on PATH (required)" >&2; return 2
     fi
@@ -162,9 +162,19 @@ run_check() {
         # Comment lines are excluded: docs legitimately QUOTE the bad shape
         # (this very script does, one screen up) without executing it.
         # NON-executable files only: on a mode-100755 script the raw form
-        # execs fine, so the 126 premise — and the rule — do not apply.
+        # execs fine, so the 126 premise — and the rule — do not apply. The
+        # mode comes from the GIT INDEX (the 126 premise is about the tracked
+        # mode; the fs bit diverges under core.fileMode=false or exec-bit-less
+        # filesystems), falling back to the fs bit for untracked files — the
+        # synth selftest fixtures go through that fallback.
         # Cheap prefilter first; the awk lexer only runs on files that match.
-        if [ ! -x "$f" ] && grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
+        _mode="$(git -C "$root" ls-files --stage -- "${f#"$root"/}" 2>/dev/null | awk '{print $1; exit}')"
+        case "$_mode" in
+            100755) _nonexec=0 ;;
+            100644) _nonexec=1 ;;
+            *) if [ -x "$f" ]; then _nonexec=0; else _nonexec=1; fi ;;
+        esac
+        if [ "$_nonexec" -eq 1 ] && grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
             selfexec+=("$f")
         fi
     done <<EOF
@@ -269,10 +279,15 @@ SH
         printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
         printf '    --selftest) bash "%s" --check; "%s" --selftest; exit 0 ;;\nesac\n' '$_SCRIPT_PATH' '$_SCRIPT_PATH'
     } > "$synth"
-    if run_check "$tmp" >/dev/null 2>&1; then
+    out="$(run_check "$tmp" 2>&1)" && {
         echo "test-gate-selftests selftest: FAIL — raw self-exec masked by a same-line bash invocation was NOT flagged" >&2
         rc=1
-    fi
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — masked exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
 
     # A raw exec behind a QUOTED-value env assignment must be flagged — the
     # bare [^space]* strip broke at the quoted space and the leftover masked

@@ -145,6 +145,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   unguarded quarter date()      -> (14) goes red (escaped ValueError)
     #   digit-leading -> fail closed  -> (15) goes red
     #   empty value -> return True    -> (16) and (17) go red
+    #   re-anchoring CALENDARISH_RE   -> (18) and (19) go red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -304,6 +305,33 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (18) a QUARTER shape with trailing junk must fail closed, not ride as
+    #      a slug — same typo class as (9), unanchored quarter alternative.
+    _case escape-quarter-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future_q"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-quarter-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (19) an ISO-BASIC shape with trailing junk likewise fails closed.
+    _case escape-basic-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"${_future//-/}"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-basic-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
     # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
     #      parse — a `revisit=` embedded in reason= prose must not shadow the
     #      real (expired) field, else prose mints a permanent exemption.
@@ -412,11 +440,12 @@ QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 # Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
 # BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-# A calendar ATTEMPT that parses as neither legal form: a dashed-date prefix
-# (2027-08-11typo), a quarter shape with any digit (2026-Q5), or ISO basic
-# (20270811). These fail closed. A merely digit-LEADING value that matches
-# none of them (2026-roadmap) is a slug — legal, no calendar expiry.
-CALENDARISH_RE = re.compile(r'\d{4}-\d{2}-\d{2}|\d{4}-Q\d+$|\d{8}$')
+# A calendar ATTEMPT that parses as neither legal form: a dashed-date, quarter,
+# or ISO-basic PREFIX with anything after it (2027-08-11typo, 2026-Q1typo,
+# 20270811typo) — all unanchored, so trailing junk still classifies as an
+# attempt and fails closed. A merely digit-LEADING value that matches none of
+# them (2026-roadmap) is a slug — legal, no calendar expiry.
+CALENDARISH_RE = re.compile(r'\d{4}-\d{2}-\d{2}|\d{4}-Q\d+|\d{8}')
 TODAY = os.environ.get("TODAY", "")
 
 
@@ -439,8 +468,14 @@ def escape_active(comment_line):
     a permanent exemption.
     """
     m = DEV_BODY_RE.search(comment_line)
-    if not m or not TODAY:
+    if not m:
         return True
+    if not TODAY:
+        # Defense in depth: the shell wrapper always exports TODAY, but if it
+        # ever arrived empty the expiry rule would silently vanish — abort
+        # loudly instead of failing open.
+        raise SystemExit("test-plan-claim-anchors: TODAY is unset/empty — "
+                         "refusing to run with expiry enforcement disabled")
     value = None
     for field in m.group(1).split(';'):
         field = field.strip()
