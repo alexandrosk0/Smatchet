@@ -360,12 +360,17 @@ has_entry() {  # <pr-number>
     # PR list continues in a THIRD field the two-field bound above cannot reach,
     # so #B/#C silently lost dedup (found by per-PR-number sweep of the ledger;
     # the heading-count sweep that validated the bound missed it). A late field
-    # counts ONLY when it starts with `PR #` — an actual PR-list field — which
-    # trigger prose never does, so the `/#907` trigger-text leak stays closed.
-    # `PR #N` buried mid-prose in a late field deliberately still nudges: a false
-    # nudge is noise once, a false dedup is a permanent silent exemption.
-    grep -qE "^#+ .*·[[:space:]]*PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: falls through to the late-field list probe
-    grep -qE "^#+ .*·[[:space:]]*PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+    # counts ONLY when it carries the shape's own `(escape)`/`(collateral)`
+    # annotation after the PR list — "starts with `PR #`" alone was NOT enough:
+    # a trigger sentence that happens to LEAD with a PR reference (`· PR #907
+    # was reverted …`) matched it and re-opened the permanent-false-dedup hole
+    # one shape further out (CodeRabbit, round six). Trigger prose never ends a
+    # field with the literal annotation, so requiring it keeps both the `/#907`
+    # and the leading-`PR #907` leaks closed. `PR #N` anywhere in a late field
+    # WITHOUT the annotation deliberately still nudges: a false nudge is noise
+    # once, a false dedup is a permanent silent exemption.
+    grep -qE "^#+ .*·[[:space:]]*PR #$1([^0-9][^·]*)?\((escape|collateral)\)" "$LEDGER" && return 0  # fail-open-ok: falls through to the annotated-list trailer probe
+    grep -qE "^#+ .*·[[:space:]]*PR #[0-9][^·]*[,[:space:]/]#$1([^0-9][^·]*)?\((escape|collateral)\)" "$LEDGER"
 }
 
 # has_sha_entry <sha> — true when the ledger mentions this commit sha in ANY

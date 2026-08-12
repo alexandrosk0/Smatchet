@@ -166,11 +166,73 @@ run_selftest() {
         echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict with trailing whitespace" >&2
         return 1
     fi
+    # Sync guard: identical copies pass, a drifted copy MUST be rejected with
+    # the drift message. Uses the path override so the case is cwd-independent;
+    # the "workflow" is a copy of this very script (the extractor is file-shape
+    # agnostic), with the negative copy's regex perturbed.
+    local tmpd
+    tmpd="$(mktemp -d)" || { echo "check-pr-intent --selftest: FAIL — mktemp failed" >&2; return 1; }
+    cp "${BASH_SOURCE[0]}" "$tmpd/same.yml"
+    rc=0
+    CHECK_PR_INTENT_WORKFLOW_PATH="$tmpd/same.yml" check_workflow_sync >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -rf "$tmpd"
+        echo "check-pr-intent --selftest: FAIL — sync check rejected an identical copy" >&2
+        return 1
+    fi
+    sed 's/adversarial-code-review/adversarial-code-reviewX/' "$tmpd/same.yml" > "$tmpd/drift.yml"
+    out="$(CHECK_PR_INTENT_WORKFLOW_PATH="$tmpd/drift.yml" check_workflow_sync 2>&1)" && {
+        rm -rf "$tmpd"
+        echo "check-pr-intent --selftest: FAIL — sync check passed a DRIFTED copy" >&2
+        return 1
+    }
+    rm -rf "$tmpd"
+    case "$out" in
+        *"VERDICT REGEX DRIFT"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — drifted copy rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
     echo "check-pr-intent --selftest: PASS"
+}
+
+# --check-workflow-sync — the machine check behind the KEEP IN SYNC comment.
+# The pr-intent-lint CI job is deliberately checkout-free, so it cannot call
+# this script and must carry a COPY of the verdict regex; nothing failed when
+# the copies drifted (CodeRabbit, round six). This extracts the two regex
+# source lines from BOTH files and compares them byte-for-byte. Wired into
+# scripts/dev/test-docs.sh and the doc-anchors CI job (which does check out).
+check_workflow_sync() {
+    local wf="${CHECK_PR_INTENT_WORKFLOW_PATH:-.github/workflows/doc-validation.yml}"
+    local self="${BASH_SOURCE[0]}"
+    WF_PATH="$wf" SELF_PATH="$self" python3 - <<'PY'
+import os, re, sys
+def extract(path, label):
+    try:
+        text = open(path, encoding="utf-8").read()
+    except OSError as e:
+        print("check-pr-intent --check-workflow-sync: cannot read %s (%s)" % (path, e), file=sys.stderr)
+        sys.exit(2)
+    m = re.search(r"verdict_re = re\.compile\(\s*\n\s*r'([^\n]*)'\s*\n\s*r'([^\n]*)'\)", text)
+    if not m:
+        print("check-pr-intent --check-workflow-sync: no verdict_re definition found in %s (%s)" % (path, label), file=sys.stderr)
+        sys.exit(2)
+    return m.group(1) + m.group(2)
+mine = extract(os.environ["SELF_PATH"], "local mirror")
+theirs = extract(os.environ["WF_PATH"], "CI copy")
+if mine != theirs:
+    print("check-pr-intent --check-workflow-sync: VERDICT REGEX DRIFT between the local mirror and the CI copy:", file=sys.stderr)
+    print("  local: %s" % mine, file=sys.stderr)
+    print("  CI:    %s" % theirs, file=sys.stderr)
+    print("  A fix applied to one copy did not reach the other — apply it to both.", file=sys.stderr)
+    sys.exit(1)
+print("check-pr-intent --check-workflow-sync: OK — verdict regex identical in both copies.")
+PY
 }
 
 case "${1:-}" in
     --selftest) run_selftest; exit $? ;;
+    --check-workflow-sync) check_workflow_sync; exit $? ;;
     --help | -h) sed -n '2,12p' "$0"; exit 0 ;;
     "") BODY="$(cat)" ;;
     *)

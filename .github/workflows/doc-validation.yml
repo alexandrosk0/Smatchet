@@ -382,6 +382,16 @@ jobs:
           bash agents/scripts/core/test-plan-claim-anchors.sh --selftest
           bash agents/scripts/core/test-plan-claim-anchors.sh --all
 
+      # The pr-intent-lint job below is checkout-free, so it carries a COPY of
+      # check-pr-intent.sh's verdict regex. This step is the machine check
+      # behind their KEEP IN SYNC comments — it runs here because THIS job has
+      # the checkout the comparison needs.
+      - name: check-pr-intent sync — CI verdict-regex copy matches the local mirror
+        if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
+        run: |
+          bash agents/scripts/core/check-pr-intent.sh --selftest
+          bash agents/scripts/core/check-pr-intent.sh --check-workflow-sync
+
       - name: test-plan-naming — plan files are kebab-case
         if: steps.detect.outputs.docs == 'true'
         run: bash agents/scripts/core/test-plan-naming.sh

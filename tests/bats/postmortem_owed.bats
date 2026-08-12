@@ -1188,13 +1188,28 @@ JSON
 
 @test "dedup: PR #N mid-prose in a LATER field still nudges (conservative)" {
     # `PR #907` buried inside third-field trigger prose does NOT dedup: a late
-    # field only counts when it starts with `PR #`. Deliberately conservative —
-    # a false nudge is noise once, a false dedup is a permanent silent exemption
-    # (the P1 this fix family exists for). Pinned so a future widening to
-    # "PR #N anywhere" has to flip this test consciously.
+    # field only counts when its PR list carries the `(escape)`/`(collateral)`
+    # annotation. Deliberately conservative — a false nudge is noise once, a
+    # false dedup is a permanent silent exemption (the P1 this fix family
+    # exists for). Pinned so a future widening has to flip this test consciously.
     printf '%s\n' '## 2026-06-10 · PR #950 · reverting PR #907 broke the packaging lane' > "$POSTMORTEM_LEDGER"
     prlist <<'JSON'
 [{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d7"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #907"* ]]
+}
+
+@test "dedup: trigger prose LEADING with PR #N still nudges (needs the annotation)" {
+    # The harder variant (CodeRabbit round six): a trigger field that STARTS
+    # with a PR reference — `· PR #907 was reverted …` — satisfied the earlier
+    # "field starts with PR #" rule and silently deduped #907 forever. A late
+    # field must carry the escape·collateral shape's own `(collateral)` /
+    # `(escape)` annotation to count; leading prose position is not evidence.
+    printf '%s\n' '## 2026-06-10 · PR #950 · PR #907 was reverted by the packaging fix' > "$POSTMORTEM_LEDGER"
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d8"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
 JSON
     run_detector
