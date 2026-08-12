@@ -46,7 +46,7 @@ if not section:
 stripped = re.sub(r'(?s)<!--.*?-->', '', body)
 verdict_re = re.compile(
     r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
-    r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)$')
+    r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)[ \t]*\r?$')
 if not verdict_re.search(stripped):
     print("check-pr-intent: MISSING review verdict. Add a line "
           "`adversarial-code-review: N findings, <disposition>` or "
@@ -155,6 +155,15 @@ run_selftest() {
     _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict (0 findings)" >&2
+        return 1
+    fi
+    # ... including with TRAILING whitespace (Markdown hard-break spaces, a
+    # stray tab, or a CR from a CRLF body). Invisible to the author, so
+    # rejecting it produces an undebuggable red; `[ \t]*\r?` before `$` eats it.
+    rc=0
+    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings  " >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict with trailing whitespace" >&2
         return 1
     fi
     echo "check-pr-intent --selftest: PASS"
