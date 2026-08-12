@@ -1,4 +1,5 @@
 # Plan — PR intent capture hardening (observability + blocking gate + cross-harness)
+<!-- plan-date: 2026-06-18 -->
 
 > **Slug**: `pr-intent-capture-hardening` (matches this file's basename without `.md`).
 >

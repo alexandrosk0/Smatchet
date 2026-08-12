@@ -1,4 +1,5 @@
 # Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class
+<!-- plan-date: 2026-06-13 -->
 
 > **Slug**: `mobile-ci-smoke-gate` (matches this file's basename without `.md`).
 >

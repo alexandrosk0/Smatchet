@@ -1,4 +1,5 @@
 # Plan — Mobile (Android) Phase-0 MVP completion
+<!-- plan-date: 2026-06-09 -->
 
 > **Slug**: `mobile-mvp-completion` (matches this file's basename without `.md`).
 >

@@ -1,4 +1,5 @@
 # UI text shortening + (?) help-marker tooltip
+<!-- plan-date: 2026-06-10 -->
 
 > **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 

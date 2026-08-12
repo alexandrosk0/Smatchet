@@ -1,4 +1,5 @@
 # Plan — Window Expand Button
+<!-- plan-date: 2026-08-07 -->
 
 > **Slug**: `window-expand-button`
 >

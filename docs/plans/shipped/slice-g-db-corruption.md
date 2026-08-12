@@ -1,4 +1,5 @@
 # Slice G — DB-corruption robustness for the local cache
+<!-- plan-date: 2026-06-16 -->
 
 **Status:** **shipped** — Phase 1 characterization (#1327); Phase 2 corrupt-file rebuild; Phase 3 / G2 `SQLITE_BUSY` contention hardening (2026-07-14, greenlit in-session).
 **Source:** `docs/guides/testing-surface.md` §6 Gap 6 ("persistence corruption untested").
