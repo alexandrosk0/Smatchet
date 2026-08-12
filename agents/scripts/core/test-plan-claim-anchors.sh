@@ -135,10 +135,11 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the section bound    -> (3) and (5) go red
     #   deleting the DEV_RE escape    -> (4) goes red
     #   dropping the heading-depth <= -> (6) goes red
-    #   neutering escape_active()     -> (7) (8) (9) (10) go red
-    #   ValueError -> return True     -> (8) and (9) go red
+    #   neutering escape_active()     -> (7) (8) (9) (10) (12) go red
+    #   ValueError -> return True     -> (8) goes red
     #   prefix-capture REVISIT_RE     -> (9) and (10) go red
     #   deleting the quarter branch   -> (11) goes red
+    #   dropping the DATE_RE gate     -> (12) goes red (python >= 3.11)
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -224,6 +225,22 @@ if [ "$SCOPE" = "selftest" ]; then
     case "$_out" in
         *UNANCHORED_CLAIM*) ;;
         *) echo "FAIL[escape-trailing-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (12) an ISO BASIC date must fail closed even though python >= 3.11
+    #      fromisoformat() would happily parse it — the grammar permits only
+    #      the dashed form, and a future-dated 20270811 riding through as
+    #      valid would be indistinguishable from a sanctioned escape.
+    _case escape-basic-date 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"${_future//-/}"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-basic-date]: exited 1 but printed no UNANCHORED_CLAIM"
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
@@ -315,6 +332,9 @@ DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
 # YYYY-MM-DD | YYYY-Qn | slug | never.
 REVISIT_RE = re.compile(r'revisit=([^;)]*)')
 QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
+# Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
+# BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
 TODAY = os.environ.get("TODAY", "")
 
 
@@ -348,14 +368,19 @@ def escape_active(comment_line):
         year, quarter = int(qm.group(1)), int(qm.group(2))
         end = datetime.date(year, 3 * quarter, (31, 30, 30, 31)[quarter - 1])
         return end >= datetime.date.fromisoformat(TODAY)
+    if not DATE_RE.match(value):
+        # Calendar-ish but valid as neither dashed date nor quarter (trailing
+        # junk, 2026-Q5, ISO basic 20270811): fail CLOSED — the author
+        # demonstrably tried to set an expiry, and treating the typo as "no
+        # date, active forever" would recreate the permanent exemption this
+        # function exists to end. Not suppressing surfaces both the claim and
+        # the typo on the next run.
+        return False
     try:
         revisit = datetime.date.fromisoformat(value)
     except ValueError:
-        # Calendar-ish but valid as neither date nor quarter: fail CLOSED —
-        # the author demonstrably tried to set an expiry, and treating the
-        # typo as "no date, active forever" would recreate the permanent
-        # exemption this function exists to end. Not suppressing surfaces
-        # both the claim and the typo on the next run.
+        # Dashed shape but not a real calendar date (2026-02-30): same fail-
+        # CLOSED reasoning.
         return False
     return revisit >= datetime.date.fromisoformat(TODAY)
 

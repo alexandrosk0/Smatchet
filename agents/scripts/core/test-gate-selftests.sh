@@ -57,7 +57,7 @@ MARKER_RE='# selftest: asserts-failure'
 # (; | && ` $( parens braces), leading keywords/env-assignments are stripped,
 # and only a segment that BEGINS with the quoted path is an exec of it — which
 # also makes bash/sh/. prefixes pass with no separate allow-list.
-SELF_EXEC_RE='"\$(_SCRIPT_PATH|SCRIPT_PATH|0)" +--'
+SELF_EXEC_RE='"\$(_SCRIPT_PATH|SCRIPT_PATH|0)"[[:space:]]+--'
 
 # exposers <root> — print, one per line, every first-party script under <root>'s
 # SCAN_DIRS that EXPOSES a --selftest flag. Fail-closed: unreadable dirs are
@@ -273,6 +273,23 @@ SH
     case "$out" in
         *"raw self-exec"*) ;;
         *) echo "test-gate-selftests selftest: FAIL — redirection exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A TAB between the path and the flag must also be flagged — the grep
+    # prefilter matched literal spaces only, so a tab-separated exec never
+    # reached the awk lexer (CodeRabbit round-3 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s"\t--check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — tab-separated raw self-exec was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — tab-separated exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
 
