@@ -31,13 +31,11 @@
 #   <!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=…; owner=…; revisit=…) -->
 # on the line ABOVE the claim, matching the lint-rules.d convention.
 #
-# KNOWN LIMITATION, stated rather than implied: the `revisit=` date is NOT
-# enforced here. The `deviation-overdue` lint that expires these markers scans
-# first-party C++ only, so a markdown escape never expires. Zero plans carry the
-# marker today, so nothing is currently unpoliced — but the first author to use
-# it gets a permanent exemption wearing an expiry date, which is worse than no
-# date at all. Extending deviation-overdue to markdown is the follow-up; do not
-# read the field as a control until then.
+# The `revisit=` date IS enforced here (closing the limitation this header
+# originally declared): the C++ deviation-overdue lint never scans markdown, so
+# this gate expires its own escapes — a marker whose revisit date has passed
+# stops suppressing and the claim reports again. A marker without a parseable
+# revisit stays active (the field is optional in the grammar).
 #
 # Scope modes:
 #   default    — diff-scope: only claims on lines ADDED vs origin/develop.
@@ -101,6 +99,12 @@ if [ "$SCOPE" = "selftest" ]; then
     trap 'rm -rf "$tmp"' EXIT
     mkdir -p "$tmp/shipped"
 
+    # Dynamic dates so the fixtures cannot rot: the hardcoded revisit=2027-01-01
+    # this replaced would silently flip case (4) from PASS-test to FAIL in 2027.
+    # 364-day offsets, not year+1: .replace(year=+1) raises on Feb 29.
+    _future="$("$PY" -c 'import datetime; print(datetime.date.today()+datetime.timedelta(days=364))')"
+    _past="$("$PY" -c 'import datetime; print(datetime.date.today()-datetime.timedelta(days=364))')"
+
     _out=""
     _case() {  # <name> <want-rc> <file-body>
         printf '%s' "$3" > "$tmp/shipped/case.md"
@@ -123,6 +127,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the section bound    -> (3) and (5) go red
     #   deleting the DEV_RE escape    -> (4) goes red
     #   dropping the heading-depth <= -> (6) goes red
+    #   neutering escape_active()     -> (7) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -154,13 +159,29 @@ if [ "$SCOPE" = "selftest" ]; then
 - `foo.ps1` already had the bootstrap.
 '
 
-    # (4) the documented escape suppresses it -> PASS.
+    # (4) the documented escape (future revisit) suppresses it -> PASS.
     _case deviation-escape 0 '# P
 
 ## Implementation log
-<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2027-01-01) -->
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"') -->
 - branch protection already had reviews disabled.
 '
+
+    # (7) the SAME escape with a PASSED revisit date must stop suppressing —
+    #     the expiry is enforced by this gate itself, since deviation-overdue
+    #     never scans markdown. Without it, an escape is a permanent exemption
+    #     wearing an expiry date.
+    _case escape-expired 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-expired]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
 
     # (5) a SIBLING heading ends the section -> PASS. Without the depth check the
     #     section would run to EOF and swallow the rest of the plan.
@@ -191,6 +212,8 @@ if [ "$SCOPE" = "selftest" ]; then
     exit 1
 fi
 
+TODAY="$(date +%F)"
+export TODAY
 "$PY" - "$SCOPE" "$PLAN_GLOB_BASE" <<'PY'
 import os, re, subprocess, sys
 
@@ -219,6 +242,25 @@ CLAIM_RE = re.compile(
 ANCHOR_RE = re.compile(r':\d+\b|#\d{2,}|\b[0-9a-f]{7,40}\b')
 
 DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
+REVISIT_RE = re.compile(r'revisit=(\d{4}-\d{2}-\d{2})')
+TODAY = os.environ.get("TODAY", "")
+
+
+def escape_active(comment_line):
+    """True while a plan-claim-anchor deviation escape still suppresses.
+
+    The revisit= date is the escape's expiry, and here it is ENFORCED: the
+    deviation-overdue lint that expires these markers scans first-party C++
+    only, so without this an author's markdown escape would be a permanent
+    exemption wearing an expiry date (the KNOWN LIMITATION this closes). A
+    marker with no parseable revisit stays active — the date is optional in
+    the grammar — but a PASSED date stops suppressing and the claim reports
+    again, exactly like an overdue C++ deviation.
+    """
+    m = REVISIT_RE.search(comment_line)
+    if not m or not TODAY:
+        return True
+    return m.group(1) >= TODAY
 
 
 def scan(path, lines):
@@ -239,7 +281,7 @@ def scan(path, lines):
             continue
         if ANCHOR_RE.search(line):
             continue
-        if i >= 2 and DEV_RE.search(lines[i - 2]):
+        if i >= 2 and DEV_RE.search(lines[i - 2]) and escape_active(lines[i - 2]):
             continue
         yield i, line.strip()
 

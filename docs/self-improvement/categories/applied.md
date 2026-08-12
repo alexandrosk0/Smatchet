@@ -3930,7 +3930,7 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
   vacuous — it self-exec'd a mode-100644 script, so `126 Permission denied`
   satisfied it — and the first version of the new cases was vacuous too, via
   `set -e` inside a `||` operand. Both fixed here; the class is filed as
-  [`asserts-failure-marker-does-not-prove-the-negative-is-reachable`](tooling/2026-08-11-asserts-failure-marker-does-not-prove-the-negative-is-reachable.md).
+  [`asserts-failure-marker-does-not-prove-the-negative-is-reachable`](applied.md).
 
   Not addressed: the paired develop-tip required-green assertion. Still open, and
   still the right second layer — this fix removes the cause, not the class of
@@ -4043,3 +4043,93 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
     call; a hook can confirm a claim was made, never that the review was real.
     An enforcement that can only check the claim would manufacture exactly the
     kind of green this backlog keeps filing entries about.
+
+- 2026-08-11 · claude-code · [tooling] · P1 — `test-gate-selftests --check` proves a `# selftest: asserts-failure` marker EXISTS, not that the negative under it can ever fail; `test-plan-index.sh`'s negative had been satisfied by a `Permission denied` for its whole life, and four more vacuous negatives were written in the two sessions that touched this area
+
+  Details: [`test-gate-selftests.sh`](../../../agents/scripts/core/test-gate-selftests.sh)
+  enforces that every `--selftest`-exposing gate script carries a negative
+  assertion, marked `# selftest: asserts-failure`. That is the right gate to
+  have — it closed a real gap. But what it can check is the presence of a marker
+  and some negative-looking code near it. It cannot check the property that
+  matters: **that the negative actually fails when the behaviour it names is
+  removed.**
+
+  **The live instance.** [`test-plan-index.sh`](../../../agents/scripts/core/test-plan-index.sh)
+  case (3) fed a non-existent archive dir and required a non-zero exit. Two
+  independent reasons it could not fail:
+
+  1. It invoked `"$_SCRIPT_PATH" --check` — executing the script directly. The
+     file is mode **100644** in git (`git ls-files -s` confirms), so that exec
+     fails with **126 Permission denied** on every machine, including CI. The
+     assertion was satisfied by the permission error, never reaching the
+     archive-dir guard at all.
+  2. Even via `bash`, it accepted ANY non-zero status. Deleting the guard leaves
+     the script exiting non-zero on an unhandled `os.listdir` traceback — so the
+     assertion stayed green with the behaviour it names entirely removed.
+
+  Verified both ways: with the archive-dir guard deleted, the selftest reported
+  PASS before the fix and FAIL after it.
+
+  **This is a class, not an instance, and the evidence is uncomfortable.** In the
+  same two sessions, *four more* vacuous negatives were written — by the session
+  fixing this very family of bugs:
+
+  - `archive-backlog-entry.sh`'s first negative assertions (three of them) each
+    required only a non-zero exit; all three still passed with their own guard
+    deleted, because the script dies downstream for an unrelated reason.
+  - The `plan-date` marker selftest wrapped its assertions in `( set -e … ) || {…}`.
+    `set -e` is **suppressed inside a subshell that is the left operand of `||`**
+    — the shell disables it for any command in a `&&`/`||` list — so every step
+    ran regardless of failure and only the last command's status was reported. It
+    passed with the fix disabled.
+
+  Five vacuous negatives, none of which a reviewer or a marker-checking gate
+  caught. Every one was found the same way: **delete the code under the assertion
+  and re-run.** That is the only check that distinguishes a test from a comment.
+
+  Two recurring mechanical causes worth naming, because both are invisible on
+  inspection:
+
+  - **Accepting a bare non-zero status.** Any sufficiently broken program exits
+    non-zero. A negative must assert the *reason* — the refusal message, the
+    specific exit code — or it is satisfied by crashes, missing interpreters,
+    permission errors and typos in the test itself.
+  - **`set -e` inside a `&&`/`||` operand.** Already documented in
+    [`script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
+    for the callee side; the *test* side has the same trap and no note anywhere.
+
+  Concrete next action, cheapest first:
+
+  1. **Make `test-gate-selftests --check` reject self-exec.** A `--selftest` that
+     re-invokes its own script must do it via `bash "$path"`, never `"$path"`,
+     since every gate script in this repo is mode 100644. This is a grep, it is
+     exact, and it would have caught the live instance. Check the other 77
+     scripts for the same shape while adding it.
+  2. **Require negatives to assert a reason.** Flag an `asserts-failure` block
+     whose only assertion is a bare status test (`if ! cmd; then`/`|| fail=1`)
+     with no message/exit-code comparison anywhere in the block. Necessarily
+     heuristic, so WARN rather than block, and cite this entry in the message.
+  3. **Do NOT try to prove reachability mechanically.** Confirming a negative can
+     fail means mutating the subject and re-running — that is mutation testing,
+     and building it here would cost far more than it returns. The durable fix is
+     the authoring rule (delete the code, re-run, watch it go red), which belongs
+     in the review checklist rather than in a gate. A gate that pretended to
+     verify reachability would itself be the false green this entry is about.
+
+  Outcome (2026-08-12): action 1 shipped — `test-gate-selftests --check` now
+  blocks raw self-exec of `$_SCRIPT_PATH`/`$SCRIPT_PATH`/`$0` (comment lines
+  excluded; `bash|sh|.`-prefixed forms pass), with selftest coverage for both
+  the flagged and legitimate shapes; the sweep of the other scripts found no
+  further live instances. Action 2 was attempted and measured out: a
+  bare-status-negative heuristic over the 79 exposers produced ~24 false
+  positives (sampled files all assert reasons via shapes no enumeration
+  catches — captured output matched later, python `assertIn`, refusal tokens
+  grepped far from the status test). A WARN wrong ~30% of the time is the
+  wolf-cry this backlog already documents, so it was removed rather than
+  shipped — which is action 3's own reasoning applied one rung down. Action 3
+  remains "do not build" by design; the durable rule (delete the code under
+  the negative, watch it go red) lives in the review checklist and was applied
+  to every assertion in this batch.
+
+  Status: applied
+  Last-reviewed: 2026-08-12
