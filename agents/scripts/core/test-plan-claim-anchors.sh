@@ -57,7 +57,13 @@ set -uo pipefail
 # Resolve BEFORE the cd — a relative $0 stops resolving once the cwd moves.
 _SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
-cd "$(git rev-parse --show-toplevel)"
+# Guarded: on a rev-parse failure the substitution is empty and `cd ""` SUCCEEDS
+# as a no-op — the gate would then scan whatever $PWD happens to be, and
+# --baseline would write outside the repo. Same trap the selftest's mktemp guard
+# documents; this is the top-of-script instance of it.
+_root="$(git rev-parse --show-toplevel 2>/dev/null)" || _root=""
+[ -n "$_root" ] || { echo "test-plan-claim-anchors: not inside a git repo" >&2; exit 2; }
+cd "$_root" || { echo "test-plan-claim-anchors: cannot cd to '$_root'" >&2; exit 2; }
 
 PLAN_GLOB_BASE="${SMATCHET_PLAN_BASE:-docs/plans}"
 

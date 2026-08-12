@@ -147,7 +147,9 @@ if MODE == "redepth":
     # bodies VERBATIM, so every archival landed a `Status: open` inside the
     # applied archive (5 accumulated before the sweep that added this). Anchored
     # to the whole line so prose mentioning the literal string is untouched.
-    body = re.sub(r'(?m)^(\s*-?\s*)Status: open\s*$',
+    # [ \t], not \s: in multiline mode \s*$ also eats the NEWLINE(S) after the
+    # line, deleting the blank separator below the Status line (CR repro).
+    body = re.sub(r'(?m)^([ \t]*-?[ \t]*)Status: open[ \t]*$',
                   r'\1Status: applied (flipped at archival)', body)
     sys.stdout.write(rewrite_links(body, lambda t: rebase(t, cat)))
 
@@ -215,6 +217,9 @@ if [ "$SELFTEST" = true ]; then
 - see [same-dir](2026-08-07-other.md)
 - external [x](https://example.com/a.md) and anchor [y](#z)
 - prose mentioning Status: open mid-line stays untouched
+- Status: open
+
+After-blank prose survives.
   Status: open
   Last-reviewed: 2026-08-11
 MD
@@ -230,11 +235,19 @@ MD
     check "](process/2026-08-07-other.md)"
     check "](https://example.com/a.md)"
     check "](#z)"
-    # Status flip: the LINE flips, the mid-line prose mention does not.
-    check "Status: applied (flipped at archival)"
+    # Status flip: the LINE flips (indented AND list-marker forms), the mid-line
+    # prose mention does not, and the BLANK line after a flipped Status survives
+    # — `\s*$` in multiline mode also ate the newline(s) below the line, gluing
+    # the next paragraph onto it (CR finding; pinned with [ \t]).
+    check "  Status: applied (flipped at archival)"
+    check "- Status: applied (flipped at archival)"
     check "prose mentioning Status: open mid-line stays untouched"
+    # $'\n\n' — NOT $(printf '\n\n'), which command-substitutes to EMPTY (trailing
+    # newlines are stripped), silently degrading this into a plain substring check
+    # that passes even with the blank line eaten. Caught by this selftest failing.
+    check "archival)"$'\n\n'"After-blank prose survives."
     case "$got" in
-        *$'\n  Status: open'*) echo "  selftest MISS: Status line was NOT flipped to applied" >&2; fail=1 ;;
+        *$'\n  Status: open'*|*$'\n- Status: open'*) echo "  selftest MISS: a Status line was NOT flipped to applied" >&2; fail=1 ;;
     esac
     # selftest: asserts-failure — the positive checks above only prove the happy
     # path, and a re-depth that silently no-ops would satisfy every one of them if

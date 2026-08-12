@@ -393,7 +393,10 @@ for fn in sorted(os.listdir(archive_dir)):
             # Row still reports the git-derived date either way; only WRITING is
             # scoped. An out-of-scope plan simply stays unstamped, exactly as it
             # is on develop today.
-            if touched_plans is None or path.replace(os.sep, "/") in touched_plans:
+            # relpath first: git emits repo-root-relative paths, and the cwd is the
+            # repo root — so an absolute or ./-prefixed archive_dir override would
+            # never match and silently stamp nothing.
+            if touched_plans is None or os.path.relpath(path).replace(os.sep, "/") in touched_plans:
                 unstamped.append((path, date))
     if date == PLACEHOLDER:
         placeholder_slugs.append(slug)

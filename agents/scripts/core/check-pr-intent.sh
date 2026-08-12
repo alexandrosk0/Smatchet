@@ -46,7 +46,7 @@ if not section:
 stripped = re.sub(r'(?s)<!--.*?-->', '', body)
 verdict_re = re.compile(
     r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
-    r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*(?!<)\S.*)$')
+    r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)$')
 if not verdict_re.search(stripped):
     print("check-pr-intent: MISSING review verdict. Add a line "
           "`adversarial-code-review: N findings, <disposition>` or "
@@ -131,6 +131,32 @@ run_selftest() {
            printf '%s\n' "$out" | sed 's/^/    /' >&2
            return 1 ;;
     esac
+    # The FINDINGS branch has the same placeholder hole: a count filled in but
+    # the disposition left as the literal `<disposition>` template MUST be
+    # rejected. The naive guard `[,:—–-]*\s*(?!<)\S` still PASSES this via
+    # backtracking — the separator class gives back the comma, `\S` matches the
+    # comma itself, and the lookahead never sees the `<`. The separator class
+    # and the disposition-start class must be DISJOINT so backtracking cannot
+    # reassign the comma. (CodeRabbit's committable suggestion had exactly the
+    # backtracking hole; verified before adopting the disjoint form.)
+    out="$(_check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings, <disposition>" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — an unfilled findings-disposition placeholder satisfied the check" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING review verdict"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — placeholder findings-form rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # A bare count with NO disposition stays accepted — `0 findings` is a
+    # complete verdict; the guard's job is placeholders, not prose quality.
+    rc=0
+    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict (0 findings)" >&2
+        return 1
+    fi
     echo "check-pr-intent --selftest: PASS"
 }
 
