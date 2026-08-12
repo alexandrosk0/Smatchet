@@ -1,4 +1,5 @@
 # Plan — Generic Cross-Platform CMake
+<!-- plan-date: 2026-05-26 -->
 
 > **Slug**: `generic-cmake-cross-platform`
 

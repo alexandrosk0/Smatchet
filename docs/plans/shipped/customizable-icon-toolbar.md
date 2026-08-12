@@ -1,4 +1,5 @@
 # Plan — Customizable icon toolbar (Total-Commander-style button bar)
+<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `customizable-icon-toolbar` (matches this file's basename without `.md`).
 >

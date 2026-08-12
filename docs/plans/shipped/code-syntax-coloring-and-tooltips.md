@@ -1,4 +1,5 @@
 # Code syntax coloring (multi-language) + tooltips
+<!-- plan-date: 2026-05-21 -->
 
 ## Context
 

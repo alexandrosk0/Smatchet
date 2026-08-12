@@ -1,4 +1,5 @@
 # Plan — CI gate hardening: required-context parity selftest + bucket-lane launch-smoke
+<!-- plan-date: 2026-06-13 -->
 
 > **Slug**: `ci-gate-hardening-parity-bucketlane` (matches this file's basename without `.md`).
 >

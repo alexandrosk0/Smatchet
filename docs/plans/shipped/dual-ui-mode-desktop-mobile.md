@@ -1,4 +1,5 @@
 # Plan — Desktop / Mobile switchable UI modes
+<!-- plan-date: 2026-06-09 -->
 
 > **Slug**: `dual-ui-mode-desktop-mobile` (matches this file's basename without `.md`).
 >

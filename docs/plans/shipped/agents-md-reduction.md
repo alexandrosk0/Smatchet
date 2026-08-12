@@ -1,4 +1,5 @@
 # Plan — AGENTS.md size reduction via topical extraction
+<!-- plan-date: 2026-05-23 -->
 
 > **Slug**: `agents-md-reduction`
 >

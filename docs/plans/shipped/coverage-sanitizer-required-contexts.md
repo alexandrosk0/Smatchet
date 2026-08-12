@@ -1,4 +1,5 @@
 # Plan — Promote Coverage + ASAN + UBSan to branch-protection required contexts (testing-surface Slice C)
+<!-- plan-date: 2026-06-15 -->
 
 **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 **Branch:** `ci/coverage-sanitizer-required-contexts` · worktree `C:\Dev\trees\coverage-sanitizer-required`

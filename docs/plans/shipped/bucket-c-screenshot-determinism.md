@@ -1,4 +1,5 @@
 # Plan — bucket-C screenshot-diff determinism (user-info-* flake)
+<!-- plan-date: 2026-08-06 -->
 
 > **Slug**: `bucket-c-screenshot-determinism`
 >

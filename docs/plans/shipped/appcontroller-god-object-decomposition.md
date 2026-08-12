@@ -1,4 +1,5 @@
 # Plan — AppController god-object decomposition
+<!-- plan-date: 2026-06-19 -->
 
 > **Slug**: `appcontroller-god-object-decomposition` (matches this file's basename without `.md`).
 >

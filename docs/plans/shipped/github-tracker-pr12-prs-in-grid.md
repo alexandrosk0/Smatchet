@@ -1,4 +1,5 @@
 # Plan — GitHub pull requests in the tracker grid (PR12 of github-tracker-backend)
+<!-- plan-date: 2026-05-22 -->
 
 > **Slug**: `github-tracker-pr12-prs-in-grid`.
 > **Status**: shipped — PR4 (`#387`) merged 2026-05-22; this PR opens against develop.

@@ -1,4 +1,5 @@
 # Plan — Agent size reduction (shrink the 3 over-cap agents under 250)
+<!-- plan-date: 2026-06-05 -->
 
 > **Slug**: `agent-size-reduction` (matches this file's basename without `.md`).
 >

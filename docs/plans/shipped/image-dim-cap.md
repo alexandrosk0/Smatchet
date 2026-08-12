@@ -1,4 +1,5 @@
 # Plan — Image-dimension cap in the attachment-preview parser (testing-surface Slice E1)
+<!-- plan-date: 2026-06-14 -->
 
 **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 **Branch:** `harden/image-dim-cap` · worktree `C:\Dev\trees\image-dim-cap`
