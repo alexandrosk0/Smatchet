@@ -70,7 +70,7 @@ next self-improvement sweep.
   stubs five symbols but not `maybe_self_resync`; observed 1/6 local failure on
   test 30 and the CI red on #1718 head `9101c9c7`.
 - Concrete next action: see § Proposal.
-- Status: open
+- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
 - Last-reviewed: 2026-07-10
 
   Status: applied (2026-07-11 reconcile — verified fixed on develop: all four `daemon_loop` tests in tests/bats/merge_watcher.bats (:679/:710/:741/:774) now stub `mw.maybe_self_resync = lambda *_a, **_k: {}`, so the startup resync never touches real git/network.)
@@ -155,7 +155,7 @@ before push. Archive to `applied.md` on the next sweep.
 
 - Details: see § Friction. Verified against the committed tree at develop head.
 - Concrete next action: see § Proposal (1)–(2) — done.
-- Status: open
+- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
 - Last-reviewed: 2026-07-10
 
   Status: applied (2026-07-11 reconcile — verified fixed on develop: scripts/dev/pre-ship.sh:316 runs `bash agents/scripts/core/test-orphan-bats.sh` in the fast pre-push path.)
@@ -618,13 +618,13 @@ before push. Archive to `applied.md` on the next sweep.
 
   Concrete next action: Add an `## Intent` requirement to the out-of-band PR-creation contract in `docs/agent-rules/ship-loops.md` § Intent capture — any agent opening a PR via the GitHub API/MCP (i.e. with no local ship-loop) MUST hand-author a filled `## Intent` section in the PR `body` before calling `create_pull_request`. Optionally back it with a pre-create reminder in the harness PR-creation helper. Cheap (~30 min, doc rule).
 
-  Status: open
+  Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
   Last-reviewed: 2026-06-20
 
 - 2026-06-20 · orchestrator · [process] · P2 — MCP-created PRs bypass the `## Intent` template → required gate fails, not self-healing
   Details: ship-loops.md § Intent capture says fill the PR body's `## Intent` at "`gh pr create` time" from `.github/pull_request_template.md`. But the remote/web harness opens PRs via the GitHub MCP `create_pull_request` tool, which sets `body` verbatim and does NOT apply the repo PR template (template auto-fill is a web-UI / interactive `gh pr create` behaviour only). So an MCP-opened PR starts with no `## Intent` and the REQUIRED "Intent section" check (`doc-validation.yml`) fails on `opened`. Worse: that workflow's `pull_request:` trigger declares no `types:`, so it defaults to `[opened, synchronize, reopened]` — editing the PR body does NOT re-run it; the red required check only clears on a NEW push (`synchronize`). Hit this session on PR #1460 (the check cleared only because a later commit re-triggered the workflow against the corrected body).
   Concrete next action: in ship-loops.md § Intent capture (+ the orchestrator PR-create packet), state that a PR created via the GitHub MCP `create_pull_request` MUST include the `## Intent` section in the `body` argument explicitly (the template is not auto-applied), and that a missing-Intent PR needs a follow-up commit to clear the gate (a body edit alone won't, since it doesn't fire on `edited`). Optional belt-and-braces: add `edited` to `doc-validation.yml`'s `pull_request: types:` so body-only fixes self-heal.
-  Status: open
+  Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
   Last-reviewed: 2026-06-20
 
 - 2026-06-20 · orchestrator · [tooling] · P2 — the `intent-out-of-band` override hatch from ADR-0022 (#1391) shipped only HALF-wired: the doc-validation gate + `poll_merge_gates` referenced the label by exact name, but (a) the GitHub label was never created in the repo, and (b) `safe-admin-merge.sh` never honored it — so a data/docs PR that tripped the `Intent section` block-allowlist check had NO working override on either merge path
@@ -3887,19 +3887,26 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
   a gate that can only go red *after* the merge needs a detector that looks after
   the merge.
 
-  **Applied 2026-08-11.** `test-plan-index.sh` now reads a
-  `<!-- plan-date: YYYY-MM-DD -->` marker in preference to git, and `--fix`
-  stamps one into any plan that lacks it. `--check` never writes, so the required
-  gate stays read-only.
+  **Applied 2026-08-11 (mechanism); back-catalogue migration still PENDING.**
+  `test-plan-index.sh` now reads a `<!-- plan-date: YYYY-MM-DD -->` marker in
+  preference to git, and `--fix` stamps one into any plan **the current change
+  touches** that lacks it. `--check` never writes, so the required gate stays
+  read-only. Stamping is diff-scoped deliberately: an unscoped `--fix` turned
+  the CI autosync into a bulk migration — with all 188 archived plans unstamped,
+  the first PR to trigger it had 188 bot-authored marker commits pushed onto its
+  branch (192 files, past CodeRabbit's 100-file review limit, required CR gate
+  wedged; observed live on PR #1999). That mass stamp was **reverted** and the
+  scope added; migrating the back catalogue is now a deliberate one-shot behind
+  `SMATCHET_PLAN_STAMP_ALL=1`, to land as its own reviewed PR.
 
-  The migration took the entry's own advice — stamp from the currently-committed
-  dates — but from a better source than git: **`INDEX.md` already holds them**,
-  generated by CI on full history. Reading the 188 rows and stamping each plan
-  from its own row makes "no archived plan's date changes on adoption" true by
-  construction rather than by luck, and needed no full-history clone. `INDEX.md`
-  came out **byte-identical**, which is the proof. `--check` then passed on this
-  SHALLOW clone — previously unreliable — because git is no longer consulted for
-  a stamped plan. That is the fix demonstrated end to end.
+  An earlier draft of this block claimed the 188-plan migration had landed and
+  that shallow-clone `--check` was "demonstrated end to end". **As of this
+  writing it has not**: 1 of 188 shipped plans carries a marker, git is still
+  consulted for the other 187, and shallow-clone `--check` stays git-dependent
+  until the migration PR lands. What WAS verified: the migration built from
+  `INDEX.md`'s own committed rows leaves `INDEX.md` byte-identical, and with it
+  applied, `--check` flips from DRIFT to pass on a shallow clone — demonstrated
+  on a branch, then reverted with the rest of the mass stamp.
 
   **One claim in the proposal is wrong and should not be carried forward.** The
   entry says the marker "retires the two special cases already in the script"
@@ -3975,7 +3982,7 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
     live — the capability exists in the tree, just not in the file the plan named);
     `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
     premise); `docs/self-improvement/postmortems.md` (ledger entry).
-  Status: open
+  Status: applied (this entry shipped as test-plan-claim-anchors.sh; Status flipped at archival)
   Last-reviewed: 2026-08-03
 
 - 2026-08-11 · claude-code · [process] · P2 — the `[pre-first-push gate]`'s self-review step is the only one with no backstop, so skipping it is invisible; skipped on PR #1996 and it cost ~8 CodeRabbit cycles, both bots' rate limits, and four locally-knowable defects reaching CI

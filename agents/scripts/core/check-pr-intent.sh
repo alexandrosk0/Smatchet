@@ -46,7 +46,7 @@ if not section:
 stripped = re.sub(r'(?s)<!--.*?-->', '', body)
 verdict_re = re.compile(
     r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
-    r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*\S.*)$')
+    r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*(?!<)\S.*)$')
 if not verdict_re.search(stripped):
     print("check-pr-intent: MISSING review verdict. Add a line "
           "`adversarial-code-review: N findings, <disposition>` or "
@@ -114,6 +114,20 @@ run_selftest() {
     case "$out" in
         *"MISSING review verdict"*) ;;
         *) echo "check-pr-intent --selftest: FAIL — commented-verdict body rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # The template's n/a line uncommented but NOT filled in — the reason is still
+    # the literal `<reason the diff is trivial>` placeholder — MUST be rejected.
+    # Without the `(?!<)` guard this false-passed: `\S.*` happily accepted `<r…`,
+    # so following the template's instructions halfway earned a green verdict.
+    out="$(_check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: n/a — <reason the diff is trivial>" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — an unfilled n/a placeholder satisfied the check" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING review verdict"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — placeholder n/a rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2
            return 1 ;;
     esac

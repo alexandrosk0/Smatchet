@@ -5,10 +5,14 @@
 # Why (plan-post-ship-claims-unverified, tooling P1): a shipped plan's closing
 # prose is the only record of what actually landed, and nothing reads it.
 # `msvc-build-onboarding-hardening.md:85` closed a row with "`build_standalone.ps1`
-# (plan file 1) already had the MSVC bootstrap from slice 1" — `git log -S vcvars`
-# on that file is EMPTY across all history. The promised vcvars/vswhere import was
-# never written, in any revision. The claim then sat load-bearing for ~2 months and
-# seeded a false premise into a downstream plan's § Context.
+# (plan file 1) already had the MSVC bootstrap from slice 1" — when measured
+# (2026-08-03), `git log -S vcvars` on that file was EMPTY across all history:
+# the promised vcvars/vswhere import was never written, in any revision. (Dated
+# deliberately — the file has since been deleted in the bash port, #1955, so the
+# measurement is no longer reproducible verbatim; an undated restatement here
+# would itself be the unanchored stale claim this gate polices.) The claim sat
+# load-bearing for ~2 months and seeded a false premise into a downstream plan's
+# § Context.
 #
 # Nothing contradicted it. § Verification (actual) listed 3/3 green, but all three
 # cases test other behaviour, so a passing verification block is fully consistent
@@ -199,8 +203,8 @@ ANY_HEAD_RE = re.compile(r'^(#{1,6})\s+')
 # is what makes the sentence an assertion about state the author did NOT create
 # in this change — the only kind this gate can ask them to cite.
 CLAIM_RE = re.compile(
-    r'\b(already had|was already|already has|already exists|already existed'
-    r'|already implemented|already landed|already shipped)\b', re.IGNORECASE)
+    r'\b(already had|was already|already has|already have|already exists|already exist'
+    r'|already existed|already implemented|already landed|already shipped)\b', re.IGNORECASE)
 
 # A verifiable pointer: `path:123` line-suffix, a `#1234` PR/issue ref, or a
 # 7-40 char hex sha. Deliberately shape-only — resolving it is test-markdown-links
@@ -279,19 +283,26 @@ def norm(text):
 
 
 def read_baseline():
-    """Grandfathered claims as a {(path, text)} set.
+    """Grandfathered claims as a {(basename, normalised-text)} set.
 
     A MISSING baseline file yields the EMPTY set — the honest answer for a fresh
     checkout, not an error. Keyed on the claim TEXT rather than the line number,
-    so unrelated edits above a claim do not un-grandfather it.
+    so unrelated edits above a claim do not un-grandfather it — and on the plan's
+    BASENAME rather than its full path, because archiving a plan (the routine
+    `git mv` active/ -> shipped/; 188 plans have taken it) changes the path while
+    the prose is untouched. Full-path keying made that move red the required doc
+    job on claims the archiving PR did not write (reproduced live before this
+    fix: `git mv` alone flipped --all to FAIL). Rows still RENDER the full path
+    for readability; only the comparison drops the directory.
     """
-    keys = set()
+    keys = {}
     try:
         with open(BASELINE_PATH, encoding="utf-8") as fh:
             for raw in fh:
                 m = _BASELINE_ROW_RE.match(raw.rstrip("\n"))
                 if m:
-                    keys.add((m.group(1), m.group(2)))
+                    k = (os.path.basename(m.group(1)), m.group(2))
+                    keys[k] = keys.get(k, 0) + 1
     except OSError:
         pass
     return keys
@@ -311,7 +322,7 @@ def render_baseline(entries):
         "`--baseline` to shrink this file. Adding a row here does not make a claim true.",
         "",
     ]
-    for path, text in sorted(entries):
+    for path, text in entries:
         out.append("- `%s` — `%s`" % (path, text))
     return "\n".join(out)
 
@@ -333,7 +344,11 @@ else:
     def added_lines(*diff_args):
         """{(path, lineno)} for every + line in a diff, from the hunk headers."""
         try:
-            out = subprocess.run(["git", "diff", "--unified=0", "--no-color", *diff_args],
+            # -c core.quotepath=off: with the default quotepath, a non-ASCII filename is
+            # emitted octal-escaped in quotes (+++ "b/..."), which the startswith
+            # parser below silently misses — added lines in that file then either drop
+            # out of scope or attach to the PREVIOUS file at wrong line numbers.
+            out = subprocess.run(["git", "-c", "core.quotepath=off", "diff", "--unified=0", "--no-color", *diff_args],
                                  capture_output=True, text=True, check=True).stdout
         except subprocess.CalledProcessError as exc:
             sys.stderr.write("WARN: git diff failed (%s); nothing to scope\n" % exc)
@@ -354,7 +369,7 @@ else:
     scoped = added_lines("origin/develop...HEAD") | added_lines("HEAD")
     try:
         untracked = subprocess.run(["git", "ls-files", "--others", "--exclude-standard"],
-                                   capture_output=True, text=True, check=True).stdout.split()
+                                   capture_output=True, text=True, check=True).stdout.splitlines()  # splitlines, not split(): a path with a space is one file, not two tokens
     except subprocess.CalledProcessError:
         untracked = []
 
@@ -378,7 +393,9 @@ else:
 # ---------------------------------------------------------------- report
 if scope == "baseline":
     os.makedirs(os.path.dirname(BASELINE_PATH), exist_ok=True)
-    entries = {(p, norm(t)) for p, _l, t in violations}
+    # One row PER OCCURRENCE (a list, not a set) so multiplicity round-trips
+    # into the count-bounded comparison above.
+    entries = sorted((p, norm(t)) for p, _l, t in violations)
     with open(BASELINE_PATH, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(render_baseline(entries) + "\n")
     print("test-plan-claim-anchors: regenerated %s (%d claim(s))" % (BASELINE_PATH, len(entries)))
@@ -388,8 +405,20 @@ if scope == "baseline":
 # grandfathers by scope (it only ever sees lines the change actually ADDED), so
 # consulting the baseline there would double-grandfather and let a re-added claim
 # through on the strength of an old row.
-baseline = read_baseline() if scope == "all" else set()
-reportable = [v for v in violations if (v[0], norm(v[2])) not in baseline]
+# The baseline is a MULTISET: norm() is many-to-one (whitespace collapsed,
+# backticks stripped), so set-membership would grandfather a brand-NEW claim
+# that happens to reuse a grandfathered row's sentence in the same file — and
+# CI runs only --all, so the diff-scope protection never covers the gate of
+# record. Count-bounded: a file gets AT MOST as many occurrences of a given
+# claim text as the committed baseline recorded; the excess is reportable.
+baseline = dict(read_baseline()) if scope == "all" else {}
+reportable = []
+for v in violations:
+    k = (os.path.basename(v[0]), norm(v[2]))
+    if baseline.get(k, 0) > 0:
+        baseline[k] -= 1
+    else:
+        reportable.append(v)
 grandfathered = len(violations) - len(reportable)
 
 for path, lineno, text in reportable:

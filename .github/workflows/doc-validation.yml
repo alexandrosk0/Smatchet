@@ -550,7 +550,7 @@ jobs:
           stripped = re.sub(r'(?s)<!--.*?-->', '', body)
           verdict_re = re.compile(
               r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
-              r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*\S.*)$')
+              r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*(?!<)\S.*)$')
           if not verdict_re.search(stripped):
               print("::error title=Review verdict missing::PR body records no pre-first-push "
                     "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "

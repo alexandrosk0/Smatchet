@@ -337,8 +337,13 @@ EOF
 #     carries an unrelated `#834` BEFORE the PR reference, so "first `#` on the
 #     line" is also wrong — it dropped this real entry and would have re-nudged
 #     #941 forever.
-# Verified on the live ledger: all 54 PR-keyed headings still match, and the
-# crafted trigger-text case no longer does.
+# Verified on the live ledger by PER-PR-NUMBER sweep — every #N appearing in any
+# `^## ` heading, asked "does has_entry dedup it?": 98/102 dedup; the 4 that keep
+# nudging are all correct exclusions (`#834` = parenthetical annotation, `#863` =
+# an Issue not a PR, `#1215`/`#1242` = trigger-prose references). The earlier
+# heading-COUNT sweep (54 → 53) validated the two-field bound while missing that
+# the escape·collateral shape lost #1571/#1572 — counting matched headings hides
+# a heading that still matches via a different number.
 has_entry() {  # <pr-number>
     [ -f "$LEDGER" ] || return 1
     # The PR's own entry.
@@ -349,7 +354,18 @@ has_entry() {  # <pr-number>
     # in the separator class fixes slash-joined trailers (`#906/#907/#908`) that
     # used to re-flag every SessionStart. `[^·]*` after the first number keeps the
     # whole list inside one field.
-    grep -qE "^#+ [^·]*(·[^·]*)?PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+    grep -qE "^#+ [^·]*(·[^·]*)?PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: no-match falls through to the late-field probes
+    # Escape·collateral shape: the live ledger also writes combined RCAs as
+    # `## <date> · PR #A (escape) · PR #B, #C (collateral) · <trigger>` — the
+    # PR list continues in a THIRD field the two-field bound above cannot reach,
+    # so #B/#C silently lost dedup (found by per-PR-number sweep of the ledger;
+    # the heading-count sweep that validated the bound missed it). A late field
+    # counts ONLY when it starts with `PR #` — an actual PR-list field — which
+    # trigger prose never does, so the `/#907` trigger-text leak stays closed.
+    # `PR #N` buried mid-prose in a late field deliberately still nudges: a false
+    # nudge is noise once, a false dedup is a permanent silent exemption.
+    grep -qE "^#+ .*·[[:space:]]*PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: falls through to the late-field list probe
+    grep -qE "^#+ .*·[[:space:]]*PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
 }
 
 # has_sha_entry <sha> — true when the ledger mentions this commit sha in ANY

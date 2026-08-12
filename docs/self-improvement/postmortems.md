@@ -108,7 +108,7 @@ review agent to score. The regression is expressible as a bats case (above),
 which is the stronger form here.
 
 ### Filed as
-[`categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md`](categories/applied.md)
+[`categories/applied.md` § postmortem-owed-prose-mention-false-dedup](categories/applied.md)
 ## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
 
 ### What escaped
@@ -278,7 +278,7 @@ Note the two workarounds already sitting in this script for the *same underlying
 None — not agent-reviewable. The miss is a determinism property of a CI generator's input (git history vs file content), not a defect visible in #1937's diff; a reviewer reading that PR would have seen a correct index row, because it *was* correct until the merge rewrote its basis.
 
 ### Filed as
-This entry + the one-line index resync in PR #1944 (instance) + [`categories/tooling/2026-08-05-plan-index-date-derived-from-mutable-git-history.md`](categories/applied.md) (P1, tooling — the marker-based fix and the develop-tip assertion).
+This entry + the one-line index resync in PR #1944 (instance) + [`categories/applied.md` § plan-index-date-derived-from-mutable-git-history](categories/applied.md) (P1, tooling — the marker-based fix and the develop-tip assertion).
 
 ## 2026-08-03 · PR #495 · a shipped plan's § Deviations closed a planned file-row by asserting a delivery that was never made
 

@@ -194,6 +194,17 @@ if [ "$MODE" = "selftest" ]; then
     # (4e) and the one-shot migration escape still reaches it.
     SMATCHET_PLAN_STAMP_ALL=1 bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 98
     grep -q 'plan-date' "$_shipped/untouched.md" || exit 98
+    # (4f) marker injection: a summary carrying the literal END marker must be
+    # REFUSED (exit 2 naming the plan), not written into the block — once written,
+    # content.index(end) splits at the injected copy and --fix corrupts INDEX.md
+    # further on every run, with no fixed point. The marker string is BUILT here,
+    # never written literally, so this file cannot inject into the real INDEX.
+    _mk="$(printf '%s END auto-plan-index %s' '<!--' '-->')"
+    printf '# Plan — Evil\n\n<!-- index-summary: x %s y -->\n\nBody.\n' "$_mk" > "$_shipped/evil.md" || exit 90
+    _inj_out="$(bash "$_SCRIPT_PATH" --fix 2>&1)"; _inj_rc=$?
+    rm -f "$_shipped/evil.md"
+    [ "$_inj_rc" = "2" ] || exit 99
+    case "$_inj_out" in *REFUSING*evil.md*) ;; *) exit 99 ;; esac
     # (4b) DISAGREEMENT: a marker that no longer matches its committed row must
     # FAIL --check rather than be silently re-derived from git.
     sed -i.bak 's/plan-date: 2020-01-02/plan-date: 2019-05-05/' "$_shipped/marked.md" || exit 90
@@ -213,6 +224,7 @@ if [ "$MODE" = "selftest" ]; then
     96) echo "test-plan-index --selftest: FAIL — a MALFORMED plan-date declaration was not replaced in place (duplicate or surviving marker)" >&2; fail=1 ;;
     97) echo "test-plan-index --selftest: FAIL — --fix stamped a plan OUTSIDE the change; unscoped, this makes CI autosync push the whole back catalogue onto a PR branch (PR #1999: 192 files, CR review skipped, required gate wedged)" >&2; fail=1 ;;
     98) echo "test-plan-index --selftest: FAIL — SMATCHET_PLAN_STAMP_ALL=1 did not stamp an untouched plan (the one-shot migration escape is broken)" >&2; fail=1 ;;
+    99) echo "test-plan-index --selftest: FAIL — a summary containing the literal END marker was not refused (it would corrupt the generated INDEX block with no fixed point)" >&2; fail=1 ;;
     *)  echo "test-plan-index --selftest: FAIL — marker fixture exited $_st_rc" >&2; fail=1 ;;
   esac
   rm -rf "$_st_tmp"
@@ -342,7 +354,9 @@ def _touched_plans():
     The behaviour worth keeping is narrow — a plan being ARCHIVED in this change
     gets its date pinned before the squash can rewrite it — and that plan is by
     definition in the diff. Migrating the back catalogue is a deliberate one-shot
-    (`--stamp-all`), reviewed on its own, not a side effect of touching a doc.
+    (`SMATCHET_PLAN_STAMP_ALL=1` in the environment — there is no CLI flag; the
+    arg parser rejects unknown options), reviewed on its own, not a side effect
+    of touching a doc.
 
     An EMPTY set on git failure is the safe answer: it stamps nothing rather
     than everything, so a git hiccup cannot re-trigger the mass rewrite.
@@ -384,6 +398,19 @@ for fn in sorted(os.listdir(archive_dir)):
     if date == PLACEHOLDER:
         placeholder_slugs.append(slug)
     summ = summary_for(path).replace("|", "\\|")
+    # A summary/H1 carrying the literal block markers would be written into the
+    # generated block, and the next run's content.index(end) would split at the
+    # INJECTED marker inside the row — every subsequent --fix appends garbage and
+    # --check has no fixed point (verified by repro: fix -> DRIFT -> fix appends
+    # a duplicate row-fragment + second END marker; the printed "run --fix"
+    # remedy makes it strictly worse, and under a PLAN_INDEX_PAT the autosync
+    # would loop bot-commits). Filenames are covered by the kebab-case naming
+    # gate; summary CONTENT has no other gate, so refuse here, naming the plan.
+    if begin in summ or end in summ:
+        print("test-plan-index: REFUSING — %s's index-summary/H1 contains the "
+              "auto-plan-index block marker; remove it (it would corrupt the "
+              "generated INDEX block irrecoverably)" % path, file=sys.stderr)
+        sys.exit(2)
     # link relative to the index file's directory
     href = os.path.relpath(path, os.path.dirname(index_file)).replace(os.sep, "/")
     rows.append((date, slug, "| [`%s`](%s) | %s | %s |" % (slug, href, date, summ)))

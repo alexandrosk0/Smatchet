@@ -1174,6 +1174,33 @@ JSON
     _combined_heading_case '## 2026-06-10 · PR #906, #907, #908 · Windows + MSVC red at merge'
 }
 
+@test "dedup: an escape·collateral heading suppresses the collateral-field PRs" {
+    # The live ledger's other combined shape (postmortems.md, 2026-06-27 entry)
+    # puts escape and collateral PRs in SEPARATE ·-fields:
+    #   `## <date> · PR #A (escape) · PR #B, #C, #D (collateral) · <trigger>`.
+    # The first-two-fields bound alone cannot reach the third field, so #B/#C
+    # silently lost dedup — re-nudged forever, the exact hole the bound was meant
+    # to close, one field further out. The later-field probes admit a field only
+    # when it STARTS with `PR #` (a PR-list field); trigger prose never does, so
+    # the #907-style trigger-text leak stays closed.
+    _combined_heading_case '## 2026-06-27 · PR #950 (escape) · PR #906, #907, #908 (collateral) · CANCELLED check merged via head-swap'
+}
+
+@test "dedup: PR #N mid-prose in a LATER field still nudges (conservative)" {
+    # `PR #907` buried inside third-field trigger prose does NOT dedup: a late
+    # field only counts when it starts with `PR #`. Deliberately conservative —
+    # a false nudge is noise once, a false dedup is a permanent silent exemption
+    # (the P1 this fix family exists for). Pinned so a future widening to
+    # "PR #N anywhere" has to flip this test consciously.
+    printf '%s\n' '## 2026-06-10 · PR #950 · reverting PR #907 broke the packaging lane' > "$POSTMORTEM_LEDGER"
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d7"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #907"* ]]
+}
+
 @test "dedup: a combined-PR heading ending at the PR list suppresses the last PR" {
     # Exercises the `$` half of the `([^0-9]|$)` boundary. In the two cases above
     # the trailing PR is followed by ` · <trigger>`, so end-of-line is never
