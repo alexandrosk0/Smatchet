@@ -304,19 +304,73 @@ EOF
     return 0
 }
 
-# Already has a postmortem? (ledger references "PR #<n>")
-has_entry() {
+# Already has a postmortem? (a ledger ENTRY HEADING references "PR #<n>")
+#
+# Takes a PR NUMBER. Sha-keyed dedup (triggers 3+4) belongs to has_sha_entry.
+#
+# BOTH probes are heading-scoped, and that symmetry is the fix
+# (postmortem-owed-prose-mention-false-dedup, tooling P1). Probe 2 always was;
+# probe 1 was not, so it matched `PR #N` ANYWHERE in the file — and citing a PR
+# in prose is how these entries are normally written ("shipped in PR #1953",
+# "concurrently by PR #1078"). The effect was that any PR named in any entry's
+# body was PERMANENTLY and SILENTLY exempted from ever being nudged again, in
+# the one detector whose job is turning escapes into gates. Measured on the real
+# ledger at the time: 12 PR numbers were deduped by prose alone, none of them
+# with an entry of their own. #1962 was the reported instance — a genuine
+# override escape reported as a clean window.
+#
+# Scoping is safe against the opposite error (re-nudging a PR that IS
+# postmortemed): every PR-keyed heading in the ledger uses the documented
+# `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
+# real entry. The only heading carrying a bare `#N` without the `PR ` prefix is
+# an Issue reference, which was never in scope here.
+# The heading is `## <date> · PR #A[, #B][/#C] · <trigger>`, so `·` delimits the
+# fields. Both probes are bounded to the FIRST TWO fields by `[^·]*(·[^·]*)?`,
+# which keeps a `#N` in the TRIGGER text from deduping PR N: without it the old
+# `.*` spanned the whole heading, so `## … · PR #1948 · … unwedge /#907` deduped
+# #907. Same permanent silent suppression as the body-prose leak, one field in.
+#
+# The leading field is OPTIONAL, and that is load-bearing in both directions:
+#   * `## RCA for PR #2006 — …` has no `·` at all and must still dedup (a
+#     `·`-requiring anchor broke exactly this shape).
+#   * `## 2026-06-07 · coverage.yml (since #834 graduation), fixed by PR #941 · …`
+#     carries an unrelated `#834` BEFORE the PR reference, so "first `#` on the
+#     line" is also wrong — it dropped this real entry and would have re-nudged
+#     #941 forever.
+# Verified on the live ledger by PER-PR-NUMBER sweep — every #N appearing in any
+# `^## ` heading, asked "does has_entry dedup it?": 98/102 dedup; the 4 that keep
+# nudging are all correct exclusions (`#834` = parenthetical annotation, `#863` =
+# an Issue not a PR, `#1215`/`#1242` = trigger-prose references). The earlier
+# heading-COUNT sweep (54 → 53) validated the two-field bound while missing that
+# the escape·collateral shape lost #1571/#1572 — counting matched headings hides
+# a heading that still matches via a different number.
+has_entry() {  # <pr-number>
     [ -f "$LEDGER" ] || return 1
-    # Match either a "PR #N" reference or a "commit <sha>" reference, so the
-    # commit-only revert/direct-push paths (which pass a sha) dedupe too.
-    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
+    # The PR's own entry.
+    grep -qE "^#+ [^·]*(·[^·]*)?PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
     # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
     # heading written `PR #A, #B, #C` OR slash-joined `PR #A/#B/#C` — only the first
-    # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. Match #N
-    # inside such a heading line (scoped to `^#+ … PR #…` so a #N mention in prose
-    # body can't false-suppress a real owe). The `/` in the separator class fixes
-    # slash-joined trailers (`#906/#907/#908`) that used to re-flag every SessionStart.
-    grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+    # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. The `/`
+    # in the separator class fixes slash-joined trailers (`#906/#907/#908`) that
+    # used to re-flag every SessionStart. `[^·]*` after the first number keeps the
+    # whole list inside one field.
+    grep -qE "^#+ [^·]*(·[^·]*)?PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: no-match falls through to the late-field probes
+    # Escape·collateral shape: the live ledger also writes combined RCAs as
+    # `## <date> · PR #A (escape) · PR #B, #C (collateral) · <trigger>` — the
+    # PR list continues in a THIRD field the two-field bound above cannot reach,
+    # so #B/#C silently lost dedup (found by per-PR-number sweep of the ledger;
+    # the heading-count sweep that validated the bound missed it). A late field
+    # counts ONLY when it carries the shape's own `(escape)`/`(collateral)`
+    # annotation after the PR list — "starts with `PR #`" alone was NOT enough:
+    # a trigger sentence that happens to LEAD with a PR reference (`· PR #907
+    # was reverted …`) matched it and re-opened the permanent-false-dedup hole
+    # one shape further out (CodeRabbit, round six). Trigger prose never ends a
+    # field with the literal annotation, so requiring it keeps both the `/#907`
+    # and the leading-`PR #907` leaks closed. `PR #N` anywhere in a late field
+    # WITHOUT the annotation deliberately still nudges: a false nudge is noise
+    # once, a false dedup is a permanent silent exemption.
+    grep -qE "^#+ .*·[[:space:]]*PR #$1([^0-9][^·]*)?\((escape|collateral)\)" "$LEDGER" && return 0  # fail-open-ok: falls through to the annotated-list trailer probe
+    grep -qE "^#+ .*·[[:space:]]*PR #[0-9][^·]*[,[:space:]/]#$1([^0-9][^·]*)?\((escape|collateral)\)" "$LEDGER"
 }
 
 # has_sha_entry <sha> — true when the ledger mentions this commit sha in ANY

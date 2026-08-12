@@ -55,6 +55,8 @@ STEPS=(
   "test-agent-contract|bash $CORE/test-agent-contract.sh"
   "test-plan-index|bash $CORE/test-plan-index.sh"
   "test-plan-ref-integrity|bash $CORE/test-plan-ref-integrity.sh"
+  "test-plan-claim-anchors|bash $CORE/test-plan-claim-anchors.sh --selftest && bash $CORE/test-plan-claim-anchors.sh --all"
+  "check-pr-intent-sync|bash $CORE/check-pr-intent.sh --check-workflow-sync"
   "test-plan-naming|bash $CORE/test-plan-naming.sh"
   "md_lint|$PY $CORE/md_lint.py --selftest && $PY $CORE/md_lint.py --all"
   "test-portable-purity|bash $CORE/test-portable-purity.sh"

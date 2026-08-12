@@ -70,7 +70,7 @@ next self-improvement sweep.
   stubs five symbols but not `maybe_self_resync`; observed 1/6 local failure on
   test 30 and the CI red on #1718 head `9101c9c7`.
 - Concrete next action: see § Proposal.
-- Status: open
+- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
 - Last-reviewed: 2026-07-10
 
   Status: applied (2026-07-11 reconcile — verified fixed on develop: all four `daemon_loop` tests in tests/bats/merge_watcher.bats (:679/:710/:741/:774) now stub `mw.maybe_self_resync = lambda *_a, **_k: {}`, so the startup resync never touches real git/network.)
@@ -155,7 +155,7 @@ before push. Archive to `applied.md` on the next sweep.
 
 - Details: see § Friction. Verified against the committed tree at develop head.
 - Concrete next action: see § Proposal (1)–(2) — done.
-- Status: open
+- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
 - Last-reviewed: 2026-07-10
 
   Status: applied (2026-07-11 reconcile — verified fixed on develop: scripts/dev/pre-ship.sh:316 runs `bash agents/scripts/core/test-orphan-bats.sh` in the fast pre-push path.)
@@ -618,13 +618,13 @@ before push. Archive to `applied.md` on the next sweep.
 
   Concrete next action: Add an `## Intent` requirement to the out-of-band PR-creation contract in `docs/agent-rules/ship-loops.md` § Intent capture — any agent opening a PR via the GitHub API/MCP (i.e. with no local ship-loop) MUST hand-author a filled `## Intent` section in the PR `body` before calling `create_pull_request`. Optionally back it with a pre-create reminder in the harness PR-creation helper. Cheap (~30 min, doc rule).
 
-  Status: open
+  Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
   Last-reviewed: 2026-06-20
 
 - 2026-06-20 · orchestrator · [process] · P2 — MCP-created PRs bypass the `## Intent` template → required gate fails, not self-healing
   Details: ship-loops.md § Intent capture says fill the PR body's `## Intent` at "`gh pr create` time" from `.github/pull_request_template.md`. But the remote/web harness opens PRs via the GitHub MCP `create_pull_request` tool, which sets `body` verbatim and does NOT apply the repo PR template (template auto-fill is a web-UI / interactive `gh pr create` behaviour only). So an MCP-opened PR starts with no `## Intent` and the REQUIRED "Intent section" check (`doc-validation.yml`) fails on `opened`. Worse: that workflow's `pull_request:` trigger declares no `types:`, so it defaults to `[opened, synchronize, reopened]` — editing the PR body does NOT re-run it; the red required check only clears on a NEW push (`synchronize`). Hit this session on PR #1460 (the check cleared only because a later commit re-triggered the workflow against the corrected body).
   Concrete next action: in ship-loops.md § Intent capture (+ the orchestrator PR-create packet), state that a PR created via the GitHub MCP `create_pull_request` MUST include the `## Intent` section in the `body` argument explicitly (the template is not auto-applied), and that a missing-Intent PR needs a follow-up commit to clear the gate (a body edit alone won't, since it doesn't fire on `edited`). Optional belt-and-braces: add `edited` to `doc-validation.yml`'s `pull_request: types:` so body-only fixes self-heal.
-  Status: open
+  Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
   Last-reviewed: 2026-06-20
 
 - 2026-06-20 · orchestrator · [tooling] · P2 — the `intent-out-of-band` override hatch from ADR-0022 (#1391) shipped only HALF-wired: the doc-validation gate + `poll_merge_gates` referenced the label by exact name, but (a) the GitHub label was never created in the repo, and (b) `safe-admin-merge.sh` never honored it — so a data/docs PR that tripped the `Intent section` block-allowlist check had NO working override on either merge path
@@ -3725,3 +3725,321 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 
   Status: applied
   Last-reviewed: 2026-08-11
+
+- 2026-08-07 · claude-code · [tooling] · P1 — `postmortem-owed.sh`'s first dedup probe matches `PR #N` **anywhere** in the ledger, so a prose mention of a PR inside an unrelated entry permanently suppresses that PR's own gate-escape nudge
+
+  Observed after PR #1962 merged with `cr-out-of-band` +
+  `cr-disposition:cr-rate-limited` — a real override escape (CodeRabbit's
+  account quota was exhausted, so the diff was never reviewed). The escape owes
+  a postmortem by
+  [`AGENTS.md` § Self-improvement loop](../../../AGENTS.md), but
+  `bash agents/scripts/core/postmortem-owed.sh --list` reports
+  `no gate escapes owed a postmortem (last 20 merges clean)`. Four consecutive
+  invocations agree, so this is a deterministic miss, not a flake.
+
+  Mechanism. `has_entry()`
+  ([`postmortem-owed.sh:240-251`](../../../agents/scripts/core/postmortem-owed.sh))
+  runs two probes and the trigger-1 loop skips the PR when either fires:
+
+  ```bash
+  grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
+  grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+  ```
+
+  The **second** probe is correctly scoped to a heading line (`^#+ …`) — its
+  comment even states the intent: *"scoped to `^#+ …` so a #N mention in prose
+  body can't false-suppress a real owe"*. The **first** probe is not scoped at
+  all. It scans the whole file, so any sentence anywhere that happens to write
+  `PR #1962` satisfies it. Measured against `origin/develop`'s ledger:
+
+  ```
+  grep -cE "PR #1962([^0-9]|$)"        → 2     # prose, inside an unrelated entry
+  grep -cE "^#+ .*PR #1962([^0-9]|$)"  → 0     # no entry is actually filed
+  ```
+
+  Both hits are body prose in the 2026-08-05 `#1937` postmortem
+  ([`postmortems.md:2171,2184`](../postmortems.md)) — written by the very
+  work that produced #1962, citing it as the determinism fix its instance
+  ratchet rests on. Citing a PR is the normal way these entries are written, so
+  the failure mode is not exotic: **any PR named in an existing entry's prose is
+  silently exempted from ever being nudged again.** The suppression is
+  permanent and silent — the detector's output is indistinguishable from a
+  genuinely clean window, which is the same "mask discards the verdict" shape as
+  [`2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md`](tooling/2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md).
+
+  Blast radius: this is the *detector for gate escapes*. A hole here doesn't
+  leak one defect, it suppresses the mechanism that converts escapes into new
+  gates. Entries accumulate cross-references over time, so the exempted set only
+  grows.
+
+  Proposed gate — **dedup on a structured field, never on free prose.**
+
+  1. **Scope probe 1 the same way probe 2 already is.** Require the `PR #N`
+     match to land on an entry heading (`^#+ .*PR #N([^0-9]|$)`), matching the
+     documented entry shape `## <date> · PR #N[, #M …] · <trigger>`. This is a
+     one-line change and immediately un-suppresses #1962. The `commit <sha>`
+     alternation should be split out and kept whole-file — `has_sha_entry`
+     already documents bare-sha matching as deliberate for triggers 3+4.
+  2. **Add a bats regression case.** `tests/bats/` should assert that a ledger
+     containing only a *prose* `PR #N` mention still reports #N as owed, and
+     that a real `## … PR #N …` heading dedupes it. This is the property both
+     probes are trying to express and neither one tests.
+  3. **Consider a machine-readable key.** Longer-term, have each entry carry an
+     explicit `### Escaped PRs: #A, #B` field and dedup on that alone, so
+     heading prose style can drift without re-opening the hole. Optional — (1)
+     plus (2) closes the class.
+
+  Item 1 is the fix; item 2 is what keeps it fixed. Do not apply from here —
+  suggestion-only per the skill's finder/applier split.
+
+  **Applied 2026-08-11** (items 1 + 2; item 3 deliberately not taken — (1)+(2)
+  close the class, as the entry itself says). Both probes are now heading-scoped,
+  and the symmetry is the fix.
+
+  Two refinements the write-up did not have:
+
+  - **The `commit <sha>` alternation was removed, not split out.** The entry
+    proposed keeping it whole-file. In fact `has_entry` is only ever called with
+    a PR NUMBER (both call sites pass one; the sha paths use `has_sha_entry`), so
+    that branch was matching the literal string `commit <pr-number>` — which
+    occurs **0 times** in the ledger, measured. It guarded a caller shape that
+    does not exist. `has_entry` now documents that it takes a PR number and that
+    sha dedup belongs to `has_sha_entry`.
+  - **Scoping was checked against the real ledger before landing**, since the
+    opposite error — re-nudging a PR that IS postmortemed — would be noisier than
+    the bug. 12 PR numbers were deduped by prose alone; all 12 are plain
+    citations ("shipped in PR #1953", "concurrently by PR #1078"), none an entry
+    of its own. Every PR-keyed heading uses the documented
+    `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
+    real entry. The one heading carrying a bare `#N` without the `PR ` prefix is
+    an Issue reference, never in scope here. #1962, the reported instance, has
+    since been given a real entry and still dedupes correctly.
+
+  Four bats cases pin the property both probes were expressing and neither
+  tested: prose does not dedupe, a documented heading does, prose cannot satisfy
+  the combined-heading probe either, and a substring PR number does not
+  cross-suppress. Restoring the unscoped probe fails the first.
+
+  Secondary observation, low confidence, recorded rather than actioned: one
+  earlier `--list` invocation in the same session emitted six owed escapes
+  (#1979, #1974, #1971, #1964, #1968, #1954) while six others reported clean.
+  Re-running four times after the fact was stable-clean, and the underlying
+  `gh pr list` query returned 20 rows on three consecutive checks, so the
+  transient was not a `gh` failure. The trigger-1 loop ends in
+  `2>/dev/null || true`, which would turn any upstream failure into a silent
+  "clean" — worth a `set -o pipefail` + explicit row-count assertion if it
+  recurs, but it is not reproducible today and is **not** the cause of the
+  #1962 miss (that one is fully explained above).
+
+  Status: applied
+  Last-reviewed: 2026-08-11
+
+- 2026-08-05 · claude-code · [tooling] · P1 — `test-plan-index.sh` derives shipped-plan index dates from `git log --follow`, which squash-merge rewrites — so a plan archived and merged across a midnight boundary reddens `develop` the instant it lands, with no pre-merge state that could have passed
+
+  Observed on PR #1937 (Help > About dialog). Merged `2026-08-05T11:33:25Z` as
+  `fce0951c` with the required `Doc anchors + agent contract` terminal-green. The
+  develop tip went RED on that same check immediately after:
+  `test-plan-index: DRIFT — shipped-plan index out of sync (182 plans in archive)`.
+  Full RCA in [`postmortems.md`](../postmortems.md) (2026-08-05 entry).
+
+  Mechanism. `agents/scripts/core/test-plan-index.sh:122-143` resolves each row's
+  date with `git log --follow --format=%ad --date=short -- <path>` — the file's
+  *first-commit* date. `--follow` is what normally makes this stable across the
+  `plans/active/` → `plans/shipped/` move. A squash-merge collapses the branch into
+  one commit and the per-file pre-merge history is unreachable from `develop`, so
+  `--follow` finds exactly one commit and returns the **squash date**:
+
+      $ git log --follow --format='%ad %h %s' --date=short \
+          -- docs/plans/shipped/about-dialog-help-menu.md
+      2026-08-05 fce0951c feat(about): About Smatchet dialog under Help, ... (#1937)
+
+  Three conditions, all common: the PR archives a plan *and* commits its index row;
+  the repo squash-merges; branch work and merge fall on different calendar days.
+  Every plan-shipping PR that spans a midnight hits this.
+
+  Why it is P1 rather than P2: the check is **required**, and a red required check
+  on the develop tip is inherited by every open PR's own head under block-on-any-red.
+  One late-evening merge blocks the whole queue until someone notices, and nothing
+  announces it — `postmortem-owed.sh` keys on merge-instant signals (non-SUCCESS
+  checks, override labels, `Revert`, overdue deviations) and this class emits none,
+  so it reports "no gate escapes owed" for the PR that caused it.
+
+  Proposed fix — **stop deriving the value from mutable git metadata.** Have
+  `--fix` write the resolved date into the plan file as an explicit
+  `<!-- plan-date: YYYY-MM-DD -->` marker when a plan is archived, and have the
+  generator prefer that marker, falling back to `git log --follow` only for legacy
+  plans without one. Content survives squash, shallow clone and staged rename
+  identically. This is not a fourth special case — it **retires the two already in
+  the script**, both of which exist to paper over the same history lookup: the
+  shallow-clone guard (`:45`, `:105`) and the staged-rename sibling-tier fallback
+  (`:135-143`, whose comment already cites the #1061 / #1092 archive date-drift
+  "twice"). Squash-merge is the third way the same lookup moves under the generator;
+  the recurring shape is the defect.
+
+  Concrete next action: add the marker read/write to `test-plan-index.sh`, plus two
+  `--selftest` cases — (1) a `shipped/` plan whose only commit is the current HEAD
+  still resolves a stable date; (2) a marker date disagreeing with its index row
+  FAILs. Migrate existing rows by running `--fix` once to stamp markers from the
+  currently-committed dates, so no archived plan's date changes on adoption.
+
+  Paired with: the develop-tip required-green assertion proposed in the
+  `2026-07-10 · PR #1698` postmortem and never landed. This is its second instance —
+  a gate that can only go red *after* the merge needs a detector that looks after
+  the merge.
+
+  **Applied 2026-08-11 (mechanism); back-catalogue migration still PENDING.**
+  `test-plan-index.sh` now reads a `<!-- plan-date: YYYY-MM-DD -->` marker in
+  preference to git, and `--fix` stamps one into any plan **the current change
+  touches** that lacks it. `--check` never writes, so the required gate stays
+  read-only. Stamping is diff-scoped deliberately: an unscoped `--fix` turned
+  the CI autosync into a bulk migration — with all 188 archived plans unstamped,
+  the first PR to trigger it had 188 bot-authored marker commits pushed onto its
+  branch (192 files, past CodeRabbit's 100-file review limit, required CR gate
+  wedged; observed live on PR #1999). That mass stamp was **reverted** and the
+  scope added; migrating the back catalogue is now a deliberate one-shot behind
+  `SMATCHET_PLAN_STAMP_ALL=1`, to land as its own reviewed PR.
+
+  An earlier draft of this block claimed the 188-plan migration had landed and
+  that shallow-clone `--check` was "demonstrated end to end". **As of this
+  writing it has not**: 1 of 188 shipped plans carries a marker, git is still
+  consulted for the other 187, and shallow-clone `--check` stays git-dependent
+  until the migration PR lands. What WAS verified: the migration built from
+  `INDEX.md`'s own committed rows leaves `INDEX.md` byte-identical, and with it
+  applied, `--check` flips from DRIFT to pass on a shallow clone — demonstrated
+  on a branch, then reverted with the rest of the mass stamp.
+
+  **One claim in the proposal is wrong and should not be carried forward.** The
+  entry says the marker "retires the two special cases already in the script"
+  (the shallow-clone guard and the staged-rename sibling fallback). It does not.
+  Both are still needed at STAMP time: a new plan is stamped from git exactly
+  once, and that one read must be correct — on a shallow clone it would not be,
+  and for a freshly `git mv`'d plan the sibling fallback is what resolves it at
+  all. What the marker changes is the *exposure*: from every run on every clone
+  forever, down to a single deterministic moment on the author's full-history
+  checkout. That is a large win, but it is a narrowing, not a retirement, and
+  deleting those guards on the strength of this entry would reintroduce the drift
+  at the one moment it still matters.
+
+  Two `--selftest` cases were added as asked, in a throwaway repo whose plan has
+  exactly ONE commit dated today — the post-squash shape, which cannot be staged
+  inside this repo: (a) the row carries the marker date, not the commit date;
+  (b) a marker disagreeing with its committed row FAILs `--check`. Disabling
+  marker precedence fails (a).
+
+  While adding them, the file's PRE-EXISTING negative assertion turned out to be
+  vacuous — it self-exec'd a mode-100644 script, so `126 Permission denied`
+  satisfied it — and the first version of the new cases was vacuous too, via
+  `set -e` inside a `||` operand. Both fixed here; the class is filed as
+  [`asserts-failure-marker-does-not-prove-the-negative-is-reachable`](tooling/2026-08-11-asserts-failure-marker-does-not-prove-the-negative-is-reachable.md).
+
+  Not addressed: the paired develop-tip required-green assertion. Still open, and
+  still the right second layer — this fix removes the cause, not the class of
+  "green on the PR head, red on develop".
+
+  Status: applied
+  Last-reviewed: 2026-08-11
+
+- 2026-08-03 · orchestrator · [tooling] · P1 — a shipped plan's § Deviations / § Implementation log can assert a delivery that never landed and **no gate reads it**: `msvc-build-onboarding-hardening.md:85` claims "`build_standalone.ps1` (plan file 1) already had the MSVC bootstrap from slice 1" — `git log -S vcvars` on that file is **empty across all history**; the promised vcvars/vswhere env import was never written, in any revision
+  Details: Surfaced while validating the `dev-onboarding-first-run-quickstart` plan, whose § Context
+    premise ("MSVC bootstrap already exists, just needs a root entry point") was inherited from that
+    line. Chain: PR #493 planned "locate `vcvars64.bat` through `vswhere.exe` … import via
+    `cmd /c \"...vcvars64.bat && set\"`" for `build_standalone.ps1`. PR #495 (`da36b45f`, 2026-05-28)
+    shipped the *other* items and closed the row with the § Deviations line above. The blameless root
+    cause is a **name conflation**: the file did contain a `Use-Msys2Ucrt64Environment` call (an **MSYS2**
+    UCRT64 env bootstrap) which #495 replaced with the retirement `throw` — that pre-existing env-setup
+    call was read as "the bootstrap", so the row was closed as already-done rather than dropped. The
+    file's only `vswhere` use is `Get-VsWherePath` (:71-83), which locates **MSBuild.exe**, not vcvars.
+    Nothing contradicted the claim: § Verification (actual) lists `test-build-wrapper.ps1` 3/3 green, but
+    all three cases test the msys2-retirement throw, the `Exe :`/`Time:` print, and the stale-sibling
+    table — **none exercises an MSVC env bootstrap**, so a passing verification block is fully consistent
+    with the capability being absent. And `postmortem-owed.sh --list` returns "no gate escapes owed": the
+    nudge reads merge signals (non-SUCCESS checks, override labels, `Revert`, overdue deviations), so an
+    *untrue prose claim* in a doc is structurally invisible to it. The claim then sat load-bearing for
+    ~2 months and seeded a false premise into a downstream plan.
+  Concrete next action: add gate rule **`plan-claim-anchor`** —
+    `agents/scripts/core/test-plan-claim-anchors.sh`, joining the existing plan-doc gate family
+    (`test-plan-index.sh` / `test-plan-ref-integrity.sh` / `test-markdown-links.sh`) in the
+    "Doc anchors + agent contract" doc-validation job. Rule: inside a plan's **§ Deviations** or
+    **§ Implementation log** sections only, a line matching the pre-existing-delivery claim set
+    (`already had|has|have|exists|existed|implemented|landed|shipped`, `was already`) MUST carry a
+    verifiable citation — a markdown link or backticked ref with a `:<line>` suffix, or a `#<PR>` /
+    commit-sha reference. Delta-gated vs `origin/develop` and baseline-grandfathered like every other
+    rule (measured 2026-08-03, claim pattern above + anchor pattern `:<line>` / `#<2+ digits>` /
+    7-40-char hex sha, scanning `## Deviations` / `## Implementation log` sections only:
+    **38 such claims across 30 files, 25 unanchored** — all grandfathered; only NEW claims must
+    anchor. The `--selftest` re-derives this baseline rather than hardcoding it). Escape:
+    `SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=…; owner=…; revisit=…)` for claims about state
+    outside the repo (e.g. `solo-merge-review-gate.md:91` cites GitHub branch-protection API state,
+    which has no `file:line`). This does not prove a claim true — it forces the author to point at the
+    code, and **there is no line to point at for a vcvars import that does not exist**, which is exactly
+    where #495 would have stopped. Est ~0.5d (bash gate + `--selftest` + AGENTS.md contract-card row).
+    Explicitly NOT proposed: extending `postmortem-owed.sh` — this class carries no merge signal, so
+    detection belongs at doc-gate time, not at merge-nudge time.
+  Cross-ref: `docs/plans/shipped/msvc-build-onboarding-hardening.md` (:82 impl-log, :85 the false
+    § Deviations claim, § Verification (actual) 3/3 non-covering tests); `scripts/dev/local/build_standalone.ps1`
+    (:71-83 `Get-VsWherePath` → MSBuild only, zero vcvars); PR #493 (`a9058b96`, plan) / **PR #495**
+    (`da36b45f`, the escaping PR); `scripts/dev/with-msvc.ps1` :39-139 (where a real vcvars import DOES
+    live — the capability exists in the tree, just not in the file the plan named);
+    `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
+    premise); `docs/self-improvement/postmortems.md` (ledger entry).
+  Status: applied (this entry shipped as test-plan-claim-anchors.sh; Status flipped at archival)
+  Last-reviewed: 2026-08-03
+
+- 2026-08-11 · claude-code · [process] · P2 — the `[pre-first-push gate]`'s self-review step is the only one with no backstop, so skipping it is invisible; skipped on PR #1996 and it cost ~8 CodeRabbit cycles, both bots' rate limits, and four locally-knowable defects reaching CI
+
+  Details: [`ship-loops.md`](../../agent-rules/ship-loops.md) § `[pre-first-push gate]`
+  makes a local self-review mandatory before the first push, "never deferring
+  locally-knowable findings to CI/CR", and the
+  [`adversarial-code-review`](../../../agents/_shared/skills/adversarial-code-review/SKILL.md)
+  skill says to use it "proactively before opening a PR". On PR #1996 the gate's
+  other steps were either run or genuinely n/a (no strict-zone C++ touched, so
+  the dual-target `/WX` build, `ctest`, and the leaf-`AGENTS.md` self-review did
+  not apply). **The review step was simply not run.** It happened 14 commits
+  later, only because the user asked "have you code reviewed the changes?".
+
+  **Measured cost on that one PR**, all of it the churn `reduce-coderabbit-review-spend`
+  Slice 1 exists to prevent:
+
+  - ~8 completed CodeRabbit review cycles across the PR's 16 commits.
+  - CodeRabbit's adaptive per-developer limit hit repeatedly (27–49 min waits,
+    three `@coderabbitai review` requests answered only by the plan/rate-limit
+    note). The rate-limiting that dominated the session was substantially
+    self-inflicted by this PR's own churn.
+  - Cursor Bugbot's usage cap hit on at least three separate heads.
+  - **Four locally-knowable defects reached CI/CR** that the review found the
+    moment it finally ran: the develop-side half-set glob enumeration, the
+    silently-dead grace cutoff, and two docs this PR itself falsified. None
+    needed CI, a reviewer, or a running gate to find — only reading the diff.
+    (A fifth of the same class, the CWD-relative glob expansion, was caught by
+    CodeRabbit as a *trivial* nitpick and escalated on inspection. A pre-push
+    review would plausibly have found it too, but the credit is CodeRabbit's,
+    not the self-review's — and this entry got that attribution wrong on its
+    first draft, caught only by re-checking before merge.)
+
+  **The structural point, which outlives this PR.** The automatic backstop
+  (`scripts/git-hooks/pre-push` step D) mirrors the *mechanical* required checks
+  — lint rules, doc anchors, markdown links, portable purity, clang-format,
+  shell-lint. It cannot mirror a judgement step. So of the four gate items, three
+  either self-enforce or are visibly n/a, and the fourth **leaves no trace either
+  way**: a PR whose review was skipped and a PR whose review was clean look
+  identical from outside.
+
+  That is precisely the `required-check-that-never-reports-is-invisible` shape
+  the same PR was fixing in CI — a check that produces no signal reads as a pass.
+  Worth noting the gate was skipped *by the session working on that entry*, which
+  suggests the failure is structural rather than a lapse of attention.
+
+  Candidate fixes, cheapest first:
+
+  - **Record the verdict.** Require the PR body's test plan to carry a line for
+    the pre-first-push review (e.g. `adversarial-code-review: N findings, all
+    fixed` or an explicit `n/a — trivial diff`). Makes absence visible without
+    enforcing anything; the `Intent section` workflow already parses the body, so
+    there is a home for the assertion.
+  - **Cite it like gate evidence.** PR #1996 added the rule that gate-tool output
+    must record the tree + commit it ran from. The same discipline applied here
+    would make "the review ran, against this diff" checkable rather than assumed.
+  - **Do not** try to enforce it in the pre-push hook. The step is a judgement
+    call; a hook can confirm a claim was made, never that the review was real.
+    An enforcement that can only check the claim would manufacture exactly the
+    kind of green this backlog keeps filing entries about.

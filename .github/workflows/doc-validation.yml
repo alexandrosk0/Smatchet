@@ -36,6 +36,8 @@ on:
       - 'agents/scripts/core/test-agent-build-facts.sh'
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
+      - 'agents/scripts/core/test-plan-claim-anchors.sh'
+      - 'docs/high-integrity/plan-claim-anchor-baseline.md'
       - 'agents/scripts/core/test-portable-purity.sh'
       - 'agents/scripts/core/test-config-globs.sh'
       - 'agents/scripts/core/test-required-context-parity.sh'
@@ -234,7 +236,15 @@ jobs:
             exit 0
           fi
           bash agents/scripts/core/test-plan-index.sh --fix
-          if git diff --quiet -- docs/plans/INDEX.md; then
+          # Scope covers docs/plans/shipped/ as well as the INDEX, because --fix
+          # now ALSO stamps `<!-- plan-date: … -->` into plans that lack one
+          # (plan-index-date-derived-from-mutable-git-history). Two failure modes
+          # if this stays INDEX-only: a run where the INDEX is already in sync but
+          # markers were written exits 0 and DISCARDS them, and the commit below
+          # stages only the INDEX. Either way the plan lands unstamped and its row
+          # goes back to being derived from git history the squash rewrites —
+          # exactly the drift the marker exists to stop.
+          if git diff --quiet -- docs/plans/INDEX.md docs/plans/shipped/; then
             echo "plan INDEX already in sync — nothing to commit."
             exit 0
           fi
@@ -247,8 +257,8 @@ jobs:
             echo "::notice::plan INDEX drifted — auto-syncing via PLAN_INDEX_PAT (re-triggers CI)."
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs/plans/INDEX.md
-            git commit -m "chore(plan): auto-sync shipped-plan INDEX"
+            git add docs/plans/INDEX.md docs/plans/shipped/
+            git commit -m "chore(plan): auto-sync shipped-plan INDEX + plan-date markers"
             git push origin "HEAD:$HEAD_REF"
             exit 0
           fi
@@ -257,12 +267,12 @@ jobs:
           # CI, freezing the PR on a stale pre-sync failure. So instead FAIL
           # LOUDLY on the current head — the author re-pushes the fix as
           # themselves, which re-triggers CI cleanly.
-          echo "::error::docs/plans/INDEX.md is out of sync with docs/plans/shipped/. Drift below."
-          echo "----- INDEX drift (run the remedy to apply) -----"
-          git --no-pager diff -- docs/plans/INDEX.md
-          echo "-------------------------------------------------"
+          echo "::error::docs/plans/INDEX.md (and/or plan-date markers) out of sync with docs/plans/shipped/. Drift below."
+          echo "----- INDEX + plan-date drift (run the remedy to apply) -----"
+          git --no-pager diff -- docs/plans/INDEX.md docs/plans/shipped/
+          echo "-------------------------------------------------------------"
           echo "Remedy: bash agents/scripts/core/test-plan-index.sh --fix"
-          echo "        git add docs/plans/INDEX.md && git commit && git push"
+          echo "        git add docs/plans/INDEX.md docs/plans/shipped/ && git commit && git push"
           echo "(Auto-fix can be enabled by adding the PLAN_INDEX_PAT repo secret"
           echo " — fine-grained PAT, Contents: Read and write. See job header.)"
           exit 1
@@ -361,6 +371,26 @@ jobs:
         run: |
           bash agents/scripts/core/test-plan-ref-integrity.sh --selftest
           bash agents/scripts/core/test-plan-ref-integrity.sh
+
+      # --all, not the bare diff-scope its sibling test-markdown-links uses: it is
+      # deterministic, needs no origin/develop fetch depth, and keeps the
+      # grandfathered set in a committed reviewable file. Any NEW claim is
+      # unbaselined and fails, which is the whole gate.
+      - name: test-plan-claim-anchors — new plan-delivery claims cite their evidence
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-plan-claim-anchors.sh --selftest
+          bash agents/scripts/core/test-plan-claim-anchors.sh --all
+
+      # The pr-intent-lint job below is checkout-free, so it carries a COPY of
+      # check-pr-intent.sh's verdict regex. This step is the machine check
+      # behind their KEEP IN SYNC comments — it runs here because THIS job has
+      # the checkout the comparison needs.
+      - name: check-pr-intent sync — CI verdict-regex copy matches the local mirror
+        if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
+        run: |
+          bash agents/scripts/core/check-pr-intent.sh --selftest
+          bash agents/scripts/core/check-pr-intent.sh --check-workflow-sync
 
       - name: test-plan-naming — plan files are kebab-case
         if: steps.detect.outputs.docs == 'true'
@@ -517,5 +547,26 @@ jobs:
                     "only the template placeholder. Fill it with the originating ask (%s). "
                     "Override with the 'intent-out-of-band' label." % guide)
               sys.exit(1)
-          print("Intent section present and filled.")
+          # Pre-first-push review verdict. The review step of the [pre-first-push
+          # gate] is the only one that leaves no trace: a PR whose self-review was
+          # skipped and one whose review was clean look identical from outside
+          # (pre-first-push-review-step-is-unenforced-and-was-skipped — skipped on
+          # PR #1996, cost ~8 CodeRabbit cycles + four locally-knowable defects in
+          # CI). Requiring the verdict line makes ABSENCE visible. It cannot make
+          # the review real — a body check can verify a claim was made, never that
+          # the review ran — which is exactly why this is a body lint and not a
+          # pre-push hook. Comments are stripped FIRST so the template's commented
+          # placeholder cannot satisfy it untouched.
+          stripped = re.sub(r'(?s)<!--.*?-->', '', body)
+          verdict_re = re.compile(
+              r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
+              r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)[ \t]*\r?$')
+          if not verdict_re.search(stripped):
+              print("::error title=Review verdict missing::PR body records no pre-first-push "
+                    "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "
+                    "(e.g. `adversarial-code-review: 4 findings, all fixed`) or, for a genuinely "
+                    "trivial diff, `adversarial-code-review: n/a — <reason>`. See "
+                    "docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
+              sys.exit(1)
+          print("Intent section present and filled; review verdict recorded.")
           PY

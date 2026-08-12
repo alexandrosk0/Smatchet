@@ -88,13 +88,150 @@ if [ "$MODE" = "selftest" ]; then
   # NO-OP on a missing/wrong archive dir (the wrong-cwd class) would wrongly
   # succeed here. Re-invoke ourselves with the override so the real arg-parse +
   # archive-dir check runs end-to-end.
-  if PLAN_INDEX_ARCHIVE_DIR="docs/plans/__no_such_archive_dir__$$" \
-       "$_SCRIPT_PATH" --check >/dev/null 2>&1; then
+  #
+  # TWO defects were fixed in this assertion; both made it unable to fail.
+  #
+  #   1. It executed $_SCRIPT_PATH directly. This file is mode 100644 in git, so
+  #      that exec fails with 126 (Permission denied) EVERYWHERE, including CI —
+  #      and 126 is non-zero, so the assertion was satisfied by the permission
+  #      error rather than by the archive-dir guard. Hence `bash "$..."`.
+  #   2. It accepted ANY non-zero status. With the guard deleted the script still
+  #      exits non-zero, on an unhandled listdir traceback — so it stayed green
+  #      even with the behaviour it names removed. Hence matching the REFUSAL
+  #      MESSAGE, not merely the status.
+  #
+  # Both verified by deleting the guard and re-running: green before, red after.
+  # An `asserts-failure` marker only means a negative exists; it cannot tell that
+  # the negative is reachable for the stated reason.
+  _st_neg="$(PLAN_INDEX_ARCHIVE_DIR="docs/plans/__no_such_archive_dir__$$" \
+       bash "$_SCRIPT_PATH" --check 2>&1)"
+  _st_neg_rc=$?
+  if [ "$_st_neg_rc" -eq 0 ]; then
     echo "test-plan-index --selftest: FAIL — a missing archive dir did NOT fail (silent NO-OP)" >&2
     fail=1
+  elif ! printf '%s' "$_st_neg" | grep -q "archive dir .* not found"; then
+    echo "test-plan-index --selftest: FAIL — a missing archive dir failed for the WRONG reason (wanted the archive-dir refusal, got: $(printf '%s' "$_st_neg" | head -1))" >&2
+    fail=1
   fi
+  # (4) plan-date marker (plan-index-date-derived-from-mutable-git-history).
+  # Both cases run in a THROWAWAY repo whose plan has exactly ONE commit dated
+  # today — the post-squash shape, where `git log --follow` returns the squash
+  # date rather than the plan's real first-commit date. That is the state which
+  # reddened `develop` on #1937, and it cannot be staged inside this repo.
+  # NB: every assertion below propagates with an explicit `|| exit N`, and the
+  # subshell's status is captured on its OWN line. `set -e` inside a subshell
+  # that is the LEFT operand of `||` is SUPPRESSED — the shell disables it for
+  # any command in a `&&`/`||` list — so a `set -e` version of this block ran
+  # every step regardless of failure and reported only the LAST command's
+  # status. It passed with the fix disabled. Distinct exit codes name which
+  # assertion broke, so a future failure does not need re-derivation.
+  # The temp dir is REQUIRED to be non-empty before the subshell runs. `cd ""`
+  # SUCCEEDS in bash (it is a no-op), so an unchecked `mktemp -d` failure would
+  # run this whole fixture in the repo root — re-`git init`, overwrite the real
+  # INDEX with a 4-line stub, then `git add -A && git commit` the entire tree.
+  _st_tmp="$(mktemp -d)" || _st_tmp=""
+  if [ -z "$_st_tmp" ] || [ ! -d "$_st_tmp" ]; then
+    echo "test-plan-index --selftest: FAIL — could not create a temp dir for the marker fixture" >&2
+    fail=1
+  else
+  (
+    cd "$_st_tmp" || exit 90
+    git init -q || exit 90
+    git config user.email t@t.t || exit 90
+    git config user.name t || exit 90
+    # A global commit.gpgsign would fail every commit here and report a fixture
+    # build error instead of the assertion (same guard the other throwaway-repo
+    # fixtures carry — test-archive-plan.sh, historical_review_survivors.bats).
+    git config commit.gpgsign false || exit 90
+    # Paths are BUILT, never written as `docs/plans/<tier>/<slug>.md` literals:
+    # test-plan-ref-integrity.sh greps every file in the repo for that shape and
+    # resolves it against the real archive, so a fixture literal reads as a
+    # dangling plan reference and REDS the required doc job. (It did — caught
+    # pre-push; the literal form failed that gate on this branch and passed at
+    # HEAD.)
+    _pd="docs/plans"
+    _shipped="$_pd/shipped"
+    mkdir -p "$_shipped" || exit 90
+    printf '# Plan — Marked\n\n<!-- plan-date: 2020-01-02 -->\n\nBody.\n' > "$_shipped/marked.md" || exit 90
+    # An IMPOSSIBLE date matches the marker's shape but is not a calendar date.
+    # It must be treated as absent (else a typo pins the row permanently, and
+    # --fix can never replace it) and REPLACED in place rather than joined by a
+    # second marker.
+    printf '# Plan — Bad\n\n<!-- plan-date: 2026-99-99 -->\n\nBody.\n' > "$_shipped/bad.md" || exit 90
+    # A MALFORMED declaration (not even date-shaped) must also be normalised to a
+    # single valid marker. Only shape-matching values were replaced before, so
+    # 2026-99-99 was fixed while `invalid` was left beside a second inserted
+    # marker — the same contradiction, reached by a different payload.
+    printf '# Plan — Junk\n\n<!-- plan-date: invalid -->\n\nBody.\n' > "$_shipped/junk.md" || exit 90
+    # An unstamped plan that this change does NOT touch. Stamping is scoped to
+    # the diff, so it must come out UNCHANGED — see (4d).
+    printf '# Plan — Untouched\n\nBody.\n' > "$_shipped/untouched.md" || exit 90
+    printf '# INDEX\n\n<!-- BEGIN auto-plan-index -->\n<!-- END auto-plan-index -->\n' > "$_pd/INDEX.md" || exit 90
+    git add -A || exit 90
+    git commit -qm only-commit-is-today || exit 90
+    # The plans under test have to be IN the change for --fix to stamp them,
+    # which is the real shape too: a plan being archived is part of the diff.
+    # They must still be COMMITTED first — an untracked plan has no history at
+    # any path, so no date resolves and there is nothing to stamp.
+    printf 'Touched.\n' >> "$_shipped/bad.md" || exit 90
+    printf 'Touched.\n' >> "$_shipped/junk.md" || exit 90
+    # (4a) STABILITY: the row must carry the MARKER date, not the (today) commit
+    # date, even though the file's entire history is that one commit.
+    bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 91
+    grep -q '| 2020-01-02 |' "$_pd/INDEX.md" || exit 92
+    # (4c) INVALID marker: not authoritative, and replaced rather than duplicated.
+    grep -q '2026-99-99' "$_pd/INDEX.md" && exit 94
+    [ "$(grep -c 'plan-date' "$_shipped/bad.md")" = "1" ] || exit 95
+    grep -q 'plan-date: 2026-99-99' "$_shipped/bad.md" && exit 95
+    [ "$(grep -c 'plan-date' "$_shipped/junk.md")" = "1" ] || exit 96
+    grep -q 'plan-date: invalid' "$_shipped/junk.md" && exit 96
+    # (4d) SCOPE: an unstamped plan OUTSIDE the change must not be rewritten.
+    # Unscoped, --fix stamped every unstamped plan, so the CI autosync pushed
+    # all 188 back-catalogue markers onto the first PR branch that triggered it
+    # — 192 files, past CodeRabbit's 100-file limit, and the required CR gate
+    # could never pass. Observed on PR #1999.
+    grep -q 'plan-date' "$_shipped/untouched.md" && exit 97
+    # (4e) and the one-shot migration escape still reaches it.
+    SMATCHET_PLAN_STAMP_ALL=1 bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 98
+    grep -q 'plan-date' "$_shipped/untouched.md" || exit 98
+    # (4f) marker injection: a summary carrying the literal END marker must be
+    # REFUSED (exit 2 naming the plan), not written into the block — once written,
+    # content.index(end) splits at the injected copy and --fix corrupts INDEX.md
+    # further on every run, with no fixed point. The marker string is BUILT here,
+    # never written literally, so this file cannot inject into the real INDEX.
+    _mk="$(printf '%s END auto-plan-index %s' '<!--' '-->')"
+    printf '# Plan — Evil\n\n<!-- index-summary: x %s y -->\n\nBody.\n' "$_mk" > "$_shipped/evil.md" || exit 90
+    _inj_out="$(bash "$_SCRIPT_PATH" --fix 2>&1)"; _inj_rc=$?
+    rm -f "$_shipped/evil.md"
+    [ "$_inj_rc" = "2" ] || exit 99
+    case "$_inj_out" in *REFUSING*evil.md*) ;; *) exit 99 ;; esac
+    # (4b) DISAGREEMENT: a marker that no longer matches its committed row must
+    # FAIL --check rather than be silently re-derived from git.
+    sed -i.bak 's/plan-date: 2020-01-02/plan-date: 2019-05-05/' "$_shipped/marked.md" || exit 90
+    rm -f "$_shipped/marked.md.bak"
+    if bash "$_SCRIPT_PATH" --check >/dev/null 2>&1; then exit 93; fi
+    exit 0
+  )
+  _st_rc=$?
+  case "$_st_rc" in
+    0)  ;;
+    90) echo "test-plan-index --selftest: FAIL — could not build the marker fixture repo" >&2; fail=1 ;;
+    91) echo "test-plan-index --selftest: FAIL — --fix errored on the marker fixture" >&2; fail=1 ;;
+    92) echo "test-plan-index --selftest: FAIL — plan-date marker NOT authoritative: a squash-shaped history (single commit, today) moved the row off the stamped date" >&2; fail=1 ;;
+    93) echo "test-plan-index --selftest: FAIL — a marker disagreeing with its committed row did not fail --check" >&2; fail=1 ;;
+    94) echo "test-plan-index --selftest: FAIL — an impossible plan-date (2026-99-99) was treated as authoritative" >&2; fail=1 ;;
+    95) echo "test-plan-index --selftest: FAIL — an impossible plan-date was not REPLACED in place (duplicate or surviving marker)" >&2; fail=1 ;;
+    96) echo "test-plan-index --selftest: FAIL — a MALFORMED plan-date declaration was not replaced in place (duplicate or surviving marker)" >&2; fail=1 ;;
+    97) echo "test-plan-index --selftest: FAIL — --fix stamped a plan OUTSIDE the change; unscoped, this makes CI autosync push the whole back catalogue onto a PR branch (PR #1999: 192 files, CR review skipped, required gate wedged)" >&2; fail=1 ;;
+    98) echo "test-plan-index --selftest: FAIL — SMATCHET_PLAN_STAMP_ALL=1 did not stamp an untouched plan (the one-shot migration escape is broken)" >&2; fail=1 ;;
+    99) echo "test-plan-index --selftest: FAIL — a summary containing the literal END marker was not refused (it would corrupt the generated INDEX block with no fixed point)" >&2; fail=1 ;;
+    *)  echo "test-plan-index --selftest: FAIL — marker fixture exited $_st_rc" >&2; fail=1 ;;
+  esac
+  rm -rf "$_st_tmp"
+  fi
+
   if [ "$fail" = "0" ]; then
-    echo "test-plan-index --selftest: PASS (git-root path resolution + shallow guard + missing-archive refusal)"
+    echo "test-plan-index --selftest: PASS (git-root path resolution + shallow guard + missing-archive refusal + plan-date marker authority)"
     echo "Passed: 1  Failed: 0"
     exit 0
   fi
@@ -115,7 +252,7 @@ done
 [ -z "$PY" ] && { echo "test-plan-index: python not found" >&2; exit 2; }
 
 "$PY" - "$ARCHIVE_DIR" "$INDEX_FILE" "$BEGIN_MARK" "$END_MARK" "$MODE" <<'PY'
-import os, re, subprocess, sys
+import datetime, os, re, subprocess, sys
 
 archive_dir, index_file, begin, end, mode = sys.argv[1:6]
 
@@ -126,6 +263,50 @@ def _git_first_date_at(git_path):
         return out[-1] if out else ""
     except Exception:
         return ""
+
+DATE_RE = re.compile(r'^\s*<!--\s*plan-date:\s*(\d{4}-\d{2}-\d{2})\s*-->\s*$')
+# Any plan-date DECLARATION, whatever its payload. Reading uses DATE_RE (a valid
+# calendar date or nothing); REPLACING uses this, so a malformed marker is
+# normalised rather than left beside a freshly inserted one. Without the split,
+# `2026-99-99` was replaced (it matches the digit shape) but `invalid` was not —
+# an arbitrary difference that left the same two-marker contradiction the
+# in-place replacement exists to prevent.
+PLAN_DATE_DECL_RE = re.compile(r'^\s*<!--\s*plan-date:.*?-->\s*$')
+
+def marker_date(path):
+    """The plan's own stamped date, or "" — the AUTHORITATIVE source when present.
+
+    Why this exists (plan-index-date-derived-from-mutable-git-history, tooling P1):
+    every other source for this value is git metadata that the merge itself
+    rewrites. A squash-merge collapses the branch, so `git log --follow` at the
+    new path finds exactly ONE commit and returns the SQUASH date. When branch
+    work and the merge fall on different calendar days -- routine for an evening
+    merge -- the row the PR committed and the row CI regenerates disagree, and
+    the required `Doc anchors + agent contract` check goes RED on the develop tip
+    the instant the PR lands, with no pre-merge state that could have passed.
+    Under block-on-any-red that red is inherited by every open PR.
+
+    Content in the file survives squash, shallow clone and staged rename
+    identically, which none of the git lookups do.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                m = DATE_RE.match(line)
+                if m:
+                    # The shape regex alone accepts 2026-99-99. An impossible date
+                    # would then become AUTHORITATIVE and, being a present marker,
+                    # would never be re-stamped by --fix — a typo that pins the row
+                    # permanently. Treat an unparseable date as ABSENT so the git
+                    # fallback and the stamping path both still apply.
+                    try:
+                        datetime.date(*(int(p) for p in m.group(1).split("-")))
+                    except ValueError:
+                        return ""
+                    return m.group(1)
+    except OSError:
+        pass
+    return ""
 
 def git_first_date(path):
     git_path = path.replace(os.sep, "/")
@@ -159,17 +340,80 @@ if not os.path.isdir(archive_dir):
 
 PLACEHOLDER = "—"  # em-dash: emitted when no first-commit date resolves.
 
+def _touched_plans():
+    """Plans this change actually touches, vs origin/develop + working tree.
+
+    STAMPING SCOPE, and it is load-bearing. `--fix` stamping every unstamped
+    plan turns the CI autosync into a bulk migration: with all 188 archived
+    plans unstamped, the first PR to trigger autosync had 188 marker commits
+    pushed onto its branch by github-actions[bot]. That took PR #1999 to 192
+    files, CodeRabbit refuses to review past 100, and the required CR gate can
+    then never pass — the PR wedges with no self-healing path. Observed, not
+    theorised: it happened to the very PR that introduced the marker.
+
+    The behaviour worth keeping is narrow — a plan being ARCHIVED in this change
+    gets its date pinned before the squash can rewrite it — and that plan is by
+    definition in the diff. Migrating the back catalogue is a deliberate one-shot
+    (`SMATCHET_PLAN_STAMP_ALL=1` in the environment — there is no CLI flag; the
+    arg parser rejects unknown options), reviewed on its own, not a side effect
+    of touching a doc.
+
+    An EMPTY set on git failure is the safe answer: it stamps nothing rather
+    than everything, so a git hiccup cannot re-trigger the mass rewrite.
+    """
+    touched = set()
+    for args in (["diff", "--name-only", "origin/develop...HEAD"],
+                 ["diff", "--name-only", "HEAD"],
+                 ["ls-files", "--others", "--exclude-standard"]):
+        try:
+            out = subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+        except (subprocess.CalledProcessError, OSError):
+            continue
+        touched.update(p.strip() for p in out.splitlines() if p.strip())
+    return touched
+
+
+STAMP_ALL = os.environ.get("SMATCHET_PLAN_STAMP_ALL") == "1"
+touched_plans = None if STAMP_ALL else _touched_plans()
+
 rows = []
 placeholder_slugs = []
+unstamped = []   # (path, resolved_date) for plans with no plan-date marker yet
 for fn in sorted(os.listdir(archive_dir)):
     if not fn.endswith(".md") or fn.startswith("_"):
         continue
     slug = fn[:-3]
     path = os.path.join(archive_dir, fn)
-    date = git_first_date(path)
+    # Marker FIRST; git only for plans not yet stamped (legacy, or a plan being
+    # archived in this very run). See marker_date().
+    date = marker_date(path)
+    if not date:
+        date = git_first_date(path)
+        if date != PLACEHOLDER:
+            # Row still reports the git-derived date either way; only WRITING is
+            # scoped. An out-of-scope plan simply stays unstamped, exactly as it
+            # is on develop today.
+            # relpath first: git emits repo-root-relative paths, and the cwd is the
+            # repo root — so an absolute or ./-prefixed archive_dir override would
+            # never match and silently stamp nothing.
+            if touched_plans is None or os.path.relpath(path).replace(os.sep, "/") in touched_plans:
+                unstamped.append((path, date))
     if date == PLACEHOLDER:
         placeholder_slugs.append(slug)
     summ = summary_for(path).replace("|", "\\|")
+    # A summary/H1 carrying the literal block markers would be written into the
+    # generated block, and the next run's content.index(end) would split at the
+    # INJECTED marker inside the row — every subsequent --fix appends garbage and
+    # --check has no fixed point (verified by repro: fix -> DRIFT -> fix appends
+    # a duplicate row-fragment + second END marker; the printed "run --fix"
+    # remedy makes it strictly worse, and under a PLAN_INDEX_PAT the autosync
+    # would loop bot-commits). Filenames are covered by the kebab-case naming
+    # gate; summary CONTENT has no other gate, so refuse here, naming the plan.
+    if begin in summ or end in summ:
+        print("test-plan-index: REFUSING — %s's index-summary/H1 contains the "
+              "auto-plan-index block marker; remove it (it would corrupt the "
+              "generated INDEX block irrecoverably)" % path, file=sys.stderr)
+        sys.exit(2)
     # link relative to the index file's directory
     href = os.path.relpath(path, os.path.dirname(index_file)).replace(os.sep, "/")
     rows.append((date, slug, "| [`%s`](%s) | %s | %s |" % (slug, href, date, summ)))
@@ -197,7 +441,60 @@ pre = content[:content.index(begin)]
 post = content[content.index(end) + len(end):]
 rebuilt = pre + new_block + post
 
+def stamp_markers():
+    """Write `<!-- plan-date: YYYY-MM-DD -->` into plans that lack one.
+
+    Only under --fix, and only from a date git actually resolved -- never the
+    placeholder. Placed directly after the H1 so it sits with the other
+    machine-read marker (`index-summary`) rather than at an arbitrary offset.
+    Idempotent: a plan that already carries a marker is never in `unstamped`.
+    """
+    stamped = []
+    for path, date in unstamped:
+        with open(path, encoding="utf-8") as f:
+            lines = f.readlines()
+        marker = "<!-- plan-date: %s -->\n" % date
+        # A plan can reach here WITH a marker already present: marker_date()
+        # rejects an impossible date like 2026-99-99, so the plan counts as
+        # unstamped. REPLACE that line rather than inserting a second marker —
+        # two markers in one file read as a contradiction to anyone opening it,
+        # even though the first (valid) one would win.
+        replaced = False
+        for i, line in enumerate(lines):
+            if PLAN_DATE_DECL_RE.match(line):
+                lines[i] = marker
+                replaced = True
+                break
+        if replaced:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.writelines(lines)
+            stamped.append(os.path.basename(path))
+            continue
+        ins = 0
+        for i, line in enumerate(lines):
+            if line.startswith("# "):
+                ins = i + 1
+                break
+        # Keep a blank line between the H1 and the marker when the H1 is
+        # immediately followed by prose, so the rendered page is unchanged.
+        block = ["\n", marker] if ins > 0 and ins < len(lines) and lines[ins].strip() else [marker]
+        lines[ins:ins] = block
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.writelines(lines)
+        stamped.append(os.path.basename(path))
+    return stamped
+
 if rebuilt == content:
+    # The index is already correct, but plans may still be UNSTAMPED — that is
+    # the migration case, and also the case for a plan archived by this very run
+    # whose git date happens to match. Stamping is what makes the date immune to
+    # the next squash, so --fix must still do it.
+    if mode == "fix" and unstamped:
+        stamped = stamp_markers()
+        print("test-plan-index: index up to date (%d plans); stamped plan-date into %d plan(s)"
+              % (len(rows), len(stamped)))
+        print("Passed: 1  Failed: 0")
+        sys.exit(0)
     print("test-plan-index: index up to date (%d plans)" % len(rows))
     print("Passed: 1  Failed: 0")
     sys.exit(0)
@@ -224,9 +521,14 @@ if mode == "fix":
               file=sys.stderr)
         print("Passed: 0  Failed: 1")
         sys.exit(2)
+    stamped = stamp_markers()
     with open(index_file, "w", encoding="utf-8", newline="\n") as f:
         f.write(rebuilt)
-    print("test-plan-index: rewrote index (%d plans)" % len(rows))
+    if stamped:
+        print("test-plan-index: rewrote index (%d plans); stamped plan-date into %d plan(s)"
+              % (len(rows), len(stamped)))
+    else:
+        print("test-plan-index: rewrote index (%d plans)" % len(rows))
     print("Passed: 1  Failed: 0")
     sys.exit(0)
 

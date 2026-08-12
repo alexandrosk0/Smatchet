@@ -108,7 +108,7 @@ review agent to score. The regression is expressible as a bats case (above),
 which is the stronger form here.
 
 ### Filed as
-[`categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md`](categories/tooling/2026-08-07-postmortem-owed-prose-mention-false-dedup.md)
+[`categories/applied.md` § postmortem-owed-prose-mention-false-dedup](categories/applied.md)
 ## 2026-08-06 · PR #1948 · override: `cr-out-of-band` used to unwedge a required CR gate that could not reach a verdict
 
 ### What escaped
@@ -278,7 +278,7 @@ Note the two workarounds already sitting in this script for the *same underlying
 None — not agent-reviewable. The miss is a determinism property of a CI generator's input (git history vs file content), not a defect visible in #1937's diff; a reviewer reading that PR would have seen a correct index row, because it *was* correct until the merge rewrote its basis.
 
 ### Filed as
-This entry + the one-line index resync in PR #1944 (instance) + [`categories/tooling/2026-08-05-plan-index-date-derived-from-mutable-git-history.md`](categories/tooling/2026-08-05-plan-index-date-derived-from-mutable-git-history.md) (P1, tooling — the marker-based fix and the develop-tip assertion).
+This entry + the one-line index resync in PR #1944 (instance) + [`categories/applied.md` § plan-index-date-derived-from-mutable-git-history](categories/applied.md) (P1, tooling — the marker-based fix and the develop-tip assertion).
 
 ## 2026-08-03 · PR #495 · a shipped plan's § Deviations closed a planned file-row by asserting a delivery that was never made
 
@@ -292,7 +292,7 @@ Blameless — a **name conflation with no verification surface**. `build_standal
 New delta-gated rule **`plan-claim-anchor`** — `agents/scripts/core/test-plan-claim-anchors.sh`, joining the existing plan-doc gate family in the "Doc anchors + agent contract" doc-validation job. Scoped to a plan's **§ Deviations** / **§ Implementation log** sections only: a line asserting pre-existing delivery (`already had|has|have|exists|existed|implemented|landed|shipped`, `was already`) must carry a verifiable citation — a link or backticked ref with a `:<line>` suffix, or a `#<PR>` / commit-sha reference. Delta-gated vs `origin/develop` and baseline-grandfathered (measured 2026-08-03, claim pattern above + anchor pattern `:<line>` / `#<2+ digits>` / 7-40-char hex sha, over `## Deviations` / `## Implementation log` sections in `plans/{shipped,active}`: **38** claims across 30 files, **25 unanchored** — all grandfathered; only NEW claims must anchor. The gate's `--selftest` re-derives this baseline rather than hardcoding it), with `SMATCHET_DEVIATION(rule=plan-claim-anchor; …)` for claims about state outside the repo (e.g. GitHub branch-protection API state, which has no `file:line`). The gate cannot prove a claim true; it forces the author to point at the code — and **there is no line to point at for a vcvars import that does not exist**, which is precisely where #495 would have stopped. Deliberately **not** an extension of `postmortem-owed.sh`: this class carries no merge signal, so detection belongs at doc-gate time.
 
 ### Filed as
-[`categories/tooling/2026-08-03-plan-post-ship-claims-unverified.md`](categories/tooling/2026-08-03-plan-post-ship-claims-unverified.md) (P1, tooling)
+[`categories/applied.md` § plan-post-ship-claims-unverified](categories/applied.md) (P1, tooling)
 
 ## 2026-06-28 · PR #1574 (introducer), #1576, #1577 (rode past) · red non-required, OFF-meant-to-block-allow-list `Bucket-E Jira fixture-backend (Mesa GL, hard)` merged on 3 PRs
 
