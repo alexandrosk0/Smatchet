@@ -1174,7 +1174,7 @@ JSON
     _combined_heading_case '## 2026-06-10 · PR #906, #907, #908 · Windows + MSVC red at merge'
 }
 
-@test "dedup: an escape·collateral heading suppresses the collateral-field PRs" {
+@test "dedup: an escape/collateral heading suppresses the collateral-field PRs" {
     # The live ledger's other combined shape (postmortems.md, 2026-06-27 entry)
     # puts escape and collateral PRs in SEPARATE ·-fields:
     #   `## <date> · PR #A (escape) · PR #B, #C, #D (collateral) · <trigger>`.
