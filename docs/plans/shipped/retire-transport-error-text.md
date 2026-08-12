@@ -1,5 +1,4 @@
 # Plan — Retire the IsTrackerTransportErrorText string heuristic (N12)
-<!-- plan-date: 2026-07-11 -->
 
 > **Slug**: `retire-transport-error-text`
 >

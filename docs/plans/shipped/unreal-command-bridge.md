@@ -1,5 +1,4 @@
 # Plan - Unreal Async Command Bridge
-<!-- plan-date: 2026-05-25 -->
 
 > **Slug**: `unreal-command-bridge`
 

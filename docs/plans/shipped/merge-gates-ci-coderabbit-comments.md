@@ -1,5 +1,4 @@
 # Plan: Merge Gates — CI green + CodeRabbit + user comments before merge
-<!-- plan-date: 2026-05-19 -->
 
 ## Context
 

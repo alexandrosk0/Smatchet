@@ -1,6 +1,4 @@
 # Add a `test-rig` agent + CTest target for `Source_Core` pure-logic helpers
-
-<!-- plan-date: 2026-05-15 -->
 <!-- index-summary: Add `test-rig` agent + CTest target for `Source_Core` pure-logic helpers using doctest. -->
 
 ## Context

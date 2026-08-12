@@ -1,5 +1,4 @@
 # Plan — ConfigManager: safe + coalesced config writes
-<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `config-io-safe-coalesced-writes`.
 >

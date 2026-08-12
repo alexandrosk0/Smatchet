@@ -1,5 +1,4 @@
 # Plan — CI / gate false-positive hardening (Cluster C)
-<!-- plan-date: 2026-06-18 -->
 
 > **Slug**: `ci-falsepositive-hardening` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — Memory budget & lifetime hardening
-<!-- plan-date: 2026-05-31 -->
 
 > **Slug**: `memory-budget-and-lifetime-hardening` (matches this file's basename without `.md`).
 >

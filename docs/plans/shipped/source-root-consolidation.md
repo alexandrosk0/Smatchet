@@ -1,5 +1,4 @@
 # Plan — consolidate all C++ under a single `Source/` root
-<!-- plan-date: 2026-05-29 -->
 
 > **Slug**: `source-root-consolidation` (matches this file's basename without `.md`).
 >

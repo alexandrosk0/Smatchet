@@ -1,5 +1,4 @@
 # All gates blocking — flip every CI test gate to merge-blocking + fix the reds
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `all-gates-blocking`
 > **Status**: `shipped` (2026-07-05 — flip live on develop; texture-guard held advisory per § Deviations)

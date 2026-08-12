@@ -1,5 +1,4 @@
 # Plan — God-file splits (architecture review item 4)
-<!-- plan-date: 2026-07-11 -->
 
 > **Slug**: `god-file-splits` (matches this file's basename without `.md`).
 >

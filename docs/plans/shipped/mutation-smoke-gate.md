@@ -1,5 +1,4 @@
 # Plan — Mutation-smoke gate (testing-surface-roadmap Slice F)
-<!-- plan-date: 2026-07-10 -->
 
 > **Slug**: `mutation-smoke-gate` (matches this file's basename without `.md`).
 >

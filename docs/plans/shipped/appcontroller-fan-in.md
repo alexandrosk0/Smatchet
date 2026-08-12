@@ -1,5 +1,4 @@
 # Plan — AppController god-header fan-in stabilization
-<!-- plan-date: 2026-06-15 -->
 
 > **Slug**: `appcontroller-fan-in` (matches this file's basename without `.md`).
 >

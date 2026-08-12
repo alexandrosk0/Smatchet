@@ -1,5 +1,4 @@
 # Lua-host friend drop — re-scope of Track B / B3 post-PR #144
-<!-- plan-date: 2026-05-16 -->
 
 **Status**: drafted 2026-05-16 by `architect` for orchestrator implementation.
 **Originating plan**: `docs/plans/shipped/large-files-and-phase-2.md` § Track B.

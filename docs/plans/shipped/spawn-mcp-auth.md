@@ -1,5 +1,4 @@
 # Plan — spawn MCP auth handshake unblock + product fix
-<!-- plan-date: 2026-06-27 -->
 
 **Slug:** `spawn-mcp-auth`
 **Owner:** orchestrator (Config + MCP + command-system)

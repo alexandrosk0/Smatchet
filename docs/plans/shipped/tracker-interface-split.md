@@ -1,5 +1,4 @@
 # Plan — ITrackerClient Interface Split
-<!-- plan-date: 2026-05-26 -->
 
 > **Slug**: `tracker-interface-split`
 

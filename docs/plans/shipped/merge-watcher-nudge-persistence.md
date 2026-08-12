@@ -1,5 +1,4 @@
 # Plan — Persist cross-poll gate state (CR-nudge guard + STALE streak) across watcher poll cycles
-<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `merge-watcher-nudge-persistence` (matches this file's basename without `.md`).
 >

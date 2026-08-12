@@ -1,6 +1,5 @@
 <!-- index-summary: absorb the Whip-Process work-item loop (spec → design → plan → impl → close, multi-model review panels, ledgers, linter) into Smatchet's native agent system — no submodule, PowerShell tooling ported to bash/python, panel wired into the verifier-scored review gate. -->
 # Plan — Absorb Whip-Process into the Smatchet agent system
-<!-- plan-date: 2026-08-06 -->
 
 > **Slug**: `absorb-whip-process`
 >

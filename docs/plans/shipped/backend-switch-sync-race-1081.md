@@ -1,6 +1,5 @@
 <!-- index-summary: Fix #1081 backend-switch (Jira→GitHub) `std::terminate` — publish-under-lock, `backendGeneration_` token gating stale-worker writes + replay-refresh TOCTOU re-check, captured-key replay latch, and `PaneSyncKickPolicy` sync-storm damping. -->
 # backend-switch-sync-race-1081 — fix plan
-<!-- plan-date: 2026-06-09 -->
 
 Fixes GitHub issue #1081: **crash: backend switch (Jira→GitHub) races in-flight sync workers → `std::terminate`**. Diagnosis by debug-detective (trusted, not re-derived here): the backend-swapped branch of `TicketSyncService::SwapBackendIfTrackerChanged` publishes the empty ActiveTickets snapshot OUTSIDE `ActiveTicketsMutex()` (finding A — shared_ptr control-block UB against worker-thread writers/readers, primary terminate candidate), and in-flight workers (offline replay completions, `UpdateTicket`, the `EnsurePaneLiveSyncStarted` main-thread post) apply stale-backend results into the post-switch context (finding B — TOCTOU contamination + stale-cfg backend flip-flop), amplified by an unbounded frame-rate sync-retry storm on fast-fail (`OnStreamingSyncSessionFinished(fetchOk=false)` re-arms `initialSyncKicked` every failed session).
 

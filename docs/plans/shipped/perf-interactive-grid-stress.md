@@ -1,5 +1,4 @@
 # Plan — interactive-grid-stress (active 8-pane mixed-backend perf probe)
-<!-- plan-date: 2026-06-20 -->
 
 > **Slug**: `perf-interactive-grid-stress` (matches this file's basename without `.md`).
 >

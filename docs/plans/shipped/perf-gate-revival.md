@@ -1,5 +1,4 @@
 # Perf-gate revival (Pillar 1) — execution playbook
-<!-- plan-date: 2026-06-06 -->
 
 > **STATUS: COMPLETE — GATE REQUIRED (2026-06-07).** All steps done: headless
 > launch proven on CI (steps 1–3), 4 human-approved `ci-windows-latest`

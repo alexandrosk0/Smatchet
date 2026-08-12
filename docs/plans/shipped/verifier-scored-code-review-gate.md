@@ -1,5 +1,4 @@
 # Plan — Verifier-scored code-review gate
-<!-- plan-date: 2026-08-06 -->
 
 > **Slug**: `verifier-scored-code-review-gate`
 >

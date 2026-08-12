@@ -1,5 +1,4 @@
 # Plan — Agent-audit remediation (portfolio eval + infra-feedback fixes)
-<!-- plan-date: 2026-06-05 -->
 
 > **Slug**: `agent-audit-remediation` (matches this file's basename without `.md`).
 >

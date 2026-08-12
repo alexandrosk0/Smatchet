@@ -1,5 +1,4 @@
 # Plan — Merge-watcher clone-key + BEHIND-advance hardening (Cluster B)
-<!-- plan-date: 2026-06-18 -->
 
 > **Slug**: `merge-watcher-clone-and-behind-hardening` (matches this file's basename without `.md`).
 >

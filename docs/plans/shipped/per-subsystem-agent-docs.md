@@ -1,5 +1,4 @@
 # Plan — Per-subsystem agent docs (rules + glossary + orientation)
-<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `per-subsystem-agent-docs` (matches this file's basename without `.md`).
 >

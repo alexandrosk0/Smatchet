@@ -1,5 +1,4 @@
 # Plan — De-duplicate tracker query-suggest + AI-client SSE clones
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `dedup-tracker-query-and-ai-client-clones` (matches this file's basename without `.md`).
 >

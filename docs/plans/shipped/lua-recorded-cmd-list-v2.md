@@ -1,6 +1,4 @@
 # Lua recorded ImGui command list — v2 follow-ups
-
-<!-- plan-date: 2026-05-14 -->
 <!-- index-summary: Stub tracking v2 follow-ups. B1 (per-window predicates) + C1 (focus-aware InputText) graduated to active plans; A1/D1/A2/E1/F1 still open, B2 subsumed by B1. -->
 
 > **Status**: stub. Tracks the v2 follow-ups enumerated in [`lua-recorded-cmd-list.md`](lua-recorded-cmd-list.md) §Out-of-scope. **B1** and **C1** have graduated to active plans ([per-window predicates](lua-window-dirty-predicates.md), [focus-aware InputText](lua-focus-aware-inputtext.md)); **B2** is subsumed by B1. The rest each have a short context block + open questions and are not scoped to ship yet. Flesh out into a separate `docs/plans/active/<slug>.md` when work starts on a specific item.

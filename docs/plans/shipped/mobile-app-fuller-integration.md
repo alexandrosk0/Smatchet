@@ -1,5 +1,4 @@
 # Mobile app — fuller integration (Phase 1)
-<!-- plan-date: 2026-06-10 -->
 
 > **Slug**: `mobile-app-fuller-integration`
 > **Status**: `shipped` — **all seven Phase-1 slices merged to `develop`** (P1.0 #1357, P1.1, P1.2 #1547, P1.3 #1552, P1.4 #1572, P1.5 #1568, P1.6 #1563 + P1.6b #1571). Closed out + archived active→shipped 2026-07-04. Residual follow-ups (bucket-E ImGui-Test-Engine automation for P1.2/P1.3/P1.5 — CI-blocked on the Mesa-GL lane; P1.6b metrics-scaling Scope-2; golden refresh; on-device emulator confirmations) are tracked outside this plan in `docs/self-improvement/categories/{test,debt}/`, not as open plan slices. The `d8ea206c` "Today" analyses below are **historical** (that commit is no longer in `develop`'s history).

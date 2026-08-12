@@ -1,5 +1,4 @@
 # Plan — Merge-time gate-snapshot ledger (lossless gate-escape detection)
-<!-- plan-date: 2026-06-05 -->
 
 > **Slug**: `merge-snapshot-ledger` (matches this file's basename without `.md`).
 >

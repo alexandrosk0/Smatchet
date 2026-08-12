@@ -1,6 +1,4 @@
 # Plan — Documentation + agentic-layer reorganization for **project-independence**
-
-<!-- plan-date: 2026-05-29 -->
 <!-- index-summary: Docs + agentic-layer reorganization for project-independence (Phases A-F): agents/core+project split, project.config seam, docs/plans+self-improvement taxonomy, STRUCTURE.md, 8 CI guards -->
 
 > **Slug**: `agentic-layer-project-independence`

@@ -1,5 +1,4 @@
 # Plan — Coverage-gap Tier 3: registry-wide command error-envelope contract sweep
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `coverage-gap-tier3-command-contract`
 >

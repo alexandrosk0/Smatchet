@@ -1,5 +1,4 @@
 # Plan — Plane custom (UUID) properties: serialize instead of silently dropping (C4)
-<!-- plan-date: 2026-07-11 -->
 
 > **Slug**: `plane-custom-properties`
 >

@@ -1,5 +1,4 @@
 # Plan — CodeQL c-cpp code scanning
-<!-- plan-date: 2026-06-17 -->
 
 > **Slug**: `codeql-code-scanning` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — User Info Window
-<!-- plan-date: 2026-06-06 -->
 
 > **Slug**: `user-info-window` (matches this file's basename without `.md`).
 >

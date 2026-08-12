@@ -1,5 +1,4 @@
 # Agent docs improvements — 5-action P2/P3 backlog clearance
-<!-- plan-date: 2026-05-18 -->
 
 **Context**: Eight structural / governance issues raised in agent feedback (AGENTS.md length, backlog overflow, missing autonomy defaults, stale security surface, thin glossary, lock terminology, vexp coupling, missing post-ship protocol). After validation against the tree + backlog cross-check + design-doc clash check, scope locked to 5 high-value P2/P3 actions that clear the most pressing fires. Remaining 4 items parked. Total implementation: ~95 min.
 

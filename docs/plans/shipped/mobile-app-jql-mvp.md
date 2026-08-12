@@ -1,5 +1,4 @@
 # Plan — Mobile app (Android-first) — Jira JQL → editable-column ticket list
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `mobile-app-jql-mvp` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — error-message quality pass
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `error-message-quality-pass`
 >

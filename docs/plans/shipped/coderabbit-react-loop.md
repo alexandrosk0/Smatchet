@@ -1,5 +1,4 @@
 # PR-feedback react loop — CodeRabbit + CI failures (slim extension on `agentic-coding-handoff`)
-<!-- plan-date: 2026-05-18 -->
 
 > ## Status — HISTORICAL (2026-05-21 v2 cleanup)
 >

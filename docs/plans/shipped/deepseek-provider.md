@@ -1,5 +1,4 @@
 # DeepSeek first-class provider + auto-clear chat on model change
-<!-- plan-date: 2026-05-19 -->
 
 ## Goal
 

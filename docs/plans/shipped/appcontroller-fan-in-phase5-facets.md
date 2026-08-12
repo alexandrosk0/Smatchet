@@ -1,5 +1,4 @@
 # Plan — AppController fan-in Phase 5: `IApp*` facet carving
-<!-- plan-date: 2026-07-06 -->
 
 > **Slug**: `appcontroller-fan-in-phase5-facets`
 >

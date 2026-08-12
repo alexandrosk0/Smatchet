@@ -1,5 +1,4 @@
 # Plan — `sanitizer-required-context`: promote both Sanitizer PR lanes to required
-<!-- plan-date: 2026-06-15 -->
 
 Slug: `sanitizer-required-context` · Owner: orchestrator · Started: 2026-06-15 · Loop-mode: `in`
 

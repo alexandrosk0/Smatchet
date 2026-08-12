@@ -1,5 +1,4 @@
 # Plan — Adopt Workflow multi-agent orchestration into the agentic infra
-<!-- plan-date: 2026-06-05 -->
 
 > **Slug**: `adopt-workflow-orchestration` (matches this file's basename without `.md`).
 >

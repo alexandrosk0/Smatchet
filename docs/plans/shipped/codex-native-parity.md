@@ -1,5 +1,4 @@
 # Plan - Codex native parity
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `codex-native-parity`
 >

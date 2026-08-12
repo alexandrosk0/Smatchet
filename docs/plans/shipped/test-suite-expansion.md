@@ -1,6 +1,4 @@
 # Test suite expansion — phased autonomous roadmap
-
-<!-- plan-date: 2026-05-16 -->
 <!-- index-summary: Test-suite expansion — Phase 1 pure-logic doctests, Phase 2 CallstackParser, Phase 3 HTTP mock + SQLite fixture + cache/audit/integration tests. Phase 3 hostile-fixture + several `<Unit>Parse.cpp` TU splits deferred — see plan § Implementation log. -->
 
 ## Context

@@ -1,5 +1,4 @@
 # Plan — B10: encode deferred process forcing-rules into the docs
-<!-- plan-date: 2026-06-02 -->
 
 > **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
 >

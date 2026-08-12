@@ -1,5 +1,4 @@
 # Slice E2 — libFuzzer harness for the untrusted-byte parsers
-<!-- plan-date: 2026-06-15 -->
 
 > **Status:** `shipped` — all 6 fuzz targets on develop. E2a (harness + `fuzz_image_dims`) via #1296; the remaining 5 drivers shipped under the child plan [`slice-e2b-libfuzzer.md`](slice-e2b-libfuzzer.md) (PR 2a #1301 + PR 2b #1307). Surface complete.
 

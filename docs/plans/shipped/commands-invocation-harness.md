@@ -1,5 +1,4 @@
 # Plan — Tier-3 Commands invocation harness: table-driven builtin-command dispatch tests
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `commands-invocation-harness`
 >

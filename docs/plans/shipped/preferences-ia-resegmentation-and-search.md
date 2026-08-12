@@ -1,5 +1,4 @@
 # Plan — Preferences IA re-segmentation + global in-place search
-<!-- plan-date: 2026-08-06 -->
 
 > **Slug**: `preferences-ia-resegmentation-and-search` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — PR intent capture (prompt → PR `## Intent`, redacted)
-<!-- plan-date: 2026-06-15 -->
 
 > **Slug**: `pr-intent-capture` (matches this file's basename without `.md`).
 >

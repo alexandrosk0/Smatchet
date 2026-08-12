@@ -1,5 +1,4 @@
 # Plan — Close the prevention-gate gaps (historical-review recurrence-proofing)
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `close-gate-gaps` (matches this file's basename without `.md`).
 >

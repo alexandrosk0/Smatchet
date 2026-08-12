@@ -1,5 +1,4 @@
 # Plan — Lightweight ticket-change monitor (notify on remote changes)
-<!-- plan-date: 2026-06-20 -->
 
 > **Slug**: `ticket-change-monitor` (matches this file's basename without `.md`).
 >
