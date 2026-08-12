@@ -163,9 +163,18 @@ if [ "$MODE" = "selftest" ]; then
     # 2026-99-99 was fixed while `invalid` was left beside a second inserted
     # marker — the same contradiction, reached by a different payload.
     printf '# Plan — Junk\n\n<!-- plan-date: invalid -->\n\nBody.\n' > "$_shipped/junk.md" || exit 90
+    # An unstamped plan that this change does NOT touch. Stamping is scoped to
+    # the diff, so it must come out UNCHANGED — see (4d).
+    printf '# Plan — Untouched\n\nBody.\n' > "$_shipped/untouched.md" || exit 90
     printf '# INDEX\n\n<!-- BEGIN auto-plan-index -->\n<!-- END auto-plan-index -->\n' > "$_pd/INDEX.md" || exit 90
     git add -A || exit 90
     git commit -qm only-commit-is-today || exit 90
+    # The plans under test have to be IN the change for --fix to stamp them,
+    # which is the real shape too: a plan being archived is part of the diff.
+    # They must still be COMMITTED first — an untracked plan has no history at
+    # any path, so no date resolves and there is nothing to stamp.
+    printf 'Touched.\n' >> "$_shipped/bad.md" || exit 90
+    printf 'Touched.\n' >> "$_shipped/junk.md" || exit 90
     # (4a) STABILITY: the row must carry the MARKER date, not the (today) commit
     # date, even though the file's entire history is that one commit.
     bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 91
@@ -176,6 +185,15 @@ if [ "$MODE" = "selftest" ]; then
     grep -q 'plan-date: 2026-99-99' "$_shipped/bad.md" && exit 95
     [ "$(grep -c 'plan-date' "$_shipped/junk.md")" = "1" ] || exit 96
     grep -q 'plan-date: invalid' "$_shipped/junk.md" && exit 96
+    # (4d) SCOPE: an unstamped plan OUTSIDE the change must not be rewritten.
+    # Unscoped, --fix stamped every unstamped plan, so the CI autosync pushed
+    # all 188 back-catalogue markers onto the first PR branch that triggered it
+    # — 192 files, past CodeRabbit's 100-file limit, and the required CR gate
+    # could never pass. Observed on PR #1999.
+    grep -q 'plan-date' "$_shipped/untouched.md" && exit 97
+    # (4e) and the one-shot migration escape still reaches it.
+    SMATCHET_PLAN_STAMP_ALL=1 bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 98
+    grep -q 'plan-date' "$_shipped/untouched.md" || exit 98
     # (4b) DISAGREEMENT: a marker that no longer matches its committed row must
     # FAIL --check rather than be silently re-derived from git.
     sed -i.bak 's/plan-date: 2020-01-02/plan-date: 2019-05-05/' "$_shipped/marked.md" || exit 90
@@ -193,6 +211,8 @@ if [ "$MODE" = "selftest" ]; then
     94) echo "test-plan-index --selftest: FAIL — an impossible plan-date (2026-99-99) was treated as authoritative" >&2; fail=1 ;;
     95) echo "test-plan-index --selftest: FAIL — an impossible plan-date was not REPLACED in place (duplicate or surviving marker)" >&2; fail=1 ;;
     96) echo "test-plan-index --selftest: FAIL — a MALFORMED plan-date declaration was not replaced in place (duplicate or surviving marker)" >&2; fail=1 ;;
+    97) echo "test-plan-index --selftest: FAIL — --fix stamped a plan OUTSIDE the change; unscoped, this makes CI autosync push the whole back catalogue onto a PR branch (PR #1999: 192 files, CR review skipped, required gate wedged)" >&2; fail=1 ;;
+    98) echo "test-plan-index --selftest: FAIL — SMATCHET_PLAN_STAMP_ALL=1 did not stamp an untouched plan (the one-shot migration escape is broken)" >&2; fail=1 ;;
     *)  echo "test-plan-index --selftest: FAIL — marker fixture exited $_st_rc" >&2; fail=1 ;;
   esac
   rm -rf "$_st_tmp"
@@ -308,6 +328,40 @@ if not os.path.isdir(archive_dir):
 
 PLACEHOLDER = "—"  # em-dash: emitted when no first-commit date resolves.
 
+def _touched_plans():
+    """Plans this change actually touches, vs origin/develop + working tree.
+
+    STAMPING SCOPE, and it is load-bearing. `--fix` stamping every unstamped
+    plan turns the CI autosync into a bulk migration: with all 188 archived
+    plans unstamped, the first PR to trigger autosync had 188 marker commits
+    pushed onto its branch by github-actions[bot]. That took PR #1999 to 192
+    files, CodeRabbit refuses to review past 100, and the required CR gate can
+    then never pass — the PR wedges with no self-healing path. Observed, not
+    theorised: it happened to the very PR that introduced the marker.
+
+    The behaviour worth keeping is narrow — a plan being ARCHIVED in this change
+    gets its date pinned before the squash can rewrite it — and that plan is by
+    definition in the diff. Migrating the back catalogue is a deliberate one-shot
+    (`--stamp-all`), reviewed on its own, not a side effect of touching a doc.
+
+    An EMPTY set on git failure is the safe answer: it stamps nothing rather
+    than everything, so a git hiccup cannot re-trigger the mass rewrite.
+    """
+    touched = set()
+    for args in (["diff", "--name-only", "origin/develop...HEAD"],
+                 ["diff", "--name-only", "HEAD"],
+                 ["ls-files", "--others", "--exclude-standard"]):
+        try:
+            out = subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
+        except (subprocess.CalledProcessError, OSError):
+            continue
+        touched.update(p.strip() for p in out.splitlines() if p.strip())
+    return touched
+
+
+STAMP_ALL = os.environ.get("SMATCHET_PLAN_STAMP_ALL") == "1"
+touched_plans = None if STAMP_ALL else _touched_plans()
+
 rows = []
 placeholder_slugs = []
 unstamped = []   # (path, resolved_date) for plans with no plan-date marker yet
@@ -322,7 +376,11 @@ for fn in sorted(os.listdir(archive_dir)):
     if not date:
         date = git_first_date(path)
         if date != PLACEHOLDER:
-            unstamped.append((path, date))
+            # Row still reports the git-derived date either way; only WRITING is
+            # scoped. An out-of-scope plan simply stays unstamped, exactly as it
+            # is on develop today.
+            if touched_plans is None or path.replace(os.sep, "/") in touched_plans:
+                unstamped.append((path, date))
     if date == PLACEHOLDER:
         placeholder_slugs.append(slug)
     summ = summary_for(path).replace("|", "\\|")
