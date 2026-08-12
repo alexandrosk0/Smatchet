@@ -1,4 +1,5 @@
 # Plan — Tighten Logging and RAII Policy: Named Escape Hatches
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `policy-tighten-logging-raii`
 

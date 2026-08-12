@@ -234,7 +234,15 @@ jobs:
             exit 0
           fi
           bash agents/scripts/core/test-plan-index.sh --fix
-          if git diff --quiet -- docs/plans/INDEX.md; then
+          # Scope covers docs/plans/shipped/ as well as the INDEX, because --fix
+          # now ALSO stamps `<!-- plan-date: … -->` into plans that lack one
+          # (plan-index-date-derived-from-mutable-git-history). Two failure modes
+          # if this stays INDEX-only: a run where the INDEX is already in sync but
+          # markers were written exits 0 and DISCARDS them, and the commit below
+          # stages only the INDEX. Either way the plan lands unstamped and its row
+          # goes back to being derived from git history the squash rewrites —
+          # exactly the drift the marker exists to stop.
+          if git diff --quiet -- docs/plans/INDEX.md docs/plans/shipped/; then
             echo "plan INDEX already in sync — nothing to commit."
             exit 0
           fi
@@ -247,8 +255,8 @@ jobs:
             echo "::notice::plan INDEX drifted — auto-syncing via PLAN_INDEX_PAT (re-triggers CI)."
             git config user.name  "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add docs/plans/INDEX.md
-            git commit -m "chore(plan): auto-sync shipped-plan INDEX"
+            git add docs/plans/INDEX.md docs/plans/shipped/
+            git commit -m "chore(plan): auto-sync shipped-plan INDEX + plan-date markers"
             git push origin "HEAD:$HEAD_REF"
             exit 0
           fi
@@ -257,12 +265,12 @@ jobs:
           # CI, freezing the PR on a stale pre-sync failure. So instead FAIL
           # LOUDLY on the current head — the author re-pushes the fix as
           # themselves, which re-triggers CI cleanly.
-          echo "::error::docs/plans/INDEX.md is out of sync with docs/plans/shipped/. Drift below."
-          echo "----- INDEX drift (run the remedy to apply) -----"
-          git --no-pager diff -- docs/plans/INDEX.md
-          echo "-------------------------------------------------"
+          echo "::error::docs/plans/INDEX.md (and/or plan-date markers) out of sync with docs/plans/shipped/. Drift below."
+          echo "----- INDEX + plan-date drift (run the remedy to apply) -----"
+          git --no-pager diff -- docs/plans/INDEX.md docs/plans/shipped/
+          echo "-------------------------------------------------------------"
           echo "Remedy: bash agents/scripts/core/test-plan-index.sh --fix"
-          echo "        git add docs/plans/INDEX.md && git commit && git push"
+          echo "        git add docs/plans/INDEX.md docs/plans/shipped/ && git commit && git push"
           echo "(Auto-fix can be enabled by adding the PLAN_INDEX_PAT repo secret"
           echo " — fine-grained PAT, Contents: Read and write. See job header.)"
           exit 1

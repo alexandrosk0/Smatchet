@@ -1,4 +1,5 @@
 # Slice E2b — libFuzzer drivers for the 5 remaining untrusted-byte parsers (PR 2a + PR 2b)
+<!-- plan-date: 2026-06-15 -->
 
 **Status:** `shipped` — both PRs merged: **PR 2a (#1301)** + **PR 2b (#1307, merged 2026-06-16)**. All 5 drivers (`fuzz_cpp_lex`, `fuzz_callstack`, `fuzz_markdown_adf`, `fuzz_ai_sse`, `fuzz_ai_ndjson`) on develop; the Slice-E2 untrusted-byte-parser fuzz surface is complete.
 **Branch / worktree:** PR 2a shipped on `feat/slice-e2b-libfuzzer` (merged #1301). **PR 2b** on `feat/slice-e2b-ai-fuzzers` @ `C:\Dev\trees\slice-e2b-aifz` — ships **off `develop`** (unstacked; 2a already merged so its branch is push-closed), not stacked on 2a's branch. See §10 Deviations.

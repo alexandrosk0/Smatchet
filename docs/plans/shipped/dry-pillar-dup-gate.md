@@ -1,4 +1,5 @@
 # Plan — DRY Quality Pillar + duplication delta-gate
+<!-- plan-date: 2026-06-03 -->
 
 > **Slug**: `dry-pillar-dup-gate` (matches this file's basename without `.md`).
 >

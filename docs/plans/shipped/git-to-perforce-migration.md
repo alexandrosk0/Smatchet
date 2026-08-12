@@ -1,4 +1,5 @@
 # Plan — Perforce as local agent VCS (dual with git)
+<!-- plan-date: 2026-05-16 -->
 
 > **Slug**: `git-to-perforce-migration` (file's basename; retained for ref stability — see § Naming).
 > **Status**: in-progress — Phase 0 + Phase 1 implemented (see § Implementation log); Phase 2+ in flight.

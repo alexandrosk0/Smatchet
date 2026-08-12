@@ -1,4 +1,5 @@
 # Plan — CI build-time reduction (sccache + build-reuse + matrix rebalance)
+<!-- plan-date: 2026-06-03 -->
 
 > **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
 >

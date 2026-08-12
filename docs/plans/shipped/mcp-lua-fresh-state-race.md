@@ -1,4 +1,5 @@
 # Plan — MCP Lua execution: fresh per-call `sol::state` (cross-thread race fix)
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `mcp-lua-fresh-state-race`
 

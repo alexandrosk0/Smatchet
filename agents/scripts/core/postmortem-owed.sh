@@ -304,18 +304,35 @@ EOF
     return 0
 }
 
-# Already has a postmortem? (ledger references "PR #<n>")
-has_entry() {
+# Already has a postmortem? (a ledger ENTRY HEADING references "PR #<n>")
+#
+# Takes a PR NUMBER. Sha-keyed dedup (triggers 3+4) belongs to has_sha_entry.
+#
+# BOTH probes are heading-scoped, and that symmetry is the fix
+# (postmortem-owed-prose-mention-false-dedup, tooling P1). Probe 2 always was;
+# probe 1 was not, so it matched `PR #N` ANYWHERE in the file — and citing a PR
+# in prose is how these entries are normally written ("shipped in PR #1953",
+# "concurrently by PR #1078"). The effect was that any PR named in any entry's
+# body was PERMANENTLY and SILENTLY exempted from ever being nudged again, in
+# the one detector whose job is turning escapes into gates. Measured on the real
+# ledger at the time: 12 PR numbers were deduped by prose alone, none of them
+# with an entry of their own. #1962 was the reported instance — a genuine
+# override escape reported as a clean window.
+#
+# Scoping is safe against the opposite error (re-nudging a PR that IS
+# postmortemed): every PR-keyed heading in the ledger uses the documented
+# `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
+# real entry. The only heading carrying a bare `#N` without the `PR ` prefix is
+# an Issue reference, which was never in scope here.
+has_entry() {  # <pr-number>
     [ -f "$LEDGER" ] || return 1
-    # Match either a "PR #N" reference or a "commit <sha>" reference, so the
-    # commit-only revert/direct-push paths (which pass a sha) dedupe too.
-    grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
+    # The PR's own entry.
+    grep -qE "^#+ .*PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
     # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
     # heading written `PR #A, #B, #C` OR slash-joined `PR #A/#B/#C` — only the first
-    # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. Match #N
-    # inside such a heading line (scoped to `^#+ … PR #…` so a #N mention in prose
-    # body can't false-suppress a real owe). The `/` in the separator class fixes
-    # slash-joined trailers (`#906/#907/#908`) that used to re-flag every SessionStart.
+    # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. The `/`
+    # in the separator class fixes slash-joined trailers (`#906/#907/#908`) that
+    # used to re-flag every SessionStart.
     grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
 }
 

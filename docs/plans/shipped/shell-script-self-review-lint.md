@@ -1,4 +1,5 @@
 # Plan — Shell-script self-review lint
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `shell-script-self-review-lint`.
 

@@ -1,4 +1,5 @@
 # Plan — Reduce agent-prompt + AGENTS.md bloat (extract to skills + rule-docs, size gate)
+<!-- plan-date: 2026-06-04 -->
 
 > **Slug**: `reduce-agent-prompt-bloat` (matches this file's basename without `.md`).
 >

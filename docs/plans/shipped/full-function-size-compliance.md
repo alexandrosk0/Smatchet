@@ -1,4 +1,5 @@
 # Plan — Full Function-Size Compliance (zero grandfathered monoliths)
+<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `full-function-size-compliance`
 >

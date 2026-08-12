@@ -1061,3 +1061,70 @@ JSON
     [[ "$output" == *"PR #8040"* ]]
     [[ "$output" == *"required-absent"* ]]
 }
+
+# ── has_entry dedups on ENTRY HEADINGS, never on free prose ──────────────────
+# (postmortem-owed-prose-mention-false-dedup, tooling P1)
+# Citing a PR is how these entries are normally written — "shipped in PR #1953",
+# "concurrently by PR #1078". While probe 1 was unscoped, any such citation
+# PERMANENTLY and SILENTLY exempted that PR from ever being nudged, in the one
+# detector whose job is turning escapes into gates. The reported instance was
+# #1962: a real override escape reported as a clean window.
+
+@test "dedup: a PROSE mention of a PR does NOT suppress its own owed escape" {
+    # The exact shape observed in the ledger: an unrelated entry citing the PR
+    # in its body. #2006 has no entry of its own, so it is still owed.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-09 · PR #1937 · something else entirely
+
+This entry rests on the determinism fix shipped in PR #2006, which is cited
+here purely as prose and is not itself postmortemed.
+MD
+    prlist <<'JSON'
+[{"number":2006,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #2006"* ]]
+}
+
+@test "dedup: a heading in the documented shape still suppresses" {
+    # The other side of the same boundary — scoping must not re-nudge a PR that
+    # genuinely has an entry.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-10 · PR #2006 · Windows + MSVC red at merge
+MD
+    prlist <<'JSON'
+[{"number":2006,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #2006"* ]]
+}
+
+@test "dedup: a prose mention does not suppress a COMBINED-heading sibling either" {
+    # Probe 2 was already heading-scoped; this pins that prose cannot satisfy it
+    # by supplying the `PR #<other>` half from a body line.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+Body prose naming PR #900 and separately mentioning #907 in the same sentence.
+MD
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #907"* ]]
+}
+
+@test "dedup: a substring PR number does not cross-suppress" {
+    # #200 must not be deduped by an entry for #2006 (and vice versa) — the
+    # trailing-boundary class is what prevents it.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-10 · PR #2006 · Windows + MSVC red at merge
+MD
+    prlist <<'JSON'
+[{"number":200,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c4"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #200"* ]]
+}

@@ -1,4 +1,5 @@
 # Plan — Coverage threshold graduation (advisory → blocking)
+<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `coverage-threshold-graduation` (matches this file's basename without `.md`).
 >

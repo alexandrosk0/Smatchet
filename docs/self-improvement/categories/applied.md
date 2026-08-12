@@ -3725,3 +3725,209 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 
   Status: applied
   Last-reviewed: 2026-08-11
+
+- 2026-08-07 · claude-code · [tooling] · P1 — `postmortem-owed.sh`'s first dedup probe matches `PR #N` **anywhere** in the ledger, so a prose mention of a PR inside an unrelated entry permanently suppresses that PR's own gate-escape nudge
+
+  Observed after PR #1962 merged with `cr-out-of-band` +
+  `cr-disposition:cr-rate-limited` — a real override escape (CodeRabbit's
+  account quota was exhausted, so the diff was never reviewed). The escape owes
+  a postmortem by
+  [`AGENTS.md` § Self-improvement loop](../../../AGENTS.md), but
+  `bash agents/scripts/core/postmortem-owed.sh --list` reports
+  `no gate escapes owed a postmortem (last 20 merges clean)`. Four consecutive
+  invocations agree, so this is a deterministic miss, not a flake.
+
+  Mechanism. `has_entry()`
+  ([`postmortem-owed.sh:240-251`](../../../agents/scripts/core/postmortem-owed.sh))
+  runs two probes and the trigger-1 loop skips the PR when either fires:
+
+  ```bash
+  grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
+  grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+  ```
+
+  The **second** probe is correctly scoped to a heading line (`^#+ …`) — its
+  comment even states the intent: *"scoped to `^#+ …` so a #N mention in prose
+  body can't false-suppress a real owe"*. The **first** probe is not scoped at
+  all. It scans the whole file, so any sentence anywhere that happens to write
+  `PR #1962` satisfies it. Measured against `origin/develop`'s ledger:
+
+  ```
+  grep -cE "PR #1962([^0-9]|$)"        → 2     # prose, inside an unrelated entry
+  grep -cE "^#+ .*PR #1962([^0-9]|$)"  → 0     # no entry is actually filed
+  ```
+
+  Both hits are body prose in the 2026-08-05 `#1937` postmortem
+  ([`postmortems.md:2171,2184`](../postmortems.md)) — written by the very
+  work that produced #1962, citing it as the determinism fix its instance
+  ratchet rests on. Citing a PR is the normal way these entries are written, so
+  the failure mode is not exotic: **any PR named in an existing entry's prose is
+  silently exempted from ever being nudged again.** The suppression is
+  permanent and silent — the detector's output is indistinguishable from a
+  genuinely clean window, which is the same "mask discards the verdict" shape as
+  [`2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md`](tooling/2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md).
+
+  Blast radius: this is the *detector for gate escapes*. A hole here doesn't
+  leak one defect, it suppresses the mechanism that converts escapes into new
+  gates. Entries accumulate cross-references over time, so the exempted set only
+  grows.
+
+  Proposed gate — **dedup on a structured field, never on free prose.**
+
+  1. **Scope probe 1 the same way probe 2 already is.** Require the `PR #N`
+     match to land on an entry heading (`^#+ .*PR #N([^0-9]|$)`), matching the
+     documented entry shape `## <date> · PR #N[, #M …] · <trigger>`. This is a
+     one-line change and immediately un-suppresses #1962. The `commit <sha>`
+     alternation should be split out and kept whole-file — `has_sha_entry`
+     already documents bare-sha matching as deliberate for triggers 3+4.
+  2. **Add a bats regression case.** `tests/bats/` should assert that a ledger
+     containing only a *prose* `PR #N` mention still reports #N as owed, and
+     that a real `## … PR #N …` heading dedupes it. This is the property both
+     probes are trying to express and neither one tests.
+  3. **Consider a machine-readable key.** Longer-term, have each entry carry an
+     explicit `### Escaped PRs: #A, #B` field and dedup on that alone, so
+     heading prose style can drift without re-opening the hole. Optional — (1)
+     plus (2) closes the class.
+
+  Item 1 is the fix; item 2 is what keeps it fixed. Do not apply from here —
+  suggestion-only per the skill's finder/applier split.
+
+  **Applied 2026-08-11** (items 1 + 2; item 3 deliberately not taken — (1)+(2)
+  close the class, as the entry itself says). Both probes are now heading-scoped,
+  and the symmetry is the fix.
+
+  Two refinements the write-up did not have:
+
+  - **The `commit <sha>` alternation was removed, not split out.** The entry
+    proposed keeping it whole-file. In fact `has_entry` is only ever called with
+    a PR NUMBER (both call sites pass one; the sha paths use `has_sha_entry`), so
+    that branch was matching the literal string `commit <pr-number>` — which
+    occurs **0 times** in the ledger, measured. It guarded a caller shape that
+    does not exist. `has_entry` now documents that it takes a PR number and that
+    sha dedup belongs to `has_sha_entry`.
+  - **Scoping was checked against the real ledger before landing**, since the
+    opposite error — re-nudging a PR that IS postmortemed — would be noisier than
+    the bug. 12 PR numbers were deduped by prose alone; all 12 are plain
+    citations ("shipped in PR #1953", "concurrently by PR #1078"), none an entry
+    of its own. Every PR-keyed heading uses the documented
+    `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
+    real entry. The one heading carrying a bare `#N` without the `PR ` prefix is
+    an Issue reference, never in scope here. #1962, the reported instance, has
+    since been given a real entry and still dedupes correctly.
+
+  Four bats cases pin the property both probes were expressing and neither
+  tested: prose does not dedupe, a documented heading does, prose cannot satisfy
+  the combined-heading probe either, and a substring PR number does not
+  cross-suppress. Restoring the unscoped probe fails the first.
+
+  Secondary observation, low confidence, recorded rather than actioned: one
+  earlier `--list` invocation in the same session emitted six owed escapes
+  (#1979, #1974, #1971, #1964, #1968, #1954) while six others reported clean.
+  Re-running four times after the fact was stable-clean, and the underlying
+  `gh pr list` query returned 20 rows on three consecutive checks, so the
+  transient was not a `gh` failure. The trigger-1 loop ends in
+  `2>/dev/null || true`, which would turn any upstream failure into a silent
+  "clean" — worth a `set -o pipefail` + explicit row-count assertion if it
+  recurs, but it is not reproducible today and is **not** the cause of the
+  #1962 miss (that one is fully explained above).
+
+  Status: applied
+  Last-reviewed: 2026-08-11
+
+- 2026-08-05 · claude-code · [tooling] · P1 — `test-plan-index.sh` derives shipped-plan index dates from `git log --follow`, which squash-merge rewrites — so a plan archived and merged across a midnight boundary reddens `develop` the instant it lands, with no pre-merge state that could have passed
+
+  Observed on PR #1937 (Help > About dialog). Merged `2026-08-05T11:33:25Z` as
+  `fce0951c` with the required `Doc anchors + agent contract` terminal-green. The
+  develop tip went RED on that same check immediately after:
+  `test-plan-index: DRIFT — shipped-plan index out of sync (182 plans in archive)`.
+  Full RCA in [`postmortems.md`](../postmortems.md) (2026-08-05 entry).
+
+  Mechanism. `agents/scripts/core/test-plan-index.sh:122-143` resolves each row's
+  date with `git log --follow --format=%ad --date=short -- <path>` — the file's
+  *first-commit* date. `--follow` is what normally makes this stable across the
+  `plans/active/` → `plans/shipped/` move. A squash-merge collapses the branch into
+  one commit and the per-file pre-merge history is unreachable from `develop`, so
+  `--follow` finds exactly one commit and returns the **squash date**:
+
+      $ git log --follow --format='%ad %h %s' --date=short \
+          -- docs/plans/shipped/about-dialog-help-menu.md
+      2026-08-05 fce0951c feat(about): About Smatchet dialog under Help, ... (#1937)
+
+  Three conditions, all common: the PR archives a plan *and* commits its index row;
+  the repo squash-merges; branch work and merge fall on different calendar days.
+  Every plan-shipping PR that spans a midnight hits this.
+
+  Why it is P1 rather than P2: the check is **required**, and a red required check
+  on the develop tip is inherited by every open PR's own head under block-on-any-red.
+  One late-evening merge blocks the whole queue until someone notices, and nothing
+  announces it — `postmortem-owed.sh` keys on merge-instant signals (non-SUCCESS
+  checks, override labels, `Revert`, overdue deviations) and this class emits none,
+  so it reports "no gate escapes owed" for the PR that caused it.
+
+  Proposed fix — **stop deriving the value from mutable git metadata.** Have
+  `--fix` write the resolved date into the plan file as an explicit
+  `<!-- plan-date: YYYY-MM-DD -->` marker when a plan is archived, and have the
+  generator prefer that marker, falling back to `git log --follow` only for legacy
+  plans without one. Content survives squash, shallow clone and staged rename
+  identically. This is not a fourth special case — it **retires the two already in
+  the script**, both of which exist to paper over the same history lookup: the
+  shallow-clone guard (`:45`, `:105`) and the staged-rename sibling-tier fallback
+  (`:135-143`, whose comment already cites the #1061 / #1092 archive date-drift
+  "twice"). Squash-merge is the third way the same lookup moves under the generator;
+  the recurring shape is the defect.
+
+  Concrete next action: add the marker read/write to `test-plan-index.sh`, plus two
+  `--selftest` cases — (1) a `shipped/` plan whose only commit is the current HEAD
+  still resolves a stable date; (2) a marker date disagreeing with its index row
+  FAILs. Migrate existing rows by running `--fix` once to stamp markers from the
+  currently-committed dates, so no archived plan's date changes on adoption.
+
+  Paired with: the develop-tip required-green assertion proposed in the
+  `2026-07-10 · PR #1698` postmortem and never landed. This is its second instance —
+  a gate that can only go red *after* the merge needs a detector that looks after
+  the merge.
+
+  **Applied 2026-08-11.** `test-plan-index.sh` now reads a
+  `<!-- plan-date: YYYY-MM-DD -->` marker in preference to git, and `--fix`
+  stamps one into any plan that lacks it. `--check` never writes, so the required
+  gate stays read-only.
+
+  The migration took the entry's own advice — stamp from the currently-committed
+  dates — but from a better source than git: **`INDEX.md` already holds them**,
+  generated by CI on full history. Reading the 188 rows and stamping each plan
+  from its own row makes "no archived plan's date changes on adoption" true by
+  construction rather than by luck, and needed no full-history clone. `INDEX.md`
+  came out **byte-identical**, which is the proof. `--check` then passed on this
+  SHALLOW clone — previously unreliable — because git is no longer consulted for
+  a stamped plan. That is the fix demonstrated end to end.
+
+  **One claim in the proposal is wrong and should not be carried forward.** The
+  entry says the marker "retires the two special cases already in the script"
+  (the shallow-clone guard and the staged-rename sibling fallback). It does not.
+  Both are still needed at STAMP time: a new plan is stamped from git exactly
+  once, and that one read must be correct — on a shallow clone it would not be,
+  and for a freshly `git mv`'d plan the sibling fallback is what resolves it at
+  all. What the marker changes is the *exposure*: from every run on every clone
+  forever, down to a single deterministic moment on the author's full-history
+  checkout. That is a large win, but it is a narrowing, not a retirement, and
+  deleting those guards on the strength of this entry would reintroduce the drift
+  at the one moment it still matters.
+
+  Two `--selftest` cases were added as asked, in a throwaway repo whose plan has
+  exactly ONE commit dated today — the post-squash shape, which cannot be staged
+  inside this repo: (a) the row carries the marker date, not the commit date;
+  (b) a marker disagreeing with its committed row FAILs `--check`. Disabling
+  marker precedence fails (a).
+
+  While adding them, the file's PRE-EXISTING negative assertion turned out to be
+  vacuous — it self-exec'd a mode-100644 script, so `126 Permission denied`
+  satisfied it — and the first version of the new cases was vacuous too, via
+  `set -e` inside a `||` operand. Both fixed here; the class is filed as
+  [`asserts-failure-marker-does-not-prove-the-negative-is-reachable`](tooling/2026-08-11-asserts-failure-marker-does-not-prove-the-negative-is-reachable.md).
+
+  Not addressed: the paired develop-tip required-green assertion. Still open, and
+  still the right second layer — this fix removes the cause, not the class of
+  "green on the PR head, red on develop".
+
+  Status: applied
+  Last-reviewed: 2026-08-11

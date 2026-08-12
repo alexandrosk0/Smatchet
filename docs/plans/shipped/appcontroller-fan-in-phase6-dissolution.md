@@ -1,4 +1,5 @@
 # Plan — AppController fan-in Phase 6: dissolution to the composition-root ceiling
+<!-- plan-date: 2026-07-10 -->
 
 > **Slug**: `appcontroller-fan-in-phase6-dissolution`
 >

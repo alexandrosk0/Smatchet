@@ -1,4 +1,5 @@
 # Plan — Sanitizer nightly (ASan+UBSan) fix + config-skew preventing gate
+<!-- plan-date: 2026-06-13 -->
 
 > **Slug**: `sanitizer-nightly-asan-ubsan-fix` (matches this file's basename without `.md`).
 >

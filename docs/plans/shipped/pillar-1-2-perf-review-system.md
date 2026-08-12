@@ -1,4 +1,5 @@
 # Repeatable Pillar 1 + Pillar 2 performance review — Smatchet
+<!-- plan-date: 2026-05-20 -->
 
 > **Retirement note (2026-07, HP-07):** the Slice-2 `docs/harness/claude-code/hooks/lint-cpp-pillar2.sh` thin shim described below was **retired** — `lint-cpp-drain.sh` now calls the canonical `scripts/dev/pillar2-scan.sh` directly (see `lint-cpp-drain.sh` § pillar-2 pass), so the wrapper was never copied by `setup-harness.sh` nor sourced by the drain. The historical Slice-2 text is preserved as-written; treat every mention of `lint-cpp-pillar2.sh` below as removed. The live Pillar-2 surfaces are `scripts/dev/pillar2-scan.sh` (canonical), the `Pillar 2 scanner` CI lane (`.github/workflows/pillar2-scan.yml`), and the inline call in `lint-cpp-drain.sh`.
 

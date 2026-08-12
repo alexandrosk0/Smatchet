@@ -1,4 +1,5 @@
 # Plan — Triggered follow-up tracking (machine-checkable deferred follow-ups)
+<!-- plan-date: 2026-06-05 -->
 
 > **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
 >

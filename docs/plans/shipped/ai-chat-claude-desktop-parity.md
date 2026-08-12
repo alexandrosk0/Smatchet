@@ -1,4 +1,5 @@
 # AI chat — Claude-Desktop-style hover actions, pin, visible user bubbles, persisted history
+<!-- plan-date: 2026-05-20 -->
 
 ## Context
 

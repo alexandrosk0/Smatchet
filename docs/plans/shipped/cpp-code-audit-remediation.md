@@ -1,4 +1,5 @@
 # Plan — C++ code audit remediation (CPP_CODE_AUDIT.md)
+<!-- plan-date: 2026-07-02 -->
 
 > **Slug**: `cpp-code-audit-remediation`
 >

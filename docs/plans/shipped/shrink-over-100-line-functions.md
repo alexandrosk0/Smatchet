@@ -1,4 +1,5 @@
 # Plan — Shrink every function over 100 lines under the soft-warn tier
+<!-- plan-date: 2026-06-06 -->
 
 > **Slug**: `shrink-over-100-line-functions` (matches this file's basename without `.md`).
 >

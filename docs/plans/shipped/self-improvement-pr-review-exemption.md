@@ -1,4 +1,5 @@
 # Plan — Exempt pure self-improvement doc PRs from CR / Bugbot review + heavy tests
+<!-- plan-date: 2026-06-20 -->
 
 > **Slug**: `self-improvement-pr-review-exemption` (matches this file's basename without `.md`).
 >

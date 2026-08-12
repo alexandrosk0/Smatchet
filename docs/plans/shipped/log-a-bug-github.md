@@ -1,4 +1,5 @@
 # Debugging features — "Log a bug" hotkey → fixed GitHub dev repo (+ phase-2 crash reporter)
+<!-- plan-date: 2026-05-30 -->
 
 ## Context
 

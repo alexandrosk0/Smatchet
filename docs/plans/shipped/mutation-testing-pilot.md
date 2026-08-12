@@ -1,4 +1,5 @@
 # Plan — Mutation-testing pilot (assertion-strength probe)
+<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `mutation-testing-pilot`.
 > **Status**: `shipped` — report + strengthening PR merged (#1626, squash `44ea33d`); this file lives in `docs/plans/shipped/`.

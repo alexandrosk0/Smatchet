@@ -1,4 +1,5 @@
 # Plan — AppController monolith reduction (cluster extraction)
+<!-- plan-date: 2026-07-06 -->
 
 > **Slug**: `appcontroller-service-extraction` (matches this file's basename without `.md`).
 >

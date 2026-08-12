@@ -1,4 +1,5 @@
 # Plan — Agent charter altitude (operating-principle preamble + context budget)
+<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `agent-charter-altitude` (matches this file's basename without `.md`).
 >

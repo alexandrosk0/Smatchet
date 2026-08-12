@@ -1,4 +1,5 @@
 # Plan — Force plan-lock filing before file edits (force-on-contention, 3-layer)
+<!-- plan-date: 2026-06-19 -->
 
 > **Slug**: `plan-lock-enforcement` (matches this file's basename without `.md`).
 >

@@ -1,4 +1,5 @@
 # Plan — Wire Cursor Bugbot into the merge-gate poller + triage
+<!-- plan-date: 2026-06-18 -->
 
 > **Slug**: `bugbot-merge-gate` (matches this file's basename without `.md`).
 >
