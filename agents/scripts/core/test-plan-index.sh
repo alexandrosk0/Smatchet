@@ -153,6 +153,11 @@ if [ "$MODE" = "selftest" ]; then
     _shipped="$_pd/shipped"
     mkdir -p "$_shipped" || exit 90
     printf '# Plan — Marked\n\n<!-- plan-date: 2020-01-02 -->\n\nBody.\n' > "$_shipped/marked.md" || exit 90
+    # An IMPOSSIBLE date matches the marker's shape but is not a calendar date.
+    # It must be treated as absent (else a typo pins the row permanently, and
+    # --fix can never replace it) and REPLACED in place rather than joined by a
+    # second marker.
+    printf '# Plan — Bad\n\n<!-- plan-date: 2026-99-99 -->\n\nBody.\n' > "$_shipped/bad.md" || exit 90
     printf '# INDEX\n\n<!-- BEGIN auto-plan-index -->\n<!-- END auto-plan-index -->\n' > "$_pd/INDEX.md" || exit 90
     git add -A || exit 90
     git commit -qm only-commit-is-today || exit 90
@@ -160,6 +165,10 @@ if [ "$MODE" = "selftest" ]; then
     # date, even though the file's entire history is that one commit.
     bash "$_SCRIPT_PATH" --fix >/dev/null 2>&1 || exit 91
     grep -q '| 2020-01-02 |' "$_pd/INDEX.md" || exit 92
+    # (4c) INVALID marker: not authoritative, and replaced rather than duplicated.
+    grep -q '2026-99-99' "$_pd/INDEX.md" && exit 94
+    [ "$(grep -c 'plan-date' "$_shipped/bad.md")" = "1" ] || exit 95
+    grep -q 'plan-date: 2026-99-99' "$_shipped/bad.md" && exit 95
     # (4b) DISAGREEMENT: a marker that no longer matches its committed row must
     # FAIL --check rather than be silently re-derived from git.
     sed -i.bak 's/plan-date: 2020-01-02/plan-date: 2019-05-05/' "$_shipped/marked.md" || exit 90
@@ -174,6 +183,8 @@ if [ "$MODE" = "selftest" ]; then
     91) echo "test-plan-index --selftest: FAIL — --fix errored on the marker fixture" >&2; fail=1 ;;
     92) echo "test-plan-index --selftest: FAIL — plan-date marker NOT authoritative: a squash-shaped history (single commit, today) moved the row off the stamped date" >&2; fail=1 ;;
     93) echo "test-plan-index --selftest: FAIL — a marker disagreeing with its committed row did not fail --check" >&2; fail=1 ;;
+    94) echo "test-plan-index --selftest: FAIL — an impossible plan-date (2026-99-99) was treated as authoritative" >&2; fail=1 ;;
+    95) echo "test-plan-index --selftest: FAIL — an impossible plan-date was not REPLACED in place (duplicate or surviving marker)" >&2; fail=1 ;;
     *)  echo "test-plan-index --selftest: FAIL — marker fixture exited $_st_rc" >&2; fail=1 ;;
   esac
   rm -rf "$_st_tmp"
@@ -201,7 +212,7 @@ done
 [ -z "$PY" ] && { echo "test-plan-index: python not found" >&2; exit 2; }
 
 "$PY" - "$ARCHIVE_DIR" "$INDEX_FILE" "$BEGIN_MARK" "$END_MARK" "$MODE" <<'PY'
-import os, re, subprocess, sys
+import datetime, os, re, subprocess, sys
 
 archive_dir, index_file, begin, end, mode = sys.argv[1:6]
 
@@ -236,6 +247,15 @@ def marker_date(path):
             for line in f:
                 m = DATE_RE.match(line)
                 if m:
+                    # The shape regex alone accepts 2026-99-99. An impossible date
+                    # would then become AUTHORITATIVE and, being a present marker,
+                    # would never be re-stamped by --fix — a typo that pins the row
+                    # permanently. Treat an unparseable date as ABSENT so the git
+                    # fallback and the stamping path both still apply.
+                    try:
+                        datetime.date(*(int(p) for p in m.group(1).split("-")))
+                    except ValueError:
+                        return ""
                     return m.group(1)
     except OSError:
         pass
@@ -330,12 +350,28 @@ def stamp_markers():
     for path, date in unstamped:
         with open(path, encoding="utf-8") as f:
             lines = f.readlines()
+        marker = "<!-- plan-date: %s -->\n" % date
+        # A plan can reach here WITH a marker already present: marker_date()
+        # rejects an impossible date like 2026-99-99, so the plan counts as
+        # unstamped. REPLACE that line rather than inserting a second marker —
+        # two markers in one file read as a contradiction to anyone opening it,
+        # even though the first (valid) one would win.
+        replaced = False
+        for i, line in enumerate(lines):
+            if DATE_RE.match(line):
+                lines[i] = marker
+                replaced = True
+                break
+        if replaced:
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.writelines(lines)
+            stamped.append(os.path.basename(path))
+            continue
         ins = 0
         for i, line in enumerate(lines):
             if line.startswith("# "):
                 ins = i + 1
                 break
-        marker = "<!-- plan-date: %s -->\n" % date
         # Keep a blank line between the H1 and the marker when the H1 is
         # immediately followed by prose, so the rendered page is unchanged.
         block = ["\n", marker] if ins > 0 and ins < len(lines) and lines[ins].strip() else [marker]

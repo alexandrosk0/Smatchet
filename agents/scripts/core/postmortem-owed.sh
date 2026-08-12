@@ -324,16 +324,32 @@ EOF
 # `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
 # real entry. The only heading carrying a bare `#N` without the `PR ` prefix is
 # an Issue reference, which was never in scope here.
+# The heading is `## <date> · PR #A[, #B][/#C] · <trigger>`, so `·` delimits the
+# fields. Both probes are bounded to the FIRST TWO fields by `[^·]*(·[^·]*)?`,
+# which keeps a `#N` in the TRIGGER text from deduping PR N: without it the old
+# `.*` spanned the whole heading, so `## … · PR #1948 · … unwedge /#907` deduped
+# #907. Same permanent silent suppression as the body-prose leak, one field in.
+#
+# The leading field is OPTIONAL, and that is load-bearing in both directions:
+#   * `## RCA for PR #2006 — …` has no `·` at all and must still dedup (a
+#     `·`-requiring anchor broke exactly this shape).
+#   * `## 2026-06-07 · coverage.yml (since #834 graduation), fixed by PR #941 · …`
+#     carries an unrelated `#834` BEFORE the PR reference, so "first `#` on the
+#     line" is also wrong — it dropped this real entry and would have re-nudged
+#     #941 forever.
+# Verified on the live ledger: all 54 PR-keyed headings still match, and the
+# crafted trigger-text case no longer does.
 has_entry() {  # <pr-number>
     [ -f "$LEDGER" ] || return 1
     # The PR's own entry.
-    grep -qE "^#+ .*PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
+    grep -qE "^#+ [^·]*(·[^·]*)?PR #$1([^0-9]|$)" "$LEDGER" && return 0  # fail-open-ok: a no-match is NOT a clean signal — it falls through to the combined-PR heading probe below
     # Combined-PR postmortem: one blameless RCA can cover several PRs in a single
     # heading written `PR #A, #B, #C` OR slash-joined `PR #A/#B/#C` — only the first
     # carries the literal `PR #` prefix; the rest are bare `, #N` / `/#N`. The `/`
     # in the separator class fixes slash-joined trailers (`#906/#907/#908`) that
-    # used to re-flag every SessionStart.
-    grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
+    # used to re-flag every SessionStart. `[^·]*` after the first number keeps the
+    # whole list inside one field.
+    grep -qE "^#+ [^·]*(·[^·]*)?PR #[0-9][^·]*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
 }
 
 # has_sha_entry <sha> — true when the ledger mentions this commit sha in ANY

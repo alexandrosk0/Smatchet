@@ -1128,3 +1128,65 @@ JSON
     run_detector
     [[ "$output" == *"PR #200"* ]]
 }
+
+@test "dedup: a #N in the heading's TRIGGER text does not suppress PR N" {
+    # The heading is `## <date> · PR #A[, #B] · <trigger>`, so `·` delimits the
+    # fields. Before the field anchor, the combined probe's `.*` spanned the whole
+    # heading, so any `#N` in the trigger prose deduped PR N — the same permanent
+    # silent suppression as the body-prose case, one field further in.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-10 · PR #1948 · override used to unwedge a required gate, see /#907
+MD
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d1"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" == *"PR #907"* ]]
+}
+
+@test "dedup: a real combined-PR heading still suppresses every listed PR" {
+    # The other side of the field anchor — the PR LIST may still hold several PRs,
+    # comma- or slash-joined, and each must dedup.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-10 · PR #906/#907/#908 · Windows + MSVC red at merge
+MD
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d2"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]},
+ {"number":906,"mergedAt":"2026-06-10T11:00:00Z","mergeCommit":{"oid":"d3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #907"* ]]
+    [[ "$output" != *"PR #906"* ]]
+}
+
+@test "dedup: a PR named in the heading's trigger AND listed is still suppressed" {
+    # Guards against over-correcting: the field anchor must not break a PR that
+    # legitimately appears in the list even when the trigger also mentions it.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-10 · PR #907 · red at merge, follow-up to /#907
+MD
+    prlist <<'JSON'
+[{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d4"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #907"* ]]
+}
+
+@test "dedup: an unrelated #N before the PR reference does not break dedup" {
+    # A real ledger heading carries `#834` before `PR #941`. Anchoring on the
+    # first `#` on the line (rather than the `·` field) dropped this entry and
+    # would have re-nudged #941 forever — the over-correction direction.
+    cat > "$POSTMORTEM_LEDGER" <<'MD'
+## 2026-06-07 · coverage.yml (since #834 graduation), fixed by PR #941 · prose-promise gate
+MD
+    prlist <<'JSON'
+[{"number":941,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d5"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    run_detector
+    [[ "$output" != *"PR #941"* ]]
+}
