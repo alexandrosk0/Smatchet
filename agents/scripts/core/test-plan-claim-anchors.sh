@@ -141,6 +141,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   deleting the quarter branch   -> (11) goes red
     #   dropping the DATE_RE gate     -> (12) goes red (python >= 3.11)
     #   first-substring revisit match -> (13) goes red
+    #   unguarded quarter date()      -> (14) goes red (escaped ValueError)
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -242,6 +243,21 @@ if [ "$SCOPE" = "selftest" ]; then
     case "$_out" in
         *UNANCHORED_CLAIM*) ;;
         *) echo "FAIL[escape-basic-date]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (14) a quarter-SHAPED value whose year cannot construct a date
+    #      (0000-Q1) must fail closed via the token, not crash the scan with
+    #      an escaped ValueError.
+    _case escape-invalid-quarter 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=0000-Q1) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-invalid-quarter]: exited 1 but printed no UNANCHORED_CLAIM"
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
@@ -393,7 +409,13 @@ def escape_active(comment_line):
     qm = QUARTER_RE.match(value)
     if qm:
         year, quarter = int(qm.group(1)), int(qm.group(2))
-        end = datetime.date(year, 3 * quarter, (31, 30, 30, 31)[quarter - 1])
+        try:
+            end = datetime.date(year, 3 * quarter, (31, 30, 30, 31)[quarter - 1])
+        except ValueError:
+            # Quarter-shaped but not constructible (0000-Q1 — year 0 is out
+            # of range): fail CLOSED like every other malformed expiry, and
+            # never let the exception escape and crash the whole scan.
+            return False
         return end >= datetime.date.fromisoformat(TODAY)
     if not DATE_RE.match(value):
         # Calendar-ish but valid as neither dashed date nor quarter (trailing

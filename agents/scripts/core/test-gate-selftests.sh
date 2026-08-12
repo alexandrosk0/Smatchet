@@ -118,6 +118,7 @@ _selfexec_hits() {
             # (2>/dev/null before the command). String form so \047 can carry
             # the single quote through the shell single-quoted awk program.
             strip = "^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+" \
+                    "|--[[:space:]]+" \
                     "|[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]*)[[:space:]]+" \
                     "|([0-9]*|&)(<|>>|>)[[:space:]]*[^[:space:]]+[[:space:]]+)"
         }
@@ -317,6 +318,23 @@ SH
     case "$out" in
         *"raw self-exec"*) ;;
         *) echo "test-gate-selftests selftest: FAIL — tab-separated exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A wrapper's `--` option terminator must be consumed too — env/command
+    # accept it and `env -- "$p" --check` still execs the 100644 file
+    # (CodeRabbit round-7 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) env -- "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind env -- was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — env -- exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
 
