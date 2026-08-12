@@ -1145,21 +1145,41 @@ JSON
     [[ "$output" == *"PR #907"* ]]
 }
 
-@test "dedup: a real combined-PR heading still suppresses every listed PR" {
-    # The other side of the field anchor — the PR LIST may still hold several PRs,
-    # comma- or slash-joined, and each must dedup.
-    cat > "$POSTMORTEM_LEDGER" <<'MD'
-## 2026-06-10 · PR #906/#907/#908 · Windows + MSVC red at merge
-MD
+_combined_heading_case() {  # <heading-line>
+    # Shared body: every PR in the list must dedup, INCLUDING the last one, whose
+    # match depends on the end-of-line half of the `([^0-9]|$)` boundary rather
+    # than a following separator.
+    printf '%s\n' "$1" > "$POSTMORTEM_LEDGER"
     prlist <<'JSON'
 [{"number":907,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"d2"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]},
  {"number":906,"mergedAt":"2026-06-10T11:00:00Z","mergeCommit":{"oid":"d3"},"labels":[],
+  "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]},
+ {"number":908,"mergedAt":"2026-06-10T12:00:00Z","mergeCommit":{"oid":"d6"},"labels":[],
   "statusCheckRollup":[{"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"FAILURE","startedAt":"2026-06-10T09:00:00Z"}]}]
 JSON
     run_detector
-    [[ "$output" != *"PR #907"* ]]
     [[ "$output" != *"PR #906"* ]]
+    [[ "$output" != *"PR #907"* ]]
+    [[ "$output" != *"PR #908"* ]]
+}
+
+@test "dedup: a SLASH-joined combined-PR heading suppresses every listed PR" {
+    _combined_heading_case '## 2026-06-10 · PR #906/#907/#908 · Windows + MSVC red at merge'
+}
+
+@test "dedup: a COMMA-separated combined-PR heading suppresses every listed PR" {
+    # The separator class carries both forms; only the slash form was covered, so
+    # a regression narrowing it to `/` would have gone unnoticed.
+    _combined_heading_case '## 2026-06-10 · PR #906, #907, #908 · Windows + MSVC red at merge'
+}
+
+@test "dedup: a combined-PR heading ending at the PR list suppresses the last PR" {
+    # Exercises the `$` half of the `([^0-9]|$)` boundary. In the two cases above
+    # the trailing PR is followed by ` · <trigger>`, so end-of-line is never
+    # reached — dropping `|$` from the pattern leaves both of them GREEN. A
+    # heading with no trigger field is the only shape that reaches it.
+    _combined_heading_case '## 2026-06-10 · PR #906, #907, #908'
 }
 
 @test "dedup: a PR named in the heading's trigger AND listed is still suppressed" {
