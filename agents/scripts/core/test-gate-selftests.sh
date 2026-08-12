@@ -50,11 +50,14 @@ MARKER_RE='# selftest: asserts-failure'
 # with no +x bit, fails 126 Permission denied on every machine, and a negative
 # asserting only "non-zero" is satisfied by that forever — test-plan-index.sh's
 # negative lived its whole life that way. Re-invocation must go through
-# `bash "$path"`. The pattern is exact by design: a quoted $_SCRIPT_PATH/$0
-# followed by a mode flag, in command position (not prefixed by bash/sh or the
-# source-dot, which are the legitimate forms).
+# `bash "$path"`. Judged PER COMMAND SEGMENT, not per line: a whole-line
+# allow-check let `bash "$p" --x; "$p" --y` slide (the later bash masked the
+# earlier raw exec) and misread `printf '%s' "$p" --x` as an exec (the path is
+# an argument there, not a command). Lines are split at command boundaries
+# (; | && ` $( parens braces), leading keywords/env-assignments are stripped,
+# and only a segment that BEGINS with the quoted path is an exec of it — which
+# also makes bash/sh/. prefixes pass with no separate allow-list.
 SELF_EXEC_RE='"\$(_SCRIPT_PATH|SCRIPT_PATH|0)" +--'
-SELF_EXEC_OK_RE='(bash|sh|\.) +"\$(_SCRIPT_PATH|SCRIPT_PATH|0)" +--'
 
 # exposers <root> — print, one per line, every first-party script under <root>'s
 # SCAN_DIRS that EXPOSES a --selftest flag. Fail-closed: unreadable dirs are
@@ -71,6 +74,32 @@ exposers() {
         done
     done
     return 0   # never leak the final grep's no-match (1) as the function's exit
+}
+
+# _selfexec_hits <file> — print `lineno:line` for every non-comment line with a
+# raw self-exec in COMMAND POSITION. Boundary split + keyword/assignment strip
+# is a heuristic lexer, deliberately shallow: false splits only create extra
+# segments (never hide one), and a segment must still BEGIN with the quoted
+# path to count, so `printf '%s' "$p" --x` and prose in strings stay clean.
+_selfexec_hits() {
+    awk '
+        /^[[:space:]]*#/ { next }
+        {
+            n = split($0, seg, /&&|[|;`(){}]|\$\(/)
+            for (i = 1; i <= n; i++) {
+                s = seg[i]
+                sub(/^[[:space:]]+/, "", s)
+                # strip leading control keywords / ! / env assignments / exec-
+                # style wrappers — all keep what follows in command position
+                # (exec of a 100644 file is itself the 126 shape).
+                while (sub(/^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)/, "", s)) { }
+                if (s ~ /^"\$(_SCRIPT_PATH|SCRIPT_PATH|0)"[[:space:]]+--/) {
+                    printf "%d:%s\n", NR, $0
+                    next
+                }
+            }
+        }
+    ' "$1"
 }
 
 # run_check <root> — assert every exposer carries the marker. Exit 0/1/2.
@@ -96,7 +125,8 @@ run_check() {
         # behaviour it names (126 before the script runs).
         # Comment lines are excluded: docs legitimately QUOTE the bad shape
         # (this very script does, one screen up) without executing it.
-        if grep -E -- "$SELF_EXEC_RE" "$f" | grep -vE '^[[:space:]]*#' | grep -qvE -- "$SELF_EXEC_OK_RE"; then
+        # Cheap prefilter first; the awk lexer only runs on files that match.
+        if grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
             selfexec+=("$f")
         fi
     done <<EOF
@@ -108,7 +138,7 @@ EOF
         echo "  negatives — the test-plan-index escape). Re-invoke via bash \"\$path\":" >&2
         for f in "${selfexec[@]}"; do
             echo "    ${f#"$root"/}:" >&2
-            grep -nE -- "$SELF_EXEC_RE" "$f" | grep -vE '^[0-9]*:[[:space:]]*#' | grep -vE -- "$SELF_EXEC_OK_RE" | head -3 | sed 's/^/      /' >&2
+            _selfexec_hits "$f" | head -3 | sed 's/^/      /' >&2
         done
         rc=1
     fi
@@ -192,6 +222,30 @@ SH
         *) echo "test-gate-selftests selftest: FAIL — self-exec exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
+
+    # A raw self-exec MASKED by a legitimate bash invocation on the same line
+    # must still be flagged — the allow-check is per command segment, not per
+    # line (CodeRabbit finding on PR #2002; also the second edge in that PR's
+    # recorded verdict). Assembled, same as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) bash "%s" --check; "%s" --selftest; exit 0 ;;\nesac\n' '$_SCRIPT_PATH' '$_SCRIPT_PATH'
+    } > "$synth"
+    if run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — raw self-exec masked by a same-line bash invocation was NOT flagged" >&2
+        rc=1
+    fi
+
+    # The path as a mere ARGUMENT is not an exec of it and must pass — only a
+    # segment that BEGINS with the quoted path counts as command position.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf "    --selftest) printf '%%s ' %s --check; exit 0 ;;\nesac\n" '"$_SCRIPT_PATH"'
+    } > "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — script path used as a printf ARGUMENT was wrongly flagged" >&2
+        rc=1
+    fi
 
     # The bash-prefixed form is the CORRECT shape and must pass; so must a
     # comment that merely quotes the bad shape (docs cite it legitimately).

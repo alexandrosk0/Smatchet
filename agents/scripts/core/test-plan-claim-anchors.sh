@@ -34,8 +34,10 @@
 # The `revisit=` date IS enforced here (closing the limitation this header
 # originally declared): the C++ deviation-overdue lint never scans markdown, so
 # this gate expires its own escapes — a marker whose revisit date has passed
-# stops suppressing and the claim reports again. A marker without a parseable
-# revisit stays active (the field is optional in the grammar).
+# stops suppressing and the claim reports again. A marker with NO revisit field
+# stays active (optional in the grammar); a date-shaped value that is not a real
+# calendar date (2026-02-30) stops suppressing — fail closed, never a typo-made
+# permanent exemption.
 #
 # Scope modes:
 #   default    — diff-scope: only claims on lines ADDED vs origin/develop.
@@ -127,7 +129,8 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the section bound    -> (3) and (5) go red
     #   deleting the DEV_RE escape    -> (4) goes red
     #   dropping the heading-depth <= -> (6) goes red
-    #   neutering escape_active()     -> (7) goes red
+    #   neutering escape_active()     -> (7) and (8) go red
+    #   ValueError -> return True     -> (8) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -183,6 +186,24 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (8) a date-SHAPED revisit that is not a real calendar date must also stop
+    #     suppressing (fail closed) — lexical comparison would misorder it and
+    #     fromisoformat() rejecting it must not fall back to "active forever"
+    #     (CodeRabbit finding on PR #2002; resolution deviates from its
+    #     keep-active suggestion, which would mint a typo-made permanent
+    #     exemption — the exact hole cases (4)/(7) exist to close).
+    _case escape-invalid-date 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2026-02-30) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-invalid-date]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
     # (5) a SIBLING heading ends the section -> PASS. Without the depth check the
     #     section would run to EOF and swallow the rest of the plan.
     _case section-ends 0 '# P
@@ -215,7 +236,7 @@ fi
 TODAY="$(date +%F)"
 export TODAY
 "$PY" - "$SCOPE" "$PLAN_GLOB_BASE" <<'PY'
-import os, re, subprocess, sys
+import datetime, os, re, subprocess, sys
 
 scope, plan_base = sys.argv[1:3]
 
@@ -253,14 +274,25 @@ def escape_active(comment_line):
     deviation-overdue lint that expires these markers scans first-party C++
     only, so without this an author's markdown escape would be a permanent
     exemption wearing an expiry date (the KNOWN LIMITATION this closes). A
-    marker with no parseable revisit stays active — the date is optional in
-    the grammar — but a PASSED date stops suppressing and the claim reports
-    again, exactly like an overdue C++ deviation.
+    marker with NO revisit field stays active — the date is optional in the
+    grammar — but a PASSED date stops suppressing and the claim reports
+    again, exactly like an overdue C++ deviation. A date-shaped value that
+    is not a real calendar date (2026-02-30) also stops suppressing: fail
+    closed, so the typo surfaces instead of minting a permanent exemption.
     """
     m = REVISIT_RE.search(comment_line)
     if not m or not TODAY:
         return True
-    return m.group(1) >= TODAY
+    try:
+        revisit = datetime.date.fromisoformat(m.group(1))
+    except ValueError:
+        # Date-SHAPED but not a real calendar date (revisit=2026-02-30):
+        # fail CLOSED — the author demonstrably tried to set an expiry, and
+        # treating the typo as "no date, active forever" would recreate the
+        # permanent exemption this function exists to end. Not suppressing
+        # surfaces both the claim and the typo on the next run.
+        return False
+    return revisit >= datetime.date.fromisoformat(TODAY)
 
 
 def scan(path, lines):
