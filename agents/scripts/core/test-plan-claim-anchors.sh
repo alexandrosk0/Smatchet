@@ -33,11 +33,13 @@
 #
 # The `revisit=` date IS enforced here (closing the limitation this header
 # originally declared): the C++ deviation-overdue lint never scans markdown, so
-# this gate expires its own escapes — a marker whose revisit date has passed
-# stops suppressing and the claim reports again. A marker with NO revisit field
-# stays active (optional in the grammar); a date-shaped value that is not a real
-# calendar date (2026-02-30) stops suppressing — fail closed, never a typo-made
-# permanent exemption.
+# this gate expires its own escapes — a marker whose revisit expiry has passed
+# stops suppressing and the claim reports again. Value semantics mirror the
+# C++ rule (00-common.sh revisit_overdue): YYYY-MM-DD | YYYY-Qn (quarter-end
+# expiry) | slug / never (no calendar expiry); NO revisit field stays active
+# (optional in the grammar). Stricter than C++ in one spot: a calendar-ish
+# value that parses as neither form (2026-02-30, 2027-08-11typo, 2026-Q5)
+# stops suppressing — fail closed, never a typo-made permanent exemption.
 #
 # Scope modes:
 #   default    — diff-scope: only claims on lines ADDED vs origin/develop.
@@ -106,6 +108,10 @@ if [ "$SCOPE" = "selftest" ]; then
     # 364-day offsets, not year+1: .replace(year=+1) raises on Feb 29.
     _future="$("$PY" -c 'import datetime; print(datetime.date.today()+datetime.timedelta(days=364))')"
     _past="$("$PY" -c 'import datetime; print(datetime.date.today()-datetime.timedelta(days=364))')"
+    # Quarter fixtures: next year's Q4 is always in the future, last year's Q1
+    # always past — no leap-day or quarter-boundary sensitivity either way.
+    _future_q="$(( $(date +%Y) + 1 ))-Q4"
+    _past_q="$(( $(date +%Y) - 1 ))-Q1"
 
     _out=""
     _case() {  # <name> <want-rc> <file-body>
@@ -129,8 +135,10 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the section bound    -> (3) and (5) go red
     #   deleting the DEV_RE escape    -> (4) goes red
     #   dropping the heading-depth <= -> (6) goes red
-    #   neutering escape_active()     -> (7) and (8) go red
-    #   ValueError -> return True     -> (8) goes red
+    #   neutering escape_active()     -> (7) (8) (9) (10) go red
+    #   ValueError -> return True     -> (8) and (9) go red
+    #   prefix-capture REVISIT_RE     -> (9) and (10) go red
+    #   deleting the quarter branch   -> (11) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -204,6 +212,45 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (9) a valid FUTURE date with trailing junk must fail closed — the whole
+    #     field is the value, not its date-shaped prefix, and prefix-capture
+    #     would keep this active until the embedded date passes.
+    _case escape-trailing-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-trailing-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (10) a PAST quarter must expire at quarter end, mirroring the C++
+    #      revisit_overdue() semantics the grammar promises.
+    _case escape-past-quarter 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_past_q"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-past-quarter]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (11) a FUTURE quarter and the grammar's `never` form both stay active.
+    _case escape-quarter-never 0 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future_q"') -->
+- branch protection already had reviews disabled.
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=never) -->
+- the tracker already had the bootstrap.
+'
+
     # (5) a SIBLING heading ends the section -> PASS. Without the depth check the
     #     section would run to EOF and swallow the rest of the plan.
     _case section-ends 0 '# P
@@ -263,7 +310,11 @@ CLAIM_RE = re.compile(
 ANCHOR_RE = re.compile(r':\d+\b|#\d{2,}|\b[0-9a-f]{7,40}\b')
 
 DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
-REVISIT_RE = re.compile(r'revisit=(\d{4}-\d{2}-\d{2})')
+# The WHOLE field, not a date-shaped prefix: revisit=2027-08-11typo must not
+# ride on its first ten characters. Value grammar (AGENTS.md deviation spec):
+# YYYY-MM-DD | YYYY-Qn | slug | never.
+REVISIT_RE = re.compile(r'revisit=([^;)]*)')
+QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 TODAY = os.environ.get("TODAY", "")
 
 
@@ -276,21 +327,35 @@ def escape_active(comment_line):
     exemption wearing an expiry date (the KNOWN LIMITATION this closes). A
     marker with NO revisit field stays active — the date is optional in the
     grammar — but a PASSED date stops suppressing and the claim reports
-    again, exactly like an overdue C++ deviation. A date-shaped value that
-    is not a real calendar date (2026-02-30) also stops suppressing: fail
-    closed, so the typo surfaces instead of minting a permanent exemption.
+    again, exactly like an overdue C++ deviation. Value semantics mirror
+    00-common.sh's revisit_overdue(): YYYY-MM-DD compares against today,
+    YYYY-Qn expires at quarter end (Q1=03-31 .. Q4=12-31), slug/never carry
+    no calendar expiry. One place this is STRICTER than the C++ side: a
+    value that LOOKS calendar-ish (leading digit) but parses as neither form
+    — 2026-02-30, 2027-08-11typo, 2026-Q5 — stops suppressing. Fail closed,
+    so the typo surfaces instead of minting a permanent exemption.
     """
     m = REVISIT_RE.search(comment_line)
     if not m or not TODAY:
         return True
+    value = m.group(1).strip()
+    if not value or not value[0].isdigit():
+        # slug / never / empty: no calendar expiry (the C++ rule's
+        # "slug / never / unknown -> never overdue" arm).
+        return True
+    qm = QUARTER_RE.match(value)
+    if qm:
+        year, quarter = int(qm.group(1)), int(qm.group(2))
+        end = datetime.date(year, 3 * quarter, (31, 30, 30, 31)[quarter - 1])
+        return end >= datetime.date.fromisoformat(TODAY)
     try:
-        revisit = datetime.date.fromisoformat(m.group(1))
+        revisit = datetime.date.fromisoformat(value)
     except ValueError:
-        # Date-SHAPED but not a real calendar date (revisit=2026-02-30):
-        # fail CLOSED — the author demonstrably tried to set an expiry, and
-        # treating the typo as "no date, active forever" would recreate the
-        # permanent exemption this function exists to end. Not suppressing
-        # surfaces both the claim and the typo on the next run.
+        # Calendar-ish but valid as neither date nor quarter: fail CLOSED —
+        # the author demonstrably tried to set an expiry, and treating the
+        # typo as "no date, active forever" would recreate the permanent
+        # exemption this function exists to end. Not suppressing surfaces
+        # both the claim and the typo on the next run.
         return False
     return revisit >= datetime.date.fromisoformat(TODAY)
 

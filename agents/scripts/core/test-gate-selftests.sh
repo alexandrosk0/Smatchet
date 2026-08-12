@@ -83,16 +83,24 @@ exposers() {
 # path to count, so `printf '%s' "$p" --x` and prose in strings stay clean.
 _selfexec_hits() {
     awk '
+        BEGIN {
+            # Leading tokens that keep what follows in command position:
+            # control keywords / ! / exec-style wrappers; env assignments with
+            # bare, double- or single-quoted values (FOO="a b" — the quoted
+            # space defeated the bare [^space]* version); redirections
+            # (2>/dev/null before the command). String form so \047 can carry
+            # the single quote through the shell single-quoted awk program.
+            strip = "^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+" \
+                    "|[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]*)[[:space:]]+" \
+                    "|[0-9]*(<|>>|>)[^[:space:]]*[[:space:]]+)"
+        }
         /^[[:space:]]*#/ { next }
         {
             n = split($0, seg, /&&|[|;`(){}]|\$\(/)
             for (i = 1; i <= n; i++) {
                 s = seg[i]
                 sub(/^[[:space:]]+/, "", s)
-                # strip leading control keywords / ! / env assignments / exec-
-                # style wrappers — all keep what follows in command position
-                # (exec of a 100644 file is itself the 126 shape).
-                while (sub(/^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)/, "", s)) { }
+                while (sub(strip, "", s)) { }
                 if (s ~ /^"\$(_SCRIPT_PATH|SCRIPT_PATH|0)"[[:space:]]+--/) {
                     printf "%d:%s\n", NR, $0
                     next
@@ -235,6 +243,38 @@ SH
         echo "test-gate-selftests selftest: FAIL — raw self-exec masked by a same-line bash invocation was NOT flagged" >&2
         rc=1
     fi
+
+    # A raw exec behind a QUOTED-value env assignment must be flagged — the
+    # bare [^space]* strip broke at the quoted space and the leftover masked
+    # the path (CodeRabbit round-2 finding on PR #2002). Assembled, as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) FOO="a b" "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind a quoted env assignment was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — quoted-assignment exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec behind a leading REDIRECTION must be flagged (same finding).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) 2>/dev/null "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind a leading redirection was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — redirection exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
 
     # The path as a mere ARGUMENT is not an exec of it and must pass — only a
     # segment that BEGINS with the quoted path counts as command position.
