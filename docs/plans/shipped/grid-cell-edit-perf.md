@@ -1,4 +1,5 @@
 # grid-cell-edit-perf — async cell-edit commit (pillar 1 + 2 restoration)
+<!-- plan-date: 2026-05-17 -->
 
 ## Problem
 

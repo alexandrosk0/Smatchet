@@ -1,4 +1,5 @@
 # Plan — DAG-ify the Source/Core include graph
+<!-- plan-date: 2026-06-14 -->
 
 > **Slug**: `core-include-dag` (matches this file's basename without `.md`).
 >

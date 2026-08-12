@@ -1,4 +1,5 @@
 # AI Assistant bucket-E TUs — execution plan
+<!-- plan-date: 2026-05-18 -->
 
 > Canonical plan doc. Plan-mode artifact lives at `~/.claude/plans/ai-assistant-bucket-e-tus-lovely-harbor.md` (gitignored). Per AGENTS.md § Plan-doc safety, this file must be committed with prefix `wip(plan): ai-assistant-bucket-e-tus` before any branch op.
 

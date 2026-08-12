@@ -1,4 +1,5 @@
 # Plan - Deterministic Jira test backend and frontend tests
+<!-- plan-date: 2026-05-23 -->
 
 > **Slug**: `deterministic-jira-test-backend`.
 >

@@ -1,4 +1,5 @@
 # Test suite expansion — completion plan (Phases 4-9 + carry-overs)
+<!-- plan-date: 2026-05-16 -->
 
 > Continuation of [`docs/plans/shipped/test-suite-expansion.md`](archive/test-suite-expansion.md). Phases 1-3 shipped 2026-05-16 ([#103](https://github.com/alexandrosk0/Smatchet/pull/103), [#106](https://github.com/alexandrosk0/Smatchet/pull/106), [#107](https://github.com/alexandrosk0/Smatchet/pull/107)). This plan sequences the remaining work end-to-end with locked decisions, parallelisation rules, and per-slice agent packets.
 

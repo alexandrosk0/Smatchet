@@ -1,4 +1,5 @@
 # Plan — About dialog under Help
+<!-- plan-date: 2026-08-05 -->
 
 > **Slug**: `about-dialog-help-menu` (matches this file's basename without `.md`).
 >

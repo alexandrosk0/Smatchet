@@ -1,4 +1,5 @@
 # Plan — Ask the user on offline-replay conflict for all field edits
+<!-- plan-date: 2026-06-04 -->
 
 > **Status**: shipped — archived 2026-06-06; post-ship sections populated and cited PRs merged (see § Implementation log).
 >

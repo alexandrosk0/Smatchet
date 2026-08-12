@@ -1,4 +1,6 @@
 # Pillar 1+2 audit — 2026-05-17
+
+<!-- plan-date: 2026-05-17 -->
 <!-- index-summary: Whole-codebase Pillar 1 (≤6.94 ms / ≤16.67 ms p99) + Pillar 2 (no sync I/O on UI thread) audit. 9 CRITICAL + 3 HIGH + 3 MEDIUM findings shipped via PR #190, PR #191, bundle PR `feat/h12-l16-m13-bundle`. H10/M14/L17 accepted no-fix; P2/P3/P4 watch-list (triggers documented in plan). -->
 
 Read-only audit of all `Source_Core/` + `Plugins/` reachable from ImGui frame stacks, looking for Pillar 1 (≤ 6.94 ms mean / ≤ 16.67 ms p99) and Pillar 2 (no sync I/O on UI thread, > 100 ms work moves to worker) violations.

@@ -1,4 +1,5 @@
 # Design addendum — multi-grid-tabs Slice 1 (AppController de-singleton + concurrency foundation)
+<!-- plan-date: 2026-06-06 -->
 
 > **Status**: `shipped` — all cited PRs merged (see Implementation log); archived 2026-06-16 via plan-archival sweep.
 >

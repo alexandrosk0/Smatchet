@@ -1,4 +1,5 @@
 # Plan — GitHub → p4d one-way mirror via Helix4Git Git Connector (WSL2)
+<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `p4-git-connector-github-mirror` (matches this file's basename without `.md`).
 >

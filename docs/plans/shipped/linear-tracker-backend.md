@@ -1,4 +1,5 @@
 # Plan - Linear as fourth tracker backend
+<!-- plan-date: 2026-05-26 -->
 
 > **Slug**: `linear-tracker-backend` (matches this file's basename without `.md`).
 >

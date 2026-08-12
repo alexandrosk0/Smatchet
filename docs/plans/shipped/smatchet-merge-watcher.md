@@ -1,4 +1,5 @@
 # Plan — `smatchet-merge-watcher` (out-of-band CI / CodeRabbit poll daemon)
+<!-- plan-date: 2026-05-21 -->
 
 > **Slug**: `smatchet-merge-watcher`
 >

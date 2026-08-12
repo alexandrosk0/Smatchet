@@ -1,4 +1,5 @@
 # Plan — P4-gated ship-loop
+<!-- plan-date: 2026-05-23 -->
 
 > **Slug**: `p4-gated-ship-loop`
 >

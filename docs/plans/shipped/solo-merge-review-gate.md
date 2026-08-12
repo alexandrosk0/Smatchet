@@ -1,4 +1,5 @@
 # Plan — Solo-workflow review gate (drop required approval, codify protection)
+<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `solo-merge-review-gate` (matches this file's basename without `.md`).
 >

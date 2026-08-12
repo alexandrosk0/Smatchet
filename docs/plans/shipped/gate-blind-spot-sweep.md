@@ -1,5 +1,6 @@
 <!-- index-summary: close four gate blind spots — cross-TU dead exports, sub-floor helper clones, link-gate target scope, and the untaxonomised root audit docs -->
 # Plan — Gate blind-spot sweep
+<!-- plan-date: 2026-07-25 -->
 
 > **Slug**: `gate-blind-spot-sweep` (matches this file's basename without `.md`).
 >

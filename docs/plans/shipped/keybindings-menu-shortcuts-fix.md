@@ -1,3 +1,4 @@
+<!-- plan-date: 2026-06-15 -->
 ﻿# Plan — Fix non-working menu-bar shortcuts + "add arbitrary command" button
 
 **Branch:** feat/keybindings-menu-shortcuts (NEW branch off origin/develop). PR #1256 (the

@@ -1,4 +1,6 @@
 # Plan: sweep open `AGENT_SELF_IMPROVEMENT.md` entries
+
+<!-- plan-date: 2026-05-15 -->
 <!-- index-summary: Triage of nine open `AGENT_SELF_IMPROVEMENT.md` entries — apply, defer, or scope. -->
 
 ## Context

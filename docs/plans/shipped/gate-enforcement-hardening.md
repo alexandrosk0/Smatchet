@@ -1,4 +1,5 @@
 # Plan — Gate enforcement hardening (agent → GitHub promotion)
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `gate-enforcement-hardening`
 >

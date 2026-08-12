@@ -1,4 +1,5 @@
 # Plan — AppController cluster extraction (follow-up slices)
+<!-- plan-date: 2026-07-06 -->
 
 > **Slug**: `appcontroller-clusters-followup` (matches this file's basename without `.md`).
 >

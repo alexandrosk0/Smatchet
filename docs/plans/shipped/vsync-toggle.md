@@ -1,4 +1,5 @@
 # Plan — Full vsync toggle (config · command · CLI · preference · env · live)
+<!-- plan-date: 2026-06-06 -->
 
 > **Status**: `shipped`
 >

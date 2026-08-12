@@ -1,4 +1,5 @@
 # Plan — Rip out C++ agentic code + add GitHub as third tracker
+<!-- plan-date: 2026-05-21 -->
 
 > **Slug**: `github-tracker-backend` (kept for PR continuity).
 >
