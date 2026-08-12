@@ -1,5 +1,4 @@
 # Plan — Tooling + Process backlog sweep (P0-P2)
-<!-- plan-date: 2026-05-27 -->
 
 > **Slug**: `tooling-process-backlog-sweep` (matches this file's basename without `.md`).
 >

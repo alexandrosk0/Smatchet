@@ -1,5 +1,4 @@
 # Plan — Multiple grid panes (dockable; same or different tracker backend, side-by-side)
-<!-- plan-date: 2026-06-06 -->
 
 > **Slug**: `multi-grid-tabs` (matches this file's basename without `.md`).
 >

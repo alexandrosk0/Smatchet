@@ -1,5 +1,4 @@
 # Plan — Tracker subsystem context docs + multi-context scaffold
-<!-- plan-date: 2026-06-01 -->
 
 > **Slug**: `tracker-context-docs` (matches this file's basename without `.md`).
 >

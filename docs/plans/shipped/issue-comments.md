@@ -1,5 +1,4 @@
 # Plan — Issue comments (all 3 backends): count column + read/post modal
-<!-- plan-date: 2026-06-14 -->
 
 > **Slug**: `issue-comments` (matches this file's basename without `.md`).
 >

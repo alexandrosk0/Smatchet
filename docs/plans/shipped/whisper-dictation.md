@@ -1,5 +1,4 @@
 # whisper-dictation — push-to-talk dictation with local + cloud transcription
-<!-- plan-date: 2026-05-17 -->
 
 ## Status: Shipped end-to-end (Phase G — 2026-05-18)
 

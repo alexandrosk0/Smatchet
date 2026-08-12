@@ -1,5 +1,4 @@
 # Plan — Gate-escape postmortem (incident → new gate)
-<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `gate-escape-postmortem` (matches this file's basename without `.md`).
 >

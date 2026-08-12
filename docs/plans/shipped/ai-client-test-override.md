@@ -1,5 +1,4 @@
 # `AiClientFactory::SetTestOverride` + `AiPrefsTestConnection` extraction
-<!-- plan-date: 2026-05-18 -->
 
 ## Context
 

@@ -1,5 +1,4 @@
 # Plan — Global JQL/ticket omnibox + icon-only Refresh buttons
-<!-- plan-date: 2026-06-15 -->
 
 > **Slug**: `jql-omnibox-search` (matches this file's basename without `.md`).
 >

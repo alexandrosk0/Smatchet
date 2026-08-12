@@ -1,5 +1,4 @@
 # Plan — Decompose Top-20 Monolith Functions
-<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `decompose-top-20-monoliths`
 >

@@ -1,5 +1,4 @@
 # git-ref plan-locks — atomic remote-agent coordination
-<!-- plan-date: 2026-05-17 -->
 
 **Status**: shipped (Phases 0-6 + 7a) · **Slug**: `git-ref-plan-locks` · **Owner**: orchestrator · **Created**: 2026-05-17
 

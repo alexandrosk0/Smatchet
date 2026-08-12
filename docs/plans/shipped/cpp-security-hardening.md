@@ -1,5 +1,4 @@
 # Plan — C++ security hardening (audit remediation)
-<!-- plan-date: 2026-06-27 -->
 
 > **Slug**: `cpp-security-hardening`
 >

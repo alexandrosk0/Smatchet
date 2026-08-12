@@ -1,5 +1,4 @@
 # Plan — a11y: keyboard-reachable (?) help-marker tooltips (#1128)
-<!-- plan-date: 2026-06-13 -->
 
 > **Slug**: `a11y-help-marker-keyboard-nav` (matches this file's basename without `.md`).
 >

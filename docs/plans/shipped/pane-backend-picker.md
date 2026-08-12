@@ -1,5 +1,4 @@
 # Plan — Per-pane backend picker (choose which tracker a new grid pane loads)
-<!-- plan-date: 2026-06-11 -->
 
 > **Slug**: `pane-backend-picker` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — Agentic ripout doc cleanup (v2 follow-up to `github-tracker-backend`)
-<!-- plan-date: 2026-05-21 -->
 
 > **Slug**: `agentic-ripout-doc-cleanup-v2`
 >

@@ -1,5 +1,4 @@
 # Agent contract alignment
-<!-- plan-date: 2026-05-16 -->
 
 Fix seven drift points between [`AGENTS.md`](../../AGENTS.md), the agent prompts under [`agents/`](../../agents/), and the telemetry hook at [`agents/_shared/token-tracking/agent-token-log.py`](../../agents/_shared/token-tracking/agent-token-log.py). All are agent-config-only — no `Source_Core/` code changes, no schema, no build.
 

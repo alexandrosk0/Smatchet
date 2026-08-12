@@ -1,5 +1,4 @@
 # Plan — merge-watcher triage-budget recovery + CR-thread resolution
-<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `merge-watcher-triage-recovery`.
 

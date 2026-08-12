@@ -1,5 +1,4 @@
 # Plan - Unreal Console Command Bridge
-<!-- plan-date: 2026-05-25 -->
 
 > **Slug**: `unreal-console-command-bridge`
 

@@ -1,5 +1,4 @@
 # Plan — split scripts: build/dev stay, agentic move under `agents/scripts/{core,project}/`
-<!-- plan-date: 2026-05-30 -->
 
 <!-- index-summary: Relocated 97 agentic/human-run scripts out of flat scripts/dev/ into agents/scripts/{core,project}/ + scripts/dev/local/ so agentic-only PRs skip the MSVC build and agents/ is extraction-ready. Phase 1 = PR #609; Phase 2 (daemon/hook cluster) = PR #610 + coordinated live cut-over. -->
 

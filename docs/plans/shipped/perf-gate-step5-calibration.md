@@ -1,5 +1,4 @@
 # Perf gate — step-5 calibration (arm the mean budget + deepen coverage)
-<!-- plan-date: 2026-07-06 -->
 
 **Status:** SHIPPED (2026-07-06) · **Owner:** perf-detective / build-doctor · **Created:** 2026-07-05
 **Predecessor:** [`docs/plans/shipped/perf-gate-revival.md`](../shipped/perf-gate-revival.md) (steps 1–4, 6a, 6b, 7 shipped; step 5 = this plan)

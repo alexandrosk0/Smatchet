@@ -1,5 +1,4 @@
 # Plan — PC-side verification & completion of the agentic-audit-review follow-ups
-<!-- plan-date: 2026-07-13 -->
 
 > **Slug**: `pc-verify-agentic-audit-followups` (matches this file's basename without `.md`).
 >

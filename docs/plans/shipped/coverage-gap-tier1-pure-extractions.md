@@ -1,5 +1,4 @@
 # Plan — Coverage-gap Tier 1: pure extractions for the audit-fixed sort + long-text paths
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `coverage-gap-tier1-pure-extractions`
 >

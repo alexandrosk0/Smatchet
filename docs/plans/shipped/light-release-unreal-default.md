@@ -1,5 +1,4 @@
 # Plan - Lua-Capable Light Release and Unreal Default
-<!-- plan-date: 2026-05-25 -->
 
 > **Slug**: `light-release-unreal-default`
 

@@ -1,5 +1,4 @@
 # Plan — Command-input hardening (CLI · MCP · Palette · Lua)
-<!-- plan-date: 2026-06-19 -->
 
 > **Slug**: `command-input-hardening`
 >

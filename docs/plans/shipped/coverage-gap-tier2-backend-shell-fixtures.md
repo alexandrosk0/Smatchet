@@ -1,5 +1,4 @@
 # Plan — Coverage-gap Tier 2: backend-shell fixture tests (Plane + Linear issue search)
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `coverage-gap-tier2-backend-shell-fixtures`
 >

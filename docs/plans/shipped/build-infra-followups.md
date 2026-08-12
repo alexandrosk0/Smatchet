@@ -1,5 +1,4 @@
 # Plan — build-infra followups (6 backlog items)
-<!-- plan-date: 2026-06-12 -->
 
 > **Slug**: `build-infra-followups` (matches this file's basename without `.md`).
 >

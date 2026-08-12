@@ -1,5 +1,4 @@
 # Plan — Subagent eval harness (eval-driven development for the dev-agent fleet)
-<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `subagent-eval-harness` (matches this file's basename without `.md`).
 >

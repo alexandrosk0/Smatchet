@@ -1,5 +1,4 @@
 # AI chat — TextEditor-backed selectable markdown render
-<!-- plan-date: 2026-05-19 -->
 
 ## Goal
 

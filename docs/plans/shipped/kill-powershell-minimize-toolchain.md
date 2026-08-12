@@ -1,5 +1,4 @@
 # Kill PowerShell + Minimize External Tools
-<!-- plan-date: 2026-05-22 -->
 
 > **Status**: `shipped` — all 7 slices merged (2026-08-05 → 2026-08-06): A #1951, B #1955, C #1956, D #1957, E #1958, F #1959, G. **29 of 34 `.ps1` deleted; the 5 kept Windows-native shims are documented in [`docs/harness/SETUP.md`](../../harness/SETUP.md) § Windows-only shims.** Re-audited 2026-08-05 against the live tree before implementation started.
 

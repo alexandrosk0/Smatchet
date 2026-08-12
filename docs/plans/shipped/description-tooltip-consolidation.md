@@ -1,5 +1,4 @@
 # Plan — description-field tooltip consolidation
-<!-- plan-date: 2026-05-23 -->
 
 > **Slug**: `description-tooltip-consolidation`
 

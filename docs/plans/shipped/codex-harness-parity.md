@@ -1,5 +1,4 @@
 # Plan - Codex harness parity
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `codex-harness-parity`
 >

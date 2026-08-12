@@ -1,5 +1,4 @@
 # Plan — Pillar-2 UI-thread blocking elimination (future-destructor + sync-I/O cluster)
-<!-- plan-date: 2026-06-13 -->
 
 > **Slug**: `ui-freeze-pillar2-blocking` (matches this file's basename without `.md`).
 >

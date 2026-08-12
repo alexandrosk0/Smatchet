@@ -1,5 +1,4 @@
 # Plan — Tracker backend `Result<T, TrackerError>` migration (hardening #21b)
-<!-- plan-date: 2026-06-08 -->
 
 > **Slug**: `tracker-result-migration`
 >

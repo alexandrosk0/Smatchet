@@ -1,5 +1,4 @@
 # Plan — Move Annotate config I/O off the UI thread
-<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `annotate-async-config-hydrate` (matches this file's basename without `.md`).
 >

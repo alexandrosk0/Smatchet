@@ -1,5 +1,4 @@
 # Plan: Tighten catch-all exception handling policy
-<!-- plan-date: 2026-05-27 -->
 
 ## Context
 

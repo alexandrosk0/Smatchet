@@ -1,5 +1,4 @@
 # Plan — single-click / double-click toggle for grid cell edit
-<!-- plan-date: 2026-05-20 -->
 
 > Slug: **`single-click-grid-edit-toggle`** (kebab-case, matches the feature).
 

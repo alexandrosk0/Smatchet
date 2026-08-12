@@ -1,5 +1,4 @@
 # Plan — Source_Core directory reorganization (precursor to high-integrity-cpp-enforcement)
-<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `source-core-dir-reorg` (matches this file's basename without `.md`).
 >

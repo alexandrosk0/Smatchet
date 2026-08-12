@@ -1,5 +1,4 @@
 # Plan — DX12 standalone renderer + Windows ARM64 standalone port
-<!-- plan-date: 2026-06-11 -->
 
 > **Slug**: `dx12-standalone-win-arm64`
 >

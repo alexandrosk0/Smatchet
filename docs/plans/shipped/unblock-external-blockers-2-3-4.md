@@ -1,5 +1,4 @@
 # Unblock external blockers 2 / 3 / 4
-<!-- plan-date: 2026-05-19 -->
 
 Plan to retire three `docs/self-improvement/categories/external-blockers.md` entries that have low-cost in-repo workarounds even though each names an external upstream owner.
 

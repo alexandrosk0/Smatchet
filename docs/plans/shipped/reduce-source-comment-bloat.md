@@ -1,5 +1,4 @@
 # Plan — Reduce source-comment bloat across first-party C++
-<!-- plan-date: 2026-05-30 -->
 
 > **Slug**: `reduce-source-comment-bloat` (matches this file's basename without `.md`).
 

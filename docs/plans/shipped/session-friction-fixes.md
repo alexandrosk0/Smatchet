@@ -1,5 +1,4 @@
 # Plan — Session-friction fixes (post-backlog-sweep session retro)
-<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `session-friction-fixes`
 >

@@ -1,5 +1,4 @@
 # Plan — Fully autonomous debugging without credentials or user input
-<!-- plan-date: 2026-05-24 -->
 
 > **Slug**: `autonomous-debugging-no-creds`
 >

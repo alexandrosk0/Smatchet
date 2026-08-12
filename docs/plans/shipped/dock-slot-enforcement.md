@@ -1,5 +1,4 @@
 # Plan: Enforce dock-slot-only windows (no free-floating)
-<!-- plan-date: 2026-05-27 -->
 
 ## Context
 

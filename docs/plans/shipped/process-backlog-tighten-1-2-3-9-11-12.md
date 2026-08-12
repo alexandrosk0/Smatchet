@@ -1,5 +1,4 @@
 # Tighten 6 process-backlog rules (items 1, 2, 3, 9, 11, 12)
-<!-- plan-date: 2026-05-19 -->
 
 Six process-category entries in `docs/backlog/agent-self-improvement/process.md` each have a concrete documented next action that lands in a single agent doc (AGENTS.md or `agents/<role>.md`) or a small script. None require code in `Source_Core/`, builds, or tests. All six can ship as **doc + tiny-script edits**, batched on a single branch with one commit per slice.
 

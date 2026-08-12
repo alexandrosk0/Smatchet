@@ -1,5 +1,4 @@
 # Plan — user-facing text i18n completeness sweep
-<!-- plan-date: 2026-07-05 -->
 
 > **Slug**: `user-facing-text-i18n-sweep`
 >

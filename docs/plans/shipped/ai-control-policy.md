@@ -1,5 +1,4 @@
 # Plan — AI control policy (human authority, loop modes, escalate-don't-assume)
-<!-- plan-date: 2026-06-03 -->
 
 > **Slug**: `ai-control-policy` (matches this file's basename without `.md`).
 >

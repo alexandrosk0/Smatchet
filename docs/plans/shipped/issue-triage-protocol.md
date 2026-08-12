@@ -1,5 +1,4 @@
 # Plan — GitHub Issue triage protocol (Issues-canonical for product bugs)
-<!-- plan-date: 2026-06-03 -->
 
 > **Slug**: `issue-triage-protocol` (matches this file's basename without `.md`).
 >

@@ -1,5 +1,4 @@
 # Plan — Internal procedure skills (codify AGENT-VS-SKILL + author-plan-doc)
-<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `internal-procedure-skills` (matches this file's basename without `.md`).
 >

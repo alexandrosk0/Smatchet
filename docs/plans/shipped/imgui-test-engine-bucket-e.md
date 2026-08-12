@@ -1,6 +1,4 @@
 # Plan (scope-only): wire ImGui Test Engine for `test-author` bucket E
-
-<!-- plan-date: 2026-05-15 -->
 <!-- index-summary: Scope-only plan for wiring ImGui Test Engine (`test-author` bucket E). Does not execute until the first concrete bucket-E item arrives. -->
 
 ## Context
