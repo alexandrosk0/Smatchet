@@ -537,5 +537,26 @@ jobs:
                     "only the template placeholder. Fill it with the originating ask (%s). "
                     "Override with the 'intent-out-of-band' label." % guide)
               sys.exit(1)
-          print("Intent section present and filled.")
+          # Pre-first-push review verdict. The review step of the [pre-first-push
+          # gate] is the only one that leaves no trace: a PR whose self-review was
+          # skipped and one whose review was clean look identical from outside
+          # (pre-first-push-review-step-is-unenforced-and-was-skipped — skipped on
+          # PR #1996, cost ~8 CodeRabbit cycles + four locally-knowable defects in
+          # CI). Requiring the verdict line makes ABSENCE visible. It cannot make
+          # the review real — a body check can verify a claim was made, never that
+          # the review ran — which is exactly why this is a body lint and not a
+          # pre-push hook. Comments are stripped FIRST so the template's commented
+          # placeholder cannot satisfy it untouched.
+          stripped = re.sub(r'(?s)<!--.*?-->', '', body)
+          verdict_re = re.compile(
+              r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
+              r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*\S.*)$')
+          if not verdict_re.search(stripped):
+              print("::error title=Review verdict missing::PR body records no pre-first-push "
+                    "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "
+                    "(e.g. `adversarial-code-review: 4 findings, all fixed`) or, for a genuinely "
+                    "trivial diff, `adversarial-code-review: n/a — <reason>`. See "
+                    "docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
+              sys.exit(1)
+          print("Intent section present and filled; review verdict recorded.")
           PY

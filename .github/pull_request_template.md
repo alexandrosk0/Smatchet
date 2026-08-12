@@ -16,6 +16,13 @@
 - [ ] `cmake --build --preset ninja-test-msvc && ctest --output-on-failure` from `build/ninja-test-msvc/`
 - [ ] `bash scripts/dev/test-all.sh` (sidecar suite)
 - [ ] Manual residue: <!-- "none" if every check is automated -->
+<!-- REQUIRED (Intent-section CI check): uncomment ONE of the two lines below and
+     fill it in AFTER actually running the pre-first-push self-review — recording a
+     verdict you did not earn defeats the gate (ship-loops.md § [pre-first-push gate] item 5).
+adversarial-code-review: N findings, <disposition>
+adversarial-code-review: n/a — <reason the diff is trivial>
+-->
+
 
 ## Coverage gate override (optional — read if your PR touches `Source/Core/src/*.cpp` without adding tests)
 

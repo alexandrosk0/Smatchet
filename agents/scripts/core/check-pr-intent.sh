@@ -37,7 +37,23 @@ if not section:
     print("check-pr-intent: EMPTY `## Intent` (only the template placeholder). "
           "Fill it with the originating ask.", file=sys.stderr)
     sys.exit(1)
-print("check-pr-intent: OK — `## Intent` present and filled.")
+# Pre-first-push review verdict — the review step otherwise leaves no trace
+# (pre-first-push-review-step-is-unenforced-and-was-skipped). Comments are
+# stripped FIRST so the template's commented placeholder cannot satisfy it.
+# This proves a claim was RECORDED, never that the review ran — the entry is
+# explicit that a check can do no more, which is why it lives in the body lint
+# and not the pre-push hook. KEEP IN SYNC with doc-validation.yml `Intent section`.
+stripped = re.sub(r'(?s)<!--.*?-->', '', body)
+verdict_re = re.compile(
+    r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
+    r'(?:\d+\s+findings?\b.*|n/a\s*[—–-]+\s*\S.*)$')
+if not verdict_re.search(stripped):
+    print("check-pr-intent: MISSING review verdict. Add a line "
+          "`adversarial-code-review: N findings, <disposition>` or "
+          "`adversarial-code-review: n/a — <reason>` "
+          "(ship-loops.md § [pre-first-push gate] item 5).", file=sys.stderr)
+    sys.exit(1)
+print("check-pr-intent: OK — `## Intent` present and filled; review verdict recorded.")
 PY
 }
 
@@ -49,11 +65,18 @@ run_selftest() {
         echo "check-pr-intent --selftest: FAIL — did not block a body missing ## Intent" >&2
         return 1
     fi
-    # Pass path: a filled `## Intent` MUST be accepted.
+    # Pass path: a filled `## Intent` + a findings-form verdict MUST be accepted.
     rc=0
-    _check "## Intent"$'\n\n'"Fix the thing the user asked for." >/dev/null 2>&1 || rc=$?
+    _check "## Intent"$'\n\n'"Fix the thing the user asked for."$'\n\n'"adversarial-code-review: 4 findings, all fixed" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
-        echo "check-pr-intent --selftest: FAIL — blocked a body WITH a filled ## Intent" >&2
+        echo "check-pr-intent --selftest: FAIL — blocked a body WITH intent + findings verdict" >&2
+        return 1
+    fi
+    # Pass path: the n/a escape form MUST be accepted.
+    rc=0
+    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"- adversarial-code-review: n/a — trivial one-line doc fix" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "check-pr-intent --selftest: FAIL — blocked the n/a verdict escape" >&2
         return 1
     fi
     # Empty-section path (template placeholder only) MUST be rejected.
@@ -63,6 +86,37 @@ run_selftest() {
         echo "check-pr-intent --selftest: FAIL — did not block an empty ## Intent" >&2
         return 1
     fi
+    # Verdict-missing path: intent filled but NO verdict line MUST be rejected,
+    # and for the RIGHT reason — a bare non-zero would also be produced by a
+    # python error or a broken Intent regex, so assert the message names it.
+    local out
+    out="$(_check "## Intent"$'\n\n'"Fix it, no review recorded." 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — did not block a body with no review verdict" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING review verdict"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — verdict-missing body rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # A verdict living ONLY inside an HTML comment (the untouched template) MUST
+    # be rejected — comments are stripped before the search. The comment is
+    # MULTI-LINE deliberately: on a single-line `<!-- adversarial... -->` the
+    # `<!--` prefix already breaks the line-start match, so that shape rejects
+    # even WITHOUT the strip and proves nothing about it (found by mutation:
+    # `stripped = body` stayed green against the single-line form). Inside a
+    # multi-line comment the verdict line stands alone and WOULD match raw.
+    out="$(_check "## Intent"$'\n\n'"Fix it."$'\n\n'"<!--"$'\n'"adversarial-code-review: 0 findings"$'\n'"-->" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — a commented-out verdict satisfied the check" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING review verdict"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — commented-verdict body rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
     echo "check-pr-intent --selftest: PASS"
 }
 
