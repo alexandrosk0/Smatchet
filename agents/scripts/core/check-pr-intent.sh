@@ -180,7 +180,14 @@ run_selftest() {
         echo "check-pr-intent --selftest: FAIL — sync check rejected an identical copy" >&2
         return 1
     fi
-    sed 's/adversarial-code-review/adversarial-code-reviewX/' "$tmpd/same.yml" > "$tmpd/drift.yml"
+    # The drift token is `findings?` — a string that occurs ONLY inside the
+    # verdict_re source lines, so the mutation provably lands in the extracted
+    # region under ANY reading of sed semantics. (The first draft mutated
+    # `adversarial-code-review`, which also works — `s///` without `g` replaces
+    # the first occurrence per LINE, so the regex line was mutated too — but a
+    # reviewer modelling `s///` as first-occurrence-per-FILE reads that as
+    # mutating only an earlier comment; a regex-only token needs no model.)
+    sed 's/findings?/findingsX?/' "$tmpd/same.yml" > "$tmpd/drift.yml"
     out="$(CHECK_PR_INTENT_WORKFLOW_PATH="$tmpd/drift.yml" check_workflow_sync 2>&1)" && {
         rm -rf "$tmpd"
         echo "check-pr-intent --selftest: FAIL — sync check passed a DRIFTED copy" >&2
