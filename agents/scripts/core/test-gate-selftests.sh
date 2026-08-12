@@ -57,7 +57,7 @@ MARKER_RE='# selftest: asserts-failure'
 # (; | && ` $( parens braces), leading keywords/env-assignments are stripped,
 # and only a segment that BEGINS with the quoted path is an exec of it — which
 # also makes bash/sh/. prefixes pass with no separate allow-list.
-SELF_EXEC_RE='"\$(_SCRIPT_PATH|SCRIPT_PATH|0)"[[:space:]]+--'
+SELF_EXEC_RE='"\$\{?(_SCRIPT_PATH|SCRIPT_PATH|0)\}?"[[:space:]]+--'
 
 # exposers <root> — print, one per line, every first-party script under <root>'s
 # SCAN_DIRS that EXPOSES a --selftest flag. Fail-closed: unreadable dirs are
@@ -77,12 +77,39 @@ exposers() {
 }
 
 # _selfexec_hits <file> — print `lineno:line` for every non-comment line with a
-# raw self-exec in COMMAND POSITION. Boundary split + keyword/assignment strip
-# is a heuristic lexer, deliberately shallow: false splits only create extra
-# segments (never hide one), and a segment must still BEGIN with the quoted
-# path to count, so `printf '%s' "$p" --x` and prose in strings stay clean.
+# raw self-exec in COMMAND POSITION. Quote-aware boundary scan + keyword/
+# assignment strip is a heuristic lexer, deliberately shallow: it polices
+# realistic first-party authoring shapes, not adversarial obfuscation (eval,
+# heredoc-sourced code). False splits only create extra segments (never hide
+# one), a segment must BEGIN with the quoted path to count (so `printf '%s'
+# "$p" --x` stays clean), and separators inside quoted strings are not
+# boundaries (so prose like `echo 'run; then "$p" --check'` stays clean).
 _selfexec_hits() {
     awk '
+        # seg_split(line, segs) — split at command boundaries (; | & ` parens
+        # braces), IGNORING separators inside single or double quotes. Shell
+        # forbids escaped quotes inside single quotes, so plain state toggles
+        # are exact there; backslash outside single quotes escapes one char.
+        # `$(` opens a fresh command context EVEN inside double quotes — it is
+        # a boundary regardless of in_d (with quote state reset), else the
+        # capture shape out="$("$p" --check)" hides its raw exec.
+        function seg_split(line, segs,    i, c, n, cur, in_s, in_d, esc) {
+            n = 0; cur = ""; in_s = 0; in_d = 0; esc = 0
+            for (i = 1; i <= length(line); i++) {
+                c = substr(line, i, 1)
+                if (esc)                      { cur = cur c; esc = 0; continue }
+                if (c == "\\" && !in_s)       { cur = cur c; esc = 1; continue }
+                if (c == "$" && !in_s && substr(line, i + 1, 1) == "(") {
+                    segs[++n] = cur; cur = ""; in_d = 0; i++; continue
+                }
+                if (c == "\047" && !in_d)     { in_s = !in_s; cur = cur c; continue }
+                if (c == "\"" && !in_s)       { in_d = !in_d; cur = cur c; continue }
+                if (!in_s && !in_d && index(";|&`(){}", c)) { segs[++n] = cur; cur = ""; continue }
+                cur = cur c
+            }
+            segs[++n] = cur
+            return n
+        }
         BEGIN {
             # Leading tokens that keep what follows in command position:
             # control keywords / ! / exec-style wrappers; env assignments with
@@ -96,12 +123,12 @@ _selfexec_hits() {
         }
         /^[[:space:]]*#/ { next }
         {
-            n = split($0, seg, /&&|[|;`(){}]|\$\(/)
+            n = seg_split($0, seg)
             for (i = 1; i <= n; i++) {
                 s = seg[i]
                 sub(/^[[:space:]]+/, "", s)
                 while (sub(strip, "", s)) { }
-                if (s ~ /^"\$(_SCRIPT_PATH|SCRIPT_PATH|0)"[[:space:]]+--/) {
+                if (s ~ /^"\$\{?(_SCRIPT_PATH|SCRIPT_PATH|0)\}?"[[:space:]]+--/) {
                     printf "%d:%s\n", NR, $0
                     next
                 }
@@ -309,6 +336,51 @@ SH
         *) echo "test-gate-selftests selftest: FAIL — &>-redirection exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
+
+    # A BRACED expansion is the same raw exec and must be flagged
+    # (CodeRabbit round-5 finding on PR #2002). Assembled, as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '${_SCRIPT_PATH}'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — braced-expansion raw self-exec was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — braced-expansion exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec inside a $( ) CAPTURE must be flagged — $( opens a command
+    # context even inside double quotes, so the quote-aware scan must still
+    # treat it as a boundary.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) out="$(%s --check)"; exit 0 ;;\nesac\n' '"$_SCRIPT_PATH"'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec inside \$( ) capture was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — capture exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A separator INSIDE a quoted string is not a command boundary — usage
+    # prose quoting the bad shape after a semicolon must pass (round-5
+    # false-positive finding: the naive split flagged exactly this).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf "    --selftest) echo 'usage: run; then %s --check by hand'; exit 0 ;;\nesac\n" '"$_SCRIPT_PATH"'
+    } > "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — quoted prose with an embedded separator was wrongly flagged" >&2
+        rc=1
+    fi
 
     # The path as a mere ARGUMENT is not an exec of it and must pass — only a
     # segment that BEGINS with the quoted path counts as command position.
