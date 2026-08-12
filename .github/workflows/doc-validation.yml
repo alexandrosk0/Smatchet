@@ -36,6 +36,8 @@ on:
       - 'agents/scripts/core/test-agent-build-facts.sh'
       - 'agents/scripts/core/test-plan-index.sh'
       - 'agents/scripts/core/test-plan-ref-integrity.sh'
+      - 'agents/scripts/core/test-plan-claim-anchors.sh'
+      - 'docs/high-integrity/plan-claim-anchor-baseline.md'
       - 'agents/scripts/core/test-portable-purity.sh'
       - 'agents/scripts/core/test-config-globs.sh'
       - 'agents/scripts/core/test-required-context-parity.sh'
@@ -369,6 +371,16 @@ jobs:
         run: |
           bash agents/scripts/core/test-plan-ref-integrity.sh --selftest
           bash agents/scripts/core/test-plan-ref-integrity.sh
+
+      # --all, not the bare diff-scope its sibling test-markdown-links uses: it is
+      # deterministic, needs no origin/develop fetch depth, and keeps the
+      # grandfathered set in a committed reviewable file. Any NEW claim is
+      # unbaselined and fails, which is the whole gate.
+      - name: test-plan-claim-anchors — new plan-delivery claims cite their evidence
+        if: steps.detect.outputs.docs == 'true'
+        run: |
+          bash agents/scripts/core/test-plan-claim-anchors.sh --selftest
+          bash agents/scripts/core/test-plan-claim-anchors.sh --all
 
       - name: test-plan-naming — plan files are kebab-case
         if: steps.detect.outputs.docs == 'true'
