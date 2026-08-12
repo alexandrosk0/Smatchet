@@ -118,7 +118,7 @@ _selfexec_hits() {
             # (2>/dev/null before the command). String form so \047 can carry
             # the single quote through the shell single-quoted awk program.
             strip = "^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+" \
-                    "|--[[:space:]]+" \
+                    "|-[^[:space:]]*[[:space:]]+" \
                     "|[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]*)[[:space:]]+" \
                     "|([0-9]*|&)(<|>>|>)[[:space:]]*[^[:space:]]+[[:space:]]+)"
         }
@@ -161,8 +161,10 @@ run_check() {
         # behaviour it names (126 before the script runs).
         # Comment lines are excluded: docs legitimately QUOTE the bad shape
         # (this very script does, one screen up) without executing it.
+        # NON-executable files only: on a mode-100755 script the raw form
+        # execs fine, so the 126 premise — and the rule — do not apply.
         # Cheap prefilter first; the awk lexer only runs on files that match.
-        if grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
+        if [ ! -x "$f" ] && grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
             selfexec+=("$f")
         fi
     done <<EOF
@@ -337,6 +339,37 @@ SH
         *) echo "test-gate-selftests selftest: FAIL — env -- exposer rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
     esac
+
+    # Wrapper OPTIONS must be consumed too — `env -i "$p" --check` still
+    # execs the 100644 file (CodeRabbit round-8 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) env -i "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind env -i was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — env -i exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # The SAME raw self-exec in an EXECUTABLE (100755) script is valid — no
+    # 126, no vacuous negative — and must pass (CodeRabbit round-8 finding).
+    # chmod back down immediately: later fixtures truncate-in-place and
+    # would silently inherit the +x bit, skipping the rule they exercise.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    chmod +x "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — raw self-exec in an EXECUTABLE script was wrongly flagged" >&2
+        rc=1
+    fi
+    chmod -x "$synth"
 
     # A SPACED redirection operand (2> /dev/null — valid shell) must also be
     # consumed before the path match (CodeRabbit round-6 finding on PR #2002).

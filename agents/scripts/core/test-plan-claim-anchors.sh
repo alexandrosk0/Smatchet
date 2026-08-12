@@ -37,9 +37,10 @@
 # stops suppressing and the claim reports again. Value semantics mirror the
 # C++ rule (00-common.sh revisit_overdue): YYYY-MM-DD | YYYY-Qn (quarter-end
 # expiry) | slug / never (no calendar expiry); NO revisit field stays active
-# (optional in the grammar). Stricter than C++ in one spot: a calendar-ish
-# value that parses as neither form (2026-02-30, 2027-08-11typo, 2026-Q5)
-# stops suppressing — fail closed, never a typo-made permanent exemption.
+# (optional in the grammar; slugs may lead with digits — 2026-roadmap stays
+# active). Stricter than C++ in one spot: a calendar ATTEMPT that parses as
+# neither form (2026-02-30, 2027-08-11typo, 2026-Q5, 20270811) stops
+# suppressing — fail closed, never a typo-made permanent exemption.
 #
 # Scope modes:
 #   default    — diff-scope: only claims on lines ADDED vs origin/develop.
@@ -142,6 +143,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the DATE_RE gate     -> (12) goes red (python >= 3.11)
     #   first-substring revisit match -> (13) goes red
     #   unguarded quarter date()      -> (14) goes red (escaped ValueError)
+    #   digit-leading -> fail closed  -> (15) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -261,6 +263,16 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (15) a digit-LEADING slug is still a slug — the grammar allows it, and
+    #      2026-roadmap must stay active, not be mistaken for a calendar
+    #      attempt (fail-closed applies only to date/quarter-shaped values).
+    _case escape-digit-slug 0 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2026-roadmap) -->
+- branch protection already had reviews disabled.
+'
+
     # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
     #      parse — a `revisit=` embedded in reason= prose must not shadow the
     #      real (expired) field, else prose mints a permanent exemption.
@@ -369,6 +381,11 @@ QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 # Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
 # BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+# A calendar ATTEMPT that parses as neither legal form: a dashed-date prefix
+# (2027-08-11typo), a quarter shape with any digit (2026-Q5), or ISO basic
+# (20270811). These fail closed. A merely digit-LEADING value that matches
+# none of them (2026-roadmap) is a slug — legal, no calendar expiry.
+CALENDARISH_RE = re.compile(r'\d{4}-\d{2}-\d{2}|\d{4}-Q\d+$|\d{8}$')
 TODAY = os.environ.get("TODAY", "")
 
 
@@ -384,10 +401,11 @@ def escape_active(comment_line):
     again, exactly like an overdue C++ deviation. Value semantics mirror
     00-common.sh's revisit_overdue(): YYYY-MM-DD compares against today,
     YYYY-Qn expires at quarter end (Q1=03-31 .. Q4=12-31), slug/never carry
-    no calendar expiry. One place this is STRICTER than the C++ side: a
-    value that LOOKS calendar-ish (leading digit) but parses as neither form
-    — 2026-02-30, 2027-08-11typo, 2026-Q5 — stops suppressing. Fail closed,
-    so the typo surfaces instead of minting a permanent exemption.
+    no calendar expiry (slugs may lead with digits: 2026-roadmap). One place
+    this is STRICTER than the C++ side: a CALENDAR ATTEMPT that parses as
+    neither legal form — 2026-02-30, 2027-08-11typo, 2026-Q5, 20270811 —
+    stops suppressing. Fail closed, so the typo surfaces instead of minting
+    a permanent exemption.
     """
     m = DEV_BODY_RE.search(comment_line)
     if not m or not TODAY:
@@ -398,13 +416,6 @@ def escape_active(comment_line):
         if field.startswith('revisit='):
             value = field[len('revisit='):].strip()
     if value is None:
-        return True
-    # (value may be the empty string: `revisit=` with nothing after it — that
-    # falls through to the no-calendar-expiry arm below, like the C++ rule's
-    # empty prev_dev_revisit.)
-    if not value or not value[0].isdigit():
-        # slug / never / empty: no calendar expiry (the C++ rule's
-        # "slug / never / unknown -> never overdue" arm).
         return True
     qm = QUARTER_RE.match(value)
     if qm:
@@ -417,21 +428,25 @@ def escape_active(comment_line):
             # never let the exception escape and crash the whole scan.
             return False
         return end >= datetime.date.fromisoformat(TODAY)
-    if not DATE_RE.match(value):
-        # Calendar-ish but valid as neither dashed date nor quarter (trailing
-        # junk, 2026-Q5, ISO basic 20270811): fail CLOSED — the author
-        # demonstrably tried to set an expiry, and treating the typo as "no
-        # date, active forever" would recreate the permanent exemption this
-        # function exists to end. Not suppressing surfaces both the claim and
-        # the typo on the next run.
+    if DATE_RE.match(value):
+        try:
+            revisit = datetime.date.fromisoformat(value)
+        except ValueError:
+            # Dashed shape but not a real calendar date (2026-02-30): fail
+            # CLOSED — the author demonstrably tried to set an expiry, and
+            # treating the typo as "no date, active forever" would recreate
+            # the permanent exemption this function exists to end.
+            return False
+        return revisit >= datetime.date.fromisoformat(TODAY)
+    if CALENDARISH_RE.match(value):
+        # A calendar ATTEMPT that parses as neither legal form (trailing
+        # junk, 2026-Q5, ISO basic 20270811): same fail-CLOSED reasoning —
+        # not suppressing surfaces both the claim and the typo.
         return False
-    try:
-        revisit = datetime.date.fromisoformat(value)
-    except ValueError:
-        # Dashed shape but not a real calendar date (2026-02-30): same fail-
-        # CLOSED reasoning.
-        return False
-    return revisit >= datetime.date.fromisoformat(TODAY)
+    # slug (including digit-leading: 2026-roadmap) / never / empty: no
+    # calendar expiry — the C++ rule's "slug / never / unknown -> never
+    # overdue" arm.
+    return True
 
 
 def scan(path, lines):
