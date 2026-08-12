@@ -1,4 +1,5 @@
 # Plan - GitHub commit tracker rows
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `github-commit-tracker-rows`.
 >

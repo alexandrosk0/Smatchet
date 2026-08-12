@@ -1,4 +1,5 @@
 # Plan — High-Integrity C++ Enforcement (slim profile)
+<!-- plan-date: 2026-05-28 -->
 
 > **Slug**: `high-integrity-cpp-enforcement`.
 

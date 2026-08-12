@@ -1,4 +1,5 @@
 # Plan — GitHub Projects v2 custom fields + ListProjects
+<!-- plan-date: 2026-07-14 -->
 
 > Closes the two items `docs/plans/shipped/github-tracker-backend.md` left deferred after
 > its § Remaining list shipped: `GitHubClient::ListProjects` (empty since PR2) and

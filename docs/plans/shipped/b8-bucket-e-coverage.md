@@ -1,4 +1,5 @@
 # Plan — B8: bucket-E coverage (post-verification re-scope)
+<!-- plan-date: 2026-06-02 -->
 
 > **Slug**: `b8-bucket-e-coverage`. Sub-plan of [`agentic-backlog-campaign.md`](../active/agentic-backlog-campaign.md) batch **B8**.
 >

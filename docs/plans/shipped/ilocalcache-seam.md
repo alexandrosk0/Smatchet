@@ -1,5 +1,6 @@
 <!-- index-summary: ISyncCache seam (ADR-0020) — 28-method sync-cache interface decouples OfflineQueueService/TicketSyncService/IssueCreatePipeline from SQLite; service tests run on a contract-suite-verified FakeSyncCache with a configure-time purity guard; PR1 #1112 (seam) + PR2 (test purity). -->
 # Plan — ISyncCache seam for pure-logic service tests
+<!-- plan-date: 2026-06-10 -->
 
 > **Slug**: `ilocalcache-seam` (matches this file's basename without `.md`).
 >

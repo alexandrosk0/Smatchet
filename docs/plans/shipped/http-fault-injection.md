@@ -1,4 +1,5 @@
 # Plan — HTTP fault-injection + retry wiring (testing-surface Slice D + D3)
+<!-- plan-date: 2026-06-14 -->
 
 > **Slug**: `http-fault-injection` (matches this file's basename without `.md`).
 >

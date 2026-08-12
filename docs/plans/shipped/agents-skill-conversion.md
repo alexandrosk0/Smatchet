@@ -1,4 +1,5 @@
 # Evaluate current agents — skill conversion candidates (v3, conservative-only, dual-publish)
+<!-- plan-date: 2026-05-19 -->
 
 ## Context
 

@@ -1,4 +1,5 @@
 # Plan — Concurrent-session guard hardening (Cluster A)
+<!-- plan-date: 2026-06-18 -->
 
 > **Slug**: `concurrent-session-guard-hardening` (matches this file's basename without `.md`).
 >

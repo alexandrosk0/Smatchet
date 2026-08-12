@@ -1,4 +1,5 @@
 # AI Assistant — Right-Docked Side Panel + agents.md Harness
+<!-- plan-date: 2026-05-16 -->
 
 > **Plan-doc relocation (mandatory first commit step)**: per `AGENTS.md` § Plan location, plans live at `docs/plans/active/<slug>.md`. After this file is approved, copy it to `docs/plans/shipped/ai-assistant-side-panel.md` and commit with `wip(plan): ai-assistant-side-panel` before any code work. The path under `~/.claude/plans/` is plan-mode scratch only.
 >
