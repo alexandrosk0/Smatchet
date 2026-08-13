@@ -7,7 +7,7 @@
 **Rule**: orchestrator runs each user task end-to-end in **one turn** without pausing for confirmation at each stage. The default sequence:
 
 ```
-diagnose → [seed plan-lock] → fix → build → [code-review pass] → [pre-first-push gate] → commit → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
+diagnose → [seed plan-lock] → fix → build → [code-review pass] → [pre-first-push gate 1–4] → commit → [record verdict — gate item 5] → push → open PR → [gate-check] → squash-merge → git-janitor cleanup → backlog entry
 ```
 
 **`[code-review pass]` (mandatory between fix and commit — `process-rules.md` § Code-review before every commit).** A `code-review` agent pass runs on the staged diff BEFORE the commit lands (orchestrator-direct commits review the staged diff; agent-produced branches get the PR-diff review dispatched at `open PR`). Critical/High findings block the commit/merge until fixed or user-waived. **Enforcement (shipped 2026-08-06, was "optional / advisory")**: `scripts/git-hooks/pre-commit` check (B) **hard-blocks** a commit whose staged diff is substantive C++ (strict-zone touch, or `>= REVIEW_LINE_THRESHOLD` changed lines) and carries no `.review-ack` fingerprint of that exact staged content. Run the review, then `bash agents/scripts/core/review-ack.sh --record --staged`; any later staged edit re-arms the gate. Docs/plan/script commits are untouched. Bypass: `SMATCHET_SKIP_REVIEW_GATE=1` (logged, discouraged). The hook gates the *presence* of a review; the review *verdict* is still yours to act on — a recorded ack with unfixed Critical/High findings is a process violation the hook cannot see.
