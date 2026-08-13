@@ -174,7 +174,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
 #   10-gate-filter.sh — the one giant `gh api graphql --jq` GATE_FILTER program
-#                        (the 31-field projection) as a template emitter.
+#                        (the 33-field projection) as a template emitter.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
 # stay INLINE in poll_merge_gates: they share one tightly-coupled per-poll local
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
@@ -385,6 +385,13 @@ poll_merge_gates() {
         return 3
     fi
     local outage_streak=0
+    # Lazy per-run cache for the base branch's required_conversation_resolution
+    # setting ("true"/"false"/"unknown"; empty = not yet read). Read at most
+    # once per run, and only on the poll that actually needs it (the
+    # BLOCKED-with-all-other-gates-green cause naming below). Env seam
+    # MERGE_GATES_CONV_RES_REQUIRED overrides for tests, mirroring
+    # pr-blocked-why.sh's PR_BLOCKED_WHY_CONV_RES_REQUIRED.
+    local conv_res_cache=""
     # The probe window opens when polling starts: `created=>=<this instant>`
     # scoped repo-wide. A quiet-but-healthy repo can only stay at zero created
     # runs while nothing pushes; the head under poll was itself pushed BEFORE
@@ -525,7 +532,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (31 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (33 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -553,14 +560,19 @@ poll_merge_gates() {
     # 30 crDisposition (bool: a `cr-disposition:`-prefixed label is present OR a
     # `cr-disposition:<reason>` marker line is in the PR body — the explicit
     # operator attestation REQUIRED before any `cr-out-of-band` downgrade is
-    # honoured; PR-3 cr-out-of-band-disposition-trail).
+    # honoured; PR-3 cr-out-of-band-disposition-trail) ·
+    # 31 thrUnresolvedTotal (UNFILTERED unresolved non-outdated review-thread
+    # count — what required_conversation_resolution actually gates on; the
+    # user-comment gate's filtered view excludes bot threads, #1937) ·
+    # 32 thrUnresolvedUser (the user-authored subset of 31; bot = 31 - 32).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 31-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 33-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
-    # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29) and
-    # crDisposition (30) are all non-empty tokens, so they are safe at the tail.
-    # GATE_FILTER — the 31-field jq projection (see field-order map above).
+    # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
+    # crDisposition (30) and the two numeric thread counts (31/32) are all
+    # non-empty tokens, so they are safe at the tail.
+    # GATE_FILTER — the 33-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -606,7 +618,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 31 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 33 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -615,11 +627,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 31 ]; then
-            # Exactly 31 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 33 ]; then
+            # Exactly 33 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 31); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 33); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -793,6 +805,17 @@ poll_merge_gates() {
         # ALONGSIDE cr-out-of-band to waive ANY CR block (PR-3): cr-out-of-band
         # alone is NOT honoured — the disposition records why CR review was waived.
         local cr_disposition="${fields[30]:-false}"
+
+        # UNFILTERED unresolved-non-outdated review-thread counts (fields 31/32:
+        # total, user-authored). The user-comment gate deliberately excludes bot
+        # threads, but branch protection's required_conversation_resolution
+        # counts EVERY unresolved thread — so the poller could read all-clear on
+        # a PR GitHub will never merge (#1937: ten open CR threads, ~90 min
+        # burned, cause found by hand). These feed the BLOCKED-cause naming
+        # below only; they gate nothing themselves. -1 = filter/parse miss →
+        # the naming stays silent (never invent a count).
+        local thr_total="${fields[31]:--1}"
+        local thr_user_cnt="${fields[32]:--1}"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -1365,6 +1388,50 @@ poll_merge_gates() {
         # otherwise the operator sees an all-green Poll line with no obvious cause.
         if [ "$mergestate_blocks" = true ]; then
             echo "BLOCK: GitHub mergeStateStatus=$gh_merge_state (set MERGE_GATES_IGNORE_MERGESTATE=true only for a positively-confirmed STALE-BLOCKED PR that is actually all-green — AGENTS.md § Merge gates)." >&2
+            # Silent-BLOCKED cause naming (poller-bot-thread-filter-diverges-
+            # from-branch-protection, tooling P2): the user-comment gate excludes
+            # bot threads, but required_conversation_resolution counts every
+            # unresolved thread — so BLOCKED with every poller gate green and
+            # open threads is almost always the conversation gate, and
+            # cr-out-of-band steers INTO it (waiving the CR gate is exactly when
+            # CR threads stay unresolved). Name it on this poll instead of
+            # letting the operator burn the budget and find the threads by hand
+            # (#1937: ten CR threads, ~90 min). Counts come from the same
+            # GraphQL response; only the branch-protection read is extra, cached
+            # per run, and a probe miss reports "may require" rather than
+            # staying silent (fail toward naming the likely cause — same
+            # posture as pr-blocked-why.sh's unknown handling).
+            if [ "$gh_merge_state" = "BLOCKED" ] && [ "${thr_total:-0}" -gt 0 ] && \
+               [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && [ "$req_absent" -eq 0 ] && \
+               [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
+               [ "$bb_block" = false ] && [ "$self_stale" = false ] && \
+               [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
+                if [ -z "$conv_res_cache" ]; then
+                    if [ -n "${MERGE_GATES_CONV_RES_REQUIRED+x}" ]; then
+                        conv_res_cache="${MERGE_GATES_CONV_RES_REQUIRED:-unknown}"
+                    else
+                        local conv_base="develop"
+                        if command -v jq >/dev/null 2>&1; then
+                            conv_base=$(jq -r '.branch_protection.branch // "develop"' \
+                                "${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}" 2>/dev/null) || conv_base="develop"
+                            [ -n "$conv_base" ] || conv_base="develop"
+                        fi
+                        conv_res_cache=$(gh api "repos/${owner}/${repo}/branches/${conv_base}/protection" \
+                            --jq 'if .required_conversation_resolution.enabled == true then "true" else "false" end' 2>/dev/null) \
+                            || conv_res_cache="unknown"
+                        [ -n "$conv_res_cache" ] || conv_res_cache="unknown"
+                    fi
+                fi
+                if [ "$conv_res_cache" != "false" ]; then
+                    local thr_user_n="$thr_user_cnt"
+                    [ "$thr_user_n" -ge 0 ] 2>/dev/null || thr_user_n=0
+                    local thr_bot_n=$(( thr_total - thr_user_n ))
+                    [ "$thr_bot_n" -ge 0 ] || thr_bot_n=0
+                    local conv_verb="requires"
+                    [ "$conv_res_cache" = "unknown" ] && conv_verb="may require (protection probe failed)"
+                    echo "BLOCK: mergeStateStatus=BLOCKED with all other gates green; ${thr_total} unresolved review thread(s) (${thr_user_n} user, ${thr_bot_n} bot) and branch protection ${conv_verb} conversation resolution. Bot threads count too — cr-out-of-band waives the poller's CR gate only, never branch protection. Resolve the threads (scripts/dev/pr-blocked-why.sh classifies them vs HEAD) or the merge will never unblock." >&2
+                fi
+            fi
         fi
 
         local elapsed=$(( $(date +%s) - start ))

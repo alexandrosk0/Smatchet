@@ -2041,6 +2041,122 @@ CFG
     rm -f "$f"
 }
 
+# ---------- Silent-BLOCKED cause naming (tooling P2: bot threads vs required_conversation_resolution) ----------
+# The user-comment gate excludes bot threads, but branch protection's
+# required_conversation_resolution counts EVERY unresolved thread — so the
+# poller could read all-clear while GitHub held the merge on ten open CR
+# threads (#1937, ~90 min burned + a manual GraphQL sweep). When BLOCKED is
+# the only blocker and unfiltered threads are open, the poller now names them.
+# MERGE_GATES_CONV_RES_REQUIRED is the test seam for the branch-protection read
+# (mirrors pr-blocked-why.sh's PR_BLOCKED_WHY_CONV_RES_REQUIRED).
+
+# blocked_with_bot_threads <n> — pass fixture, mergeStateStatus=BLOCKED, plus
+# <n> unresolved non-outdated threads authored by a non-CR non-cursor bot (CR /
+# cursor authorship would trip the cr_open / bb_open gates and mask the path
+# under test). Echoes the fixture path.
+blocked_with_bot_threads() {
+    local n="$1" nodes="[]" i
+    for ((i=0; i<n; i++)); do
+        nodes=$(jq -c '. + [{"isResolved": false, "isOutdated": false,
+            "comments": {"pageInfo": {"hasNextPage": false},
+                         "nodes": [{"author": {"login": "github-actions[bot]", "__typename": "Bot"}}]}}]' <<<"$nodes")
+    done
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.reviewThreads.nodes" "$nodes")"
+    rm -f "$f"
+    echo "$f2"
+}
+
+@test "silent-BLOCKED: bot threads + conv-res required -> actionable cause named [P2]" {
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) (0 user, 2 bot)"* ]]
+    [[ "$output" == *"waives the poller's CR gate only, never branch protection"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: conv-res disabled -> no thread-cause line (generic BLOCK only) [P2]" {
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=false
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mergeStateStatus=BLOCKED"* ]]
+    [[ "$output" != *"unresolved review thread(s)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: protection probe unknown -> hedged 'may require' still names the threads [P2]" {
+    local f; f="$(blocked_with_bot_threads 1)"
+    export MERGE_GATES_CONV_RES_REQUIRED=unknown
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 unresolved review thread(s) (0 user, 1 bot)"* ]]
+    [[ "$output" == *"may require (protection probe failed)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: zero open threads -> no thread-cause line (negative canary) [P2]" {
+    # The pass fixture's only unresolved thread is OUTDATED, so the unfiltered
+    # count is 0 — BLOCKED alone must not fabricate a thread cause.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mergeStateStatus=BLOCKED"* ]]
+    [[ "$output" != *"unresolved review thread(s)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: another gate red -> no thread-cause line (not the ONLY blocker) [P2]" {
+    # A real user comment blocks the user gate; the thread-cause naming must
+    # stay silent so it never distracts from an actual red gate.
+    local f; f="$(blocked_with_bot_threads 2)"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.comments.nodes" \
+        '[{"author": {"login": "somehuman", "__typename": "User"}}]')"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"all other gates green"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f" "$f2"
+}
+
+@test "silent-BLOCKED: a USER-authored open thread blocks the user gate, so naming stays silent [P2]" {
+    # A user thread is never the SILENT cause — it reds the user-comment gate
+    # (field 15 counts user-authored threads), which already names itself. The
+    # thread-cause line is reserved for the invisible case: bot-only threads.
+    local f nodes
+    nodes='[{"isResolved": false, "isOutdated": false, "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [{"author": {"login": "somehuman", "__typename": "User"}}]}}]'
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.reviewThreads.nodes" "$nodes")"
+    set_fixture "$f2"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"all other gates green"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f" "$f2"
+}
+
 # ---------- Actions-outage escalation (process P1 fix (3): CI unavailable gets a defined move) ----------
 # The #1941 shape: Actions jammed repo-wide (75 runs stuck queued, zero runs
 # created after 19:16Z, close/reopen produced nothing), so the head could never
@@ -2517,10 +2633,10 @@ CFG
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 31; the
-    # -ne 31 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 33; the
+    # -ne 33 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
-    # fields rely on).
+    # + thread-count fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -2528,7 +2644,7 @@ CFG
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 31"* ]]
+    [[ "$output" == *"expected 33"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }
