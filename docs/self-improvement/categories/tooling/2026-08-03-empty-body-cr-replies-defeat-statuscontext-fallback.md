@@ -39,7 +39,7 @@ the header grep still returned nothing and the gate still failed closed. Once a
 head reaches this state the only exit is a **new head**.
 
 Neither existing entry covers this: the
-[adaptive-ratelimit](../process/2026-07-10-coderabbit-adaptive-ratelimit-wedges-required-cr-gate.md)
+[adaptive-ratelimit](../applied.md)
 one is about CR never *arriving*; the
 [stuck-blockers](2026-07-13-cr-merge-gate-stuck-blockers.md) one is about
 findings that *are* parseable. This is CR having arrived and the gate being
