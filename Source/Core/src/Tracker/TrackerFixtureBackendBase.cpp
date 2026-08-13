@@ -21,9 +21,10 @@ bool TrackerFixtureBackendBase::LoadFixtureJson(nlohmann::json& out) {
         return false;
     }
     std::stringstream buf;
-    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by
-    // construction; owner=security-audit; revisit=2026-12-31)
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
     buf << in.rdbuf();
+    // clang-format on
     nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(buf.str());
     if (parsed.is_discarded()) {
         loadError_ = "invalid JSON in fixture file";

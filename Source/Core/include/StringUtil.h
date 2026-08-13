@@ -152,13 +152,9 @@ inline std::string SanitizeForSpreadsheet(const std::string& s) {
     return out;
 }
 
-/// Base64 encode (RFC 4648, standard alphabet, '=' padded).
-///
-/// Single source for the repo's base64: the tracker Basic-auth header
-/// (`TrackerHttpUtils`), the MCP envelope path (`Source/Plugins/Mcp`), and the bug-report
-/// attachment encoder all route here. Previously each carried its own encoder — two of them
-/// byte-identical (a 259-token copy-paste clone), the third a differently-written
-/// implementation of the same RFC that the duplication gate could not see.
+/// Base64 encode (RFC 4648, standard alphabet, '=' padded). Single source for the repo's
+/// base64 — the tracker Basic-auth header, the MCP envelope path, and the bug-report
+/// attachment encoder all route here; each previously carried its own copy.
 inline std::string Base64Encode(const std::string& in) {
     static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     std::string out;

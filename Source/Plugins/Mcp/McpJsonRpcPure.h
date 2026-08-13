@@ -36,8 +36,7 @@ void AppendAllowlistedArgKvs(std::ostringstream& oss, const nlohmann::json& obj)
 
 } // namespace detail
 
-// Base64Encode was removed from this namespace — it was byte-identical to the tracker's
-// encoder. Use the single-sourced `Base64Encode` from Core's StringUtil.h instead.
+// Base64Encode moved to Core's StringUtil.h (was byte-identical to the tracker's encoder).
 
 bool LooksLikeHttpUrl(const std::string& url);
 

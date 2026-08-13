@@ -64,13 +64,10 @@ bool IsQueryUserField(const TrackerField& field);
 
 /// Append value suggestions for `field` whose raw value or display label prefix-matches
 /// `prefix`, de-duplicated through `seen`. Walks AllowedValueOptions (user fields emit an
-/// account-id entry plus a display-name entry; other fields emit value and, when distinct,
+/// account-id entry plus a display-name entry; others emit value and, when distinct,
 /// id-qualified-by-value) then the flat AllowedValues list.
-///
-/// `userDisplaySuffix` is the only backend-local divergence: the separator label appended to
-/// the display-name variant of a user field — Jira renders " (display name) -> ", Plane
-/// " (display) -> ". Passing it in keeps both wordings verbatim while the body stays single-
-/// sourced (was a 465-token copy-paste clone across the two engines).
+/// `userDisplaySuffix` is the only backend-local divergence — Jira renders " (display name) -> ",
+/// Plane " (display) -> "; passing it in keeps both wordings while the body is single-sourced.
 void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, const char* userDisplaySuffix,
                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen);
 

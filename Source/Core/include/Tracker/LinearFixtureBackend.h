@@ -18,9 +18,7 @@
 
 #include <nlohmann/json.hpp>
 
-// From here down this header is per-backend declaration shell — the std includes, the forward decls,
-// and the three overrides that genuinely differ per backend. All shared behaviour already lives in
-// TrackerFixtureBackendBase, so what remains is API shape rather than duplicated logic.
+// Below is per-backend declaration shell only — shared behaviour lives in TrackerFixtureBackendBase.
 // SMATCHET_DEVIATION(rule=duplication; reason=fixture decl shell; owner=tracker; revisit=2026-12-31)
 #include <memory>
 #include <string>
@@ -33,17 +31,12 @@ class ITrackerCollaboration;
 namespace smatchet {
 namespace linear {
 
-/// Read-only Linear backend backed by a fixture JSON file. Loads once at
-/// construction; `FetchIssues` returns the cached vector. Reachability always
-/// reports `AuthenticatedReachable` so the UI shows no disconnect banner during
-/// fixture-driven scenarios (matches GitHub/Plane fixtures).
+/// Read-only Linear backend backed by a fixture JSON file, loaded once at construction.
 class LinearFixtureBackend : public smatchet::tracker_fixture::TrackerFixtureBackendBase {
   public:
-    /// `fixturePath` must point to a JSON file shaped like the GraphQL `issues`
-    /// response — `{ "data": { "issues": { "nodes": [...] } } }` — or a minimal
-    /// `{ "nodes": [...] }`. On any I/O or JSON-parse error the backend stays
-    /// empty (`FetchIssues` returns no rows + a diagnostic in `outFetchError`);
-    /// the detailed message is also surfaced via `LoadError()`.
+    /// `fixturePath` must be JSON shaped like the GraphQL `issues` response
+    /// (`{"data":{"issues":{"nodes":[...]}}}`) or a minimal `{"nodes":[...]}`. On any I/O or
+    /// parse error the backend stays empty and the message surfaces via `LoadError()`.
     explicit LinearFixtureBackend(const std::string& fixturePath);
 
     std::string GetTrackerType() const override { return "Linear"; }

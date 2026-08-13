@@ -1,27 +1,14 @@
 #ifndef SMATCHET_TRACKER_FIXTURE_BACKEND_BASE_H
 #define SMATCHET_TRACKER_FIXTURE_BACKEND_BASE_H
 
-// Shared read-path base for the deterministic, production-resident fixture backends
-// (GitHubFixtureBackend / PlaneFixtureBackend / LinearFixtureBackend). Each of those
-// reads a JSON fixture from disk at construction, maps it through its own pure mapper,
-// and then serves reads from the resulting CachedTickets — the mapping differs per
-// backend, but everything downstream of it was byte-identical across all three (a
-// ~1,800-token clone family in the DRY-pillar baseline, docs/adr/0015).
-//
-// What lives here is exactly the identical part: the role-interface accessors, the two
-// read paths, and the fixture state they read from. What stays in each derived backend
-// is what genuinely differs:
-//
-//   * the constructor + fixture->CachedTicket mapping (different JSON schema per backend);
-//   * `GetTrackerType()`;
-//   * `ProbeReachability()` — the diagnostic strings differ, and GitHub/Linear report
-//     ServiceUnavailable on a load error where Plane does not;
-//   * the mutation surface — Plane/Linear reject writes with a read-only error, while
-//     GitHub logs a no-op and returns Ok, and their BuildFieldPayload results differ.
-//
-// This is a within-subsystem base for three backends that already share their role
-// interfaces, not a helper spanning independent subsystems — the distinction the
-// double-edged-DRY guardrail in docs/agent-rules/quality-pillars.md turns on.
+// Shared read path for the production-resident fixture backends (GitHub / Plane / Linear).
+// Each reads a JSON fixture at construction and maps it through its own pure mapper; the
+// mapping differs per backend, but everything downstream of it was byte-identical across all
+// three (a ~1,800-token clone family in the DRY-pillar baseline, docs/adr/0015). That identical
+// part — role accessors, both read paths, and the fixture state — lives here.
+// Each backend still owns its fixture mapping, GetTrackerType, ProbeReachability, and (GitHub
+// only) write semantics. A within-subsystem base for three backends that already share their
+// role interfaces, not a helper spanning independent subsystems.
 
 #include "ITrackerBackend.h"
 #include "ITrackerConnectivity.h"
@@ -71,13 +58,10 @@ class TrackerFixtureBackendBase : public ITrackerBackend,
     std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
                                     const std::string& value) const override;
 
-    /// Fixtures are read-only by default: writes are rejected with an invalid-request
-    /// error naming the backend ("<Type>FixtureBackend is read-only"), and BuildFieldPayload
-    /// yields an empty object. A fixture that wants write semantics (GitHub logs the call and
-    /// returns Ok so mutating scenarios can run) overrides these three.
-    ///
-    /// The three signatures below match every other ITrackerIssueMutations implementer verbatim
-    /// because the interface fixes them — declaration-shape symmetry, not duplicated logic.
+    /// Read-only by default: writes are rejected as invalid-request naming the backend
+    /// ("<Type>FixtureBackend is read-only") and BuildFieldPayload yields an empty object.
+    /// GitHub overrides all three to log a no-op and return Ok so mutating scenarios run.
+    /// The signatures are fixed by ITrackerIssueMutations, hence identical everywhere.
     // SMATCHET_DEVIATION(rule=duplication; reason=interface-decl symmetry; owner=tracker; revisit=2026-12-31)
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
