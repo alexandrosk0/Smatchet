@@ -146,6 +146,7 @@ if [ "$SCOPE" = "selftest" ]; then
     #   digit-leading -> fail closed  -> (15) goes red
     #   empty value -> return True    -> (16) and (17) go red
     #   re-anchoring CALENDARISH_RE   -> (18) and (19) go red
+    #   first-paren DEV_BODY_RE       -> (20) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -332,6 +333,34 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (20) a `)` inside reason= prose must not truncate the body and drop the
+    #      real (expired) revisit field — the body parse runs to the LAST `)`.
+    _case escape-paren-reason 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=see foo(bar) note; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-paren-reason]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (21) a marker MISSING its closing paren never engages suppression at all
+    #      (DEV_RE requires the paren) — the claim reports.
+    _case escape-unclosed-marker 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=x; owner=x; revisit=never -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-unclosed-marker]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
     # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
     #      parse — a `revisit=` embedded in reason= prose must not shadow the
     #      real (expired) field, else prose mints a permanent exemption.
@@ -435,7 +464,10 @@ DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
 # match would let `reason=see revisit=never note; revisit=<past>` ride on the
 # embedded first occurrence. Value grammar (AGENTS.md deviation spec):
 # YYYY-MM-DD | YYYY-Qn | slug | never.
-DEV_BODY_RE = re.compile(r'SMATCHET_DEVIATION\(([^)]*)\)')
+# Greedy to the LAST `)` on the line: `[^)]*` truncated at a `)` inside
+# reason= prose, dropping the real revisit= field and minting a permanent
+# exemption (CodeRabbit round-11 finding on PR #2002).
+DEV_BODY_RE = re.compile(r'SMATCHET_DEVIATION\((.*)\)')
 QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 # Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
 # BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
@@ -469,7 +501,10 @@ def escape_active(comment_line):
     """
     m = DEV_BODY_RE.search(comment_line)
     if not m:
-        return True
+        # Only reachable when the caller's DEV_RE matched but the body is
+        # unparseable — a malformed marker must not mint an exemption: fail
+        # CLOSED, same reasoning as every other malformed escape.
+        return False
     if not TODAY:
         # Defense in depth: the shell wrapper always exports TODAY, but if it
         # ever arrived empty the expiry rule would silently vanish — abort
