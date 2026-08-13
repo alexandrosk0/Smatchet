@@ -1,4 +1,4 @@
-- 2026-08-12 · claude-code · [process] · P2 — a CodeRabbit review that COMPLETED can still leave the head with no review evidence the `CR findings` gate accepts, in two observed shapes: a rate-limit-stale `success` status, and a comment-only clean pass that posts no review object; both are indistinguishable from "never reviewed" until something re-triggers the reviewer
+- 2026-08-12 · claude-code · [process] · P2 — a CodeRabbit review that COMPLETED can still leave the head with no review evidence the `CR findings` gate accepts, in three observed shapes: a rate-limit-stale `success` status, a comment-only clean pass that posts no review object, and a clean-with-nitpicks review object whose body omits the actionable-count header; all are indistinguishable from "never reviewed" until something re-triggers the reviewer
 
   Details: the gate rule (shipped after #1996, tightened by the ledger learning
   of 2026-08-11) is correct: `state: success` + description `Review rate
@@ -27,6 +27,23 @@
   adaptive rate-limit window the retry burns (25-55 min per wait, four waits
   during the #1999 drive).
 
+  3. **Header-less clean-with-nitpicks review** (added 2026-08-13, observed on
+     the #2002 merge drive, round 12). A full review CAN submit a review object
+     on the current head and still wedge the gate: a clean pass that carries
+     only nitpicks omits the `Actionable comments posted: N` header line from
+     the review body. `cr-finding-gate`'s parser greps for exactly that header,
+     treats a header-less body as "not parseable → retry", exhausts its retry
+     window, and resolves to PENDING — permanently, since the review it is
+     waiting for already happened. Unlike shapes 1–2, `@coderabbitai full
+     review` does NOT resolve this one: the fresh review is clean again, omits
+     the header again, and re-wedges. This is a gate bug, not a reviewer
+     quirk — the fix is in the gate: an on-head review object whose body has
+     nitpicks/summary content but no actionable-count header IS evidence of 0
+     actionable findings and must resolve to success. On #2002 the status sat
+     pending through a valid round-12 clean review and the merge proceeded on
+     directly-verified review evidence instead of the status (rationale on the
+     PR).
+
   Also worth recording for the next long merge drive: pushing to a PR while
   CodeRabbit is mid-review ABORTS the review ("head commit changed during the
   review"), and the automatic retry burns the next rate-limit slot — the
@@ -41,8 +58,10 @@
   `@coderabbitai full review` nudge itself — once per head, budget-capped —
   instead of parking on `pending` until a human or a timer intervenes. The
   merge-gates.sh side already has the auto-post shape
-  (MERGE_GATES_STALE_REREVIEW_POLLS); the CI gate lacks it. Est ~0.5d
+  (MERGE_GATES_STALE_REREVIEW_POLLS); the CI gate lacks it. For shape 3 the
+  nudge is useless (see above) — the parser itself must accept an on-head
+  review object with no actionable-count header as 0 actionable. Est ~0.5d
   including bats coverage for the once-per-head cap.
 
   Status: open
-  Last-reviewed: 2026-08-12
+  Last-reviewed: 2026-08-13

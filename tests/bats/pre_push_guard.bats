@@ -2,7 +2,8 @@
 # tests/bats/pre_push_guard.bats
 # ----------------------------------------------------------------------------
 # Bats tests for scripts/git-hooks/pre-push (A) — the direct-push-to-protected-
-# branch hard-stop. Pre-push ref updates are fed on stdin
+# branch hard-stop — plus (C) plan-lock collision and (E) review-verdict marker.
+# Pre-push ref updates are fed on stdin
 # ("<local_ref> <local_sha> <remote_ref> <remote_sha>"); `gh` is stubbed to a
 # no-op so the (B) merged-PR check makes no network call and cleanly exits 0.
 # ----------------------------------------------------------------------------
@@ -24,8 +25,11 @@ setup() {
 teardown() { rm -rf "$TMP"; }
 
 # run_push <refline> [env-assignment]
+# (E) is neutralised by default — the fixture repo's HEAD legitimately has no
+# review-verdict marker (stage-neutraliser discipline); the (E) tests below
+# re-enable it via a later `SMATCHET_SKIP_REVIEW_MARKER=0` (last env wins).
 run_push() {
-    printf '%s\n' "$1" | ( cd "$TMP" && env ${2:-} PATH="$STUB:$PATH" bash "$HOOK" origin url )
+    printf '%s\n' "$1" | ( cd "$TMP" && env SMATCHET_SKIP_REVIEW_MARKER=1 ${2:-} PATH="$STUB:$PATH" bash "$HOOK" origin url )
 }
 
 @test "push to develop is REFUSED" {
@@ -131,4 +135,46 @@ planlock_fixture() {
     run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "LTC_ROWS_OVERRIDE=$ROWS"
     [ "$status" -eq 1 ]
     [[ "$output" == *"plan-lock collision"* ]]
+}
+
+# ---- (E) REVIEW-VERDICT MARKER ----------------------------------------------
+# Feature-branch pushes need a `$GIT_DIR/review-verdict-<HEAD sha>` marker
+# (stamped by record-review-verdict.sh). The marker is stamped/withheld
+# directly here — the recorder's own selftest covers the stamping path.
+
+@test "(E) feature push with NO review-verdict marker is REFUSED" {
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no review-verdict marker"* ]]
+    [[ "$output" == *"record-review-verdict.sh"* ]]
+}
+
+@test "(E) feature push WITH a marker for HEAD is allowed" {
+    touch "$TMP/.git/review-verdict-$(git -C "$TMP" rev-parse HEAD)"
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 0 ]
+}
+
+@test "(E) a marker for an EARLIER commit does not cover a new HEAD" {
+    # Stamp for the current HEAD, then advance — the new commit is exactly the
+    # unreviewed-push hole the binding exists to close.
+    touch "$TMP/.git/review-verdict-$(git -C "$TMP" rev-parse HEAD)"
+    ( cd "$TMP" && echo z > f && git add -A && git commit -qm advance )
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no review-verdict marker"* ]]
+}
+
+@test "(E) SMATCHET_SKIP_REVIEW_MARKER=1 overrides with a logged note" {
+    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=1"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skipping the review-verdict marker gate"* ]]
+}
+
+@test "(E) runs AFTER the protected-branch stop: develop refusal wins" {
+    # A develop push with no marker must still report the (A) refusal — (E)
+    # must not re-label a protected-branch accident as a review-process miss.
+    run run_push "refs/heads/feature $SHA refs/heads/develop $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"REFUSING direct push to 'develop'"* ]]
 }
