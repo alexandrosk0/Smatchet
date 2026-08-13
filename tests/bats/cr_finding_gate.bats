@@ -517,9 +517,27 @@ run_nudge() {
     [ "$(grep -c '@coderabbitai full review' "$POST_LOG")" -eq 1 ]
 }
 
-@test "workflow grants the comment-POST scopes the auto-nudge needs" {
-    grep -qE '^  issues: write$'        "$WF"
-    grep -qE '^  pull-requests: write$' "$WF"
+@test "workflow grants the comment-POST scope and NOT more (least privilege)" {
+    # issues:write alone authorizes the nudge's PR-comment POST (PR comments go
+    # through the issues endpoint); pull-requests stays read for the metadata /
+    # file-list fetches. pull-requests:write would be unused token surface.
+    grep -qE '^  issues: write$'         "$WF"
+    grep -qE '^  pull-requests: read$'   "$WF"
+    ! grep -qE '^  pull-requests: write$' "$WF"
+}
+
+@test "nudge: a forged marker from a non-bot commenter does not suppress recovery" {
+    # Markers are authenticated by author (github-actions[bot], the login the
+    # workflow token posts as). A drive-by commenter pasting the marker — or
+    # three of them to drain the budget — must not stop the nudge.
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    row 'someuser' '2026-08-13T12:01:00Z' "@coderabbitai full review <!-- cr-full-review-nudge:${SHA} -->"
+    row 'someuser' '2026-08-13T12:02:00Z' 'cr-full-review-nudge:aaaa'
+    row 'someuser' '2026-08-13T12:03:00Z' 'cr-full-review-nudge:bbbb'
+    row 'someuser' '2026-08-13T12:04:00Z' 'cr-full-review-nudge:cccc'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
 }
 
 @test "the nudge call is wired into the rate-limit branch, not just defined" {

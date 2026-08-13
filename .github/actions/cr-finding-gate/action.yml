@@ -9,10 +9,11 @@ description: >-
 inputs:
   github-token:
     description: >-
-      Token with statuses:write + pull-requests:read, plus issues:write /
-      pull-requests:write for the stale-evidence full-review auto-nudge
-      (comment POST; the gate still functions read-only without it — the
-      nudge POST just warns and moves on).
+      Token with statuses:write + pull-requests:read, plus issues:write for
+      the stale-evidence full-review auto-nudge (PR comments POST through the
+      issues endpoint, so issues:write alone authorizes it; the gate still
+      functions read-only without it — the nudge POST just warns and moves
+      on).
     required: true
   pr-number:
     description: Pull-request number to evaluate.
@@ -119,8 +120,18 @@ runs:
           while IFS=$'\t' read -r login ts b64; do
             [ -n "$b64" ] || continue
             cmt=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || continue
-            case "$cmt" in *cr-full-review-nudge:*) n_nudges=$((n_nudges + 1)) ;; esac
-            case "$cmt" in *"$marker"*) mine=true ;; esac
+            # Markers are AUTHENTICATED by author: the nudge posts via the
+            # workflow token, i.e. as github-actions[bot], so only that login's
+            # markers count for the once-per-head dedup and the budget.
+            # Trusting any commenter's text would let a forged
+            # `cr-full-review-nudge:<sha>` (or three of them) suppress recovery
+            # on a head that still lacks accepted review evidence — a
+            # denial-of-recovery from a drive-by comment (CodeRabbit round-1
+            # finding on this gate's own PR).
+            if [ "$login" = "github-actions[bot]" ]; then
+              case "$cmt" in *cr-full-review-nudge:*) n_nudges=$((n_nudges + 1)) ;; esac
+              case "$cmt" in *"$marker"*) mine=true ;; esac
+            fi
             if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
               # Busy signals are matched on the NOTICE wording, deliberately
               # NOT on 'rate.?limit': CR's command replies quote stored repo
