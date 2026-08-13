@@ -1665,7 +1665,7 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 8 expected terminal states (incl. READY_FLIP_FAILED + STUCK_NEEDS_ATTENTION)" {
+@test "NOTIFY_STATES contains the 9 expected terminal states (incl. ACTIONS_UNAVAILABLE)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
@@ -1673,12 +1673,56 @@ m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec
 # STUCK_NEEDS_ATTENTION joined when the wedge-escalation driver started flipping
 # last_state to it for the one-shot maybe_notify toast (the stuck-escalation
 # feature); the assertion was left at 7 and silently red until now.
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION'}
+# ACTIONS_UNAVAILABLE joined with the merge-gates exit-7 Actions-outage
+# escalation — an escalation nobody is told about is dead under the watcher.
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
+assert 'ACTIONS_UNAVAILABLE' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
 print('ok')
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"ok"* ]]
+}
+
+@test "poll_one maps merge-gates exit 7 to ACTIONS_UNAVAILABLE and surfaces the ESCALATE diagnosis" {
+    # Exit 7 returns before the per-iteration Poll line AND before GATE_CARRY,
+    # so stdout is empty and stderr leads with the long BLOCK: required-missing
+    # line. Without the returncode==7 branch the 300-char stderr join truncates
+    # the ESCALATE diagnosis away and the state falls to generic EXIT_7 —
+    # absent from NOTIFY_STATES/AGENT_EVENT_STATES, i.e. a silent escalation.
+    run python - <<'PY'
+import importlib.util, os, sys, tempfile
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); sys.modules["mw"] = m; spec.loader.exec_module(m)
+m._pr_lifecycle_state = lambda pr, cp: "OPEN"
+m._poll_owner_repo = lambda pr, cp: ("alexandrosk0", "Smatchet")
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m._resolve_orch_user = lambda cp: "bats"
+class _Gates:
+    returncode = 7
+    stdout = ""
+    stderr = (
+        "BLOCK: required-missing: Build and test (required by branch protection but absent "
+        "from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger "
+        "CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence "
+        "on an early poll may still be pending; it is blocked until the contexts actually report, "
+        "never merged on the assumption they will.\n"
+        "ESCALATE: ACTIONS UNAVAILABLE — 1 required context(s) absent on head deadbeef "
+        "for 15 consecutive polls AND zero workflow runs created repo-wide since "
+        "2026-08-13T00:00:00Z. This head cannot go green by waiting.\n"
+    )
+m._poll_run_gates = lambda owner, repo, pr, env: _Gates()
+state = m.poll_one({"pr": 999, "clone_path": tempfile.mkdtemp()})
+assert state["last_state"] == "ACTIONS_UNAVAILABLE", state
+assert state["gates_return_code"] == 7, state
+assert state["last_status_line"].startswith("ESCALATE: ACTIONS UNAVAILABLE"), state
+assert "ACTIONS_UNAVAILABLE" in m.NOTIFY_STATES
+assert "ACTIONS_UNAVAILABLE" in m.AGENT_EVENT_STATES
+print("exit7 ok")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exit7 ok"* ]]
 }
 
 @test "maybe_notify suppresses repeat-notify for the same state" {

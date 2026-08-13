@@ -601,7 +601,17 @@ def poll_one(
         3: "GH_API_DOWN",
         4: "PR_CLOSED_OR_MERGED",
         5: "PAGINATION_OVERFLOW",
+        7: "ACTIONS_UNAVAILABLE",
     }.get(gates.returncode, f"EXIT_{gates.returncode}")
+    if gates.returncode == 7:
+        # Exit 7 returns before the per-iteration `Poll …` line, so stdout is
+        # empty and the stderr join above leads with the (very long) BLOCK:
+        # required-missing line — the ESCALATE diagnosis would be truncated
+        # away. The diagnosis IS the deliverable of this state: surface it.
+        for ln in gates.stderr.splitlines():
+            if ln.strip().startswith("ESCALATE:"):
+                last_line = ln.strip()[:500]
+                break
     result = {
         "pr": pr,
         "clone_path": clone_path,
@@ -1237,6 +1247,10 @@ NOTIFY_STATES = {
     # Wedge escalation — set by maybe_escalate_stuck_pr after a PR sits in a
     # non-progressing blocked state for >= MERGE_WATCH_STUCK_CYCLES cycles.
     "STUCK_NEEDS_ATTENTION",
+    # Actions-outage escalation (merge-gates exit 7): required contexts absent
+    # while zero workflow runs were created repo-wide — waiting cannot clear
+    # it, so a human/agent must act. Silent under the watcher otherwise.
+    "ACTIONS_UNAVAILABLE",
 }
 
 
@@ -2853,6 +2867,7 @@ AGENT_EVENT_STATES = {
     "PAGINATION_OVERFLOW",
     "TIMEOUT",
     "READY_FLIP_FAILED",
+    "ACTIONS_UNAVAILABLE",
 }
 
 
