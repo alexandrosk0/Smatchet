@@ -182,6 +182,15 @@ EOF
 # gate no longer uses.
 RATE_LIMIT_RE='rate.?limit|limit reached'
 
+# The positive half of the shape-3 discrimination: a header-less on-head
+# review resolves clean ONLY when the observed clean-with-nitpicks shape is
+# present (2026-08-12 entry) — generic furniture ("Review details" etc.)
+# appears in every CR body and proves nothing. The negative half (no line may
+# pair "actionable" with a digit, catching a format-drifted count header) is
+# mirrored inside verdict() below. Same restate-then-assert-verbatim contract
+# as RATE_LIMIT_RE above.
+NITPICK_CLEAN_RE='nitpick comments'
+
 # verdict <fixture> -> not-reviewed | unsettled | fail-closed | findings:N | clean
 # Mirrors decide()'s control flow using the action's own jq + header regex.
 #   not-reviewed = no verdict-carrying review, CR status SUCCESS -> gate passes
@@ -205,7 +214,11 @@ verdict() {
     body=$(jq -r -f "$BATS_TEST_TMPDIR/body.jq" "$f")
     num=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
             | grep -oE '[0-9]+' | head -1 || true)
-    if [ -z "$num" ]; then printf 'fail-closed'
+    if [ -z "$num" ]; then
+        if printf '%s' "$body" | grep -qiE "$NITPICK_CLEAN_RE" \
+           && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]'; then
+            printf 'nitpick-clean'
+        else printf 'fail-closed'; fi
     elif [ "$num" -gt 0 ]; then printf 'findings:%s' "$num"
     else printf 'clean'; fi
 }
@@ -267,10 +280,63 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
 
 @test "verdict: non-blank body with no count header stays fail-closed (#524)" {
     setup_jq
-    # A real review whose header we cannot find is an unsettled state, not
-    # proof of zero findings. It must never reach the StatusContext pass.
+    # A review whose header-less body shows NONE of CR's review furniture is an
+    # unsettled state, not proof of zero findings. It must never reach the
+    # StatusContext pass. (Header-less bodies WITH furniture resolve clean —
+    # the shape-3 tests below — so this fixture is deliberately bare prose.)
     f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"unexpected prose, no header\"}]" SUCCESS)"
     [ "$(verdict "$f")" = "fail-closed" ]
+}
+
+@test "verdict: header-less clean-with-nitpicks review resolves clean (shape 3)" {
+    setup_jq
+    # The #2002 round-12 wedge: a full review submitted a review object on the
+    # current head whose clean-pass body carried only nitpicks — no "Actionable
+    # comments posted: N" line. Fail-closing here is a PERMANENT wedge, because
+    # the review being retried for already happened and a re-requested full
+    # review is clean again (header-less again). The nitpick section is CR
+    # review furniture -> settled clean verdict.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"🧹 Nitpick comments (2) … prose …\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "nitpick-clean" ]
+}
+
+@test "verdict: header-less body with only generic furniture stays fail-closed" {
+    setup_jq
+    # "Review details" / the auto-generated marker appear in EVERY CR body,
+    # findings included. Accepting them alone would let a format-drifted
+    # findings header go green — the positive signal must be the nitpick
+    # section specifically.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"Review details… <!-- This is an auto-generated comment by CodeRabbit for review status -->\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "fail-closed" ]
+}
+
+@test "verdict: a drifted digit-bearing actionable line blocks the shape-3 pass" {
+    setup_jq
+    # The symmetric fail-open: CR renames the header (e.g. drops 'posted') so
+    # the count parse misses, but the body still pairs 'actionable' with a
+    # digit — that is findings-shaped, not clean-shaped, and must stay
+    # fail-closed even though the nitpick section is present.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"Actionable comments: 3\\n🧹 Nitpick comments (1)\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "fail-closed" ]
+}
+
+@test "verdict: digit-free 'no actionable' prose does not block the shape-3 pass" {
+    setup_jq
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"No actionable comments were generated.\\n🧹 Nitpick comments (2)\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "nitpick-clean" ]
+}
+
+@test "verdict: a body WITH the count header never takes the shape-3 path" {
+    setup_jq
+    # Furniture markers appear in every CR review body, findings included. The
+    # header parse must win: 3 actionable + a nitpick section is FAILURE, not
+    # nitpick-clean.
+    f="$(payload "[{$CR_NODE,\"submittedAt\":\"T1\",\"body\":\"**Actionable comments posted: 3**\\n🧹 Nitpick comments (1)\"}]" SUCCESS)"
+    [ "$(verdict "$f")" = "findings:3" ]
+}
+
+@test "the shape-3 furniture guard is present in the action, not just here" {
+    grep -qF "$NITPICK_CLEAN_RE" "$ACTION"
 }
 
 @test "verdict: a rate-limited SUCCESS is NOT review evidence" {
@@ -328,4 +394,190 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
     f="$(payload "[{$CR_NODE,\"submittedAt\":\"T2\",\"body\":\"\"}]" SUCCESS)"
     [ "$(jq -r -f "$BATS_TEST_TMPDIR/count.jq.old" "$f")" -eq 1 ]
     [ "$(jq -r -f "$BATS_TEST_TMPDIR/count.jq" "$f")" -eq 0 ]
+}
+
+# ============================================================================
+# Stale-evidence auto-nudge (shapes 1-2, 2026-08-12 entry) — the gate posts
+# `@coderabbitai full review` itself when CR's status on the head is a stale
+# rate-limit SUCCESS while a completed clean pass exists only as a comment.
+# These tests run the REAL function, extracted from action.yml, against a
+# stubbed `gh` — same no-drift contract as the jq extraction above.
+# ============================================================================
+
+# Extract maybe_nudge_full_review() from the action's run block. The block's
+# base indent is 8 spaces, so the function's closing brace is exactly
+# "        }" — inner constructs sit deeper and cannot end the match early.
+setup_nudge() {
+    awk '/maybe_nudge_full_review\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' \
+        "$ACTION" > "$BATS_TEST_TMPDIR/nudge.fn"
+    # Non-vacuity: an extraction miss must fail loudly, not test nothing.
+    grep -q 'cr-full-review-nudge' "$BATS_TEST_TMPDIR/nudge.fn"
+    grep -q 'gh api'               "$BATS_TEST_TMPDIR/nudge.fn"
+    POST_LOG="$BATS_TEST_TMPDIR/posts.log"; : > "$POST_LOG"
+    TSV="$BATS_TEST_TMPDIR/comments.tsv";   : > "$TSV"
+    export POST_LOG TSV
+    SHA=0123456789abcdef0123456789abcdef01234567
+    OWNER=o REPO=r PR=1 NUDGE_BUDGET=3
+    export SHA OWNER REPO PR NUDGE_BUDGET
+}
+
+# Stub gh: the comments fetch serves the TSV fixture (rc from GH_FETCH_RC);
+# any other invocation is a POST and is appended to the log, one arg per line.
+gh() {
+    case "$*" in
+        *"comments?per_page="*) cat "$TSV"; return "${GH_FETCH_RC:-0}" ;;
+        *) printf '%s\n' "$@" >> "$POST_LOG" ;;
+    esac
+}
+
+# row <login> <updated_at> <body> — append one comment to the TSV fixture in
+# the function's wire format: login TAB updated_at TAB base64(body).
+# tr -d '\n' keeps the base64 single-line and portable (no -w0).
+row() {
+    printf '%s\t%s\t%s\n' "$1" "$2" "$(printf '%s' "$3" | base64 | tr -d '\n')" >> "$TSV"
+}
+
+run_nudge() {
+    # shellcheck disable=SC1090
+    source "$BATS_TEST_TMPDIR/nudge.fn"
+    nudge_attempted=false
+    # `run` shields bats' errexit: the function tolerates a failing gh fetch
+    # by design (the real action runs under `set +e`), and must exit 0 there.
+    run maybe_nudge_full_review
+    [ "$status" -eq 0 ]
+}
+
+@test "nudge: posts once given a comments-only clean pass and no prior marker" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    run_nudge
+    grep -q '@coderabbitai full review'          "$POST_LOG"
+    grep -q "cr-full-review-nudge:${SHA}"        "$POST_LOG"
+}
+
+@test "nudge: once per head — an existing marker for this SHA suppresses it" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    row 'github-actions[bot]' '2026-08-13T12:01:00Z' "@coderabbitai full review <!-- cr-full-review-nudge:${SHA} -->"
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: budget cap — three prior nudges on other heads suppress a fourth" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    row 'github-actions[bot]' '2026-08-13T10:00:00Z' 'cr-full-review-nudge:aaaa'
+    row 'github-actions[bot]' '2026-08-13T10:01:00Z' 'cr-full-review-nudge:bbbb'
+    row 'github-actions[bot]' '2026-08-13T10:02:00Z' 'cr-full-review-nudge:cccc'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: the persistent walkthrough comment is not clean-pass evidence" {
+    setup_nudge
+    # CR edits the walkthrough in place; its "No actionable comments…" text
+    # survives across heads. Trusting it would burn the once-per-head nudge
+    # inside a rate-limit window, on a reply that just says "limit reached".
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' '<!-- walkthrough_start --> No actionable comments were generated in the recent review.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: clean-pass prose from a non-CR author is not evidence" {
+    setup_nudge
+    row 'someuser' '2026-08-13T12:00:00Z' 'there are no actionable findings in my opinion'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: no clean-pass evidence at all -> no post" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review limit reached. Next review available in 115 minutes.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: a failed comment fetch never nudges (dedup marker invisible)" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    GH_FETCH_RC=1
+    run_nudge
+    unset GH_FETCH_RC
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: evaluated at most once per action run" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    source "$BATS_TEST_TMPDIR/nudge.fn"
+    nudge_attempted=false
+    maybe_nudge_full_review
+    maybe_nudge_full_review   # second call in the same run: marker not yet
+                              # visible in the fixture — must not double-post
+    [ "$(grep -c '@coderabbitai full review' "$POST_LOG")" -eq 1 ]
+}
+
+@test "workflow grants the comment-POST scopes the auto-nudge needs" {
+    grep -qE '^  issues: write$'        "$WF"
+    grep -qE '^  pull-requests: write$' "$WF"
+}
+
+@test "the nudge call is wired into the rate-limit branch, not just defined" {
+    # The function existing is not enough — it must run where the wedge occurs.
+    awk "/grep -qiE 'rate.\?limit\|limit reached'/,/^            fi\$/" "$ACTION" \
+        | grep -q 'maybe_nudge_full_review'
+}
+
+@test "nudge: recency — a busy signal newer than the clean reply suppresses it" {
+    setup_nudge
+    # The burn scenario: head H2 just bounced on the rate limit; the only
+    # clean-pass reply is from earlier head H1. Nudging now would spend the
+    # once-per-head marker on a "limit reached" reply.
+    row 'coderabbitai[bot]' '2026-08-13T10:00:00Z' 'Review complete — no actionable findings.'
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: recency — a clean reply newer than the busy signal posts" {
+    setup_nudge
+    # The genuine shape-1 wedge: the window reopened, a comment-only clean
+    # pass completed AFTER the rate-limit notice, and the stale status sits.
+    row 'coderabbitai[bot]' '2026-08-13T11:00:00Z' '## Review limit reached — Next review available in: 115 minutes'
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Review complete — no actionable findings.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: an in-progress walkthrough edit newer than the clean reply suppresses it" {
+    setup_nudge
+    row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
+    row 'coderabbitai[bot]' '2026-08-13T12:30:00Z' '<!-- walkthrough_start --> Currently processing new changes in this PR.'
+    run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: a quoted rate-limit LEARNING inside the clean reply is not a busy signal" {
+    setup_nudge
+    # CR command replies quote stored repo learnings verbatim, and ours contain
+    # "Review rate limited". If the busy regex matched that phrase, the genuine
+    # clean reply would suppress ITSELF — the feature dead in its target
+    # scenario. The busy match is on notice wording, not on 'rate limit'.
+    row 'coderabbitai[bot]' '2026-08-13T13:00:00Z' 'Review complete — no actionable findings. Learnings used: a status with description Review rate limited is not review evidence.'
+    run_nudge
+    grep -q '@coderabbitai full review' "$POST_LOG"
+}
+
+@test "the nudge is also wired into the not-settled arm (shape 2, no status at all)" {
+    # A comment-only clean pass can complete with NO CodeRabbit StatusContext
+    # on the head (cr_ctx ABSENT) — the wedge parks in the `*)` arm, one door
+    # over from the rate-limit branch. The recency guard is what keeps this
+    # call quiet while CR is genuinely still working.
+    grep -qE '^\s*\*\)\s*maybe_nudge_full_review; return 1 ;;' "$ACTION"
+}
+
+@test "the drifted-header digit guard is present in the action, not just here" {
+    # verdict() restates the negative half of the shape-3 discrimination; this
+    # pins the action's copy so removing it there cannot pass silently.
+    grep -qF "grep -i 'actionable' | grep -q '[0-9]'" "$ACTION"
 }

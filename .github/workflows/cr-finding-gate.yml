@@ -37,7 +37,13 @@ on:
 permissions:
   contents: read
   statuses: write
-  pull-requests: read
+  # read for PR metadata / file lists; the action's stale-evidence auto-nudge
+  # additionally POSTs one `@coderabbitai full review` issue comment (once per
+  # head, budget-capped — see maybe_nudge_full_review in the action), which
+  # needs write on the issue-comment surface. PR comments go through the
+  # issues endpoint, so grant both scopes.
+  pull-requests: write
+  issues: write
 
 concurrency:
   # Do NOT cancel in-progress: review/comment events fire in bursts, and a

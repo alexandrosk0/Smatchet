@@ -13,7 +13,7 @@
   review passes read the two paragraphs against each other.
 
   This is a distinct failure mode from the fabricated-quote class
-  ([`2026-08-07-fabricated-quote-is-a-class-not-an-instance.md`](2026-08-07-fabricated-quote-is-a-class-not-an-instance.md)).
+  ([`2026-08-07-fabricated-quote-is-a-class-not-an-instance.md`](../applied.md)).
   There the citation was invented; here every grep was real, its output was pasted correctly,
   and the arithmetic was never done. A measured number with a wrong population reads exactly
   like a measured number with the right one — there is no surface tell, which is why it survived

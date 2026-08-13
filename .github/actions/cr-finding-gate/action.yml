@@ -8,7 +8,11 @@ description: >-
 
 inputs:
   github-token:
-    description: Token with statuses:write + pull-requests:read.
+    description: >-
+      Token with statuses:write + pull-requests:read, plus issues:write /
+      pull-requests:write for the stale-evidence full-review auto-nudge
+      (comment POST; the gate still functions read-only without it — the
+      nudge POST just warns and moves on).
     required: true
   pr-number:
     description: Pull-request number to evaluate.
@@ -50,6 +54,99 @@ runs:
             -f context="${CONTEXT}" \
             -f description="${desc}" >/dev/null \
             || echo "WARN: gh api statuses POST failed (fork PR / missing statuses:write?)" >&2
+        }
+
+        # --- Stale-evidence auto-nudge (shapes 1-2 of the 2026-08-12 entry) ----
+        # A CodeRabbit review that COMPLETED can still leave the head with no
+        # evidence this gate accepts: the auto-review attempt posts a rate-limit
+        # SUCCESS status that never updates, and a later comment-triggered pass
+        # on an incrementally-clean head replies its verdict as an ISSUE COMMENT
+        # with no review object and no status refresh. Correct gate, wedged PR —
+        # nothing ever re-triggers the reviewer (observed twice on the #1999
+        # merge drive). Both times the manual fix was `@coderabbitai full
+        # review`, which always submits a review object and refreshes the
+        # status. Post that nudge from the gate itself instead of parking on
+        # PENDING until a human intervenes. merge-gates.sh already has the
+        # client-side twin (MERGE_GATES_STALE_REREVIEW_POLLS); this is the CI
+        # side, for merges driven without the local poller.
+        #
+        # Guard rails:
+        #   - RECENCY-ORDERED evidence, not mere presence: clean-pass prose has
+        #     no head anchor, and a clean reply from an EARLIER head persists
+        #     forever — trusting it blind would fire the nudge the moment a
+        #     fresh head bounces on the rate limit, burning the once-per-head
+        #     marker on a "limit reached" reply (and a rate-limit slot with
+        #     it). So the nudge requires the newest clean-pass comment to be
+        #     STRICTLY NEWER (updated_at) than every CR busy signal (rate-limit
+        #     notice / review-in-progress edit). In the genuine wedge the clean
+        #     reply IS CR's latest word; mid-review or mid-window it is not.
+        #   - once per head: the nudge comment embeds `cr-full-review-nudge:
+        #     <sha>`; a comment carrying the current head's marker suppresses
+        #     re-posting forever (re-runs included).
+        #   - budget-capped per PR (NUDGE_BUDGET, default 3 heads): a
+        #     pathological push loop cannot spam the thread.
+        #   - the persistent walkthrough comment is EXCLUDED as clean-pass
+        #     evidence: CR edits it in place and its "No actionable comments…"
+        #     text survives across heads. Its BUSY text does count as a busy
+        #     signal — rate-limit and in-progress notices are edited into it.
+        #   - a failed comment fetch nudges nothing: the dedup marker would be
+        #     invisible and a re-run could double-post.
+        #   - the nudge never decides the gate: callers still return
+        #     non-terminal, and the triggered review's events re-run this
+        #     workflow to a real verdict.
+        NUDGE_BUDGET="${NUDGE_BUDGET:-3}"
+        nudge_attempted=false
+        maybe_nudge_full_review() {
+          # The poll loop calls decide() repeatedly — evaluate at most once per
+          # action run (the cross-run dedup is the marker comment).
+          [ "$nudge_attempted" = true ] && return 0
+          nudge_attempted=true
+          local marker="cr-full-review-nudge:${SHA}"
+          # `cmt`, not `body`: the bats suite extracts decide()'s jq programs
+          # by literal substring markers keyed on decide()'s assignment names,
+          # and this function sits earlier in the file — any line here that
+          # contains such an assignment (even inside a comment) hijacks the
+          # extraction and corrupts the suite's fixtures.
+          local tsv rc login ts b64 cmt mine=false n_nudges=0
+          local clean_ts="" busy_ts=""
+          # login TAB updated_at TAB base64(body) per comment — base64 keeps
+          # multiline bodies one-per-line so the loop sees whole comments;
+          # ISO-8601 updated_at compares correctly as a plain string.
+          tsv=$(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
+                  --jq '.[] | ((.user.login // "") + "\t" + (.updated_at // "") + "\t" + ((.body // "") | @base64))' 2>/dev/null)
+          rc=$?
+          [ "$rc" -eq 0 ] || return 0
+          while IFS=$'\t' read -r login ts b64; do
+            [ -n "$b64" ] || continue
+            cmt=$(printf '%s' "$b64" | base64 -d 2>/dev/null) || continue
+            case "$cmt" in *cr-full-review-nudge:*) n_nudges=$((n_nudges + 1)) ;; esac
+            case "$cmt" in *"$marker"*) mine=true ;; esac
+            if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
+              # Busy signals are matched on the NOTICE wording, deliberately
+              # NOT on 'rate.?limit': CR's command replies quote stored repo
+              # learnings verbatim, and ours contain "Review rate limited" —
+              # matching that would mark the genuine clean reply itself busy
+              # and suppress the nudge in exactly its target scenario.
+              if printf '%s' "$cmt" | grep -qiE 'review limit reached|next review available|currently processing|review in progress by coderabbit'; then
+                [ "$ts" \> "$busy_ts" ] && busy_ts="$ts"
+              fi
+              if ! printf '%s' "$cmt" | grep -q 'walkthrough_start' \
+                 && printf '%s' "$cmt" | grep -qiE 'no actionable (comments|findings)'; then
+                [ "$ts" \> "$clean_ts" ] && clean_ts="$ts"
+              fi
+            fi
+          done <<< "$tsv"
+          [ -n "$clean_ts" ]                     || return 0
+          [ "$clean_ts" \> "$busy_ts" ]          || return 0
+          [ "$mine" = false ]                    || return 0
+          [ "$n_nudges" -lt "$NUDGE_BUDGET" ]    || return 0
+          echo "CR finding gate: posting @coderabbitai full review nudge (stale evidence on ${SHA:0:12})"
+          gh api "repos/${OWNER}/${REPO}/issues/${PR}/comments" \
+            -f body="@coderabbitai full review
+
+        <!-- ${marker} -->
+        _Auto-posted by the CR finding gate: CodeRabbit's status on head ${SHA:0:12} is a stale rate-limit success while a completed clean pass exists only as a comment — a full review creates current-head review evidence._" >/dev/null \
+            || echo "WARN: nudge comment POST failed (missing issues:write?)" >&2
         }
 
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
@@ -288,14 +385,26 @@ runs:
               # Not settled: CR has not reviewed this head yet. The poll window
               # will not outlive a multi-minute limit, so this resolves to
               # PENDING and the workflow's CR-comment trigger re-runs it once the
-              # real review lands. Never green on an unreviewed head.
+              # real review lands. Never green on an unreviewed head. But when a
+              # completed clean pass is advertised ONLY in comments while this
+              # stale status sits here, nothing will ever re-trigger CR — post
+              # the full-review nudge (once per head, budget-capped) so the wedge
+              # self-heals instead of waiting on a human.
+              maybe_nudge_full_review
               return 1
             fi
 
             case "$cr_ctx" in
               SUCCESS)       post success "CodeRabbit completed with no review on head (skipped/clean)"; exit 0 ;;
               FAILURE|ERROR) post failure "CodeRabbit check reported ${cr_ctx} on current head"; exit 0 ;;
-              *)             return 1 ;;   # not settled — let the poll loop retry
+              # Not settled — let the poll loop retry. But shape 2 can wedge
+              # HERE, not just in the rate-limit branch: a comment-triggered
+              # pass on an incrementally-clean head can complete as an issue
+              # comment with no review object AND no StatusContext on the head
+              # at all (cr_ctx ABSENT). The recency guard inside the nudge
+              # keeps it quiet while CR is genuinely still working (the
+              # in-progress / rate-limit edits are newer than any clean reply).
+              *)             maybe_nudge_full_review; return 1 ;;
             esac
           fi
 
@@ -325,12 +434,38 @@ runs:
           n=$(printf '%s' "$body" | grep -oiE 'Actionable comments posted:[[:space:]]*[0-9]+' \
                 | grep -oE '[0-9]+' | head -1 || true)
           if [ -z "$n" ]; then
+            # Shape 3 (2026-08-12 entry, observed #2002 round 12): a clean pass
+            # that carries only nitpicks omits the "Actionable comments posted:
+            # N" header from the review body entirely, while a review WITH
+            # findings always carries it. Treating every header-less body as
+            # unsettled wedged the gate PERMANENTLY — the review it retried for
+            # had already happened, and `@coderabbitai full review` re-wedges it
+            # (the fresh review is clean again, omits the header again). So: an
+            # on-head CR review whose header-less body still shows the
+            # OBSERVED clean-with-nitpicks shape IS a settled clean verdict.
+            # Two-sided discrimination, because this gate's history is a
+            # string of CR-format wedges (#536, #1718, #1724, #1954) and the
+            # symmetric risk here is a FORMAT-DRIFTED findings header (e.g.
+            # "Actionable comments: 3") slipping past the count parse above
+            # and going green on furniture alone:
+            #   - positive: the nitpick section must be present (the shape
+            #     that was actually observed to wedge) — generic review
+            #     furniture ("Review details" etc.) appears in every CR body
+            #     and proves nothing;
+            #   - negative: no line may pair "actionable" with a digit — a
+            #     drifted count header would, while clean prose ("No
+            #     actionable comments were generated") does not.
+            if printf '%s' "$body" | grep -qiE 'nitpick comments' \
+               && ! printf '%s' "$body" | grep -i 'actionable' | grep -q '[0-9]'; then
+              post success "CodeRabbit clean review on current head (nitpicks only, no actionable-count header)"; exit 0
+            fi
             # Fail closed: we ARE in the n_reviews>0 branch (a CR review node
             # exists on this head) yet its body carries no actionable-count
-            # header. That is an unexpected/unsettled state, NOT proof of "0
-            # actionable" — do not post success. Return non-terminal so the poll
-            # loop retries; a persistently header-less review resolves to PENDING
-            # at window-exhaustion (a human/CR re-run settles it), never green.
+            # header and none of CR's review furniture. That is an unexpected/
+            # unsettled state, NOT proof of "0 actionable" — do not post
+            # success. Return non-terminal so the poll loop retries; a
+            # persistently header-less review resolves to PENDING at
+            # window-exhaustion (a human/CR re-run settles it), never green.
             return 1
           fi
           if [ "$n" -gt 0 ]; then
