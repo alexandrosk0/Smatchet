@@ -138,31 +138,57 @@ planlock_fixture() {
 }
 
 # ---- (E) REVIEW-VERDICT MARKER ----------------------------------------------
-# Feature-branch pushes need a `$GIT_DIR/review-verdict-<HEAD sha>` marker
-# (stamped by record-review-verdict.sh). The marker is stamped/withheld
-# directly here — the recorder's own selftest covers the stamping path.
+# Pushed refs/heads/* tips need a `$GIT_DIR/review-verdict-<pushed sha>` marker
+# (stamped by record-review-verdict.sh). Judged per stdin update record, so the
+# reflines here carry REAL shas. The marker is stamped/withheld directly — the
+# recorder's own selftest covers the stamping path.
 
 @test "(E) feature push with NO review-verdict marker is REFUSED" {
-    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    HEADSHA="$(git -C "$TMP" rev-parse HEAD)"
+    run run_push "refs/heads/feature $HEADSHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
     [ "$status" -eq 1 ]
     [[ "$output" == *"no review-verdict marker"* ]]
     [[ "$output" == *"record-review-verdict.sh"* ]]
 }
 
-@test "(E) feature push WITH a marker for HEAD is allowed" {
-    touch "$TMP/.git/review-verdict-$(git -C "$TMP" rev-parse HEAD)"
-    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+@test "(E) feature push WITH a marker for the pushed sha is allowed" {
+    HEADSHA="$(git -C "$TMP" rev-parse HEAD)"
+    touch "$TMP/.git/review-verdict-$HEADSHA"
+    run run_push "refs/heads/feature $HEADSHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
     [ "$status" -eq 0 ]
 }
 
-@test "(E) a marker for an EARLIER commit does not cover a new HEAD" {
+@test "(E) a marker for an EARLIER commit does not cover a new tip" {
     # Stamp for the current HEAD, then advance — the new commit is exactly the
     # unreviewed-push hole the binding exists to close.
     touch "$TMP/.git/review-verdict-$(git -C "$TMP" rev-parse HEAD)"
     ( cd "$TMP" && echo z > f && git add -A && git commit -qm advance )
-    run run_push "refs/heads/feature $SHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    NEWSHA="$(git -C "$TMP" rev-parse HEAD)"
+    run run_push "refs/heads/feature $NEWSHA refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
     [ "$status" -eq 1 ]
     [[ "$output" == *"no review-verdict marker"* ]]
+}
+
+@test "(E) a marked checkout cannot smuggle an UNMARKED sibling ref" {
+    # The first cut keyed on HEAD, so `git push origin side` from a marked
+    # checkout slid through unreviewed (CodeRabbit on PR #2003). Per-record
+    # judging must refuse and NAME the unmarked ref.
+    HEADSHA="$(git -C "$TMP" rev-parse HEAD)"
+    touch "$TMP/.git/review-verdict-$HEADSHA"
+    ( cd "$TMP" && git checkout -qb side && echo s > s && git add -A \
+        && git commit -qm side && git checkout -q feature )
+    SIDESHA="$(git -C "$TMP" rev-parse side)"
+    run run_push "refs/heads/feature $HEADSHA refs/heads/feature $SHA
+refs/heads/side $SIDESHA refs/heads/side $ZERO" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"no review-verdict marker for side"* ]]
+}
+
+@test "(E) a branch DELETE from an unmarked checkout is allowed" {
+    # A delete pushes no new commits — nothing to review. The HEAD-keyed first
+    # cut would have blocked this spuriously.
+    run run_push "(delete) $ZERO refs/heads/feature $SHA" "SMATCHET_SKIP_REVIEW_MARKER=0"
+    [ "$status" -eq 0 ]
 }
 
 @test "(E) SMATCHET_SKIP_REVIEW_MARKER=1 overrides with a logged note" {

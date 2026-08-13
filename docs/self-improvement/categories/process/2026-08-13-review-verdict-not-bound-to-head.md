@@ -31,10 +31,14 @@
      is what makes every push invalidate the prior verdict automatically). The
      regex pair stays byte-identical via `--check-workflow-sync`, which now
      also compares the `head_re` line.
-  3. Pre-push hook stage (E) refuses a feature push whose HEAD carries no
-     `$GIT_DIR/review-verdict-<sha>` marker — the recorder stamps it, a commit
-     made after the review lacks it. Override `SMATCHET_SKIP_REVIEW_MARKER=1`;
-     fail-open on infra.
+  3. Pre-push hook stage (E) refuses a push whose non-protected `refs/heads/*`
+     update records carry a tip with no `$GIT_DIR/review-verdict-<sha>` marker
+     — the recorder stamps it, a commit made after the review lacks it. Judged
+     per update record (review round 1 on the gate's own PR caught the
+     HEAD-keyed first cut: a marked checkout could push an unmarked sibling
+     ref, and a delete from an unmarked checkout was spuriously blocked).
+     Deletes are exempt. Override `SMATCHET_SKIP_REVIEW_MARKER=1`; fail-open
+     on infra.
 
   Residual limit, unchanged from the parent entry
   (pre-first-push-review-step-is-unenforced-and-was-skipped): all three layers
