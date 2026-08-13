@@ -14,6 +14,7 @@
 #include "IssueDraft.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
+#include "StringUtil.h" // Base64Encode — single-sourced base64
 #include "TextRedaction.h"
 #include "TrackerHttpUtils.h"
 #if defined(SMATCHET_EMBEDDED_IN_UNREAL)
@@ -78,35 +79,11 @@ std::string TimestampStamp() {
     return std::string(buf);
 }
 
+// Byte-buffer front-end for StringUtil.h's Base64Encode. This TU used to carry a third,
+// independently-written RFC 4648 encoder — same output, different code, so the duplication
+// gate (which detects copy-paste, not semantic twins) never saw it.
 std::string Base64EncodeBytes(const std::vector<unsigned char>& in) {
-    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((in.size() + 2) / 3) * 4);
-    std::size_t i = 0;
-    for (; i + 3 <= in.size(); i += 3) {
-        const std::uint32_t n = (static_cast<std::uint32_t>(in[i]) << 16) |
-                                (static_cast<std::uint32_t>(in[i + 1]) << 8) | static_cast<std::uint32_t>(in[i + 2]);
-        out.push_back(tbl[(n >> 18) & 0x3F]);
-        out.push_back(tbl[(n >> 12) & 0x3F]);
-        out.push_back(tbl[(n >> 6) & 0x3F]);
-        out.push_back(tbl[n & 0x3F]);
-    }
-    const std::size_t rem = in.size() - i;
-    if (rem == 1) {
-        const std::uint32_t n = static_cast<std::uint32_t>(in[i]) << 16;
-        out.push_back(tbl[(n >> 18) & 0x3F]);
-        out.push_back(tbl[(n >> 12) & 0x3F]);
-        out.push_back('=');
-        out.push_back('=');
-    } else if (rem == 2) {
-        const std::uint32_t n =
-            (static_cast<std::uint32_t>(in[i]) << 16) | (static_cast<std::uint32_t>(in[i + 1]) << 8);
-        out.push_back(tbl[(n >> 18) & 0x3F]);
-        out.push_back(tbl[(n >> 12) & 0x3F]);
-        out.push_back(tbl[(n >> 6) & 0x3F]);
-        out.push_back('=');
-    }
-    return out;
+    return Base64Encode(std::string(in.begin(), in.end()));
 }
 
 bool ReadFileBytes(const std::string& path, std::vector<unsigned char>& out) {

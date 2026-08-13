@@ -17,15 +17,20 @@ namespace {
 using tracker_query_suggest::AddSuggestionUnique;
 using tracker_query_suggest::AppendFieldCatalog;
 using tracker_query_suggest::AppendTerms;
+using tracker_query_suggest::AppendValueSuggestions;
 using tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered;
 using tracker_query_suggest::AsciiStartsWithIgnoreCase;
 using tracker_query_suggest::BeginQuerySuggestPass;
 using tracker_query_suggest::FindTrackerField;
-using tracker_query_suggest::InsertForValueToken;
 using tracker_query_suggest::IsQueryDateField;
 using tracker_query_suggest::IsQueryIdChar;
 using tracker_query_suggest::IsQueryUserField;
 using tracker_query_suggest::SortAndCapQuerySuggestions;
+
+// Jira's wording for the display-name variant of a user-field value suggestion. The sole
+// backend-local divergence in the otherwise shared AppendValueSuggestions body — Plane says
+// " (display) -> ". Kept verbatim; only the body is now single-sourced.
+constexpr const char* kJiraUserDisplaySuffix = " (display name) -> ";
 
 static bool IsJqlVersionField(const TrackerField& field) {
     return field.Type == "version" || field.ItemsType == "version";
@@ -175,58 +180,6 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
         if (++added >= kMaxUsers) {
             break;
         }
-    }
-}
-
-// Near-twin of Plane's AppendValueSuggestions, kept per-engine on purpose: Jira labels user options
-// " (display name)", Plane " (display)" — folding would collapse a genuine backend-local label divergence. The clone
-// only surfaced after the cluster-A helper-name unification removed the cosmetic-identifier difference the gate keyed
-// on.
-static void AppendValueSuggestions(const TrackerField& field, const std::string& prefix,
-                                   std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=per-engine near-twin; owner=tracker-backend; revisit=2026-12-31)
-    const std::string pre = ToLowerAsciiCopy(prefix);
-    const bool isUserField = IsQueryUserField(field);
-    auto matchesPrefix = [&](const std::string& raw, const std::string& label) {
-        return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
-    };
-    auto tryAdd = [&](const std::string& raw, const std::string& displayLabel) {
-        if (raw.empty()) {
-            return;
-        }
-        if (!matchesPrefix(raw, displayLabel)) {
-            return;
-        }
-        const std::string insert = InsertForValueToken(raw);
-        std::string label = displayLabel.empty() ? raw : displayLabel;
-        if (label != insert && !insert.empty() && insert.front() == '"') {
-            label = label + " -> " + insert;
-        }
-        AddSuggestionUnique(out, seen, std::move(label), insert);
-    };
-
-    for (const auto& opt : field.AllowedValueOptions) {
-        if (isUserField) {
-            const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
-            const std::string accountId = opt.Id;
-            if (!accountId.empty() && matchesPrefix(accountId, display)) {
-                AddSuggestionUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
-            }
-            if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
-                AddSuggestionUnique(out, seen, display + " (display name) -> " + InsertForValueToken(display),
-                                    InsertForValueToken(display));
-            }
-            continue;
-        }
-        if (!opt.Value.empty()) {
-            tryAdd(opt.Value, opt.Value);
-        }
-        if (!opt.Id.empty() && opt.Id != opt.Value) {
-            tryAdd(opt.Id, opt.Id + " (" + opt.Value + ")");
-        }
-    }
-    for (const auto& v : field.AllowedValues) {
-        tryAdd(v, v);
     }
 }
 
@@ -407,7 +360,7 @@ void AppendJqlValueModeSuggestions(const std::vector<TrackerUser>& users, const 
                                    const TrackerField* valueField, QuerySuggestBuild& out,
                                    std::unordered_set<std::string>& seen, QuerySuggestMeta* metaOut) {
     if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
-        AppendValueSuggestions(*valueField, prefix, out.Items, seen);
+        AppendValueSuggestions(*valueField, prefix, kJiraUserDisplaySuffix, out.Items, seen);
     }
     if (valueField != nullptr) {
         AppendJqlFunctionSuggestions(*valueField, prefix, out.Items, seen);

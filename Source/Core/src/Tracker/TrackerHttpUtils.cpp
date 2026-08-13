@@ -69,22 +69,8 @@ std::string UrlEncode(const std::string& value) {
     return escaped.str();
 }
 
-// Base64 encode (RFC 4648) so we can send Authorization exactly like PowerShell/curl.
-std::string Base64Encode(const std::string& in) {
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((in.size() + 2) / 3) * 4);
-    for (size_t i = 0; i < in.size(); i += 3) {
-        const unsigned char a = static_cast<unsigned char>(in[i]);
-        const unsigned char b = (i + 1 < in.size()) ? static_cast<unsigned char>(in[i + 1]) : 0u;
-        const unsigned char c = (i + 2 < in.size()) ? static_cast<unsigned char>(in[i + 2]) : 0u;
-        out += table[a >> 2];
-        out += table[((a & 3) << 4) | (b >> 4)];
-        out += (i + 1 < in.size()) ? table[((b & 15) << 2) | (c >> 6)] : '=';
-        out += (i + 2 < in.size()) ? table[c & 63] : '=';
-    }
-    return out;
-}
+// Base64 for the Authorization header comes from StringUtil.h's Base64Encode — sending it
+// exactly like PowerShell/curl. This TU used to carry its own byte-identical encoder.
 
 std::string NormalizeBaseUrl(const std::string& domain) {
     std::string base = domain;

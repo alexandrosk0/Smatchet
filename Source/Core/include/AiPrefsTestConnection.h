@@ -3,6 +3,10 @@
 
 #include "AiTypes.h"
 
+#include <atomic>
+#include <memory>
+#include <string>
+
 class IAppThreading; // narrow AppController threading facet — see Commands/IAppThreading.h
 struct UiDrawSession;
 
@@ -30,11 +34,26 @@ namespace AiPrefsTestConnection {
 //     `SmatchetDrawPreferencesPanel` can clear state and have the late dispatch
 //     short-circuit).
 // Threading: must be called from the UI thread.
-// DRIFT WARNING: as long as `SmatchetPreferencesUi.cpp`'s `runProbe` lambda
-// remains inline (pending the follow-up PR after whisper-dictation-phase-f
-// merges), this function MUST stay in lock-step with that lambda's body.
-// docs/plans/shipped/ai-client-test-override.md tracks the rewire follow-up.
 void TriggerProbe(UiDrawSession& d, IAppThreading& app, AiProvider provider);
+
+// Worker-thread probe body: reachability check on the cheap model-listing endpoint,
+// then a 1-token "ping" chat handshake against the configured model so
+// model-not-found / chat-disabled / missing-loaded-model errors surface BEFORE the
+// user types their first real prompt (a healthy model-list endpoint does not imply a
+// healthy chat endpoint against a loaded model). Returns an empty string on success,
+// a user-facing error message otherwise.
+//
+// Catches every exception — MakeAiClient / ProbeReachability / SendStreaming all run
+// third-party transport (cpr/libcurl) plus SSE-parser code, and an escape would
+// propagate out of the background task and call std::terminate. `logTag` prefixes the
+// LOG_WARN emitted on that path.
+//
+// Threading: call from a background task, never the UI thread. The caller owns
+// publishing the verdict — the two callers commit it differently (this component
+// writes cfg; the Preferences Assistant tab writes its working copy behind a
+// generation guard), which is why only the probe body is shared.
+std::string RunProbe(AiProvider provider, const AiClientConfig& clientCfg, const std::string& modelId,
+                     const std::shared_ptr<std::atomic<bool>>& cancel, const char* logTag);
 
 } // namespace AiPrefsTestConnection
 
