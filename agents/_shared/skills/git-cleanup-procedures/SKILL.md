@@ -132,7 +132,7 @@ gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
 ```
 
 - **Step 1** verify merge state via the poll-until-stable helper (require `MERGEABLE`+`CLEAN`).
-- **Step 3** run merge gates — the rc-handling decision mapping (0 pass / 1-3 ask-user / 4 closed / 5 pagination / `*` HALT) is the agent's reasoning; the executable case block is below.
+- **Step 3** run merge gates — the rc-handling decision mapping (0 pass / 1-3 ask-user / 4 closed / 5 pagination / 7 Actions-outage / `*` HALT) is the agent's reasoning; the executable case block is below.
 - **Step 7** append to plan revision if the PR shipped a slice (`- <sha-short> · <PR-title>` under `## Implementation log`; commit `docs(plan): log <slug> #<N>` on a fresh branch + PR, or batch).
 - **Step 8** re-check the next PR's mergeability (merging A may flip B to `CONFLICTING`).
 - **Step 9** post-merge backlog sweep (apply threshold-met `docs/self-improvement/` entries; one small PR each).
@@ -173,9 +173,29 @@ if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
                 *) exit 1 ;;
             esac
             ;;
+        7)
+            # Actions unavailable (outage escalation): required contexts absent for
+            # the OUTAGE_POLLS streak AND zero runs created repo-wide in the probe
+            # window. NO skip option — an --admin merge past absent checks is exactly
+            # what postmortem-owed.sh's required-ABSENT detector flags.
+            choice=$(ask_user_question "Actions unavailable (code=7) — see the ESCALATE diagnosis above." \
+                       "Wait for Actions to drain, then re-poll" \
+                       "Re-fire CI (push or close-reopen), then re-poll" \
+                       "Abandon")
+            case "$choice" in
+                "Wait for Actions to drain"*)
+                    MERGE_GATES_FLIP_READY=true \
+                    poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
+                "Re-fire CI"*)
+                    gh pr close "$N" && gh pr reopen "$N"
+                    MERGE_GATES_FLIP_READY=true \
+                    poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
+                *) exit 1 ;;
+            esac
+            ;;
         *)
-            # Defensive catch-all. poll_merge_gates returns 0-5 today; any unexpected rc
-            # must HALT — never silently fall through to auto-merge.
+            # Defensive catch-all. poll_merge_gates returns 0-5 or 7 today; any
+            # unexpected rc must HALT — never silently fall through to auto-merge.
             echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2; exit 1
             ;;
     esac

@@ -1357,3 +1357,21 @@ JSON
     [ "$status" -eq 1 ]
     [[ "$output" == *"required-absent: Never Reports [merge-time set]"* ]]
 }
+
+@test "merge-time set: set-but-EMPTY POSTMORTEM_REQUIRED_CONTEXTS disables the snapshot path too [P2]" {
+    # The documented opt-out (header § Test seams: set-but-EMPTY is honoured,
+    # inert required-by-name scope) must gate the snapshot lookup as well — a
+    # schema-2 row otherwise silently re-enables the detector the operator
+    # explicitly turned off.
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8046,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j6"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8046,"mergeCommit":"j6","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Never Reports"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"required-absent"* ]]
+    [[ "$output" != *"PR #8046"* ]]
+}

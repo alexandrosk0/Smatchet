@@ -93,6 +93,7 @@ A rate-limited **code** PR that wedges past its window stays a deliberate BLOCK 
 | 4 | PR `CLOSED` or `MERGED` externally | "Abandon (PR no longer mergeable)" — no skip option |
 | 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
 | 6 | `gh pr ready` unknown failure (after positive-check fallback) | surface error to user; do not auto-merge |
+| 7 | Actions unavailable — required context(s) absent for ≥`MERGE_GATES_OUTAGE_POLLS` polls AND zero workflow runs created repo-wide in the probe window | "Wait for Actions to drain, then re-poll" / "Re-fire CI (push or close-reopen), then re-poll" / "Abandon" — **no skip option**: an `--admin` merge past absent checks is exactly what postmortem-owed.sh's required-ABSENT detector flags (snapshot + deviation entry owed) |
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 

@@ -79,7 +79,8 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    - `1|2|3` — gates blocked → `ask_user_question`: **Skip gates and merge anyway** (log `WARN: user skipped gates: code=$rc`) · **Keep waiting** (double `MERGE_GATES_MAX_POLLS`, reset timer, re-poll once; a second failure exits) · **Abandon** (exit).
    - `4` — PR no longer mergeable (CLOSED/MERGED) → surface + abandon.
    - `5` — pagination overflow, manual review required → `ask_user_question`: **Abandon (manual review)** · **Skip and merge anyway** (acknowledge risk, log the WARN).
-   - any other rc — defensive catch-all: HALT. `poll_merge_gates` returns 0-5 today; an unexpected code must never silently fall through to auto-merge.
+   - `7` — Actions unavailable (outage escalation: required contexts absent for the `MERGE_GATES_OUTAGE_POLLS` streak AND zero workflow runs created repo-wide in the probe window) → `ask_user_question`: **Wait for Actions to drain, then re-poll** · **Re-fire CI (push or close-reopen), then re-poll** · **Abandon**. **No skip option** — an `--admin` merge past absent checks is exactly what postmortem-owed.sh's required-ABSENT detector flags (snapshot + deviation entry owed).
+   - any other rc — defensive catch-all: HALT. `poll_merge_gates` returns 0-5 or 7 today; an unexpected code must never silently fall through to auto-merge.
 
    The verbatim case block → skill § Merge-gates rc-handling (executable form) — keep it in lockstep with this mapping.
 

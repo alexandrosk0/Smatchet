@@ -354,9 +354,9 @@ def _poll_run_gates(owner: str, repo: str, pr: int, env: dict):
 def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
     """Parse the `GATE_CARRY nudge_head=… stale_head=… stale_streak=… none_head=…
     none_streak=…` line the poller emits before its blocked `return 1`. Returns
-    {nudged_head, stale_head, stale_streak, none_head, none_streak}, or None when
-    absent (pass / early-return — the caller carries the prior registry values
-    forward). The none_head/none_streak fields carry the once-per-HEAD CR=NONE
+    {nudged_head, stale_head, stale_streak, none_head, none_streak, outage_head,
+    outage_streak, outage_since}, or None when absent (pass / early-return — the
+    caller carries the prior registry values forward). The none_head/none_streak fields carry the once-per-HEAD CR=NONE
     @coderabbitai-review nudge counter (core-scripts-python-04); merge-gates.sh has
     emitted them on GATE_CARRY since it re-seeds via MERGE_GATES_PRIOR_NONE_* but
     the watcher previously dropped them, so the streak reset every cycle."""
@@ -374,12 +374,19 @@ def _parse_gate_carry(stdout: str) -> dict[str, Any] | None:
                 none_streak = int(fields.get("none_streak", "0") or "0")
             except ValueError:
                 none_streak = 0
+            try:
+                outage_streak = int(fields.get("outage_streak", "0") or "0")
+            except ValueError:
+                outage_streak = 0
             return {
                 "nudged_head": fields.get("nudge_head", ""),
                 "stale_head": fields.get("stale_head", ""),
                 "stale_streak": streak,
                 "none_head": fields.get("none_head", ""),
                 "none_streak": none_streak,
+                "outage_head": fields.get("outage_head", ""),
+                "outage_streak": outage_streak,
+                "outage_since": fields.get("outage_since", ""),
             }
     return None
 
@@ -549,6 +556,13 @@ def poll_one(
     # resets to 0 every cycle and the NONE_NUDGE_POLLS threshold is never reached.
     env["MERGE_GATES_PRIOR_NONE_HEAD"] = str(entry.get("none_head", "") or "")
     env["MERGE_GATES_PRIOR_NONE_STREAK"] = str(int(entry.get("none_streak", 0) or 0))
+    # Actions-outage escalation carry (exit 7): without these three the outage
+    # streak restarts at 0 every MAX_POLLS=1 cycle, so the OUTAGE_POLLS
+    # threshold is never reached and the escalation is dead under the watcher —
+    # the exact repo-wide-jam scenario (#1941) it exists for.
+    env["MERGE_GATES_PRIOR_OUTAGE_HEAD"] = str(entry.get("outage_head", "") or "")
+    env["MERGE_GATES_PRIOR_OUTAGE_STREAK"] = str(int(entry.get("outage_streak", 0) or 0))
+    env["MERGE_GATES_PRIOR_OUTAGE_SINCE"] = str(entry.get("outage_since", "") or "")
     # Per-invocation overrides (e.g. MERGE_GATES_CR_GRACE_POLLS=0 from the
     # CR-NONE grace-elapsed re-poll). update(), not setdefault(), so the
     # override wins over the daemon defaults above and the inherited env.
@@ -1753,15 +1767,20 @@ def _bump_nudge_state(
     stale_streak: int,
     none_head: str = "",
     none_streak: int = 0,
+    outage_head: str = "",
+    outage_streak: int = 0,
+    outage_since: str = "",
 ) -> None:
-    """Persist the cross-cycle CR-nudge guard + STALE streak + CR=NONE streak.
+    """Persist the cross-cycle CR-nudge guard + STALE/NONE/outage streaks.
 
     Mirrors `_bump_cr_none_grace`. `nudged_head` pins the once-per-HEAD
     @coderabbitai-review guard; `stale_head` / `stale_streak` carry the STALE
     re-review counter; `none_head` / `none_streak` carry the CR=NONE nudge counter
-    (core-scripts-python-04). All survive the MERGE_GATES_MAX_POLLS=1 single-poll
-    model that resets merge-gates.sh's in-process locals every cycle — the five
-    fields are written together from the one GATE_CARRY line under a single lock.
+    (core-scripts-python-04); `outage_head` / `outage_streak` / `outage_since`
+    carry the Actions-outage escalation state (exit 7 — dead under the watcher
+    without them). All survive the MERGE_GATES_MAX_POLLS=1 single-poll model
+    that resets merge-gates.sh's in-process locals every cycle — the fields are
+    written together from the one GATE_CARRY line under a single lock.
     """
     with registry_lock():
         entries = read_registry()
@@ -1772,6 +1791,9 @@ def _bump_nudge_state(
                 e["stale_streak"] = stale_streak
                 e["none_head"] = none_head
                 e["none_streak"] = none_streak
+                e["outage_head"] = outage_head
+                e["outage_streak"] = outage_streak
+                e["outage_since"] = outage_since
                 break
         write_registry(entries)
 
@@ -3145,6 +3167,9 @@ def process_registered_pr(entry: dict[str, Any]) -> dict[str, Any]:
             nudge_carry["stale_streak"],
             nudge_carry.get("none_head", ""),
             nudge_carry.get("none_streak", 0),
+            nudge_carry.get("outage_head", ""),
+            nudge_carry.get("outage_streak", 0),
+            nudge_carry.get("outage_since", ""),
         )
     # CR-NONE grace driver — flip BLOCKED -> GATES_PASSED once a
     # skipped/absent-review grace window has elapsed across real

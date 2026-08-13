@@ -850,8 +850,15 @@ for row in "${ROWS[@]}"; do
     # creation-lag grace ($absent_judgeable) still gates: lag is about run
     # creation, not about which set to judge against. Empty output (no row /
     # schema 1 / recorded-[]) falls back to the effective-date path below.
+    # The set-but-EMPTY POSTMORTEM_REQUIRED_CONTEXTS opt-out (header § Test
+    # seams: "inert required-by-name scope") disables required-absent judging
+    # as a whole, so it must gate the snapshot lookup too — otherwise a
+    # schema-2 row silently re-enables the detector the operator explicitly
+    # turned off. A NON-empty override only pins today's set; the merge-time
+    # snapshot still takes precedence for the PRs it covers.
     snap_req_set=""
-    if [ "$absent_judgeable" = "1" ] && command -v jq >/dev/null 2>&1; then
+    if [ "$absent_judgeable" = "1" ] && command -v jq >/dev/null 2>&1 && \
+       { [ -z "${POSTMORTEM_REQUIRED_CONTEXTS+x}" ] || [ -n "$req_ctx_raw" ]; }; then
         snap_req_set="$(snapshot_required_contexts "$num" "$mergecommit")"
     fi
     if [ -n "$snap_req_set" ]; then

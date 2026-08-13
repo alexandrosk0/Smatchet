@@ -58,8 +58,8 @@
   last one. After a later push produced a green `CR finding gate`, the PR stayed
   `BLOCKED` — the residual cause was `required_conversation_resolution` with ten
   unresolved CodeRabbit threads, which the poller does not count. That is a
-  separate defect, filed as
-  `2026-08-05-poller-bot-thread-filter-diverges-from-branch-protection.md`.
+  separate defect, filed as the 2026-08-05 poller-bot-thread-filter entry
+  (applied — the poller now names the cause; archived in `../applied.md`).
   Everything above about the cancelled-pending run still holds; it just was not
   the whole story, which is itself the lesson — the poller reported one BLOCK
   reason at a time and cleared it into another.

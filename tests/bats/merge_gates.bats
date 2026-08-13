@@ -170,6 +170,7 @@ teardown() {
     unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
     unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED
+    unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
 }
 
 # ---------- helpers ----------
@@ -2256,6 +2257,85 @@ blocked_with_bot_threads() {
     run poll_merge_gates org repo 1
     [ "$status" -eq 3 ]
     [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a non-negative integer"* ]]
+}
+
+@test "outage: GATE_CARRY emits the outage streak + window anchor for the watcher [P1]" {
+    # The watcher runs MERGE_GATES_MAX_POLLS=1 — without these fields on
+    # GATE_CARRY the streak restarts every cycle and exit 7 can never fire.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=15
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage_head=abc123"* ]]
+    [[ "$output" == *"outage_streak=1"* ]]
+    [[ "$output" == *"outage_since=2"* ]]   # ISO year prefix — anchor was stamped
+}
+
+@test "outage: a PRIOR_-seeded streak reaches the threshold in a single-poll cycle [P1]" {
+    # Watcher model: cycle N-1 carried streak=2; this cycle is the third
+    # consecutive absent poll on the same head -> probe fires and escalates.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_PRIOR_OUTAGE_HEAD=abc123
+    export MERGE_GATES_PRIOR_OUTAGE_STREAK=2
+    export MERGE_GATES_PRIOR_OUTAGE_SINCE=2026-08-13T10:00:00Z
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"3 consecutive polls"* ]]
+    [[ "$output" == *"since 2026-08-13T10:00:00Z"* ]]
+}
+
+@test "outage: a carried streak from a DIFFERENT head restarts at 1 [P1]" {
+    # A new push restarts CI's run-creation clock — a stale carried streak
+    # must not count against the new head.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_PRIOR_OUTAGE_HEAD=deadbeef
+    export MERGE_GATES_PRIOR_OUTAGE_STREAK=99
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ESCALATE"* ]]
+    [[ "$output" == *"outage_head=abc123"* ]]
+    [[ "$output" == *"outage_streak=1"* ]]
+}
+
+@test "outage: a confirmed-alive probe resets the streak and re-anchors the window [P1]" {
+    # Without the reset the probe re-fires every remaining poll, and a single
+    # early run permanently masks a jam that begins later (fixed-window bug).
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=5
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage_streak=0"* ]]
+    [[ "$output" != *"outage_since=2"* ]]   # anchor cleared (ISO year would follow otherwise)
+}
+
+@test "outage: a non-numeric probe response (jq null) is unverified, never alive [P1]" {
+    # A 200 with an unexpected body yields the string "null" (gh exits 0):
+    # neither the =0 escalate branch nor the -z WARN matched, so it silently
+    # counted as evidence of life. It must route to the WARN branch.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=null
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage probe failed"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+    # and it does NOT reset the streak (unverified evidence carries forward)
+    [[ "$output" == *"outage_streak=1"* ]]
 }
 
 # ---------- gh_pr_ready_idempotent ----------

@@ -129,28 +129,32 @@ sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-# Full five-field GATE_CARRY line (merge-gates.sh emits none_head/none_streak too).
+# Full GATE_CARRY line (merge-gates.sh emits none_* and outage_* fields too).
 got = m._parse_gate_carry(
     "Poll 1/1 — CI: ...\n"
-    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7\n"
+    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7 "
+    "outage_head=ooo outage_streak=3 outage_since=2026-08-13T10:00:00Z\n"
 )
 assert got == {
     "nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5,
     "none_head": "nnn", "none_streak": 7,
+    "outage_head": "ooo", "outage_streak": 3, "outage_since": "2026-08-13T10:00:00Z",
 }, got
 assert m._parse_gate_carry("no carry line here") is None
 # Empty values -> zeros/blanks.
-g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0")
+g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0 outage_head= outage_streak=0 outage_since=")
 assert g2 == {
     "nudged_head": "", "stale_head": "", "stale_streak": 0,
     "none_head": "", "none_streak": 0,
+    "outage_head": "", "outage_streak": 0, "outage_since": "",
 }, g2
-# Legacy line without the none_* fields (older merge-gates.sh) -> none defaults.
+# Legacy line without the none_*/outage_* fields (older merge-gates.sh) -> defaults.
 g3 = m._parse_gate_carry("GATE_CARRY nudge_head=a stale_head=b stale_streak=2")
 assert g3["none_head"] == "" and g3["none_streak"] == 0, g3
-# Non-numeric none_streak -> 0 (never raises).
-g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN")
-assert g4["none_streak"] == 0, g4
+assert g3["outage_head"] == "" and g3["outage_streak"] == 0 and g3["outage_since"] == "", g3
+# Non-numeric streaks -> 0 (never raises).
+g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN outage_streak=soon")
+assert g4["none_streak"] == 0 and g4["outage_streak"] == 0, g4
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -362,18 +366,23 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 entries = m.read_registry()
 assert entries, "no registry entries after register"
 clone = entries[0]["clone_path"]
-# Pass all five fields incl. the new none_head/none_streak (core-scripts-python-04).
-m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6)
+# Pass every field incl. none_* (core-scripts-python-04) and the outage carry.
+m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6,
+                    "outHEAD", 9, "2026-08-13T10:00:00Z")
 e = m.read_registry()[0]
 assert e["nudged_head"] == "headSHA999", e
 assert e["stale_head"] == "headSHA999", e
 assert e["stale_streak"] == 4, e
 assert e["none_head"] == "noneHEAD", e
 assert e["none_streak"] == 6, e
-# Backward-compat: the two none_* params default so an older call site still works.
+assert e["outage_head"] == "outHEAD", e
+assert e["outage_streak"] == 9, e
+assert e["outage_since"] == "2026-08-13T10:00:00Z", e
+# Backward-compat: the none_*/outage_* params default so an older call site still works.
 m._bump_nudge_state(999, clone, "h2", "h2", 1)
 e2 = m.read_registry()[0]
 assert e2["none_head"] == "" and e2["none_streak"] == 0, e2
+assert e2["outage_head"] == "" and e2["outage_streak"] == 0 and e2["outage_since"] == "", e2
 print("OK")
 PY
     [ "$status" -eq 0 ]
