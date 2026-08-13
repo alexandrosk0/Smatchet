@@ -96,6 +96,17 @@ case "$1" in
                     *)   echo "gh: stub transient error (no HTTP code)" >&2; exit 1 ;;
                 esac
                 ;;
+            */actions/runs)
+                # Outage probe: gh api repos/<o>/<r>/actions/runs -X GET
+                #   -f "created=>=<iso>" -f per_page=1 --jq '.total_count'
+                #   MERGE_GATES_STUB_RUNS_CREATED — total_count to report
+                #                                   (default 1 = Actions alive)
+                #                                   "fail" → probe error
+                case "${MERGE_GATES_STUB_RUNS_CREATED:-1}" in
+                    fail) echo "gh: stub actions/runs error" >&2; exit 1 ;;
+                    *)    echo "${MERGE_GATES_STUB_RUNS_CREATED:-1}"; exit 0 ;;
+                esac
+                ;;
         esac
         ;;
     pr)
@@ -158,6 +169,7 @@ teardown() {
     unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
     unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
+    unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED
 }
 
 # ---------- helpers ----------
@@ -2027,6 +2039,107 @@ CFG
     [[ "$output" == *"GATES_PASSED"* ]]
     unset MERGE_GATES_IGNORE_MERGESTATE
     rm -f "$f"
+}
+
+# ---------- Actions-outage escalation (process P1 fix (3): CI unavailable gets a defined move) ----------
+# The #1941 shape: Actions jammed repo-wide (75 runs stuck queued, zero runs
+# created after 19:16Z, close/reopen produced nothing), so the head could never
+# go green and the operator's options collapsed to "wait forever" or "--admin
+# override". The poller now supplies the third option: after OUTAGE_POLLS
+# consecutive unexplained required-absent polls it probes runs CREATED repo-wide
+# since polling began; zero created → return 7 with the outage diagnosis instead
+# of timing out at MAX_POLLS with a per-check message. The probe (not the
+# threshold) separates outage from the ~27 min creation lag: backlogged-but-
+# alive Actions still creates runs, so the count stays >0 and polling continues.
+
+@test "outage: required-absent + zero runs created repo-wide -> return 7 + ESCALATE diagnosis [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"ESCALATE: ACTIONS UNAVAILABLE"* ]]
+    [[ "$output" == *"zero workflow runs created repo-wide"* ]]
+    [[ "$output" == *"Do NOT --admin merge"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "outage: Actions alive (runs being created) -> normal required-missing block, no escalation [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=5
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-missing"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: probe failure -> keep polling with a WARN, never escalate on unverified evidence [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=fail
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage probe failed"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: threshold not reached -> no probe verdict, normal block [P1]" {
+    # Default OUTAGE_POLLS (15) with a single poll: the streak never reaches the
+    # threshold, so even a zero-count stub cannot escalate.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: streak accumulates across polls and escalates at the threshold [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=3
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"3 consecutive polls"* ]]
+}
+
+@test "outage: a DIRTY head never escalates - the conflict fully explains the absence [P1]" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"CONFLICTED"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+    rm -f "$f"
+}
+
+@test "outage: MERGE_GATES_OUTAGE_POLLS=0 disables the escalation entirely [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=0
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: non-integer MERGE_GATES_OUTAGE_POLLS is rejected (return 3) [P1]" {
+    export MERGE_GATES_OUTAGE_POLLS=soon
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a non-negative integer"* ]]
 }
 
 # ---------- gh_pr_ready_idempotent ----------

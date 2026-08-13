@@ -149,6 +149,12 @@
 #   3 — gh API down (3 consecutive failures)
 #   4 — PR closed or merged externally
 #   5 — pagination overflow (any connection has more pages)
+#   7 — Actions outage escalation: required contexts absent on the head for
+#       MERGE_GATES_OUTAGE_POLLS consecutive polls while ZERO workflow runs
+#       were created repo-wide since polling began — the head cannot go green
+#       by waiting (admin-merge-past-absent-checks-undetected fix (3): the
+#       ship-loop's defined move is to STOP and escalate, never override;
+#       see docs/agent-rules/ship-loops.md § CI unavailable).
 #
 # Return codes (gh_pr_ready_idempotent):
 #   0 — PR is now ready (or already was)
@@ -360,6 +366,33 @@ poll_merge_gates() {
     # Mirrors CR_GRACE_POLLS. A silent Bugbot with NO artefact (bb_state ABSENT)
     # is never waited on — only a confirmed-engaged-but-stale Bugbot graces.
     local BB_GRACE_POLLS="${MERGE_GATES_BB_GRACE_POLLS:-10}"
+    # Actions-outage escalation threshold — consecutive required-absent polls
+    # (non-conflicted head) before probing whether ANY workflow run has been
+    # created repo-wide since polling began. Zero runs created + required
+    # contexts absent = a head that cannot go green by waiting (the #1941
+    # shape: Actions jammed repo-wide, 75 runs stuck queued, close/reopen
+    # produced 0 runs; the operator's options collapsed to "wait forever" or
+    # "--admin override"). Escalating with that diagnosis IS the third option
+    # (admin-merge-past-absent-checks-undetected fix (3); AI_POLICY.md
+    # § Escalate, don't assume). Default 15 (~15 min at the 60 s interval).
+    # The ~27 min check-suite creation LAG is disambiguated by the probe, not
+    # the threshold: under mere backlog runs ARE still being created
+    # repo-wide, so the probe returns >0 and the poller keeps polling — only
+    # a repo that has stopped creating runs entirely escalates. 0 disables.
+    local OUTAGE_POLLS="${MERGE_GATES_OUTAGE_POLLS:-15}"
+    if ! [[ "$OUTAGE_POLLS" =~ ^[0-9]+$ ]]; then
+        echo "poll_merge_gates: MERGE_GATES_OUTAGE_POLLS must be a non-negative integer (got: $OUTAGE_POLLS)" >&2
+        return 3
+    fi
+    local outage_streak=0
+    # The probe window opens when polling starts: `created=>=<this instant>`
+    # scoped repo-wide. A quiet-but-healthy repo can only stay at zero created
+    # runs while nothing pushes; the head under poll was itself pushed BEFORE
+    # polling began, so its runs (if Actions is alive) were created before the
+    # window and don't count — which is exactly right: the question is whether
+    # Actions is creating runs NOW, not whether it once did.
+    local poll_start_iso
+    poll_start_iso="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     if [ ! -f "$QUERY_FILE" ]; then
         echo "poll_merge_gates: query file not found: $QUERY_FILE" >&2
@@ -1005,10 +1038,45 @@ poll_merge_gates() {
         # (required contexts have no terminal conclusion); only the diagnosis differs.
         if [ "$req_absent" -gt 0 ] && [ "${fields[17]:-UNKNOWN}" = "DIRTY" ]; then
             echo "BLOCK: required-missing: ${req_absent_names} (head is CONFLICTED — mergeStateStatus=DIRTY, so GitHub will not build it and these contexts can never report. Merge origin/develop into the branch and resolve the conflict; CI re-fires on the new head. This is NOT a CI fault and polling will not clear it)." >&2
+            # A conflict fully explains the absence — the outage question does
+            # not arise, and its streak must not accumulate behind the
+            # conflict diagnosis.
+            outage_streak=0
         elif [ "$req_absent" -gt 0 ]; then
             echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence on an early poll may still be pending; it is blocked until the contexts actually report, never merged on the assumption they will." >&2
+            # Actions-outage escalation (fix (3), admin-merge-past-absent-
+            # checks-undetected): after OUTAGE_POLLS consecutive polls in this
+            # unexplained-absence state, ask whether Actions has created ANY
+            # workflow run repo-wide since polling began. Zero runs created
+            # means waiting cannot clear this block — either Actions is jammed
+            # (the #1941 shape) or nothing ever triggers CI for this head —
+            # and the defined move is to stop and escalate, NOT to time out at
+            # MAX_POLLS with a per-check message, and NOT to --admin merge.
+            # A probe failure keeps polling (escalation is an early exit;
+            # never take it on unverified evidence), as does any nonzero
+            # created-count (backlogged-but-alive Actions keeps creating runs,
+            # which is what separates the ~27 min creation lag from an
+            # outage).
+            if [ "$OUTAGE_POLLS" -gt 0 ]; then
+                outage_streak=$((outage_streak + 1))
+                if [ "$outage_streak" -ge "$OUTAGE_POLLS" ]; then
+                    local runs_created
+                    runs_created=$(gh api "repos/${owner}/${repo}/actions/runs" \
+                                     -X GET -f "created=>=${poll_start_iso}" -f per_page=1 \
+                                     --jq '.total_count' 2>/dev/null) || runs_created=""
+                    if [ "$runs_created" = "0" ]; then
+                        echo "ESCALATE: ACTIONS UNAVAILABLE — ${req_absent} required context(s) absent on head ${head_sha:0:8} for ${outage_streak} consecutive polls AND zero workflow runs created repo-wide since ${poll_start_iso}. This head cannot go green by waiting: either Actions is not creating runs (outage/jam — the #1941 shape) or nothing re-triggers CI for this head. Defined move (ship-loops.md § CI unavailable): stop polling, surface this diagnosis, and re-run once Actions drains (or re-fire CI with a push / close-reopen). Do NOT --admin merge past absent checks — postmortem-owed.sh's required-context-ABSENT detector flags that merge and a snapshot + deviation entry are owed." >&2
+                        return 7
+                    elif [ -z "$runs_created" ]; then
+                        echo "WARN: outage probe failed (gh api actions/runs); cannot distinguish outage from backlog this poll — continuing to poll." >&2
+                    fi
+                fi
+            fi
         elif [ "$req_absent" -lt 0 ]; then
             echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
+            outage_streak=0
+        else
+            outage_streak=0
         fi
 
         # ── Bugbot (cursor[bot]) gate #4 ──────────────────────────────────────
