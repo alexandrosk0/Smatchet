@@ -4236,3 +4236,396 @@ path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 
   Status: applied (flipped at archival)
   Last-reviewed: 2026-08-13
+
+- 2026-08-06 · claude-code · [process] · P1 — an `--admin` merge past checks that never ran leaves no trace any detector reads, and `merge-gates.sh` mislabels a CI-cannot-run head as "required-missing"
+
+  **Evidence.** PR #1941 (preferences IA re-segmentation + global search) squash-merged
+  2026-08-06T19:25:12Z as `c7fb2236` on `develop` via `gh pr merge --squash --admin`, with all
+  22 branch-protection-required contexts absent from the head rollup. The head `4617a034` was
+  never built at all: `gh api repos/<o>/<r>/actions/runs?head_sha=4617a034…` returned
+  `total_count: 0`. `postmortem-owed.sh --list` afterwards reported "no gate escapes owed
+  (last 20 merges clean)".
+
+  Two independent holes produced this:
+
+  1. **No defined behaviour when CI is structurally unavailable.** Actions was jammed
+     repo-wide — 75 runs stuck `queued` since 18:13 UTC, no new run created repo-wide after
+     19:16 UTC, and a `gh pr close && gh pr reopen` (to re-fire the `pull_request` event)
+     produced 0 runs. There was no path to a green head. The ship-loop's only defined move
+     is to keep polling, so the operator's choices collapse to "wait indefinitely" or
+     "override" — and the override is exactly what the gates exist to prevent. The escape is
+     the *absence of a third option*, not the person who took the second.
+
+  2. **The escape class is invisible to the detector.** `postmortem-owed.sh` keys on a
+     non-SUCCESS check at merge, an override label, a `Revert` commit, or an overdue
+     deviation. An `--admin` merge past *absent* checks emits none of those four signals:
+     there is no red check (there is no check), no label, no revert. This is the same
+     detection hole already recorded in the ledger twice — `2026-07-10 · PR #1698` and
+     `2026-08-05 · PR #1937` — both of which proposed a develop-tip required-green assertion
+     that never landed. Third recurrence.
+
+  A third, lower-severity contributor worth fixing in the same area: **`merge-gates.sh`
+  reports a conflicted head as N `required-missing` checks.** When `mergeStateStatus` is
+  `DIRTY` / `mergeable` is `CONFLICTING`, GitHub declines to build the head at all, so the
+  poller sees 22 absent required contexts and prints the generic "never ran; e.g. a
+  GITHUB_TOKEN bot push that did not re-trigger CI" hint. That cost a full 90-poll timeout
+  before the actual cause (a conflict in `docs/plans/INDEX.md`) was found by hand. The
+  actionable cause was available on poll 1 from a field the poller already fetches.
+
+  Proposed fixes:
+
+  1. **Detect the merge after the fact.** Extend `postmortem-owed.sh` with a fifth signal:
+     for each merge commit on `develop` in the scanned window, resolve the merged PR's head
+     sha and flag it when `actions/runs?head_sha=<sha>` yields `total_count == 0`, or when
+     the head rollup carries fewer contexts than the branch-protection required set. This
+     catches admin merges, zero-rollup merges, and the "CI never triggered" class in one
+     check, and it needs no cooperation from whoever performed the merge — which is the
+     property the label-keyed signals lack.
+  2. **Name the real cause in the poller.** In `merge-gates.sh`, branch on
+     `mergeStateStatus == DIRTY` / `mergeable == CONFLICTING` before reporting
+     `required-missing`, and emit a distinct blocked reason ("head is conflicted — CI will
+     not build it; merge origin/develop first"). Same for `BLOCKED` with a zero-length
+     rollup. Cheap: both fields are already in the existing GraphQL response.
+  3. **Give "CI is unavailable" a defined move.** Today the ship-loop has none. Minimum
+     viable: when the poller observes zero runs created repo-wide inside the poll window
+     (an Actions outage, not a PR problem), it should stop polling and escalate with that
+     diagnosis rather than time out at 90 polls with a per-check message — per
+     `AI_POLICY.md` § Escalate, don't assume, an unvalidatable state is an escalation, and
+     an outage is unvalidatable by construction.
+
+  Concrete next action: fix (1) — it is self-contained inside `postmortem-owed.sh`, closes
+  a hole that has now recurred three times, and is testable in `tests/bats/`. (2) is a small
+  follow-up in the same PR if the diff stays small. (3) needs a design call on what the
+  ship-loop does with an escalation and should not be bundled.
+
+  Related, distinct — do not merge these: the two prior ledger entries (2026-07-10 · #1698,
+  2026-08-05 · #1937) describe the same *detector* hole reached from a different direction
+  (a check green on the PR head and red on develop). A single develop-tip required-green
+  assertion would close all three, and that is the argument for finally building it.
+
+  Compensating verification actually performed on the merged head, for the record: dual-target
+  build (`SmatchetStandalone` + `SmatchetCore_DX12`) EXIT=0 and
+  `test-lint-rules.sh --diff origin/develop` EXIT=0 (advisory WARNs only). That is not CI and
+  does not substitute for it — the next `develop` post-merge run, once Actions drains, is the
+  backstop to watch.
+
+  **Update 2026-08-11 — fixes (1) and (2) shipped; (3) is all that remains.**
+
+  - **(1) Detect the merge after the fact — DONE.** `postmortem-owed.sh` gained the
+    fifth signal as a required-context-ABSENT cross-check: every name in
+    `branch_protection.required_contexts` must appear in the merged PR's rollup
+    (field 5, the `|||`-joined present-context list the script already parsed for the
+    expected-present allow-list), else the merge owes a postmortem. It runs on the
+    snapshot path as well as the live one — a snapshot records the merge-instant RED
+    set, never rollup *membership*, so absence is only ever observable from the live
+    rollup and an instrumented merge would otherwise be exempt from the one signal
+    snapshots cannot carry. It needs no cooperation from the merge actor, which is
+    the property this entry wanted. Implemented via rollup membership rather than the
+    proposed `actions/runs?head_sha=<sha>` probe: same escape class, no extra API call
+    per scanned merge, and it also catches a head that *was* built but whose suite is
+    missing contexts. Guarded by `POSTMORTEM_ABSENT_GRACE_SECONDS` (default 3600) —
+    the infra entry `required-check-that-never-reports-is-invisible` measured a ~27-min
+    check-suite creation lag, so a just-merged PR is deferred to the next sweep instead
+    of false-flagged. Suite: `tests/bats/postmortem_owed.bats` § required-absent,
+    including this PR's exact shape (zero rollup, no red, no label → owes).
+  - **(2) Name the real cause in the poller — DONE.** `merge-gates.sh` now branches on
+    `mergeStateStatus == DIRTY` before emitting the generic hint and reports "head is
+    CONFLICTED … merge origin/develop first; this is NOT a CI fault and polling will
+    not clear it". As predicted the field was already in the poller's GraphQL response,
+    so the diagnosis is available on poll 1 rather than after a 90-poll timeout. The
+    non-DIRTY branch keeps the original "never ran" hint and gained the creation-lag
+    caveat. Both are still BLOCKs — only the diagnosis differs. Cases in
+    `tests/bats/merge_gates.bats` § required-missing cause attribution, incl. a negative
+    canary that a DIRTY head with nothing absent emits no conflict line.
+    *Adjacent false-pass found while testing, and fixed:* the `mergeStateStatus`
+    guard blocked on `BLOCKED|BEHIND` only, so an all-green **DIRTY** head — one whose
+    required contexts DID report before the conflict appeared — reached `GATES_PASSED`
+    and failed later at the REST merge. Initially left alone on the reasoning that this
+    entry asked for diagnosis rather than a new block; that was too narrow, since an
+    unmergeable head passing the gate is the same false-pass class the entry is about.
+    `DIRTY` now joins the blocking set. Safe because `DIRTY` is a *computed* verdict —
+    GitHub reports `UNKNOWN` while mergeability is still being determined — so it
+    cannot fire on a pending computation, and `MERGE_GATES_IGNORE_MERGESTATE` still
+    covers a positively-confirmed stale `DIRTY` (pinned by its own test).
+  - **(3) Give "CI is unavailable" a defined move — DONE (2026-08-13).** Design call
+    made: escalation is a deterministic poller verdict, and the move on it is
+    stop-and-surface, never override. `merge-gates.sh` gained an Actions-outage
+    detector: after `MERGE_GATES_OUTAGE_POLLS` (default 15) consecutive
+    unexplained required-absent polls it probes `actions/runs?created=>=<poll
+    start>` repo-wide; zero runs created → stop polling, print `ESCALATE:
+    ACTIONS UNAVAILABLE` with the diagnosis, return the new exit code 7 —
+    instead of burning the remaining window to the generic per-check timeout.
+    The PROBE (not the threshold) separates an outage from the ~27 min
+    check-suite creation lag: backlogged-but-alive Actions still creates runs
+    repo-wide, so the count stays >0 and polling continues. Conflict-explained
+    absence (mergeStateStatus=DIRTY) never counts toward the streak, a failed
+    probe keeps polling (escalation is never taken on unverified evidence), and
+    0 disables. The ship-loop's defined move for exit 7 is documented at
+    `docs/agent-rules/ship-loops.md` § CI unavailable: escalate per
+    `AI_POLICY.md`, re-run when Actions drains or re-fire CI, never `--admin`
+    past absent checks — which fix (1)'s detector now flags regardless. Suite:
+    `tests/bats/merge_gates.bats` § Actions-outage escalation (8 cases:
+    escalate / alive / probe-fail / threshold / streak accumulation / DIRTY
+    exemption / disabled / knob validation).
+
+  Status: applied — all three fixes shipped ((1)+(2) 2026-08-11, (3) 2026-08-13)
+  Last-reviewed: 2026-08-13
+
+# The required CR-findings gate has no pass path when CodeRabbit never reviews (throttled, draft-skipped, or path-excluded)
+
+- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [process] · P2 — the required `CR findings` status pends forever when CR doesn't produce a review; high-volume campaigns exhaust the adaptive rate-limit (and re-triggers reset it), while docs/self-improvement-only PRs are path-excluded outright — both wedge merge
+
+## Friction
+
+Shipping 11 campaign PRs (#1682–#1692) plus follow-ups in one session pushed
+CodeRabbit's per-developer review volume to the 95th percentile, where its
+**adaptive** limit releases new reviews only gradually. The repo's required
+`CR findings (0 actionable)` status check stays `pending` until CodeRabbit posts
+a *completed* review on the PR's current head SHA, so the throttle blocked
+#1702's merge for ~2h even though every real CI lane was green and Cursor Bugbot
+had already reviewed it with zero actionable findings.
+
+Two behaviours compounded it, both verified this session:
+
+- CodeRabbit **skips draft PRs entirely** — the gate can never satisfy while the
+  PR is a draft, so a fix-forward opened as draft sits pending until marked ready.
+- Each manual `@coderabbitai review` that lands *inside* an active rate-limit
+  window **resets the countdown** — observed the "next review available in" value
+  jump from `51 seconds` back up to `38 minutes` immediately after a trigger. So
+  re-triggering to "unstick" the gate is actively counterproductive.
+
+The required gate has no degrade path when the external reviewer is unavailable,
+so an upstream throttle translates directly into an unbounded merge block.
+
+**Stronger variant, observed on the PR logging this very entry (#1718):** CodeRabbit
+**path-excludes** `docs/self-improvement/**` (`!docs/self-improvement/**` in
+`.coderabbit.yaml`), so for a docs/self-improvement-only PR it posts "Review skipped
+due to path filters" and **never** produces a review. The `CR findings (0 actionable)`
+gate is then **structurally unsatisfiable** — no amount of waiting or re-triggering
+helps, because there is nothing for CR to review. Same class of failure (CR skips a
+draft too), and the fix is the same: the gate must treat "CR will not / cannot review
+this PR" (path-excluded, draft-skipped, throttled past a deadline) as **0 findings →
+pass**, not perpetual pending.
+
+## Proposal
+
+1. **Agent behaviour (cheap, do first):** when the `CR findings` gate is pending
+   due to a CodeRabbit rate-limit, do **not** re-trigger — let the rolling window
+   age out, then trigger once. Encode in the PR-babysit / ship-loop playbook next
+   to the existing draft-PR note.
+2. **Pace campaigns:** stagger PR *readiness* (mark ready in small batches) so CR
+   review volume stays under the adaptive limit instead of firing N reviews at once.
+3. **Gate design (load-bearing):** the required `CR findings` check must have a
+   pass path when CR does not produce a review. Two triggers: (a) an explicit
+   **"Review skipped due to path filters"** (or draft-skip) comment from CR on the
+   head SHA → treat as 0 findings → **pass immediately** (structural, not a wait);
+   (b) after N hours pending with zero findings from any other reviewer
+   (Bugbot/Copilot) → degrade to advisory. Without (a), any docs/self-improvement-only
+   PR — including the ones this very backlog process produces — can never merge
+   without an operator admin-merge.
+
+Est: (1) ~10 min doc; (2) ~15 min playbook; (3) ~1–2h (poller/gate change).
+This session resolved #1702 only via an operator-authorized admin merge past the
+pending gate.
+
+**Update (2026-07-10): partially implemented (the structural half of proposal 3).**
+Ported the **selfImpOnly** terminal pass-signal from the client gate
+(`merge-gates.sh`) to the SERVER gate (`.github/actions/cr-finding-gate/action.yml`),
+the one that actually blocks merge: a diff entirely under `docs/self-improvement/**`
+(path-excluded by `.coderabbit.yaml`, sanctioned by
+`self-improvement-pr-review-exemption`) passes immediately, no CR wait — exactly
+the docs-only-PR class that wedged. It is head-accurate (queries the PR's current
+file list) and fail-closed on any `gh` pagination error.
+
+A second, comment-body-based "terminal path-filter skip" pass was tried and
+**dropped after CodeRabbit review** (#1724): CR's skip summary comment carries no
+reliable head-commit anchor, so a stale skip comment from an earlier docs-only
+commit could pass a LATER code commit before CR re-reviewed it (fail-open race).
+selfImpOnly covers the recurring case without that hazard.
+
+Still open (deliberately NOT auto-passed — unsafe): the **rate-limit on a CODE
+PR** case. Auto-passing it would wave un-reviewed code through; the correct escape
+stays the `cr-out-of-band` label + `cr-disposition:` attestation (already
+supported). Proposals (1) don't-re-trigger and (2) pace-campaigns remain doc/
+playbook follow-ups.
+
+## Format
+
+- Details: see § Friction. Verified: the rate-limit countdown reset was observed
+  in the PR's `coderabbitai[bot]` comments (51s → 38m after a re-trigger); the
+  gate context string is `CR findings (0 actionable)` with description
+  "awaiting CodeRabbit review on current head".
+- Concrete next action: see § Proposal (1)–(3).
+- Triggered-follow-up: when=pr-count:base=develop;since=2026-07-10;n=25; action=re-check whether the required CR gate ever degraded gracefully under a throttle, or whether another campaign wedged again; baseline=#1702 blocked ~2h on CR rate-limit despite green CI + Bugbot clear; fired=2026-07-11
+- Follow-up observation (2026-07-11): no recurrence. The backlog-takeover session merged five PRs
+  (#1726, #1700, #1728, #1730, #1738) while CodeRabbit was continuously rate-limited (its
+  "review limit reached" comment present on every PR, windows 15–58 min); the
+  `CR findings (0 actionable)` check reached SUCCESS on each head within the normal CI window and
+  every merge proceeded without an admin-merge or `cr-out-of-band` label. The remaining unsafe
+  case (rate-limit wedging a code PR past its window) did not reproduce; proposals (1)/(2) stay
+  open as playbook follow-ups.
+- Update (2026-08-13): proposals (1) and (2) landed as the "CodeRabbit rate-limit
+  playbook" in `docs/agent-rules/merge-gates.md` (never re-trigger inside an active
+  window — the countdown resets; stagger campaign PR readiness; per-PR, batch fix
+  rounds into one push per the pre-first-push gate). The structural half of (3)
+  (selfImpOnly terminal pass) shipped 2026-07-10; the throttled-code-PR case stays a
+  deliberate BLOCK with the `cr-out-of-band` + `cr-disposition:` escape, per the
+  2026-07-11 follow-up observation that it never recurred across five rate-limited
+  merges. Separately, the CI gate now auto-posts a recency-gated
+  `@coderabbitai full review` nudge when a COMPLETED clean pass leaves no on-head
+  evidence (PR #2004) — the self-heal for the stale-evidence wedge family this
+  entry first recorded. Nothing remains open.
+- Status: applied
+- Last-reviewed: 2026-08-13
+
+- 2026-08-05 · claude-code · [tooling] · P2 — The gate-poller filters bot review threads out of its user-comment gate, but `required_conversation_resolution` counts them — so the poller can report all-clear on a PR GitHub will never merge
+
+  Observed on PR #1937 (Help > About dialog). After the missing `CR finding gate`
+  check-run was resolved (see
+  `2026-08-04-required-check-cancelled-while-pending-wedges-poller.md`), the head
+  was 43 SUCCESS / 5 SKIPPED / 0 fail, `cr-out-of-band` was set with a
+  `cr-disposition:` marker, and the poller printed `User: 0`. GitHub still
+  reported `mergeStateStatus=BLOCKED` and refused the merge.
+
+  Cause: branch protection on `develop` sets
+  `required_conversation_resolution: {"enabled": true}`, and GitHub counts **every**
+  unresolved review thread — including bot-authored ones. Ten unresolved CodeRabbit
+  threads were open on the PR. The poller's gate #3 deliberately excludes them:
+  `agents/scripts/core/merge-gates.d/10-gate-filter.sh:210-212` selects only threads
+  with `.author.__typename != "Bot"` and a login other than `ORCH_USER`. Gate #2 (the
+  CodeRabbit gate) passes on `APPROVED` / `COMMENTED + 0 actionable` and is separately
+  waivable via `cr-out-of-band` — but that label waives the **poller's** gate. GitHub
+  branch protection has never heard of it. So both poller gates read green while the
+  thing actually holding the merge was a count neither of them measures.
+
+  Why it matters beyond this PR: the divergence is silent and it fails in the
+  expensive direction. The poller's own output is what an operator (or the
+  merge-watcher) reads to decide whether to keep waiting, and it says the PR is
+  ready. The only signal to the contrary is the opaque `mergeStateStatus=BLOCKED`
+  line, which names no cause. On #1937 this cost the full ~90 min budget and a
+  manual GraphQL sweep to discover the ten threads and resolve them one by one.
+  The `cr-out-of-band` label makes it *worse*, not better: waiving the CR gate is
+  precisely the situation in which unresolved CR threads are expected to remain,
+  so the label reliably steers into the wedge.
+
+  Proposed fix: project the **unfiltered** unresolved-non-outdated thread count as a
+  new field alongside the existing user count, and on a `mergeStateStatus=BLOCKED`
+  poll where every other gate passes, emit an actionable BLOCK naming it — e.g.
+
+      BLOCK: mergeStateStatus=BLOCKED with all gates green; 10 unresolved review
+             thread(s) (0 user, 10 bot) and branch protection requires conversation
+             resolution. Resolve them or the merge will never unblock.
+
+  The thread nodes are already fetched by the same GraphQL query, so this is a jq
+  projection change, not an extra API call. Gate the message on the repo actually
+  having `required_conversation_resolution` enabled (one `gh api
+  repos/{o}/{r}/branches/{base}/protection` read, cached per run) so it does not
+  fire spuriously on repos without it.
+
+  Deliberately **not** proposed: making the poller resolve bot threads itself. That
+  is a merge-blocking judgement call — auto-resolving CR threads would silently
+  discard findings, which is exactly the failure mode `cr-out-of-band` already has a
+  `cr-disposition:` attestation to prevent.
+
+  Concrete next action: add the unfiltered-thread-count field to
+  `agents/scripts/core/merge-gates.d/10-gate-filter.sh` and the BLOCK branch to
+  `agents/scripts/core/merge-gates.sh`, with a `tests/bats/merge_gates.bats` case
+  pinning the "all gates green + BLOCKED + N bot threads" path to the actionable
+  message. Also worth a line in `docs/agent-rules/merge-gates.md` § CodeRabbit gate:
+  `cr-out-of-band` waives the poller's gate only — it does not waive branch
+  protection's conversation-resolution requirement.
+
+  Update (2026-08-13): shipped as proposed. `10-gate-filter.sh` projects the
+  unfiltered unresolved-non-outdated thread counts (fields 31 total / 32
+  user-authored; the projection grew 31 -> 33 fields with the fail-closed
+  count assertion updated in lockstep), and `merge-gates.sh` names the cause on
+  the poll it appears: when `mergeStateStatus=BLOCKED` with every other gate
+  green and threads open, it emits the actionable BLOCK with the (user, bot)
+  split, gated on the base branch actually requiring conversation resolution
+  (one branch-protection read cached per run; env seam
+  `MERGE_GATES_CONV_RES_REQUIRED` mirrors pr-blocked-why.sh's; a probe miss
+  reports "may require" rather than staying silent). A user-authored open
+  thread never takes this path — it reds the user-comment gate, which already
+  names itself; the line is reserved for the invisible bot-only case, and it
+  points at `pr-blocked-why.sh` for the per-thread classification. merge-gates.md
+  § Per-PR overrides now states the general rule: out-of-band labels waive the
+  poller's gates only, never branch protection. Six bats cases pin the path
+  (named / conv-res-disabled silent / unknown hedged / zero threads silent /
+  other-gate-red silent / user-thread reds the user gate instead).
+
+  Status: applied
+  Last-reviewed: 2026-08-13
+
+- 2026-08-11 · claude-code · [tooling] · P2 — a required context that stops reporting on EVERY PR is now only a WARN, so `postmortem-owed.sh --blocking` exits 0 on it; the effective-date fix traded this away to stop a SessionStart wedge, and only a merge-time snapshot buys it back
+
+  Details: the effective-date fix for
+  [`required-absent-judges-history-by-todays-required-set`](applied.md) (applied
+  2026-08-11) dates each required context from the earliest merge in the scan window
+  where it was observed PRESENT, and skips PRs that merged before that. A context
+  observed on **no** PR in the window cannot be dated at all, and the two
+  explanations point opposite ways:
+
+  - it was promoted so recently that nothing has run it yet — benign; or
+  - it never reports at all — the #1941 shape, and one of the most serious escapes
+    this detector exists to catch.
+
+  From the window alone these are **indistinguishable**: both produce exactly "the
+  name is in `required_contexts` and appears in zero rollups". So the undatable case
+  is reported once as a `warns` line naming the ambiguity, and `warns` never affects
+  the exit code.
+
+  **The cost, stated plainly.** Before the fix, a required workflow that silently
+  stopped reporting would flag every PR in the window and hard-fail `--blocking`.
+  After it, that same outage produces one advisory line and a green `--blocking`.
+  That is a real reduction in detection strength on the detector's headline case,
+  and it was accepted only because the alternative re-creates the wedge the fix
+  exists to remove: with `POSTMORTEM_BLOCKING_GRACE=0`, flagging per-PR means a
+  routine branch-protection change hard-fails `--blocking` at SessionStart for up to
+  `SCAN_N` PRs at once, wedging every new session on phantom escapes.
+
+  Two mitigations already limit the blast radius, which is why this is P2 and not P1:
+
+  - An **empty rollup** is exempt from the dating entirely and still flags. The
+    reported escapes (#1941, #1972-#1974) are all empty-rollup merges, so the
+    historical cases remain caught. The gap is narrower than "absence is unchecked":
+    it is specifically *one* context missing from otherwise-populated rollups, across
+    the whole window.
+  - The WARN is emitted on every sweep, so the signal is never lost — only
+    downgraded from blocking to advisory.
+
+  Found by the pre-first-push adversarial review of the fix itself, which correctly
+  called it out as "deliberate and documented, but the headline case of the detector
+  added in the immediately preceding commit". Recording it rather than leaving the
+  reasoning only in a code comment, because a deliberate trade-off that lives only in
+  a comment is indistinguishable from an oversight six months later.
+
+  Concrete next action: the fix is the OTHER candidate from the original entry —
+  **persist the required set at merge time**. The merge-snapshot ledger
+  (`merge-snapshots.jsonl`) already writes a per-merge record and is the natural
+  home: add the branch-protection required-context list to the snapshot the watcher
+  captures. Then "was this context required when this PR merged?" is a lookup rather
+  than an inference, the effective-date heuristic and the undatable case both
+  disappear, and a context that stops reporting can be flagged per-PR again without
+  any risk of the promotion wedge. Note this only helps merges made AFTER the
+  snapshot gains the field, so the window-derived dating has to stay as the fallback
+  for older merges — the two coexist rather than one replacing the other.
+
+  Update (2026-08-13): shipped as proposed. `merge-snapshot-append.sh` now
+  persists the branch-protection required set at the decision instant
+  (`requiredContexts`, schema 2; self-derived from `project.config.json`
+  § branch_protection — the file `setup-branch-protection.sh` applies, so it is
+  the set in force — with a `SNAPSHOT_REQUIRED_CONTEXTS` test seam; a capture-
+  time config miss records `[]`, which readers treat as "no merge-time set").
+  `postmortem-owed.sh` prefers the snapshot's merge-time set per merge: "was
+  this context required when this PR merged?" is a lookup, so the undatable
+  ambiguity disappears for snapshotted merges — a never-reporting required
+  context flags per-PR and hard-fails `--blocking` again, with zero
+  promotion-wedge risk (a context absent from the merge-time set is simply not
+  judged). The effective-date heuristic and the once-per-window WARN remain the
+  fallback for schema-1 history, exactly as the entry predicted the two would
+  coexist. The creation-lag grace still defers fresh merges. Six bats cases
+  (headline flag / not-required-then / schema-1 fallback / recorded-[] fallback
+  / grace deferral / --blocking exit 1) plus writer selftest coverage.
+
+  Status: applied
+  Last-reviewed: 2026-08-13

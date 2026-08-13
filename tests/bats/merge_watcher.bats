@@ -129,28 +129,32 @@ sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
 sys.path.insert(0, sd)
 spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-# Full five-field GATE_CARRY line (merge-gates.sh emits none_head/none_streak too).
+# Full GATE_CARRY line (merge-gates.sh emits none_* and outage_* fields too).
 got = m._parse_gate_carry(
     "Poll 1/1 — CI: ...\n"
-    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7\n"
+    "GATE_CARRY nudge_head=abc stale_head=xyz stale_streak=5 none_head=nnn none_streak=7 "
+    "outage_head=ooo outage_streak=3 outage_since=2026-08-13T10:00:00Z\n"
 )
 assert got == {
     "nudged_head": "abc", "stale_head": "xyz", "stale_streak": 5,
     "none_head": "nnn", "none_streak": 7,
+    "outage_head": "ooo", "outage_streak": 3, "outage_since": "2026-08-13T10:00:00Z",
 }, got
 assert m._parse_gate_carry("no carry line here") is None
 # Empty values -> zeros/blanks.
-g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0")
+g2 = m._parse_gate_carry("GATE_CARRY nudge_head= stale_head= stale_streak=0 none_head= none_streak=0 outage_head= outage_streak=0 outage_since=")
 assert g2 == {
     "nudged_head": "", "stale_head": "", "stale_streak": 0,
     "none_head": "", "none_streak": 0,
+    "outage_head": "", "outage_streak": 0, "outage_since": "",
 }, g2
-# Legacy line without the none_* fields (older merge-gates.sh) -> none defaults.
+# Legacy line without the none_*/outage_* fields (older merge-gates.sh) -> defaults.
 g3 = m._parse_gate_carry("GATE_CARRY nudge_head=a stale_head=b stale_streak=2")
 assert g3["none_head"] == "" and g3["none_streak"] == 0, g3
-# Non-numeric none_streak -> 0 (never raises).
-g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN")
-assert g4["none_streak"] == 0, g4
+assert g3["outage_head"] == "" and g3["outage_streak"] == 0 and g3["outage_since"] == "", g3
+# Non-numeric streaks -> 0 (never raises).
+g4 = m._parse_gate_carry("GATE_CARRY none_streak=NaN outage_streak=soon")
+assert g4["none_streak"] == 0 and g4["outage_streak"] == 0, g4
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -362,18 +366,23 @@ m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 entries = m.read_registry()
 assert entries, "no registry entries after register"
 clone = entries[0]["clone_path"]
-# Pass all five fields incl. the new none_head/none_streak (core-scripts-python-04).
-m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6)
+# Pass every field incl. none_* (core-scripts-python-04) and the outage carry.
+m._bump_nudge_state(999, clone, "headSHA999", "headSHA999", 4, "noneHEAD", 6,
+                    "outHEAD", 9, "2026-08-13T10:00:00Z")
 e = m.read_registry()[0]
 assert e["nudged_head"] == "headSHA999", e
 assert e["stale_head"] == "headSHA999", e
 assert e["stale_streak"] == 4, e
 assert e["none_head"] == "noneHEAD", e
 assert e["none_streak"] == 6, e
-# Backward-compat: the two none_* params default so an older call site still works.
+assert e["outage_head"] == "outHEAD", e
+assert e["outage_streak"] == 9, e
+assert e["outage_since"] == "2026-08-13T10:00:00Z", e
+# Backward-compat: the none_*/outage_* params default so an older call site still works.
 m._bump_nudge_state(999, clone, "h2", "h2", 1)
 e2 = m.read_registry()[0]
 assert e2["none_head"] == "" and e2["none_streak"] == 0, e2
+assert e2["outage_head"] == "" and e2["outage_streak"] == 0 and e2["outage_since"] == "", e2
 print("OK")
 PY
     [ "$status" -eq 0 ]
@@ -1656,7 +1665,7 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 8 expected terminal states (incl. READY_FLIP_FAILED + STUCK_NEEDS_ATTENTION)" {
+@test "NOTIFY_STATES contains the 9 expected terminal states (incl. ACTIONS_UNAVAILABLE)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
@@ -1664,12 +1673,56 @@ m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec
 # STUCK_NEEDS_ATTENTION joined when the wedge-escalation driver started flipping
 # last_state to it for the one-shot maybe_notify toast (the stuck-escalation
 # feature); the assertion was left at 7 and silently red until now.
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION'}
+# ACTIONS_UNAVAILABLE joined with the merge-gates exit-7 Actions-outage
+# escalation — an escalation nobody is told about is dead under the watcher.
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
+assert 'ACTIONS_UNAVAILABLE' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
 print('ok')
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"ok"* ]]
+}
+
+@test "poll_one maps merge-gates exit 7 to ACTIONS_UNAVAILABLE and surfaces the ESCALATE diagnosis" {
+    # Exit 7 returns before the per-iteration Poll line AND before GATE_CARRY,
+    # so stdout is empty and stderr leads with the long BLOCK: required-missing
+    # line. Without the returncode==7 branch the 300-char stderr join truncates
+    # the ESCALATE diagnosis away and the state falls to generic EXIT_7 —
+    # absent from NOTIFY_STATES/AGENT_EVENT_STATES, i.e. a silent escalation.
+    run python - <<'PY'
+import importlib.util, os, sys, tempfile
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); sys.modules["mw"] = m; spec.loader.exec_module(m)
+m._pr_lifecycle_state = lambda pr, cp: "OPEN"
+m._poll_owner_repo = lambda pr, cp: ("alexandrosk0", "Smatchet")
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m._resolve_orch_user = lambda cp: "bats"
+class _Gates:
+    returncode = 7
+    stdout = ""
+    stderr = (
+        "BLOCK: required-missing: Build and test (required by branch protection but absent "
+        "from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger "
+        "CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence "
+        "on an early poll may still be pending; it is blocked until the contexts actually report, "
+        "never merged on the assumption they will.\n"
+        "ESCALATE: ACTIONS UNAVAILABLE — 1 required context(s) absent on head deadbeef "
+        "for 15 consecutive polls AND zero workflow runs created repo-wide since "
+        "2026-08-13T00:00:00Z. This head cannot go green by waiting.\n"
+    )
+m._poll_run_gates = lambda owner, repo, pr, env: _Gates()
+state = m.poll_one({"pr": 999, "clone_path": tempfile.mkdtemp()})
+assert state["last_state"] == "ACTIONS_UNAVAILABLE", state
+assert state["gates_return_code"] == 7, state
+assert state["last_status_line"].startswith("ESCALATE: ACTIONS UNAVAILABLE"), state
+assert "ACTIONS_UNAVAILABLE" in m.NOTIFY_STATES
+assert "ACTIONS_UNAVAILABLE" in m.AGENT_EVENT_STATES
+print("exit7 ok")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exit7 ok"* ]]
 }
 
 @test "maybe_notify suppresses repeat-notify for the same state" {

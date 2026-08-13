@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agents/scripts/core/merge-gates.d/10-gate-filter.sh
 # ----------------------------------------------------------------------------
-# The one `gh api graphql --jq` GATE_FILTER program — the 31-field projection
+# The one `gh api graphql --jq` GATE_FILTER program — the 33-field projection
 # that turns the GraphQL response into the fixed-order field stream the poll
 # loop reads with `mapfile`. Relocated VERBATIM from merge-gates.sh (the former
 # in-function `GATE_FILTER='...'` literal) into a single-quoted global so the
@@ -229,6 +229,9 @@ _MG_GATE_FILTER_TEMPLATE='
     ($selfImpOnly | tostring),
     ($pureDocs | tostring),
     ($crratelimited | tostring),
-    ($crdisposition | tostring)
+    ($crdisposition | tostring),
+    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length),
+    ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
+        and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)
   )
 '

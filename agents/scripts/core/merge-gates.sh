@@ -137,6 +137,14 @@
 #                                  MERGE_GATES_MAX_POLLS=1 cycles. The poll emits
 #                                  the updated values on a `GATE_CARRY` stdout
 #                                  line before `return 1`.
+#   MERGE_GATES_PRIOR_OUTAGE_HEAD   — seed the Actions-outage escalation state
+#   MERGE_GATES_PRIOR_OUTAGE_STREAK   (consecutive unexplained required-absent
+#   MERGE_GATES_PRIOR_OUTAGE_SINCE    polls on this head + the probe-window
+#                                  anchor). Same GATE_CARRY round-trip as the
+#                                  streaks above: without it the outage streak
+#                                  resets every MERGE_GATES_MAX_POLLS=1 cycle
+#                                  and the exit-7 escalation can never fire
+#                                  under the watcher.
 #
 # Manual CR re-review trigger: post `@coderabbitai review` as a PR comment
 # (`gh pr comment <pr> --body "@coderabbitai review"`) when CR's review is
@@ -149,6 +157,13 @@
 #   3 — gh API down (3 consecutive failures)
 #   4 — PR closed or merged externally
 #   5 — pagination overflow (any connection has more pages)
+#   7 — Actions outage escalation: required contexts absent on the head for
+#       MERGE_GATES_OUTAGE_POLLS consecutive polls while ZERO workflow runs
+#       were created repo-wide since the absence streak began (the window
+#       re-anchors after each confirmed-alive probe) — the head cannot go
+#       green by waiting (admin-merge-past-absent-checks-undetected fix (3):
+#       the ship-loop's defined move is to STOP and escalate, never override;
+#       see docs/agent-rules/ship-loops.md § CI unavailable).
 #
 # Return codes (gh_pr_ready_idempotent):
 #   0 — PR is now ready (or already was)
@@ -168,7 +183,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
 #   10-gate-filter.sh — the one giant `gh api graphql --jq` GATE_FILTER program
-#                        (the 31-field projection) as a template emitter.
+#                        (the 33-field projection) as a template emitter.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
 # stay INLINE in poll_merge_gates: they share one tightly-coupled per-poll local
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
@@ -360,6 +375,58 @@ poll_merge_gates() {
     # Mirrors CR_GRACE_POLLS. A silent Bugbot with NO artefact (bb_state ABSENT)
     # is never waited on — only a confirmed-engaged-but-stale Bugbot graces.
     local BB_GRACE_POLLS="${MERGE_GATES_BB_GRACE_POLLS:-10}"
+    # Actions-outage escalation threshold — consecutive required-absent polls
+    # (non-conflicted head) before probing whether ANY workflow run has been
+    # created repo-wide since polling began. Zero runs created + required
+    # contexts absent = a head that cannot go green by waiting (the #1941
+    # shape: Actions jammed repo-wide, 75 runs stuck queued, close/reopen
+    # produced 0 runs; the operator's options collapsed to "wait forever" or
+    # "--admin override"). Escalating with that diagnosis IS the third option
+    # (admin-merge-past-absent-checks-undetected fix (3); AI_POLICY.md
+    # § Escalate, don't assume). Default 15 (~15 min at the 60 s interval).
+    # The ~27 min check-suite creation LAG is disambiguated by the probe, not
+    # the threshold: under mere backlog runs ARE still being created
+    # repo-wide, so the probe returns >0 and the poller keeps polling — only
+    # a repo that has stopped creating runs entirely escalates. Zero is
+    # REJECTED, not a disable switch: exit 7 is a no-skip safety exit, and a
+    # 0 here would silently downgrade the Actions-unavailable state to rc 1/2
+    # where the halt prompt offers "Skip gates and merge anyway" (same
+    # fail-closed posture as MERGE_GATES_FRESHNESS: an env var must not be
+    # able to weaken enforcement). Effectively-never is available via a large
+    # value.
+    local OUTAGE_POLLS="${MERGE_GATES_OUTAGE_POLLS:-15}"
+    if ! [[ "$OUTAGE_POLLS" =~ ^[0-9]+$ ]] || [ "$OUTAGE_POLLS" -eq 0 ]; then
+        echo "poll_merge_gates: MERGE_GATES_OUTAGE_POLLS must be a positive integer (got: $OUTAGE_POLLS) — 0 is rejected because it would silently disable the no-skip exit-7 outage escalation" >&2
+        return 3
+    fi
+    # Outage state survives MERGE_GATES_MAX_POLLS=1 watcher cycles via the same
+    # PRIOR_*/GATE_CARRY round-trip as the STALE/NONE streaks — in-process
+    # locals alone would reset every cycle and the threshold could never be
+    # reached under the watcher. Keyed by head: a new push restarts CI's
+    # run-creation clock, so the streak and probe window restart with it.
+    local outage_head="${MERGE_GATES_PRIOR_OUTAGE_HEAD:-}"
+    local outage_streak="${MERGE_GATES_PRIOR_OUTAGE_STREAK:-0}"
+    [[ "$outage_streak" =~ ^[0-9]+$ ]] || outage_streak=0
+    local outage_since="${MERGE_GATES_PRIOR_OUTAGE_SINCE:-}"
+    [[ "$outage_since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || outage_since=""
+    # Lazy per-run cache for the base branch's required_conversation_resolution
+    # setting ("true"/"false"/"unknown"; empty = not yet read). Read at most
+    # once per run, and only on the poll that actually needs it (the
+    # BLOCKED-with-all-other-gates-green cause naming below). Env seam
+    # MERGE_GATES_CONV_RES_REQUIRED overrides for tests, mirroring
+    # pr-blocked-why.sh's PR_BLOCKED_WHY_CONV_RES_REQUIRED.
+    local conv_res_cache=""
+    # The probe window ($outage_since above) anchors when the absence STREAK
+    # starts, not when polling starts: `created=>=<streak start>` scoped
+    # repo-wide. A quiet-but-healthy repo can only stay at zero created runs
+    # while nothing pushes; the head under poll was itself pushed BEFORE the
+    # absence was first observed, so its runs (if Actions is alive) were
+    # created before the window and don't count — which is exactly right: the
+    # question is whether Actions is creating runs NOW, not whether it once
+    # did. A confirmed-alive probe re-anchors the window (streak reset below),
+    # so a single early run cannot permanently mask a jam that begins later —
+    # a fixed poll-start window would answer "did Actions EVER create a run
+    # since polling began" for the rest of the budget.
 
     if [ ! -f "$QUERY_FILE" ]; then
         echo "poll_merge_gates: query file not found: $QUERY_FILE" >&2
@@ -492,7 +559,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (31 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (33 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -520,14 +587,19 @@ poll_merge_gates() {
     # 30 crDisposition (bool: a `cr-disposition:`-prefixed label is present OR a
     # `cr-disposition:<reason>` marker line is in the PR body — the explicit
     # operator attestation REQUIRED before any `cr-out-of-band` downgrade is
-    # honoured; PR-3 cr-out-of-band-disposition-trail).
+    # honoured; PR-3 cr-out-of-band-disposition-trail) ·
+    # 31 thrUnresolvedTotal (UNFILTERED unresolved non-outdated review-thread
+    # count — what required_conversation_resolution actually gates on; the
+    # user-comment gate's filtered view excludes bot threads, #1937) ·
+    # 32 thrUnresolvedUser (the user-authored subset of 31; bot = 31 - 32).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 31-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 33-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
-    # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29) and
-    # crDisposition (30) are all non-empty tokens, so they are safe at the tail.
-    # GATE_FILTER — the 31-field jq projection (see field-order map above).
+    # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
+    # crDisposition (30) and the two numeric thread counts (31/32) are all
+    # non-empty tokens, so they are safe at the tail.
+    # GATE_FILTER — the 33-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -573,7 +645,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 31 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 33 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -582,11 +654,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 31 ]; then
-            # Exactly 31 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 33 ]; then
+            # Exactly 33 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 31); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 33); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -760,6 +832,20 @@ poll_merge_gates() {
         # ALONGSIDE cr-out-of-band to waive ANY CR block (PR-3): cr-out-of-band
         # alone is NOT honoured — the disposition records why CR review was waived.
         local cr_disposition="${fields[30]:-false}"
+
+        # UNFILTERED unresolved-non-outdated review-thread counts (fields 31/32:
+        # total, user-authored). The user-comment gate deliberately excludes bot
+        # threads, but branch protection's required_conversation_resolution
+        # counts EVERY unresolved thread — so the poller could read all-clear on
+        # a PR GitHub will never merge (#1937: ten open CR threads, ~90 min
+        # burned, cause found by hand). These feed the BLOCKED-cause naming
+        # below only; they gate nothing themselves. -1 = filter/parse miss →
+        # the naming stays silent (never invent a count).
+        local thr_total="${fields[31]:--1}"
+        local thr_user_cnt="${fields[32]:--1}"
+        # bats-only seam: force the field-32 parse-miss (-1) path — a fixture
+        # cannot make the filter emit -1 for one field while field 31 parses.
+        [ -n "${MERGE_GATES_TEST_THR_USER_CNT:-}" ] && thr_user_cnt="$MERGE_GATES_TEST_THR_USER_CNT"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -1005,10 +1091,69 @@ poll_merge_gates() {
         # (required contexts have no terminal conclusion); only the diagnosis differs.
         if [ "$req_absent" -gt 0 ] && [ "${fields[17]:-UNKNOWN}" = "DIRTY" ]; then
             echo "BLOCK: required-missing: ${req_absent_names} (head is CONFLICTED — mergeStateStatus=DIRTY, so GitHub will not build it and these contexts can never report. Merge origin/develop into the branch and resolve the conflict; CI re-fires on the new head. This is NOT a CI fault and polling will not clear it)." >&2
+            # A conflict fully explains the absence — the outage question does
+            # not arise, and its streak must not accumulate behind the
+            # conflict diagnosis.
+            outage_streak=0
+            outage_since=""
         elif [ "$req_absent" -gt 0 ]; then
             echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence on an early poll may still be pending; it is blocked until the contexts actually report, never merged on the assumption they will." >&2
+            # Actions-outage escalation (fix (3), admin-merge-past-absent-
+            # checks-undetected): after OUTAGE_POLLS consecutive polls in this
+            # unexplained-absence state, ask whether Actions has created ANY
+            # workflow run repo-wide since polling began. Zero runs created
+            # means waiting cannot clear this block — either Actions is jammed
+            # (the #1941 shape) or nothing ever triggers CI for this head —
+            # and the defined move is to stop and escalate, NOT to time out at
+            # MAX_POLLS with a per-check message, and NOT to --admin merge.
+            # A probe failure keeps polling (escalation is an early exit;
+            # never take it on unverified evidence), as does any nonzero
+            # created-count (backlogged-but-alive Actions keeps creating runs,
+            # which is what separates the ~27 min creation lag from an
+            # outage).
+            if [ "$outage_head" != "$head_sha" ]; then
+                # New head: the push restarts CI's run-creation clock, so
+                # a streak carried from an earlier head must not count
+                # against this one.
+                outage_head="$head_sha"
+                outage_streak=0
+                outage_since=""
+            fi
+            outage_streak=$((outage_streak + 1))
+            [ -n "$outage_since" ] || outage_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if [ "$outage_streak" -ge "$OUTAGE_POLLS" ]; then
+                local runs_created
+                runs_created=$(gh api "repos/${owner}/${repo}/actions/runs" \
+                                 -X GET -f "created=>=${outage_since}" -f per_page=1 \
+                                 --jq '.total_count' 2>/dev/null) || runs_created=""
+                # A 200 with an unexpected body shape yields the string
+                # "null" (gh exits 0) — that is an UNVERIFIED probe, not
+                # evidence of life; route it to the WARN branch with any
+                # other non-numeric output.
+                [[ "$runs_created" =~ ^[0-9]+$ ]] || runs_created=""
+                if [ "$runs_created" = "0" ]; then
+                    echo "ESCALATE: ACTIONS UNAVAILABLE — ${req_absent} required context(s) absent on head ${head_sha:0:8} for ${outage_streak} consecutive polls AND zero workflow runs created repo-wide since ${outage_since}. This head cannot go green by waiting: either Actions is not creating runs (outage/jam — the #1941 shape) or nothing re-triggers CI for this head. Defined move (ship-loops.md § CI unavailable): stop polling, surface this diagnosis, and re-run once Actions drains (or re-fire CI with a push / close-reopen). Do NOT --admin merge past absent checks — postmortem-owed.sh's required-context-ABSENT detector flags that merge and a snapshot + deviation entry are owed." >&2
+                    return 7
+                elif [ -z "$runs_created" ]; then
+                    echo "WARN: outage probe failed (gh api actions/runs); cannot distinguish outage from backlog this poll — continuing to poll." >&2
+                else
+                    # Actions confirmed alive: reset the streak and
+                    # re-anchor the window at the next absent poll — the
+                    # next probe fires a full threshold later against a
+                    # fresh window (catches a jam that begins after an
+                    # early run), instead of re-probing every remaining
+                    # poll against evidence that only ages.
+                    outage_streak=0
+                    outage_since=""
+                fi
+            fi
         elif [ "$req_absent" -lt 0 ]; then
             echo "WARN: required-context check returned ${req_absent} (filter/parse miss); failing closed on the required-absent gate this poll." >&2
+            outage_streak=0
+            outage_since=""
+        else
+            outage_streak=0
+            outage_since=""
         fi
 
         # ── Bugbot (cursor[bot]) gate #4 ──────────────────────────────────────
@@ -1297,6 +1442,65 @@ poll_merge_gates() {
         # otherwise the operator sees an all-green Poll line with no obvious cause.
         if [ "$mergestate_blocks" = true ]; then
             echo "BLOCK: GitHub mergeStateStatus=$gh_merge_state (set MERGE_GATES_IGNORE_MERGESTATE=true only for a positively-confirmed STALE-BLOCKED PR that is actually all-green — AGENTS.md § Merge gates)." >&2
+            # Silent-BLOCKED cause naming (poller-bot-thread-filter-diverges-
+            # from-branch-protection, tooling P2): the user-comment gate excludes
+            # bot threads, but required_conversation_resolution counts every
+            # unresolved thread — so BLOCKED with every poller gate green and
+            # open threads is almost always the conversation gate, and
+            # cr-out-of-band steers INTO it (waiving the CR gate is exactly when
+            # CR threads stay unresolved). Name it on this poll instead of
+            # letting the operator burn the budget and find the threads by hand
+            # (#1937: ten CR threads, ~90 min). Counts come from the same
+            # GraphQL response; only the branch-protection read is extra, cached
+            # per run, and a probe miss reports "may require" rather than
+            # staying silent (fail toward naming the likely cause — same
+            # posture as pr-blocked-why.sh's unknown handling).
+            if [ "$gh_merge_state" = "BLOCKED" ] && [ "${thr_total:-0}" -gt 0 ] && \
+               [ "$ci_fail" -eq 0 ] && [ "$ci_pend" -eq 0 ] && [ "$req_absent" -eq 0 ] && \
+               [ "$cr_pass" = true ] && [ "$cr_open_blocks" = false ] && \
+               [ "$bb_block" = false ] && [ "$self_stale" = false ] && \
+               [ "$user" -eq 0 ] && [ "$review_pass" = true ]; then
+                if [ -z "$conv_res_cache" ]; then
+                    if [ -n "${MERGE_GATES_CONV_RES_REQUIRED+x}" ]; then
+                        conv_res_cache="${MERGE_GATES_CONV_RES_REQUIRED:-unknown}"
+                    else
+                        # Protection must be read for the PR's ACTUAL base
+                        # branch — a release/hotfix PR based off a branch other
+                        # than the config-named one would otherwise be judged
+                        # by the wrong branch's conversation-resolution
+                        # setting. Config (then "develop") is the fallback
+                        # when the base read fails, not the primary source.
+                        local conv_base=""
+                        conv_base=$(gh api "repos/${owner}/${repo}/pulls/${prNumber}" \
+                            --jq '.base.ref' 2>/dev/null) || conv_base=""
+                        if [ -z "$conv_base" ] && command -v jq >/dev/null 2>&1; then
+                            conv_base=$(jq -r '.branch_protection.branch // "develop"' \
+                                "${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}" 2>/dev/null) || conv_base=""
+                        fi
+                        [ -n "$conv_base" ] || conv_base="develop"
+                        conv_res_cache=$(gh api "repos/${owner}/${repo}/branches/${conv_base}/protection" \
+                            --jq 'if .required_conversation_resolution.enabled == true then "true" else "false" end' 2>/dev/null) \
+                            || conv_res_cache="unknown"
+                        [ -n "$conv_res_cache" ] || conv_res_cache="unknown"
+                    fi
+                fi
+                if [ "$conv_res_cache" != "false" ]; then
+                    # A field-32 parse miss (thr_user_cnt=-1) must WITHHOLD the
+                    # user/bot breakdown, not default the user count to 0 and
+                    # attribute every thread to bots — the total alone still
+                    # names the cause (the never-invent-a-count posture the
+                    # field-31 comment promises).
+                    local thr_split=""
+                    if [ "$thr_user_cnt" -ge 0 ] 2>/dev/null; then
+                        local thr_bot_n=$(( thr_total - thr_user_cnt ))
+                        [ "$thr_bot_n" -ge 0 ] || thr_bot_n=0
+                        thr_split=" (${thr_user_cnt} user, ${thr_bot_n} bot)"
+                    fi
+                    local conv_verb="requires"
+                    [ "$conv_res_cache" = "unknown" ] && conv_verb="may require (protection probe failed)"
+                    echo "BLOCK: mergeStateStatus=BLOCKED with all other gates green; ${thr_total} unresolved review thread(s)${thr_split} and branch protection ${conv_verb} conversation resolution. Bot threads count too — cr-out-of-band waives the poller's CR gate only, never branch protection. Resolve the threads (scripts/dev/pr-blocked-why.sh classifies them vs HEAD) or the merge will never unblock." >&2
+                fi
+            fi
         fi
 
         local elapsed=$(( $(date +%s) - start ))
@@ -1317,8 +1521,9 @@ poll_merge_gates() {
     # counter). Distinct `GATE_CARRY` prefix; the per-iteration `Poll …` line
     # above always precedes it on this return path, so a caller parsing the
     # status line (first `Poll ` line) is unaffected.
-    printf 'GATE_CARRY nudge_head=%s stale_head=%s stale_streak=%s none_head=%s none_streak=%s\n' \
-        "$rereview_posted_head" "$stale_head" "$stale_streak" "$none_head" "$none_streak"
+    printf 'GATE_CARRY nudge_head=%s stale_head=%s stale_streak=%s none_head=%s none_streak=%s outage_head=%s outage_streak=%s outage_since=%s\n' \
+        "$rereview_posted_head" "$stale_head" "$stale_streak" "$none_head" "$none_streak" \
+        "$outage_head" "$outage_streak" "$outage_since"
     return 1
 }
 

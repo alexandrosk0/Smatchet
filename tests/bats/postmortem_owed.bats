@@ -1252,3 +1252,126 @@ JSON
     run_detector
     [[ "$output" != *"PR #941"* ]]
 }
+
+# ============================================================================
+# Merge-time required set (undatable-required-context-never-fails-blocking,
+# tooling P2) — schema-2 snapshots carry requiredContexts, so "was this context
+# required when THIS PR merged?" is a lookup: the effective-date heuristic and
+# its WARN-only undatable carve-out apply only to pre-schema-2 history.
+# ============================================================================
+
+@test "merge-time set: an undatable never-reporting context flags per-PR again [P2]" {
+    # The entry's headline case. "Never Reports" is required per the merge-time
+    # snapshot but appears in NO rollup in the window — undatable by the
+    # heuristic (WARN-only), but the snapshot removes the ambiguity: it was
+    # required at THIS merge and did not report -> owed.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8040,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j0"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8040,"mergeCommit":"j0","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Windows + MSVC","Never Reports"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" == *"PR #8040"* ]]
+    [[ "$output" == *"required-absent: Never Reports [merge-time set]"* ]]
+}
+
+@test "merge-time set: a context required TODAY but not at merge time is not judged [P2]" {
+    # The promotion wedge at zero risk: today's set (POSTMORTEM_REQUIRED_CONTEXTS)
+    # includes Perf PR-fast, the merge-time set does not — the PR merged before
+    # the promotion and must not flag, with no dating heuristic involved.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8041,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j1"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8041,"mergeCommit":"j1","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Windows + MSVC"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"PR #8041"* ]]
+    [[ "$output" == *"no gate escapes owed"* ]]
+}
+
+@test "merge-time set: a schema-1 row (no requiredContexts) falls back to the heuristic [P2]" {
+    # Pre-schema-2 history keeps its current judgement: the undatable context
+    # stays a once-per-window WARN, never a per-PR owe.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,Windows + MSVC,Never Reports"
+    prlist <<'JSON'
+[{"number":8042,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j2"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8042,"mergeCommit":"j2","redChecks":[],"overrideLabels":[]}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"PR #8042"* ]]
+    [[ "$output" == *"present on NO merged PR"* ]]
+    [[ "$output" == *"Never Reports"* ]]
+}
+
+@test "merge-time set: a recorded-[] set (capture-time config miss) falls back too [P2]" {
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    export POSTMORTEM_REQUIRED_CONTEXTS="Test-delta gate,Windows + MSVC,Never Reports"
+    prlist <<'JSON'
+[{"number":8043,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j3"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8043,"mergeCommit":"j3","redChecks":[],"overrideLabels":[],"requiredContexts":[],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"PR #8043"* ]]
+    [[ "$output" == *"present on NO merged PR"* ]]
+}
+
+@test "merge-time set: the creation-lag grace still defers a fresh snapshotted merge [P2]" {
+    # Lag is about run creation, not about which set to judge against — a merge
+    # inside the grace window is deferred even with a schema-2 snapshot.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=99999999999
+    prlist <<'JSON'
+[{"number":8044,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j4"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8044,"mergeCommit":"j4","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Never Reports"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"PR #8044"* ]]
+}
+
+@test "merge-time set: --blocking exits 1 on the snapshotted never-reporting context [P2]" {
+    # The cost the entry recorded, bought back: before this fix the same shape
+    # was a WARN and --blocking exited 0.
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8045,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j5"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"},
+    {"__typename":"CheckRun","name":"Windows + MSVC","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8045,"mergeCommit":"j5","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Windows + MSVC","Never Reports"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run bash "$SCRIPT" --blocking
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-absent: Never Reports [merge-time set]"* ]]
+}
+
+@test "merge-time set: set-but-EMPTY POSTMORTEM_REQUIRED_CONTEXTS disables the snapshot path too [P2]" {
+    # The documented opt-out (header § Test seams: set-but-EMPTY is honoured,
+    # inert required-by-name scope) must gate the snapshot lookup as well — a
+    # schema-2 row otherwise silently re-enables the detector the operator
+    # explicitly turned off.
+    export POSTMORTEM_REQUIRED_CONTEXTS=""
+    export POSTMORTEM_ABSENT_GRACE_SECONDS=0
+    prlist <<'JSON'
+[{"number":8046,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"j6"},"labels":[],
+  "statusCheckRollup":[
+    {"__typename":"CheckRun","name":"Test-delta gate","status":"COMPLETED","conclusion":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":8046,"mergeCommit":"j6","redChecks":[],"overrideLabels":[],"requiredContexts":["Test-delta gate","Never Reports"],"schema":2}' > "$SNAPSHOT_LEDGER"
+    run_detector
+    [[ "$output" != *"required-absent"* ]]
+    [[ "$output" != *"PR #8046"* ]]
+}

@@ -248,7 +248,7 @@ none — not agent-reviewable. This is a CI-availability + detector-coverage gap
 in a diff that a review agent would score.
 
 ### Filed as
-[`categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md`](categories/process/2026-08-06-admin-merge-past-absent-checks-undetected.md)
+[`2026-08-06-admin-merge-past-absent-checks-undetected` (archived in `categories/applied.md`)](categories/applied.md)
 
 ## 2026-08-05 · PR #1937 · `Doc anchors + agent contract` was GREEN on the PR head and RED on `develop` the instant the squash landed — `test-plan-index` derives row dates from git history the merge itself rewrites
 

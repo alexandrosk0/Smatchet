@@ -537,6 +537,23 @@ has_snapshot() {
         "$SNAPSHOT_LEDGER" >/dev/null 2>&1
 }
 
+# snapshot_required_contexts <pr> <mergeCommit> — print the MERGE-TIME required
+# set recorded in the snapshot (one name per line), or nothing when the row is
+# absent, predates the field (schema 1), or recorded [] (config read failed at
+# capture — absent info, not an empty requirement). The caller falls back to the
+# effective-date heuristic on empty output, so schema-1 history keeps its
+# current (weaker) judgement while snapshotted merges get the lookup
+# (undatable-required-context-never-fails-blocking).
+snapshot_required_contexts() {
+    local pr="$1" mc="$2"
+    [ -f "$SNAPSHOT_LEDGER" ] || return 0
+    command -v jq >/dev/null 2>&1 || return 0
+    jq -r --argjson pr "$pr" --arg mc "$mc" '
+        select(.pr == $pr and .mergeCommit == $mc)
+        | (.requiredContexts // [])[]
+    ' "$SNAPSHOT_LEDGER" 2>/dev/null || true
+}
+
 owed=()           # "PR #N — <trigger>"
 warns=()          # auditable WARN lines (broken-lane downgrades — not owed escapes)
 merged_commits="" # space-delimited set of mergeCommit oids seen this run (trigger 4 reuse)
@@ -718,12 +735,15 @@ done
 # fix exists to stop, so it is reported ONCE, loudly, as its own diagnostic —
 # signal preserved, wedge removed.
 #
-# KNOWN GAP, deliberate: `warns` never affects the exit code, so a required
-# workflow that stops reporting on EVERY PR leaves `--blocking` green. That is a
-# real loss against the previous behaviour, accepted because the alternative
-# re-creates the SessionStart wedge, and because the two causes are
-# indistinguishable from the window alone. Closing it properly needs the other
-# candidate fix — persisting the required set at merge time — which is filed.
+# KNOWN GAP, deliberate — and CLOSED for snapshotted merges: `warns` never
+# affects the exit code, so a required workflow that stops reporting on EVERY
+# PR leaves `--blocking` green *when only the window heuristic is available*.
+# Accepted because the alternative re-creates the SessionStart wedge, and the
+# two causes are indistinguishable from the window alone. The merge-time
+# required set persisted in schema-2 snapshots (merge-snapshot-append.sh
+# requiredContexts) removes the ambiguity per merge — those PRs are judged by
+# lookup in the loop below and flag per-PR again. This WARN and the dating
+# heuristic remain the fallback for pre-schema-2 history.
 REQ_UNDATABLE=""
 if [ "${#ROWS[@]}" -gt 0 ] && [ "${#REQ_NAMES[@]}" -gt 0 ]; then
     for _rq in "${REQ_NAMES[@]}"; do
@@ -821,7 +841,40 @@ for row in "${ROWS[@]}"; do
     # is deferred to the next sweep rather than false-flagged (see
     # $ABSENT_GRACE_SECONDS). Fail-closed: jq absent → REQ_CTX_JSON is '[]' → inert,
     # same degradation as the required-by-name red scope above.
-    if [ "$absent_judgeable" = "1" ] && [ "$REQ_CTX_JSON" != "[]" ] && command -v jq >/dev/null 2>&1; then
+    # MERGE-TIME REQUIRED SET, when the snapshot carries one (schema 2 —
+    # undatable-required-context-never-fails-blocking): "was this context
+    # required when THIS PR merged?" answered by lookup, so the effective-date
+    # heuristic and its undatable WARN-only carve-out don't apply — a context
+    # that stops reporting flags per-PR again, with zero promotion-wedge risk
+    # (a context absent from the merge-time set is simply not judged). The
+    # creation-lag grace ($absent_judgeable) still gates: lag is about run
+    # creation, not about which set to judge against. Empty output (no row /
+    # schema 1 / recorded-[]) falls back to the effective-date path below.
+    # The set-but-EMPTY POSTMORTEM_REQUIRED_CONTEXTS opt-out (header § Test
+    # seams: "inert required-by-name scope") disables required-absent judging
+    # as a whole, so it must gate the snapshot lookup too — otherwise a
+    # schema-2 row silently re-enables the detector the operator explicitly
+    # turned off. A NON-empty override only pins today's set; the merge-time
+    # snapshot still takes precedence for the PRs it covers.
+    snap_req_set=""
+    if [ "$absent_judgeable" = "1" ] && command -v jq >/dev/null 2>&1 && \
+       { [ -z "${POSTMORTEM_REQUIRED_CONTEXTS+x}" ] || [ -n "$req_ctx_raw" ]; }; then
+        snap_req_set="$(snapshot_required_contexts "$num" "$mergecommit")"
+    fi
+    if [ -n "$snap_req_set" ]; then
+        req_absent_names=""
+        while IFS= read -r reqname; do
+            reqname="${reqname%$'\r'}"
+            [ -z "$reqname" ] && continue
+            case "|||${present_names}|||" in
+                *"|||${reqname}|||"*) ;;   # present (any state — absence is the signal)
+                *) req_absent_names="${req_absent_names:+$req_absent_names, }$reqname" ;;
+            esac
+        done <<< "$snap_req_set"
+        if [ -n "$req_absent_names" ]; then
+            trigger="${trigger:+$trigger; }required-absent: ${req_absent_names} [merge-time set]"
+        fi
+    elif [ "$absent_judgeable" = "1" ] && [ "$REQ_CTX_JSON" != "[]" ] && command -v jq >/dev/null 2>&1; then
         req_absent_names=""
         while IFS= read -r reqname; do
             reqname="${reqname%$'\r'}"   # strip a trailing CR (git-bash jq on Windows)

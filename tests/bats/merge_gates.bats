@@ -96,6 +96,42 @@ case "$1" in
                     *)   echo "gh: stub transient error (no HTTP code)" >&2; exit 1 ;;
                 esac
                 ;;
+            */actions/runs)
+                # Outage probe: gh api repos/<o>/<r>/actions/runs -X GET
+                #   -f "created=>=<iso>" -f per_page=1 --jq '.total_count'
+                #   MERGE_GATES_STUB_RUNS_CREATED — total_count to report
+                #                                   (default 1 = Actions alive)
+                #                                   "fail" → probe error
+                case "${MERGE_GATES_STUB_RUNS_CREATED:-1}" in
+                    fail) echo "gh: stub actions/runs error" >&2; exit 1 ;;
+                    *)    echo "${MERGE_GATES_STUB_RUNS_CREATED:-1}"; exit 0 ;;
+                esac
+                ;;
+            */pulls/*)
+                # Silent-BLOCKED live probe step 1: gh api repos/<o>/<r>/pulls/<n>
+                #   --jq .base.ref (the PR's ACTUAL base for the protection read).
+                #   MERGE_GATES_STUB_BASE_REF — base ref to emit; unset → error
+                #   (forces the config fallback, so only opted-in tests take
+                #   the live path).
+                if [ -n "${MERGE_GATES_STUB_BASE_REF:-}" ]; then
+                    echo "$MERGE_GATES_STUB_BASE_REF"; exit 0
+                fi
+                echo "gh: stub pulls error" >&2; exit 1
+                ;;
+            */branches/*/protection)
+                # Step 2: protection read for the base from step 1. Appends the
+                # requested path to a file so a test can assert WHICH branch
+                # was queried (stdout/stderr are captured by the SUT).
+                #   MERGE_GATES_STUB_PROTECTION — "true" / "false"; unset → error
+                #   MERGE_GATES_STUB_PROTECTION_PATH_FILE — record "$2" here
+                if [ -n "${MERGE_GATES_STUB_PROTECTION_PATH_FILE:-}" ]; then
+                    echo "$2" >> "$MERGE_GATES_STUB_PROTECTION_PATH_FILE"
+                fi
+                if [ -n "${MERGE_GATES_STUB_PROTECTION:-}" ]; then
+                    echo "$MERGE_GATES_STUB_PROTECTION"; exit 0
+                fi
+                echo "gh: stub protection error" >&2; exit 1
+                ;;
         esac
         ;;
     pr)
@@ -158,6 +194,8 @@ teardown() {
     unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
     unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
+    unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED
+    unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
 }
 
 # ---------- helpers ----------
@@ -2029,6 +2067,341 @@ CFG
     rm -f "$f"
 }
 
+# ---------- Silent-BLOCKED cause naming (tooling P2: bot threads vs required_conversation_resolution) ----------
+# The user-comment gate excludes bot threads, but branch protection's
+# required_conversation_resolution counts EVERY unresolved thread — so the
+# poller could read all-clear while GitHub held the merge on ten open CR
+# threads (#1937, ~90 min burned + a manual GraphQL sweep). When BLOCKED is
+# the only blocker and unfiltered threads are open, the poller now names them.
+# MERGE_GATES_CONV_RES_REQUIRED is the test seam for the branch-protection read
+# (mirrors pr-blocked-why.sh's PR_BLOCKED_WHY_CONV_RES_REQUIRED).
+
+# blocked_with_bot_threads <n> — pass fixture, mergeStateStatus=BLOCKED, plus
+# <n> unresolved non-outdated threads authored by a non-CR non-cursor bot (CR /
+# cursor authorship would trip the cr_open / bb_open gates and mask the path
+# under test). Echoes the fixture path.
+blocked_with_bot_threads() {
+    local n="$1" nodes="[]" i
+    for ((i=0; i<n; i++)); do
+        nodes=$(jq -c '. + [{"isResolved": false, "isOutdated": false,
+            "comments": {"pageInfo": {"hasNextPage": false},
+                         "nodes": [{"author": {"login": "github-actions[bot]", "__typename": "Bot"}}]}}]' <<<"$nodes")
+    done
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.reviewThreads.nodes" "$nodes")"
+    rm -f "$f"
+    echo "$f2"
+}
+
+@test "silent-BLOCKED: bot threads + conv-res required -> actionable cause named [P2]" {
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) (0 user, 2 bot)"* ]]
+    [[ "$output" == *"waives the poller's CR gate only, never branch protection"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: conv-res disabled -> no thread-cause line (generic BLOCK only) [P2]" {
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=false
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mergeStateStatus=BLOCKED"* ]]
+    [[ "$output" != *"unresolved review thread(s)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: protection probe unknown -> hedged 'may require' still names the threads [P2]" {
+    local f; f="$(blocked_with_bot_threads 1)"
+    export MERGE_GATES_CONV_RES_REQUIRED=unknown
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 unresolved review thread(s) (0 user, 1 bot)"* ]]
+    [[ "$output" == *"may require (protection probe failed)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: zero open threads -> no thread-cause line (negative canary) [P2]" {
+    # The pass fixture's only unresolved thread is OUTDATED, so the unfiltered
+    # count is 0 — BLOCKED alone must not fabricate a thread cause.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"mergeStateStatus=BLOCKED"* ]]
+    [[ "$output" != *"unresolved review thread(s)"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: another gate red -> no thread-cause line (not the ONLY blocker) [P2]" {
+    # A real user comment blocks the user gate; the thread-cause naming must
+    # stay silent so it never distracts from an actual red gate.
+    local f; f="$(blocked_with_bot_threads 2)"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.comments.nodes" \
+        '[{"author": {"login": "somehuman", "__typename": "User"}}]')"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"all other gates green"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f" "$f2"
+}
+
+@test "silent-BLOCKED: live probe (no test seam) reads the PR's ACTUAL base branch protection [P2]" {
+    # Every other silent-BLOCKED test drives the MERGE_GATES_CONV_RES_REQUIRED
+    # seam, so the real read path — pulls/<n> .base.ref, then THAT branch's
+    # protection — was unexercised. This is the code that fixes judging a PR
+    # by the config-named branch's setting; assert the probe queries the base
+    # the pulls read returned, not "develop".
+    local f; f="$(blocked_with_bot_threads 2)"
+    set_fixture "$f"
+    export MERGE_GATES_STUB_BASE_REF="release-1.2"
+    export MERGE_GATES_STUB_PROTECTION="true"
+    export MERGE_GATES_STUB_PROTECTION_PATH_FILE="$BATS_TEST_TMPDIR/protection-path"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) (0 user, 2 bot)"* ]]
+    [[ "$output" == *"requires conversation resolution"* ]]
+    grep -q "branches/release-1.2/protection" "$MERGE_GATES_STUB_PROTECTION_PATH_FILE"
+    unset MERGE_GATES_STUB_BASE_REF MERGE_GATES_STUB_PROTECTION MERGE_GATES_STUB_PROTECTION_PATH_FILE
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: user-thread parse miss (-1) withholds the user/bot split, keeps the total [P2]" {
+    # A field-32 miss surfaces as thr_user_cnt=-1; defaulting it to 0 would
+    # claim every thread is bot-authored — an invented count. The cause line
+    # must keep the total and drop the breakdown.
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    export MERGE_GATES_TEST_THR_USER_CNT="-1"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) and branch protection requires"* ]]
+    [[ "$output" != *"user,"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED MERGE_GATES_TEST_THR_USER_CNT
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: a USER-authored open thread blocks the user gate, so naming stays silent [P2]" {
+    # A user thread is never the SILENT cause — it reds the user-comment gate
+    # (field 15 counts user-authored threads), which already names itself. The
+    # thread-cause line is reserved for the invisible case: bot-only threads.
+    local f nodes
+    nodes='[{"isResolved": false, "isOutdated": false, "comments": {"pageInfo": {"hasNextPage": false}, "nodes": [{"author": {"login": "somehuman", "__typename": "User"}}]}}]'
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"BLOCKED"')"
+    local f2
+    f2="$(fixture_override "$f" "data.repository.pullRequest.reviewThreads.nodes" "$nodes")"
+    set_fixture "$f2"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"all other gates green"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED
+    rm -f "$f" "$f2"
+}
+
+# ---------- Actions-outage escalation (process P1 fix (3): CI unavailable gets a defined move) ----------
+# The #1941 shape: Actions jammed repo-wide (75 runs stuck queued, zero runs
+# created after 19:16Z, close/reopen produced nothing), so the head could never
+# go green and the operator's options collapsed to "wait forever" or "--admin
+# override". The poller now supplies the third option: after OUTAGE_POLLS
+# consecutive unexplained required-absent polls it probes runs CREATED repo-wide
+# since polling began; zero created → return 7 with the outage diagnosis instead
+# of timing out at MAX_POLLS with a per-check message. The probe (not the
+# threshold) separates outage from the ~27 min creation lag: backlogged-but-
+# alive Actions still creates runs, so the count stays >0 and polling continues.
+
+@test "outage: required-absent + zero runs created repo-wide -> return 7 + ESCALATE diagnosis [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"ESCALATE: ACTIONS UNAVAILABLE"* ]]
+    [[ "$output" == *"zero workflow runs created repo-wide"* ]]
+    [[ "$output" == *"Do NOT --admin merge"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "outage: Actions alive (runs being created) -> normal required-missing block, no escalation [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=5
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-missing"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: probe failure -> keep polling with a WARN, never escalate on unverified evidence [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=fail
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage probe failed"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: threshold not reached -> no probe verdict, normal block [P1]" {
+    # Default OUTAGE_POLLS (15) with a single poll: the streak never reaches the
+    # threshold, so even a zero-count stub cannot escalate.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ESCALATE"* ]]
+}
+
+@test "outage: streak accumulates across polls and escalates at the threshold [P1]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=3
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"3 consecutive polls"* ]]
+}
+
+@test "outage: a DIRTY head never escalates - the conflict fully explains the absence [P1]" {
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.mergeStateStatus" '"DIRTY"')"
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"CONFLICTED"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+    rm -f "$f"
+}
+
+@test "outage: MERGE_GATES_OUTAGE_POLLS=0 is REJECTED (return 3) - no silent disable of the no-skip exit [P1]" {
+    # 0 used to disable the escalation entirely; that let an env var
+    # downgrade the Actions-unavailable state to rc 1/2, where the halt
+    # prompt offers "Skip gates and merge anyway" — defeating exit 7's
+    # no-skip design. Same fail-closed posture as MERGE_GATES_FRESHNESS:
+    # a weakening value never passes.
+    export MERGE_GATES_OUTAGE_POLLS=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a positive integer"* ]]
+}
+
+@test "outage: non-integer MERGE_GATES_OUTAGE_POLLS is rejected (return 3) [P1]" {
+    export MERGE_GATES_OUTAGE_POLLS=soon
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a positive integer"* ]]
+}
+
+@test "outage: GATE_CARRY emits the outage streak + window anchor for the watcher [P1]" {
+    # The watcher runs MERGE_GATES_MAX_POLLS=1 — without these fields on
+    # GATE_CARRY the streak restarts every cycle and exit 7 can never fire.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=15
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage_head=abc123"* ]]
+    [[ "$output" == *"outage_streak=1"* ]]
+    [[ "$output" == *"outage_since=2"* ]]   # ISO year prefix — anchor was stamped
+}
+
+@test "outage: a PRIOR_-seeded streak reaches the threshold in a single-poll cycle [P1]" {
+    # Watcher model: cycle N-1 carried streak=2; this cycle is the third
+    # consecutive absent poll on the same head -> probe fires and escalates.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_PRIOR_OUTAGE_HEAD=abc123
+    export MERGE_GATES_PRIOR_OUTAGE_STREAK=2
+    export MERGE_GATES_PRIOR_OUTAGE_SINCE=2026-08-13T10:00:00Z
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"3 consecutive polls"* ]]
+    [[ "$output" == *"since 2026-08-13T10:00:00Z"* ]]
+}
+
+@test "outage: a carried streak from a DIFFERENT head restarts at 1 [P1]" {
+    # A new push restarts CI's run-creation clock — a stale carried streak
+    # must not count against the new head.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=3
+    export MERGE_GATES_PRIOR_OUTAGE_HEAD=deadbeef
+    export MERGE_GATES_PRIOR_OUTAGE_STREAK=99
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"ESCALATE"* ]]
+    [[ "$output" == *"outage_head=abc123"* ]]
+    [[ "$output" == *"outage_streak=1"* ]]
+}
+
+@test "outage: a confirmed-alive probe resets the streak and re-anchors the window [P1]" {
+    # Without the reset the probe re-fires every remaining poll, and a single
+    # early run permanently masks a jam that begins later (fixed-window bug).
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=5
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage_streak=0"* ]]
+    [[ "$output" != *"outage_since=2"* ]]   # anchor cleared (ISO year would follow otherwise)
+}
+
+@test "outage: a non-numeric probe response (jq null) is unverified, never alive [P1]" {
+    # A 200 with an unexpected body yields the string "null" (gh exits 0):
+    # neither the =0 escalate branch nor the -z WARN matched, so it silently
+    # counted as evidence of life. It must route to the WARN branch.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_MAX_POLLS=1
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=null
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"outage probe failed"* ]]
+    [[ "$output" != *"ESCALATE"* ]]
+    # and it does NOT reset the streak (unverified evidence carries forward)
+    [[ "$output" == *"outage_streak=1"* ]]
+}
+
 # ---------- gh_pr_ready_idempotent ----------
 
 @test "gh_pr_ready_idempotent: already-ready (not in draft state) returns 0" {
@@ -2404,10 +2777,10 @@ CFG
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 31; the
-    # -ne 31 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 33; the
+    # -ne 33 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
-    # fields rely on).
+    # + thread-count fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -2415,7 +2788,7 @@ CFG
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 31"* ]]
+    [[ "$output" == *"expected 33"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }

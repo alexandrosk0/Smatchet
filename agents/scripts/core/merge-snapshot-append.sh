@@ -11,10 +11,10 @@
 # three merge actors (merge-watcher daemon, in-session orchestrator, git-janitor)
 # so every `develop` merge records its gate verdict identically.
 #
-# Ledger line schema (one compact single-line JSON object per merge, schema 1):
+# Ledger line schema (one compact single-line JSON object per merge, schema 2):
 #   {"pr":N,"mergeCommit":"<sha>","headSha":"<sha>","mergedAt":"<iso8601Z>",
 #    "gates":"GATES_PASSED","redChecks":[...],"overrideLabels":[...],
-#    "mergeActor":"merge-watcher|orchestrator|git-janitor","schema":1}
+#    "requiredContexts":[...],"mergeActor":"merge-watcher|orchestrator|git-janitor","schema":2}
 #
 # Idempotency: a re-append for the same `pr`+`mergeCommit` is a no-op (grep-guard)
 # so merge-path retries never double-write.
@@ -104,8 +104,33 @@ append_merge_snapshot() {
     red_json="$(csv_to_json_array "$red_csv")" || return 1
     override_json="$(csv_to_json_array "$override_csv")" || return 1
 
+    # requiredContexts — the branch-protection required set IN FORCE AT THIS
+    # MERGE (undatable-required-context-never-fails-blocking, tooling P2). The
+    # detector's effective-date heuristic infers promotion dates from the scan
+    # window and cannot date a context that appears in NO rollup — which is
+    # either a fresh promotion (benign) or a context that never reports (the
+    # #1941 escape), indistinguishable from the window alone, so it degrades to
+    # a WARN. Persisting the set at the decision instant turns "was this
+    # required when this PR merged?" into a lookup and restores per-PR blocking
+    # for snapshotted merges. Source: SNAPSHOT_REQUIRED_CONTEXTS (csv test
+    # seam; may be set-but-empty) else project.config.json
+    # § branch_protection.required_contexts — the file
+    # setup-branch-protection.sh applies, so it IS the set in force. A config
+    # read failure records [] (schema-1-equivalent: absent info, never a
+    # guess), which the detector treats as "no merge-time set" fallback.
+    local req_json
+    if [ -n "${SNAPSHOT_REQUIRED_CONTEXTS+x}" ]; then
+        req_json="$(csv_to_json_array "$SNAPSHOT_REQUIRED_CONTEXTS")" || return 1
+    else
+        req_json="$(jq -c '[.branch_protection.required_contexts[]?]' \
+            "${MERGE_SNAPSHOT_CONFIG_FILE:-$_msa_root/project.config.json}" 2>/dev/null)" || req_json='[]'
+        [ -n "$req_json" ] || req_json='[]'
+    fi
+
     # Compose the compact single-line object with jq so every field (labels +
     # redChecks arrays, the ISO timestamp, the actor) encodes UTF-8-safely.
+    # schema 2 = requiredContexts added (additive; schema-1 rows stay valid and
+    # readers key on field presence, not the schema number).
     line="$(jq -cn \
         --argjson pr "$pr" \
         --arg mergeCommit "$merge_commit" \
@@ -114,8 +139,9 @@ append_merge_snapshot() {
         --arg gates "$gates" \
         --argjson redChecks "$red_json" \
         --argjson overrideLabels "$override_json" \
+        --argjson requiredContexts "$req_json" \
         --arg mergeActor "$actor" \
-        '{pr:$pr, mergeCommit:$mergeCommit, headSha:$headSha, mergedAt:$mergedAt, gates:$gates, redChecks:$redChecks, overrideLabels:$overrideLabels, mergeActor:$mergeActor, schema:1}')" \
+        '{pr:$pr, mergeCommit:$mergeCommit, headSha:$headSha, mergedAt:$mergedAt, gates:$gates, redChecks:$redChecks, overrideLabels:$overrideLabels, requiredContexts:$requiredContexts, mergeActor:$mergeActor, schema:2}')" \
         || { echo "merge-snapshot-append: jq failed to compose snapshot line" >&2; return 1; }
 
     mkdir -p "$(dirname "$MERGE_SNAPSHOT_LEDGER")"
@@ -144,7 +170,23 @@ run_selftest() {
     if [ "$(jq -r '.pr' "$tmp")" != "42" ]; then echo "selftest FAIL: pr field wrong" >&2; fails=$((fails+1)); fi
     if [ "$(jq -r '.overrideLabels | length' "$tmp")" != "2" ]; then echo "selftest FAIL: overrideLabels not a 2-elem array" >&2; fails=$((fails+1)); fi
     if [ "$(jq -r '.redChecks | length' "$tmp")" != "0" ]; then echo "selftest FAIL: redChecks should be empty array" >&2; fails=$((fails+1)); fi
-    if [ "$(jq -r '.schema' "$tmp")" != "1" ]; then echo "selftest FAIL: schema must be 1" >&2; fails=$((fails+1)); fi
+    if [ "$(jq -r '.schema' "$tmp")" != "2" ]; then echo "selftest FAIL: schema must be 2" >&2; fails=$((fails+1)); fi
+    # requiredContexts self-derives from the config (or the env seam) and is
+    # always an array — [] on a config-read failure, never absent on schema 2.
+    if [ "$(jq -r '.requiredContexts | type' "$tmp")" != "array" ]; then echo "selftest FAIL: requiredContexts must be an array" >&2; fails=$((fails+1)); fi
+
+    # 1b. The env seam pins the recorded set (and set-but-empty records []).
+    local tmp2
+    tmp2="$(mktemp)"
+    MERGE_SNAPSHOT_LEDGER="$tmp2" SNAPSHOT_REQUIRED_CONTEXTS="A ctx, B ctx" \
+        append_merge_snapshot 7 seam1 h1 GATES_PASSED "" "" orchestrator
+    if [ "$(jq -r '.requiredContexts | join("|")' "$tmp2")" != "A ctx|B ctx" ]; then
+        echo "selftest FAIL: SNAPSHOT_REQUIRED_CONTEXTS seam not recorded" >&2; fails=$((fails+1)); fi
+    MERGE_SNAPSHOT_LEDGER="$tmp2" SNAPSHOT_REQUIRED_CONTEXTS="" \
+        append_merge_snapshot 8 seam2 h2 GATES_PASSED "" "" orchestrator
+    if [ "$(jq -rs '.[1].requiredContexts | length' "$tmp2")" != "0" ]; then
+        echo "selftest FAIL: set-but-empty seam should record []" >&2; fails=$((fails+1)); fi
+    rm -f "$tmp2"
 
     # 2. Idempotent re-append (same pr+mergeCommit) is a no-op.
     append_merge_snapshot 42 abc123 def456 GATES_PASSED "" "cr-out-of-band,perf-out-of-band" orchestrator
