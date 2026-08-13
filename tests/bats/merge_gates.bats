@@ -2302,14 +2302,17 @@ blocked_with_bot_threads() {
     rm -f "$f"
 }
 
-@test "outage: MERGE_GATES_OUTAGE_POLLS=0 disables the escalation entirely [P1]" {
-    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+@test "outage: MERGE_GATES_OUTAGE_POLLS=0 is REJECTED (return 3) - no silent disable of the no-skip exit [P1]" {
+    # 0 used to disable the escalation entirely; that let an env var
+    # downgrade the Actions-unavailable state to rc 1/2, where the halt
+    # prompt offers "Skip gates and merge anyway" — defeating exit 7's
+    # no-skip design. Same fail-closed posture as MERGE_GATES_FRESHNESS:
+    # a weakening value never passes.
     export MERGE_GATES_OUTAGE_POLLS=0
-    export MERGE_GATES_STUB_RUNS_CREATED=0
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
-    [ "$status" -eq 1 ]
-    [[ "$output" != *"ESCALATE"* ]]
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a positive integer"* ]]
 }
 
 @test "outage: non-integer MERGE_GATES_OUTAGE_POLLS is rejected (return 3) [P1]" {
@@ -2317,7 +2320,7 @@ blocked_with_bot_threads() {
     set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
     run poll_merge_gates org repo 1
     [ "$status" -eq 3 ]
-    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a non-negative integer"* ]]
+    [[ "$output" == *"MERGE_GATES_OUTAGE_POLLS must be a positive integer"* ]]
 }
 
 @test "outage: GATE_CARRY emits the outage streak + window anchor for the watcher [P1]" {
