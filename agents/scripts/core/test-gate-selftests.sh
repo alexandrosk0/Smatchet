@@ -45,6 +45,20 @@ EXPOSE_RE='(--selftest\)|"--selftest"|== "--selftest"|= "--selftest"|add_argumen
 # The required behaviour-inert marker (accepts the `: n/a — <reason>` form too).
 MARKER_RE='# selftest: asserts-failure'
 
+# Self-exec of a mode-100644 script (asserts-failure-marker-does-not-prove-the-
+# negative-is-reachable, tooling P1): `"$_SCRIPT_PATH" --check` execs a file
+# with no +x bit, fails 126 Permission denied on every machine, and a negative
+# asserting only "non-zero" is satisfied by that forever — test-plan-index.sh's
+# negative lived its whole life that way. Re-invocation must go through
+# `bash "$path"`. Judged PER COMMAND SEGMENT, not per line: a whole-line
+# allow-check let `bash "$p" --x; "$p" --y` slide (the later bash masked the
+# earlier raw exec) and misread `printf '%s' "$p" --x` as an exec (the path is
+# an argument there, not a command). Lines are split at command boundaries
+# (; | && ` $( parens braces), leading keywords/env-assignments are stripped,
+# and only a segment that BEGINS with the quoted path is an exec of it — which
+# also makes bash/sh/. prefixes pass with no separate allow-list.
+SELF_EXEC_RE='"\$\{?(_SCRIPT_PATH|SCRIPT_PATH|0)\}?"[[:space:]]+--'
+
 # exposers <root> — print, one per line, every first-party script under <root>'s
 # SCAN_DIRS that EXPOSES a --selftest flag. Fail-closed: unreadable dirs are
 # simply empty, but a total-zero result is treated as infra error by the caller.
@@ -62,9 +76,71 @@ exposers() {
     return 0   # never leak the final grep's no-match (1) as the function's exit
 }
 
+# _selfexec_hits <file> — print `lineno:line` for every non-comment line with a
+# raw self-exec in COMMAND POSITION. Quote-aware boundary scan + keyword/
+# assignment strip is a heuristic lexer, deliberately shallow: it polices
+# realistic first-party authoring shapes, not adversarial obfuscation (eval,
+# heredoc-sourced code). False splits only create extra segments (never hide
+# one), a segment must BEGIN with the quoted path to count (so `printf '%s'
+# "$p" --x` stays clean), and separators inside quoted strings are not
+# boundaries (so prose like `echo 'run; then "$p" --check'` stays clean).
+_selfexec_hits() {
+    awk '
+        # seg_split(line, segs) — split at command boundaries (; | & ` parens
+        # braces), IGNORING separators inside single or double quotes. Shell
+        # forbids escaped quotes inside single quotes, so plain state toggles
+        # are exact there; backslash outside single quotes escapes one char.
+        # `$(` opens a fresh command context EVEN inside double quotes — it is
+        # a boundary regardless of in_d (with quote state reset), else the
+        # capture shape out="$("$p" --check)" hides its raw exec.
+        function seg_split(line, segs,    i, c, n, cur, in_s, in_d, esc) {
+            n = 0; cur = ""; in_s = 0; in_d = 0; esc = 0
+            for (i = 1; i <= length(line); i++) {
+                c = substr(line, i, 1)
+                if (esc)                      { cur = cur c; esc = 0; continue }
+                if (c == "\\" && !in_s)       { cur = cur c; esc = 1; continue }
+                if (c == "$" && !in_s && substr(line, i + 1, 1) == "(") {
+                    segs[++n] = cur; cur = ""; in_d = 0; i++; continue
+                }
+                if (c == "\047" && !in_d)     { in_s = !in_s; cur = cur c; continue }
+                if (c == "\"" && !in_s)       { in_d = !in_d; cur = cur c; continue }
+                if (!in_s && !in_d && index(";|&`(){}", c)) { segs[++n] = cur; cur = ""; continue }
+                cur = cur c
+            }
+            segs[++n] = cur
+            return n
+        }
+        BEGIN {
+            # Leading tokens that keep what follows in command position:
+            # control keywords / ! / exec-style wrappers; env assignments with
+            # bare, double- or single-quoted values (FOO="a b" — the quoted
+            # space defeated the bare [^space]* version); redirections
+            # (2>/dev/null before the command). String form so \047 can carry
+            # the single quote through the shell single-quoted awk program.
+            strip = "^((if|elif|while|until|then|else|do|time|exec|command|env|nohup|!)[[:space:]]+" \
+                    "|-[^[:space:]]*[[:space:]]+" \
+                    "|[A-Za-z_][A-Za-z0-9_]*=(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]*)[[:space:]]+" \
+                    "|([0-9]*|&)(<|>>|>)[[:space:]]*[^[:space:]]+[[:space:]]+)"
+        }
+        /^[[:space:]]*#/ { next }
+        {
+            n = seg_split($0, seg)
+            for (i = 1; i <= n; i++) {
+                s = seg[i]
+                sub(/^[[:space:]]+/, "", s)
+                while (sub(strip, "", s)) { }
+                if (s ~ /^"\$\{?(_SCRIPT_PATH|SCRIPT_PATH|0)\}?"[[:space:]]+--/) {
+                    printf "%d:%s\n", NR, $0
+                    next
+                }
+            }
+        }
+    ' "$1"
+}
+
 # run_check <root> — assert every exposer carries the marker. Exit 0/1/2.
 run_check() {
-    local root="$1" list rc=0 f missing=()
+    local root="$1" list rc=0 f missing=() _mode _nonexec
     if ! command -v grep >/dev/null 2>&1; then
         echo "test-gate-selftests: grep not on PATH (required)" >&2; return 2
     fi
@@ -75,14 +151,45 @@ run_check() {
         echo "    (expected many; a zero result means the scan is broken — fail-closed)." >&2
         return 2
     fi
+    local selfexec=()
     while IFS= read -r f; do
         [ -n "$f" ] || continue
         if ! grep -qF -- "$MARKER_RE" "$f"; then
             missing+=("$f")
         fi
+        # BLOCKING: raw self-exec — the negative it feeds can never reach the
+        # behaviour it names (126 before the script runs).
+        # Comment lines are excluded: docs legitimately QUOTE the bad shape
+        # (this very script does, one screen up) without executing it.
+        # NON-executable files only: on a mode-100755 script the raw form
+        # execs fine, so the 126 premise — and the rule — do not apply. The
+        # mode comes from the GIT INDEX (the 126 premise is about the tracked
+        # mode; the fs bit diverges under core.fileMode=false or exec-bit-less
+        # filesystems), falling back to the fs bit for untracked files — the
+        # synth selftest fixtures go through that fallback.
+        # Cheap prefilter first; the awk lexer only runs on files that match.
+        _mode="$(git -C "$root" ls-files --stage -- "${f#"$root"/}" 2>/dev/null | awk '{print $1; exit}')"
+        case "$_mode" in
+            100755) _nonexec=0 ;;
+            100644) _nonexec=1 ;;
+            *) if [ -x "$f" ]; then _nonexec=0; else _nonexec=1; fi ;;
+        esac
+        if [ "$_nonexec" -eq 1 ] && grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
+            selfexec+=("$f")
+        fi
     done <<EOF
 $list
 EOF
+    if [ "${#selfexec[@]}" -ne 0 ]; then
+        echo "test-gate-selftests: FAIL — raw self-exec of a mode-100644 script (fails 126" >&2
+        echo "  Permission denied before any behaviour runs, silently satisfying bare-status" >&2
+        echo "  negatives — the test-plan-index escape). Re-invoke via bash \"\$path\":" >&2
+        for f in "${selfexec[@]}"; do
+            echo "    ${f#"$root"/}:" >&2
+            _selfexec_hits "$f" | head -3 | sed 's/^/      /' >&2
+        done
+        rc=1
+    fi
     if [ "${#missing[@]}" -ne 0 ]; then
         echo "test-gate-selftests: FAIL — these scripts expose --selftest but their selftest" >&2
         echo "  asserts no FAILURE case (no '# selftest: asserts-failure' marker):" >&2
@@ -91,7 +198,11 @@ EOF
         echo "  failure token) and mark it, or use '# selftest: asserts-failure: n/a — <reason>'" >&2
         echo "  for a genuine pure dispatcher. See close-gate-gaps Slice 3." >&2
         rc=1
-    else
+    fi
+    # PASS prints only when EVERY rule held — a green line above a red exit was
+    # exactly the contradiction the selfexec branch first shipped with (caught
+    # by reading the combined output, not the code).
+    if [ "$rc" -eq 0 ]; then
         local n; n="$(printf '%s\n' "$list" | grep -c .)"
         echo "test-gate-selftests: PASS — all $n --selftest-exposing scripts assert a failure case."
     fi
@@ -137,6 +248,245 @@ esac
 SH
     if ! run_check "$tmp" >/dev/null 2>&1; then
         echo "test-gate-selftests selftest: FAIL — n/a marker form was wrongly flagged" >&2
+        rc=1
+    fi
+
+    # Raw self-exec must be flagged, and for the RIGHT reason — the output must
+    # name the rule, since a bare rc check would also pass on an unrelated FAIL.
+    # The bad shape is ASSEMBLED, never written literally: this very gate greps
+    # files for it, and a literal fixture here would flag the gate itself (it
+    # did — same self-flagging the INDEX-marker fixture avoids the same way).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    local out
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — self-exec exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw self-exec MASKED by a legitimate bash invocation on the same line
+    # must still be flagged — the allow-check is per command segment, not per
+    # line (CodeRabbit finding on PR #2002; also the second edge in that PR's
+    # recorded verdict). Assembled, same as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) bash "%s" --check; "%s" --selftest; exit 0 ;;\nesac\n' '$_SCRIPT_PATH' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec masked by a same-line bash invocation was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — masked exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec behind a QUOTED-value env assignment must be flagged — the
+    # bare [^space]* strip broke at the quoted space and the leftover masked
+    # the path (CodeRabbit round-2 finding on PR #2002). Assembled, as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) FOO="a b" "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind a quoted env assignment was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — quoted-assignment exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec behind a leading REDIRECTION must be flagged (same finding).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) 2>/dev/null "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind a leading redirection was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — redirection exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A TAB between the path and the flag must also be flagged — the grep
+    # prefilter matched literal spaces only, so a tab-separated exec never
+    # reached the awk lexer (CodeRabbit round-3 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s"\t--check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — tab-separated raw self-exec was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — tab-separated exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A wrapper's `--` option terminator must be consumed too — env/command
+    # accept it and `env -- "$p" --check` still execs the 100644 file
+    # (CodeRabbit round-7 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) env -- "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind env -- was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — env -- exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # Wrapper OPTIONS must be consumed too — `env -i "$p" --check` still
+    # execs the 100644 file (CodeRabbit round-8 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) env -i "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind env -i was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — env -i exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # The SAME raw self-exec in an EXECUTABLE (100755) script is valid — no
+    # 126, no vacuous negative — and must pass (CodeRabbit round-8 finding).
+    # chmod back down immediately: later fixtures truncate-in-place and
+    # would silently inherit the +x bit, skipping the rule they exercise.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    chmod +x "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — raw self-exec in an EXECUTABLE script was wrongly flagged" >&2
+        rc=1
+    fi
+    chmod -x "$synth"
+
+    # A SPACED redirection operand (2> /dev/null — valid shell) must also be
+    # consumed before the path match (CodeRabbit round-6 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) 2> /dev/null "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind a spaced redirection was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — spaced-redirection exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec behind a bash &>-style redirection must be flagged — the
+    # numeric-fd strip did not cover the & form and & is not a segment split
+    # (CodeRabbit round-4 finding on PR #2002).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) &>/dev/null "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec behind &> redirection was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — &>-redirection exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A BRACED expansion is the same raw exec and must be flagged
+    # (CodeRabbit round-5 finding on PR #2002). Assembled, as above.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '${_SCRIPT_PATH}'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — braced-expansion raw self-exec was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — braced-expansion exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A raw exec inside a $( ) CAPTURE must be flagged — $( opens a command
+    # context even inside double quotes, so the quote-aware scan must still
+    # treat it as a boundary.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf '    --selftest) out="$(%s --check)"; exit 0 ;;\nesac\n' '"$_SCRIPT_PATH"'
+    } > "$synth"
+    out="$(run_check "$tmp" 2>&1)" && {
+        echo "test-gate-selftests selftest: FAIL — raw self-exec inside \$( ) capture was NOT flagged" >&2
+        rc=1
+    }
+    case "$out" in
+        *"raw self-exec"*) ;;
+        *) echo "test-gate-selftests selftest: FAIL — capture exposer rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2; rc=1 ;;
+    esac
+
+    # A separator INSIDE a quoted string is not a command boundary — usage
+    # prose quoting the bad shape after a semicolon must pass (round-5
+    # false-positive finding: the naive split flagged exactly this).
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf "    --selftest) echo 'usage: run; then %s --check by hand'; exit 0 ;;\nesac\n" '"$_SCRIPT_PATH"'
+    } > "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — quoted prose with an embedded separator was wrongly flagged" >&2
+        rc=1
+    fi
+
+    # The path as a mere ARGUMENT is not an exec of it and must pass — only a
+    # segment that BEGINS with the quoted path counts as command position.
+    {
+        printf '#!/usr/bin/env bash\n# selftest: asserts-failure\ncase "${1:-}" in\n'
+        printf "    --selftest) printf '%%s ' %s --check; exit 0 ;;\nesac\n" '"$_SCRIPT_PATH"'
+    } > "$synth"
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — script path used as a printf ARGUMENT was wrongly flagged" >&2
+        rc=1
+    fi
+
+    # The bash-prefixed form is the CORRECT shape and must pass; so must a
+    # comment that merely quotes the bad shape (docs cite it legitimately).
+    cat > "$synth" <<'SH'
+#!/usr/bin/env bash
+# selftest: asserts-failure
+# never invoke as "$_SCRIPT_PATH" --check (126 on a 100644 file)
+case "${1:-}" in
+    --selftest) bash "$_SCRIPT_PATH" --check; exit 0 ;;
+esac
+SH
+    if ! run_check "$tmp" >/dev/null 2>&1; then
+        echo "test-gate-selftests selftest: FAIL — bash-prefixed self-invocation (or a quoting comment) was wrongly flagged" >&2
         rc=1
     fi
 

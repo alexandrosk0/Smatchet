@@ -31,13 +31,16 @@
 #   <!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=…; owner=…; revisit=…) -->
 # on the line ABOVE the claim, matching the lint-rules.d convention.
 #
-# KNOWN LIMITATION, stated rather than implied: the `revisit=` date is NOT
-# enforced here. The `deviation-overdue` lint that expires these markers scans
-# first-party C++ only, so a markdown escape never expires. Zero plans carry the
-# marker today, so nothing is currently unpoliced — but the first author to use
-# it gets a permanent exemption wearing an expiry date, which is worse than no
-# date at all. Extending deviation-overdue to markdown is the follow-up; do not
-# read the field as a control until then.
+# The `revisit=` date IS enforced here (closing the limitation this header
+# originally declared): the C++ deviation-overdue lint never scans markdown, so
+# this gate expires its own escapes — a marker whose revisit expiry has passed
+# stops suppressing and the claim reports again. Value semantics mirror the
+# C++ rule (00-common.sh revisit_overdue): YYYY-MM-DD | YYYY-Qn (quarter-end
+# expiry) | slug / never (no calendar expiry); NO revisit field stays active
+# (optional in the grammar; slugs may lead with digits — 2026-roadmap stays
+# active). Stricter than C++ in one spot: a calendar ATTEMPT that parses as
+# neither form (2026-02-30, 2027-08-11typo, 2026-Q5, 20270811) stops
+# suppressing — fail closed, never a typo-made permanent exemption.
 #
 # Scope modes:
 #   default    — diff-scope: only claims on lines ADDED vs origin/develop.
@@ -101,6 +104,16 @@ if [ "$SCOPE" = "selftest" ]; then
     trap 'rm -rf "$tmp"' EXIT
     mkdir -p "$tmp/shipped"
 
+    # Dynamic dates so the fixtures cannot rot: the hardcoded revisit=2027-01-01
+    # this replaced would silently flip case (4) from PASS-test to FAIL in 2027.
+    # 364-day offsets, not year+1: .replace(year=+1) raises on Feb 29.
+    _future="$("$PY" -c 'import datetime; print(datetime.date.today()+datetime.timedelta(days=364))')"
+    _past="$("$PY" -c 'import datetime; print(datetime.date.today()-datetime.timedelta(days=364))')"
+    # Quarter fixtures: next year's Q4 is always in the future, last year's Q1
+    # always past — no leap-day or quarter-boundary sensitivity either way.
+    _future_q="$(( $(date +%Y) + 1 ))-Q4"
+    _past_q="$(( $(date +%Y) - 1 ))-Q1"
+
     _out=""
     _case() {  # <name> <want-rc> <file-body>
         printf '%s' "$3" > "$tmp/shipped/case.md"
@@ -123,6 +136,17 @@ if [ "$SCOPE" = "selftest" ]; then
     #   dropping the section bound    -> (3) and (5) go red
     #   deleting the DEV_RE escape    -> (4) goes red
     #   dropping the heading-depth <= -> (6) goes red
+    #   neutering escape_active()     -> (7) (8) (9) (10) (12) go red
+    #   ValueError -> return True     -> (8) goes red
+    #   prefix-capture REVISIT_RE     -> (9) and (10) go red
+    #   deleting the quarter branch   -> (11) goes red
+    #   dropping the DATE_RE gate     -> (12) goes red (python >= 3.11)
+    #   first-substring revisit match -> (13) goes red
+    #   unguarded quarter date()      -> (14) goes red (escaped ValueError)
+    #   digit-leading -> fail closed  -> (15) goes red
+    #   empty value -> return True    -> (16) and (17) go red
+    #   re-anchoring CALENDARISH_RE   -> (18) and (19) go red
+    #   first-paren DEV_BODY_RE       -> (20) goes red
     #
     # (1) unanchored claim inside § Deviations -> FAIL, and the output must name
     #     the rule. Asserting only "non-zero" would be satisfied by a python
@@ -154,12 +178,226 @@ if [ "$SCOPE" = "selftest" ]; then
 - `foo.ps1` already had the bootstrap.
 '
 
-    # (4) the documented escape suppresses it -> PASS.
+    # (4) the documented escape (future revisit) suppresses it -> PASS.
     _case deviation-escape 0 '# P
 
 ## Implementation log
-<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2027-01-01) -->
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"') -->
 - branch protection already had reviews disabled.
+'
+
+    # (7) the SAME escape with a PASSED revisit date must stop suppressing —
+    #     the expiry is enforced by this gate itself, since deviation-overdue
+    #     never scans markdown. Without it, an escape is a permanent exemption
+    #     wearing an expiry date.
+    _case escape-expired 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-expired]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (8) a date-SHAPED revisit that is not a real calendar date must also stop
+    #     suppressing (fail closed) — lexical comparison would misorder it and
+    #     fromisoformat() rejecting it must not fall back to "active forever"
+    #     (CodeRabbit finding on PR #2002; resolution deviates from its
+    #     keep-active suggestion, which would mint a typo-made permanent
+    #     exemption — the exact hole cases (4)/(7) exist to close).
+    _case escape-invalid-date 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2026-02-30) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-invalid-date]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (9) a valid FUTURE date with trailing junk must fail closed — the whole
+    #     field is the value, not its date-shaped prefix, and prefix-capture
+    #     would keep this active until the embedded date passes.
+    _case escape-trailing-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-trailing-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (12) an ISO BASIC date must fail closed even though python >= 3.11
+    #      fromisoformat() would happily parse it — the grammar permits only
+    #      the dashed form, and a future-dated 20270811 riding through as
+    #      valid would be indistinguishable from a sanctioned escape.
+    _case escape-basic-date 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"${_future//-/}"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-basic-date]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (14) a quarter-SHAPED value whose year cannot construct a date
+    #      (0000-Q1) must fail closed via the token, not crash the scan with
+    #      an escaped ValueError.
+    _case escape-invalid-quarter 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=0000-Q1) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-invalid-quarter]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (15) a digit-LEADING slug is still a slug — the grammar allows it, and
+    #      2026-roadmap must stay active, not be mistaken for a calendar
+    #      attempt (fail-closed applies only to date/quarter-shaped values).
+    _case escape-digit-slug 0 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2026-roadmap) -->
+- branch protection already had reviews disabled.
+'
+
+    # (16) `revisit=` typed but EMPTY must fail closed — a malformed attempt,
+    #      not the sanctioned absent-field case (deliberate divergence from
+    #      the C++ rule, which folds empty into unset).
+    _case escape-empty-revisit 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-empty-revisit]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (17) an empty FINAL duplicate field wins over a valid earlier one
+    #      (last-field-wins, matching 10-line-rules.sh) and must fail closed
+    #      — else appending `; revisit=` would blank out a real expiry.
+    _case escape-empty-final-dup 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future"'; revisit=) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-empty-final-dup]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (18) a QUARTER shape with trailing junk must fail closed, not ride as
+    #      a slug — same typo class as (9), unanchored quarter alternative.
+    _case escape-quarter-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future_q"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-quarter-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (19) an ISO-BASIC shape with trailing junk likewise fails closed.
+    _case escape-basic-junk 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"${_future//-/}"'typo) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-basic-junk]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (20) a `)` inside reason= prose must not truncate the body and drop the
+    #      real (expired) revisit field — the body parse runs to the LAST `)`.
+    _case escape-paren-reason 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=see foo(bar) note; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-paren-reason]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (21) a marker MISSING its closing paren never engages suppression at all
+    #      (DEV_RE requires the paren) — the claim reports.
+    _case escape-unclosed-marker 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=x; owner=x; revisit=never -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-unclosed-marker]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (13) the FINAL revisit= FIELD wins, matching 10-line-rules.sh's field
+    #      parse — a `revisit=` embedded in reason= prose must not shadow the
+    #      real (expired) field, else prose mints a permanent exemption.
+    _case escape-embedded-revisit 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=see revisit=never note; owner=x; revisit='"$_past"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-embedded-revisit]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (10) a PAST quarter must expire at quarter end, mirroring the C++
+    #      revisit_overdue() semantics the grammar promises.
+    _case escape-past-quarter 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_past_q"') -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-past-quarter]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (11) a FUTURE quarter and the grammar's `never` form both stay active.
+    _case escape-quarter-never 0 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit='"$_future_q"') -->
+- branch protection already had reviews disabled.
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=never) -->
+- the tracker already had the bootstrap.
 '
 
     # (5) a SIBLING heading ends the section -> PASS. Without the depth check the
@@ -191,8 +429,10 @@ if [ "$SCOPE" = "selftest" ]; then
     exit 1
 fi
 
+TODAY="$(date +%F)"
+export TODAY
 "$PY" - "$SCOPE" "$PLAN_GLOB_BASE" <<'PY'
-import os, re, subprocess, sys
+import datetime, os, re, subprocess, sys
 
 scope, plan_base = sys.argv[1:3]
 
@@ -219,6 +459,101 @@ CLAIM_RE = re.compile(
 ANCHOR_RE = re.compile(r':\d+\b|#\d{2,}|\b[0-9a-f]{7,40}\b')
 
 DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
+# The deviation BODY parses as ;-delimited fields and the FINAL revisit= field
+# wins, mirroring 10-line-rules.sh's `IFS=';' read -ra kvs` loop — a substring
+# match would let `reason=see revisit=never note; revisit=<past>` ride on the
+# embedded first occurrence. Value grammar (AGENTS.md deviation spec):
+# YYYY-MM-DD | YYYY-Qn | slug | never.
+# Greedy to the LAST `)` on the line: `[^)]*` truncated at a `)` inside
+# reason= prose, dropping the real revisit= field and minting a permanent
+# exemption (CodeRabbit round-11 finding on PR #2002).
+DEV_BODY_RE = re.compile(r'SMATCHET_DEVIATION\((.*)\)')
+QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
+# Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
+# BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
+DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+# A calendar ATTEMPT that parses as neither legal form: a dashed-date, quarter,
+# or ISO-basic PREFIX with anything after it (2027-08-11typo, 2026-Q1typo,
+# 20270811typo) — all unanchored, so trailing junk still classifies as an
+# attempt and fails closed. A merely digit-LEADING value that matches none of
+# them (2026-roadmap) is a slug — legal, no calendar expiry.
+CALENDARISH_RE = re.compile(r'\d{4}-\d{2}-\d{2}|\d{4}-Q\d+|\d{8}')
+TODAY = os.environ.get("TODAY", "")
+
+
+def escape_active(comment_line):
+    """True while a plan-claim-anchor deviation escape still suppresses.
+
+    The revisit= date is the escape's expiry, and here it is ENFORCED: the
+    deviation-overdue lint that expires these markers scans first-party C++
+    only, so without this an author's markdown escape would be a permanent
+    exemption wearing an expiry date (the KNOWN LIMITATION this closes). A
+    marker with NO revisit field stays active — the date is optional in the
+    grammar — but a PASSED date stops suppressing and the claim reports
+    again, exactly like an overdue C++ deviation. Value semantics mirror
+    00-common.sh's revisit_overdue(): YYYY-MM-DD compares against today,
+    YYYY-Qn expires at quarter end (Q1=03-31 .. Q4=12-31), slug/never carry
+    no calendar expiry (slugs may lead with digits: 2026-roadmap). One place
+    this is STRICTER than the C++ side: a CALENDAR ATTEMPT that parses as
+    neither legal form — 2026-02-30, 2027-08-11typo, 2026-Q5, 20270811 —
+    stops suppressing. Fail closed, so the typo surfaces instead of minting
+    a permanent exemption.
+    """
+    m = DEV_BODY_RE.search(comment_line)
+    if not m:
+        # Only reachable when the caller's DEV_RE matched but the body is
+        # unparseable — a malformed marker must not mint an exemption: fail
+        # CLOSED, same reasoning as every other malformed escape.
+        return False
+    if not TODAY:
+        # Defense in depth: the shell wrapper always exports TODAY, but if it
+        # ever arrived empty the expiry rule would silently vanish — abort
+        # loudly instead of failing open.
+        raise SystemExit("test-plan-claim-anchors: TODAY is unset/empty — "
+                         "refusing to run with expiry enforcement disabled")
+    value = None
+    for field in m.group(1).split(';'):
+        field = field.strip()
+        if field.startswith('revisit='):
+            value = field[len('revisit='):].strip()
+    if value is None:
+        return True
+    if not value:
+        # `revisit=` typed but left EMPTY: a malformed attempt, not the
+        # sanctioned absent-field case — fail CLOSED. Deliberate divergence
+        # from the C++ rule (which folds empty into unset): an empty field
+        # must not mint a permanent suppression.
+        return False
+    qm = QUARTER_RE.match(value)
+    if qm:
+        year, quarter = int(qm.group(1)), int(qm.group(2))
+        try:
+            end = datetime.date(year, 3 * quarter, (31, 30, 30, 31)[quarter - 1])
+        except ValueError:
+            # Quarter-shaped but not constructible (0000-Q1 — year 0 is out
+            # of range): fail CLOSED like every other malformed expiry, and
+            # never let the exception escape and crash the whole scan.
+            return False
+        return end >= datetime.date.fromisoformat(TODAY)
+    if DATE_RE.match(value):
+        try:
+            revisit = datetime.date.fromisoformat(value)
+        except ValueError:
+            # Dashed shape but not a real calendar date (2026-02-30): fail
+            # CLOSED — the author demonstrably tried to set an expiry, and
+            # treating the typo as "no date, active forever" would recreate
+            # the permanent exemption this function exists to end.
+            return False
+        return revisit >= datetime.date.fromisoformat(TODAY)
+    if CALENDARISH_RE.match(value):
+        # A calendar ATTEMPT that parses as neither legal form (trailing
+        # junk, 2026-Q5, ISO basic 20270811): same fail-CLOSED reasoning —
+        # not suppressing surfaces both the claim and the typo.
+        return False
+    # slug (including digit-leading: 2026-roadmap) / never / empty: no
+    # calendar expiry — the C++ rule's "slug / never / unknown -> never
+    # overdue" arm.
+    return True
 
 
 def scan(path, lines):
@@ -239,7 +574,7 @@ def scan(path, lines):
             continue
         if ANCHOR_RE.search(line):
             continue
-        if i >= 2 and DEV_RE.search(lines[i - 2]):
+        if i >= 2 and DEV_RE.search(lines[i - 2]) and escape_active(lines[i - 2]):
             continue
         yield i, line.strip()
 
