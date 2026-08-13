@@ -159,9 +159,10 @@
 #   5 — pagination overflow (any connection has more pages)
 #   7 — Actions outage escalation: required contexts absent on the head for
 #       MERGE_GATES_OUTAGE_POLLS consecutive polls while ZERO workflow runs
-#       were created repo-wide since polling began — the head cannot go green
-#       by waiting (admin-merge-past-absent-checks-undetected fix (3): the
-#       ship-loop's defined move is to STOP and escalate, never override;
+#       were created repo-wide since the absence streak began (the window
+#       re-anchors after each confirmed-alive probe) — the head cannot go
+#       green by waiting (admin-merge-past-absent-checks-undetected fix (3):
+#       the ship-loop's defined move is to STOP and escalate, never override;
 #       see docs/agent-rules/ship-loops.md § CI unavailable).
 #
 # Return codes (gh_pr_ready_idempotent):
@@ -836,6 +837,9 @@ poll_merge_gates() {
         # the naming stays silent (never invent a count).
         local thr_total="${fields[31]:--1}"
         local thr_user_cnt="${fields[32]:--1}"
+        # bats-only seam: force the field-32 parse-miss (-1) path — a fixture
+        # cannot make the filter emit -1 for one field while field 31 parses.
+        [ -n "${MERGE_GATES_TEST_THR_USER_CNT:-}" ] && thr_user_cnt="$MERGE_GATES_TEST_THR_USER_CNT"
 
         # User comments (non-bot, non-self) — -1 fails closed at `user -eq 0`.
         local user="${fields[15]:--1}"
@@ -1477,13 +1481,20 @@ poll_merge_gates() {
                     fi
                 fi
                 if [ "$conv_res_cache" != "false" ]; then
-                    local thr_user_n="$thr_user_cnt"
-                    [ "$thr_user_n" -ge 0 ] 2>/dev/null || thr_user_n=0
-                    local thr_bot_n=$(( thr_total - thr_user_n ))
-                    [ "$thr_bot_n" -ge 0 ] || thr_bot_n=0
+                    # A field-32 parse miss (thr_user_cnt=-1) must WITHHOLD the
+                    # user/bot breakdown, not default the user count to 0 and
+                    # attribute every thread to bots — the total alone still
+                    # names the cause (the never-invent-a-count posture the
+                    # field-31 comment promises).
+                    local thr_split=""
+                    if [ "$thr_user_cnt" -ge 0 ] 2>/dev/null; then
+                        local thr_bot_n=$(( thr_total - thr_user_cnt ))
+                        [ "$thr_bot_n" -ge 0 ] || thr_bot_n=0
+                        thr_split=" (${thr_user_cnt} user, ${thr_bot_n} bot)"
+                    fi
                     local conv_verb="requires"
                     [ "$conv_res_cache" = "unknown" ] && conv_verb="may require (protection probe failed)"
-                    echo "BLOCK: mergeStateStatus=BLOCKED with all other gates green; ${thr_total} unresolved review thread(s) (${thr_user_n} user, ${thr_bot_n} bot) and branch protection ${conv_verb} conversation resolution. Bot threads count too — cr-out-of-band waives the poller's CR gate only, never branch protection. Resolve the threads (scripts/dev/pr-blocked-why.sh classifies them vs HEAD) or the merge will never unblock." >&2
+                    echo "BLOCK: mergeStateStatus=BLOCKED with all other gates green; ${thr_total} unresolved review thread(s)${thr_split} and branch protection ${conv_verb} conversation resolution. Bot threads count too — cr-out-of-band waives the poller's CR gate only, never branch protection. Resolve the threads (scripts/dev/pr-blocked-why.sh classifies them vs HEAD) or the merge will never unblock." >&2
                 fi
             fi
         fi

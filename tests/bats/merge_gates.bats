@@ -107,6 +107,31 @@ case "$1" in
                     *)    echo "${MERGE_GATES_STUB_RUNS_CREATED:-1}"; exit 0 ;;
                 esac
                 ;;
+            */pulls/*)
+                # Silent-BLOCKED live probe step 1: gh api repos/<o>/<r>/pulls/<n>
+                #   --jq .base.ref (the PR's ACTUAL base for the protection read).
+                #   MERGE_GATES_STUB_BASE_REF — base ref to emit; unset → error
+                #   (forces the config fallback, so only opted-in tests take
+                #   the live path).
+                if [ -n "${MERGE_GATES_STUB_BASE_REF:-}" ]; then
+                    echo "$MERGE_GATES_STUB_BASE_REF"; exit 0
+                fi
+                echo "gh: stub pulls error" >&2; exit 1
+                ;;
+            */branches/*/protection)
+                # Step 2: protection read for the base from step 1. Appends the
+                # requested path to a file so a test can assert WHICH branch
+                # was queried (stdout/stderr are captured by the SUT).
+                #   MERGE_GATES_STUB_PROTECTION — "true" / "false"; unset → error
+                #   MERGE_GATES_STUB_PROTECTION_PATH_FILE — record "$2" here
+                if [ -n "${MERGE_GATES_STUB_PROTECTION_PATH_FILE:-}" ]; then
+                    echo "$2" >> "$MERGE_GATES_STUB_PROTECTION_PATH_FILE"
+                fi
+                if [ -n "${MERGE_GATES_STUB_PROTECTION:-}" ]; then
+                    echo "$MERGE_GATES_STUB_PROTECTION"; exit 0
+                fi
+                echo "gh: stub protection error" >&2; exit 1
+                ;;
         esac
         ;;
     pr)
@@ -2137,6 +2162,42 @@ blocked_with_bot_threads() {
     [[ "$output" != *"all other gates green"* ]]
     unset MERGE_GATES_CONV_RES_REQUIRED
     rm -f "$f" "$f2"
+}
+
+@test "silent-BLOCKED: live probe (no test seam) reads the PR's ACTUAL base branch protection [P2]" {
+    # Every other silent-BLOCKED test drives the MERGE_GATES_CONV_RES_REQUIRED
+    # seam, so the real read path — pulls/<n> .base.ref, then THAT branch's
+    # protection — was unexercised. This is the code that fixes judging a PR
+    # by the config-named branch's setting; assert the probe queries the base
+    # the pulls read returned, not "develop".
+    local f; f="$(blocked_with_bot_threads 2)"
+    set_fixture "$f"
+    export MERGE_GATES_STUB_BASE_REF="release-1.2"
+    export MERGE_GATES_STUB_PROTECTION="true"
+    export MERGE_GATES_STUB_PROTECTION_PATH_FILE="$BATS_TEST_TMPDIR/protection-path"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) (0 user, 2 bot)"* ]]
+    [[ "$output" == *"requires conversation resolution"* ]]
+    grep -q "branches/release-1.2/protection" "$MERGE_GATES_STUB_PROTECTION_PATH_FILE"
+    unset MERGE_GATES_STUB_BASE_REF MERGE_GATES_STUB_PROTECTION MERGE_GATES_STUB_PROTECTION_PATH_FILE
+    rm -f "$f"
+}
+
+@test "silent-BLOCKED: user-thread parse miss (-1) withholds the user/bot split, keeps the total [P2]" {
+    # A field-32 miss surfaces as thr_user_cnt=-1; defaulting it to 0 would
+    # claim every thread is bot-authored — an invented count. The cause line
+    # must keep the total and drop the breakdown.
+    local f; f="$(blocked_with_bot_threads 2)"
+    export MERGE_GATES_CONV_RES_REQUIRED=true
+    export MERGE_GATES_TEST_THR_USER_CNT="-1"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"2 unresolved review thread(s) and branch protection requires"* ]]
+    [[ "$output" != *"user,"* ]]
+    unset MERGE_GATES_CONV_RES_REQUIRED MERGE_GATES_TEST_THR_USER_CNT
+    rm -f "$f"
 }
 
 @test "silent-BLOCKED: a USER-authored open thread blocks the user gate, so naming stays silent [P2]" {
