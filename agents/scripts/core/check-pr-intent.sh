@@ -47,13 +47,36 @@ stripped = re.sub(r'(?s)<!--.*?-->', '', body)
 verdict_re = re.compile(
     r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
     r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)[ \t]*\r?$')
-if not verdict_re.search(stripped):
+mv = verdict_re.search(stripped)
+if not mv:
     print("check-pr-intent: MISSING review verdict. Add a line "
           "`adversarial-code-review: N findings, <disposition>` or "
           "`adversarial-code-review: n/a — <reason>` "
           "(ship-loops.md § [pre-first-push gate] item 5).", file=sys.stderr)
     sys.exit(1)
-print("check-pr-intent: OK — `## Intent` present and filled; review verdict recorded.")
+# Head binding — a verdict that names no commit is "reviewed something once";
+# binding it to the head makes every push invalidate the prior verdict, so an
+# unreviewed push is machine-visible (review-verdict-not-bound-to-head,
+# process 2026-08-13: the recorded verdict survived six review-fix pushes it
+# never covered). The template's literal `head=<sha>` cannot match the hex
+# class, so an unfilled placeholder stays red. KEEP IN SYNC with
+# doc-validation.yml `Intent section`.
+head_re = re.compile(r'\bhead=([0-9a-f]{7,40})\b')
+hm = head_re.search(mv.group(0))
+if not hm:
+    print("check-pr-intent: MISSING head= binding on the review verdict. Append "
+          "`(head=<sha>)` naming the reviewed head — "
+          "`bash agents/scripts/core/record-review-verdict.sh` stamps and prints "
+          "the line. Every push invalidates the prior verdict.", file=sys.stderr)
+    sys.exit(1)
+expected = os.environ.get("PR_HEAD_SHA", "")
+if expected and not (expected.startswith(hm.group(1)) or hm.group(1).startswith(expected)):
+    print("check-pr-intent: STALE review verdict — recorded head=%s but the PR head "
+          "is %s. The diff changed since the recorded review: re-review the delta "
+          "(or record a fresh `n/a — <reason>` for a trivial delta) and update the "
+          "verdict line." % (hm.group(1), expected), file=sys.stderr)
+    sys.exit(1)
+print("check-pr-intent: OK — `## Intent` present and filled; review verdict recorded and head-bound.")
 PY
 }
 
@@ -66,15 +89,18 @@ run_selftest() {
         return 1
     fi
     # Pass path: a filled `## Intent` + a findings-form verdict MUST be accepted.
+    # Pass fixtures carry `(head=…)` and pin PR_HEAD_SHA="" so each case tests
+    # ONE thing: here the verdict grammar, with head binding in presence-only
+    # mode (no expected head to compare against). Head cases come later.
     rc=0
-    _check "## Intent"$'\n\n'"Fix the thing the user asked for."$'\n\n'"adversarial-code-review: 4 findings, all fixed" >/dev/null 2>&1 || rc=$?
+    PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix the thing the user asked for."$'\n\n'"adversarial-code-review: 4 findings, all fixed (head=abc1234)" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "check-pr-intent --selftest: FAIL — blocked a body WITH intent + findings verdict" >&2
         return 1
     fi
     # Pass path: the n/a escape form MUST be accepted.
     rc=0
-    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"- adversarial-code-review: n/a — trivial one-line doc fix" >/dev/null 2>&1 || rc=$?
+    PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"- adversarial-code-review: n/a — trivial one-line doc fix (head=abc1234)" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "check-pr-intent --selftest: FAIL — blocked the n/a verdict escape" >&2
         return 1
@@ -152,7 +178,7 @@ run_selftest() {
     # A bare count with NO disposition stays accepted — `0 findings` is a
     # complete verdict; the guard's job is placeholders, not prose quality.
     rc=0
-    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings" >/dev/null 2>&1 || rc=$?
+    PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings (head=abc1234)" >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict (0 findings)" >&2
         return 1
@@ -161,11 +187,56 @@ run_selftest() {
     # stray tab, or a CR from a CRLF body). Invisible to the author, so
     # rejecting it produces an undebuggable red; `[ \t]*\r?` before `$` eats it.
     rc=0
-    _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings  " >/dev/null 2>&1 || rc=$?
+    PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings (head=abc1234)  " >/dev/null 2>&1 || rc=$?
     if [ "$rc" -ne 0 ]; then
         echo "check-pr-intent --selftest: FAIL — blocked a bare-count verdict with trailing whitespace" >&2
         return 1
     fi
+    # Head binding: a verdict with NO head= token MUST be rejected, for the
+    # head reason (not a grammar miss — the verdict line itself is valid).
+    out="$(PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — accepted a verdict with no head= binding" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING head="*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — head-less verdict rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # The template's literal `(head=<sha>)` placeholder MUST stay red — the hex
+    # class cannot match `<sha>`, so pasting the template unfilled is caught.
+    out="$(PR_HEAD_SHA="" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings (head=<sha>)" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — the literal head=<sha> placeholder satisfied the check" >&2
+        return 1
+    }
+    case "$out" in
+        *"MISSING head="*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — placeholder head rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # With PR_HEAD_SHA set, a recorded head that PREFIXES the actual head MUST
+    # pass — record-review-verdict.sh stamps a short sha, CI supplies the full one.
+    rc=0
+    PR_HEAD_SHA="abc1234def5678900aabbccddeeff00112233445" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings (head=abc1234)" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "check-pr-intent --selftest: FAIL — blocked a verdict whose head= matches PR_HEAD_SHA" >&2
+        return 1
+    fi
+    # ... and a recorded head that does NOT match MUST be rejected as STALE —
+    # this is the whole point of the binding: a push after the review invalidates
+    # the verdict (review-verdict-not-bound-to-head).
+    out="$(PR_HEAD_SHA="deadbeef00112233445566778899aabbccddeeff" _check "## Intent"$'\n\n'"Fix it."$'\n\n'"adversarial-code-review: 0 findings (head=abc1234)" 2>&1)" && {
+        echo "check-pr-intent --selftest: FAIL — accepted a verdict recorded for a DIFFERENT head" >&2
+        return 1
+    }
+    case "$out" in
+        *"STALE review verdict"*) ;;
+        *) echo "check-pr-intent --selftest: FAIL — stale-head verdict rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
     # Sync guard: identical copies pass, a drifted copy MUST be rejected with
     # the drift message. Uses the path override so the case is cwd-independent;
     # the "workflow" is a copy of this very script (the extractor is file-shape
@@ -193,10 +264,28 @@ run_selftest() {
         echo "check-pr-intent --selftest: FAIL — sync check passed a DRIFTED copy" >&2
         return 1
     }
+    case "$out" in
+        *"VERDICT REGEX DRIFT"*) ;;
+        *) rm -rf "$tmpd"
+           echo "check-pr-intent --selftest: FAIL — drifted copy rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
+    # A drift in head_re MUST also be caught. The token `{7,40}` also appears in
+    # this selftest's own sed script (the copy contains the whole file), but
+    # `s///` without `g` replaces the first occurrence on EVERY matching line —
+    # so the head_re source line is mutated no matter what else is; the
+    # verdict_re lines contain no `{7,40}`, so the drift is head_re-only.
+    sed 's/{7,40}/{7,41}/' "$tmpd/same.yml" > "$tmpd/drift-head.yml"
+    out="$(CHECK_PR_INTENT_WORKFLOW_PATH="$tmpd/drift-head.yml" check_workflow_sync 2>&1)" && {
+        rm -rf "$tmpd"
+        echo "check-pr-intent --selftest: FAIL — sync check passed a head_re-only drift" >&2
+        return 1
+    }
     rm -rf "$tmpd"
     case "$out" in
         *"VERDICT REGEX DRIFT"*) ;;
-        *) echo "check-pr-intent --selftest: FAIL — drifted copy rejected for the wrong reason:" >&2
+        *) echo "check-pr-intent --selftest: FAIL — head_re-drifted copy rejected for the wrong reason:" >&2
            printf '%s\n' "$out" | sed 's/^/    /' >&2
            return 1 ;;
     esac
@@ -224,7 +313,11 @@ def extract(path, label):
     if not m:
         print("check-pr-intent --check-workflow-sync: no verdict_re definition found in %s (%s)" % (path, label), file=sys.stderr)
         sys.exit(2)
-    return m.group(1) + m.group(2)
+    h = re.search(r"head_re = re\.compile\(r'([^\n]*)'\)", text)
+    if not h:
+        print("check-pr-intent --check-workflow-sync: no head_re definition found in %s (%s)" % (path, label), file=sys.stderr)
+        sys.exit(2)
+    return m.group(1) + m.group(2) + "\n" + h.group(1)
 mine = extract(os.environ["SELF_PATH"], "local mirror")
 theirs = extract(os.environ["WF_PATH"], "CI copy")
 if mine != theirs:

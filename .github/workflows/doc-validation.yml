@@ -529,6 +529,7 @@ jobs:
         # in a title re-parse as shell). See the autosync-plan-index job header.
         env:
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           python3 - <<'PY'
           import os, re, sys
@@ -561,12 +562,38 @@ jobs:
           verdict_re = re.compile(
               r'(?mi)^\s*(?:[-*+]\s+)?(?:\[[ xX]\]\s+)?[*_`]*adversarial-code-review[*_`]*\s*:[*_]*\s*'
               r'(?:\d+\s+findings?\b(?:[\s,:;—–-]*(?![<,\s:;—–-])\S.*)?|n/a\s*[—–-]+\s*(?!<)\S.*)[ \t]*\r?$')
-          if not verdict_re.search(stripped):
+          mv = verdict_re.search(stripped)
+          if not mv:
               print("::error title=Review verdict missing::PR body records no pre-first-push "
                     "review verdict. Add a line `adversarial-code-review: N findings, <disposition>` "
                     "(e.g. `adversarial-code-review: 4 findings, all fixed`) or, for a genuinely "
                     "trivial diff, `adversarial-code-review: n/a — <reason>`. See "
                     "docs/agent-rules/ship-loops.md § [pre-first-push gate] item 5.")
               sys.exit(1)
-          print("Intent section present and filled; review verdict recorded.")
+          # Head binding — a verdict that names no commit is "reviewed something
+          # once"; binding it to the head means every push invalidates the prior
+          # verdict, so an unreviewed push is machine-visible instead of riding a
+          # stale claim (review-verdict-not-bound-to-head, process 2026-08-13: one
+          # recorded verdict survived six review-fix pushes it never covered).
+          # This job re-runs on every synchronize event with the fresh head SHA,
+          # which is what makes the invalidation automatic. The template's literal
+          # `head=<sha>` cannot match the hex class, so an unfilled placeholder
+          # stays red. Same limit as the verdict itself: proves the claim was
+          # re-recorded for this head, never that the re-review ran.
+          head_re = re.compile(r'\bhead=([0-9a-f]{7,40})\b')
+          hm = head_re.search(mv.group(0))
+          if not hm:
+              print("::error title=Review verdict not head-bound::The review verdict names no "
+                    "commit. Append `(head=<sha>)` naming the reviewed head — "
+                    "`bash agents/scripts/core/record-review-verdict.sh` stamps and prints the "
+                    "line. Every push invalidates the prior verdict.")
+              sys.exit(1)
+          expected = os.environ.get("PR_HEAD_SHA", "")
+          if expected and not (expected.startswith(hm.group(1)) or hm.group(1).startswith(expected)):
+              print("::error title=Review verdict stale::The recorded verdict names head=%s but "
+                    "this PR's head is %s — the diff changed since that review. Re-review the "
+                    "delta (or record `n/a — <reason>` for a trivial one) and update the verdict "
+                    "line via record-review-verdict.sh." % (hm.group(1), expected))
+              sys.exit(1)
+          print("Intent section present and filled; review verdict recorded and head-bound.")
           PY

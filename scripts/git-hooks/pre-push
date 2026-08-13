@@ -24,6 +24,17 @@
 #
 # (B) skips silently when: branch is develop / main / detached HEAD; `gh` not on
 # PATH; no PR for the branch; PR state OPEN. (A) ignores ref DELETES.
+#
+# (E) REVIEW-VERDICT MARKER — refuse a push carrying a non-protected
+#     refs/heads/* update whose pushed sha has no `$GIT_DIR/review-verdict-<sha>`
+#     marker (stamped by agents/scripts/core/record-review-verdict.sh after the
+#     pre-first-push review). Judged per update record like (A) — HEAD alone
+#     would let a marked checkout push an unmarked sibling ref. The PR-body
+#     verdict line proves a review was CLAIMED; this proves the claim was
+#     re-recorded for the exact commit being pushed — a commit made after the
+#     review has no marker, which is the six-unreviewed-pushes hole
+#     (review-verdict-not-bound-to-head, process 2026-08-13). Deletes are
+#     exempt. Override: SMATCHET_SKIP_REVIEW_MARKER=1 (sanctioned, logged).
 
 set -euo pipefail
 
@@ -43,11 +54,17 @@ if [ -n "$repo_root" ] && [ -x "$repo_root/agents/scripts/project/p4-reconcile-c
     fi
 fi
 
-# (A) Direct-push-to-protected-branch hard-stop. Parse the pre-push ref updates
-# on stdin — each line is "<local_ref> <local_sha> <remote_ref> <remote_sha>".
-# A non-delete update whose REMOTE ref is develop/main is a direct push to a
-# protected branch (catches `git push`, `git push origin HEAD:develop`, and
-# `git push origin local:develop` alike — more robust than the current branch).
+# Capture the pre-push ref updates ONCE — each stdin line is
+# "<local_ref> <local_sha> <remote_ref> <remote_sha>". Both (A) and (E) judge
+# per update record; stdin can only be read once, so it is snapshotted here and
+# each stage iterates the snapshot (CodeRabbit on PR #2003: (E)'s first cut
+# keyed on HEAD only, so a marked checkout could push an unmarked sibling ref).
+push_updates="$(cat)"
+
+# (A) Direct-push-to-protected-branch hard-stop. A non-delete update whose
+# REMOTE ref is develop/main is a direct push to a protected branch (catches
+# `git push`, `git push origin HEAD:develop`, and `git push origin
+# local:develop` alike — more robust than the current branch).
 zero_sha="0000000000000000000000000000000000000000"
 protected_push=""
 while read -r _local_ref local_sha remote_ref _remote_sha; do
@@ -56,7 +73,9 @@ while read -r _local_ref local_sha remote_ref _remote_sha; do
     case "$remote_ref" in
         refs/heads/develop | refs/heads/main) protected_push="${remote_ref#refs/heads/}" ;;
     esac
-done
+done <<PUSH_UPDATES
+$push_updates
+PUSH_UPDATES
 
 if [ -n "$protected_push" ]; then
     cat >&2 <<EOF
@@ -87,9 +106,9 @@ fi
 #     Refuse a push when this branch's changed files overlap a refs/locks/*
 #     write set owned by a DIFFERENT branch — the cross-branch collision the
 #     lock exists to catch. Changed-file basis is branch-level + stdin-
-#     INDEPENDENT (`$(git merge-base origin/develop HEAD)..HEAD`): (A)'s
-#     `while read` already drained the ref-update stdin, so a second reader
-#     gets EOF. Identity is keyed on BRANCH (never owner/AGENT_ID). Honours a
+#     INDEPENDENT (`$(git merge-base origin/develop HEAD)..HEAD`): the
+#     ref-update stdin is snapshotted above and a raw second read would get
+#     EOF. Identity is keyed on BRANCH (never owner/AGENT_ID). Honours a
 #     14-day staleness cutoff (symmetric with Layer C), so an aged orphan lock
 #     is non-blocking. Override: SMATCHET_ALLOW_UNLOCKED_PUSH=1.
 #
@@ -279,6 +298,64 @@ elif [ -n "$repo_root" ]; then
             printf '  Override (sanctioned, logged): SMATCHET_SKIP_PRESHIP_GATE=1 git push ...\n\n' >&2
             exit 1
         fi
+    fi
+fi
+
+# (E) REVIEW-VERDICT MARKER — the pre-first-push review's only machine-visible
+#     trace local to the commits being pushed. record-review-verdict.sh stamps
+#     `$GIT_DIR/review-verdict-<sha>` for HEAD after validating the verdict
+#     tail; a pushed tip with no marker is a commit no recorded review covers
+#     (review-verdict-not-bound-to-head). Judged PER UPDATE RECORD from the
+#     stdin snapshot, not on HEAD — a marked checkout can push an unmarked
+#     sibling ref (`git push origin other-branch`), and a branch DELETE from an
+#     unmarked checkout must not be blocked (CodeRabbit on PR #2003; same
+#     per-record basis as (A)). Scoped to non-protected refs/heads/* — (A)
+#     already hard-stops develop/main, and tags point at already-pushed
+#     history. FAIL-OPEN on infra (unresolvable git-dir, empty stdin): the
+#     gate must never wedge a push on its own breakage.
+if [ "${SMATCHET_SKIP_REVIEW_MARKER:-0}" = "1" ]; then
+    echo "pre-push: SMATCHET_SKIP_REVIEW_MARKER=1 — skipping the review-verdict marker gate." >&2
+else
+    rv_gitdir="$(git rev-parse --git-dir 2>/dev/null || true)"
+    rv_missing_sha=""
+    rv_missing_ref=""
+    if [ -n "$rv_gitdir" ]; then
+        while read -r _rv_local_ref rv_sha rv_ref _rv_remote_sha; do
+            [ -n "$rv_ref" ] || continue
+            [ "$rv_sha" = "$zero_sha" ] && continue   # DELETE — nothing new to review
+            case "$rv_ref" in
+                refs/heads/develop | refs/heads/main) continue ;;   # (A)'s domain
+                refs/heads/*) ;;
+                *) continue ;;   # tags / notes / refspec exotica
+            esac
+            if [ ! -f "$rv_gitdir/review-verdict-$rv_sha" ]; then
+                rv_missing_sha="$rv_sha"
+                rv_missing_ref="$rv_ref"
+            fi
+        done <<PUSH_UPDATES
+$push_updates
+PUSH_UPDATES
+    fi
+    if [ -n "$rv_missing_sha" ]; then
+        cat >&2 <<EOF
+
+pre-push: REFUSING push — no review-verdict marker for ${rv_missing_ref#refs/heads/} @ ${rv_missing_sha:0:12}.
+
+  The pre-first-push gate's review step (ship-loops.md § [pre-first-push gate]
+  item 5) must be re-run — and re-recorded — for the exact commit being pushed;
+  a verdict recorded for an earlier commit does not cover this one. After
+  reviewing the diff, commit it, then stamp the verdict (it binds HEAD, so
+  check out the branch being pushed first):
+
+    bash agents/scripts/core/record-review-verdict.sh "N findings, <disposition>"
+    bash agents/scripts/core/record-review-verdict.sh "n/a — <reason>"
+
+  It validates the tail, writes the marker for HEAD, and prints the head-bound
+  line for the PR body (CI checks the same binding against the PR head).
+
+  Override (sanctioned, logged): SMATCHET_SKIP_REVIEW_MARKER=1 git push ...
+EOF
+        exit 1
     fi
 fi
 

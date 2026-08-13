@@ -117,6 +117,8 @@ run_hook() {
     #   - protected-branch stop (A) is stdin-driven and inert on the empty
     #     stdin here; neutralised anyway per the stage-neutraliser lint
     #     (test-pre-push-stage-neutralisers.sh). -> ALLOW_DEVELOP_PUSH.
+    #   - review-verdict marker (E) keys on the REAL repo's HEAD, which
+    #     legitimately has no marker during a test run. -> SKIP_REVIEW_MARKER.
     local out exit_code
     set +e
     out=$(env -i \
@@ -125,6 +127,7 @@ run_hook() {
         SMATCHET_ALLOW_DEVELOP_PUSH=1 \
         SMATCHET_SKIP_PRESHIP_GATE=1 \
         SMATCHET_ALLOW_UNLOCKED_PUSH=1 \
+        SMATCHET_SKIP_REVIEW_MARKER=1 \
         SMATCHET_ALLOW_MERGED_PR_PUSH="${extra_env#SMATCHET_ALLOW_MERGED_PR_PUSH=}" \
         bash "$HOOK" 2>&1)
     exit_code=$?

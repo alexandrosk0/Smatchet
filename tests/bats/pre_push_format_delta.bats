@@ -39,6 +39,7 @@ require_tools() {
 # discipline, test/2026-06-24); empty stdin keeps stage A inert.
 run_hook() {
     SMATCHET_ALLOW_UNLOCKED_PUSH=1 SMATCHET_ALLOW_MERGED_PR_PUSH=1 \
+        SMATCHET_SKIP_REVIEW_MARKER=1 \
         bash "$HOOK" </dev/null
 }
 
