@@ -455,7 +455,7 @@ run_nudge() {
     grep -q "cr-full-review-nudge:${SHA}"        "$POST_LOG"
 }
 
-@test "nudge: once per head — an existing marker for this SHA suppresses it" {
+@test "nudge: once per head - an existing marker for this SHA suppresses it" {
     setup_nudge
     row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
     row 'github-actions[bot]' '2026-08-13T12:01:00Z' "@coderabbitai full review <!-- cr-full-review-nudge:${SHA} -->"
@@ -463,7 +463,7 @@ run_nudge() {
     [ ! -s "$POST_LOG" ]
 }
 
-@test "nudge: budget cap — three prior nudges on other heads suppress a fourth" {
+@test "nudge: budget cap - three prior nudges on other heads suppress a fourth" {
     setup_nudge
     row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
     row 'github-actions[bot]' '2026-08-13T10:00:00Z' 'cr-full-review-nudge:aaaa'
@@ -528,7 +528,7 @@ run_nudge() {
         | grep -q 'maybe_nudge_full_review'
 }
 
-@test "nudge: recency — a busy signal newer than the clean reply suppresses it" {
+@test "nudge: recency - a busy signal newer than the clean reply suppresses it" {
     setup_nudge
     # The burn scenario: head H2 just bounced on the rate limit; the only
     # clean-pass reply is from earlier head H1. Nudging now would spend the
@@ -539,7 +539,7 @@ run_nudge() {
     [ ! -s "$POST_LOG" ]
 }
 
-@test "nudge: recency — a clean reply newer than the busy signal posts" {
+@test "nudge: recency - a clean reply newer than the busy signal posts" {
     setup_nudge
     # The genuine shape-1 wedge: the window reopened, a comment-only clean
     # pass completed AFTER the rate-limit notice, and the stale status sits.
