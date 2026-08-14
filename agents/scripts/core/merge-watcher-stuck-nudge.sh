@@ -76,10 +76,25 @@ now = time.time()
 stuck = []
 evidence = []       # unix timestamps proving the daemon has run recently
 missing_state = []  # PRs registered > grace ago with NO state file at all
+
+
+def add_evidence(ts):
+    # Finite-and-not-future only, for EVERY evidence source: a future value
+    # (json Infinity, corrupted timestamp, clock-skewed/utime'd mtime) would
+    # win max(evidence) and mask a dead daemon forever. Dropping bogus
+    # values degrades to silence at worst, never to a false "alive".
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return
+    if math.isfinite(ts) and ts <= now:
+        evidence.append(ts)
+
+
 log_file = root / "daemon.log"
 try:
     if log_file.exists():
-        evidence.append(log_file.stat().st_mtime)
+        add_evidence(log_file.stat().st_mtime)
 except OSError:
     pass
 for e in entries:
@@ -94,7 +109,7 @@ for e in entries:
         # writes these): count its mtime even when the JSON is unreadable, so
         # an all-corrupt state dir cannot silence the absence check entirely.
         try:
-            evidence.append(sf.stat().st_mtime)
+            add_evidence(sf.stat().st_mtime)
         except OSError:
             pass
         try:
@@ -106,15 +121,8 @@ for e in entries:
         # Guarded separately: a garbage last_poll_unix must not clobber a
         # validly-read last_state (the float() used to share the parse try,
         # so a bad timestamp silently dropped a STUCK PR from the nudge).
-        # Finite-and-not-future only: json.loads accepts Infinity/NaN, and an
-        # inf (or clock-skewed future) sample would win max(evidence) and
-        # suppress watcher-dead forever (CR review, PR #2007).
-        try:
-            last_poll = float(st.get("last_poll_unix", 0) or 0)
-            if math.isfinite(last_poll) and last_poll <= now:
-                evidence.append(last_poll)
-        except (TypeError, ValueError):
-            pass
+        # add_evidence enforces finite-and-not-future (CR review, PR #2007).
+        add_evidence(st.get("last_poll_unix", 0) or 0)
     else:
         try:
             registered_at = float(e.get("registered_at", 0) or 0)
