@@ -282,6 +282,10 @@ struct TrackerConfig {
     // Same replace-not-merge rationale as MigratedMenuShortcutsV1; a user who later
     // removes the binding keeps it removed.
     bool MigratedQuickCreateHotkeyV1 = false;
+    // One-shot migration flag: widens the zoom bindings from their single legacy combo
+    // to the full alias set once a binding can hold several. Only a row still carrying
+    // exactly the legacy default is widened, so a user's own zoom key survives.
+    bool MigratedMultiHotkeyZoomV1 = false;
 
     // --- Quick-create issue popup: engine-context prefill toggles ---
     // Which host-engine snapshot fields (pushed by the Unreal plugin) are folded into the

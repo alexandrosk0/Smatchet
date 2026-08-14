@@ -63,8 +63,8 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
     return true;
 }
 
-bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out, const char* armLabel) {
+bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, bool& capturing, std::string& out,
+                             const char* armLabel) {
     bool committed = false;
     // Function-scoped (one rebind control captures at a time): the arm click below must
     // clear a warning left over from a capture that ended OUTSIDE this function (tab
@@ -123,28 +123,45 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
     return committed;
 }
 
-std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings,
-                                   const std::string& candidateHotkey,
-                                   const std::string& selfCommandId,
-                                   const std::string& selfArgsJson) {
+std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, const std::string& candidateHotkey,
+                                   const std::string& selfCommandId, const std::string& selfArgsJson) {
     ImGuiBugHotkey cand;
     if (!ParseImGuiHotkey(candidateHotkey, cand)) {
         return std::string(); // unparseable candidate -> nothing to conflict against
     }
     for (const Keybinding& b : bindings) {
         if (b.CommandId == selfCommandId && b.ArgsJson == selfArgsJson) {
-            continue; // the row being edited never conflicts with itself
+            continue; // the row being edited never conflicts with itself (nor its own aliases)
         }
-        if (!b.Enabled || b.Hotkey.empty()) {
-            continue; // disabled / unbound rows do not dispatch, so they can't collide
+        if (!b.Enabled) {
+            continue; // disabled rows do not dispatch, so they can't collide
         }
-        ImGuiBugHotkey existing;
-        if (!ParseImGuiHotkey(b.Hotkey, existing)) {
-            continue;
+        // Any ONE of an action's alternative combos colliding is a real conflict —
+        // every combo in the set dispatches.
+        for (std::size_t h = 0; h < b.Hotkeys.size(); ++h) {
+            ImGuiBugHotkey existing;
+            if (!ParseImGuiHotkey(b.Hotkeys[h], existing)) {
+                continue;
+            }
+            if (SameCombo(existing, cand)) {
+                return b.CommandId;
+            }
         }
-        if (existing.key == cand.key && existing.ctrl == cand.ctrl && existing.shift == cand.shift &&
-            existing.alt == cand.alt && existing.super == cand.super) {
-            return b.CommandId;
+    }
+    return std::string();
+}
+
+std::string FindKeybindingConflictForRow(const std::vector<Keybinding>& bindings, const Keybinding& row,
+                                         std::string& outOffendingCombo) {
+    outOffendingCombo.clear();
+    if (!row.Enabled) {
+        return std::string(); // a disabled action dispatches nothing, so nothing collides
+    }
+    for (std::size_t h = 0; h < row.Hotkeys.size(); ++h) {
+        const std::string conflict = FindKeybindingConflict(bindings, row.Hotkeys[h], row.CommandId, row.ArgsJson);
+        if (!conflict.empty()) {
+            outOffendingCombo = row.Hotkeys[h]; // name WHICH combo collides, not just the row
+            return conflict;
         }
     }
     return std::string();
@@ -165,7 +182,7 @@ bool QuickBindPopup::Draw(TrackerConfig& cfg) {
     if (pendingOpen_) {
         // Seed the draft from the action's current binding (empty if unbound).
         const int idx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
-        draft_ = (idx >= 0) ? cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey : std::string();
+        draft_ = (idx >= 0) ? cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() : std::string();
         capturing_ = false;
         ImGui::OpenPopup(kPopupId);
         pendingOpen_ = false;
@@ -189,6 +206,18 @@ bool QuickBindPopup::Draw(TrackerConfig& cfg) {
             ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s",
                                SmatchetLocalization::T("keybindings.quickbind.conflict", "Already bound to:"),
                                conflict.c_str());
+        }
+
+        // "Set" replaces the whole combo set, so an action carrying alternatives must
+        // say so before the user loses them here — the full editor is where a single
+        // alias is added or dropped.
+        const int rowIdx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
+        if (rowIdx >= 0 && cfg.Keybindings.Bindings[static_cast<std::size_t>(rowIdx)].Hotkeys.size() > 1U) {
+            const std::string all = BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, commandId_, argsJson_);
+            ImGui::TextColored(
+                ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%s %s",
+                SmatchetLocalization::T("keybindings.quickbind.replacesAll", "Set replaces every combo, currently:"),
+                all.c_str());
         }
 
         ImGui::Separator();

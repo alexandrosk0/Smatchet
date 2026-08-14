@@ -342,6 +342,56 @@ void MigrateQuickCreateKeybindingV1(const nlohmann::json& j, TrackerConfig& cfg)
     cfg.MigratedQuickCreateHotkeyV1 = true;
 }
 
+// One-shot migration: widen the zoom bindings from their single legacy combo to the
+// full alias set (Ctrl+= / Ctrl+Shift+= / Ctrl+NumAdd, etc). Needed for the same
+// replace-not-merge reason as the migrations above — from_json REPLACES the binding
+// table, so a config saved by a single-combo build keeps one combo per action and
+// would never see the new alternatives.
+//
+// Two deliberate divergences from MigrateMenuShortcutKeybindingsV1:
+//   (a) a row is widened ONLY while its combo set is still exactly the legacy default.
+//       A user who rebound or cleared Zoom In keeps their choice; they opt in through
+//       "Reset all to defaults". This also makes the migration idempotent twice over —
+//       after one run the set has 3 combos, so a re-run is a no-op even without the flag.
+//   (b) a MISSING row stays missing. V1 already seeded these rows, so absent here means
+//       the user deleted it; resurrecting it would undo that.
+void MigrateZoomHotkeyAliasesV1(const nlohmann::json& j, TrackerConfig& cfg) {
+    cfg.MigratedMultiHotkeyZoomV1 = j.value("migrated_multi_hotkey_zoom_v1", false);
+    if (cfg.MigratedMultiHotkeyZoomV1) {
+        return;
+    }
+    struct ZoomAlias {
+        const char* commandId;
+        const char* legacy;
+    };
+    static const ZoomAlias kZoom[] = {
+        {"ui.zoom.in", "Ctrl+="},
+        {"ui.zoom.out", "Ctrl+-"},
+        {"ui.zoom.reset", "Ctrl+0"},
+    };
+    const KeybindingsConfig defaults = KeybindingsConfig::Defaults();
+    int widened = 0;
+    for (const ZoomAlias& z : kZoom) {
+        const int idx = cfg.Keybindings.FindBindingIndex(z.commandId, "{}");
+        const int di = defaults.FindBindingIndex(z.commandId, "{}");
+        if (idx < 0 || di < 0) {
+            continue;
+        }
+        Keybinding& row = cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)];
+        if (row.Hotkeys.size() != 1U || row.Hotkeys[0] != z.legacy) {
+            continue; // customised or cleared — leave the user's choice alone
+        }
+        row.Hotkeys = defaults.Bindings[static_cast<std::size_t>(di)].Hotkeys;
+        ++widened;
+    }
+    if (widened > 0) {
+        LOG_INFO("ConfigManager: widened %d zoom keybinding(s) to their alias sets "
+                 "(migrated_multi_hotkey_zoom_v1)",
+                 widened);
+    }
+    cfg.MigratedMultiHotkeyZoomV1 = true;
+}
+
 // First-run Lua script consent gate. Hand-parsed (path + sha-256 objects) so the pure
 // LuaScriptConsent.h stays nlohmann-free. Malformed entries are skipped, not fatal.
 void LoadLuaConsentFields(const nlohmann::json& j, TrackerConfig& cfg) {
@@ -467,6 +517,10 @@ void LoadListFields(const nlohmann::json& j, TrackerConfig& cfg) {
     MigrateMenuShortcutKeybindingsV1(j, cfg);
     MigrateMenuShortcutKeybindingsV2(j, cfg);
     MigrateQuickCreateKeybindingV1(j, cfg);
+    // Last: the seeding migrations above pull straight from Defaults(), which already
+    // carries the alias sets, so a freshly-seeded row arrives complete and this one's
+    // exact-legacy-match guard correctly skips it.
+    MigrateZoomHotkeyAliasesV1(j, cfg);
 }
 
 // Route SMATCHET_TRACKER_TOKEN / SMATCHET_TRACKER_BASE_URL to the active backend's

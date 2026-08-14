@@ -33,7 +33,6 @@ struct ImGuiBugHotkey {
 /// '+' is the separator). Returns false (and leaves `out` partial) when no main
 /// key resolves or the string is empty. At most one main key; extra main keys ->
 /// the last one wins.
-///
 /// Two shifted spellings are accepted as INPUT and normalise to {shift, base key}
 /// on a US/ANSI layout, because that is the physical keystroke ImGui reports:
 /// '+' / "plus" -> Shift+'=' and '_' / "underscore" -> Shift+'-'. So "Ctrl++"
@@ -46,7 +45,6 @@ bool ParseImGuiHotkey(const std::string& spec, ImGuiBugHotkey& out);
 /// Modifiers emitted in fixed order (Ctrl, Shift, Alt, Super) then the main key.
 /// Returns "" when hk.key is ImGuiKey_None. Round-trips with ParseImGuiHotkey for
 /// every key the parser recognises (letters upper-cased: 'b' -> "B").
-///
 /// The shifted input spellings are deliberately NOT round-tripped verbatim: the
 /// canonical rendering of {ctrl, shift, Equal} is "Ctrl+Shift+=", not "Ctrl++".
 /// Store canonical strings (this function's output) in config, so the round-trip

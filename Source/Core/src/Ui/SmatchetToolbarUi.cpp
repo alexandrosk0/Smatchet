@@ -274,7 +274,9 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
                 std::string tip = b.Tooltip.empty() ? b.CommandId : b.Tooltip;
                 if (b.Kind == ToolbarButtonKind::Command && !b.CommandId.empty()) {
-                    const std::string combo = BoundHotkeyDisplay(cfg.Keybindings.Bindings, b.CommandId);
+                    // A hover tooltip has room for the whole alias set, unlike the menu
+                    // and palette shortcut columns — so surface every combo here.
+                    const std::string combo = BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, b.CommandId, "{}");
                     if (!combo.empty()) {
                         tip += "  (";
                         tip += combo;

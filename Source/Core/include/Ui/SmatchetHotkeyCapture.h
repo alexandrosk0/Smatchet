@@ -34,14 +34,13 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out);
 /// the canonical combo string to `out`. `capturing` is caller-owned persistent
 /// state; `idSuffix` disambiguates the button id when several controls share a
 /// frame. Returns true only on the commit frame.
-///
 /// `armLabel` picks the not-capturing rendering. Null (the default) keeps the
 /// display-text + "Click to rebind" pair. Non-null renders a single SmallButton
 /// carrying that label as the whole arm affordance — how the editor draws each
 /// combo chip (the chip's own combo string is the label, so clicking it rebinds
 /// that slot in place) and its "+ Add" button.
-bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out, const char* armLabel = nullptr);
+bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, bool& capturing, std::string& out,
+                             const char* armLabel = nullptr);
 
 /// True when any rebind control (editor row / quick-bind popup) was in capture mode
 /// this frame or the previous one. dispatchKeybindings consults this to stand down
@@ -50,14 +49,22 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
 /// grace covers draw order (the capture widget draws after dispatch runs).
 bool HotkeyCaptureArmedRecently();
 
-/// First binding in `bindings` whose parsed combo equals `candidateHotkey`'s,
-/// excluding the (selfCommandId, selfArgsJson) row being edited and any disabled /
-/// empty / unparseable binding. Returns the conflicting binding's CommandId, or ""
-/// when the combo is free. Shared conflict check for the editor + quick-bind popup.
-std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings,
-                                   const std::string& candidateHotkey,
-                                   const std::string& selfCommandId,
-                                   const std::string& selfArgsJson);
+/// First binding in `bindings` with ANY combo whose parsed form equals
+/// `candidateHotkey`'s, excluding the (selfCommandId, selfArgsJson) row being edited
+/// and any disabled / unparseable binding. Returns the conflicting binding's
+/// CommandId, or "" when the combo is free. Shared conflict check for the editor +
+/// quick-bind popup. Every alternative combo of an action dispatches, so any one of
+/// them colliding is a real conflict.
+std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, const std::string& candidateHotkey,
+                                   const std::string& selfCommandId, const std::string& selfArgsJson);
+
+/// Row-level variant: the first of `row`'s own combos that collides with another
+/// action, so a multi-combo editor row can name WHICH combo is the problem rather
+/// than flagging the whole row. Writes that combo to `outOffendingCombo` and returns
+/// the conflicting CommandId; both are empty when the row is clean. A disabled row
+/// never conflicts (it dispatches nothing).
+std::string FindKeybindingConflictForRow(const std::vector<Keybinding>& bindings, const Keybinding& row,
+                                         std::string& outOffendingCombo);
 
 /// Small modal owned by SmatchetUI. The toolbar / command-palette "Set shortcut..."
 /// context action calls Open() with a target command id; SmatchetUI calls Draw()

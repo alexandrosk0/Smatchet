@@ -60,6 +60,143 @@ bool RowMatchesFilter(const std::string& filterLower, const std::string& label, 
            PreferencesFilter::ContainsLower(hotkey, filterLower);
 }
 
+// Multi-combo overload: a row matches when the filter hits ANY of its combos. Loops
+// the set rather than joining it — no per-row allocation on a per-frame path.
+bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
+                      const std::vector<std::string>& hotkeys) {
+    if (filterLower.empty()) {
+        return true;
+    }
+    if (PreferencesFilter::ContainsLower(label, filterLower) ||
+        PreferencesFilter::ContainsLower(commandId, filterLower)) {
+        return true;
+    }
+    for (std::size_t i = 0; i < hotkeys.size(); ++i) {
+        if (PreferencesFilter::ContainsLower(hotkeys[i], filterLower)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The Shortcut cell for one action: a chip per alternative combo, then "+ Add".
+// Each chip's LABEL is its own rebind button (click it to re-capture that slot in
+// place), with an "x" beside it to drop the slot — so the one-click rebind the
+// single-combo row always had survives, it just now exists once per combo.
+// Returns true when the row's combo set changed this frame.
+//
+// `capturingKey` is the shared "which control holds capture" latch, scoped per SLOT
+// (rowKey + unit separator + slot) because a row now hosts several capture controls.
+bool DrawBindingCombosCell(IAppCommands& app, const std::vector<Keybinding>& allBinds, Keybinding& b,
+                           const std::string& rowKey, std::string& capturingKey) {
+    bool mutated = false;
+
+    // Deferred erase: dropping a chip mid-loop would invalidate both the iteration and
+    // ImGui's id sequence for the rest of the row.
+    int pendingRemove = -1;
+    for (std::size_t h = 0; h < b.Hotkeys.size(); ++h) {
+        ImGui::PushID(static_cast<int>(h));
+        const std::string slotKey = rowKey + "\x1f" + std::to_string(static_cast<unsigned long long>(h));
+        bool capturing = (capturingKey == slotKey);
+        std::string out = b.Hotkeys[h];
+        const bool committed =
+            smatchet::ui::DrawHotkeyRebindControl("kbchip", b.Hotkeys[h], capturing, out, b.Hotkeys[h].c_str());
+        if (capturing) {
+            capturingKey = slotKey; // this slot armed/holds capture
+        } else if (capturingKey == slotKey) {
+            capturingKey.clear(); // it just cancelled/committed
+        }
+        if (committed && !out.empty()) {
+            // Replace this slot, unless the captured combo already sits in another slot
+            // of the same row — then collapse rather than duplicate.
+            if (b.HasHotkey(out) && out != b.Hotkeys[h]) {
+                pendingRemove = static_cast<int>(h);
+            } else {
+                b.Hotkeys[h] = out;
+            }
+            b.Enabled = true; // committing a combo re-enables a disabled row
+            mutated = true;
+        }
+        if (!capturing) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("x###kbDropCombo")) {
+                pendingRemove = static_cast<int>(h);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("keybindings.editor.removeCombo", "Remove this combo"));
+            }
+        }
+        ImGui::SameLine();
+        ImGui::PopID();
+    }
+    if (pendingRemove >= 0) {
+        b.Hotkeys.erase(b.Hotkeys.begin() + static_cast<std::ptrdiff_t>(pendingRemove));
+        mutated = true;
+    }
+
+    // "+ Add" — an extra alternative for this action; the same capture control, armed
+    // from a labelled button instead of an existing combo.
+    {
+        const std::string addKey = rowKey + "\x1f"
+                                            "add";
+        bool capturing = (capturingKey == addKey);
+        std::string out;
+        const bool committed = smatchet::ui::DrawHotkeyRebindControl(
+            "kbadd", std::string(), capturing, out, SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
+        if (capturing) {
+            capturingKey = addKey;
+        } else if (capturingKey == addKey) {
+            capturingKey.clear();
+        }
+        if (committed && b.AddHotkey(out)) {
+            b.Enabled = true;
+            mutated = true;
+        }
+    }
+
+    // Warn-only conflict, naming WHICH combo collides — with several combos on a row,
+    // flagging the row alone would not say where to look.
+    std::string offending;
+    const std::string conflict = smatchet::ui::FindKeybindingConflictForRow(allBinds, b, offending);
+    if (!conflict.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s %s", offending.c_str(),
+                           SmatchetLocalization::T("keybindings.editor.conflict", "conflicts with"),
+                           CommandLabel(app, conflict).c_str());
+    }
+    return mutated;
+}
+
+// "Reset all to defaults" + its confirm modal. P2-M5: this tab autosaves (debounced
+// ~100 ms), so an unconfirmed reset makes the loss of every custom shortcut permanent
+// almost immediately. Returns true when the reset was confirmed this frame.
+bool DrawResetDefaultsConfirm(UiDrawSession& d, std::string& capturingKey) {
+    bool reset = false;
+    if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetDefaults", "Reset all to defaults"))) {
+        ImGui::OpenPopup("Reset keyboard shortcuts?###KbResetConfirm");
+    }
+    if (ImGui::BeginPopupModal("Reset keyboard shortcuts?###KbResetConfirm", nullptr,
+                               ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped(
+            "%s", SmatchetLocalization::Format("keybindings.editor.resetConfirm",
+                                               "Replace all %d shortcuts with the defaults? Custom bindings are "
+                                               "lost immediately (this tab saves automatically).",
+                                               static_cast<int>(d.cfg.Keybindings.Bindings.size())));
+        ImGui::Spacing();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"))) {
+            d.cfg.Keybindings = KeybindingsConfig::Defaults();
+            capturingKey.clear();
+            reset = true;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"))) {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+    return reset;
+}
+
 void DrawSystemShortcutRow(const char* label, const char* combo) {
     ImGui::Bullet();
     ImGui::TextUnformatted(label);
@@ -134,7 +271,7 @@ bool DrawAddCommandPopup(IAppCommands& app, std::vector<Keybinding>& binds) {
         if (ImGui::Selectable(label.c_str())) {
             Keybinding nb;
             nb.CommandId = c.Name;
-            nb.Hotkey.clear(); // unbound row — user captures the combo inline
+            nb.Hotkeys.clear(); // unbound row — user captures the combo inline
             nb.ArgsJson = "{}";
             nb.Enabled = true;
             binds.push_back(nb);
@@ -223,7 +360,7 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
         for (std::size_t i = 0; i < binds.size(); ++i) {
             Keybinding& b = binds[i];
             const std::string label = CommandLabel(app, b.CommandId);
-            if (!RowMatchesFilter(filterLower, label, b.CommandId, b.Hotkey)) {
+            if (!RowMatchesFilter(filterLower, label, b.CommandId, b.Hotkeys)) {
                 continue;
             }
             ImGui::TableNextRow();
@@ -237,27 +374,8 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
 
             ImGui::TableSetColumnIndex(1);
             const std::string rowKey = b.CommandId + "\x1f" + b.ArgsJson;
-            bool capturing = (capturingKey == rowKey);
-            std::string out = b.Hotkey;
-            const bool committed = smatchet::ui::DrawHotkeyRebindControl("kbrow", b.Hotkey, capturing, out);
-            if (capturing) {
-                capturingKey = rowKey; // this row armed/holds capture
-            } else if (capturingKey == rowKey) {
-                capturingKey.clear(); // it just cancelled/committed
-            }
-            if (committed) {
-                b.Hotkey = out;
-                b.Enabled = true; // committing a combo re-enables a disabled row
+            if (DrawBindingCombosCell(app, binds, b, rowKey, capturingKey)) {
                 mutated = true;
-            }
-            if (!b.Hotkey.empty() && b.Enabled) {
-                const std::string conflict =
-                    smatchet::ui::FindKeybindingConflict(binds, b.Hotkey, b.CommandId, b.ArgsJson);
-                if (!conflict.empty()) {
-                    ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s",
-                                       SmatchetLocalization::T("keybindings.editor.conflict", "conflicts with"),
-                                       CommandLabel(app, conflict).c_str());
-                }
             }
 
             ImGui::TableSetColumnIndex(2);
@@ -265,16 +383,21 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
                 mutated = true;
             }
             ImGui::SameLine();
-            const bool canClear = !b.Hotkey.empty();
+            const bool canClear = !b.Hotkeys.empty();
             if (!canClear) {
                 ImGui::BeginDisabled(true);
             }
             if (ImGui::SmallButton(SmatchetLocalization::T("keybindings.editor.clear", "Clear"))) {
-                b.Hotkey.clear(); // keep the row listed (unbound) so it stays rebindable
+                b.Hotkeys.clear(); // keep the row listed (unbound) so it stays rebindable
                 mutated = true;
             }
             if (!canClear) {
                 ImGui::EndDisabled();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                // Clear drops EVERY combo — worth saying now that a row can hold several.
+                ImGui::SetTooltip("%s", SmatchetLocalization::T("keybindings.editor.clearTooltip",
+                                                                "Remove every combo for this action"));
             }
 
             ImGui::PopID();
@@ -283,30 +406,8 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
     }
 
     ImGui::Spacing();
-    // P2-M5: this tab autosaves (debounced ~100 ms), so an unconfirmed reset makes the
-    // loss of every custom shortcut permanent almost immediately. Route through a confirm.
-    if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetDefaults", "Reset all to defaults"))) {
-        ImGui::OpenPopup("Reset keyboard shortcuts?###KbResetConfirm");
-    }
-    if (ImGui::BeginPopupModal("Reset keyboard shortcuts?###KbResetConfirm", nullptr,
-                               ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped(
-            "%s", SmatchetLocalization::Format("keybindings.editor.resetConfirm",
-                                               "Replace all %d shortcuts with the defaults? Custom bindings are "
-                                               "lost immediately (this tab saves automatically).",
-                                               static_cast<int>(d.cfg.Keybindings.Bindings.size())));
-        ImGui::Spacing();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmYes", "Reset to defaults"))) {
-            d.cfg.Keybindings = KeybindingsConfig::Defaults();
-            capturingKey.clear();
-            mutated = true;
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.resetConfirmNo", "Keep my shortcuts"))) {
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+    if (DrawResetDefaultsConfirm(d, capturingKey)) {
+        mutated = true;
     }
     ImGui::SameLine();
     if (ImGui::Button(SmatchetLocalization::T("keybindings.editor.addCommand", "Add shortcut for a command..."))) {
@@ -370,7 +471,8 @@ bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d) {
     const std::string filterLower = PreferencesFilter::ToLowerFold(std::string(d.prefsSearchBuf));
     const std::vector<Keybinding>& binds = d.cfg.Keybindings.Bindings;
     for (std::size_t i = 0; i < binds.size(); ++i) {
-        if (RowMatchesFilter(filterLower, CommandLabel(app, binds[i].CommandId), binds[i].CommandId, binds[i].Hotkey)) {
+        if (RowMatchesFilter(filterLower, CommandLabel(app, binds[i].CommandId), binds[i].CommandId,
+                             binds[i].Hotkeys)) {
             return true;
         }
     }
