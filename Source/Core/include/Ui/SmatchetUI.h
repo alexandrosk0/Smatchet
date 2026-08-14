@@ -186,12 +186,24 @@ class SmatchetUI {
     // Disabled / unparseable bindings are dropped at build time so the per-frame
     // dispatch loop only walks valid entries. ArgsJson is kept as text and parsed at
     // dispatch (cold path: only when a hotkey actually fires).
+    //
+    // FLAT: one entry per COMBO, not per binding — an action with several alternative
+    // combos contributes one entry each, all carrying the same actionIndex. Keeping
+    // the loop flat means the per-frame cost stays "N bool compares + IsKeyPressed"
+    // with no inner loop.
     struct ParsedKeybinding {
         smatchet::ui::ImGuiBugHotkey hk;
         std::string commandId;
         std::string argsJson;
+        int actionIndex = -1; // index into cfg.Keybindings.Bindings of the owning action
     };
     std::vector<ParsedKeybinding> keybindingCache_;
+    // Per-action frame stamp of the last dispatch, sized at cache-rebuild time (never
+    // per frame) and written only on a match. Two alias combos of the SAME action can
+    // land in one frame (Ctrl held while both '=' and keypad '+' arrive), and the
+    // dispatch loop deliberately does not break on a match — without this the action
+    // would fire twice. Distinct actions sharing a keystroke still all fire.
+    std::vector<int> actionLastFiredFrame_;
     bool keybindingCacheDirty_ = true;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);

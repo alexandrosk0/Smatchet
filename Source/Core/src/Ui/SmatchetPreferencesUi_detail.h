@@ -81,6 +81,17 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
 /// SmatchetPreferencesUi_Keybindings.cpp.
 void ResetKeybindingsCaptureState();
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+/// Bucket-E seam onto the Keyboard Shortcuts page's combo-chip cell (one clickable
+/// chip per alternative combo + "+ Add"). The real cell renders inside the docked
+/// Preferences window's clipped content region, where ItemClick is unreliable in the
+/// headless suite, so the UI test hosts THIS function in a floating replica window —
+/// exercising the shipped chip layout rather than a copy of it. `capturingKey` is the
+/// caller-owned "which slot holds capture" latch. Defined in
+/// SmatchetPreferencesUi_Keybindings.cpp; ui-tests builds only.
+bool DrawKeybindingCombosCellForTest(Keybinding& b, const std::string& rowKey, std::string& capturingKey);
+#endif
+
 /// Maps the persisted cfg.DateFormatOption string to the Combo index used by the
 /// Appearance tab's "Date Format Style" dropdown. Unknown / "compact" → 0. Pure —
 /// no ImGui / no session state — so it is bucket-A testable in isolation.

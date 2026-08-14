@@ -20,8 +20,8 @@ namespace smatchet {
 namespace ui {
 
 /// Scan the current ImGui input frame for the first *bindable* non-modifier key
-/// press — restricted to the keys StringifyImGuiHotkey can render (A-Z, 0-9,
-/// F1-F12, Comma, Space, Enter) so a captured combo always round-trips through
+/// press — the set is BindableImGuiKeys() (Ui/ImGuiHotkey.h), i.e. exactly the keys
+/// StringifyImGuiHotkey can render, so a captured combo always round-trips through
 /// Parse/Stringify. On a hit, snapshot the live modifier state (Ctrl/Shift/Alt/
 /// Super) into `out` and return true. Modifier-only / no-key frames return false —
 /// a combo is not committed until a real key lands. No auto-repeat.
@@ -34,8 +34,13 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out);
 /// the canonical combo string to `out`. `capturing` is caller-owned persistent
 /// state; `idSuffix` disambiguates the button id when several controls share a
 /// frame. Returns true only on the commit frame.
-bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out);
+/// `armLabel` picks the not-capturing rendering. Null (the default) keeps the
+/// display-text + "Click to rebind" pair. Non-null renders a single SmallButton
+/// carrying that label as the whole arm affordance — how the editor draws each
+/// combo chip (the chip's own combo string is the label, so clicking it rebinds
+/// that slot in place) and its "+ Add" button.
+bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, bool& capturing, std::string& out,
+                             const char* armLabel = nullptr);
 
 /// True when any rebind control (editor row / quick-bind popup) was in capture mode
 /// this frame or the previous one. dispatchKeybindings consults this to stand down
@@ -44,14 +49,27 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
 /// grace covers draw order (the capture widget draws after dispatch runs).
 bool HotkeyCaptureArmedRecently();
 
-/// First binding in `bindings` whose parsed combo equals `candidateHotkey`'s,
-/// excluding the (selfCommandId, selfArgsJson) row being edited and any disabled /
-/// empty / unparseable binding. Returns the conflicting binding's CommandId, or ""
-/// when the combo is free. Shared conflict check for the editor + quick-bind popup.
-std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings,
-                                   const std::string& candidateHotkey,
-                                   const std::string& selfCommandId,
-                                   const std::string& selfArgsJson);
+/// First binding in `bindings` with ANY combo whose parsed form equals
+/// `candidateHotkey`'s, excluding the (selfCommandId, selfArgsJson) row being edited
+/// and any disabled / unparseable binding. Returns the conflicting binding's
+/// CommandId, or "" when the combo is free. Shared conflict check for the editor +
+/// quick-bind popup. Every alternative combo of an action dispatches, so any one of
+/// them colliding is a real conflict.
+std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, const std::string& candidateHotkey,
+                                   const std::string& selfCommandId, const std::string& selfArgsJson);
+
+/// Whole-table variant for the editor: one pass computing, for EVERY row i, the
+/// first of its combos that collides with another enabled action
+/// (outOffendingCombos[i]) and that action's CommandId (outConflictCommandIds[i]);
+/// both "" when clean. A disabled row never conflicts (it dispatches nothing).
+/// The editor calls this once per frame instead of a per-row lookup: conflicts
+/// depend on every row's parsed combos, so a per-row scan re-parsed the whole
+/// table for each visible row (~rows x combos string parses per frame against the
+/// 6.94 ms budget) — here every combo is parsed exactly once and the pairwise
+/// check compares PODs.
+void ComputeKeybindingRowConflicts(const std::vector<Keybinding>& bindings,
+                                   std::vector<std::string>& outConflictCommandIds,
+                                   std::vector<std::string>& outOffendingCombos);
 
 /// Small modal owned by SmatchetUI. The toolbar / command-palette "Set shortcut..."
 /// context action calls Open() with a target command id; SmatchetUI calls Draw()

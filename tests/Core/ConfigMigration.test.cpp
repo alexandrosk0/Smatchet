@@ -384,7 +384,10 @@ TEST_CASE("ConfigMigration menu shortcuts: seeds the new bindings into a pre-exi
     // The Ctrl+= → ui.zoom.in default binding (the marquee "Zoom In" symptom) is restored on its key.
     const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkey == "Ctrl+=");
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].PrimaryHotkey() == "Ctrl+=");
+    // V1 seeds whole rows straight from Defaults(), so a row seeded here arrives with the
+    // full alias set already — the later zoom-alias migration has nothing left to widen.
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 3);
 
     // Pre-existing bindings survive the seed (append-only — the migration never clobbers the table).
     CHECK(cfg.Keybindings.FindBindingIndex("app.dock_debug.toggle", "{}") >= 0);
@@ -407,7 +410,7 @@ TEST_CASE("ConfigMigration menu shortcuts: respects a user rebind of a new comma
     CHECK(CountCommand(cfg.Keybindings, "ui.zoom.in") == 1); // not duplicated
     const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
     REQUIRE(zi >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkey == "Ctrl+Up"); // user key kept
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].PrimaryHotkey() == "Ctrl+Up"); // user key kept
     // The other new defaults are still seeded alongside the preserved rebind.
     CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}") >= 0);
 }
@@ -443,7 +446,7 @@ TEST_CASE("ConfigMigration menu shortcuts v2: seeds the Notifications reveal int
     CHECK(cfg.MigratedMenuShortcutsV2 == true);
     const int ni = cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}");
     REQUIRE(ni >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].Hotkey == "Ctrl+Shift+Y");
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].PrimaryHotkey() == "Ctrl+Shift+Y");
     // V1's own seeds are untouched by V2 running after it on the same load.
     CHECK(cfg.MigratedMenuShortcutsV1 == true);
 }
@@ -466,7 +469,7 @@ TEST_CASE("ConfigMigration menu shortcuts v2: renames a legacy `notifications` b
     CHECK(CountCommand(cfg.Keybindings, "view.toggle.notifications") == 1);
     const int ni = cfg.Keybindings.FindBindingIndex("view.toggle.notifications", "{\"action\":\"show\"}");
     REQUIRE(ni >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].Hotkey == "Ctrl+Alt+N"); // user key kept
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(ni)].PrimaryHotkey() == "Ctrl+Alt+N"); // user key kept
 }
 
 TEST_CASE("ConfigMigration menu shortcuts v2: flag set on disk skips the seed (cleared stays cleared)") {
@@ -530,7 +533,7 @@ TEST_CASE("ConfigMigration quick-create: seeds Ctrl+Shift+T into a pre-existing 
     CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
     const int idx = cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}");
     REQUIRE(idx >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey == "Ctrl+Shift+T");
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() == "Ctrl+Shift+T");
     // Pre-existing bindings survive (append-only).
     CHECK(cfg.Keybindings.FindBindingIndex("view.sidebar.primary", "{\"action\":\"toggle\"}") >= 0);
 }
@@ -548,7 +551,7 @@ TEST_CASE("ConfigMigration quick-create: respects a user rebind (no duplicate, k
     CHECK(CountCommand(cfg.Keybindings, "issue.quick_create.open") == 1);
     const int idx = cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}");
     REQUIRE(idx >= 0);
-    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey == "Ctrl+Shift+Q");
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() == "Ctrl+Shift+Q");
 }
 
 TEST_CASE("ConfigMigration quick-create: flag set on disk skips the seed (cleared stays cleared)") {
@@ -563,4 +566,119 @@ TEST_CASE("ConfigMigration quick-create: flag set on disk skips the seed (cleare
 
     CHECK(cfg.MigratedQuickCreateHotkeyV1 == true);
     CHECK(cfg.Keybindings.FindBindingIndex("issue.quick_create.open", "{}") < 0); // not resurrected
+}
+
+// --- multi-combo zoom aliases (docs/plans/keybindings-multi-combo.md) ------------
+// from_json REPLACES the binding table, so a config saved by a single-combo build
+// keeps one combo per zoom action and would never receive the new alternatives.
+// MigrateZoomHotkeyAliasesV1 widens ONLY a row still carrying exactly the legacy
+// default, so a user's own zoom key survives untouched.
+
+TEST_CASE("ConfigMigration zoom aliases: widens the legacy single-combo zoom defaults") {
+    smatchet_tests::TestEnvGuard env;
+    // A config saved by a build that had the zoom bindings but not the alias sets. The
+    // earlier seed migrations are already flagged done, so this one acts alone.
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkey":"Ctrl+-","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.reset","hotkey":"Ctrl+0","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV1 == true);
+
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    const Keybinding& zoomIn = cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 3);
+    CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
+    CHECK(zoomIn.Hotkeys[1] == "Ctrl+Shift+="); // "Ctrl and +" on a US layout
+    CHECK(zoomIn.Hotkeys[2] == "Ctrl+NumAdd");  // layout-independent keypad
+
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.size() == 2);
+
+    const int zr = cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}");
+    REQUIRE(zr >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zr)].Hotkeys.size() == 2);
+
+    // One row per action — widening adds combos, never rows.
+    CHECK(CountCommand(cfg.Keybindings, "ui.zoom.in") == 1);
+}
+
+TEST_CASE("ConfigMigration zoom aliases: a rebound or cleared zoom row is left alone") {
+    smatchet_tests::TestEnvGuard env;
+    // Zoom In moved to the user's own key; Zoom Out deliberately cleared. Neither is
+    // the legacy default any more, so neither may be widened behind the user's back —
+    // they opt in through "Reset all to defaults".
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+Up","args_json":"{}","enabled":true},
+        {"command_id":"ui.zoom.out","hotkey":"","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV1 == true);
+
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    REQUIRE(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 1);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys[0] == "Ctrl+Up");
+
+    const int zo = cfg.Keybindings.FindBindingIndex("ui.zoom.out", "{}");
+    REQUIRE(zo >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zo)].Hotkeys.empty()); // stays cleared
+
+    // A row the user deleted stays deleted — unlike the seeding migrations, this one
+    // never resurrects a missing action.
+    CHECK(cfg.Keybindings.FindBindingIndex("ui.zoom.reset", "{}") < 0);
+}
+
+TEST_CASE("ConfigMigration zoom aliases: flag set on disk skips the widen") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"migrated_multi_hotkey_zoom_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig cfg = ConfigManager::Load();
+
+    CHECK(cfg.MigratedMultiHotkeyZoomV1 == true);
+    const int zi = cfg.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    CHECK(cfg.Keybindings.Bindings[static_cast<std::size_t>(zi)].Hotkeys.size() == 1);
+}
+
+TEST_CASE("ConfigMigration zoom aliases: survive a Save -> Load round-trip without growing") {
+    smatchet_tests::TestEnvGuard env;
+    const std::string pre =
+        R"json({"tracker_type":"Jira","migrated_menu_shortcuts_v1":true,"migrated_menu_shortcuts_v2":true,
+        "migrated_quick_create_hotkey_v1":true,"keybindings":{"bindings":[
+        {"command_id":"ui.zoom.in","hotkey":"Ctrl+=","args_json":"{}","enabled":true}
+    ]}})json";
+    WriteConfigRaw(env, pre);
+
+    const TrackerConfig migrated = ConfigManager::Load();
+    REQUIRE(migrated.Keybindings.Bindings.size() >= 1);
+    ConfigManager::Save(migrated);
+
+    // The dual-written legacy `hotkey` scalar duplicates hotkeys[0], so the reader must
+    // de-dup or every save/load cycle would grow the set.
+    const TrackerConfig reloaded = ConfigManager::Load();
+    const int zi = reloaded.Keybindings.FindBindingIndex("ui.zoom.in", "{}");
+    REQUIRE(zi >= 0);
+    const Keybinding& zoomIn = reloaded.Keybindings.Bindings[static_cast<std::size_t>(zi)];
+    REQUIRE(zoomIn.Hotkeys.size() == 3);
+    CHECK(zoomIn.Hotkeys[0] == "Ctrl+=");
+    CHECK(zoomIn.Hotkeys[2] == "Ctrl+NumAdd");
 }

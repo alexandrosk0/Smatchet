@@ -13,30 +13,16 @@ namespace ui {
 
 namespace {
 
-// The keys the parser/stringifier round-trip (see ImGuiHotkey.cpp KeyFromToken):
-// letters, digits, F-keys are contiguous in imgui so we scan by range; the three
-// punctuation keys are listed explicitly. Anything outside this set is rejected so
-// a captured combo always survives Stringify -> Parse.
+// Scan the grammar's own bindable-key set (ImGuiHotkey.h BindableImGuiKeys) rather
+// than a hand-written list here: every key it yields round-trips Stringify -> Parse,
+// so a captured combo can always be stored and re-read. Deriving the set from the
+// grammar is what lets '=', '-' and the keypad become capturable the moment the
+// grammar learns them — a local copy would have silently kept rejecting them.
 ImGuiKey FirstBindableKeyPressedThisFrame() {
-    for (ImGuiKey k = ImGuiKey_A; k <= ImGuiKey_Z; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    for (ImGuiKey k = ImGuiKey_0; k <= ImGuiKey_9; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    for (ImGuiKey k = ImGuiKey_F1; k <= ImGuiKey_F12; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    const ImGuiKey kExtras[] = {ImGuiKey_Comma, ImGuiKey_Space, ImGuiKey_Enter};
-    for (ImGuiKey k : kExtras) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
+    const std::vector<ImGuiKey>& bindable = BindableImGuiKeys();
+    for (std::size_t i = 0; i < bindable.size(); ++i) {
+        if (ImGui::IsKeyPressed(bindable[i], /*repeat*/ false)) {
+            return bindable[i];
         }
     }
     return ImGuiKey_None;
@@ -77,22 +63,29 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
     return true;
 }
 
-bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out) {
+bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display, bool& capturing, std::string& out,
+                             const char* armLabel) {
     bool committed = false;
     // Function-scoped (one rebind control captures at a time): the arm click below must
     // clear a warning left over from a capture that ended OUTSIDE this function (tab
     // switch clearing the caller's `capturing`, or the quick-bind popup reopening).
     static bool s_showNeedsModifierWarning = false;
     if (!capturing) {
-        if (display.empty()) {
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.unbound", "(unbound)"));
-        } else {
-            ImGui::TextUnformatted(display.c_str());
+        // armLabel non-null: the label IS the arm button (combo chip / "+ Add"). Null:
+        // the original display-text + "Click to rebind" pair, whose button label and id
+        // must stay byte-identical — bucket-E addresses it by that exact string.
+        if (armLabel == nullptr) {
+            if (display.empty()) {
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.unbound", "(unbound)"));
+            } else {
+                ImGui::TextUnformatted(display.c_str());
+            }
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
         const std::string btnId =
-            std::string(SmatchetLocalization::T("keybindings.editor.rebindButton", "Click to rebind")) +
+            std::string(armLabel != nullptr
+                            ? armLabel
+                            : SmatchetLocalization::T("keybindings.editor.rebindButton", "Click to rebind")) +
             "##rebind" + (idSuffix != nullptr ? idSuffix : "");
         if (ImGui::SmallButton(btnId.c_str())) {
             capturing = true;
@@ -130,31 +123,84 @@ bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
     return committed;
 }
 
-std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings,
-                                   const std::string& candidateHotkey,
-                                   const std::string& selfCommandId,
-                                   const std::string& selfArgsJson) {
+std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, const std::string& candidateHotkey,
+                                   const std::string& selfCommandId, const std::string& selfArgsJson) {
     ImGuiBugHotkey cand;
     if (!ParseImGuiHotkey(candidateHotkey, cand)) {
         return std::string(); // unparseable candidate -> nothing to conflict against
     }
     for (const Keybinding& b : bindings) {
         if (b.CommandId == selfCommandId && b.ArgsJson == selfArgsJson) {
-            continue; // the row being edited never conflicts with itself
+            continue; // the row being edited never conflicts with itself (nor its own aliases)
         }
-        if (!b.Enabled || b.Hotkey.empty()) {
-            continue; // disabled / unbound rows do not dispatch, so they can't collide
+        if (!b.Enabled) {
+            continue; // disabled rows do not dispatch, so they can't collide
         }
-        ImGuiBugHotkey existing;
-        if (!ParseImGuiHotkey(b.Hotkey, existing)) {
-            continue;
-        }
-        if (existing.key == cand.key && existing.ctrl == cand.ctrl && existing.shift == cand.shift &&
-            existing.alt == cand.alt && existing.super == cand.super) {
-            return b.CommandId;
+        // Any ONE of an action's alternative combos colliding is a real conflict —
+        // every combo in the set dispatches.
+        for (std::size_t h = 0; h < b.Hotkeys.size(); ++h) {
+            ImGuiBugHotkey existing;
+            if (!ParseImGuiHotkey(b.Hotkeys[h], existing)) {
+                continue;
+            }
+            if (SameCombo(existing, cand)) {
+                return b.CommandId;
+            }
         }
     }
     return std::string();
+}
+
+void ComputeKeybindingRowConflicts(const std::vector<Keybinding>& bindings,
+                                   std::vector<std::string>& outConflictCommandIds,
+                                   std::vector<std::string>& outOffendingCombos) {
+    const std::size_t n = bindings.size();
+    outConflictCommandIds.assign(n, std::string());
+    outOffendingCombos.assign(n, std::string());
+
+    // Parse every enabled row's combos exactly once. `specIndex` remembers which
+    // Hotkeys entry each parsed struct came from, so the offending-combo report
+    // names the user's spelling even when some of a row's combos failed to parse.
+    struct ParsedRow {
+        std::vector<ImGuiBugHotkey> combos;
+        std::vector<std::size_t> specIndex;
+    };
+    std::vector<ParsedRow> parsed(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!bindings[i].Enabled) {
+            continue; // a disabled action dispatches nothing: neither collides nor is collided with
+        }
+        for (std::size_t h = 0; h < bindings[i].Hotkeys.size(); ++h) {
+            ImGuiBugHotkey hk;
+            if (ParseImGuiHotkey(bindings[i].Hotkeys[h], hk)) {
+                parsed[i].combos.push_back(hk);
+                parsed[i].specIndex.push_back(h);
+            }
+        }
+    }
+
+    // Pairwise POD compares, preserving the per-row report order the old lookup had:
+    // for each row, its FIRST offending combo (in Hotkeys order) against the FIRST
+    // colliding action (in table order) wins.
+    for (std::size_t i = 0; i < n; ++i) {
+        bool found = false;
+        for (std::size_t k = 0; !found && k < parsed[i].combos.size(); ++k) {
+            for (std::size_t j = 0; !found && j < n; ++j) {
+                if (j == i ||
+                    (bindings[j].CommandId == bindings[i].CommandId && bindings[j].ArgsJson == bindings[i].ArgsJson)) {
+                    continue; // a row never conflicts with itself (nor its own aliases)
+                }
+                for (std::size_t m = 0; m < parsed[j].combos.size(); ++m) {
+                    if (SameCombo(parsed[i].combos[k], parsed[j].combos[m])) {
+                        outConflictCommandIds[i] = bindings[j].CommandId;
+                        outOffendingCombos[i] = bindings[i].Hotkeys[parsed[i].specIndex[k]];
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 void QuickBindPopup::Open(const std::string& commandId, const std::string& displayName,
@@ -172,7 +218,7 @@ bool QuickBindPopup::Draw(TrackerConfig& cfg) {
     if (pendingOpen_) {
         // Seed the draft from the action's current binding (empty if unbound).
         const int idx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
-        draft_ = (idx >= 0) ? cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].Hotkey : std::string();
+        draft_ = (idx >= 0) ? cfg.Keybindings.Bindings[static_cast<std::size_t>(idx)].PrimaryHotkey() : std::string();
         capturing_ = false;
         ImGui::OpenPopup(kPopupId);
         pendingOpen_ = false;
@@ -196,6 +242,22 @@ bool QuickBindPopup::Draw(TrackerConfig& cfg) {
             ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s",
                                SmatchetLocalization::T("keybindings.quickbind.conflict", "Already bound to:"),
                                conflict.c_str());
+        }
+
+        // "Set" replaces the whole combo set, so an action carrying alternatives must
+        // say so before the user loses them here — the full editor is where a single
+        // alias is added or dropped. Resolve the display FIRST: BoundHotkeyDisplayAll
+        // skips disabled rows, so a disabled multi-combo action yields "" and the
+        // size gate alone would print the label trailed by nothing.
+        const int rowIdx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
+        if (rowIdx >= 0 && cfg.Keybindings.Bindings[static_cast<std::size_t>(rowIdx)].Hotkeys.size() > 1U) {
+            const std::string all = BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, commandId_, argsJson_);
+            if (!all.empty()) {
+                ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%s %s",
+                                   SmatchetLocalization::T("keybindings.quickbind.replacesAll",
+                                                           "Set replaces every combo, currently:"),
+                                   all.c_str());
+            }
         }
 
         ImGui::Separator();

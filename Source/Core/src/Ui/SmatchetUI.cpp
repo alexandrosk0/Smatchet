@@ -901,29 +901,41 @@ extern "C" void SmatchetUiTestMarkKeybindingsDirty() {
 #endif
 
 // Rebuilds keybindingCache_ from cfg.Keybindings: parses each enabled binding's hotkey
-// string once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
+// strings once, drops disabled / unparseable entries, and keeps ArgsJson as text (parsed
 // lazily at dispatch — only when a hotkey actually fires). Cleared + rebuilt whenever
 // keybindingCacheDirty_ is set: once after config load (drawInitConfigOnce) and on any
 // future editor save. Runs on the UI thread.
+//
+// A binding's alternative combos are FLATTENED into one cache entry each (all tagged
+// with the binding's index) so the per-frame loop stays flat; an unparseable combo is
+// skipped individually, leaving its siblings live.
 void SmatchetUI::rebuildKeybindingCache(UiDrawSession& d) {
     keybindingCache_.clear();
-    keybindingCache_.reserve(d.cfg.Keybindings.Bindings.size());
+    size_t comboCount = 0;
+    for (size_t i = 0; i < d.cfg.Keybindings.Bindings.size(); ++i) {
+        comboCount += d.cfg.Keybindings.Bindings[i].Hotkeys.size();
+    }
+    keybindingCache_.reserve(comboCount);
+    actionLastFiredFrame_.assign(d.cfg.Keybindings.Bindings.size(), -1);
     for (size_t i = 0; i < d.cfg.Keybindings.Bindings.size(); ++i) {
         const Keybinding& b = d.cfg.Keybindings.Bindings[i];
         if (!b.Enabled) {
             continue;
         }
-        smatchet::ui::ImGuiBugHotkey hk;
-        if (!smatchet::ui::ParseImGuiHotkey(b.Hotkey, hk)) {
-            LOG_WARN("Keybindings: skipping unparseable hotkey \"%s\" for command \"%s\".", b.Hotkey.c_str(),
-                     b.CommandId.c_str());
-            continue;
+        for (size_t h = 0; h < b.Hotkeys.size(); ++h) {
+            smatchet::ui::ImGuiBugHotkey hk;
+            if (!smatchet::ui::ParseImGuiHotkey(b.Hotkeys[h], hk)) {
+                LOG_WARN("Keybindings: skipping unparseable hotkey \"%s\" for command \"%s\".", b.Hotkeys[h].c_str(),
+                         b.CommandId.c_str());
+                continue;
+            }
+            ParsedKeybinding pk;
+            pk.hk = hk;
+            pk.commandId = b.CommandId;
+            pk.argsJson = b.ArgsJson;
+            pk.actionIndex = static_cast<int>(i);
+            keybindingCache_.push_back(std::move(pk));
         }
-        ParsedKeybinding pk;
-        pk.hk = hk;
-        pk.commandId = b.CommandId;
-        pk.argsJson = b.ArgsJson;
-        keybindingCache_.push_back(std::move(pk));
     }
     keybindingCacheDirty_ = false;
 }
@@ -955,6 +967,7 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
     if (smatchet::ui::HotkeyCaptureArmedRecently()) {
         return;
     }
+    const int frame = ::ImGui::GetFrameCount();
     for (size_t i = 0; i < keybindingCache_.size(); ++i) {
         const ParsedKeybinding& pk = keybindingCache_[i];
         if (!smatchet::ui::MatchHotkey(io, pk.hk)) {
@@ -966,6 +979,19 @@ void SmatchetUI::dispatchKeybindings(AppController& app, UiDrawSession& d) {
             pk.hk.ctrl || pk.hk.alt || pk.hk.super || (pk.hk.key >= ImGuiKey_F1 && pk.hk.key <= ImGuiKey_F12);
         if (!typingSafe && io.WantTextInput) {
             continue;
+        }
+        // Alias de-dup: an action's alternative combos are separate cache entries and
+        // two of them can match in the same frame (Ctrl held while both '=' and the
+        // keypad '+' arrive), which would otherwise zoom twice. Fire each action at
+        // most once per frame; distinct actions on one keystroke still all fire, since
+        // the loop deliberately does not break. Ahead of the palette pseudo-binding so
+        // that cannot double-toggle either.
+        if (pk.actionIndex >= 0 && pk.actionIndex < static_cast<int>(actionLastFiredFrame_.size())) {
+            const std::size_t ai = static_cast<std::size_t>(pk.actionIndex);
+            if (actionLastFiredFrame_[ai] == frame) {
+                continue;
+            }
+            actionLastFiredFrame_[ai] = frame;
         }
         // Pseudo-binding: the command palette is a UI widget, not a registry command.
         // Toggle it directly, gated exactly like the pre-migration Ctrl+Shift+P path.
@@ -1250,13 +1276,8 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     ::ImGui::Begin("##DockDebug", nullptr, kDbgFlags);
     // Resolve the live hotkey bound to app.dock_debug.toggle so the hint stays correct
     // after a rebind (default Ctrl+Alt+D); show no key if the user disabled the binding.
-    std::string dbgHotkey;
-    for (const Keybinding& b : d.cfg.Keybindings.Bindings) {
-        if (b.Enabled && b.CommandId == "app.dock_debug.toggle") {
-            dbgHotkey = b.Hotkey;
-            break;
-        }
-    }
+    // Shares the one display lookup every other surface uses (menus, palette, toolbar).
+    const std::string dbgHotkey = BoundHotkeyDisplay(d.cfg.Keybindings.Bindings, "app.dock_debug.toggle");
     if (dbgHotkey.empty()) {
         ::ImGui::TextDisabled("Dock Node Debug");
     } else {
