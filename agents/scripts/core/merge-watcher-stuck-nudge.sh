@@ -9,6 +9,16 @@
 #   --list   (default) plain "stuck: PR #N — <reason> (<streak> cycles)" lines.
 #   --nudge  SessionStart-formatted block (silent when nothing is stuck).
 #
+# Also detects daemon ABSENCE (merge-watcher-liveness-unmonitored, infra P2):
+# the per-PR state files this script reads are written BY the daemon, so a
+# daemon that never starts (or dies later) is silent by construction — with
+# PRs registered, that silence means throughput stopped with no signal. When
+# the registry is non-empty and the freshest daemon evidence (any per-PR
+# last_poll_unix, or daemon.log mtime) is older than
+# MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS (default 300 = 5 poll intervals) —
+# or there is no evidence at all for a PR registered longer ago than that —
+# a "daemon looks DEAD" nudge fires alongside any STUCK lines.
+#
 # Mirrors postmortem-owed.sh: deterministic read of the watcher state, no action.
 # Advisory — never blocks. Exit 0 always (even without python; degrades silent).
 set -euo pipefail
@@ -37,7 +47,7 @@ done
 [ -n "$PYBIN" ] || exit 0
 
 "$PYBIN" - "$MODE" "$SCRIPT_DIR" <<'PY'
-import importlib.util, json, os, sys
+import importlib.util, json, math, os, sys, time
 
 mode, sd = sys.argv[1], sys.argv[2]
 # Import merge-watcher-cli.py for its watcher_root()/state_dir()/read_registry()
@@ -50,10 +60,43 @@ try:
     spec.loader.exec_module(cli)
     state_dir = cli.state_dir()
     entries = cli.read_registry()
+    root = cli.watcher_root()
 except Exception:
     sys.exit(0)
 
+# Daemon-absence grace: freshest daemon evidence older than this (or no
+# evidence at all for an entry registered longer ago than this) = dead.
+# Default 5 × the 60 s poll interval, so a slow poll never false-alarms.
+try:
+    grace = int(os.environ.get("MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS", "300"))
+except ValueError:
+    grace = 300
+now = time.time()
+
 stuck = []
+evidence = []       # unix timestamps proving the daemon has run recently
+missing_state = []  # PRs registered > grace ago with NO state file at all
+
+
+def add_evidence(ts):
+    # Finite-and-not-future only, for EVERY evidence source: a future value
+    # (json Infinity, corrupted timestamp, clock-skewed/utime'd mtime) would
+    # win max(evidence) and mask a dead daemon forever. Dropping bogus
+    # values degrades to silence at worst, never to a false "alive".
+    try:
+        ts = float(ts)
+    except (TypeError, ValueError):
+        return
+    if math.isfinite(ts) and ts <= now:
+        evidence.append(ts)
+
+
+log_file = root / "daemon.log"
+try:
+    if log_file.exists():
+        add_evidence(log_file.stat().st_mtime)
+except OSError:
+    pass
 for e in entries:
     try:
         pr = int(e.get("pr", -1))
@@ -62,32 +105,87 @@ for e in entries:
     sf = state_dir / f"{pr}.json"
     last_state = ""
     if sf.exists():
+        # The file's existence is itself daemon evidence (only the daemon
+        # writes these): count its mtime even when the JSON is unreadable, so
+        # an all-corrupt state dir cannot silence the absence check entirely.
         try:
-            last_state = json.loads(sf.read_text(encoding="utf-8")).get("last_state", "")
+            add_evidence(sf.stat().st_mtime)
+        except OSError:
+            pass
+        try:
+            st = json.loads(sf.read_text(encoding="utf-8"))
+            last_state = st.get("last_state", "")
         except Exception:
+            st = {}
             last_state = ""
+        # Guarded separately: a garbage last_poll_unix must not clobber a
+        # validly-read last_state (the float() used to share the parse try,
+        # so a bad timestamp silently dropped a STUCK PR from the nudge).
+        # add_evidence enforces finite-and-not-future (CR review, PR #2007).
+        add_evidence(st.get("last_poll_unix", 0) or 0)
+    else:
+        try:
+            registered_at = float(e.get("registered_at", 0) or 0)
+        except (TypeError, ValueError):
+            registered_at = 0.0
+        if (now - registered_at) > grace:
+            missing_state.append(pr)
     # An ESCALATED wedge is the authoritative signal: the per-PR state file's
     # last_state == STUCK_NEEDS_ATTENTION (the registry stuck_streak alone can be
     # a sub-threshold streak that hasn't escalated yet — don't nudge on those).
     if last_state == "STUCK_NEEDS_ATTENTION":
         stuck.append((pr, e.get("stuck_reason", "?"), e.get("stuck_streak", "?")))
 
-if not stuck:
+# Daemon-absence verdict — only meaningful when something IS registered
+# ("Register with watcher" handed these PRs to a component that must exist).
+# No evidence + only fresh registrations = daemon may not have polled yet →
+# stay silent rather than false-alarm the install instant.
+dead_reason = ""
+if entries:
+    fresh = max(evidence) if evidence else None
+    if fresh is not None and (now - fresh) > grace:
+        dead_reason = (
+            f"latest daemon evidence (state files / daemon.log) is "
+            f"{int(now - fresh)}s old (grace {grace}s)"
+        )
+    elif fresh is None and missing_state:
+        prs = ", ".join(f"#{p}" for p in missing_state)
+        dead_reason = (
+            f"no daemon output at all — no per-PR state file and no daemon.log — "
+            f"yet PR(s) {prs} registered more than {grace}s ago"
+        )
+
+if not stuck and not dead_reason:
     sys.exit(0)
 
 if mode == "nudge":
-    print("## === merge-watcher: PR(s) STUCK_NEEDS_ATTENTION ===")
-    print(
-        "The merge-watcher escalated these wedged PR(s) -- they will NOT merge "
-        "without a human action:"
-    )
-    for pr, reason, streak in stuck:
-        print(f"  - PR #{pr}: {reason} (stuck {streak} cycles)")
-    print(
-        "Un-wedge each (rebase / fix CI / resolve threads) or "
-        "`merge-watch unregister <pr>` to hand it back."
-    )
+    if stuck:
+        print("## === merge-watcher: PR(s) STUCK_NEEDS_ATTENTION ===")
+        print(
+            "The merge-watcher escalated these wedged PR(s) -- they will NOT merge "
+            "without a human action:"
+        )
+        for pr, reason, streak in stuck:
+            print(f"  - PR #{pr}: {reason} (stuck {streak} cycles)")
+        print(
+            "Un-wedge each (rebase / fix CI / resolve threads) or "
+            "`merge-watch unregister <pr>` to hand it back."
+        )
+    if dead_reason:
+        print(f"## === merge-watcher: daemon looks DEAD ({len(entries)} PR(s) registered) ===")
+        print(f"{dead_reason}.")
+        print(
+            "Registered PR(s) will sit green and unmerged until the daemon runs. "
+            "On the Windows host re-run the installer (idempotent, now self-verifies):"
+        )
+        print(
+            "  powershell -ExecutionPolicy Bypass -File "
+            "agents/scripts/core/merge-watcher-install-autostart.ps1"
+        )
+        print("then check: Get-ScheduledTaskInfo SmatchetMergeWatcher; tail daemon.log.")
 else:
     for pr, reason, streak in stuck:
         print(f"stuck: PR #{pr} — {reason} ({streak} cycles)")
+    if dead_reason:
+        print(f"watcher-dead: {len(entries)} PR(s) registered — {dead_reason}")
 PY

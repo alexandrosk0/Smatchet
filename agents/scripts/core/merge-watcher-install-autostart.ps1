@@ -19,12 +19,18 @@
 #   -PythonExe <path>        Override the Python interpreter. Defaults to
 #                            the `python` resolved on PATH at install time.
 #   -TaskName <name>         Override "SmatchetMergeWatcher".
+#   -SkipStartCheck          Skip the post-install start + health check (e.g.
+#                            installing for a different user session, or in CI
+#                            where Task Scheduler can't start).
 # ----------------------------------------------------------------------------
 
 param(
     [int]$PollInterval = 60,
     [string]$PythonExe = "",
-    [string]$TaskName = "SmatchetMergeWatcher"
+    [string]$TaskName = "SmatchetMergeWatcher",
+    # Skip the post-install start + health check (e.g. installing for a
+    # different user session, or in CI where Task Scheduler can't start).
+    [switch]$SkipStartCheck
 )
 
 $ErrorActionPreference = "Stop"
@@ -153,8 +159,74 @@ Write-Host "  Python:         $PythonExe"
 Write-Host "  Poll interval:  $PollInterval seconds"
 Write-Host "  Log file:       $logFile"
 Write-Host ""
-Write-Host "Daemon will start on next login. Start now with:"
-Write-Host "  Start-ScheduledTask -TaskName $TaskName"
+
+# --- Post-install verification (merge-watcher-liveness-unmonitored fix 1) ---
+# Registration proves nothing about the ACTION: a stale path, missing
+# interpreter, or bad quoting installs "successfully" and the first evidence
+# is a poll that never happens - observed dead for days with 2 PRs registered
+# (LastTaskResult=1 on every trigger, zero log output). So: start the task
+# now and assert it SURVIVES. A broken action exits within ~1 s
+# (LastTaskResult non-zero); a healthy daemon keeps running indefinitely.
+if ($SkipStartCheck) {
+    Write-Host "Post-install start check SKIPPED (-SkipStartCheck)." -ForegroundColor Yellow
+    Write-Host "Daemon will start on next login. Start + verify manually with:"
+    Write-Host "  Start-ScheduledTask -TaskName $TaskName"
+    Write-Host "  Get-ScheduledTaskInfo -TaskName $TaskName   # LastTaskResult"
+} else {
+    Write-Host "Starting '$TaskName' to verify the registered action actually runs..."
+    $preLogLen = 0
+    if (Test-Path $logFile) { $preLogLen = (Get-Item $logFile).Length }
+    Start-ScheduledTask -TaskName $TaskName
+    # Healthy = Running on 3 CONSECUTIVE 2 s polls (~6 s sustained), not one
+    # sample: a daemon that starts and crashes a few seconds in would pass a
+    # single-sample check (CR review, PR #2007). A broken action never shows
+    # Running at all; a crash-looper resets the streak.
+    $healthy = $false
+    $runStreak = 0
+    $deadline = (Get-Date).AddSeconds(20)
+    while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 2
+        # Recheck AFTER sleeping: the pre-sleep check alone lets the final
+        # sample land ~2 s past the deadline and still count as healthy.
+        if ((Get-Date) -ge $deadline) { break }
+        $state = (Get-ScheduledTask -TaskName $TaskName).State
+        if ($state -eq "Running") {
+            $runStreak++
+            if ($runStreak -ge 3) {
+                $healthy = $true
+                break
+            }
+            continue
+        }
+        $runStreak = 0
+        # Not running: either still Queued/starting up, or already exited.
+        $info = Get-ScheduledTaskInfo -TaskName $TaskName
+        if ($state -eq "Ready" -and $info.LastTaskResult -ne 0 -and $info.LastTaskResult -ne 267009) {
+            break  # exited non-zero - fail fast with diagnostics below
+        }
+    }
+    if ($healthy) {
+        Write-Host "[OK] Daemon task is RUNNING (survived the start check)." -ForegroundColor Green
+        if ((Test-Path $logFile) -and ((Get-Item $logFile).Length -gt $preLogLen)) {
+            Write-Host "  Log is growing: $logFile"
+        }
+    } else {
+        $info = Get-ScheduledTaskInfo -TaskName $TaskName
+        Write-Host ""
+        Write-Host "[FAIL] '$TaskName' did not stay running after start." -ForegroundColor Red
+        Write-Host "  State:          $((Get-ScheduledTask -TaskName $TaskName).State)"
+        Write-Host "  LastTaskResult: $($info.LastTaskResult)"
+        Write-Host "  Action:         cmd.exe $cmdArgs"
+        if (Test-Path $logFile) {
+            Write-Host "  Log tail ($logFile):"
+            Get-Content $logFile -Tail 10 | ForEach-Object { Write-Host "    $_" }
+        } else {
+            Write-Host "  Log file was never created: $logFile"
+        }
+        Write-Host "The task is registered but WILL NOT poll. Fix the action and re-run this installer."
+        exit 1
+    }
+}
 Write-Host ""
 Write-Host "Check / control:"
 Write-Host "  Get-ScheduledTask -TaskName $TaskName"
