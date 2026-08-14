@@ -19,6 +19,9 @@
 #   -PythonExe <path>        Override the Python interpreter. Defaults to
 #                            the `python` resolved on PATH at install time.
 #   -TaskName <name>         Override "SmatchetMergeWatcher".
+#   -SkipStartCheck          Skip the post-install start + health check (e.g.
+#                            installing for a different user session, or in CI
+#                            where Task Scheduler can't start).
 # ----------------------------------------------------------------------------
 
 param(
@@ -183,6 +186,9 @@ if ($SkipStartCheck) {
     $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 2
+        # Recheck AFTER sleeping: the pre-sleep check alone lets the final
+        # sample land ~2 s past the deadline and still count as healthy.
+        if ((Get-Date) -ge $deadline) { break }
         $state = (Get-ScheduledTask -TaskName $TaskName).State
         if ($state -eq "Running") {
             $runStreak++
