@@ -160,7 +160,7 @@ Write-Host ""
 # --- Post-install verification (merge-watcher-liveness-unmonitored fix 1) ---
 # Registration proves nothing about the ACTION: a stale path, missing
 # interpreter, or bad quoting installs "successfully" and the first evidence
-# is a poll that never happens — observed dead for days with 2 PRs registered
+# is a poll that never happens - observed dead for days with 2 PRs registered
 # (LastTaskResult=1 on every trigger, zero log output). So: start the task
 # now and assert it SURVIVES. A broken action exits within ~1 s
 # (LastTaskResult non-zero); a healthy daemon keeps running indefinitely.
@@ -174,22 +174,29 @@ if ($SkipStartCheck) {
     $preLogLen = 0
     if (Test-Path $logFile) { $preLogLen = (Get-Item $logFile).Length }
     Start-ScheduledTask -TaskName $TaskName
+    # Healthy = Running on 3 CONSECUTIVE 2 s polls (~6 s sustained), not one
+    # sample: a daemon that starts and crashes a few seconds in would pass a
+    # single-sample check (CR review, PR #2007). A broken action never shows
+    # Running at all; a crash-looper resets the streak.
     $healthy = $false
-    $deadline = (Get-Date).AddSeconds(15)
+    $runStreak = 0
+    $deadline = (Get-Date).AddSeconds(20)
     while ((Get-Date) -lt $deadline) {
         Start-Sleep -Seconds 2
         $state = (Get-ScheduledTask -TaskName $TaskName).State
         if ($state -eq "Running") {
-            # Survived past the instant-fail window; a broken cmd action dies
-            # in under a second. Log growth is corroborating, not required —
-            # python block-buffers its startup banner.
-            $healthy = $true
-            break
+            $runStreak++
+            if ($runStreak -ge 3) {
+                $healthy = $true
+                break
+            }
+            continue
         }
+        $runStreak = 0
         # Not running: either still Queued/starting up, or already exited.
         $info = Get-ScheduledTaskInfo -TaskName $TaskName
         if ($state -eq "Ready" -and $info.LastTaskResult -ne 0 -and $info.LastTaskResult -ne 267009) {
-            break  # exited non-zero — fail fast with diagnostics below
+            break  # exited non-zero - fail fast with diagnostics below
         }
     }
     if ($healthy) {

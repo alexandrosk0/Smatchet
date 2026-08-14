@@ -47,7 +47,7 @@ done
 [ -n "$PYBIN" ] || exit 0
 
 "$PYBIN" - "$MODE" "$SCRIPT_DIR" <<'PY'
-import importlib.util, json, os, sys, time
+import importlib.util, json, math, os, sys, time
 
 mode, sd = sys.argv[1], sys.argv[2]
 # Import merge-watcher-cli.py for its watcher_root()/state_dir()/read_registry()
@@ -106,8 +106,13 @@ for e in entries:
         # Guarded separately: a garbage last_poll_unix must not clobber a
         # validly-read last_state (the float() used to share the parse try,
         # so a bad timestamp silently dropped a STUCK PR from the nudge).
+        # Finite-and-not-future only: json.loads accepts Infinity/NaN, and an
+        # inf (or clock-skewed future) sample would win max(evidence) and
+        # suppress watcher-dead forever (CR review, PR #2007).
         try:
-            evidence.append(float(st.get("last_poll_unix", 0) or 0))
+            last_poll = float(st.get("last_poll_unix", 0) or 0)
+            if math.isfinite(last_poll) and last_poll <= now:
+                evidence.append(last_poll)
         except (TypeError, ValueError):
             pass
     else:

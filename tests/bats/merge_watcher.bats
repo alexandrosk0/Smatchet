@@ -2759,6 +2759,33 @@ PY
     [[ "$output" == *"PR #81"* ]]
 }
 
+@test "stuck-nudge absence: Infinity/future last_poll_unix cannot suppress watcher-dead" {
+    # json.loads accepts Infinity, and a future timestamp (corruption / clock
+    # skew) would win max(evidence) and mask a dead daemon forever. Both files
+    # are mtime-aged so the only fresh-looking evidence is the bogus value.
+    python - <<'PY'
+import importlib.util, os, json, time
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([
+    {"pr":83,"clone_path":"/c/clones/Smatchet","registered_at":1000},
+    {"pr":84,"clone_path":"/c/clones/Smatchet","registered_at":1000},
+])
+old = int(time.time()) - 7200
+f83 = sdir/"83.json"
+f83.write_text('{"pr":83,"last_state":"BLOCKED","last_poll_unix":Infinity}', encoding="utf-8")
+os.utime(f83, (old, old))
+f84 = sdir/"84.json"
+f84.write_text(json.dumps({"pr":84,"last_state":"BLOCKED","last_poll_unix":int(time.time())+7200}), encoding="utf-8")
+os.utime(f84, (old, old))
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"daemon looks DEAD"* ]]
+}
+
 @test "stuck-nudge absence: all-corrupt state files still count as evidence via mtime (fresh write = alive)" {
     # A state file the daemon JUST wrote proves life even if its JSON is
     # unreadable — the absence check must key on the write, not the content.
