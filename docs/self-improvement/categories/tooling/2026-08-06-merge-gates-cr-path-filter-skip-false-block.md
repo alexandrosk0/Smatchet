@@ -65,5 +65,5 @@
     :1164-1167 the size-skip override message); `4685997d` / PR #1468 (the masking exemption);
     PR #1953 + PR #1961 (observations); `.coderabbit.yaml` (`!docs/self-improvement/**` path filter);
     `.github/actions/cr-finding-gate/action.yml` (the required gate whose SUCCESS the poller
-    re-derives). Related: [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](../process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md)
+    re-derives). Related: [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](../applied.md)
     — the mirror-image hole (gate cannot reach a verdict) in the same CR path.
