@@ -210,6 +210,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`preferences-ia-resegmentation-and-search`](shipped/preferences-ia-resegmentation-and-search.md) | 2026-08-06 | Plan — Preferences IA re-segmentation + global in-place search |
 | [`verifier-scored-code-review-gate`](shipped/verifier-scored-code-review-gate.md) | 2026-08-06 | Plan — Verifier-scored code-review gate |
 | [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-07 | Plan — Window Expand Button |
+| [`keybindings-multi-combo`](shipped/keybindings-multi-combo.md) | 2026-08-14 | Plan — Multi-combo keybindings (several alternative combos per action) |
 <!-- END auto-plan-index -->
 
 ### Notes
