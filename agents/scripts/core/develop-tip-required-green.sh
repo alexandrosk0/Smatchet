@@ -199,7 +199,7 @@ gather_and_nudge() {
     echo "nothing, which is exactly how it hides (#1957: red across three merges) — it is the"
     echo "only coverage for what PR checks structurally cannot run, so fix it, don't ignore it:"
     printf '%s\n' "$reds" | while IFS='|' read -r name kind why; do
-        echo "  - RED [$kind]: $name — $why"
+        echo "  - NOT GREEN [$kind]: $name — $why"
     done
     echo "(A required RED is usually a merge-before-terminal race, #1237-family; a CANCELLED"
     echo " develop run was superseded/killed and proves nothing — re-run it to learn the truth.)"
