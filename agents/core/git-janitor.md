@@ -80,7 +80,8 @@ For each open PR targeting `develop`, in **dependency order** (oldest unmerged f
    - `4` — PR no longer mergeable (CLOSED/MERGED) → surface + abandon.
    - `5` — pagination overflow, manual review required → `ask_user_question`: **Abandon (manual review)** · **Skip and merge anyway** (acknowledge risk, log the WARN).
    - `7` — Actions unavailable (outage escalation: required contexts absent for the `MERGE_GATES_OUTAGE_POLLS` streak AND zero workflow runs created repo-wide in the probe window) → `ask_user_question`: **Wait for Actions to drain, then re-poll** · **Re-fire CI (push or close-reopen), then re-poll** · **Abandon**. **No skip option** — an `--admin` merge past absent checks is exactly what postmortem-owed.sh's required-ABSENT detector flags (snapshot + deviation entry owed).
-   - any other rc — defensive catch-all: HALT. `poll_merge_gates` returns 0-5 or 7 today; an unexpected code must never silently fall through to auto-merge.
+   - `8` — required run cancelled while pending (`required-missing-cancelled`: the context's pending run was cancelled by the concurrency-group collapse and left no check-run; waiting cannot clear it) → `ask_user_question`: **Rerun the named run(s) (`gh run rerun <id>` from the BLOCK output), then re-poll** · **Abandon**. **No skip option** — same absent-checks rationale as code 7.
+   - any other rc — defensive catch-all: HALT. `poll_merge_gates` returns 0-5, 7 or 8 today; an unexpected code must never silently fall through to auto-merge.
 
    The verbatim case block → skill § Merge-gates rc-handling (executable form) — keep it in lockstep with this mapping.
 

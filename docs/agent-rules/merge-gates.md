@@ -94,6 +94,7 @@ A rate-limited **code** PR that wedges past its window stays a deliberate BLOCK 
 | 5 | Pagination overflow (any `hasNextPage`) | "Abandon (manual review required)" / "Skip gates and merge anyway (acknowledge risk)" |
 | 6 | `gh pr ready` unknown failure (after positive-check fallback) | surface error to user; do not auto-merge |
 | 7 | Actions unavailable — required context(s) absent for ≥`MERGE_GATES_OUTAGE_POLLS` polls AND zero workflow runs created repo-wide in the probe window | "Wait for Actions to drain, then re-poll" / "Re-fire CI (push or close-reopen), then re-poll" / "Abandon" — **no skip option**: an `--admin` merge past absent checks is exactly what postmortem-owed.sh's required-ABSENT detector flags (snapshot + deviation entry owed) |
+| 8 | Cancelled-while-pending — required context(s) absent, everything else terminal-green, and the head's runs include a CANCELLED run of the missing context's workflow with nothing queued/in-progress (the concurrency pending-queue collapse left no check-run; #1937) | "Rerun the named run(s) (`gh run rerun <id>` from the BLOCK output), then re-poll" / "Abandon" — **no skip option**: same absent-checks rationale as code 7 |
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 

@@ -193,8 +193,26 @@ if [ "${SKIP_MERGE_GATES:-false}" != "true" ]; then
                 *) exit 1 ;;
             esac
             ;;
+        8)
+            # Cancelled-while-pending (required-missing-cancelled): the required
+            # context's pending run was cancelled by the concurrency-group
+            # collapse and left NO check-run — waiting cannot clear it. The
+            # BLOCK output above names the exact `gh run rerun <id>` line(s).
+            # No skip option (same absent-checks rationale as code 7).
+            choice=$(ask_user_question "Required run cancelled while pending (code=8) — see the gh run rerun line(s) above." \
+                       "Rerun the named run(s), then re-poll" \
+                       "Abandon")
+            case "$choice" in
+                "Rerun the named run(s)"*)
+                    # Operator/agent executes the printed `gh run rerun <id>`
+                    # line(s) from the BLOCK output, then:
+                    MERGE_GATES_FLIP_READY=true \
+                    poll_merge_gates "$OWNER" "$REPO" "$N" || exit 1 ;;
+                *) exit 1 ;;
+            esac
+            ;;
         *)
-            # Defensive catch-all. poll_merge_gates returns 0-5 or 7 today; any
+            # Defensive catch-all. poll_merge_gates returns 0-5, 7 or 8 today; any
             # unexpected rc must HALT — never silently fall through to auto-merge.
             echo "poll_merge_gates: unexpected rc=$rc — HALT" >&2; exit 1
             ;;

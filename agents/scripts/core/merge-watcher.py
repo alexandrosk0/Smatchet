@@ -602,6 +602,7 @@ def poll_one(
         4: "PR_CLOSED_OR_MERGED",
         5: "PAGINATION_OVERFLOW",
         7: "ACTIONS_UNAVAILABLE",
+        8: "REQUIRED_MISSING_CANCELLED",
     }.get(gates.returncode, f"EXIT_{gates.returncode}")
     if gates.returncode == 7:
         # Exit 7 returns before the per-iteration `Poll …` line, so stdout is
@@ -612,6 +613,21 @@ def poll_one(
             if ln.strip().startswith("ESCALATE:"):
                 last_line = ln.strip()[:500]
                 break
+    if gates.returncode == 8:
+        # Exit 8's deliverable is the required-missing-cancelled diagnosis
+        # PLUS the `gh run rerun <id>` line(s) that follow it — same
+        # truncation hazard as exit 7 (the generic required-missing BLOCK
+        # line alone overflows the 300-char stderr join). Keep the diagnosis
+        # head and every rerun line.
+        _diag = []
+        for ln in gates.stderr.splitlines():
+            t = ln.strip()
+            if t.startswith("BLOCK: required-missing-cancelled"):
+                _diag.append(t[:300])
+            elif t.startswith("gh run rerun "):
+                _diag.append(t)
+        if _diag:
+            last_line = " | ".join(_diag)[:500]
     result = {
         "pr": pr,
         "clone_path": clone_path,
@@ -1251,6 +1267,11 @@ NOTIFY_STATES = {
     # while zero workflow runs were created repo-wide — waiting cannot clear
     # it, so a human/agent must act. Silent under the watcher otherwise.
     "ACTIONS_UNAVAILABLE",
+    # Cancelled-while-pending (merge-gates exit 8): a required context's
+    # pending run was cancelled by the concurrency-group collapse and left no
+    # check-run — waiting cannot clear it; the state line carries the
+    # `gh run rerun <id>` fix. Same silent-wedge hazard as exit 7 (#1937).
+    "REQUIRED_MISSING_CANCELLED",
 }
 
 
@@ -2868,6 +2889,7 @@ AGENT_EVENT_STATES = {
     "TIMEOUT",
     "READY_FLIP_FAILED",
     "ACTIONS_UNAVAILABLE",
+    "REQUIRED_MISSING_CANCELLED",
 }
 
 

@@ -233,3 +233,17 @@ with one always-on job; Pattern B with a real+skip pair; Pattern C with a
 detect-changes gate; Pattern D keeps an advisory job's broken-lane teeth via a
 step-level mask. Verify by opening a docs-only PR and confirming the check
 reports (not "Expected").
+
+## Two surfaces per workflow: job name vs status context
+
+A workflow that posts a StatusContext under a different name than its job (the
+CR finding gate posts `CR findings (0 actionable)` from a job named
+`CR finding gate`) is **two independently-failable gates**: branch protection
+can require either surface, and only the required one blocks. Observed on
+#1937: the status context was green (label override worked end-to-end) while
+the required *check-run* was absent — its pending workflow run had been
+cancelled by GitHub's one-pending-per-concurrency-group collapse, which
+creates no check-run at all. When requiring such a workflow, know WHICH
+surface is in the required list, and remember that a cancelled-while-pending
+run leaves that surface absent-forever (the poller's `required-missing-
+cancelled` exit names the run and the `gh run rerun <id>` fix).

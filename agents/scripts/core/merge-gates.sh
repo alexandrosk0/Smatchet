@@ -164,6 +164,14 @@
 #       green by waiting (admin-merge-past-absent-checks-undetected fix (3):
 #       the ship-loop's defined move is to STOP and escalate, never override;
 #       see docs/agent-rules/ship-loops.md § CI unavailable).
+#   8 — cancelled-while-pending: required context(s) absent, every other
+#       check terminal-green, and the head's workflow runs show ≥1 CANCELLED
+#       run with zero queued/in-progress — GitHub's one-pending-run-per-
+#       concurrency-group collapse cancelled the run before it created a
+#       check-run, so the context is absent-forever, not late (#1937 burned
+#       90 polls on this shape). The BLOCK line names the run id(s); the fix
+#       is `gh run rerun <id>` (required-check-cancelled-while-pending-
+#       wedges-poller, tooling P2).
 #
 # Return codes (gh_pr_ready_idempotent):
 #   0 — PR is now ready (or already was)
@@ -1098,6 +1106,64 @@ poll_merge_gates() {
             outage_since=""
         elif [ "$req_absent" -gt 0 ]; then
             echo "BLOCK: required-missing: ${req_absent_names} (required by branch protection but absent from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence on an early poll may still be pending; it is blocked until the contexts actually report, never merged on the assumption they will." >&2
+            # "Not yet" vs "never" (required-check-cancelled-while-pending-
+            # wedges-poller, tooling P2): the generic hint above conflates
+            # check-suite creation LAG (wait) with a run GitHub CANCELLED
+            # while still pending — its concurrency model keeps ONE pending
+            # run per group and cancels the rest, and a run cancelled before
+            # it starts creates NO check-run, so the required context is
+            # absent forever (#1937: 90 polls burned; only `gh run rerun`
+            # revives it). The second case is detectable once nothing else is
+            # in flight: every other check terminal-green AND the head's
+            # workflow runs show ≥1 cancelled with zero queued/in-progress.
+            # That is positive evidence waiting cannot clear the absence —
+            # name the run id(s) + the one-line fix and exit with a distinct
+            # code instead of polling to MAX_POLLS. A probe failure, any
+            # active run, or no runs at all (the pure-lag shape) keeps
+            # polling — the early exit is never taken on unverified evidence
+            # (same posture as the outage probe below). ci_fail must be 0
+            # too: with a red check the operator pushes a fix anyway, which
+            # re-fires every workflow and moots the rerun advice.
+            if [ "$ci_pend" -eq 0 ] && [ "$ci_fail" -eq 0 ]; then
+                local head_runs run_count cancelled_lines matched_lines active_count
+                head_runs=$(gh api "repos/${owner}/${repo}/actions/runs" \
+                              -X GET -f "head_sha=${head_sha}" -f per_page=100 \
+                              --jq '.workflow_runs[] | [.id, .status, (.conclusion // ""), .name] | @tsv' 2>/dev/null) \
+                    || head_runs="__PROBE_FAIL__"
+                run_count=$(printf '%s' "$head_runs" | grep -c . || true)
+                # A FULL first page means the listing may be truncated — an
+                # active run past page 1 would be invisible to the guard
+                # below, so the evidence is unverifiable; keep polling.
+                if [ "$head_runs" != "__PROBE_FAIL__" ] && [ -n "$head_runs" ] \
+                   && [ "${run_count:-0}" -lt 100 ]; then
+                    active_count=$(printf '%s\n' "$head_runs" \
+                        | awk -F'\t' '$2=="queued" || $2=="in_progress" || $2=="waiting" || $2=="pending" || $2=="requested"' \
+                        | grep -c . || true)
+                    cancelled_lines=$(printf '%s\n' "$head_runs" \
+                        | awk -F'\t' '$2=="completed" && $3=="cancelled" {print "  gh run rerun " $1 "   # " $4}')
+                    # CORRELATE before exiting: the early exit is only taken
+                    # when a cancelled run's WORKFLOW NAME matches an absent
+                    # required context (the #1937 shape — the cr-finding-gate
+                    # workflow and its required job share the name). An
+                    # unrelated cancelled run (a superseded comment-trigger
+                    # burst) alongside ordinary check-suite creation lag must
+                    # NOT stop polling with rerun advice that cannot create
+                    # the missing context — those candidates are surfaced as
+                    # a WARN each poll instead, so a name-mismatched wedge is
+                    # still visible to the operator without a wrong exit.
+                    matched_lines=$(printf '%s\n' "$head_runs" \
+                        | awk -F'\t' -v names="$req_absent_names" \
+                            '$2=="completed" && $3=="cancelled" && index(names, $4) {print "  gh run rerun " $1 "   # " $4}')
+                    if [ "${active_count:-0}" -eq 0 ] && [ -n "$matched_lines" ]; then
+                        echo "BLOCK: required-missing-cancelled: ${req_absent_names} — every other check is terminal-green and the head's workflow runs include CANCELLED run(s) of the missing context's workflow with nothing queued or in progress. GitHub cancelled the pending run before it created a check-run (one-pending-per-concurrency-group collapse), so this absence will NOT clear by waiting and nothing re-triggers the workflow. Re-run and re-poll:" >&2
+                        printf '%s\n' "$matched_lines" >&2
+                        return 8
+                    elif [ "${active_count:-0}" -eq 0 ] && [ -n "$cancelled_lines" ]; then
+                        echo "WARN: cancelled run(s) exist on the head with nothing active, but none name-match the missing required context(s) — possible cancelled-while-pending wedge under a workflow/job name mismatch. Candidates (verify before rerunning):" >&2
+                        printf '%s\n' "$cancelled_lines" >&2
+                    fi
+                fi
+            fi
             # Actions-outage escalation (fix (3), admin-merge-past-absent-
             # checks-undetected): after OUTAGE_POLLS consecutive polls in this
             # unexplained-absence state, ask whether Actions has created ANY
