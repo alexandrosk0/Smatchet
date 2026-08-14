@@ -86,5 +86,29 @@
     checked out. Orthogonal to liveness, but it is the same host state, and both
     argue for the daemon reporting what it actually is at each poll.
 
-  Status: open
-  Last-reviewed: 2026-08-05
+  Fixes (1) and (2) shipped 2026-08-14:
+
+  - **(2) Absence-aware nudge** — `merge-watcher-stuck-nudge.sh` now computes
+    the freshest daemon evidence (per-PR `last_poll_unix` across registered
+    PRs + `daemon.log` mtime) and, with a non-empty registry, nudges
+    "daemon looks DEAD" when that evidence is older than
+    `MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS` (default 300 = 5 poll
+    intervals) or when a PR registered longer ago than the grace has no
+    state file and no other evidence exists. Fresh registrations with no
+    output yet stay silent (no install-instant false alarm). Still advisory,
+    still exit 0 always. Bats: dead-since-install, fresh-registration
+    silence, alive, and dies-later cases.
+  - **(1) Installer post-install verification** —
+    `merge-watcher-install-autostart.ps1` now Start-ScheduledTask's the task
+    it just registered and polls up to 15 s: a broken action exits within
+    ~1 s (the observed LastTaskResult=1 shape), a healthy daemon stays
+    Running. Not-running → print the action string + LastTaskResult + log
+    tail and exit 1 — loud at install instead of silent for days.
+    `-SkipStartCheck` opts out (other-user install / CI).
+
+  Status: open — code shipped; remains open for the human ops step (re-run
+  the installer on the Windows host — an agent session cannot register a
+  Scheduled Task) and for fix (3) (daemon heartbeat file) if the inferred
+  evidence ever proves too coarse. Archive once the host daemon is confirmed
+  alive by the new install check.
+  Last-reviewed: 2026-08-14

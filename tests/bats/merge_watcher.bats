@@ -2668,6 +2668,74 @@ PY
     [[ "$output" == *"CONFLICT"* ]]
 }
 
+@test "stuck-nudge absence: registered long ago + zero daemon output -> daemon-dead nudge, exit 0" {
+    # The dead-since-install shape (merge-watcher-liveness-unmonitored): a PR
+    # registered past the grace window with no per-PR state file and no
+    # daemon.log means the daemon has never run — previously silent forever.
+    python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+cli.write_registry([{"pr":77,"clone_path":"/c/clones/Smatchet","registered_at":1000}])
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"daemon looks DEAD"* ]]
+    [[ "$output" == *"#77"* ]]
+    [[ "$output" == *"merge-watcher-install-autostart.ps1"* ]]
+    # --list mode: machine-readable one-liner
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"watcher-dead: 1 PR(s) registered"* ]]
+}
+
+@test "stuck-nudge absence: fresh registration with no state yet stays SILENT (no install-instant false alarm)" {
+    python - <<'PY'
+import importlib.util, os, time
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+cli.write_registry([{"pr":78,"clone_path":"/c/clones/Smatchet","registered_at":int(time.time())}])
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "stuck-nudge absence: recent per-PR poll evidence -> alive, no dead nudge" {
+    python - <<'PY'
+import importlib.util, os, json, time
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([{"pr":79,"clone_path":"/c/clones/Smatchet","registered_at":1000}])
+(sdir/"79.json").write_text(json.dumps({"pr":79,"last_state":"BLOCKED","last_poll_unix":int(time.time())}), encoding="utf-8")
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "stuck-nudge absence: stale poll evidence beyond the grace -> dead (dies-later case)" {
+    # A daemon that ran once and died: state files exist but the freshest
+    # last_poll_unix is far older than MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS.
+    python - <<'PY'
+import importlib.util, os, json, time
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([{"pr":80,"clone_path":"/c/clones/Smatchet","registered_at":1000}])
+(sdir/"80.json").write_text(json.dumps({"pr":80,"last_state":"BLOCKED","last_poll_unix":int(time.time())-7200}), encoding="utf-8")
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"daemon looks DEAD"* ]]
+    [[ "$output" == *"grace 300s"* ]]
+}
+
 # ---------- gate-logic self-resync (#1428 residual) ----------
 # The daemon's throughput-safe complement to merge-gates.sh's fail-closed freshness
 # guard: detect when this checkout drifted behind origin/develop on a gate-logic file
