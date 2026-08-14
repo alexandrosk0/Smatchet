@@ -181,6 +181,7 @@ GIT_BIN = _resolve_bin(
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # so the sibling module resolves under any launch cwd
 from merge_watcher_registry import (  # noqa: E402
+    AGENT_EVENT_STATES as _REGISTRY_AGENT_EVENT_STATES,
     watcher_root,
     state_dir,
     read_registry,
@@ -2888,21 +2889,12 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
 # state transition that a SessionStart hook / the `merge-watcher-cli.py await`
 # subcommand can tail. It is purely additive: the human toast still fires.
 
-#: Terminal/actionable states an agent wants to wake on. Superset of NOTIFY_STATES
-#: plus GATES_PASSED (merged) so an `await --until=terminal` returns on a merge too.
-AGENT_EVENT_STATES = {
-    "GATES_PASSED",
-    "TRIAGE_BUDGET_EXHAUSTED",
-    "STUCK_NEEDS_ATTENTION",
-    "CI_FAIL",
-    "GH_API_DOWN",
-    "PR_CLOSED_OR_MERGED",
-    "PAGINATION_OVERFLOW",
-    "TIMEOUT",
-    "READY_FLIP_FAILED",
-    "ACTIONS_UNAVAILABLE",
-    "REQUIRED_MISSING_CANCELLED",
-}
+#: Terminal/actionable states an agent wants to wake on — imported from the
+#: shared registry module so the CLI's `await` filters can never drift from
+#: what the daemon emits (they did, twice: exit 7 and exit 8 were both
+#: invisible to `await` until the PR #2012 CodeRabbit round). The definition
+#: and its rationale live in merge_watcher_registry.py.
+AGENT_EVENT_STATES = _REGISTRY_AGENT_EVENT_STATES
 
 
 def agent_events_path() -> pathlib.Path:

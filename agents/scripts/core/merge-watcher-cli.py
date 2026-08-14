@@ -44,6 +44,8 @@ import time
 # when launched by absolute path from an unrelated cwd (Scheduled Task / cron).
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from merge_watcher_registry import (  # noqa: E402
+    AGENT_EVENT_STATES,
+    AGENT_EVENT_END_STATES,
     watcher_root,
     state_dir,
     registry_lock,
@@ -372,11 +374,12 @@ def cmd_await(args: argparse.Namespace) -> int:
     agent-events NDJSON sink and returns on the next event for the PR whose state
     matches `--until`. NO daemon change — the daemon already appends events.
 
-      --until blocking  : return on any actionable BLOCKED-class state
-                          (TRIAGE_BUDGET_EXHAUSTED / STUCK_NEEDS_ATTENTION /
-                          CI_FAIL / READY_FLIP_FAILED) — the orchestrator must act.
-      --until terminal  : also return on GATES_PASSED / PR_CLOSED_OR_MERGED (the
-                          PR reached an end state). Default.
+      --until blocking  : return on any actionable BLOCKED-class state — the
+                          daemon's AGENT_EVENT_STATES vocabulary minus the two
+                          end states (GATES_PASSED / PR_CLOSED_OR_MERGED); the
+                          orchestrator must act.
+      --until terminal  : also return on the two end states (the PR reached an
+                          end state). Default.
       --timeout N       : seconds to wait (default 0 = wait forever).
 
     Only events APPENDED AFTER this command starts count (it records the sink's
@@ -386,12 +389,13 @@ def cmd_await(args: argparse.Namespace) -> int:
     pr = int(args.pr)
     until = getattr(args, "until", "terminal")
     timeout = float(getattr(args, "timeout", 0) or 0)
-    blocking_states = {
-        "TRIAGE_BUDGET_EXHAUSTED", "STUCK_NEEDS_ATTENTION",
-        "CI_FAIL", "READY_FLIP_FAILED", "GH_API_DOWN",
-        "PAGINATION_OVERFLOW", "TIMEOUT",
-    }
-    terminal_states = blocking_states | {"GATES_PASSED", "PR_CLOSED_OR_MERGED"}
+    # Derived from the daemon's own emit vocabulary — never a hand-copied
+    # list: the previous literal set silently dropped ACTIONS_UNAVAILABLE
+    # (exit 7) and REQUIRED_MISSING_CANCELLED (exit 8), so `await` waited
+    # forever on exactly the states that most need an agent to act
+    # (CodeRabbit finding, PR #2012).
+    terminal_states = set(AGENT_EVENT_STATES)
+    blocking_states = terminal_states - set(AGENT_EVENT_END_STATES)
     want = blocking_states if until == "blocking" else terminal_states
     sink = agent_events_path()
     # Start at the current end-of-file so only NEW events count.

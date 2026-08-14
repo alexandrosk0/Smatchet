@@ -119,3 +119,34 @@ def write_registry(entries: list[dict[str, Any]]) -> None:
     tmp = p.with_suffix(p.suffix + ".tmp")
     tmp.write_text(json.dumps(entries, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     tmp.replace(p)
+
+
+# ---------------------------------------------------------------------------
+# Agent-event vocabulary (shared: daemon emits, CLI await filters)
+# ---------------------------------------------------------------------------
+#: Terminal/actionable states an agent wants to wake on. Superset of the
+#: daemon's NOTIFY_STATES plus GATES_PASSED (merged) so an
+#: `await --until=terminal` returns on a merge too. Lives HERE, not in
+#: merge-watcher.py, because merge-watcher-cli.py's `await` filters MUST use
+#: the same vocabulary the daemon emits: the CLI once carried a hand-copied
+#: subset that silently dropped ACTIONS_UNAVAILABLE (exit 7) and
+#: REQUIRED_MISSING_CANCELLED (exit 8) — `await` then waited forever on
+#: exactly the states that most need an agent to act (CodeRabbit finding on
+#: PR #2012). Same extraction rationale as the registry primitives above
+#: (core-scripts-python-10).
+AGENT_EVENT_STATES = {
+    "GATES_PASSED",
+    "TRIAGE_BUDGET_EXHAUSTED",
+    "STUCK_NEEDS_ATTENTION",
+    "CI_FAIL",
+    "GH_API_DOWN",
+    "PR_CLOSED_OR_MERGED",
+    "PAGINATION_OVERFLOW",
+    "TIMEOUT",
+    "READY_FLIP_FAILED",
+    "ACTIONS_UNAVAILABLE",
+    "REQUIRED_MISSING_CANCELLED",
+}
+
+#: The two end states: the PR needs no further agent action.
+AGENT_EVENT_END_STATES = frozenset({"GATES_PASSED", "PR_CLOSED_OR_MERGED"})
