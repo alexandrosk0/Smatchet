@@ -3,7 +3,7 @@
     The label was strictly load-bearing: `CR findings (0 actionable)` — a **required** StatusContext —
     was stuck PENDING because CR's last on-head review was body-less, so
     `.github/actions/cr-finding-gate/action.yml` `decide()` could not terminate (root cause filed as
-    [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](2026-08-05-cr-finding-gate-empty-body-review-wedge.md)).
+    [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](../applied.md)).
     Every other check was green; re-running the workflow re-posted PENDING. The label's early-exit was
     the only way to clear `mergeStateStatus=BLOCKED`.
     `bash agents/scripts/core/postmortem-owed.sh --list` nonetheless reports "no gate escapes owed":

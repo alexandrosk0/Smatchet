@@ -4686,3 +4686,175 @@ playbook follow-ups.
   designed, and the PR merged with the verdict bound to the merged head
   `18198525dd09`.
   Last-reviewed: 2026-08-14
+
+# Empty-body CodeRabbit reply reviews defeat the CR gate's StatusContext fallback
+
+- **Category**: tooling
+- **Priority**: P1
+- **Date**: 2026-08-03
+- **Observed on**: PR #1928 (`feat/ui-thread-sync-reads`), head `0b077b5e`
+- **Status**: applied (2026-08-14 — both proposed fixes are live in
+  `.github/actions/cr-finding-gate/action.yml` `decide()`, landed on the #1996
+  re-occurrence of this class. Fix 1 verbatim: blank-bodied review nodes are
+  filtered out of BOTH the `n_reviews` count and the latest-body selection, so a
+  reply-only head falls back to the `CodeRabbit` StatusContext exactly as
+  proposed — pinned by `tests/bats/cr_finding_gate.bats` ("a blank-bodied thread
+  reply is NOT a review (the #1996 wedge)", "whitespace-only body", "findings
+  survive a LATER blank reply", "a clean review followed by a blank reply still
+  passes"). Fix 2 landed NARROWER than proposed, deliberately: only the
+  observed clean-with-nitpicks header-less shape passes (two-sided
+  discrimination pinned by the shape-3 bats block); an outside-diff-only
+  header-less body stays fail-closed because outside-diff comments ARE findings
+  — current CR format posts them alongside an `Actionable comments posted: N`
+  header, so the auto-pass this entry proposed would fail open on them. That
+  residual resolves to PENDING plus the gate's full-review auto-nudge rather
+  than a wedge.)
+
+## Friction
+
+`CR findings (0 actionable)` — a **required** commit StatusContext — sat PENDING
+for hours on a PR whose every other check was terminal-green, with no operator
+action able to clear it.
+
+`decide()` in [`.github/actions/cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
+branches on `n_reviews`, the count of CodeRabbit review nodes whose
+`commit.oid == headRefOid`:
+
+- `n_reviews == 0` → fall back to CodeRabbit's own `CodeRabbit` StatusContext;
+  `SUCCESS` ⇒ pass.
+- `n_reviews > 0` → grep the latest on-head review body for
+  `Actionable comments posted: N`. A **missing header is fail-closed**
+  (`return 1`, non-terminal, poll retries).
+
+The wedge: replying to a CodeRabbit inline thread with
+`addPullRequestReviewThreadReply` creates a **review node with an empty body**,
+and CodeRabbit's auto-acknowledgement of that reply creates **another**. On
+#1928 five thread replies produced three `coderabbitai[bot]` reviews on head
+`0b077b5e` with `bodylen=0`.
+
+That drove `n_reviews` from 0 to 3 — pushing the gate out of the branch where
+the green `CodeRabbit` StatusContext would have passed it, and into the
+header-grep branch, where three empty bodies can only ever fail closed. **The
+act of responding to the review is what broke the gate.**
+
+Worse, it is not self-healing on the same head. When CodeRabbit later posted a
+genuine 6415-char review, every finding was an *"Outside diff range comment"* —
+a body shape that carries **no** `Actionable comments posted:` header at all. So
+the header grep still returned nothing and the gate still failed closed. Once a
+head reaches this state the only exit is a **new head**.
+
+Neither existing entry covers this: the
+[adaptive-ratelimit](applied.md)
+one is about CR never *arriving*; the
+[stuck-blockers](tooling/2026-07-13-cr-merge-gate-stuck-blockers.md) one is about
+findings that *are* parseable. This is CR having arrived and the gate being
+structurally unable to read it.
+
+## Cost
+
+~3 h of a session spent diagnosing and attempting recovery on an
+otherwise-mergeable PR, ending in a no-op push purely to reset the head. Two
+false starts along the way: a GraphQL review-body dump that returned empty
+(needed the REST `repos/.../pulls/N/reviews` projection to reveal `bodylen=0`),
+and a CR re-trigger whose gate run was then cancelled by concurrency with no
+re-run.
+
+## Proposed fix
+
+Two independent changes, either of which unwedges this class:
+
+1. **Ignore empty-body reviews in the `n_reviews` count.** A zero-length body
+   carries no verdict, so it should not be evidence that CR reviewed this head.
+   Filter `bodylen == 0` out before the branch, which restores the
+   StatusContext fallback for the reply-only case.
+2. **Treat a non-empty body with no actionable header as `0 actionable`, not as
+   a retry.** The "Outside diff range comment" shape is a legitimate CR output
+   with genuinely zero actionable in-diff comments. Fail-closed is right for a
+   *truncated/unknown* body, but a body that parses as a complete CR review with
+   no header is a pass, not an indefinite retry.
+
+## Operator guidance until fixed
+
+- **Do not reply to CodeRabbit threads via `addPullRequestReviewThreadReply`**
+  while `CR findings (0 actionable)` is a required check. Address findings in
+  the commit message on the fixing commit instead.
+- If a head is already wedged, do not reach for `cr-out-of-band` on a code PR —
+  push a new head. The label exists for a rate-limited CR, and using it here
+  would wave un-reviewed code through.
+
+## Status
+
+Applied — see the Status header line for the disposition.
+
+# CR finding gate wedges on an empty-body CodeRabbit review
+
+- **Category**: process
+- **Priority**: P1
+- **Date**: 2026-08-05
+- **Observed on**: PR #1948 (`fix/fa-ttf-worktree-fallback`)
+- **Status**: applied (2026-08-14 — landed structurally stronger than proposed,
+  on the #1996 re-occurrence: instead of special-casing an empty body inside the
+  `n_reviews > 0` path, `decide()` in
+  `.github/actions/cr-finding-gate/action.yml` excludes blank-bodied review
+  nodes from `n_reviews` entirely, so this entry's shape (an empty CR
+  acknowledgement review as the only on-head node) takes the existing
+  `n_reviews == 0` StatusContext branch — `SUCCESS` ⇒ pass, exactly the
+  disambiguation proposed here. The paired rate-limit-description guard keeps a
+  `SUCCESS` whose description says "Review rate limited" from counting as review
+  evidence (CR repo learning, 2026-08-11), so the fix cannot fail open on an
+  unreviewed head. Decision-table cases pinned in
+  `tests/bats/cr_finding_gate.bats`: "a genuinely completed SUCCESS with no
+  review node still passes", "a rate-limited SUCCESS is NOT review evidence",
+  plus the blank-reply block.)
+
+## What happened
+
+CodeRabbit posted a `COMMENTED` review node on the PR head
+(`e56ac352`) with an **empty body** — its acknowledgement after the one inline
+finding was addressed and the thread resolved. No new push followed, so CR never
+posted another review.
+
+`.github/actions/cr-finding-gate/action.yml` then took its fail-closed branch:
+
+- `n_reviews > 0` (a review node exists on this head), so the
+  `n_reviews == 0` disambiguation via CR's own `CodeRabbit` StatusContext —
+  which *was* `SUCCESS` — is never reached;
+- the review body carries no `Actionable comments posted: N` header, so
+  `n` is empty and `decide()` returns non-terminal;
+- the 12×15 s window exhausts and the action posts
+  `pending — awaiting CodeRabbit review on current head`.
+
+`CR findings (0 actionable)` is a **required** StatusContext, so the PR sat at
+`mergeStateStatus=BLOCKED` with every other check green. Re-running the workflow
+re-ran the identical logic and re-posted PENDING — the state is not
+self-healing; only a new push or a fresh CR review can clear it, and neither is
+guaranteed to arrive.
+
+Unwedged by applying `cr-out-of-band` (user-authorised, "ignore cr") and
+re-running the gate, which took the label-override early-exit. That is an
+override label standing in for a gate that could not reach a verdict — the shape
+we normally treat as a gate escape.
+
+## Why it matters
+
+The fail-closed branch is correct in spirit (a header-less review is not proof
+of "0 actionable"), but it has no terminal state for the case where the
+header-less review is CR's *final* word on the head. Every such PR needs a human
+override, which erodes the label's meaning as a deliberate exception.
+
+## Proposed fix
+
+In the `n_reviews > 0` / empty-`n` path, disambiguate the same way the
+`n_reviews == 0` path already does, but only for a **body-less** review:
+
+- if the latest on-head CR review body is empty/whitespace **and** CR's own
+  `CodeRabbit` StatusContext on that head is `SUCCESS`, treat it as
+  "CR settled with nothing actionable" → `post success`;
+- keep the current non-terminal retry for a **non-empty** body that merely lacks
+  the header (that really is an unsettled/unexpected state).
+
+An empty body cannot hide a finding count, so this does not reopen the #524
+fail-open (which was a *preamble line above* the header, i.e. a non-empty body).
+
+Add a case to whichever harness covers the action's decision table so the
+empty-body + StatusContext-SUCCESS combination is pinned.
