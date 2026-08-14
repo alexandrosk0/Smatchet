@@ -3,7 +3,7 @@
 
 > **Slug**: `keybindings-multi-combo` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped` — merged via [#2013](https://github.com/alexandrosk0/Smatchet/pull/2013) (squash `8579fd47`, 2026-08-14); § Implementation log / Deviations / Verification (actual) populated in that PR.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -311,11 +311,3 @@ coverage split below is uneven and stated plainly.
 **Manual residue**: the marquee acceptance — pressing `Ctrl+=`, `Ctrl+Shift+=` and `Ctrl`+numpad`+` in the
 running app and watching the font grow by exactly 1 each — is automated in bucket E but unrun here, so it
 is manual residue **for this session only**. Running the bucket-E "Keybindings" group on Windows clears it.
-
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
-
-*(Delete this `## Archive` block as part of step 2.)*
