@@ -4858,3 +4858,62 @@ fail-open (which was a *preamble line above* the header, i.e. a non-empty body).
 
 Add a case to whichever harness covers the action's decision table so the
 empty-body + StatusContext-SUCCESS combination is pinned.
+
+# Develop-tip health assertion — second occurrence, promote it
+
+- **Category**: infra
+- **Priority**: P1
+- **Date**: 2026-08-05
+- **Observed on**: PR #1957 (installer smokes red on develop for 3 merges)
+- **Status**: applied (2026-08-14 — the widening this entry asked for is live in
+  `agents/scripts/core/develop-tip-required-green.sh` (file name kept for the
+  SessionStart-hook wiring): the pure detector now sweeps the develop tip's
+  ACTUAL check runs — required and non-required alike, block-on-any-red parity
+  — labeling each not-green check `required|non-required|unknown` so the nudge
+  distinguishes "blocks every PR" from "broken post-merge backstop". The
+  advisory-name exemption applies ONLY to non-required checks (true merge-gate
+  parity: a required red blocks every PR whatever its name says), and an
+  unreadable required set degrades the label to `unknown` instead of silencing
+  the sweep. CANCELLED gets its own unknown-not-green wording (the exact way
+  #1957 hid), with a later green re-run of the same check superseding an
+  earlier cancel; the tip's check-run pages are globally time-sorted before
+  last-wins so a >100-run tip cannot resurface a stale row. Selftest cases pin
+  the #1957 shapes: red non-required backstop reported,
+  cancelled-run-as-unknown, advisory silence for non-required only
+  (advisory-named REQUIRED red still reported), empty-required-set →
+  kind=unknown, superseded-cancel silence, plus the original required-red /
+  all-green / absent(PR-only) / in-progress cases.)
+
+## What happened
+
+`Windows x64 installer smoke` and `Windows-on-ARM ARM64 installer smoke` went RED
+on develop at #1957 and stayed red while #1959 and #1960 merged on top. Nothing in
+the pipeline asserts the develop tip is green before the next merge, and #1957's own
+develop run was **cancelled** by a superseding push, so the failure never even
+announced itself on the PR.
+
+This is the *identical class* the 2026-07-10 / #1698 postmortem already named and
+proposed a gate for — "required check goes red on develop and nobody notices until it
+blocks the next PR". That proposal was filed as a follow-up and never landed. This is
+its second occurrence, with a worse variant: the red checks here are **non-required**
+post-merge backstops, so even the block-on-any-red inheritance that surfaced #1698
+did not fire.
+
+## Proposed action
+
+Land the assertion the #1698 entry proposed, widened to non-required checks:
+
+- A `develop-tip-required-green.sh` (or an extension of
+  `agents/scripts/core/postmortem-owed.sh`'s sweep) that queries the develop tip's
+  check conclusions — **required and non-required alike**, matching the merge-gate
+  allow-list philosophy in `AGENTS.md` § Merge gates — and raises a loud, attributable
+  SessionStart nudge naming the PR whose merge introduced each red.
+- Treat a **cancelled** post-merge run on develop as unknown-not-green, since that is
+  precisely how #1957 hid.
+
+## Why it matters
+
+Post-merge backstop jobs are the *only* coverage for code PR checks structurally cannot
+run (here: a ~20-30 min LTO publish build). If nothing reads their result, they are
+decorative — the break sat on develop across three merges and was found by an ad-hoc
+adversarial review, not by the system.
