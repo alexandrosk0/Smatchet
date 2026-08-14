@@ -125,12 +125,16 @@ bool DrawBindingCombosCell(IAppCommands& app, const std::vector<Keybinding>& all
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("%s", SmatchetLocalization::T("keybindings.editor.removeCombo", "Remove this combo"));
             }
+            ImGui::SameLine(); // next chip (or "+ Add") continues the row
         }
-        ImGui::SameLine();
         ImGui::PopID();
     }
     if (pendingRemove >= 0) {
         b.Hotkeys.erase(b.Hotkeys.begin() + static_cast<std::ptrdiff_t>(pendingRemove));
+        // Slots are identified by INDEX, so an erase renumbers every chip after the
+        // removed one. An armed capture on a later slot would silently re-target a
+        // different combo, so drop it rather than let it land somewhere unexpected.
+        capturingKey.clear();
         mutated = true;
     }
 
