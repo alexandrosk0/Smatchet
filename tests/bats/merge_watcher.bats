@@ -2719,8 +2719,9 @@ PY
 }
 
 @test "stuck-nudge absence: stale poll evidence beyond the grace -> dead (dies-later case)" {
-    # A daemon that ran once and died: state files exist but the freshest
-    # last_poll_unix is far older than MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS.
+    # A daemon that ran once and died: state files exist but BOTH the
+    # last_poll_unix and the file mtime (also daemon evidence) are far older
+    # than MERGE_WATCH_NUDGE_ABSENCE_GRACE_SECONDS.
     python - <<'PY'
 import importlib.util, os, json, time
 sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
@@ -2728,12 +2729,51 @@ spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-wat
 cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
 sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
 cli.write_registry([{"pr":80,"clone_path":"/c/clones/Smatchet","registered_at":1000}])
-(sdir/"80.json").write_text(json.dumps({"pr":80,"last_state":"BLOCKED","last_poll_unix":int(time.time())-7200}), encoding="utf-8")
+old = int(time.time()) - 7200
+sf = sdir/"80.json"
+sf.write_text(json.dumps({"pr":80,"last_state":"BLOCKED","last_poll_unix":old}), encoding="utf-8")
+os.utime(sf, (old, old))
 PY
     run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
     [ "$status" -eq 0 ]
     [[ "$output" == *"daemon looks DEAD"* ]]
     [[ "$output" == *"grace 300s"* ]]
+}
+
+@test "stuck-nudge: garbage last_poll_unix does NOT clobber a valid STUCK last_state" {
+    # Regression guard: the float() on last_poll_unix used to share the JSON
+    # try-block, so a bad timestamp reset last_state and silently dropped a
+    # legitimately STUCK PR from the nudge.
+    python - <<'PY'
+import importlib.util, os, json
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([{"pr":81,"clone_path":"/c/clones/Smatchet","stuck_reason":"CONFLICT","stuck_streak":5}])
+(sdir/"81.json").write_text(json.dumps({"pr":81,"last_state":"STUCK_NEEDS_ATTENTION","last_poll_unix":"not-a-number"}), encoding="utf-8")
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"STUCK_NEEDS_ATTENTION"* ]]
+    [[ "$output" == *"PR #81"* ]]
+}
+
+@test "stuck-nudge absence: all-corrupt state files still count as evidence via mtime (fresh write = alive)" {
+    # A state file the daemon JUST wrote proves life even if its JSON is
+    # unreadable — the absence check must key on the write, not the content.
+    python - <<'PY'
+import importlib.util, os
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("cli", os.path.join(sd, "merge-watcher-cli.py"))
+cli = importlib.util.module_from_spec(spec); spec.loader.exec_module(cli)
+sdir = cli.state_dir(); sdir.mkdir(parents=True, exist_ok=True)
+cli.write_registry([{"pr":82,"clone_path":"/c/clones/Smatchet","registered_at":1000}])
+(sdir/"82.json").write_text("{not json", encoding="utf-8")
+PY
+    run bash "$SCRIPTS_DIR/merge-watcher-stuck-nudge.sh" --nudge
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
 }
 
 # ---------- gate-logic self-resync (#1428 residual) ----------

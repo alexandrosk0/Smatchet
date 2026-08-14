@@ -90,12 +90,26 @@ for e in entries:
     sf = state_dir / f"{pr}.json"
     last_state = ""
     if sf.exists():
+        # The file's existence is itself daemon evidence (only the daemon
+        # writes these): count its mtime even when the JSON is unreadable, so
+        # an all-corrupt state dir cannot silence the absence check entirely.
+        try:
+            evidence.append(sf.stat().st_mtime)
+        except OSError:
+            pass
         try:
             st = json.loads(sf.read_text(encoding="utf-8"))
             last_state = st.get("last_state", "")
-            evidence.append(float(st.get("last_poll_unix", 0) or 0))
         except Exception:
+            st = {}
             last_state = ""
+        # Guarded separately: a garbage last_poll_unix must not clobber a
+        # validly-read last_state (the float() used to share the parse try,
+        # so a bad timestamp silently dropped a STUCK PR from the nudge).
+        try:
+            evidence.append(float(st.get("last_poll_unix", 0) or 0))
+        except (TypeError, ValueError):
+            pass
     else:
         try:
             registered_at = float(e.get("registered_at", 0) or 0)
