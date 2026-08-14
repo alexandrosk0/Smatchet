@@ -58,13 +58,18 @@ bool HotkeyCaptureArmedRecently();
 std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, const std::string& candidateHotkey,
                                    const std::string& selfCommandId, const std::string& selfArgsJson);
 
-/// Row-level variant: the first of `row`'s own combos that collides with another
-/// action, so a multi-combo editor row can name WHICH combo is the problem rather
-/// than flagging the whole row. Writes that combo to `outOffendingCombo` and returns
-/// the conflicting CommandId; both are empty when the row is clean. A disabled row
-/// never conflicts (it dispatches nothing).
-std::string FindKeybindingConflictForRow(const std::vector<Keybinding>& bindings, const Keybinding& row,
-                                         std::string& outOffendingCombo);
+/// Whole-table variant for the editor: one pass computing, for EVERY row i, the
+/// first of its combos that collides with another enabled action
+/// (outOffendingCombos[i]) and that action's CommandId (outConflictCommandIds[i]);
+/// both "" when clean. A disabled row never conflicts (it dispatches nothing).
+/// The editor calls this once per frame instead of a per-row lookup: conflicts
+/// depend on every row's parsed combos, so a per-row scan re-parsed the whole
+/// table for each visible row (~rows x combos string parses per frame against the
+/// 6.94 ms budget) — here every combo is parsed exactly once and the pairwise
+/// check compares PODs.
+void ComputeKeybindingRowConflicts(const std::vector<Keybinding>& bindings,
+                                   std::vector<std::string>& outConflictCommandIds,
+                                   std::vector<std::string>& outOffendingCombos);
 
 /// Small modal owned by SmatchetUI. The toolbar / command-palette "Set shortcut..."
 /// context action calls Open() with a target command id; SmatchetUI calls Draw()

@@ -31,6 +31,21 @@ Keybinding MakeBinding(const char* hotkey, const char* commandId, const char* ar
     return MakeBindingMulti({hotkey}, commandId, argsJson);
 }
 
+// Find-or-append the (commandId, argsJson) row and return its index. Enabled on
+// create; the callers own the combo-set semantics (replace vs append).
+int UpsertBindingRow(KeybindingsConfig& cfg, const std::string& commandId, const std::string& argsJson) {
+    const int existing = cfg.FindBindingIndex(commandId, argsJson);
+    if (existing >= 0) {
+        return existing;
+    }
+    Keybinding b;
+    b.CommandId = commandId;
+    b.ArgsJson = argsJson;
+    b.Enabled = true;
+    cfg.Bindings.push_back(b);
+    return static_cast<int>(cfg.Bindings.size()) - 1;
+}
+
 } // namespace
 
 std::string Keybinding::PrimaryHotkey() const { return Hotkeys.empty() ? std::string() : Hotkeys.front(); }
@@ -213,15 +228,7 @@ int KeybindingsConfig::FindBindingIndex(const std::string& commandId, const std:
 
 int KeybindingsConfig::SetBindingHotkey(const std::string& commandId, const std::string& argsJson,
                                         const std::string& hotkey) {
-    int idx = FindBindingIndex(commandId, argsJson);
-    if (idx < 0) {
-        Keybinding b;
-        b.CommandId = commandId;
-        b.ArgsJson = argsJson;
-        b.Enabled = true;
-        Bindings.push_back(b);
-        idx = static_cast<int>(Bindings.size()) - 1;
-    }
+    const int idx = UpsertBindingRow(*this, commandId, argsJson);
     Keybinding& row = Bindings[static_cast<std::size_t>(idx)];
     // REPLACE-ALL, not append: "this action's shortcut is now X" drops any
     // alternatives (see the header). AddBindingHotkey is the additive door.
@@ -236,15 +243,7 @@ int KeybindingsConfig::AddBindingHotkey(const std::string& commandId, const std:
     if (hotkey.empty()) {
         return -1;
     }
-    int idx = FindBindingIndex(commandId, argsJson);
-    if (idx < 0) {
-        Keybinding b;
-        b.CommandId = commandId;
-        b.ArgsJson = argsJson;
-        b.Enabled = true;
-        Bindings.push_back(b);
-        idx = static_cast<int>(Bindings.size()) - 1;
-    }
+    const int idx = UpsertBindingRow(*this, commandId, argsJson);
     Keybinding& row = Bindings[static_cast<std::size_t>(idx)];
     row.AddHotkey(hotkey); // dedups
     row.Enabled = true;    // adding a combo re-enables a disabled action

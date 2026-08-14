@@ -151,20 +151,56 @@ std::string FindKeybindingConflict(const std::vector<Keybinding>& bindings, cons
     return std::string();
 }
 
-std::string FindKeybindingConflictForRow(const std::vector<Keybinding>& bindings, const Keybinding& row,
-                                         std::string& outOffendingCombo) {
-    outOffendingCombo.clear();
-    if (!row.Enabled) {
-        return std::string(); // a disabled action dispatches nothing, so nothing collides
-    }
-    for (std::size_t h = 0; h < row.Hotkeys.size(); ++h) {
-        const std::string conflict = FindKeybindingConflict(bindings, row.Hotkeys[h], row.CommandId, row.ArgsJson);
-        if (!conflict.empty()) {
-            outOffendingCombo = row.Hotkeys[h]; // name WHICH combo collides, not just the row
-            return conflict;
+void ComputeKeybindingRowConflicts(const std::vector<Keybinding>& bindings,
+                                   std::vector<std::string>& outConflictCommandIds,
+                                   std::vector<std::string>& outOffendingCombos) {
+    const std::size_t n = bindings.size();
+    outConflictCommandIds.assign(n, std::string());
+    outOffendingCombos.assign(n, std::string());
+
+    // Parse every enabled row's combos exactly once. `specIndex` remembers which
+    // Hotkeys entry each parsed struct came from, so the offending-combo report
+    // names the user's spelling even when some of a row's combos failed to parse.
+    struct ParsedRow {
+        std::vector<ImGuiBugHotkey> combos;
+        std::vector<std::size_t> specIndex;
+    };
+    std::vector<ParsedRow> parsed(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (!bindings[i].Enabled) {
+            continue; // a disabled action dispatches nothing: neither collides nor is collided with
+        }
+        for (std::size_t h = 0; h < bindings[i].Hotkeys.size(); ++h) {
+            ImGuiBugHotkey hk;
+            if (ParseImGuiHotkey(bindings[i].Hotkeys[h], hk)) {
+                parsed[i].combos.push_back(hk);
+                parsed[i].specIndex.push_back(h);
+            }
         }
     }
-    return std::string();
+
+    // Pairwise POD compares, preserving the per-row report order the old lookup had:
+    // for each row, its FIRST offending combo (in Hotkeys order) against the FIRST
+    // colliding action (in table order) wins.
+    for (std::size_t i = 0; i < n; ++i) {
+        bool found = false;
+        for (std::size_t k = 0; !found && k < parsed[i].combos.size(); ++k) {
+            for (std::size_t j = 0; !found && j < n; ++j) {
+                if (j == i ||
+                    (bindings[j].CommandId == bindings[i].CommandId && bindings[j].ArgsJson == bindings[i].ArgsJson)) {
+                    continue; // a row never conflicts with itself (nor its own aliases)
+                }
+                for (std::size_t m = 0; m < parsed[j].combos.size(); ++m) {
+                    if (SameCombo(parsed[i].combos[k], parsed[j].combos[m])) {
+                        outConflictCommandIds[i] = bindings[j].CommandId;
+                        outOffendingCombos[i] = bindings[i].Hotkeys[parsed[i].specIndex[k]];
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+    }
 }
 
 void QuickBindPopup::Open(const std::string& commandId, const std::string& displayName,
@@ -210,14 +246,18 @@ bool QuickBindPopup::Draw(TrackerConfig& cfg) {
 
         // "Set" replaces the whole combo set, so an action carrying alternatives must
         // say so before the user loses them here — the full editor is where a single
-        // alias is added or dropped.
+        // alias is added or dropped. Resolve the display FIRST: BoundHotkeyDisplayAll
+        // skips disabled rows, so a disabled multi-combo action yields "" and the
+        // size gate alone would print the label trailed by nothing.
         const int rowIdx = cfg.Keybindings.FindBindingIndex(commandId_, argsJson_);
         if (rowIdx >= 0 && cfg.Keybindings.Bindings[static_cast<std::size_t>(rowIdx)].Hotkeys.size() > 1U) {
             const std::string all = BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, commandId_, argsJson_);
-            ImGui::TextColored(
-                ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%s %s",
-                SmatchetLocalization::T("keybindings.quickbind.replacesAll", "Set replaces every combo, currently:"),
-                all.c_str());
+            if (!all.empty()) {
+                ImGui::TextColored(ImVec4(0.75f, 0.75f, 0.75f, 1.0f), "%s %s",
+                                   SmatchetLocalization::T("keybindings.quickbind.replacesAll",
+                                                           "Set replaces every combo, currently:"),
+                                   all.c_str());
+            }
         }
 
         ImGui::Separator();

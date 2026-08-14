@@ -12,7 +12,7 @@
 Every rebindable shortcut carries **exactly one** key combo today: `Keybinding` holds a single
 `std::string Hotkey`, and the whole editor / display / mutator surface is built on that assumption.
 [`docs/guides/keyboard-shortcuts.md`](../../guides/keyboard-shortcuts.md) states the policy outright —
-*"One combo per command"* — a deliberate v1 scope call in [`docs/plans/keyboard-shortcuts-rebindable.md`](../shipped/keyboard-shortcuts-rebindable.md).
+*"One combo per command"* — a deliberate v1 scope call in [`docs/plans/keyboard-shortcuts-rebindable.md`](../keyboard-shortcuts-rebindable.md).
 
 **User request (verbatim):** *"extend the keybindings to have multiple keys. I want among others to
 bind the font size increase to ctrl = and to ctrl +"*
@@ -103,7 +103,7 @@ The naive "chips are read-only labels + an `[+ Add]` button" shape **regresses t
 a row's single combo is rebound in one click via `DrawHotkeyRebindControl`, and Add-only would make
 that remove-then-add. So each chip's **label is itself the arm affordance**:
 
-```
+```text
 [ Ctrl+= ] x   [ Ctrl+Shift+= ] x   [ Ctrl+NumAdd ] x   [ + Add ]
 Ctrl+Shift+= conflicts with Toggle Performance
 ```
@@ -147,7 +147,7 @@ What **STAYS** in `DrawKeybindingsSectionBody`: the filter input, table setup/he
 
 ## Perf-review-system gates (diff touches `Source/Core/` — MANDATORY)
 
-Per [`docs/plans/pillar-1-2-perf-review-system.md`](../shipped/pillar-1-2-perf-review-system.md).
+Per [`docs/plans/pillar-1-2-perf-review-system.md`](../pillar-1-2-perf-review-system.md).
 
 1. **PR-fast CI** — **fires**: the changed hot path is `dispatchKeybindings`, called every frame from `drawPreWindowOverlays` ([`SmatchetUI.cpp:616`](../../../Source/Core/src/Ui/SmatchetUI.cpp)). Run the steady-state UI scenario that the curated diff→scenario map in `agents/core/perf-gatekeeper.md` binds to `Source/Core/src/Ui/SmatchetUI.cpp`; if that path is absent from `scripts/dev/perf-pr-fast-set.json`, add it in this PR.
 2. **Pillar 2 static scanner** — **N/A**: no new sync I/O (`cpr`/`SQLite`/`p4`/file) reachable from `ImGui::*`; the only write is the existing off-thread `EnqueueTrackerConfig`.
@@ -163,7 +163,7 @@ Per [`docs/plans/pillar-1-2-perf-review-system.md`](../shipped/pillar-1-2-perf-r
 
 - **Risk — `Ctrl+Shift+=` is a NEW default combo and may collide with a user's own binding.** Mitigated: the migration widens only *untouched* rows, the editor's live conflict-warn surfaces any collision, and project policy is warn-not-block. Verified none of the new combos collides with an existing `Defaults()` entry (`Ctrl+Shift+=` is unused).
 - **Risk — `+` ≡ `Shift+=` is a US/ANSI-layout assumption.** ImGui reports the US-position key. Mitigated: the layout-independent `Ctrl+NumAdd` ships alongside, and capture always records the physically-observed key. Documented in the user guide.
-- **Risk — NumLock off may report `Keypad0`–`9` as Home/End on some backends** (`KeypadAdd`/`KeypadSubtract` are unaffected). `Ctrl+Num0` is the weakest of the three new defaults; **accepted** — harmless when unreported, noted in the guide.
+- **Risk — NumLock off may report `Keypad0`–`9` as Home/End on some backends** (`KeypadAdd`/`KeypadSubtract` are unaffected). `Ctrl+Num0` (the zoom-reset alias) is therefore the weakest of the three new keypad aliases (`Ctrl+NumAdd`, `Ctrl+NumSubtract`, `Ctrl+Num0`); **accepted** — harmless when unreported, noted in the guide.
 - **Risk — an old build that SAVES drops the `hotkeys` array.** Mitigated by dual-write: `hotkey` still carries the primary combo, so a downgrade degrades to one working combo rather than an unbound action. Full downgrade round-trip is **accepted** as out of scope; documented.
 - **Risk — hand-edited `Ctrl++B`-style specs changing meaning.** The trailing-only literal rule makes this a **provable zero-delta** (`Ctrl++B` stays `{ctrl, B}`); pinned by a bucket-A test.
 - **Risk — `dup_audit.py` (blocking delta gate) on the new conflict / display / factory helpers.** Pre-empted by three extractions that each *remove* an existing clone: `SameCombo` (today duplicated between [`ImGuiHotkey.cpp:192`](../../../Source/Core/src/Ui/ImGuiHotkey.cpp) and [`SmatchetHotkeyCapture.cpp:152`](../../../Source/Core/src/Ui/SmatchetHotkeyCapture.cpp)), `FindDisplayBinding` (shared by all three `BoundHotkeyDisplay*`, carrying the two existing `SMATCHET_DEVIATION(rule=bare-json-parse-untrusted)` comments once instead of twice), and `MakeBinding` → `MakeBindingMulti`.
@@ -256,6 +256,18 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
   surroundings by hand.
 - Bare `///` separator lines inside the new doc comments tripped `comment-decorative-banner` (blocking);
   the paragraphs were joined instead. No content change.
+- **Review round (CodeRabbit on PR #2013): `FindKeybindingConflictForRow` replaced by
+  `ComputeKeybindingRowConflicts`.** The per-row lookup this plan named re-parsed every combo of every
+  row for each visible row, every frame the editor page was open (~rows × combos string parses against
+  the 6.94 ms budget). The whole-table pass parses each combo once per frame and compares PODs; the
+  chip cell now receives its row's precomputed conflict strings, which also dropped the cell's `app` +
+  `allBinds` parameters (and the seam's). Same review round: the duplicated find-or-append body in
+  `SetBindingHotkey`/`AddBindingHotkey` was extracted to a file-local `UpsertBindingRow`; the quick-bind
+  "replaces every combo" line now renders only when the resolved display string is non-empty (a
+  disabled multi-combo row yielded an empty list); the add-button ImGui id became the locale-stable
+  `###kbAddCombo`; the two new capture sub-cases assert the arm step; and the dead single-string
+  `RowMatchesFilter` overload (orphaned by the vector overload, a latent `-Werror` unused-function
+  break on the Windows build) was deleted.
 
 ## Verification (actual)
 

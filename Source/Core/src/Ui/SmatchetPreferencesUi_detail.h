@@ -89,8 +89,7 @@ void ResetKeybindingsCaptureState();
 /// exercising the shipped chip layout rather than a copy of it. `capturingKey` is the
 /// caller-owned "which slot holds capture" latch. Defined in
 /// SmatchetPreferencesUi_Keybindings.cpp; ui-tests builds only.
-bool DrawKeybindingCombosCellForTest(IAppCommands& app, const std::vector<Keybinding>& allBinds, Keybinding& b,
-                                     const std::string& rowKey, std::string& capturingKey);
+bool DrawKeybindingCombosCellForTest(Keybinding& b, const std::string& rowKey, std::string& capturingKey);
 #endif
 
 /// Maps the persisted cfg.DateFormatOption string to the Combo index used by the

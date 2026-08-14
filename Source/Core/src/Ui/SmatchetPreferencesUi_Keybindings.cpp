@@ -47,21 +47,10 @@ std::string CommandLabel(IAppCommands& app, const std::string& commandId) {
 }
 
 // A row matches when the (already-lowercased) filter is a substring of the action
-// label, the command id, or the bound combo. Empty filter matches everything.
-// The ASCII helpers come from PreferencesFilter — this TU used to carry its own
-// copies (Pillar 5).
-bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
-                      const std::string& hotkey) {
-    if (filterLower.empty()) {
-        return true;
-    }
-    return PreferencesFilter::ContainsLower(label, filterLower) ||
-           PreferencesFilter::ContainsLower(commandId, filterLower) ||
-           PreferencesFilter::ContainsLower(hotkey, filterLower);
-}
-
-// Multi-combo overload: a row matches when the filter hits ANY of its combos. Loops
-// the set rather than joining it — no per-row allocation on a per-frame path.
+// label, the command id, or ANY of its combos; empty filter matches everything.
+// Loops the combo set rather than joining it — no per-row allocation on a per-frame
+// path. The ASCII helpers come from PreferencesFilter — this TU used to carry its
+// own copies (Pillar 5).
 bool RowMatchesFilter(const std::string& filterLower, const std::string& label, const std::string& commandId,
                       const std::vector<std::string>& hotkeys) {
     if (filterLower.empty()) {
@@ -87,8 +76,11 @@ bool RowMatchesFilter(const std::string& filterLower, const std::string& label, 
 //
 // `capturingKey` is the shared "which control holds capture" latch, scoped per SLOT
 // (rowKey + unit separator + slot) because a row now hosts several capture controls.
-bool DrawBindingCombosCell(IAppCommands& app, const std::vector<Keybinding>& allBinds, Keybinding& b,
-                           const std::string& rowKey, std::string& capturingKey) {
+// The warn-only conflict is PRECOMPUTED by the caller (ComputeKeybindingRowConflicts,
+// once per frame for the whole table) — a per-row lookup here re-parsed every combo
+// of every row for each visible row, each frame. Both strings empty = clean row.
+bool DrawBindingCombosCell(Keybinding& b, const std::string& rowKey, std::string& capturingKey,
+                           const std::string& offendingCombo, const std::string& conflictLabel) {
     bool mutated = false;
 
     // Deferred erase: dropping a chip mid-loop would invalidate both the iteration and
@@ -145,8 +137,11 @@ bool DrawBindingCombosCell(IAppCommands& app, const std::vector<Keybinding>& all
                                             "add";
         bool capturing = (capturingKey == addKey);
         std::string out;
+        // "###" makes the button's ImGui id locale-stable ("kbAddCombo") while the
+        // visible label stays the localized "+ Add" — bucket-E addresses the id.
         const bool committed = smatchet::ui::DrawHotkeyRebindControl(
-            "kbadd", std::string(), capturing, out, SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
+            "###kbAddCombo", std::string(), capturing, out,
+            SmatchetLocalization::T("keybindings.editor.addCombo", "+ Add"));
         if (capturing) {
             capturingKey = addKey;
         } else if (capturingKey == addKey) {
@@ -160,12 +155,10 @@ bool DrawBindingCombosCell(IAppCommands& app, const std::vector<Keybinding>& all
 
     // Warn-only conflict, naming WHICH combo collides — with several combos on a row,
     // flagging the row alone would not say where to look.
-    std::string offending;
-    const std::string conflict = smatchet::ui::FindKeybindingConflictForRow(allBinds, b, offending);
-    if (!conflict.empty()) {
-        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s %s", offending.c_str(),
+    if (!conflictLabel.empty()) {
+        ImGui::TextColored(ImVec4(0.95f, 0.55f, 0.35f, 1.0f), "%s %s %s", offendingCombo.c_str(),
                            SmatchetLocalization::T("keybindings.editor.conflict", "conflicts with"),
-                           CommandLabel(app, conflict).c_str());
+                           conflictLabel.c_str());
     }
     return mutated;
 }
@@ -361,6 +354,12 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
                                 ImGuiTableColumnFlags_WidthStretch, 0.15f);
         ImGui::TableHeadersRow();
 
+        // One conflict pass for the whole table this frame — each combo is parsed
+        // once, and the rows below just render their precomputed result.
+        std::vector<std::string> conflictIds;
+        std::vector<std::string> offendingCombos;
+        smatchet::ui::ComputeKeybindingRowConflicts(binds, conflictIds, offendingCombos);
+
         for (std::size_t i = 0; i < binds.size(); ++i) {
             Keybinding& b = binds[i];
             const std::string label = CommandLabel(app, b.CommandId);
@@ -378,7 +377,8 @@ void DrawKeybindingsSectionBody(SmatchetUI& ui, IAppCommands& app, UiDrawSession
 
             ImGui::TableSetColumnIndex(1);
             const std::string rowKey = b.CommandId + "\x1f" + b.ArgsJson;
-            if (DrawBindingCombosCell(app, binds, b, rowKey, capturingKey)) {
+            const std::string conflictLabel = conflictIds[i].empty() ? std::string() : CommandLabel(app, conflictIds[i]);
+            if (DrawBindingCombosCell(b, rowKey, capturingKey, offendingCombos[i], conflictLabel)) {
                 mutated = true;
             }
 
@@ -474,9 +474,10 @@ void ResetKeybindingsCaptureState() { s_kbCapturingKey.clear(); }
 // the real function in a floating replica window through this thin forwarder rather
 // than reimplementing the chip layout in the test (which would then not be a test of
 // this code at all). Same shape as the SmatchetUiTestMarkKeybindingsDirty seam.
-bool DrawKeybindingCombosCellForTest(IAppCommands& app, const std::vector<Keybinding>& allBinds, Keybinding& b,
-                                     const std::string& rowKey, std::string& capturingKey) {
-    return DrawBindingCombosCell(app, allBinds, b, rowKey, capturingKey);
+bool DrawKeybindingCombosCellForTest(Keybinding& b, const std::string& rowKey, std::string& capturingKey) {
+    // No conflict strings: the replica hosts a single synthetic row, and the conflict
+    // hint is precomputed table-wide by the real editor (ComputeKeybindingRowConflicts).
+    return DrawBindingCombosCell(b, rowKey, capturingKey, std::string(), std::string());
 }
 #endif
 

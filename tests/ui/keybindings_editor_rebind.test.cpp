@@ -398,10 +398,14 @@ void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
         // stringifier learned are capturable too. Before that, '=' and the keypad were
         // rejected outright — you could not bind Ctrl+= from the UI at all, even though
         // it shipped as a default.
+        // Assert the arm step too — a bare `if` here would let an arming regression
+        // (for '=' or the keypad specifically) skip both blocks and report green.
         g_captureState = CaptureWidgetState{};
         ctx->Yield();
         ctx->ItemClick("**/Click to rebind##rebindcaptureTest");
-        if (YieldUntil(ctx, [] { return g_captureState.capturing; }, 60)) {
+        const bool armedEq = YieldUntil(ctx, [] { return g_captureState.capturing; }, 60);
+        IM_CHECK_NO_RET(armedEq);
+        if (armedEq) {
             ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Equal);
             const bool committedEq = YieldUntil(ctx, [] { return g_captureState.committed; }, 60);
             IM_CHECK_NO_RET(committedEq);
@@ -414,7 +418,9 @@ void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
         g_captureState = CaptureWidgetState{};
         ctx->Yield();
         ctx->ItemClick("**/Click to rebind##rebindcaptureTest");
-        if (YieldUntil(ctx, [] { return g_captureState.capturing; }, 60)) {
+        const bool armedPad = YieldUntil(ctx, [] { return g_captureState.capturing; }, 60);
+        IM_CHECK_NO_RET(armedPad);
+        if (armedPad) {
             ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd);
             const bool committedPad = YieldUntil(ctx, [] { return g_captureState.committed; }, 60);
             IM_CHECK_NO_RET(committedPad);
@@ -494,7 +500,6 @@ void RegisterQuickBindCaptureThenSet(ImGuiTestEngine* engine) {
 // engine traps the resulting IM_ASSERT.
 struct ComboCellState {
     Keybinding row;
-    std::vector<Keybinding> all;
     std::string capturingKey;
     bool mutated = false;
 };
@@ -510,8 +515,8 @@ void RegisterComboChipsAddAndRemove(ImGuiTestEngine* engine) {
         }
         ImGui::SetNextWindowSize(ImVec2(640.0f, 200.0f), ImGuiCond_Appearing);
         if (ImGui::Begin("SmatchetTest::KeybindingCombosCell")) {
-            if (SmatchetPreferencesUiDetail::DrawKeybindingCombosCellForTest(
-                    *app, g_comboCell.all, g_comboCell.row, "testrow", g_comboCell.capturingKey)) {
+            if (SmatchetPreferencesUiDetail::DrawKeybindingCombosCellForTest(g_comboCell.row, "testrow",
+                                                                             g_comboCell.capturingKey)) {
                 g_comboCell.mutated = true;
             }
         }
@@ -537,7 +542,7 @@ void RegisterComboChipsAddAndRemove(ImGuiTestEngine* engine) {
 
         // 1. "+ Add" arms capture and appends a THIRD combo (the set grows, the
         //    existing two are untouched).
-        ctx->ItemClick("**/+ Add##rebindkbadd");
+        ctx->ItemClick("**/###kbAddCombo"); // locale-stable id; visible label is the localized "+ Add"
         const bool armedAdd = YieldUntil(ctx, [] { return !g_comboCell.capturingKey.empty(); }, 60);
         IM_CHECK_NO_RET(armedAdd);
         if (armedAdd) {
