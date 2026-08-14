@@ -181,6 +181,7 @@ GIT_BIN = _resolve_bin(
 _HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))  # so the sibling module resolves under any launch cwd
 from merge_watcher_registry import (  # noqa: E402
+    AGENT_EVENT_STATES as _REGISTRY_AGENT_EVENT_STATES,
     watcher_root,
     state_dir,
     read_registry,
@@ -602,6 +603,7 @@ def poll_one(
         4: "PR_CLOSED_OR_MERGED",
         5: "PAGINATION_OVERFLOW",
         7: "ACTIONS_UNAVAILABLE",
+        8: "REQUIRED_MISSING_CANCELLED",
     }.get(gates.returncode, f"EXIT_{gates.returncode}")
     if gates.returncode == 7:
         # Exit 7 returns before the per-iteration `Poll …` line, so stdout is
@@ -612,6 +614,25 @@ def poll_one(
             if ln.strip().startswith("ESCALATE:"):
                 last_line = ln.strip()[:500]
                 break
+    rerun_commands: list[str] = []
+    if gates.returncode == 8:
+        # Exit 8's deliverable is the required-missing-cancelled diagnosis
+        # PLUS the `gh run rerun <id>` line(s) that follow it — same
+        # truncation hazard as exit 7 (the generic required-missing BLOCK
+        # line alone overflows the 300-char stderr join). The COMMANDS go
+        # first (they are the actionable part and must survive every
+        # downstream truncation: maybe_notify caps at 200 chars, the agent
+        # event at 300) and are ALSO carried as a structured field so those
+        # consumers can render them without string surgery.
+        _diag = ""
+        for ln in gates.stderr.splitlines():
+            t = ln.strip()
+            if t.startswith("BLOCK: required-missing-cancelled"):
+                _diag = t[:300]
+            elif t.startswith("gh run rerun "):
+                rerun_commands.append(t)
+        if _diag or rerun_commands:
+            last_line = " | ".join(rerun_commands + ([_diag] if _diag else []))[:500]
     result = {
         "pr": pr,
         "clone_path": clone_path,
@@ -620,6 +641,8 @@ def poll_one(
         "last_status_line": last_line,
         "gates_return_code": gates.returncode,
     }
+    if rerun_commands:
+        result["rerun_commands"] = rerun_commands
     # GATE_CARRY — the poll emits "GATE_CARRY nudge_head=… stale_head=… stale_streak=…"
     # before its blocked return so the watcher can persist the once-per-HEAD nudge
     # guard + STALE streak across cycles (the in-process locals reset under
@@ -1251,6 +1274,11 @@ NOTIFY_STATES = {
     # while zero workflow runs were created repo-wide — waiting cannot clear
     # it, so a human/agent must act. Silent under the watcher otherwise.
     "ACTIONS_UNAVAILABLE",
+    # Cancelled-while-pending (merge-gates exit 8): a required context's
+    # pending run was cancelled by the concurrency-group collapse and left no
+    # check-run — waiting cannot clear it; the state line carries the
+    # `gh run rerun <id>` fix. Same silent-wedge hazard as exit 7 (#1937).
+    "REQUIRED_MISSING_CANCELLED",
 }
 
 
@@ -1289,7 +1317,13 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     # — saves a second click hunting for the comments from the overview tab.
     # Option C of the watcher-loop fix: faster, actionable notify.
     cr_finding = cur_state == "TRIAGE_BUDGET_EXHAUSTED" or _looks_like_cr_finding_block(status_line)
-    if cr_finding and pr_url:
+    rerun_commands = state.get("rerun_commands") or []
+    if rerun_commands:
+        # REQUIRED_MISSING_CANCELLED: the rerun command IS the message — it
+        # must survive the 200-char cap intact (the state name rides in
+        # --state), so it leads and the diagnosis is dropped from the toast.
+        message = "; ".join(rerun_commands)[:200]
+    elif cr_finding and pr_url:
         message = f"{status_line[:160]} — review inline: {pr_url}/files"
     else:
         message = status_line[:200]
@@ -2855,20 +2889,12 @@ def maybe_auto_act(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, An
 # state transition that a SessionStart hook / the `merge-watcher-cli.py await`
 # subcommand can tail. It is purely additive: the human toast still fires.
 
-#: Terminal/actionable states an agent wants to wake on. Superset of NOTIFY_STATES
-#: plus GATES_PASSED (merged) so an `await --until=terminal` returns on a merge too.
-AGENT_EVENT_STATES = {
-    "GATES_PASSED",
-    "TRIAGE_BUDGET_EXHAUSTED",
-    "STUCK_NEEDS_ATTENTION",
-    "CI_FAIL",
-    "GH_API_DOWN",
-    "PR_CLOSED_OR_MERGED",
-    "PAGINATION_OVERFLOW",
-    "TIMEOUT",
-    "READY_FLIP_FAILED",
-    "ACTIONS_UNAVAILABLE",
-}
+#: Terminal/actionable states an agent wants to wake on — imported from the
+#: shared registry module so the CLI's `await` filters can never drift from
+#: what the daemon emits (they did, twice: exit 7 and exit 8 were both
+#: invisible to `await` until the PR #2012 CodeRabbit round). The definition
+#: and its rationale live in merge_watcher_registry.py.
+AGENT_EVENT_STATES = _REGISTRY_AGENT_EVENT_STATES
 
 
 def agent_events_path() -> pathlib.Path:
@@ -2923,7 +2949,9 @@ def maybe_emit_agent_event(
         "source": "merge-watcher",
     }
     # Carry the most actionable fields when present so a consumer doesn't re-query.
-    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget"):
+    # rerun_commands: exit 8's `gh run rerun <id>` line(s), untruncated — the
+    # 300-char status_line cap above would otherwise be the only carrier.
+    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget", "rerun_commands"):
         if k in state:
             event[k] = state[k]
     append_agent_event(event)

@@ -97,6 +97,24 @@ case "$1" in
                 esac
                 ;;
             */actions/runs)
+                # Two probes share this path; the cancelled-pending probe is
+                # the one that passes a head_sha=<sha> field.
+                _has_head_sha=""
+                for _a in "$@"; do
+                    case "$_a" in head_sha=*) _has_head_sha=1 ;; esac
+                done
+                if [ -n "$_has_head_sha" ]; then
+                    # Cancelled-pending probe: gh api .../actions/runs -X GET
+                    #   -f head_sha=<sha> -f per_page=100 --jq '... @tsv'
+                    #   MERGE_GATES_STUB_HEAD_RUNS — final TSV output, one run
+                    #     per line: id<TAB>status<TAB>conclusion<TAB>name
+                    #     (unset/empty → no runs on head); "fail" → probe error
+                    case "${MERGE_GATES_STUB_HEAD_RUNS:-}" in
+                        fail) echo "gh: stub head-runs error" >&2; exit 1 ;;
+                        "")   exit 0 ;;
+                        *)    printf '%s\n' "$MERGE_GATES_STUB_HEAD_RUNS"; exit 0 ;;
+                    esac
+                fi
                 # Outage probe: gh api repos/<o>/<r>/actions/runs -X GET
                 #   -f "created=>=<iso>" -f per_page=1 --jq '.total_count'
                 #   MERGE_GATES_STUB_RUNS_CREATED — total_count to report
@@ -194,7 +212,7 @@ teardown() {
     unset MERGE_GATES_NONE_NUDGE_POLLS MERGE_GATES_PRIOR_NONE_STREAK MERGE_GATES_PRIOR_NONE_HEAD
     unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE MERGE_GATES_IGNORE_MERGESTATE
     unset MERGE_GATES_FRESHNESS MERGE_GATES_FRESH_RUN_BLOB MERGE_GATES_FRESH_DEV_BLOB
-    unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED
+    unset MERGE_GATES_OUTAGE_POLLS MERGE_GATES_STUB_RUNS_CREATED MERGE_GATES_STUB_HEAD_RUNS
     unset MERGE_GATES_PRIOR_OUTAGE_HEAD MERGE_GATES_PRIOR_OUTAGE_STREAK MERGE_GATES_PRIOR_OUTAGE_SINCE
 }
 
@@ -2300,6 +2318,116 @@ blocked_with_bot_threads() {
     [[ "$output" == *"CONFLICTED"* ]]
     [[ "$output" != *"ESCALATE"* ]]
     rm -f "$f"
+}
+
+# ── cancelled-while-pending: required-missing disambiguation ────────────────
+# A run GitHub cancels while still PENDING (one-pending-per-concurrency-group
+# collapse) creates NO check-run, so the required context is absent forever and
+# nothing re-triggers it — #1937 burned all 90 polls on that head. Once every
+# other check is terminal-green, a cancelled run on the head with zero
+# queued/in-progress runs is positive "never, not late" evidence: the poller
+# names the run id + `gh run rerun <id>` and exits 8 instead of polling out.
+# (required-check-cancelled-while-pending-wedges-poller, tooling P2.)
+
+@test "cancelled-pending: absent required + terminal-green CI + name-matched cancelled run, none active -> return 8 + rerun advice [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '31795783743\tcompleted\tcancelled\tDoc anchors + agent contract')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 8 ]
+    [[ "$output" == *"required-missing-cancelled"* ]]
+    [[ "$output" == *"gh run rerun 31795783743"* ]]
+    [[ "$output" != *"GATES_PASSED"* ]]
+}
+
+@test "cancelled-pending: an unrelated cancelled run (workflow name does not match the absent context) WARNs and keeps polling [P2]" {
+    # A superseded comment-trigger burst leaves cancelled runs of OTHER
+    # workflows while the required context is merely creation-lagged: rerun
+    # advice on those cannot create the missing context, so no early exit —
+    # but the candidates are surfaced for the name-mismatch wedge case.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '111\tcompleted\tcancelled\tCR finding gate')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+    [[ "$output" == *"none name-match"* ]]
+    [[ "$output" == *"gh run rerun 111"* ]]
+}
+
+@test "cancelled-pending: substring workflow name (MSVC vs 'Windows + MSVC') does NOT take the exit - exact membership only [P2]" {
+    # index()-style matching would let a cancelled run named "MSVC" match the
+    # absent context "Windows + MSVC" and stop polling with rerun advice for
+    # the wrong workflow (CodeRabbit round on this slice).
+    export MERGE_GATES_REQUIRED_CONTEXTS="Windows + MSVC"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '444\tcompleted\tcancelled\tMSVC')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+    [[ "$output" == *"none name-match"* ]]
+}
+
+@test "cancelled-pending: a FULL first page (100 rows) is unverifiable evidence - keep polling [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    local rows i
+    rows="$(printf '1\tcompleted\tcancelled\tDoc anchors + agent contract')"
+    for i in $(seq 2 100); do
+        rows="$rows$(printf '\n%s\tcompleted\tsuccess\tOther workflow' "$i")"
+    done
+    export MERGE_GATES_STUB_HEAD_RUNS="$rows"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+}
+
+@test "cancelled-pending: a queued run on the head suppresses the early exit (something may still arrive) [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '111\tcompleted\tcancelled\tDoc anchors + agent contract\n222\tqueued\t\tDoc anchors + agent contract')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+}
+
+@test "cancelled-pending: no runs on the head (pure creation-lag shape) keeps polling [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+}
+
+@test "cancelled-pending: a probe failure keeps polling (early exit never taken on unverified evidence) [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_HEAD_RUNS=fail
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+}
+
+@test "cancelled-pending: completed-success runs alone (no cancelled) keep polling [P2]" {
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '333\tcompleted\tsuccess\tSome other workflow')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+}
+
+@test "cancelled-pending: outage tests' shape (no head-runs stub) still reaches the outage escalation [P2]" {
+    # Regression guard on ORDERING: the cancelled probe runs before the outage
+    # streak; with no cancelled evidence it must fall through so exit 7 still
+    # fires exactly as before this probe existed.
+    export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
+    export MERGE_GATES_OUTAGE_POLLS=1
+    export MERGE_GATES_STUB_RUNS_CREATED=0
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 7 ]
+    [[ "$output" == *"ESCALATE: ACTIONS UNAVAILABLE"* ]]
 }
 
 @test "outage: MERGE_GATES_OUTAGE_POLLS=0 is REJECTED (return 3) - no silent disable of the no-skip exit [P1]" {

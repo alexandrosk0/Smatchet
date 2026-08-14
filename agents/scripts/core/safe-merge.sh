@@ -83,6 +83,10 @@
 #   1 — REFUSED: merge gates did not pass (no merge armed)
 #   2 — usage / dependency error (gh or jq missing, bad args)
 #   3 — gate-poll precondition error (PR closed/merged, gh API down, etc.)
+#   4 — REFUSED: required-missing-cancelled (gate rc=8) — the required
+#       context's pending run was cancelled (concurrency pending-queue
+#       collapse, no check-run created); run the printed `gh run rerun <id>`
+#       line(s), then re-run safe-merge
 #
 # selftest: asserts-failure
 # ----------------------------------------------------------------------------
@@ -515,6 +519,9 @@ main() {
             echo "REFUSED — PR #$pr: merge gates did NOT pass; NOT arming auto-merge." >&2
             echo "A bare 'gh pr merge --auto' would skip the CodeRabbit / user-comment / Bugbot gates (none are GitHub-required) and could fire past a RED block-allowlist check. Fix the blocker or apply the named *-out-of-band override label." >&2
             exit 1 ;;
+        8)
+            echo "REFUSED — PR #$pr: required-missing-cancelled (rc=8) — the required context's pending run was CANCELLED by the concurrency-group collapse and left no check-run; waiting cannot clear it. Execute the 'gh run rerun <id>' line(s) printed in the gate output above, then re-run safe-merge. NOT arming auto-merge." >&2
+            exit 4 ;;
         *)
             echo "REFUSED — PR #$pr: gate-poll precondition error (rc=$GATE_RC: PR closed/merged, gh API down, pagination overflow, or config error). NOT arming auto-merge." >&2
             exit 3 ;;

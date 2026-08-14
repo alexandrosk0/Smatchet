@@ -1352,6 +1352,65 @@ print('OK timeout-on-stale')
     [[ "$output" == *"OK timeout-on-stale"* ]]
 }
 
+@test "await filters derive from the shared AGENT_EVENT_STATES (exit-7/8 states cannot drift out)" {
+    # The CLI once hand-copied the state list and silently dropped
+    # ACTIONS_UNAVAILABLE (exit 7) and REQUIRED_MISSING_CANCELLED (exit 8) —
+    # `await` then waited forever on exactly the states that most need an
+    # agent to act (CodeRabbit finding, PR #2012). The vocabulary now lives
+    # once in merge_watcher_registry.py; daemon and CLI both import it.
+    run python -c "
+import sys, importlib.util, os
+sd = r'$SCRIPTS_DIR'
+sys.path.insert(0, sd)
+from merge_watcher_registry import AGENT_EVENT_STATES, AGENT_EVENT_END_STATES
+spec = importlib.util.spec_from_file_location('mw', os.path.join(sd, 'merge-watcher.py'))
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+# Daemon emits the SAME set object/content the registry module defines.
+assert m.AGENT_EVENT_STATES == AGENT_EVENT_STATES, m.AGENT_EVENT_STATES
+# Both drift victims are present, and the end states are a strict subset.
+assert 'ACTIONS_UNAVAILABLE' in AGENT_EVENT_STATES
+assert 'REQUIRED_MISSING_CANCELLED' in AGENT_EVENT_STATES
+assert AGENT_EVENT_END_STATES < AGENT_EVENT_STATES
+# The CLI derives its await filters from the import — no literal copy left.
+src = open(os.path.join(sd, 'merge-watcher-cli.py'), encoding='utf-8').read()
+assert 'AGENT_EVENT_STATES' in src and 'AGENT_EVENT_END_STATES' in src
+assert 'TRIAGE_BUDGET_EXHAUSTED\", \"STUCK_NEEDS_ATTENTION' not in src
+print('OK shared-vocab')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK shared-vocab"* ]]
+}
+
+@test "await --until blocking returns on a REQUIRED_MISSING_CANCELLED event (the exit-8 path)" {
+    # Functional pin: seed the sink AFTER recording the offset — emulated by
+    # calling the tail loop via cmd_await in a thread while appending the
+    # event from the main thread.
+    run python -c "
+import sys, importlib.util, os, threading, time, argparse
+sd = r'$SCRIPTS_DIR'
+sys.path.insert(0, sd)
+spec = importlib.util.spec_from_file_location('mw', os.path.join(sd, 'merge-watcher.py'))
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+spec2 = importlib.util.spec_from_file_location('cli', os.path.join(sd, 'merge-watcher-cli.py'))
+c = importlib.util.module_from_spec(spec2); sys.modules['cli']=c; spec2.loader.exec_module(c)
+rc_box = {}
+def run_await():
+    ns = argparse.Namespace(pr='777', until='blocking', timeout=10.0)
+    rc_box['rc'] = c.cmd_await(ns)
+t = threading.Thread(target=run_await); t.start()
+time.sleep(1.0)  # let await record its start offset
+m.append_agent_event({'ts_unix': 2, 'pr': 777, 'state': 'REQUIRED_MISSING_CANCELLED',
+                      'status_line': 'gh run rerun 123   # CR finding gate',
+                      'rerun_commands': ['gh run rerun 123   # CR finding gate'],
+                      'source': 'merge-watcher'})
+t.join(timeout=15)
+assert rc_box.get('rc') == 0, rc_box
+print('OK await-exit8')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"OK await-exit8"* ]]
+}
+
 @test "merge-watcher-cli ledger-guard: clean ledger exits 0; uncommitted ledger rows exit 1" {
     # Build a throwaway git repo with the ledger path.
     GTMP="$(mktemp -d)"
@@ -1665,7 +1724,7 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 9 expected terminal states (incl. ACTIONS_UNAVAILABLE)" {
+@test "NOTIFY_STATES contains the 10 expected terminal states (incl. ACTIONS_UNAVAILABLE + REQUIRED_MISSING_CANCELLED)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
@@ -1675,9 +1734,12 @@ m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec
 # feature); the assertion was left at 7 and silently red until now.
 # ACTIONS_UNAVAILABLE joined with the merge-gates exit-7 Actions-outage
 # escalation — an escalation nobody is told about is dead under the watcher.
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE'}
+# REQUIRED_MISSING_CANCELLED joined with the merge-gates exit-8
+# cancelled-while-pending disambiguation (same silent-wedge hazard, #1937).
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE', 'REQUIRED_MISSING_CANCELLED'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
 assert 'ACTIONS_UNAVAILABLE' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
+assert 'REQUIRED_MISSING_CANCELLED' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
 print('ok')
 "
     [ "$status" -eq 0 ]
@@ -1723,6 +1785,54 @@ print("exit7 ok")
 PY
     [ "$status" -eq 0 ]
     [[ "$output" == *"exit7 ok"* ]]
+}
+
+@test "poll_one maps merge-gates exit 8 to REQUIRED_MISSING_CANCELLED and surfaces the rerun line(s)" {
+    # Exit 8 has the same truncation hazard as exit 7: it returns before the
+    # Poll line, and stderr leads with the >300-char generic required-missing
+    # BLOCK line — without the returncode==8 branch the actionable
+    # `gh run rerun <id>` line(s) never reach last_status_line and the state
+    # falls to generic EXIT_8, absent from both notify sets (a silent wedge,
+    # the #1937 shape this exit exists to name).
+    run python - <<'PY'
+import importlib.util, os, sys, tempfile
+sd = os.path.join(os.environ["REPO_ROOT"], "agents", "scripts", "core")
+spec = importlib.util.spec_from_file_location("mw", os.path.join(sd, "merge-watcher.py"))
+m = importlib.util.module_from_spec(spec); sys.modules["mw"] = m; spec.loader.exec_module(m)
+m._pr_lifecycle_state = lambda pr, cp: "OPEN"
+m._poll_owner_repo = lambda pr, cp: ("alexandrosk0", "Smatchet")
+m.ensure_pr_ready_for_review = lambda owner, repo, pr: True
+m._resolve_orch_user = lambda cp: "bats"
+class _Gates:
+    returncode = 8
+    stdout = ""
+    stderr = (
+        "BLOCK: required-missing: CR finding gate (required by branch protection but absent "
+        "from the head rollup — never ran; e.g. a GITHUB_TOKEN bot push that did not re-trigger "
+        "CI). NOTE check-suite creation LAGS a push (~27 min measured under backlog), so absence "
+        "on an early poll may still be pending; it is blocked until the contexts actually report, "
+        "never merged on the assumption they will.\n"
+        "BLOCK: required-missing-cancelled: CR finding gate — every other check is terminal-green "
+        "and the head's workflow runs include CANCELLED run(s) of the missing context's workflow "
+        "with nothing queued or in progress. Re-run and re-poll:\n"
+        "  gh run rerun 31795783743   # CR finding gate\n"
+    )
+m._poll_run_gates = lambda owner, repo, pr, env: _Gates()
+state = m.poll_one({"pr": 998, "clone_path": tempfile.mkdtemp()})
+assert state["last_state"] == "REQUIRED_MISSING_CANCELLED", state
+assert state["gates_return_code"] == 8, state
+assert "required-missing-cancelled" in state["last_status_line"], state
+assert "gh run rerun 31795783743" in state["last_status_line"], state
+# Commands lead so they survive the 200/300-char consumer truncations, and
+# ride untruncated in the structured field (CodeRabbit round on this slice).
+assert state["last_status_line"].startswith("gh run rerun 31795783743"), state
+assert state["rerun_commands"] == ["gh run rerun 31795783743   # CR finding gate"], state
+assert "REQUIRED_MISSING_CANCELLED" in m.NOTIFY_STATES
+assert "REQUIRED_MISSING_CANCELLED" in m.AGENT_EVENT_STATES
+print("exit8 ok")
+PY
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"exit8 ok"* ]]
 }
 
 @test "maybe_notify suppresses repeat-notify for the same state" {
