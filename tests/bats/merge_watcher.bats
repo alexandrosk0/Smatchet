@@ -1764,6 +1764,10 @@ assert state["last_state"] == "REQUIRED_MISSING_CANCELLED", state
 assert state["gates_return_code"] == 8, state
 assert "required-missing-cancelled" in state["last_status_line"], state
 assert "gh run rerun 31795783743" in state["last_status_line"], state
+# Commands lead so they survive the 200/300-char consumer truncations, and
+# ride untruncated in the structured field (CodeRabbit round on this slice).
+assert state["last_status_line"].startswith("gh run rerun 31795783743"), state
+assert state["rerun_commands"] == ["gh run rerun 31795783743   # CR finding gate"], state
 assert "REQUIRED_MISSING_CANCELLED" in m.NOTIFY_STATES
 assert "REQUIRED_MISSING_CANCELLED" in m.AGENT_EVENT_STATES
 print("exit8 ok")

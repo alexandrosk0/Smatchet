@@ -1151,9 +1151,17 @@ poll_merge_gates() {
                     # the missing context — those candidates are surfaced as
                     # a WARN each poll instead, so a name-mismatched wedge is
                     # still visible to the operator without a wrong exit.
+                    # Exact, delimiter-safe membership: req_absent_names is
+                    # `join(", ")`-built (10-gate-filter.sh) and no context
+                    # name contains a comma, so split on ", " and require
+                    # EQUALITY — index() substring matching would let a
+                    # cancelled workflow whose name is merely CONTAINED in an
+                    # absent context (e.g. "MSVC" vs "Windows + MSVC") take
+                    # the exit with rerun advice for the wrong workflow.
                     matched_lines=$(printf '%s\n' "$head_runs" \
                         | awk -F'\t' -v names="$req_absent_names" \
-                            '$2=="completed" && $3=="cancelled" && index(names, $4) {print "  gh run rerun " $1 "   # " $4}')
+                            'BEGIN { n = split(names, _a, /, /); for (i = 1; i <= n; i++) _set[_a[i]] = 1 }
+                             $2=="completed" && $3=="cancelled" && ($4 in _set) {print "  gh run rerun " $1 "   # " $4}')
                     if [ "${active_count:-0}" -eq 0 ] && [ -n "$matched_lines" ]; then
                         echo "BLOCK: required-missing-cancelled: ${req_absent_names} — every other check is terminal-green and the head's workflow runs include CANCELLED run(s) of the missing context's workflow with nothing queued or in progress. GitHub cancelled the pending run before it created a check-run (one-pending-per-concurrency-group collapse), so this absence will NOT clear by waiting and nothing re-triggers the workflow. Re-run and re-poll:" >&2
                         printf '%s\n' "$matched_lines" >&2

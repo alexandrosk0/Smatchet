@@ -2355,6 +2355,19 @@ blocked_with_bot_threads() {
     [[ "$output" == *"gh run rerun 111"* ]]
 }
 
+@test "cancelled-pending: substring workflow name (MSVC vs 'Windows + MSVC') does NOT take the exit - exact membership only [P2]" {
+    # index()-style matching would let a cancelled run named "MSVC" match the
+    # absent context "Windows + MSVC" and stop polling with rerun advice for
+    # the wrong workflow (CodeRabbit round on this slice).
+    export MERGE_GATES_REQUIRED_CONTEXTS="Windows + MSVC"
+    export MERGE_GATES_STUB_HEAD_RUNS="$(printf '444\tcompleted\tcancelled\tMSVC')"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"required-missing-cancelled"* ]]
+    [[ "$output" == *"none name-match"* ]]
+}
+
 @test "cancelled-pending: a FULL first page (100 rows) is unverifiable evidence - keep polling [P2]" {
     export MERGE_GATES_REQUIRED_CONTEXTS="Doc anchors + agent contract"
     local rows i

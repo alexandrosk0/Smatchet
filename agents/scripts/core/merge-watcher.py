@@ -613,21 +613,25 @@ def poll_one(
             if ln.strip().startswith("ESCALATE:"):
                 last_line = ln.strip()[:500]
                 break
+    rerun_commands: list[str] = []
     if gates.returncode == 8:
         # Exit 8's deliverable is the required-missing-cancelled diagnosis
         # PLUS the `gh run rerun <id>` line(s) that follow it — same
         # truncation hazard as exit 7 (the generic required-missing BLOCK
-        # line alone overflows the 300-char stderr join). Keep the diagnosis
-        # head and every rerun line.
-        _diag = []
+        # line alone overflows the 300-char stderr join). The COMMANDS go
+        # first (they are the actionable part and must survive every
+        # downstream truncation: maybe_notify caps at 200 chars, the agent
+        # event at 300) and are ALSO carried as a structured field so those
+        # consumers can render them without string surgery.
+        _diag = ""
         for ln in gates.stderr.splitlines():
             t = ln.strip()
             if t.startswith("BLOCK: required-missing-cancelled"):
-                _diag.append(t[:300])
+                _diag = t[:300]
             elif t.startswith("gh run rerun "):
-                _diag.append(t)
-        if _diag:
-            last_line = " | ".join(_diag)[:500]
+                rerun_commands.append(t)
+        if _diag or rerun_commands:
+            last_line = " | ".join(rerun_commands + ([_diag] if _diag else []))[:500]
     result = {
         "pr": pr,
         "clone_path": clone_path,
@@ -636,6 +640,8 @@ def poll_one(
         "last_status_line": last_line,
         "gates_return_code": gates.returncode,
     }
+    if rerun_commands:
+        result["rerun_commands"] = rerun_commands
     # GATE_CARRY — the poll emits "GATE_CARRY nudge_head=… stale_head=… stale_streak=…"
     # before its blocked return so the watcher can persist the once-per-HEAD nudge
     # guard + STALE streak across cycles (the in-process locals reset under
@@ -1310,7 +1316,13 @@ def maybe_notify(state: dict[str, Any], entry: dict[str, Any]) -> dict[str, Any]
     # — saves a second click hunting for the comments from the overview tab.
     # Option C of the watcher-loop fix: faster, actionable notify.
     cr_finding = cur_state == "TRIAGE_BUDGET_EXHAUSTED" or _looks_like_cr_finding_block(status_line)
-    if cr_finding and pr_url:
+    rerun_commands = state.get("rerun_commands") or []
+    if rerun_commands:
+        # REQUIRED_MISSING_CANCELLED: the rerun command IS the message — it
+        # must survive the 200-char cap intact (the state name rides in
+        # --state), so it leads and the diagnosis is dropped from the toast.
+        message = "; ".join(rerun_commands)[:200]
+    elif cr_finding and pr_url:
         message = f"{status_line[:160]} — review inline: {pr_url}/files"
     else:
         message = status_line[:200]
@@ -2945,7 +2957,9 @@ def maybe_emit_agent_event(
         "source": "merge-watcher",
     }
     # Carry the most actionable fields when present so a consumer doesn't re-query.
-    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget"):
+    # rerun_commands: exit 8's `gh run rerun <id>` line(s), untruncated — the
+    # 300-char status_line cap above would otherwise be the only carrier.
+    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget", "rerun_commands"):
         if k in state:
             event[k] = state[k]
     append_agent_event(event)

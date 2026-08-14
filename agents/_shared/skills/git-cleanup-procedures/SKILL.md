@@ -132,7 +132,7 @@ gh api -X DELETE repos/<owner>/<repo>/git/refs/heads/<headRefName>
 ```
 
 - **Step 1** verify merge state via the poll-until-stable helper (require `MERGEABLE`+`CLEAN`).
-- **Step 3** run merge gates — the rc-handling decision mapping (0 pass / 1-3 ask-user / 4 closed / 5 pagination / 7 Actions-outage / `*` HALT) is the agent's reasoning; the executable case block is below.
+- **Step 3** run merge gates — the rc-handling decision mapping (0 pass / 1-3 ask-user / 4 closed / 5 pagination / 7 Actions-outage / 8 cancelled-required-rerun / `*` HALT) is the agent's reasoning; the executable case block is below.
 - **Step 7** append to plan revision if the PR shipped a slice (`- <sha-short> · <PR-title>` under `## Implementation log`; commit `docs(plan): log <slug> #<N>` on a fresh branch + PR, or batch).
 - **Step 8** re-check the next PR's mergeability (merging A may flip B to `CONFLICTING`).
 - **Step 9** post-merge backlog sweep (apply threshold-met `docs/self-improvement/` entries; one small PR each).

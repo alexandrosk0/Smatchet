@@ -240,7 +240,7 @@ A workflow that posts a StatusContext under a different name than its job (the
 CR finding gate posts `CR findings (0 actionable)` from a job named
 `CR finding gate`) is **two independently-failable gates**: branch protection
 can require either surface, and only the required one blocks. Observed on
-#1937: the status context was green (label override worked end-to-end) while
+PR #1937: the status context was green (label override worked end-to-end) while
 the required *check-run* was absent — its pending workflow run had been
 cancelled by GitHub's one-pending-per-concurrency-group collapse, which
 creates no check-run at all. When requiring such a workflow, know WHICH
