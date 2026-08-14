@@ -67,6 +67,10 @@
 #include "Config/KeybindingsConfig.h"          // KeybindingsConfig, SetBindingHotkey
 #include "SmatchetUiSession.h"                 // UiDrawSession, PreferencesCategory, g_ui
 #include "Ui/SmatchetHotkeyCapture.h"          // smatchet::ui::FindKeybindingConflict
+// Private companion header of the Preferences split TUs — not on this target's include
+// path (it is only ever included by its own sibling .cpp files), hence the explicit
+// relative path. Needed for the DrawKeybindingCombosCellForTest bucket-E seam.
+#include "../../Source/Core/src/Ui/SmatchetPreferencesUi_detail.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
@@ -74,6 +78,7 @@
 #include "imgui_te_engine.h"
 
 #include <string>
+#include <vector>
 
 // g_ui — the shared bag of UI-thread visibility flags + the live TrackerConfig
 // (g_ui.cfg). We set showPreferences / requestPreferencesFocus and read
@@ -243,6 +248,57 @@ void RegisterZoomComboAdjustsFontSize(ImGuiTestEngine* engine) {
     };
 }
 
+// --- Test C2: the zoom ALIAS combos dispatch too ---------------------------------
+// The marquee acceptance for docs/plans/keybindings-multi-combo.md: one action, three
+// alternative combos, each firing on its own. Ctrl+Shift+Equal is what "Ctrl and +"
+// physically is on a US layout — the exact-modifier matcher treats it as a different
+// keystroke from Ctrl+= (Test C), so before the alias set it did nothing at all. The
+// keypad variant covers the same intent layout-independently. Both must survive the
+// flatten-into-the-dispatch-cache path AND the per-action de-dup that guards it.
+void RegisterZoomAliasCombosAdjustFontSize(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "ZoomAliasCombosAdjustFontSize");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        const int before = g_ui.cfg.FontSizePt;
+
+        // Alias 2 of ui.zoom.in: Ctrl+Shift+= (the "Ctrl and +" keystroke).
+        g_ui.cfg.FontSizePt = 16;
+        ctx->Yield();
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Equal);
+        const bool grewShifted = YieldUntil(ctx, [] { return g_ui.cfg.FontSizePt > 16; });
+        if (!grewShifted) {
+            ctx->LogError("Ctrl+Shift+= did not zoom in — the ui.zoom.in alias set never reached the "
+                          "dispatch cache (or the shifted spec failed to parse)");
+        }
+        IM_CHECK_NO_RET(grewShifted);
+
+        // Alias 3: the numeric keypad '+', layout-independent.
+        g_ui.cfg.FontSizePt = 16;
+        ctx->Yield();
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd);
+        const bool grewKeypad = YieldUntil(ctx, [] { return g_ui.cfg.FontSizePt > 16; });
+        if (!grewKeypad) {
+            ctx->LogError("Ctrl+numpad-plus did not zoom in — the keypad token is missing from the "
+                          "hotkey grammar or from the ui.zoom.in alias set");
+        }
+        IM_CHECK_NO_RET(grewKeypad);
+
+        // Zoom OUT's keypad alias, so the widened set is not just an in-only change.
+        g_ui.cfg.FontSizePt = 16;
+        ctx->Yield();
+        ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_KeypadSubtract);
+        const bool shrank = YieldUntil(ctx, [] { return g_ui.cfg.FontSizePt < 16; });
+        IM_CHECK_NO_RET(shrank);
+
+        g_ui.cfg.FontSizePt = before;
+        ctx->Yield();
+    };
+}
+
 // --- Test D: rebind to a fresh combo, rebuild the cache, the NEW combo fires ---
 // The rebind→MarkKeybindingsDirty→rebuildKeybindingCache→new-combo-dispatches integration seam —
 // previously the documented residue: no accessor reached the live SmatchetUI to mark the dispatch
@@ -337,6 +393,35 @@ void RegisterCaptureWidgetClickCaptureCommit(ImGuiTestEngine* engine) {
             IM_CHECK_NO_RET(!g_captureState.capturing);                         // capture ends on commit
             IM_CHECK_NO_RET(g_captureState.out.find('J') != std::string::npos); // captured our key
         }
+
+        // The capture set is derived from the grammar (BindableImGuiKeys), so keys the
+        // stringifier learned are capturable too. Before that, '=' and the keypad were
+        // rejected outright — you could not bind Ctrl+= from the UI at all, even though
+        // it shipped as a default.
+        g_captureState = CaptureWidgetState{};
+        ctx->Yield();
+        ctx->ItemClick("**/Click to rebind##rebindcaptureTest");
+        if (YieldUntil(ctx, [] { return g_captureState.capturing; }, 60)) {
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_Equal);
+            const bool committedEq = YieldUntil(ctx, [] { return g_captureState.committed; }, 60);
+            IM_CHECK_NO_RET(committedEq);
+            if (committedEq) {
+                // Canonical form of the "Ctrl and +" keystroke.
+                IM_CHECK_NO_RET(g_captureState.out == "Ctrl+Shift+=");
+            }
+        }
+
+        g_captureState = CaptureWidgetState{};
+        ctx->Yield();
+        ctx->ItemClick("**/Click to rebind##rebindcaptureTest");
+        if (YieldUntil(ctx, [] { return g_captureState.capturing; }, 60)) {
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiKey_KeypadAdd);
+            const bool committedPad = YieldUntil(ctx, [] { return g_captureState.committed; }, 60);
+            IM_CHECK_NO_RET(committedPad);
+            if (committedPad) {
+                IM_CHECK_NO_RET(g_captureState.out == "Ctrl+NumAdd");
+            }
+        }
     };
 }
 
@@ -398,15 +483,110 @@ void RegisterQuickBindCaptureThenSet(ImGuiTestEngine* engine) {
     };
 }
 
+// --- Test G: the combo-chip cell's add / remove / rebind-in-place interior --------
+// The multi-combo editor row (docs/plans/keybindings-multi-combo.md) renders one
+// clickable chip per alternative combo plus "+ Add". Like E/F this lives in the
+// docked Preferences content region, so host the REAL cell in a floating replica
+// window (SmatchetPreferencesUiDetail::DrawKeybindingCombosCellForTest) rather than
+// reimplementing the layout here. Beyond the behaviour, the live tick is the guard on
+// the chip loop's PushID/PopID balance and its DEFERRED erase — dropping a chip
+// mid-loop would invalidate both the iteration and ImGui's id sequence, and the test
+// engine traps the resulting IM_ASSERT.
+struct ComboCellState {
+    Keybinding row;
+    std::vector<Keybinding> all;
+    std::string capturingKey;
+    bool mutated = false;
+};
+ComboCellState g_comboCell;
+
+void RegisterComboChipsAddAndRemove(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "Keybindings", "ComboChipsAddAndRemove");
+    t->GuiFunc = [](ImGuiTestContext*) {
+        DismissAppUpdateModal();
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            return;
+        }
+        ImGui::SetNextWindowSize(ImVec2(640.0f, 200.0f), ImGuiCond_Appearing);
+        if (ImGui::Begin("SmatchetTest::KeybindingCombosCell")) {
+            if (SmatchetPreferencesUiDetail::DrawKeybindingCombosCellForTest(
+                    *app, g_comboCell.all, g_comboCell.row, "testrow", g_comboCell.capturingKey)) {
+                g_comboCell.mutated = true;
+            }
+        }
+        ImGui::End();
+    };
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (app == nullptr) {
+            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        g_comboCell = ComboCellState{};
+        g_comboCell.row.CommandId = "ui.zoom.in";
+        g_comboCell.row.ArgsJson = "{}";
+        g_comboCell.row.Hotkeys.push_back("Ctrl+=");
+        g_comboCell.row.Hotkeys.push_back("Ctrl+NumAdd");
+        ctx->SetRef("SmatchetTest::KeybindingCombosCell");
+        ctx->Yield();
+        ctx->Yield();
+
+        // Each combo renders as its own chip, labelled with the combo itself.
+        IM_CHECK_NO_RET(g_comboCell.row.Hotkeys.size() == 2);
+
+        // 1. "+ Add" arms capture and appends a THIRD combo (the set grows, the
+        //    existing two are untouched).
+        ctx->ItemClick("**/+ Add##rebindkbadd");
+        const bool armedAdd = YieldUntil(ctx, [] { return !g_comboCell.capturingKey.empty(); }, 60);
+        IM_CHECK_NO_RET(armedAdd);
+        if (armedAdd) {
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Shift | ImGuiKey_J);
+            const bool added = YieldUntil(ctx, [] { return g_comboCell.row.Hotkeys.size() == 3; }, 60);
+            IM_CHECK_NO_RET(added);
+            if (added) {
+                IM_CHECK_NO_RET(g_comboCell.row.Hotkeys[0] == "Ctrl+=");      // order preserved
+                IM_CHECK_NO_RET(g_comboCell.row.Hotkeys[1] == "Ctrl+NumAdd"); // sibling untouched
+                IM_CHECK_NO_RET(g_comboCell.mutated);
+            }
+        }
+
+        // 2. Clicking a CHIP arms capture for that slot and replaces it IN PLACE —
+        //    the one-click rebind the single-combo row always had, now per combo.
+        g_comboCell.capturingKey.clear();
+        ctx->Yield();
+        ctx->ItemClick("**/Ctrl+=##rebindkbchip");
+        const bool armedChip = YieldUntil(ctx, [] { return !g_comboCell.capturingKey.empty(); }, 60);
+        IM_CHECK_NO_RET(armedChip);
+        if (armedChip) {
+            ctx->KeyPress(ImGuiMod_Ctrl | ImGuiMod_Alt | ImGuiKey_Y);
+            const bool replaced = YieldUntil(
+                ctx, [] { return !g_comboCell.row.Hotkeys.empty() && g_comboCell.row.Hotkeys[0] != "Ctrl+="; }, 60);
+            IM_CHECK_NO_RET(replaced);
+            // Replaced, not appended: the slot count is unchanged.
+            IM_CHECK_NO_RET(g_comboCell.row.Hotkeys.size() == 3);
+        }
+
+        // 3. A chip's "x" drops just that combo, leaving the rest of the set intact.
+        const std::size_t beforeRemove = g_comboCell.row.Hotkeys.size();
+        ctx->ItemClick("**/x###kbDropCombo");
+        const bool removed =
+            YieldUntil(ctx, [beforeRemove] { return g_comboCell.row.Hotkeys.size() == beforeRemove - 1U; }, 60);
+        IM_CHECK_NO_RET(removed);
+    };
+}
+
 } // namespace
 
 extern "C" void SmatchetRegisterKeybindingsEditorRebindTests(ImGuiTestEngine* engine) {
     RegisterEditorTabRendersWithLiveConflict(engine);
     RegisterDefaultComboDispatchesToCommand(engine);
     RegisterZoomComboAdjustsFontSize(engine);
+    RegisterZoomAliasCombosAdjustFontSize(engine);
     RegisterRebindThenNewComboFires(engine);
     RegisterCaptureWidgetClickCaptureCommit(engine);
     RegisterQuickBindCaptureThenSet(engine);
+    RegisterComboChipsAddAndRemove(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

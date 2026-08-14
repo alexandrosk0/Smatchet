@@ -464,6 +464,18 @@ void DrawKeybindingsPreferencesTab(SmatchetUI& ui, IAppCommands& app, UiDrawSess
 namespace SmatchetPreferencesUiDetail {
 void ResetKeybindingsCaptureState() { s_kbCapturingKey.clear(); }
 
+#if defined(SMATCHET_BUILD_UI_TESTS)
+// Test seam: the combo-chip cell lives inside the docked Preferences window's clipped
+// content region, where ItemClick is unreliable in the headless suite. Bucket-E hosts
+// the real function in a floating replica window through this thin forwarder rather
+// than reimplementing the chip layout in the test (which would then not be a test of
+// this code at all). Same shape as the SmatchetUiTestMarkKeybindingsDirty seam.
+bool DrawKeybindingCombosCellForTest(IAppCommands& app, const std::vector<Keybinding>& allBinds, Keybinding& b,
+                                     const std::string& rowKey, std::string& capturingKey) {
+    return DrawBindingCombosCell(app, allBinds, b, rowKey, capturingKey);
+}
+#endif
+
 bool AnyKeybindingRowMatchesQuery(IAppCommands& app, UiDrawSession& d) {
     if (!d.prefsFilter.Active()) {
         return false;

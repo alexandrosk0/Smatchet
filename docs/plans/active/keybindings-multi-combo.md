@@ -218,13 +218,87 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **Full old-build downgrade round-trip** (an old build re-saving preserves `hotkeys`) — no-action; dual-write already prevents the destructive case.
 
 ## Implementation log
-*(populated post-ship)*
+
+- **Commit 1 — `feat(hotkeys): parse literal + and keypad tokens; derive the capture key set`**
+  (`ImGuiHotkey.{h,cpp}`, `SmatchetHotkeyCapture.{h,cpp}` capture path, `tests/Core/ImGuiHotkey.test.cpp`).
+  Trailing-literal-`+` tokenizer; `kShiftedKeys` (`+`/`plus` → Shift+`=`, `_`/`underscore` → Shift+`-`);
+  13 keypad rows + 4 alias rows in `kNamedKeys`; `SameCombo` extracted (removes the existing
+  `FindShortcutConflict` ↔ `FindKeybindingConflict` clone); `BindableImGuiKeys()` derived from the
+  grammar's own tables, which `FirstBindableKeyPressedThisFrame` now scans; `DrawHotkeyRebindControl`
+  gained the defaulted `armLabel` param. Data-model-neutral and green standalone.
+- **Commit 2 — `feat(keybindings): bind several alternative combos to one action`** (everything else).
+  `Keybinding::Hotkeys` + the four accessors; dual-write/dual-read JSON; `SetBindingHotkey` documented
+  replace-all plus new `AddBindingHotkey`/`RemoveBindingHotkey`; `FindDisplayBinding` shared by the
+  three `BoundHotkeyDisplay*` (new `...All`); `MakeBindingMulti` + the three zoom `Defaults()` rows;
+  flattened `keybindingCache_` with `actionIndex` + `actionLastFiredFrame_` de-dup; chip-based editor
+  row with `DrawBindingCombosCell` + `DrawResetDefaultsConfirm` extracted; `FindKeybindingConflictForRow`;
+  `MigrateZoomHotkeyAliasesV1`; 4 EN/FR locale entries; toolbar tooltip → `BoundHotkeyDisplayAll`;
+  dock-debug overlay lookup → the real `BoundHotkeyDisplay`; bucket-A + bucket-E test updates; user doc.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Editor row shape refined before implementing** (already folded into § Editor row above, recorded here
+  for the reviewer): the approved sketch had read-only chips + an "Add" button, which would have
+  *regressed* the existing one-click in-place rebind into remove-then-add. Each chip's label is now its
+  own arm button, and `capturingKey` gained a slot discriminator (`rowKey + "\x1f" + <slot|add>`).
+- **New bucket-E seam not in the original file list**: `SmatchetPreferencesUiDetail::DrawKeybindingCombosCellForTest`
+  (`SMATCHET_BUILD_UI_TESTS`-guarded forwarder in `SmatchetPreferencesUi_Keybindings.cpp` + a declaration
+  in `SmatchetPreferencesUi_detail.h`). Hosting the *real* chip cell in the bucket-E replica window beats
+  reimplementing the layout in the test. `Source/Core/src/Ui` is not on the UI-test target's include path,
+  so the test includes the private companion header by explicit relative path rather than editing CMake.
+- **`NoDoubleFireOnSimultaneousAliases` bucket-E case dropped**, per the plan's own instruction to say so
+  rather than drop it silently. It could not be run or even compiled in this environment (below), so
+  landing an unrunnable, frame-timing-sensitive test would have been noise. The de-dup is covered by the
+  `actionLastFiredFrame_` code and review; the residue is one unverified guard.
+- **No wholesale `clang-format -i`.** The committed tree is not clang-format-clean under the repo's own
+  `.clang-format` (LLVM's `AccessModifierOffset: -2` vs the committed column-0 `public:`), so formatting
+  whole files reflowed untouched code. Format-only churn was reverted and new code matched to its
+  surroundings by hand.
+- Bare `///` separator lines inside the new doc comments tripped `comment-decorative-banner` (blocking);
+  the paragraphs were joined instead. No content change.
 
 ## Verification (actual)
-*(populated post-ship)*
+
+Read from real command output, not assumed. **This session ran on a Linux container where the MSVC
+presets and the ImGui doctest/UI rigs are `[n/a]` (`project.config.json` § environments)**, so the
+coverage split below is uneven and stated plainly.
+
+**Ran and green:**
+- **Grammar bucket A** — `tests/Core/ImGuiHotkey.test.cpp` via a local harness (the file's owning target
+  is MSVC-only; `ImGuiHotkey.cpp`'s single ImGui call is `IsKeyPressed` inside `MatchHotkey`, which the
+  test file already excludes, so a stub satisfies the link): **19 cases / 4745 assertions / 0 failed**,
+  compiled `-Wall -Wextra -Werror`.
+- **Config + migration bucket A** — `tests/Core/KeybindingsConfig.test.cpp` and
+  `tests/Core/ConfigMigration.test.cpp` compiled with the preset's own flags and linked against the
+  `ninja-test-linux` objects: **279 cases / 2661 assertions / 0 failed** (includes the 234-case
+  `SmatchetTsanTests` subset, unchanged and still green).
+- **Linux subset build** — `cmake --preset ninja-test-linux` + `ninja SmatchetTsanTests`: `CONFIGURE_EXIT:0`,
+  `BUILD_EXIT:0`, no warnings.
+- **Lint** — `test-lint-rules.sh --diff origin/develop`: `LINT_EXIT:0`, every hard rule PASS (strict-zone,
+  comment-noise, no-raw-new, catch-all, oversized-function, include-cycle, fan-in, agent-size). Remaining
+  are advisory WARNs only: `tu-line-ceiling` on two pre-existing whales, two soft-tier branch-count WARNs
+  (`ParseImGuiHotkey` 22, `dispatchKeybindings` 21, cap 30 blocking / 20 soft), and comment-ratio WARNs on
+  the five headers whose doc comments grew.
+- **Docs** — `scripts/dev/test-docs.sh`: `Passed: 19  Failed: 0`.
+
+**NOT run — must be run on a Windows box before merge:**
+- **Dual-target MSVC build** (`ninja-iter-msvc` → `SmatchetStandalone` + `SmatchetCore_DX12`). The Linux
+  subset builds `Source/Core/src/Config/**` and the grammar, but **not** `SmatchetUI.cpp`,
+  `SmatchetPreferencesUi_Keybindings.cpp`, `SmatchetHotkeyCapture.cpp` or `SmatchetToolbarUi.cpp`
+  (`SMATCHET_BUILD_APP=OFF` — no GLFW/ImGui). Those four were verified by `clang++ -fsyntax-only` against
+  the vendored ImGui headers, which is weaker than a real dual-target link.
+- **Bucket E** (`ninja-ui-test-msvc`, group `"Keybindings"`) — **not compiled and not run**: this container
+  has no GL headers. The three new/extended cases (`ZoomAliasCombosAdjustFontSize`, the widened-capture
+  extension of `CaptureWidgetClickThenKeyCommits`, and the new `ComboChipsAddAndRemove`) are therefore
+  **unverified**, including the `DrawKeybindingCombosCellForTest` include path. `funcsize_preferences_tabs.test.cpp`
+  live-ticks the Keybindings page and would catch a chip-loop `PushID`/`PopID` imbalance — also unrun here.
+- **Perf gate-check vs baseline** for the named steady-state UI scenario (§ Perf-review-system gates).
+
+**Plan stress-test — `grill-with-docs`**: not run (its rig is part of the same Windows-side tooling).
+
+**Manual residue**: the marquee acceptance — pressing `Ctrl+=`, `Ctrl+Shift+=` and `Ctrl`+numpad`+` in the
+running app and watching the font grow by exactly 1 each — is automated in bucket E but unrun here, so it
+is manual residue **for this session only**. Running the bucket-E "Keybindings" group on Windows clears it.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped. Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
