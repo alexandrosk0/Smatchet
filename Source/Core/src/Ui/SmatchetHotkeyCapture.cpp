@@ -13,30 +13,16 @@ namespace ui {
 
 namespace {
 
-// The keys the parser/stringifier round-trip (see ImGuiHotkey.cpp KeyFromToken):
-// letters, digits, F-keys are contiguous in imgui so we scan by range; the three
-// punctuation keys are listed explicitly. Anything outside this set is rejected so
-// a captured combo always survives Stringify -> Parse.
+// Scan the grammar's own bindable-key set (ImGuiHotkey.h BindableImGuiKeys) rather
+// than a hand-written list here: every key it yields round-trips Stringify -> Parse,
+// so a captured combo can always be stored and re-read. Deriving the set from the
+// grammar is what lets '=', '-' and the keypad become capturable the moment the
+// grammar learns them — a local copy would have silently kept rejecting them.
 ImGuiKey FirstBindableKeyPressedThisFrame() {
-    for (ImGuiKey k = ImGuiKey_A; k <= ImGuiKey_Z; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    for (ImGuiKey k = ImGuiKey_0; k <= ImGuiKey_9; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    for (ImGuiKey k = ImGuiKey_F1; k <= ImGuiKey_F12; k = static_cast<ImGuiKey>(k + 1)) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
-        }
-    }
-    const ImGuiKey kExtras[] = {ImGuiKey_Comma, ImGuiKey_Space, ImGuiKey_Enter};
-    for (ImGuiKey k : kExtras) {
-        if (ImGui::IsKeyPressed(k, /*repeat*/ false)) {
-            return k;
+    const std::vector<ImGuiKey>& bindable = BindableImGuiKeys();
+    for (std::size_t i = 0; i < bindable.size(); ++i) {
+        if (ImGui::IsKeyPressed(bindable[i], /*repeat*/ false)) {
+            return bindable[i];
         }
     }
     return ImGuiKey_None;
@@ -78,21 +64,28 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out) {
 }
 
 bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out) {
+                             bool& capturing, std::string& out, const char* armLabel) {
     bool committed = false;
     // Function-scoped (one rebind control captures at a time): the arm click below must
     // clear a warning left over from a capture that ended OUTSIDE this function (tab
     // switch clearing the caller's `capturing`, or the quick-bind popup reopening).
     static bool s_showNeedsModifierWarning = false;
     if (!capturing) {
-        if (display.empty()) {
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.unbound", "(unbound)"));
-        } else {
-            ImGui::TextUnformatted(display.c_str());
+        // armLabel non-null: the label IS the arm button (combo chip / "+ Add"). Null:
+        // the original display-text + "Click to rebind" pair, whose button label and id
+        // must stay byte-identical — bucket-E addresses it by that exact string.
+        if (armLabel == nullptr) {
+            if (display.empty()) {
+                ImGui::TextDisabled("%s", SmatchetLocalization::T("keybindings.editor.unbound", "(unbound)"));
+            } else {
+                ImGui::TextUnformatted(display.c_str());
+            }
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
         const std::string btnId =
-            std::string(SmatchetLocalization::T("keybindings.editor.rebindButton", "Click to rebind")) +
+            std::string(armLabel != nullptr
+                            ? armLabel
+                            : SmatchetLocalization::T("keybindings.editor.rebindButton", "Click to rebind")) +
             "##rebind" + (idSuffix != nullptr ? idSuffix : "");
         if (ImGui::SmallButton(btnId.c_str())) {
             capturing = true;

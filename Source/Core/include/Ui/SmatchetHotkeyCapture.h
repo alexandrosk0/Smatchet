@@ -20,8 +20,8 @@ namespace smatchet {
 namespace ui {
 
 /// Scan the current ImGui input frame for the first *bindable* non-modifier key
-/// press — restricted to the keys StringifyImGuiHotkey can render (A-Z, 0-9,
-/// F1-F12, Comma, Space, Enter) so a captured combo always round-trips through
+/// press — the set is BindableImGuiKeys() (Ui/ImGuiHotkey.h), i.e. exactly the keys
+/// StringifyImGuiHotkey can render, so a captured combo always round-trips through
 /// Parse/Stringify. On a hit, snapshot the live modifier state (Ctrl/Shift/Alt/
 /// Super) into `out` and return true. Modifier-only / no-key frames return false —
 /// a combo is not committed until a real key lands. No auto-repeat.
@@ -34,8 +34,14 @@ bool CaptureImGuiHotkeyThisFrame(ImGuiBugHotkey& out);
 /// the canonical combo string to `out`. `capturing` is caller-owned persistent
 /// state; `idSuffix` disambiguates the button id when several controls share a
 /// frame. Returns true only on the commit frame.
+///
+/// `armLabel` picks the not-capturing rendering. Null (the default) keeps the
+/// display-text + "Click to rebind" pair. Non-null renders a single SmallButton
+/// carrying that label as the whole arm affordance — how the editor draws each
+/// combo chip (the chip's own combo string is the label, so clicking it rebinds
+/// that slot in place) and its "+ Add" button.
 bool DrawHotkeyRebindControl(const char* idSuffix, const std::string& display,
-                             bool& capturing, std::string& out);
+                             bool& capturing, std::string& out, const char* armLabel = nullptr);
 
 /// True when any rebind control (editor row / quick-bind popup) was in capture mode
 /// this frame or the previous one. dispatchKeybindings consults this to stand down
