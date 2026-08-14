@@ -123,6 +123,19 @@ step_timeout() {
     [ -n "$output" ]
 }
 
+@test "workflow has NO concurrency block (pending-queue collapse stays gone)" {
+    # A per-PR concurrency group with cancel-in-progress:false still lets
+    # GitHub cancel PENDING runs (one pending per group), and a run cancelled
+    # before it starts creates no check-run — the required context goes
+    # absent-forever (#1937; cr-finding-gate-pending-queue-collapse entry).
+    # Every run posts a status computed from current head state, so parallel
+    # runs converge and no concurrency limiting is needed or safe here.
+    # Match YAML keys only — the explanatory comment in the workflow names
+    # cancel-in-progress in prose, which must not trip this pin.
+    ! grep -qE '^concurrency:' "$WF"
+    ! grep -qE '^[[:space:]]+cancel-in-progress:' "$WF"
+}
+
 @test "workflow posts PENDING when the evaluation could not conclude" {
     grep -q 'always() && steps.eval.outcome != .success.' "$WF"
     grep -q "state=pending" "$WF"

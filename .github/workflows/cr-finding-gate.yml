@@ -47,15 +47,22 @@ permissions:
   pull-requests: read
   issues: write
 
-concurrency:
-  # Do NOT cancel in-progress: review/comment events fire in bursts, and a
-  # cancelled run leaves a red "cancelled" check on the commit. Each run only
-  # posts a status (last write wins), so let them all complete rather than
-  # cancel. NB "each run is a few seconds" was never true — a run that has to
-  # wait on CodeRabbit polls for up to POLL_BUDGET_SECONDS (see the action), so
-  # the timeouts below are sized against that, not against a few seconds.
-  group: cr-finding-gate-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: false
+# NO concurrency block — deliberately (cr-finding-gate-pending-queue-collapse,
+# tooling 2026-08-14; split from the #1937 postmortem). The previous per-PR
+# group with cancel-in-progress:false only protected IN-PROGRESS runs: GitHub
+# still keeps just ONE **pending** run per group and cancels the rest, and a
+# run cancelled before it starts creates NO check-run at all — leaving the
+# required `CR finding gate` context absent-forever with nothing left to
+# re-trigger it (on #1937 five pull_request_review_comment runs were cancelled
+# in one second and the PR burned the poller's full budget). Running every
+# event is CORRECT here: each run evaluates the CURRENT head state via GraphQL
+# (never the triggering event's payload) and finishes by posting a status,
+# where last-write-wins — so parallel runs converge on the same verdict and
+# order cannot corrupt the result. The cost is bounded runner minutes per
+# burst (each run at most POLL_BUDGET_SECONDS + overhead, see the action),
+# which buys the absence of the wedge class. Do NOT reintroduce a concurrency
+# block without solving the pending-queue collapse some other way — the
+# no-concurrency shape is pinned by tests/bats/cr_finding_gate.bats.
 
 env:
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
