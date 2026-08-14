@@ -134,10 +134,13 @@ step_timeout() {
     # the test's last statement never fails under bats (errexit exempts `!`
     # pipelines), which would make this pin inert. Any-indentation match so a
     # JOB-level concurrency block (same collapse behavior) cannot evade the
-    # pin; comment lines start with '#' and cannot match a key pattern.
-    run grep -E '^[[:space:]]*concurrency:' "$WF"
+    # pin; optional quotes and space-before-colon are matched too, since
+    # 'concurrency' :, "concurrency": and 'concurrency': are all valid YAML
+    # spellings of the same key; comment lines start with '#' and cannot
+    # match a key pattern.
+    run grep -E "^[[:space:]]*[\"']?concurrency[\"']?[[:space:]]*:" "$WF"
     [ "$status" -ne 0 ]
-    run grep -E '^[[:space:]]*cancel-in-progress:' "$WF"
+    run grep -E "^[[:space:]]*[\"']?cancel-in-progress[\"']?[[:space:]]*:" "$WF"
     [ "$status" -ne 0 ]
 }
 
