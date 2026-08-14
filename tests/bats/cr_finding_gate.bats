@@ -130,10 +130,15 @@ step_timeout() {
     # absent-forever (#1937; cr-finding-gate-pending-queue-collapse entry).
     # Every run posts a status computed from current head state, so parallel
     # runs converge and no concurrency limiting is needed or safe here.
-    # Match YAML keys only — the explanatory comment in the workflow names
-    # cancel-in-progress in prose, which must not trip this pin.
-    ! grep -qE '^concurrency:' "$WF"
-    ! grep -qE '^[[:space:]]+cancel-in-progress:' "$WF"
+    # run + explicit status, NOT bare `! grep`: a negated command that is not
+    # the test's last statement never fails under bats (errexit exempts `!`
+    # pipelines), which would make this pin inert. Any-indentation match so a
+    # JOB-level concurrency block (same collapse behavior) cannot evade the
+    # pin; comment lines start with '#' and cannot match a key pattern.
+    run grep -E '^[[:space:]]*concurrency:' "$WF"
+    [ "$status" -ne 0 ]
+    run grep -E '^[[:space:]]*cancel-in-progress:' "$WF"
+    [ "$status" -ne 0 ]
 }
 
 @test "workflow posts PENDING when the evaluation could not conclude" {
