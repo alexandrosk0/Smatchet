@@ -23,9 +23,11 @@
 # docs/harness/claude-code/settings.json.tmpl references it by path.)
 #
 # Modes:
-#   --nudge (default)  SILENT unless a required check on the develop tip is RED;
-#                      then print a short attributable block. Never blocks (exit 0).
-#   --selftest         fixture-driven test of the pure RED-detector; exit 0/1.
+#   --nudge (default)  SILENT unless a check on the develop tip is not green
+#                      (required or non-required; cancelled counts as unknown-
+#                      not-green); then print a short attributable block.
+#                      Never blocks (exit 0).
+#   --selftest         fixture-driven test of the pure not-green detector; exit 0/1.
 #
 # Data layer is injectable for the selftest (no live gh needed):
 #   SMATCHET_DEVTIP_REQUIRED_FIXTURE   — file: one required check-name per line.
@@ -42,7 +44,19 @@ set -uo pipefail
 # ---------------------------------------------------------------------------
 # Pure detector: given the required-check names and the tip's latest per-check
 # (status<TAB>conclusion) rows, print each NOT-GREEN check on the tip as
-# `name|kind|why` (kind: required|non-required). Empty output = all green.
+# tab-separated `name<TAB>kind<TAB>why` (kind: required|non-required|unknown).
+# Tab, not '|': the widened sweep feeds arbitrary workflow job names through
+# this record, and a job name may legally contain '|' — it cannot contain a tab
+# (the TSV pipeline upstream would already have split it). Empty output = all
+# green.
+#
+# kind=unknown: the caller could not obtain the required set (no branch
+# protection visible to this token, or a transient fetch failure — the two are
+# indistinguishable here). The sweep still runs — going silent instead was the
+# v2 behavior, and it made the nudge permanently blind on any checkout whose
+# token cannot read branch protection, defeating the #1957 widening exactly
+# where it matters; "unknown" reports the red without guessing its blast
+# radius.
 #
 # NOT-GREEN = the check's latest run on the tip is COMPLETED with a conclusion
 # other than success/neutral/skipped. CANCELLED gets its own why-wording —
@@ -54,7 +68,12 @@ set -uo pipefail
 # The sweep iterates the tip's ACTUAL check runs — required and non-required
 # alike (block-on-any-red philosophy; non-required post-merge backstops are the
 # only coverage for what PR checks cannot run). Checks whose name contains
-# "advisory" (any case) are excluded, mirroring the merge-gate allow-list.
+# "advisory" (any case) are exempt ONLY when they are not required — true
+# merge-gate parity (10-gate-filter.sh exempts advisory names from the
+# allow-list arm, never from the required arm). A required check red on the
+# tip blocks every open PR whatever its name says, so it is always reported;
+# with kind=unknown the advisory name wins the exemption (can't prove it
+# required, and advisory naming is the sanctioned non-blocking convention).
 #
 # A required check that is simply ABSENT from the tip is (still) NOT red: many
 # required contexts are PR-only (Test-delta, Perf PR-fast, Coverage, CR finding
@@ -72,7 +91,6 @@ devtip_not_green() {
     names="$(printf '%s\n' "$runs_lines" | awk -F'\t' 'NF && !seen[$1]++ {print $1}')"
     while IFS= read -r name; do
         [ -n "$name" ] || continue
-        case "$name" in *[Aa][Dd][Vv][Ii][Ss][Oo][Rr][Yy]*) continue ;; esac
         status=""; concl=""
         while IFS=$'\t' read -r r_name r_status r_concl; do
             [ "$r_name" = "$name" ] || continue
@@ -82,16 +100,24 @@ $runs_lines
 EOF
         [ "$status" = "completed" ] || continue    # in-progress: don't nag mid-CI
         case "$concl" in success | neutral | skipped) continue ;; esac
-        kind="non-required"
-        if printf '%s\n' "$required_lines" | grep -Fxq -- "$name"; then
+        if [ -z "$required_lines" ]; then
+            kind="unknown"
+        elif printf '%s\n' "$required_lines" | grep -Fxq -- "$name"; then
             kind="required"
+        else
+            kind="non-required"
+        fi
+        # Advisory-name exemption AFTER classification: it never silences a
+        # known-required red (merge-gate parity — see the header note).
+        if [ "$kind" != "required" ]; then
+            case "$name" in *[Aa][Dd][Vv][Ii][Ss][Oo][Rr][Yy]*) continue ;; esac
         fi
         if [ "$concl" = "cancelled" ]; then
             why="latest run CANCELLED — result unknown (superseded/killed), not green"
         else
             why="latest run terminal ${concl:-<none>}"
         fi
-        printf '%s|%s|%s\n' "$name" "$kind" "$why"
+        printf '%s\t%s\t%s\n' "$name" "$kind" "$why"
     done <<EOF
 $names
 EOF
@@ -99,12 +125,13 @@ EOF
 
 # ---------------------------------------------------------------------------
 run_selftest() {
-    local req runs out
+    local req runs out TAB
+    TAB="$(printf '\t')"
     req="$(printf 'Windows + MSVC\nDoc anchors + agent contract\nCR finding gate\n')"
     # Case 1: a required check RED on the tip -> reported, kind=required.
     runs="$(printf 'Windows + MSVC\tcompleted\tsuccess\nDoc anchors + agent contract\tcompleted\tfailure\nCR finding gate\tcompleted\tsuccess\n')"
     out="$(devtip_not_green "$req" "$runs")"
-    if ! printf '%s' "$out" | grep -q '^Doc anchors + agent contract|required|latest run terminal failure'; then
+    if ! printf '%s' "$out" | grep -q "^Doc anchors + agent contract${TAB}required${TAB}latest run terminal failure"; then
         echo "develop-tip-required-green --selftest: FAIL — RED required check not reported as required" >&2; return 1
     fi
     # Case 2: all green -> MUST be silent.
@@ -123,21 +150,21 @@ run_selftest() {
     # Case 4: an in-progress (non-terminal) check -> NOT red (don't nag mid-run).
     runs="$(printf 'Windows + MSVC\tin_progress\t\nDoc anchors + agent contract\tcompleted\tsuccess\nCR finding gate\tcompleted\tsuccess\n')"
     out="$(devtip_not_green "$req" "$runs")"
-    if printf '%s' "$out" | grep -q '^Windows + MSVC|'; then
+    if printf '%s' "$out" | grep -q "^Windows + MSVC${TAB}"; then
         echo "develop-tip-required-green --selftest: FAIL — in-progress check flagged as red" >&2; return 1
     fi
     # Case 5 (#1957 class): a NON-required backstop RED on the tip -> reported,
     # kind=non-required. The required-only v1 was blind to exactly this.
     runs="$(printf 'Windows + MSVC\tcompleted\tsuccess\nWindows x64 installer smoke\tcompleted\tfailure\n')"
     out="$(devtip_not_green "$req" "$runs")"
-    if ! printf '%s' "$out" | grep -q '^Windows x64 installer smoke|non-required|latest run terminal failure'; then
+    if ! printf '%s' "$out" | grep -q "^Windows x64 installer smoke${TAB}non-required${TAB}latest run terminal failure"; then
         echo "develop-tip-required-green --selftest: FAIL — red non-required backstop not reported" >&2; return 1
     fi
     # Case 6 (#1957 hiding shape): a CANCELLED develop run -> reported as
     # unknown-not-green, with the distinct why-wording.
     runs="$(printf 'Windows x64 installer smoke\tcompleted\tcancelled\n')"
     out="$(devtip_not_green "$req" "$runs")"
-    if ! printf '%s' "$out" | grep -q '^Windows x64 installer smoke|non-required|latest run CANCELLED — result unknown'; then
+    if ! printf '%s' "$out" | grep -q "^Windows x64 installer smoke${TAB}non-required${TAB}latest run CANCELLED — result unknown"; then
         echo "develop-tip-required-green --selftest: FAIL — cancelled run not reported as unknown-not-green" >&2; return 1
     fi
     # Case 7: an advisory-named check red on the tip -> silent (merge-gate parity).
@@ -153,7 +180,24 @@ run_selftest() {
     if [ -n "$out" ]; then
         echo "develop-tip-required-green --selftest: FAIL — superseded cancel not silenced by the green re-run" >&2; return 1
     fi
-    echo "develop-tip-required-green --selftest: PASS — reports required AND non-required not-green (cancelled = unknown); silent on green / in-progress / absent(PR-only) / advisory / superseded cancel."
+    # Case 9: an advisory-NAMED check that IS in the required set, red on the
+    # tip -> still reported (merge-gate parity: advisory exempts only the
+    # non-required arm; a required red blocks every PR whatever its name).
+    runs="$(printf 'Sanitizer smoke (advisory)\tcompleted\tfailure\n')"
+    out="$(devtip_not_green "$(printf 'Sanitizer smoke (advisory)\n')" "$runs")"
+    if ! printf '%s' "$out" | grep -q "^Sanitizer smoke (advisory)${TAB}required${TAB}latest run terminal failure"; then
+        echo "develop-tip-required-green --selftest: FAIL — advisory-named REQUIRED red was not reported" >&2; return 1
+    fi
+    # Case 10: required set unavailable (empty) -> the sweep still runs and a
+    # red is reported with kind=unknown, not silently dropped (v2 went silent
+    # here, which made the nudge permanently blind on tokens that cannot read
+    # branch protection).
+    runs="$(printf 'Windows x64 installer smoke\tcompleted\tfailure\n')"
+    out="$(devtip_not_green "" "$runs")"
+    if ! printf '%s' "$out" | grep -q "^Windows x64 installer smoke${TAB}unknown${TAB}latest run terminal failure"; then
+        echo "develop-tip-required-green --selftest: FAIL — red not reported as kind=unknown with an empty required set" >&2; return 1
+    fi
+    echo "develop-tip-required-green --selftest: PASS — reports required AND non-required not-green (cancelled = unknown); advisory exempts only non-required; empty required set degrades to kind=unknown; silent on green / in-progress / absent(PR-only) / superseded cancel."
     return 0
 }
 
@@ -174,17 +218,22 @@ gather_and_nudge() {
         [ -n "$tip" ] || return 0
         required_lines="$(gh api "repos/$owner_repo/branches/develop/protection/required_status_checks" \
             --jq '.contexts[]?' 2>/dev/null || true)"
-        # No branch protection / no perms -> silent, INCLUDING the non-required
-        # sweep: without the required set every red would be labeled
-        # non-required, and a mislabeled required red ("doesn't block PRs")
-        # is worse than one quiet session on a misconfigured checkout.
-        [ -n "$required_lines" ] || return 0
+        # required_lines may legitimately come back EMPTY (no classic branch
+        # protection visible to this token, rulesets instead, or a transient
+        # failure — indistinguishable from here). The sweep still runs: the
+        # detector degrades kind to "unknown" rather than dropping reds, so
+        # the nudge is not permanently blind on such checkouts.
+        #
         # Latest run per check-name on the tip. --paginate does NOT guarantee chronological row
-        # order (a re-run can arrive newest-first), so sort ascending by started_at/completed_at to
-        # make "newest last" actually hold before the detector's last-wins keys off it — otherwise a
-        # stale run could shadow a terminal-red or emit a stale red (#1752).
+        # order (a re-run can arrive newest-first), and gh applies --jq PER PAGE, so an in-jq
+        # sort_by never sees the whole set — cross-page order was still wrong beyond 100 runs
+        # (#1752's fix was incomplete). Emit the timestamp as the FIRST field from each page,
+        # sort the combined stream on it in the shell (ISO-8601 sorts lexicographically;
+        # LC_ALL=C for byte order), then strip it — "newest last" then holds globally before
+        # the detector's last-wins keys off it.
         runs_lines="$(gh api "repos/$owner_repo/commits/$tip/check-runs" --paginate \
-            --jq '[.check_runs[]] | sort_by(.started_at // .completed_at // "") | .[] | [.name, .status, (.conclusion // "")] | @tsv' 2>/dev/null || true)"
+            --jq '.check_runs[] | [(.started_at // .completed_at // ""), .name, .status, (.conclusion // "")] | @tsv' 2>/dev/null \
+            | LC_ALL=C sort | cut -f2- || true)"
         pr_hint="$(gh api "repos/$owner_repo/commits/$tip/pulls" --jq '.[0].number // empty' 2>/dev/null || true)"
     fi
 
@@ -198,9 +247,13 @@ gather_and_nudge() {
     echo "the whole repo is blocked until it's fixed. A red *non-required* backstop blocks"
     echo "nothing, which is exactly how it hides (#1957: red across three merges) — it is the"
     echo "only coverage for what PR checks structurally cannot run, so fix it, don't ignore it:"
-    printf '%s\n' "$reds" | while IFS='|' read -r name kind why; do
+    printf '%s\n' "$reds" | while IFS="$(printf '\t')" read -r name kind why; do
         echo "  - NOT GREEN [$kind]: $name — $why"
     done
+    if printf '%s\n' "$reds" | grep -q "$(printf '\t')unknown$(printf '\t')"; then
+        echo "(kind=unknown: the branch-protection required set was not readable from here, so"
+        echo " whether these block PRs is unverified — treat them as potentially blocking.)"
+    fi
     echo "(A required RED is usually a merge-before-terminal race, #1237-family; a CANCELLED"
     echo " develop run was superseded/killed and proves nothing — re-run it to learn the truth.)"
     return 0

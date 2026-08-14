@@ -4868,14 +4868,20 @@ empty-body + StatusContext-SUCCESS combination is pinned.
 - **Status**: applied (2026-08-14 — the widening this entry asked for is live in
   `agents/scripts/core/develop-tip-required-green.sh` (file name kept for the
   SessionStart-hook wiring): the pure detector now sweeps the develop tip's
-  ACTUAL check runs — required and non-required alike, block-on-any-red parity,
-  advisory-named checks excluded — labeling each not-green check
-  `required|non-required` so the nudge distinguishes "blocks every PR" from
-  "broken post-merge backstop". CANCELLED gets its own unknown-not-green
-  wording (the exact way #1957 hid), with a later green re-run of the same
-  check superseding an earlier cancel. Selftest cases pin the #1957 shapes:
-  red non-required backstop reported, cancelled-run-as-unknown, advisory
-  silence, superseded-cancel silence, plus the original required-red /
+  ACTUAL check runs — required and non-required alike, block-on-any-red parity
+  — labeling each not-green check `required|non-required|unknown` so the nudge
+  distinguishes "blocks every PR" from "broken post-merge backstop". The
+  advisory-name exemption applies ONLY to non-required checks (true merge-gate
+  parity: a required red blocks every PR whatever its name says), and an
+  unreadable required set degrades the label to `unknown` instead of silencing
+  the sweep. CANCELLED gets its own unknown-not-green wording (the exact way
+  #1957 hid), with a later green re-run of the same check superseding an
+  earlier cancel; the tip's check-run pages are globally time-sorted before
+  last-wins so a >100-run tip cannot resurface a stale row. Selftest cases pin
+  the #1957 shapes: red non-required backstop reported,
+  cancelled-run-as-unknown, advisory silence for non-required only
+  (advisory-named REQUIRED red still reported), empty-required-set →
+  kind=unknown, superseded-cancel silence, plus the original required-red /
   all-green / absent(PR-only) / in-progress cases.)
 
 ## What happened
