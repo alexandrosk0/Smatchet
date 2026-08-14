@@ -2,6 +2,7 @@
 // tool-call summary builders, and JSON-RPC error-message extraction.
 
 #include "McpJsonRpcPure.h"
+#include "StringUtil.h" // Base64Encode now lives in Core (single-sourced)
 
 #include <doctest/doctest.h>
 #include <nlohmann/json.hpp>
@@ -9,7 +10,6 @@
 #include <cstddef>
 #include <string>
 
-using smatchet::mcp::pure::Base64Encode;
 using smatchet::mcp::pure::BuildRunLuaSummary;
 using smatchet::mcp::pure::BuildToolCallSummary;
 using smatchet::mcp::pure::ExtractJsonRpcErrorMessage;
@@ -46,7 +46,7 @@ TEST_CASE("Base64Encode handles empty, sub-3-byte tails, aligned, and binary inp
 TEST_CASE("TruncateOneLine respects cap and appends ellipsis on overflow") {
     CHECK(TruncateOneLine("", 10) == "");
     CHECK(TruncateOneLine("short", 10) == "short");
-    CHECK(TruncateOneLine("exactly10!", 10) == "exactly10!");   // exactly-at-cap unchanged.
+    CHECK(TruncateOneLine("exactly10!", 10) == "exactly10!");     // exactly-at-cap unchanged.
     CHECK(TruncateOneLine("exactly11!.", 10) == "exactly11!..."); // one-over → first 10 bytes + "...".
 
     // Zero cap → empty input passes through; non-empty triggers truncation to 0 + "...".
@@ -61,7 +61,7 @@ TEST_CASE("TruncateOneLine respects cap and appends ellipsis on overflow") {
     // "héllo" in UTF-8 = h\xC3\xA9llo (6 bytes). Truncating to 2 bytes yields "h\xC3"
     // — a partial codepoint. Test only the byte-length law.
     const std::string utf8 = "h\xC3\xA9llo";
-    CHECK(TruncateOneLine(utf8, 2).size() == 2 + 3);  // 2 raw bytes + "..."
+    CHECK(TruncateOneLine(utf8, 2).size() == 2 + 3); // 2 raw bytes + "..."
     CHECK(TruncateOneLine(utf8, 100) == utf8);
 }
 
@@ -128,7 +128,7 @@ TEST_CASE("BuildToolCallSummary emits tool + sorted key list and allowlisted val
 
 TEST_CASE("BuildToolCallSummary truncates oversize allowlisted string values to 80 chars") {
     nlohmann::json keyed;
-    keyed["id"] = std::string(120, 'x');  // 120 'x' chars, well over the 80-char cap.
+    keyed["id"] = std::string(120, 'x'); // 120 'x' chars, well over the 80-char cap.
     const std::string out = BuildToolCallSummary("t", keyed);
     // Tail is " id=" + truncate-80("xxxx…") → 80 'x' + "..."
     const std::string expected = "tool=t arg_keys=[id] id=" + std::string(80, 'x') + "...";

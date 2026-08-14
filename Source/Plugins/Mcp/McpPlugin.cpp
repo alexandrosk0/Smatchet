@@ -18,6 +18,7 @@
 #include "Commands/Command.h"
 #include "Json/BoundedJsonParse.h" // smatchet::json_safe::ParseBounded — depth/node-bounded ingress parse (#1271)
 #include "McpJsonRpcPure.h"
+#include "StringUtil.h" // Base64Encode — single-sourced base64 (was duplicated in mcp::pure)
 #include "McpRateLimitPure.h"
 #include <cstdio>  // std::remove, std::fopen/fwrite/fclose
 #include <cstdlib> // std::getenv — spawn-token handshake (SMATCHET_MCP_SPAWN_TOKEN)
@@ -44,7 +45,6 @@
 
 namespace {
 
-using ::smatchet::mcp::pure::Base64Encode;
 using ::smatchet::mcp::pure::BuildRunLuaSummary;
 using ::smatchet::mcp::pure::BuildRunLuaToolEntry;
 using ::smatchet::mcp::pure::BuildToolCallSummary;

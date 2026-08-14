@@ -4,13 +4,10 @@
 #include "PlaneFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
-#include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
-#include <sstream>
 #include <utility>
 
 namespace smatchet {
@@ -43,27 +40,10 @@ class PlaneFixtureBackendFactory : public ITrackerBackendFactory {
 
 } // namespace
 
-ITrackerIssueReader& PlaneFixtureBackend::Reader() { return *this; }
-ITrackerConnectivity& PlaneFixtureBackend::Connectivity() { return *this; }
-ITrackerFieldCatalog* PlaneFixtureBackend::FieldCatalog() { return nullptr; }
-ITrackerIssueMutations* PlaneFixtureBackend::Mutations() { return this; }
-ITrackerCollaboration* PlaneFixtureBackend::Collaboration() { return nullptr; }
-ITrackerActivity* PlaneFixtureBackend::Activity() { return nullptr; }
-
-PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath) : fixturePath_(fixturePath) {
-    std::ifstream in(fixturePath);
-    if (!in.good()) {
-        loadError_ = "cannot open fixture file";
-        return;
-    }
-    std::stringstream buf;
-    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
-    buf << in.rdbuf();
-    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_PLANE_BACKEND_FIXTURE),
-    // so cap depth/nodes/bytes rather than trust wherever it points.
-    const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(buf.str());
-    if (j.is_discarded()) {
-        loadError_ = "invalid JSON in fixture file";
+PlaneFixtureBackend::PlaneFixtureBackend(const std::string& fixturePath)
+    : smatchet::tracker_fixture::TrackerFixtureBackendBase(fixturePath) {
+    nlohmann::json j;
+    if (!LoadFixtureJson(j)) {
         return;
     }
 
@@ -104,57 +84,6 @@ TrackerReachabilityProbeResult PlaneFixtureBackend::ProbeReachability(const Trac
     out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
     out.Diagnostic = "PlaneFixtureBackend (no network)";
     return out;
-}
-
-std::vector<CachedTicket> PlaneFixtureBackend::FetchIssues(bool* outFullSyncCompleted,
-                                                           const TrackerConfig* /*configOverride*/,
-                                                           const ViewsStore* /*viewsOverride*/,
-                                                           std::string* outFetchError, std::string* outWarning,
-                                                           TrackerError* outFetchErrorStructured) {
-    if (outFullSyncCompleted)
-        *outFullSyncCompleted = loadError_.empty();
-    if (outFetchError)
-        *outFetchError = loadError_;
-
-    if (outFetchErrorStructured) {
-        // Same classification this fixture's FetchIssuesForKeys applies to loadError_.
-        *outFetchErrorStructured = loadError_.empty() ? TrackerError::Ok() : TrackerErrorInvalidRequest(loadError_);
-    }
-    if (outWarning)
-        outWarning->clear();
-    return tickets_;
-}
-
-Result<std::vector<CachedTicket>, TrackerError>
-PlaneFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                                        const ViewsStore& /*views*/) {
-    if (!loadError_.empty()) {
-        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorInvalidRequest(loadError_));
-    }
-    std::vector<CachedTicket> outTickets;
-    for (const auto& key : issueKeys) {
-        for (const auto& t : tickets_) {
-            if (t.id == key) {
-                outTickets.push_back(t);
-                break;
-            }
-        }
-    }
-    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(outTickets));
-}
-
-TrackerError PlaneFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/) {
-    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
-}
-
-TrackerError PlaneFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
-                                              const std::vector<std::string>& /*values*/) {
-    return TrackerErrorInvalidRequest("PlaneFixtureBackend is read-only");
-}
-
-Result<nlohmann::json, TrackerError>
-PlaneFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& /*values*/) {
-    return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object());
 }
 
 std::unique_ptr<ITrackerBackendFactory> MakePlaneFixtureBackendFactory(const std::string& fixturePath) {

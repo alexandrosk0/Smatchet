@@ -22,6 +22,7 @@
 #include "AiEndpointPolicy.h"
 #include "AiEndpointSanitize.h"
 #include "AiModelCatalog.h"
+#include "AiPrefsTestConnection.h"
 #include "AiPrefsValidator.h"
 #include "AiTypes.h"
 #include "IAiClient.h"
@@ -217,68 +218,11 @@ void CommitProbeVerdict(const std::string& errMsg, AiProvider provider, const st
 void RunProbeWorker(AiProvider provider, AiClientConfig clientCfg, std::shared_ptr<std::atomic<bool>> cancel,
                     std::string defaultedBaseUrl, std::string modelId, std::uint64_t generation,
                     IMainThreadPoster& poster) {
-    std::string errMsg;
-    // Defensive try/catch — `MakeAiClient` / `ProbeReachability` /
-    // `SendStreaming` all run third-party transport (cpr/libcurl) +
-    // SSE parser code. An uncaught exception here would propagate out of the
-    // background task and call `std::terminate`. Trap it, surface as a failure
-    // result via the existing dispatcher path so UI state recovers.
-    const char* const internalErrMsg =
-        SmatchetLocalization::T("prefs.assistant.test_internal_error",
-                                "the request could not be completed — check the endpoint URL and try again");
-    try {
-        std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
-        if (!client) {
-            errMsg = "Provider not available in this build.";
-        } else {
-            // Step 1: reachability — server alive plus auth accepted on the
-            // cheap model-listing endpoint.
-            errMsg = client->ProbeReachability(clientCfg);
-            // Step 2: real chat handshake — sends a 1-token "ping" against
-            // the configured model so model-not-found / chat-disabled /
-            // missing-loaded-model errors surface BEFORE the user types
-            // their first real prompt. This is what made earlier Test-
-            // connection passes mislead users into thinking the full chat
-            // path worked when it did not — a healthy model-list endpoint does
-            // not imply a healthy chat endpoint against a loaded model.
-            if (errMsg.empty()) {
-                if (modelId.empty()) {
-                    errMsg = "chat: model id is empty (set 'Model' field)";
-                } else {
-                    AiChatRequest req;
-                    req.Model = modelId;
-                    AiMessage userMsg;
-                    userMsg.Role = "user";
-                    userMsg.Content = "ping";
-                    req.History.push_back(std::move(userMsg));
-                    req.MaxTokens = 4;
-                    std::atomic<bool> sawDelta(false);
-                    std::string chatErr;
-                    auto onDelta = [&](const AiStreamDelta& d2) {
-                        if (!d2.TokenChunk.empty() || d2.IsFinal) {
-                            sawDelta.store(true);
-                        }
-                    };
-                    auto onError = [&](const AiStreamError& e) { chatErr = e.Message; };
-                    client->SendStreaming(clientCfg, req, onDelta, onError, cancel);
-                    if (!chatErr.empty()) {
-                        errMsg = std::string("chat: ") + chatErr;
-                    } else if (!sawDelta.load()) {
-                        errMsg = "chat: server returned no content";
-                    }
-                }
-            }
-        }
-        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
-        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
-        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
-    } catch (const std::exception& ex) {
-        LOG_WARN("Assistant test-connection: %s", ex.what());
-        errMsg = internalErrMsg;
-    } catch (...) {
-        LOG_WARN("Assistant test-connection: unknown exception");
-        errMsg = internalErrMsg;
-    }
+    // Probe body is single-sourced in AiPrefsTestConnection::RunProbe — this tab and the
+    // AiPrefsTestConnection component ran byte-identical copies of it until they were folded
+    // together. Only the verdict commit stays local (working copy + generation guard).
+    const std::string errMsg =
+        AiPrefsTestConnection::RunProbe(provider, clientCfg, modelId, cancel, "Assistant test-connection");
     poster.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl, generation]() {
         if (cancel && cancel->load()) {
             return;

@@ -15,10 +15,7 @@
 // fake don't crash. The fixture is read-only by design — debug-detective
 // scenarios that mutate are out-of-scope for slice 1.
 
-#include "ITrackerBackend.h"
-#include "ITrackerConnectivity.h"
-#include "ITrackerIssueMutations.h"
-#include "ITrackerIssueReader.h"
+#include "Tracker/TrackerFixtureBackendBase.h"
 
 #include <nlohmann/json.hpp>
 
@@ -35,17 +32,8 @@ namespace github {
 /// once at construction; subsequent `FetchIssues` calls return the cached
 /// vector. Reachability probe always returns `AuthenticatedReachable` so the
 /// UI doesn't show a disconnect banner during fixture-driven scenarios.
-class GitHubFixtureBackend : public ITrackerBackend,
-                             public ITrackerIssueReader,
-                             public ITrackerConnectivity,
-                             public ITrackerIssueMutations {
+class GitHubFixtureBackend : public smatchet::tracker_fixture::TrackerFixtureBackendBase {
   public:
-    ITrackerIssueReader& Reader() override;
-    ITrackerConnectivity& Connectivity() override;
-    ITrackerFieldCatalog* FieldCatalog() override;
-    ITrackerIssueMutations* Mutations() override;
-    ITrackerCollaboration* Collaboration() override;
-    ITrackerActivity* Activity() override;
     /// `fixturePath` must point to a JSON file shaped like the GraphQL search
     /// response — top-level `nodes[]` array of Issue/PullRequest objects.
     /// `ownerHint` / `repoHint` are used when nodes don't carry
@@ -55,20 +43,14 @@ class GitHubFixtureBackend : public ITrackerBackend,
     GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint, const std::string& repoHint,
                          bool includePullRequests);
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     std::string GetTrackerType() const override { return "GitHub"; }
 
+    // The per-backend override block below (reachability probe + the three mutation entry points)
+    // is declaration-shape symmetry with the other tracker backends, not shareable logic: the
+    // signatures are fixed by ITrackerConnectivity / ITrackerIssueMutations, and GitHub's write
+    // bodies deliberately differ from the read-only default in TrackerFixtureBackendBase.
+    // SMATCHET_DEVIATION(rule=duplication; reason=interface-decl symmetry; owner=tracker; revisit=2026-12-31)
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
-
-    std::vector<CachedTicket> FetchIssues(bool* outFullSyncCompleted = nullptr,
-                                          const TrackerConfig* configOverride = nullptr,
-                                          const ViewsStore* viewsOverride = nullptr,
-                                          std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
-                                          TrackerError* outFetchErrorStructured = nullptr) override;
-
-    Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& cfg,
-                                                                       const std::vector<std::string>& issueKeys,
-                                                                       const ViewsStore& views) override;
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override;
 
@@ -78,20 +60,10 @@ class GitHubFixtureBackend : public ITrackerBackend,
     Result<nlohmann::json, TrackerError> BuildFieldPayload(const TrackerField& field,
                                                            const std::vector<std::string>& values) override;
 
-    std::string ResolveDisplayValue(const std::string& fieldId, const TrackerField* field,
-                                    const std::string& value) const override;
-
-    /// Diagnostic: load error message (empty when the fixture parsed cleanly).
-    /// Surfaced via `FetchIssues`' `outFetchError` on every call when non-empty.
-    const std::string& LoadError() const { return loadError_; }
-
   private:
-    std::string fixturePath_;
     std::string ownerHint_;
     std::string repoHint_;
     bool includePullRequests_ = true;
-    std::vector<CachedTicket> tickets_;
-    std::string loadError_;
 };
 
 } // namespace github

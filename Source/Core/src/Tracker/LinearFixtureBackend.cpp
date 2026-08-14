@@ -4,14 +4,11 @@
 #include "LinearFixtureBackend.h"
 
 #include "ITrackerBackendFactory.h"
-#include "Json/BoundedJsonParse.h"
 #include "LinearIssueMappingPure.h"
 #include "Logger.h"
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
-#include <sstream>
 #include <utility>
 
 namespace smatchet {
@@ -49,7 +46,13 @@ const nlohmann::json* FindNodesArray(const nlohmann::json& root) {
     return nullptr;
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture-factory boilerplate deliberately mirrors the Plane sibling — the standing per-backend *Client/fixture exemption class; folding them would couple independent tracker backends; owner=security-audit; revisit=2026-12-31)
+// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture-factory boilerplate deliberately mirrors the Plane
+// sibling — the standing per-backend *Client/fixture exemption class; folding them would couple independent tracker
+// backends; owner=security-audit; revisit=2026-12-31)
+// Per-backend fixture-factory boilerplate — the standing per-backend factory / *Client exemption class
+// in ADR-0015. Differs only in the backend type and its log strings; folding it would couple two
+// otherwise-independent tracker backends, which the double-edged-DRY guardrail treats as a regression.
+// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture factory; owner=tracker; revisit=2026-12-31)
 class LinearFixtureBackendFactory : public ITrackerBackendFactory {
   public:
     explicit LinearFixtureBackendFactory(std::string fixturePath) : fixturePath_(std::move(fixturePath)) {}
@@ -75,27 +78,10 @@ class LinearFixtureBackendFactory : public ITrackerBackendFactory {
 
 } // namespace
 
-ITrackerIssueReader& LinearFixtureBackend::Reader() { return *this; }
-ITrackerConnectivity& LinearFixtureBackend::Connectivity() { return *this; }
-ITrackerFieldCatalog* LinearFixtureBackend::FieldCatalog() { return nullptr; }
-ITrackerIssueMutations* LinearFixtureBackend::Mutations() { return this; }
-ITrackerCollaboration* LinearFixtureBackend::Collaboration() { return nullptr; }
-ITrackerActivity* LinearFixtureBackend::Activity() { return nullptr; }
-
-LinearFixtureBackend::LinearFixtureBackend(const std::string& fixturePath) : fixturePath_(fixturePath) {
-    std::ifstream in(fixturePath);
-    if (!in.good()) {
-        loadError_ = "cannot open fixture file";
-        return;
-    }
-    std::stringstream buf;
-    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
-    buf << in.rdbuf();
-    // Bounded parse: the fixture path is env-var-selectable (SMATCHET_TEST_LINEAR_BACKEND_FIXTURE),
-    // so cap depth/nodes/bytes rather than trust wherever it points.
-    const nlohmann::json j = smatchet::json_safe::ParseBoundedOrDiscarded(buf.str());
-    if (j.is_discarded()) {
-        loadError_ = "invalid JSON in fixture file";
+LinearFixtureBackend::LinearFixtureBackend(const std::string& fixturePath)
+    : smatchet::tracker_fixture::TrackerFixtureBackendBase(fixturePath) {
+    nlohmann::json j;
+    if (!LoadFixtureJson(j)) {
         return;
     }
     const nlohmann::json* nodes = FindNodesArray(j);
@@ -116,58 +102,6 @@ TrackerReachabilityProbeResult LinearFixtureBackend::ProbeReachability(const Tra
     out.Kind = TrackerReachabilityProbeKind::AuthenticatedReachable;
     out.Diagnostic = "LinearFixtureBackend (no network)";
     return out;
-}
-
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
-std::vector<CachedTicket> LinearFixtureBackend::FetchIssues(bool* outFullSyncCompleted,
-                                                            const TrackerConfig* /*configOverride*/,
-                                                            const ViewsStore* /*viewsOverride*/,
-                                                            std::string* outFetchError, std::string* outWarning,
-                                                            TrackerError* outFetchErrorStructured) {
-    if (outFullSyncCompleted)
-        *outFullSyncCompleted = loadError_.empty();
-    if (outFetchError)
-        *outFetchError = loadError_;
-
-    if (outFetchErrorStructured) {
-        // Same classification this fixture's FetchIssuesForKeys applies to loadError_.
-        *outFetchErrorStructured = loadError_.empty() ? TrackerError::Ok() : TrackerErrorInvalidRequest(loadError_);
-    }
-    if (outWarning)
-        outWarning->clear();
-    return tickets_;
-}
-
-Result<std::vector<CachedTicket>, TrackerError>
-LinearFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                                         const ViewsStore& /*views*/) {
-    if (!loadError_.empty()) {
-        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorInvalidRequest(loadError_));
-    }
-    std::vector<CachedTicket> outTickets;
-    for (const auto& key : issueKeys) {
-        for (const auto& t : tickets_) {
-            if (t.id == key) {
-                outTickets.push_back(t);
-                break;
-            }
-        }
-    }
-    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(outTickets));
-}
-
-TrackerError LinearFixtureBackend::UpdateIssueFields(const std::string& /*issueId*/, const nlohmann::json& /*fields*/) {
-    return TrackerErrorInvalidRequest("LinearFixtureBackend is read-only");
-}
-
-TrackerError LinearFixtureBackend::UpdateField(const std::string& /*issueId*/, const TrackerField& /*field*/,
-                                               const std::vector<std::string>& /*values*/) {
-    return TrackerErrorInvalidRequest("LinearFixtureBackend is read-only");
-}
-
-Result<nlohmann::json, TrackerError>
-LinearFixtureBackend::BuildFieldPayload(const TrackerField& /*field*/, const std::vector<std::string>& /*values*/) {
-    return Result<nlohmann::json, TrackerError>::Ok(nlohmann::json::object());
 }
 
 std::unique_ptr<ITrackerBackendFactory> MakeLinearFixtureBackendFactory(const std::string& fixturePath) {

@@ -154,6 +154,53 @@ bool IsQueryDateField(const TrackerField& field) {
     return field.Family == TrackerFieldFamily::Date || field.Family == TrackerFieldFamily::DateTime;
 }
 
+void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, const char* userDisplaySuffix,
+                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
+    const std::string pre = ToLowerAsciiCopy(prefix);
+    const bool isUserField = IsQueryUserField(field);
+    auto matchesPrefix = [&](const std::string& raw, const std::string& label) {
+        return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
+    };
+    auto tryAdd = [&](const std::string& raw, const std::string& displayLabel) {
+        if (raw.empty()) {
+            return;
+        }
+        if (!matchesPrefix(raw, displayLabel)) {
+            return;
+        }
+        const std::string insert = InsertForValueToken(raw);
+        std::string label = displayLabel.empty() ? raw : displayLabel;
+        if (label != insert && !insert.empty() && insert.front() == '"') {
+            label = label + " -> " + insert;
+        }
+        AddSuggestionUnique(out, seen, std::move(label), insert);
+    };
+
+    for (const auto& opt : field.AllowedValueOptions) {
+        if (isUserField) {
+            const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
+            const std::string accountId = opt.Id;
+            if (!accountId.empty() && matchesPrefix(accountId, display)) {
+                AddSuggestionUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
+            }
+            if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
+                AddSuggestionUnique(out, seen, display + userDisplaySuffix + InsertForValueToken(display),
+                                    InsertForValueToken(display));
+            }
+            continue;
+        }
+        if (!opt.Value.empty()) {
+            tryAdd(opt.Value, opt.Value);
+        }
+        if (!opt.Id.empty() && opt.Id != opt.Value) {
+            tryAdd(opt.Id, opt.Id + " (" + opt.Value + ")");
+        }
+    }
+    for (const auto& v : field.AllowedValues) {
+        tryAdd(v, v);
+    }
+}
+
 void ResolveQueryReplaceRange(const char* buf, int bufLen, int cursor, int selStart, int selEnd, int& replaceStart,
                               int& replaceEnd, std::string& prefix) {
     if (selStart != selEnd) {

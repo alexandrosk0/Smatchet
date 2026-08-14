@@ -97,22 +97,6 @@ std::string TruncateOneLine(const std::string& s, std::size_t maxChars) {
     return s.substr(0, maxChars) + "...";
 }
 
-std::string Base64Encode(const std::string& in) {
-    static const char table[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    std::string out;
-    out.reserve(((in.size() + 2) / 3) * 4);
-    for (size_t i = 0; i < in.size(); i += 3) {
-        const unsigned char a = static_cast<unsigned char>(in[i]);
-        const unsigned char b = (i + 1 < in.size()) ? static_cast<unsigned char>(in[i + 1]) : 0u;
-        const unsigned char c = (i + 2 < in.size()) ? static_cast<unsigned char>(in[i + 2]) : 0u;
-        out += table[a >> 2];
-        out += table[((a & 3) << 4) | (b >> 4)];
-        out += (i + 1 < in.size()) ? table[((b & 15) << 2) | (c >> 6)] : '=';
-        out += (i + 2 < in.size()) ? table[c & 63] : '=';
-    }
-    return out;
-}
-
 bool LooksLikeHttpUrl(const std::string& url) { return url.find("http://") == 0 || url.find("https://") == 0; }
 
 std::string NormalizeDomain(const std::string& rawDomain) {

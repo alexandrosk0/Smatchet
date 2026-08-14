@@ -23,12 +23,45 @@
 
 namespace {
 
-// Worker-thread probe body: reachability check + a 1-token chat handshake against
-// the configured model. Returns empty on success; a populated error message
-// otherwise. Catches every exception (third-party cpr/libcurl + SSE parser) so a
-// throw never escapes the background task and calls std::terminate.
+// UI-thread result dispatch: short-circuit on cancel, otherwise surface
+// Verified / Failed into the g_ui prefs-test fields and persist any defaulted
+// base URL back into cfg.
+void PublishProbeResult(const std::string& errMsg, AiProvider provider, const std::string& defaultedBaseUrl,
+                        const std::shared_ptr<std::atomic<bool>>& cancel) {
+    if (cancel && cancel->load()) {
+        return;
+    }
+    g_ui.assistantPrefsTestInFlight = false;
+    if (errMsg.empty()) {
+        LOG_INFO("AiPrefsTestConnection: VERIFIED providerKind=%d defaultedBaseUrl='%s'", static_cast<int>(provider),
+                 defaultedBaseUrl.c_str());
+        g_ui.assistantPrefsTestResult = "Verified";
+        g_ui.assistantPrefsTestResultType = 1;
+        if (!defaultedBaseUrl.empty()) {
+            if (provider == AiProvider::OllamaOpenAiCompat) {
+                g_ui.cfg.AiBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::OllamaNative) {
+                g_ui.cfg.AiOllamaBaseUrl = defaultedBaseUrl;
+            } else if (provider == AiProvider::DeepSeek) {
+                g_ui.cfg.AiDeepSeekBaseUrl = defaultedBaseUrl;
+            }
+            MarkPrefsDirty(g_ui);
+            g_ui.assistantPrefsForceBufferReseed = true;
+        }
+    } else {
+        LOG_ERROR("AiPrefsTestConnection: FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
+                  errMsg.c_str());
+        g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
+        g_ui.assistantPrefsTestResultType = 2;
+    }
+}
+
+} // namespace
+
+namespace AiPrefsTestConnection {
+
 std::string RunProbe(AiProvider provider, const AiClientConfig& clientCfg, const std::string& modelId,
-                     const std::shared_ptr<std::atomic<bool>>& cancel) {
+                     const std::shared_ptr<std::atomic<bool>>& cancel, const char* logTag) {
     std::string errMsg;
     try {
         std::unique_ptr<IAiClient> client = AiClientFactory::MakeAiClient(provider);
@@ -68,57 +101,17 @@ std::string RunProbe(AiProvider provider, const AiClientConfig& clientCfg, const
                 }
             }
         }
-        // SMATCHET_DEVIATION(rule=duplication; reason=test-connection probe twins (AiPrefsTestConnection vs Preferences
-        // UI worker) predate this pass; the identical localized catch-handling keeps both twins consistent until the
-        // planned twin dedup; owner=user-text-error-pass; revisit=2026-09-30)
     } catch (const std::exception& ex) {
-        LOG_WARN("AiPrefsTestConnection: %s", ex.what());
+        LOG_WARN("%s: %s", logTag, ex.what());
         errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
                                          "the request could not be completed — check the endpoint URL and try again");
     } catch (...) {
-        LOG_WARN("AiPrefsTestConnection: unknown exception");
+        LOG_WARN("%s: unknown exception", logTag);
         errMsg = SmatchetLocalization::T("prefs.assistant.test_internal_error",
                                          "the request could not be completed — check the endpoint URL and try again");
     }
     return errMsg;
 }
-
-// UI-thread result dispatch: short-circuit on cancel, otherwise surface
-// Verified / Failed into the g_ui prefs-test fields and persist any defaulted
-// base URL back into cfg.
-void PublishProbeResult(const std::string& errMsg, AiProvider provider, const std::string& defaultedBaseUrl,
-                        const std::shared_ptr<std::atomic<bool>>& cancel) {
-    if (cancel && cancel->load()) {
-        return;
-    }
-    g_ui.assistantPrefsTestInFlight = false;
-    if (errMsg.empty()) {
-        LOG_INFO("AiPrefsTestConnection: VERIFIED providerKind=%d defaultedBaseUrl='%s'", static_cast<int>(provider),
-                 defaultedBaseUrl.c_str());
-        g_ui.assistantPrefsTestResult = "Verified";
-        g_ui.assistantPrefsTestResultType = 1;
-        if (!defaultedBaseUrl.empty()) {
-            if (provider == AiProvider::OllamaOpenAiCompat) {
-                g_ui.cfg.AiBaseUrl = defaultedBaseUrl;
-            } else if (provider == AiProvider::OllamaNative) {
-                g_ui.cfg.AiOllamaBaseUrl = defaultedBaseUrl;
-            } else if (provider == AiProvider::DeepSeek) {
-                g_ui.cfg.AiDeepSeekBaseUrl = defaultedBaseUrl;
-            }
-            MarkPrefsDirty(g_ui);
-            g_ui.assistantPrefsForceBufferReseed = true;
-        }
-    } else {
-        LOG_ERROR("AiPrefsTestConnection: FAILED providerKind=%d errMsg='%s'", static_cast<int>(provider),
-                  errMsg.c_str());
-        g_ui.assistantPrefsTestResult = std::string("Failed: ") + errMsg;
-        g_ui.assistantPrefsTestResultType = 2;
-    }
-}
-
-} // namespace
-
-namespace AiPrefsTestConnection {
 
 void TriggerProbe(UiDrawSession& d, IAppThreading& app, AiProvider provider) {
     LOG_INFO("AiPrefsTestConnection::TriggerProbe start providerKind=%d", static_cast<int>(provider));
@@ -141,7 +134,7 @@ void TriggerProbe(UiDrawSession& d, IAppThreading& app, AiProvider provider) {
     // Joined background-task pool, not a raw detached thread — the no-detach lint forbids that.
     // Joined at shutdown, so the &app capture stays valid for the task's whole life.
     app.LaunchBackgroundTask([provider, clientCfg, cancel, defaultedBaseUrl, modelId, &app]() {
-        const std::string errMsg = RunProbe(provider, clientCfg, modelId, cancel);
+        const std::string errMsg = RunProbe(provider, clientCfg, modelId, cancel, "AiPrefsTestConnection");
         app.PostToMainThread([errMsg, cancel, provider, defaultedBaseUrl]() {
             PublishProbeResult(errMsg, provider, defaultedBaseUrl, cancel);
         });

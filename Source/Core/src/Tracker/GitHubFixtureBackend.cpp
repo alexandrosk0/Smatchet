@@ -23,7 +23,8 @@ bool ReadFileToString(const std::string& path, std::string& out) {
         return false;
     }
     std::ostringstream ss;
-    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by construction; owner=security-audit; revisit=2026-12-31)
+    // SMATCHET_DEVIATION(rule=unbounded-file-slurp; reason=developer-authored local fixture file, small by
+    // construction; owner=security-audit; revisit=2026-12-31)
     ss << in.rdbuf();
     out = ss.str();
     return true;
@@ -31,16 +32,10 @@ bool ReadFileToString(const std::string& path, std::string& out) {
 
 } // namespace
 
-ITrackerIssueReader& GitHubFixtureBackend::Reader() { return *this; }
-ITrackerConnectivity& GitHubFixtureBackend::Connectivity() { return *this; }
-ITrackerFieldCatalog* GitHubFixtureBackend::FieldCatalog() { return nullptr; }
-ITrackerIssueMutations* GitHubFixtureBackend::Mutations() { return this; }
-ITrackerCollaboration* GitHubFixtureBackend::Collaboration() { return nullptr; }
-ITrackerActivity* GitHubFixtureBackend::Activity() { return nullptr; }
-
 GitHubFixtureBackend::GitHubFixtureBackend(const std::string& fixturePath, const std::string& ownerHint,
                                            const std::string& repoHint, bool includePullRequests)
-    : fixturePath_(fixturePath), ownerHint_(ownerHint), repoHint_(repoHint), includePullRequests_(includePullRequests) {
+    : smatchet::tracker_fixture::TrackerFixtureBackendBase(fixturePath), ownerHint_(ownerHint), repoHint_(repoHint),
+      includePullRequests_(includePullRequests) {
     std::string contents;
     if (!ReadFileToString(fixturePath_, contents)) {
         loadError_ = contents;
@@ -89,45 +84,6 @@ TrackerReachabilityProbeResult GitHubFixtureBackend::ProbeReachability(const Tra
     return r;
 }
 
-std::vector<CachedTicket> GitHubFixtureBackend::FetchIssues(bool* outFullSyncCompleted,
-                                                            const TrackerConfig* /*configOverride*/,
-                                                            const ViewsStore* /*viewsOverride*/,
-                                                            std::string* outFetchError, std::string* outWarning,
-                                                            TrackerError* outFetchErrorStructured) {
-    if (outFullSyncCompleted) {
-        *outFullSyncCompleted = loadError_.empty();
-    }
-    if (outFetchError) {
-        *outFetchError = loadError_;
-    }
-    if (outFetchErrorStructured) {
-        // Same classification this fixture's FetchIssuesForKeys applies to loadError_.
-        *outFetchErrorStructured = loadError_.empty() ? TrackerError::Ok() : TrackerErrorInvalidRequest(loadError_);
-    }
-    if (outWarning) {
-        outWarning->clear();
-    }
-    return tickets_;
-}
-
-Result<std::vector<CachedTicket>, TrackerError>
-GitHubFixtureBackend::FetchIssuesForKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& issueKeys,
-                                         const ViewsStore& /*views*/) {
-    if (!loadError_.empty()) {
-        return Result<std::vector<CachedTicket>, TrackerError>::Err(TrackerErrorInvalidRequest(loadError_));
-    }
-    std::vector<CachedTicket> outTickets;
-    for (const auto& key : issueKeys) {
-        for (const auto& t : tickets_) {
-            if (t.id == key) {
-                outTickets.push_back(t);
-                break;
-            }
-        }
-    }
-    return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(outTickets));
-}
-
 TrackerError GitHubFixtureBackend::UpdateIssueFields(const std::string& issueId, const nlohmann::json& /*fields*/) {
     LOG_INFO("GitHubFixtureBackend::UpdateIssueFields no-op on fixture backend (issueId=%s)", issueId.c_str());
     return TrackerError::Ok();
@@ -149,11 +105,6 @@ Result<nlohmann::json, TrackerError> GitHubFixtureBackend::BuildFieldPayload(con
     nlohmann::json outPayload = nlohmann::json::object();
     outPayload["values"] = std::move(arr);
     return Result<nlohmann::json, TrackerError>::Ok(std::move(outPayload));
-}
-
-std::string GitHubFixtureBackend::ResolveDisplayValue(const std::string& /*fieldId*/, const TrackerField* /*field*/,
-                                                      const std::string& value) const {
-    return value;
 }
 
 } // namespace github

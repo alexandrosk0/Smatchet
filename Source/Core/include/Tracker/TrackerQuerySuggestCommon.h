@@ -62,6 +62,15 @@ void AppendFieldCatalog(const std::vector<TrackerField>& fields, const std::stri
 /// True for user-type fields (single or multi).
 bool IsQueryUserField(const TrackerField& field);
 
+/// Append value suggestions for `field` whose raw value or display label prefix-matches
+/// `prefix`, de-duplicated through `seen`. Walks AllowedValueOptions (user fields emit an
+/// account-id entry plus a display-name entry; others emit value and, when distinct,
+/// id-qualified-by-value) then the flat AllowedValues list.
+/// `userDisplaySuffix` is the only backend-local divergence — Jira renders " (display name) -> ",
+/// Plane " (display) -> "; passing it in keeps both wordings while the body is single-sourced.
+void AppendValueSuggestions(const TrackerField& field, const std::string& prefix, const char* userDisplaySuffix,
+                            std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen);
+
 /// True for date / date-time fields.
 bool IsQueryDateField(const TrackerField& field);
 
