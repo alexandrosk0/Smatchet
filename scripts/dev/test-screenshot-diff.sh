@@ -55,7 +55,11 @@
 #   per scenario REGARDLESS of verdict, so the reporting CI step can surface it
 #   without gaining the power to block the lane:
 #     <scenario>\t<verdict>\t<linf>\t<tolerance>\t<golden-date-iso>\t<golden-age-days>
-#   verdict ∈ pass | fail | bootstrap | missing-capture | spawn-failed.
+#   verdict ∈ pass | fail | fail-assert | bootstrap | missing-capture |
+#   spawn-failed. `fail` is a failing image diff; `fail-assert` is a scenario
+#   whose NON-diff assertion failed (the dock-gap pink scan) even though the diff
+#   itself was clean or never ran — its linf column may look healthy, which is
+#   exactly why the verdict has its own token.
 #   linf is `-` when the run never reached a diff; the date/age pair is `-` when
 #   git cannot date the golden (untracked, no git, or a shallow clone with no
 #   commit touching it). The date comes from git — NOT the filesystem, whose
@@ -218,6 +222,11 @@ run_scenario() {
     local scen="$1"
     local captured="$TMP_DIR/$scen.png"
     local golden="$GOLDEN_DIR/$scen.png"
+    # Non-diff assertions (today: the dock-gap pink scan) fail INDEPENDENTLY of the
+    # image diff, and they must reach the report. Without this the driver could
+    # count a scenario failed while its row read `pass` — the report contradicting
+    # the run is the exact misreporting this report exists to prevent.
+    local scen_assert_failed=0
 
     echo
     echo "=== Scenario: $scen ==="
@@ -302,6 +311,7 @@ run_scenario() {
         if [ "$pink_rc" -eq 0 ]; then
             assert "$scen pink-pixels == 0 (no dock gap)" "ok"
         else
+            scen_assert_failed=1
             assert "$scen pink-pixels == 0 (no dock gap)" "$pink_out"
         fi
     fi
@@ -310,7 +320,11 @@ run_scenario() {
     if [ "$BOOTSTRAP" -eq 1 ]; then
         cp "$captured" "$golden"
         echo "  BOOTSTRAP  wrote $golden ($(wc -c < "$golden") bytes)"
-        report_row "$scen" "bootstrap" "-" "$golden"
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "-" "$golden"
+        else
+            report_row "$scen" "bootstrap" "-" "$golden"
+        fi
         assert "$scen golden bootstrap" "ok"
         return
     fi
@@ -324,7 +338,11 @@ run_scenario() {
         echo "  WARN  $golden was missing — bootstrapped from this run."
         echo "        Commit the new golden so future runs gate against it:"
         echo "          git add $golden"
-        report_row "$scen" "bootstrap" "-" "$golden"
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "-" "$golden"
+        else
+            report_row "$scen" "bootstrap" "-" "$golden"
+        fi
         assert "$scen golden auto-bootstrapped" "ok"
         return
     fi
@@ -343,7 +361,13 @@ run_scenario() {
     linf="$(printf '%s' "$diff_out" | sed -n 's/.*linf=\([0-9-]*\).*/\1/p' | head -1)"
     [ -n "$linf" ] || linf="-"
     if [ "$diff_rc" -eq 0 ]; then
-        report_row "$scen" "pass" "$linf" "$golden"
+        # Clean diff, but a non-diff assertion already failed: the scenario is NOT
+        # passing, and the row must not say so.
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "$linf" "$golden"
+        else
+            report_row "$scen" "pass" "$linf" "$golden"
+        fi
         assert "$scen L_inf <= $TOL" "ok"
     else
         report_row "$scen" "fail" "$linf" "$golden"

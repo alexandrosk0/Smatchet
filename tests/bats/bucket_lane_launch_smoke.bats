@@ -178,6 +178,36 @@ STUB
     [ ! -e "$WORK/golden-report.tsv" ]
 }
 
+@test "golden report: a failed NON-diff assertion never reports as pass" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    # Bootstrap the goldens with a PASSING pink stub so the diff run has something
+    # to compare against.
+    PINKBIN="$WORK/pinkbin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$PINKBIN"
+    chmod +x "$PINKBIN"
+    export PINK_PIXEL_COUNT_BIN="$PINKBIN"
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+
+    # Now fail ONLY the dock-gap pink scan. The image diff still passes (the diff
+    # stub always returns 0), so without propagation the row would read `pass`
+    # while the driver counted the scenario failed — the report contradicting the
+    # run, which is the failure mode this report exists to prevent.
+    printf '#!/usr/bin/env bash\necho "pink pixels: 42"\nexit 1\n' > "$PINKBIN"
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    [ "$status" -ne 0 ]   # the driver itself must still fail
+
+    verdict="$(awk -F'\t' '$1=="dock-gap-sentinel"{print $2}' "$SMATCHET_GOLDEN_REPORT_FILE")"
+    [ -n "$verdict" ]
+    [ "$verdict" != "pass" ]
+    [ "$verdict" = "fail-assert" ]
+    # Scenarios with no failing assertion are unaffected.
+    other="$(awk -F'\t' '$1=="command-palette-fuzzy"{print $2}' "$SMATCHET_GOLDEN_REPORT_FILE")"
+    [ "$other" = "pass" ]
+}
+
 # --- lane-shape invariant: only lane-integrity may block ------------------------
 # The bucket-C lane is advisory for its screenshot-diff purpose; its ONLY teeth are
 # the lane-integrity step. Every step after it is pure reporting/observability, and

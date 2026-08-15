@@ -111,6 +111,15 @@
   needs real history). The assertion was negative-tested: stripping
   `continue-on-error` from one upload fails it by name.
 
+  Round 3 found the report contradicting its own driver: `dock-gap-sentinel`'s
+  pink-clear scan is a NON-diff assertion, so a pink failure incremented `FAILED`
+  while a clean image diff still wrote a `pass` row — the summary would have
+  called the scenario healthy on a run the driver failed. Non-diff assertion
+  results now propagate into the row as a distinct `fail-assert` verdict (its
+  `linf` column can look healthy, which is exactly why it needs its own token),
+  covering the bootstrap paths too. Negative-tested: with the fix reverted and
+  the test kept, the row reads `pass` and the assertion fails.
+
   The rule generalises in
   [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
   masks: *a mask may suppress blocking, never reporting* — the property the other
