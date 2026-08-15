@@ -54,9 +54,12 @@
 #   SMATCHET_GOLDEN_REPORT_FILE is set this driver writes one TAB-separated row
 #   per scenario REGARDLESS of verdict, so the reporting CI step can surface it
 #   without gaining the power to block the lane:
-#     <scenario>\t<verdict>\t<linf>\t<tolerance>\t<golden-mtime-iso>\t<golden-age-days>
+#     <scenario>\t<verdict>\t<linf>\t<tolerance>\t<golden-date-iso>\t<golden-age-days>
 #   verdict ∈ pass | fail | bootstrap | missing-capture | spawn-failed.
-#   linf / mtime / age are `-` when the run never reached a diff.
+#   linf is `-` when the run never reached a diff; the date/age pair is `-` when
+#   git cannot date the golden (untracked, no git, or a shallow clone with no
+#   commit touching it). The date comes from git — NOT the filesystem, whose
+#   mtime is the checkout time on any CI runner.
 #
 # Usage:
 #   bash scripts/dev/test-screenshot-diff.sh                # diff mode (gate)
@@ -187,14 +190,20 @@ report_row() {
     [ -n "${SMATCHET_GOLDEN_REPORT_FILE:-}" ] || return 0
     local mtime="-" age="-"
     if [ -n "$golden" ] && [ -f "$golden" ]; then
-        # `stat -c %Y` (GNU/Git-Bash) with a BSD `stat -f %m` fallback; both
-        # absent (or a python-less box) leaves the age columns as '-' rather
-        # than failing the driver over a reporting nicety.
+        # The date MUST come from git, not the filesystem: a CI checkout stamps
+        # every file with the checkout time, so mtime reports a three-month-old
+        # golden as 0 days old — a fresh-looking lie, which is the exact class of
+        # misleading signal this report exists to kill. `git log -1 --format=%ct`
+        # gives the commit that last changed the golden, i.e. its real age.
+        # Run from the golden's own directory so the lookup works whether the
+        # golden lives in this repo or in a caller-supplied dir. Unknown (no git,
+        # untracked file, shallow clone with no touching commit) stays '-' —
+        # never a number that would read as fresh.
         local epoch=""
-        epoch="$(stat -c %Y "$golden" 2>/dev/null || stat -f %m "$golden" 2>/dev/null || true)"
-        # Digits-only guard: a non-numeric stat result would abort the whole
-        # driver in the arithmetic below (set -e) — a reporting nicety must never
-        # take the gate down.
+        epoch="$(git -C "$(dirname "$golden")" log -1 --format=%ct -- "$(basename "$golden")" 2>/dev/null || true)"
+        # Digits-only guard: a non-numeric result would abort the whole driver in
+        # the arithmetic below (set -e) — a reporting nicety must never take the
+        # gate down.
         case "$epoch" in ''|*[!0-9]*) epoch="" ;; esac
         if [ -n "$epoch" ]; then
             mtime="$(date -u -d "@$epoch" '+%Y-%m-%d' 2>/dev/null || date -u -r "$epoch" '+%Y-%m-%d' 2>/dev/null || echo '-')"

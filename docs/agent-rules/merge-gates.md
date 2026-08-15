@@ -180,7 +180,11 @@ Concretely, bucket-C's driver (`scripts/dev/test-screenshot-diff.sh`) writes a
 per-scenario verdict row to its golden-report file — named by the project
 env-prefix + `_GOLDEN_REPORT_FILE`, see the driver's env-override header — on
 **every** outcome
-(`scenario \t verdict \t linf \t tol \t golden-date \t age-days`), and the
+(`scenario \t verdict \t linf \t tol \t golden-date \t age-days`) — the date read
+from **git** (`git log -1 --format=%ct` on the artefact), never the filesystem,
+whose mtime is the *checkout* time on any CI runner and would report a months-old
+artefact as 0 days old; an artefact git cannot date reports `-`, never a
+fresh-looking number. The lane's checkout therefore needs full history. The
 `Report bucket-C golden verdicts (advisory)` step renders it into the job summary
 + uploads it as an artefact. That step is `if: always()` and exits 0 on every
 branch, so the reporting carries no blocking power of its own: a stale golden

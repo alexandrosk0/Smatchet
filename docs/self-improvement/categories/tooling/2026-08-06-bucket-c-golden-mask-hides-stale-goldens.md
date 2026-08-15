@@ -64,8 +64,30 @@
   **after** the lane-integrity step on purpose: a reporting step that could fail
   ahead of the teeth would skip them (lane-integrity carries no `if: always()`).
   `tests/bats/bucket_lane_launch_smoke.bats` pins the rows on the failing path,
-  the date/age columns on the passing path, and the opt-in (no env var → no
-  file). The rule generalises in
+  the git-sourced date on the passing path, the `-` fallback, and the opt-in (no
+  env var → no file).
+
+  **The date must come from git, not the filesystem** — caught by running the
+  first build of this on the real lane (PR #2023, run 31904156001), where every
+  row read `2026-08-15  0` while git dates those same goldens 2026-08-06/09. A
+  CI checkout stamps every file with the checkout time, so an mtime-based age
+  reports a months-old golden as brand new: the fresh-looking lie this report
+  exists to kill, reintroduced by the report itself. The driver now dates each
+  golden by the commit that last changed it and prints `-` when git cannot
+  answer (untracked / shallow clone), never a number; the bucket-C checkout
+  carries `fetch-depth: 0` so that history exists.
+
+  **First-run finding (feeds part 2):** that same run reported all seven
+  scenarios `fail` with `linf=-1` — the diff helper's *dimension mismatch*
+  sentinel, not a pixel delta. Under llvmpipe on the CI runner the captures do
+  not even match the goldens' dimensions, so part 2's ratchet cannot simply be
+  flipped on for `user-info-*`: the CI-native capture size has to be reconciled
+  first (or the ratchet scoped to a developer-GPU run). Lane status was `fail`,
+  not `broken` (8 passed / 7 failed — the non-diff assertions pass), so
+  lane-integrity stayed green and the mask swallowed all seven — exactly the
+  silent rot described above, now visible on every run.
+
+  The rule generalises in
   [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
   masks: *a mask may suppress blocking, never reporting* — the property the other
   two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's Mesa per-test

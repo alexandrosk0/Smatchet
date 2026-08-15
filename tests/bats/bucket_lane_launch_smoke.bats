@@ -120,25 +120,53 @@ STUB
     done < "$SMATCHET_GOLDEN_REPORT_FILE"
 }
 
-@test "golden report: rows carry the golden's date + age when a golden exists" {
+@test "golden report: rows date the golden from git, not the filesystem mtime" {
     write_stub_exe live
     export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
-    # First --bootstrap run writes the goldens; the second run diffs against them
-    # (SCREENSHOT_DIFF_BIN is the always-rc0 stub), so rows land as `pass` with a
-    # real mtime/age rather than the bootstrap placeholder.
+    # First --bootstrap run writes the goldens; the second diffs against them
+    # (SCREENSHOT_DIFF_BIN is the always-rc0 stub), so rows land as `pass`.
     run bash "$DRIVER" --bootstrap
     [ "$status" -eq 0 ]
+
+    # Commit the goldens at a KNOWN old date. mtime is "just now" either way, so
+    # a row reporting that old date proves the date came from git — the whole
+    # point: on a CI runner every file's mtime is the checkout time, which would
+    # report a months-old golden as 0 days old.
+    git -C "$SMATCHET_GOLDEN_DIR" init -q
+    git -C "$SMATCHET_GOLDEN_DIR" config user.email t@example.com
+    git -C "$SMATCHET_GOLDEN_DIR" config user.name t
+    git -C "$SMATCHET_GOLDEN_DIR" add -A
+    GIT_AUTHOR_DATE="2026-01-02T00:00:00Z" GIT_COMMITTER_DATE="2026-01-02T00:00:00Z" \
+        git -C "$SMATCHET_GOLDEN_DIR" commit -q -m goldens
+
     : > "$SMATCHET_GOLDEN_REPORT_FILE"
     run bash "$DRIVER"
     [ "$status" -eq 0 ]
     # grep -P is not portable (BSD/busybox); match the literal tab-delimited field.
     grep -q "$(printf '\tpass\t')" "$SMATCHET_GOLDEN_REPORT_FILE"
-    # Every pass row's date column must be an ISO date and age a number — that is
-    # the staleness signal the job summary renders.
-    while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+    while IFS=$'\t' read -r scen verdict linf tol gdate age; do
         [ "$verdict" = "pass" ] || continue
-        [[ "$mtime" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+        [ "$gdate" = "2026-01-02" ]   # git's commit date, NOT today's mtime
         [[ "$age" =~ ^[0-9]+$ ]]
+        [ "$age" -gt 0 ]
+    done < "$SMATCHET_GOLDEN_REPORT_FILE"
+}
+
+@test "golden report: an undatable golden reports '-', never a fresh-looking 0" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    # Goldens exist but live in no git repo — the date is unknowable. It must
+    # read '-' rather than falling back to the mtime (which is "now" on every CI
+    # checkout and would report every stale golden as brand new).
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    [ "$status" -eq 0 ]
+    while IFS=$'\t' read -r scen verdict linf tol gdate age; do
+        [ "$verdict" = "pass" ] || continue
+        [ "$gdate" = "-" ]
+        [ "$age" = "-" ]
     done < "$SMATCHET_GOLDEN_REPORT_FILE"
 }
 
