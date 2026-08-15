@@ -44,6 +44,8 @@ Fields in that order (`;` + space between fields). Four `when=` kinds (`;`-delim
 
 Author with `fired=never`; when the orchestrator acts it stamps `fired=<date>` via PR (the nudge is **read-only** — a due-but-unaddressed entry re-nudges every session until stamped, like `postmortem-owed`). Entries with no `Triggered-follow-up:` line are invisible to the nudge — fully backward-compatible.
 
+**An entry proposing a gate must name its enumerator and replay the motivating bug against it.** "Assert every X" is only specified once X resolves to an enumerable declaration — name the file and the declaration the gate iterates, not a prose description of the population (a prose population cannot be wrong, which is precisely why it hides this failure). Then walk the named enumerator by hand and confirm the known-bad case that motivated the gate actually appears in it: a proposed dock-slot gate once named a real symbol (`kEntries`) that was not addressable from outside its TU and did not contain the very constant the gate existed to catch — the gate as written would have stayed green through its own motivating bug. If the entry cannot point at the row the gate would have tripped on, the gate is not specified yet.
+
 Applied entries are archived immediately to [`self-improvement/categories/applied.md`](categories/applied.md).
 
 ## Categories

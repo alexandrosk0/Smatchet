@@ -38,7 +38,7 @@
   contradicted itself in its own text (6 + 56 ≠ 56). Review caught it. The generalisable check —
   when a claim reads "N do X, M do not-X" off one grep, assert the two sets are disjoint before
   writing the numbers down — is filed separately at
-  [`categories/process/2026-08-07-two-counts-from-one-grep-must-be-disjoint.md`](../process/2026-08-07-two-counts-from-one-grep-must-be-disjoint.md).
+  [`categories/process/2026-08-07-two-counts-from-one-grep-must-be-disjoint.md`](../applied.md).
 
   The mechanism is in [`Source/Core/src/Commands/Scenarios/UiTestScenario.cpp`](../../../../Source/Core/src/Commands/Scenarios/UiTestScenario.cpp)
   lines 381 and 402-403: `passed_` comes from `ImGuiTestEngine_GetResult` and
