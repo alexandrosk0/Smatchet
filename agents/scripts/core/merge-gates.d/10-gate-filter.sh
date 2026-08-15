@@ -154,10 +154,16 @@ _MG_GATE_FILTER_TEMPLATE='
 #      before CR re-runs. A pure-docs diff is harmless to fast-pass; a code
 #      diff with a genuine path-filter skip falls back to the NONE
 #      grace-then-pass below (slower, never wedged).
-# The heading requirement keeps two look-alikes out: "## Review available on
+# Both arms must keep the NON-terminal look-alikes out. On the comment surface
+# the "## Review skipped" heading requirement excludes "## Review available on
 # request" (manual-trigger repos — a review CAN still be triggered, so NONE
 # grace + the auto-nudge must keep working) and "## Review limit reached"
-# (rate limit — TEMPORARY, handled by $crratelimited below).
+# (rate limit — TEMPORARY, handled by $crratelimited below). On the STATUS
+# surface those same states hide INSIDE a "Review skipped: ..." description —
+# observed live: "Review skipped: manual review required for this OSS
+# repository" — so the status arm must exclude the manual-trigger and
+# rate-limit reason texts explicitly, not rely on the "Review skipped" prefix
+# discriminating (CR round 2 on PR #2017).
 # This is TERMINAL — CR processed the PR and declined an incremental review,
 # so no inline review will ever land and the NONE+status-SUCCESS grace must
 # NOT wait it out (PR #976 burned ~10 cycles on a docs-only PR). Distinct from
@@ -167,7 +173,11 @@ _MG_GATE_FILTER_TEMPLATE='
               and (.state == "SUCCESS"))
      | (.description // "")]
     | any((test("review skipped"; "i"))
-          and ((test("too many files"; "i")) | not)))
+          and ((test("too many files"; "i")) | not)
+          and ((test("manual review required"; "i")) | not)
+          and ((test("available on request"; "i")) | not)
+          and ((test("rate.?limit"; "i")) | not)
+          and ((test("limit reached"; "i")) | not)))
    or ($pureDocs
        and ($crcommentbodies
             | any(test("##[[:space:]]*Review skipped"; "i")

@@ -924,6 +924,47 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
 }
 
+@test "CR status description 'Review skipped: manual review required' -> NOT a terminal pass (manual trigger still possible)" {
+    # CR round 2 on PR #2017: the manual-trigger state hides INSIDE a
+    # "Review skipped: ..." STATUS description — observed live on PR #2014:
+    # SUCCESS + "Review skipped: manual review required for this OSS
+    # repository". A review CAN still be triggered, so the status arm must not
+    # terminal-pass on the "Review skipped" prefix alone; the PR stays in the
+    # ordinary status-SUCCESS-waiting-for-inline grace where a manual
+    # `@coderabbitai review` resolves it.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped: manual review required for this OSS repository","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+status-SUCCESS-waiting-for-inline"* ]]
+    [[ "$output" != *"NONE+review-skipped"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR status description 'Review skipped: rate limited' -> NOT a terminal pass (rate-limit machinery binds instead)" {
+    # Same shape, rate-limit flavor: a "Review skipped: rate limited" STATUS
+    # description is TEMPORARY — CR re-reviews when quota recovers. It must not
+    # take the terminal review-skipped pass; the dedicated rate-limit
+    # classifier picks it up (code PR, no current-head verdict -> pause/block).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped: rate limited","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=1
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" != *"NONE+review-skipped"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
 @test "CR 'Review available on request' comment (marker, no '## Review skipped' heading) -> NONE grace keeps working" {
     # Manual-trigger repos (<10 stars): CR posts a "## Review available on
     # request" comment carrying the same generic skip marker. A review CAN
