@@ -1158,6 +1158,10 @@ jobs:
       # green run or a no-log run never reds the job.
       - name: Surface bucket-C spawned-child log
         if: always()
+        # Pure observability, and the Actions bash wrapper runs with -e (the body's
+        # `set -uo pipefail` does not clear it), so a failing mkdir/cp/cat here
+        # would red the advisory lane after lane-integrity already passed.
+        continue-on-error: true
         shell: bash
         run: |
           set -uo pipefail

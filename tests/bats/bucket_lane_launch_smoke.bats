@@ -178,6 +178,37 @@ STUB
     [ ! -e "$WORK/golden-report.tsv" ]
 }
 
+# --- lane-shape invariant: only lane-integrity may block ------------------------
+# The bucket-C lane is advisory for its screenshot-diff purpose; its ONLY teeth are
+# the lane-integrity step. Every step after it is pure reporting/observability, and
+# each must be continue-on-error — the Actions bash wrapper runs with -e (a body's
+# `set -uo pipefail` does not clear it) and `if-no-files-found: ignore` covers only
+# an ABSENT file, so an unmasked mkdir/cp/cat or a transient upload error would red
+# the lane after the teeth already passed. Asserted here so the property is
+# enforced rather than re-argued in review (CodeRabbit flagged three such steps
+# across two rounds on PR #2023).
+@test "bucket-C workflow: lane-integrity is the lane's only blocking step" {
+    python3 -c 'import yaml' 2>/dev/null || skip "PyYAML unavailable"
+    run python3 - "$REPO_ROOT/.github/workflows/build-and-test.yml" <<'PY'
+import sys, yaml
+jobs = yaml.safe_load(open(sys.argv[1]))["jobs"]
+job = next(j for j in jobs.values() if "Bucket-C" in str(j.get("name", "")))
+steps = job["steps"]
+teeth = [i for i, s in enumerate(steps) if "Lane-integrity" in str(s.get("name", ""))]
+assert len(teeth) == 1, "expected exactly one lane-integrity step, got %d" % len(teeth)
+i = teeth[0]
+assert not steps[i].get("continue-on-error", False), "lane-integrity must keep its teeth"
+bad = [s.get("name", "?") for s in steps[i + 1:] if not s.get("continue-on-error", False)]
+assert not bad, "reporting steps after lane-integrity must be continue-on-error: %s" % bad
+# The report's own history requirement: dating a golden needs real history.
+checkout = next(s for s in steps if "checkout" in str(s.get("uses", "")))
+assert checkout.get("with", {}).get("fetch-depth") == 0, "golden dating needs fetch-depth: 0"
+print("OK")
+PY
+    [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+    [[ "$output" == *"OK"* ]]
+}
+
 @test "sentinel records exact passed/failed counts" {
     write_stub_exe dead
     run bash "$DRIVER"

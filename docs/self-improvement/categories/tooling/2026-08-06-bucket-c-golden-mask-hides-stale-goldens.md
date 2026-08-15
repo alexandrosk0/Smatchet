@@ -100,6 +100,17 @@
   branch-controlled code and needs only local `git log` reads, never an
   authenticated fetch or push (zizmor `artipacked`).
 
+  Round 2 caught a *fourth* instance of the same class — the pre-existing
+  `Surface bucket-C spawned-child log` step, whose body sets `-uo pipefail` but
+  inherits `-e` from the Actions bash wrapper, so a failing `mkdir`/`cp`/`cat`
+  would red the lane after the teeth passed. Three such steps across two review
+  rounds is the signal that the property needs enforcing rather than re-arguing:
+  `bucket_lane_launch_smoke.bats` now asserts the **lane shape** — exactly one
+  lane-integrity step, it keeps its teeth, every step after it is
+  `continue-on-error`, and the checkout carries `fetch-depth: 0` (dating a golden
+  needs real history). The assertion was negative-tested: stripping
+  `continue-on-error` from one upload fails it by name.
+
   The rule generalises in
   [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
   masks: *a mask may suppress blocking, never reporting* — the property the other
