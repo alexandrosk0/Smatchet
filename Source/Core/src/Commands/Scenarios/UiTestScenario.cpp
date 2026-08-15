@@ -150,7 +150,7 @@ void DumpAllUiTestLogs(ImGuiTestEngine* engine, const std::string& path) {
 #endif
 
 // Emit the formatted ui_test outcome to STDOUT with a SINGLE exempt write, then
-// flush. The spawn driver (CliCommandRunner.cpp::LaunchEphemeralInstance)
+// flush. The spawn driver (CliSpawn.cpp::LaunchEphemeralInstance)
 // redirects the ephemeral child's stdout+stderr into the spawn-log; but the
 // ImGui Test Engine's own output channels do NOT reliably populate that log on a
 // FAILING run (ConfigLogToTTY only routes while a test BODY runs; the upstream

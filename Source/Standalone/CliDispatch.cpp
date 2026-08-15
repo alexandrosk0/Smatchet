@@ -37,10 +37,14 @@
 #include <ghc/filesystem.hpp>
 
 #include <chrono>
+// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
+// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
+// CliCommandRunner TU prologue header is introduced)
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream> // ReadChildLogTailSanitized — bounded child-log tail on child-died
 #include <random>
 #include <string>
 #include <thread>
@@ -48,6 +52,9 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
+// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
+// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
+// CliCommandRunner TU prologue header is introduced)
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
@@ -110,7 +117,7 @@ McpReadyStatus WaitForMcpReady(const std::string& host, int port, int timeoutMs,
 /// reused, so the child keeps its own); `requestToken` is the token the child will actually
 /// require, sent on the readiness probe.
 int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& outPort,
-                     const std::string& provisionToken, const std::string& requestToken) {
+                     const std::string& provisionToken, const std::string& requestToken, SpawnedChild& outChild) {
     const std::string exePath = GetExePath();
     if (exePath.empty()) {
         nlohmann::json env;
@@ -133,8 +140,7 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
 
     std::fprintf(stderr, "[spawn] launching ephemeral instance on port %d ...\n",
                  port); // CLI stdout — product output, not logging
-    std::string childLogPath;
-    if (!LaunchEphemeralInstance(exePath, port, &childLogPath, provisionToken)) {
+    if (!LaunchEphemeralInstance(exePath, port, &outChild, provisionToken)) {
         nlohmann::json env;
         env["ok"] = false;
         env["command"] = commandName;
@@ -142,9 +148,9 @@ int SpawnAndRunSetup(const std::string& commandName, std::string& outHost, int& 
         EmitErrorToStderr(env);
         return kExitNotConnected;
     }
-    if (!childLogPath.empty()) {
+    if (!outChild.logPath.empty()) {
         std::fprintf(stderr, "[spawn] child stdout/stderr → %s\n",
-                     childLogPath.c_str()); // CLI stdout — product output, not logging
+                     outChild.logPath.c_str()); // CLI stdout — product output, not logging
     }
 
     // Bumped 15s → 30s post Phase D/E AI merges: the addition of OpenAi, Anthropic,
@@ -241,9 +247,115 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
     return kExitOk;
 }
 
+/// True once the file at outPath exists and is non-empty (the WaitForFile predicate,
+/// exposed as a single probe so the child-aware wait below can interleave it with
+/// liveness polls).
+static bool ResultFileNonEmpty(const std::string& outPath) {
+    std::error_code ec;
+    return fs::exists(fs::path(outPath), ec) && fs::file_size(fs::path(outPath), ec) > 0;
+}
+
+/// Bounded tail of the child's captured stdout/stderr, sanitized for a JSON envelope:
+/// bytes outside printable ASCII (keeping \n and \t) become '?', so a partial UTF-8
+/// sequence or binary noise in the crash output can never make the error dump throw.
+static std::string ReadChildLogTailSanitized(const std::string& logPath, size_t maxBytes) {
+    std::ifstream in(logPath.c_str(), std::ios::binary);
+    if (!in.is_open())
+        return std::string();
+    in.seekg(0, std::ios::end);
+    const std::streamoff size = in.tellg();
+    if (size <= 0)
+        return std::string();
+    const std::streamoff start =
+        (static_cast<size_t>(size) > maxBytes) ? size - static_cast<std::streamoff>(maxBytes) : std::streamoff(0);
+    in.seekg(start, std::ios::beg);
+    std::string tail(static_cast<size_t>(size - start), '\0');
+    in.read(&tail[0], static_cast<std::streamsize>(tail.size()));
+    tail.resize(static_cast<size_t>(in.gcount()));
+    for (std::string::size_type i = 0; i < tail.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(tail[i]);
+        if (c == '\r')
+            tail[i] = '\n';
+        else if (c != '\n' && c != '\t' && (c < 0x20 || c > 0x7E))
+            tail[i] = '?';
+    }
+    return tail;
+}
+
+/// Child-aware replacement for the --spawn result wait: a child that dies before the
+/// envelope lands is reported as child-died with its exit code + log tail, not as a
+/// timeout burned to the full deadline — no timeout value fixes a teardown crash, and
+/// the old shape sent every investigator chasing --timeout (test 2026-08-03
+/// ui-test-engine-teardown-assert). Returns kExitOk once the result file is ready;
+/// otherwise emits the child-died / timeout error envelope, quits the spawned app, and
+/// returns the failing exit code.
+static int AwaitSpawnResultFile(httplib::Client& cli, const std::string& commandName, const std::string& outPath,
+                                int scenarioWaitMs, const SpawnedChild& child) {
+    bool fileReady = false;
+    bool childDied = false;
+    int childExitCode = 0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(scenarioWaitMs);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (ResultFileNonEmpty(outPath)) {
+            fileReady = true;
+            break;
+        }
+        if (PollSpawnedChild(child, childExitCode) == SpawnedChildStatus::Exited) {
+            // Grace re-check: the writer may exit right after its final flush, so give
+            // the filesystem one beat before declaring the envelope missing.
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            fileReady = ResultFileNonEmpty(outPath);
+            childDied = !fileReady;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    }
+    if (fileReady) {
+        // Small delay to ensure fwrite+fclose has fully flushed before the read.
+        // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
+        // but kernel write buffers can briefly show a partial file on some filesystems.
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        return kExitOk;
+    }
+    if (childDied) {
+        nlohmann::json errEnv;
+        errEnv["ok"] = false;
+        errEnv["command"] = commandName;
+        nlohmann::json err;
+        err["code"] = "child-died";
+        err["message"] = "--spawn: ephemeral instance exited (code " + std::to_string(childExitCode) +
+                         ") before writing the scenario result.";
+        err["childExitCode"] = childExitCode;
+        if (!child.logPath.empty()) {
+            err["hint"] = "The child crashed after dispatch (often an assert/teardown failure) — "
+                          "read its captured output: " +
+                          child.logPath;
+            const std::string tail = ReadChildLogTailSanitized(child.logPath, 2048);
+            if (!tail.empty())
+                err["logTail"] = tail;
+        }
+        errEnv["error"] = std::move(err);
+        EmitErrorToStderr(errEnv);
+        // Uniform teardown (harmless no-op against a dead child): every failure path quits.
+        PostAppQuitBestEffort(cli);
+        return kExitHandler;
+    }
+    nlohmann::json errEnv;
+    errEnv["ok"] = false;
+    errEnv["command"] = commandName;
+    errEnv["error"] = {{"code", "timeout"},
+                       {"message", "--spawn: scenario did not finish within expected time."},
+                       {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
+    EmitErrorToStderr(errEnv);
+    // Still try to quit the spawned app.
+    PostAppQuitBestEffort(cli);
+    return kExitTimeout;
+}
+
 /// Phase 3 of SpawnAndRun: handle async scenario.run result.
-/// Waits for the output file, reads it, and emits the result envelope.
-/// Returns kExitOk on success; 8 (timeout) or kExitHandler on failure.
+/// Waits for the output file — watching child liveness via AwaitSpawnResultFile — reads
+/// it, and emits the result envelope. Returns kExitOk on success; 8 (timeout) or
+/// kExitHandler on failure.
 /// Sends app.quit on every failure path so the orchestrator's early-return is safe.
 /// userScreenshotPath: C1 parent-fulfill. When non-empty, the trusted --spawn parent
 /// asked for a screenshot at this (often absolute) path but sent the child a confine-safe
@@ -252,32 +364,21 @@ int SpawnAndRunDispatch(httplib::Client& cli, const std::string& commandName, co
 /// emitted screenshotPath so the envelope still names the path the caller asked for.
 int SpawnAndRunHandleAsync(const ParsedArgs& pa, httplib::Client& cli, const std::string& commandName,
                            const std::string& outPath, int frames, int scenarioWaitMs,
-                           const std::string& requestedOutLog, const std::string& userScreenshotPath) {
+                           const std::string& requestedOutLog, const std::string& userScreenshotPath,
+                           const SpawnedChild& child) {
     std::fprintf(stderr, "[spawn] scenario running (%d frames / ~%d s) ...\n", frames,
                  frames / 60); // CLI stdout — product output, not logging
-    const bool fileReady = WaitForFile(outPath, scenarioWaitMs);
-    // Small delay to ensure fwrite+fclose has fully flushed before we read.
-    // The writer calls dump(2) → fwrite → fclose, so once size>0 it's usually complete,
-    // but kernel write buffers can briefly show a partial file on some filesystems.
-    if (fileReady)
-        std::this_thread::sleep_for(std::chrono::milliseconds(150));
-    if (!fileReady) {
-        nlohmann::json errEnv;
-        errEnv["ok"] = false;
-        errEnv["command"] = commandName;
-        errEnv["error"] = {{"code", "timeout"},
-                           {"message", "--spawn: scenario did not finish within expected time."},
-                           {"hint", "Try --timeout=<larger-ms> or --frames=<smaller-n>"}};
-        EmitErrorToStderr(errEnv);
-        // Still try to quit the spawned app.
-        PostAppQuitBestEffort(cli);
-        return kExitTimeout;
-    }
+    const int waitResult = AwaitSpawnResultFile(cli, commandName, outPath, scenarioWaitMs, child);
+    if (waitResult != kExitOk)
+        return waitResult; // error envelope emitted + app.quit sent by the wait helper
 
     // Read the result file and build an envelope around it. Bounded read via the shared leaf
     // (command-input-hardening Phase 1.3): a corrupt/oversized result file must not balloon parent
     // memory before ParseBounded's 4 MiB cap rejects it.
     std::string content;
+    // clang-format off
+    // SMATCHET_DEVIATION(rule=duplication; reason=the read leaf itself is shared (CliResultFileRead.h); only the per-surface error-envelope emit remains cloned with CliCommandRunner.cpp's in-process reader and differs irreducibly by command var (commandName vs toolName), message prefix, and shutdown call (PostAppQuitBestEffort(cli) vs standalone::Shutdown(boot)) — a shared emitter would take all three as params for a 4-line body, worse coupling than the DRY gate doc endorses exempting; owner=orchestrator; revisit=if a source-tagged CLI error-envelope emitter lands)
+    // clang-format on
     switch (smatchet::cli::ReadResultFileBounded(outPath, 4u * 1024u * 1024u, content)) {
     case smatchet::cli::ResultFileReadStatus::OpenFailed: {
         nlohmann::json errEnv;
@@ -461,8 +562,10 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
         }
         const std::string requestedOutLog = SwapOutLogForConfineSafeBasename(argsToSend);
 
-        // Phase 1: launch ephemeral instance and wait for MCP ready.
-        const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken);
+        // Phase 1: launch ephemeral instance and wait for MCP ready. The child tracker
+        // (process handle/pid + log path) feeds the async wait's child-died detection.
+        SpawnedChild child;
+        const int setupResult = SpawnAndRunSetup(commandName, host, port, provisionToken, requestToken, child);
         if (setupResult != kExitOk)
             return setupResult;
         spawnedReady = true;
@@ -496,7 +599,7 @@ int SpawnAndRun(const ParsedArgs& pa, const std::string& commandName, const nloh
             // Phase 3: wait for the output file and emit the result.
             const std::string outPath = SafeString(envData, "outPath");
             resultCode = SpawnAndRunHandleAsync(pa, cli, commandName, outPath, frames, scenarioWaitMs, requestedOutLog,
-                                                userScreenshotPath);
+                                                userScreenshotPath, child);
             if (resultCode != kExitOk)
                 return resultCode; // async helper sends app.quit on every failure path
         } else {

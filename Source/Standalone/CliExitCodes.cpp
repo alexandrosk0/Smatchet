@@ -40,6 +40,8 @@ int ExitCodeForErrorCode(const std::string& code) {
         return 9; // no kExit* constant yet — reachable once dry-run lands (see the header note)
     if (code == "timeout")
         return kExitTimeout;
+    if (code == "child-died")
+        return kExitHandler; // --spawn child exited before writing its result (a crash, not a timeout)
     return kExitHandler;
 }
 
