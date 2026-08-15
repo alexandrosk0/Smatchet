@@ -34,7 +34,10 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 ## Process
 
 1. **Scope:**
-   - No arg → `git diff origin/develop...HEAD` (current branch's pending changes)
+   - No arg → `git diff origin/develop...` (merge-base → **working tree**, so unstaged hunks
+     are in scope; the committed-only `origin/develop...HEAD` form silently drops them).
+     Untracked first-party files enter the diff via `git add --intent-to-add` first — same
+     convention as `pre-ship.sh` (new files are otherwise invisible to `git diff`).
    - PR number → `gh pr diff <num>` and `gh pr view <num>`
    - File path → review that file in full
    - **Always run `git status --short` first.** For any `MM` path in scope, the staged and
@@ -42,7 +45,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
      working-tree hunks, which is wrong precisely where the requester's "what I'm about to
      commit" mental model is wrong (that is what `MM` means). State the staged/unstaged split
      up front and ask which is under review; default to the **working tree** (that is what
-     will be built and tested).
+     will be built and tested), consistent with the no-arg scope above.
 
 2. **Semantic search first** (per AGENTS.md):
    - Call your harness's semantic codebase search to get impact analysis (what depends on the changed code), session memory (prior decisions / observations on these files), and supporting-file context.
