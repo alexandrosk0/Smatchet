@@ -106,27 +106,72 @@ _MG_GATE_FILTER_TEMPLATE='
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur
          | if ($cur | length) > 0 then ($cur | sort_by(.submittedAt) | .[-1].body // "")
            else ($crall | sort_by(.submittedAt) | .[-1].body // "") end) end) as $crbody
+# $crcommentbodies — every coderabbitai-authored PR conversation comment body,
+# bound once and shared by the three skip classifiers below ($crskip,
+# $crreviewskipped, $crratelimited).
 | ([$pr.comments.nodes[]?
     | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-    | (.body // "")]
+    | (.body // "")]) as $crcommentbodies
+# $crskip (size-skip) — ONLY the too-many-files skip. The HTML marker
+# `skip review by coderabbit.ai` is NOT reason-specific: CR stamps it on EVERY
+# skip comment (path filters, docs-only, trivial diff, review-available-on-
+# request) — so the marker alone must never classify. Both the marker arm and
+# the structural-heading arm additionally require the "too many files" reason
+# text in the SAME body (tooling 2026-08-06 cr-path-filter-skip-false-block:
+# the old marker-alone disjunct routed every path-filter skip into the
+# size-skip hard-block arm with unactionable "split the PR" advice).
+| ($crcommentbodies
    | any(
-       contains("skip review by coderabbit.ai")
-       or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))) as $crskip
+       (contains("skip review by coderabbit.ai")
+        or test("##[[:space:]]*Review skipped"; "i"))
+       and (ascii_downcase | contains("too many files")))) as $crskip
+# pureDocs — the PR diff is strictly within the is-pure-docs-diff.sh allow-list
+# (docs/ , backlog/ , agents/scripts/ , or any *.md ANYWHERE). Mirrors that
+# script over the PR file list so the poller can apply the IDENTICAL pure-docs
+# verdict without a local checkout. Used by the rate-limit auto-downgrade
+# (deliverable 1): a rate-limit skip on a pure-docs PR is harmless to fast-pass
+# (markdown is never compiled), while a rate-limit skip on a CODE PR must pause /
+# require an explicit disposition (deliverable 2). Also gates the comment-based
+# arm of $crreviewskipped below (bound here, above it, for that reason).
+# Fail-safe FALSE on an empty file list, a >100-file page (cannot see every
+# path), or absent files.
+| (($changedPaths | length) > 0
+   and ($filesOverflow | not)
+   and ($changedPaths | all(test("^(docs/|backlog/|agents/scripts/|.*[.]md$)")))) as $pureDocs
 # crReviewSkipped — the GENERIC terminal "Review skipped" (docs-only /
-# path-filtered / trivial diff per .coderabbit.yaml): the "CodeRabbit"
-# StatusContext is SUCCESS and its description says "Review skipped" WITHOUT
-# "too many files" (the size-skip variant, handled by $crskip + the NONE size
-# branch). This is TERMINAL — CR processed the PR and declined an incremental
-# review, so no inline review will ever land and the NONE+status-SUCCESS grace
-# must NOT wait it out (PR #976 burned ~10 cycles on a docs-only PR). Distinct
-# from $crskip (a too-many-files BLOCK read from a CONVERSATION COMMENT); this
-# reads the STATUS description and is a PASS signal.
-| ([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
-    | select(.__typename == "StatusContext" and .context == "CodeRabbit"
-             and (.state == "SUCCESS"))
-    | (.description // "")]
-   | any((test("review skipped"; "i"))
-         and ((test("too many files"; "i")) | not))) as $crreviewskipped
+# path-filtered / trivial diff per .coderabbit.yaml), read from EITHER surface:
+#  (a) the "CodeRabbit" StatusContext is SUCCESS and its description says
+#      "Review skipped" WITHOUT "too many files"; OR
+#  (b) the diff is pure-docs AND a CR conversation comment carries the
+#      structural "## Review skipped" heading WITHOUT "too many files". CR
+#      frequently posts the skip comment while its StatusContext description
+#      reads "Review completed" (observed on the same run for a path-filter
+#      skip), so keying on the status description alone misses the fact and the
+#      PR falls through to the NONE grace/size-skip arms instead of this
+#      terminal pass. The $pureDocs guard exists because comments — unlike the
+#      head-scoped StatusContext — persist across pushes: without it a stale
+#      skip comment from a docs-only head could fast-pass a FRESH CODE push
+#      before CR re-runs. A pure-docs diff is harmless to fast-pass; a code
+#      diff with a genuine path-filter skip falls back to the NONE
+#      grace-then-pass below (slower, never wedged).
+# The heading requirement keeps two look-alikes out: "## Review available on
+# request" (manual-trigger repos — a review CAN still be triggered, so NONE
+# grace + the auto-nudge must keep working) and "## Review limit reached"
+# (rate limit — TEMPORARY, handled by $crratelimited below).
+# This is TERMINAL — CR processed the PR and declined an incremental review,
+# so no inline review will ever land and the NONE+status-SUCCESS grace must
+# NOT wait it out (PR #976 burned ~10 cycles on a docs-only PR). Distinct from
+# $crskip (the too-many-files BLOCK); this is a PASS signal.
+| (([$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
+     | select(.__typename == "StatusContext" and .context == "CodeRabbit"
+              and (.state == "SUCCESS"))
+     | (.description // "")]
+    | any((test("review skipped"; "i"))
+          and ((test("too many files"; "i")) | not)))
+   or ($pureDocs
+       and ($crcommentbodies
+            | any(test("##[[:space:]]*Review skipped"; "i")
+                  and ((ascii_downcase | contains("too many files")) | not))))) as $crreviewskipped
 # crRateLimited — CR declined / deferred the review because it hit its rate
 # limit (PR-2 cr-review-skipped-pure-docs-auto-downgrade /
 # cr-rate-limit-code-pr-auto-pause). Distinct from $crreviewskipped (a clean
@@ -137,24 +182,11 @@ _MG_GATE_FILTER_TEMPLATE='
 # (CR surfaces the rate-limit on either surface). Regex tolerates "rate limit",
 # "rate-limited", "rate limited", and the common "try again later" phrasing.
 # (NB: no apostrophes in this single-quoted jq filter string.)
-| (([$pr.comments.nodes[]?
-     | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")
-     | (.body // "")]
+| (($crcommentbodies
     + [$pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes[]?
        | select(.__typename == "StatusContext" and .context == "CodeRabbit")
        | (.description // "")])
    | any(test("rate.?limit"; "i") or test("try again later"; "i"))) as $crratelimited
-# pureDocs — the PR diff is strictly within the is-pure-docs-diff.sh allow-list
-# (docs/ , backlog/ , agents/scripts/ , or any *.md ANYWHERE). Mirrors that
-# script over the PR file list so the poller can apply the IDENTICAL pure-docs
-# verdict without a local checkout. Used by the rate-limit auto-downgrade
-# (deliverable 1): a rate-limit skip on a pure-docs PR is harmless to fast-pass
-# (markdown is never compiled), while a rate-limit skip on a CODE PR must pause /
-# require an explicit disposition (deliverable 2). Fail-safe FALSE on an empty
-# file list, a >100-file page (cannot see every path), or absent files.
-| (($changedPaths | length) > 0
-   and ($filesOverflow | not)
-   and ($changedPaths | all(test("^(docs/|backlog/|agents/scripts/|.*[.]md$)")))) as $pureDocs
 # Bugbot (cursor[bot]) — mirrors the $crall/$crstate machinery. $bball = all
 # reviews authored by cursor[bot] (its summary review, always state COMMENTED).
 # $bbterminal = TRUE when a cursor[bot] CONVERSATION (issue) comment body carries

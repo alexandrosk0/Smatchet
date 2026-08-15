@@ -16,7 +16,7 @@
     hold for the wedge class: there the label dismisses a **required, non-terminal gate**, and the diff
     scope is irrelevant to whether that mattered. Note the two holes point opposite ways in the same
     CR path — this one hides an override that WAS load-bearing; the sibling tooling entry
-    [`tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](../tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
+    [`tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](../applied.md)
     manufactures override use where none is needed.
   Concrete next action: make the drop conditional on the CR gate having actually *ruled*, not on diff
     scope. In `postmortem-owed.sh`, before `core_scoped_only_trigger()` drops a `cr-out-of-band`

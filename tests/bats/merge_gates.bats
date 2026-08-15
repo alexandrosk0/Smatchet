@@ -869,6 +869,84 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED
 }
 
+@test "CR path-filter skip comment (marker + '## Review skipped', no 'too many files') -> terminal pass, NOT size-skip" {
+    # tooling 2026-08-06 cr-path-filter-skip-false-block regression: CR stamps
+    # the HTML marker `skip review by coderabbit.ai` on EVERY skip comment,
+    # whatever the reason. The old $crskip fired on the marker alone, routing a
+    # PATH-FILTER skip into the size-skip hard-block arm — "split the PR" advice
+    # on a 3-file diff. Real shape from PR #2016: the skip comment says "Review
+    # was skipped due to path filters" while the CodeRabbit StatusContext
+    # description reads "Review completed", so the status-description-keyed
+    # fallback cannot carry the fact — the COMMENT surface must classify. Must
+    # take the terminal review-skipped PASS, not the size-skip BLOCK, and not
+    # burn the NONE grace. The diff is pure-docs (the comment-based arm is
+    # $pureDocs-gated — see the code-diff counterpart test below).
+    local f1 f
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Review was skipped due to path filters\n>\n> Files ignored due to path filters (3)"}]')"
+    f="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"docs/notes/example.md"},{"path":"docs/self-improvement/merge-snapshots.jsonl"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NONE+review-skipped"* ]]
+    [[ "$output" != *"size-skip"* ]]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f1" "$f"
+    unset MERGE_GATES_CR_INSTALLED
+}
+
+@test "CR path-filter skip comment + CODE diff -> NOT a terminal pass (stale-comment fast-pass guarded by pureDocs)" {
+    # The comment-based review-skipped arm is $pureDocs-gated: comments — unlike
+    # the head-scoped StatusContext — persist across pushes, so a stale skip
+    # comment from a docs-only head must not fast-pass a FRESH CODE push before
+    # CR re-runs. A code diff with a genuine path-filter skip falls back to the
+    # ordinary NONE grace (slower, never wedged) instead.
+    local f1 f
+    f1="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review skipped\n>\n> Review was skipped due to path filters"}]')"
+    f="$(fixture_override "$f1" \
+        "data.repository.pullRequest.files" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"path":"src/core/Tracker.cpp"}]}')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=2
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [[ "$output" != *"size-skip"* ]]
+    [[ "$output" != *"review-skipped"* ]]
+    rm -f "$f1" "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
+@test "CR 'Review available on request' comment (marker, no '## Review skipped' heading) -> NONE grace keeps working" {
+    # Manual-trigger repos (<10 stars): CR posts a "## Review available on
+    # request" comment carrying the same generic skip marker. A review CAN
+    # still be triggered on request, so this must be NEITHER a size-skip block
+    # NOR a terminal review-skipped pass — the PR stays in the ordinary NONE
+    # grace where the auto-nudge / a manual `@coderabbitai review` can still
+    # resolve it.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.comments.nodes" \
+        '[{"author":{"login":"coderabbitai[bot]","__typename":"Bot"},"body":"<!-- This is an auto-generated comment: skip review by coderabbit.ai -->\n\n> [!IMPORTANT]\n> ## Review available on request\n>\n> Reviews should be triggered manually for repositories with fewer than 10 stars."}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_CR_GRACE_POLLS=2
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"NONE+pending"* ]]
+    [[ "$output" != *"size-skip"* ]]
+    [[ "$output" != *"review-skipped"* ]]
+    rm -f "$f"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_CR_GRACE_POLLS
+}
+
 @test "C4 prong 2: NONE + StatusContext=SUCCESS + no inline + grace expired -> pass with no-inline-evidence WARN" {
     # Grace-expired path. Probably a status-only CR config — pass so the loop
     # never wedges. WARN names the suspicious shape so the operator can spot
