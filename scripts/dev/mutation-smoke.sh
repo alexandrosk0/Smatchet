@@ -73,7 +73,10 @@ fi
 
 [ -f "$CORPUS" ] || { echo "mutation-smoke: corpus not found: $CORPUS" >&2; exit 3; }
 # shellcheck source=agents/scripts/core/lib/resolve-py.sh
-. "$REPO_ROOT/agents/scripts/core/lib/resolve-py.sh"
+# Anchored to THIS SCRIPT's location, not $REPO_ROOT: the bats suite runs
+# mutation-smoke.sh with cwd inside throwaway fixture repos, where
+# `git rev-parse --show-toplevel` resolves to the fixture (no lib there).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "mutation-smoke: python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # Resolve the test exe. Default to the conventional path; if absent, locate the
