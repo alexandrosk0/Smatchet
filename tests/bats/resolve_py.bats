@@ -52,10 +52,13 @@ STUB
     mkdir "$STUB_DIR/bin"
     real_py="$(command -v python3 || command -v python)"
     [ -n "$real_py" ] || skip "no working python interpreter"
+    "$real_py" -c "" >/dev/null 2>&1 || skip "python on PATH does not execute"
     ln -s "$real_py" "$STUB_DIR/bin/python3"
     run bash -c "cd '$STUB_DIR' && PATH='bin:/usr/bin:/bin' bash -c '. \"$LIB\"; resolve_py'"
     [ "$status" -eq 0 ]
-    [[ "$output" == /* ]]
+    # Exactly the relative-PATH candidate, canonicalized — a /usr/bin/python3
+    # fallback must NOT satisfy this test (CR #2019 round 2).
+    [ "$output" = "$STUB_DIR/bin/python3" ]
     # And the returned path still works after a directory change.
     run bash -c "cd '$STUB_DIR' && PATH='bin:/usr/bin:/bin' bash -c '. \"$LIB\"; p=\"\$(resolve_py)\"; cd / && \"\$p\" -c \"\"'"
     [ "$status" -eq 0 ]
@@ -73,4 +76,16 @@ STUB
     [ "$status" -eq 0 ]
     [[ "$output" == /* ]]
     "$output" -c 'import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)'
+}
+
+@test "a shell function shadowing python3 cannot win resolution (type -P, not command -v)" {
+    # command -v would echo the bare function NAME, which passes the run probe
+    # (the function executes) and canonicalizes to a bogus "$PWD/python3".
+    # type -P ignores functions/aliases and returns only executable file paths.
+    command -v python3 >/dev/null 2>&1 || skip "no python3 on PATH"
+    run bash -c "python3() { :; }; . '$LIB'; resolve_py"
+    [ "$status" -eq 0 ]
+    [[ "$output" == /* ]]
+    [ -x "$output" ]
+    [ "$output" != "$PWD/python3" ]
 }

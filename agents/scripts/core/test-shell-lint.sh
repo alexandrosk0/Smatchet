@@ -443,7 +443,7 @@ check_py_probe() {
     local script="$1"
     local nc
     nc=$(non_comment "$script")
-    local probe='(command -v|which|type -p)'
+    local probe='(command -v|which|type -[pP])'
 
     # -- shape (a): candidate-loop picker.
     local lno content var list ncand win hits first rel

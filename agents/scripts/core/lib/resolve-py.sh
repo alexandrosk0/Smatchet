@@ -26,9 +26,12 @@
 #   `python` must not win the fallback — callers run py3-only code
 #   (`open(..., encoding=…)`, f-strings), so a py2 pick trades the loud
 #   stub-failure this lib exists to prevent for a quieter mid-script one.
-#   The printed path is made ABSOLUTE (same round): `command -v` echoes a
+#   The printed path is made ABSOLUTE (same round): the PATH lookup echoes a
 #   relative path for a relative PATH entry, which breaks the first caller
-#   that cd's between resolving and invoking.
+#   that cd's between resolving and invoking. Resolution uses `type -P`, not
+#   `command -v` (round 2): a shell function or alias shadowing a candidate
+#   name would win `command -v`, pass the run probe, and canonicalize to a
+#   bogus "$PWD/<name>" — `type -P` only returns executable file paths.
 #
 #   SMATCHET_RESOLVE_PY_FORCE_NONE=1 forces the "no working python" branch —
 #   a test seam so no-python degrade paths are testable in an environment that
@@ -43,7 +46,12 @@ resolve_py() {
     fi
     local _rp_cand _rp_path
     for _rp_cand in python3 python py; do
-        _rp_path="$(command -v "$_rp_cand" 2>/dev/null)" || continue
+        # type -P, not command -v (CR #2019 round 2): command -v echoes the BARE
+        # NAME for a shell function/alias shadowing a candidate, which would
+        # pass validation (the function runs) and canonicalize to a bogus
+        # "$PWD/<name>". type -P only ever returns an executable file path.
+        _rp_path="$(type -P "$_rp_cand" 2>/dev/null)" || continue
+        [ -n "$_rp_path" ] || continue
         if "$_rp_path" -c 'import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)' \
             >/dev/null 2>&1; then
             case "$_rp_path" in
