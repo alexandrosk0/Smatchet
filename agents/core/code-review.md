@@ -34,9 +34,18 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 ## Process
 
 1. **Scope:**
-   - No arg → `git diff origin/develop...HEAD` (current branch's pending changes)
+   - No arg → `git diff origin/develop...` (merge-base → **working tree**, so unstaged hunks
+     are in scope; the committed-only `origin/develop...HEAD` form silently drops them).
+     Untracked first-party files enter the diff via `git add --intent-to-add` first — same
+     convention as `pre-ship.sh` (new files are otherwise invisible to `git diff`).
    - PR number → `gh pr diff <num>` and `gh pr view <num>`
    - File path → review that file in full
+   - **Always run `git status --short` first.** For any `MM` path in scope, the staged and
+     working-tree contents differ — a review scoped to `git diff --cached` silently skips the
+     working-tree hunks, which is wrong precisely where the requester's "what I'm about to
+     commit" mental model is wrong (that is what `MM` means). State the staged/unstaged split
+     up front and ask which is under review; default to the **working tree** (that is what
+     will be built and tested), consistent with the no-arg scope above.
 
 2. **Semantic search first** (per AGENTS.md):
    - Call your harness's semantic codebase search to get impact analysis (what depends on the changed code), session memory (prior decisions / observations on these files), and supporting-file context.
@@ -111,7 +120,7 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 - `Commands/` — `const CommandContext&` + structured error envelope; all front-ends dispatch through `CommandRegistry`.
 - `Persistence/` — SQLite schema additive-only.
 - `Sync/` — every backend write through `OfflineQueueService`; replay reuses the live pipelines.
-- `Ui/` — the UI-thread-non-blocking checklist. **Sync I/O reachable from any ImGui render path is a Pillar-2 CRITICAL finding, not a perf nit** — read the leaf for the full enumeration (cpr / SQLite / p4 / file-I/O off the render path, `future::get` ready-check, no `join` / `sleep_for` on the UI thread, no mutex held across I/O).
+- `Ui/` — the UI-thread-non-blocking checklist. **Sync I/O reachable from any ImGui render path is a Pillar-2 CRITICAL finding, not a perf nit** — read the leaf for the full enumeration (cpr / SQLite / p4 / file-I/O off the render path, `future::get` ready-check, no `join` / `sleep_for` on the UI thread, no mutex held across I/O). **An existence check on an ImGui id, dock node, or opaque handle is not a validity check**: ids are hashes — recycled across sessions and, for dock nodes, persisted to `imgui.ini` — so a lookup that succeeds proves an object exists, not that it is the object you meant (a `DockBuilderGetNode(slot) != nullptr` guard succeeded for exactly the orphan ids it existed to reject, because they were reloaded from the ini). Require the structural relationship too (parent / root / owning container) and name in a comment which relationship the constant must satisfy. Same shape for `FindWindowByName` (finds a stale window from a previous layout) and any `id -> object` map that outlives a session.
 
 If the change introduces an intermittent-stall risk, hand off to `spike-hunter` for measurement before merging.
 

@@ -5229,3 +5229,186 @@ needs its risky work step-scoped.
   Concrete next action: (a) add `agents/scripts/core/lib/resolve-py.sh` with one exec-validating `resolve_py()`, convert the ~15 single-candidate guards to source it, then widen rule 9 to flag any python probe not routed through it (one shape to enforce instead of a regex guessing at intent); (b) fix `_lock-json.py` newline handling at the source (reconfigure the stream or write bytes), keep the shell-side strip as defence in depth, and add a test asserting no `\r` survives in a lock-table row on Windows.
   Status: applied (flipped at archival)
   Last-reviewed: 2026-08-04
+
+- 2026-08-07 · claude-code · [process] · P2 — a background-task completion notification's "exit code 0" is the **pipeline's** exit, not the gate's; always read the in-file `*_EXIT=` value
+
+  Hit twice this session. A gate run in the background as
+
+  ```bash
+  bash agents/scripts/project/test-lint-rules.sh --diff origin/develop 2>&1 | tee out.txt
+  ```
+
+  completes with a notification reading `exit code 0` **regardless of the gate's verdict**,
+  because the reported status is the pipeline's, and the pipeline ends in `tee`. The same
+  trap bites the interactive form: `echo "$?"` after a pipe reports the **last** element's
+  exit — use `${PIPESTATUS[0]}`.
+
+  The concrete near-miss: two wrong bucket-E invocations
+  (`--target SmatchetUiTests` → `ninja: error: unknown target`, and
+  `bash scripts/dev/test-ui.sh` → `No such file or directory`) both surfaced as exit 0 and
+  were nearly recorded as passing runs. They were only caught by reading the output file,
+  which contained the errors in plain text.
+
+  Two fixes, both cheap:
+
+  1. **Convention** — every gate wrapper this repo runs in the background must end with an
+     explicit `echo "<NAME>_EXIT=${PIPESTATUS[0]}"` appended to the same output file, and
+     the reader must grep for that token rather than trusting the notification. This is an
+     ad-hoc habit today, not a repo convention — agents invent a token per run (`LINT_EXIT=`,
+     `DOCS_EXIT=`, `FMT=`, `BUILD_*_DONE`) and no gate wrapper in `scripts/` emits a verdict
+     token into its own output. (`scripts/dev/local/test-build-wrapper.sh:186` sets
+     `SMATCHET_TEST_WITHMSVC_EXIT=` — an env var handed to a subprocess, not a verdict written
+     where a reader will look for it.) Naming the convention and writing it down is the whole
+     proposal.
+  2. **Doc** — add the rule to [`process-rules.md`](../../agent-rules/process-rules.md)
+     § Cadence and verification, next to the existing note that `tail -N` can truncate a
+     gate's verdict off the head of its output.
+
+  Generalised: **a notification is a liveness signal, not a verdict.** Any claim that a
+  gate passed must cite a line from the gate's own output.
+
+- 2026-08-07 · claude-code · [process] · P2 — `code-review` told "review the staged diff" silently skips working-tree hunks on `MM` paths; it must report the split before reviewing
+
+  Concrete miss: the worktree A review of [PR #1966](https://github.com/alexandrosk0/Smatchet/pull/1966)
+  was scoped to `git diff --cached`, but `Source/Core/src/Ui/SmatchetWindowExpand.cpp` was
+  `MM` — the most substantive hunk under discussion (the `PushStyleColor` array/loop refactor
+  the requester explicitly asked to have its push/pop balance verified) existed **only in the
+  working tree**. The agent caught it, but only because it happened to run `git status`; a
+  reviewer that goes straight to `git diff --cached` reviews code the requester is not
+  looking at, and reports green on a file whose real content it never read.
+
+  The requester's mental model of "what I'm about to commit" is wrong precisely on `MM`
+  files — that is what `MM` means.
+
+  Fix, in [`agents/core/code-review.md`](../../../agents/core/code-review.md): make step 1
+  run `git status --short` and, for **any** `MM` path in scope, state the staged/unstaged
+  split up front and ask which one is under review (default: review the **working tree**,
+  since that is what will be built and tested). Cheap — one command — and it converts a
+  silent scope hole into an explicit question.
+
+- 2026-08-07 · claude-code · [process] · P2 — a doc-correction sweep must grep the *distinguishing phrase*, not the subsystem name, or it silently misses files
+
+  Correcting a stale claim across the docs tree ("the duplication gate is WARN-first" → "it is
+  blocking") I swept for the subsystem tokens — `duplication`, `dup_audit` — and declared the
+  drift bounded to two files. A reviewer then found a third, [`docs/CONTEXT.md`](../../CONTEXT.md),
+  which states the claim without naming the gate at all: it says only *"DRY is WARN-first today
+  per ADR-0015"*. The subsystem grep could not have found it.
+
+  The rule: sweep on the phrase that makes the claim **wrong** (`WARN-first`), not on the thing
+  the claim is **about**. The wrong phrase is what needs to change, so it is the complete
+  enumerator by construction; the subsystem name is only a proxy, and any doc that refers to
+  the subsystem obliquely escapes it.
+
+  Cost is real but bounded: `WARN-first` matches roughly **100 lines across 40 markdown files**
+  on this worktree, most legitimately describing *other* gates still in calibration. Triage is a
+  scan, not a rewrite, and it is the price of the sweep being complete rather than plausible.
+  (Approximate deliberately: this entry contains the phrase several times, so an exact count
+  self-invalidates on its own next revision — a hazard for any doc that counts a token it uses.)
+
+  Two scoping notes learned by running it: frozen docs (`docs/plans/shipped/**`, `evaluation/**`)
+  legitimately record what was true when written and should be **excluded by default** rather
+  than "fixed" — a shipped plan describing the gate as WARN-first at the time is accurate
+  history. And a stale-claim sweep is a *whole-file* scan, so a hit inside a fenced code block
+  or a quoted historical excerpt is a false positive to skip, not a line to edit.
+
+  Belongs as a line in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
+  § Cadence and verification, next to the existing "use `test-markdown-links.sh` as the enumerator, not grep"
+  note — same failure shape: a hand-rolled proxy standing in for a complete enumerator.
+
+- 2026-08-07 · claude-code · [process] · P2 — a backlog entry proposing a gate must name the concrete symbol the gate enumerates, and be checked against the bug that motivated it
+
+  I proposed a gate to catch dock-node-id constants that name no real slot, and specified it as
+  "enumerate `SmatchetDockNodeIds::kEntries`". That table lives in an anonymous namespace in the
+  `.cpp` (so the qualified name is not even addressable) and maps layout keys to only three
+  slots; `kSecondarySideBar` — the exact constant the gate exists to catch — never appears in
+  it. The gate as written would have stayed green through its own motivating bug.
+
+  The proposal read as concrete because it named a real symbol. Naming a symbol is necessary but
+  not sufficient; the symbol has to be the one that actually enumerates the population.
+
+  Two checks, both mechanical, both cheap enough to be unconditional:
+
+  1. **Name the enumerator explicitly** — the file and the declaration the gate iterates, not a
+     prose description of the population ("every dock id"). A prose population cannot be wrong,
+     which is precisely why it hides this failure.
+  2. **Replay the motivating bug against it** — walk the proposed enumerator by hand and confirm
+     the known-bad case appears in it. If the entry cannot point at the row the gate would have
+     tripped on, the gate is not specified yet.
+
+  Generalises past gates: the same check applies to any proposed automation described by the
+  population it covers. "Assert every X" is only meaningful once X resolves to an enumerable
+  declaration, and only correct once the known counterexample is shown to be inside it.
+
+  Concrete instance and the corrected proposal:
+  [`../debt/2026-08-07-dock-node-id-slot-liveness-followups.md`](debt/2026-08-07-dock-node-id-slot-liveness-followups.md).
+
+- 2026-08-07 · claude-code · [process] · P2 — add a `code-review` checklist line: an existence check on an ImGui / dock / handle id must also assert the **containment** relationship, because ids are recycled *and persisted*
+
+  Caught as a High in the [PR #1984](https://github.com/alexandrosk0/Smatchet/pull/1984)
+  review. The first cut of `EnsureDockSlotAlive` was:
+
+  ```cpp
+  return ImGui::DockBuilderGetNode(slot) != nullptr ? slot : 0;
+  ```
+
+  which looks obviously correct and is obviously wrong. `DockBuilderGetNode` is a flat
+  `DockContextFindNodeByID` map lookup (`imgui.cpp:20701-20705`). The orphan root nodes the
+  guard exists to reject are written to `imgui.ini` under `[Docking][Data]` and **reloaded
+  next launch** — so for every user who already ran the buggy build, the lookup succeeds for
+  exactly the ids that must fail. The guard would have been a no-op on the whole installed
+  base while passing every fresh-profile test.
+
+  The fix was one clause: also require `node->ParentNode != nullptr`, since every constant in
+  `SmatchetDockNodeIds.h` names a node the default layout cuts as a *child* of the dockspace
+  root, so a null parent means the id resolved to a detached node.
+
+  Generalised checklist line, for the `code-review` subsystem-invariants section under `Ui/`:
+
+  > An existence check on an ImGui id, dock node, or opaque handle is not a validity check.
+  > Ids are hashes — recycled across sessions and, for dock nodes, **persisted to `imgui.ini`**.
+  > A lookup that succeeds proves an object exists, not that it is the object you meant.
+  > Require the structural relationship too (parent / root / owning container), and name in a
+  > comment which relationship the constant is supposed to satisfy.
+
+  Broader than docking: the same shape applies to `ImGuiID` window lookups (`FindWindowByName`
+  finds a stale window from a previous layout) and to any `id -> object` map that outlives a
+  session.
+
+- 2026-08-07 · claude-code · [process] · P2 — when a claim reads "N sites do X, M do not-X" off a single grep, the two populations are usually **nested, not disjoint**; subtract before writing the numbers down
+
+  Caught as a High on the [PR #1966](https://github.com/alexandrosk0/Smatchet/pull/1966)
+  plan-doc addendum, and traced back into the already-pushed
+  [PR #1984](https://github.com/alexandrosk0/Smatchet/pull/1984) entry it summarised
+  ([`categories/test/2026-08-07-booted-app-or-skip-fails-open.md`](test/2026-08-07-booted-app-or-skip-fails-open.md)).
+  That entry stated the bucket-E guard "fails **open** at 56 call sites" and, four paragraphs
+  later, that "**6** sites already fail **closed**". Both numbers came from the same
+  `grep -c "AppController\* app = SmatchetActiveUiTestAppController();"` match set — the six
+  fail-closed sites are *inside* the 56, because 56 counts the **assignment** shape, which every
+  site shares regardless of what it does on the next line. The correct fail-open count is 50.
+  The entry contradicted itself in its own text (6 + 56 ≠ 56) and neither I nor two earlier
+  review passes read the two paragraphs against each other.
+
+  This is a distinct failure mode from the fabricated-quote class
+  ([`2026-08-07-fabricated-quote-is-a-class-not-an-instance.md`](applied.md)).
+  There the citation was invented; here every grep was real, its output was pasted correctly,
+  and the arithmetic was never done. A measured number with a wrong population reads exactly
+  like a measured number with the right one — there is no surface tell, which is why it survived
+  further than the fabricated quotes did.
+
+  Two mechanical checks, both cheap:
+
+  1. **Assert disjointness explicitly.** When one grep shape underlies both counts, the second
+     population is a *filter* of the first. Either re-grep the complement (`grep -L`, or grep the
+     shape and subtract the exception files' own counts) or state the relationship in the text —
+     "50 of its 56" rather than "56 … and separately 6".
+  2. **Read the paragraphs against each other before shipping.** The contradiction here was
+     internal to one file and visible without leaving it. A doc that quotes two counts of the
+     same population owes a sentence saying how they relate.
+
+  Same shape, different unit, in the addendum that summarised it: a sentence whose subject was
+  "commit A **and** commit B" carried counts derived from B alone. Check: when a claim names
+  multiple commits, run the union — `git diff --name-only <first>~1 <last> -- <path>` — rather
+  than reading one commit's `--stat`.
+
+  Belongs in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
+  § Cadence and verification, next to the other verify-the-claim-not-the-tool rules.
