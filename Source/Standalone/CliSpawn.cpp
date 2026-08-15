@@ -34,6 +34,9 @@
 #endif // SMATCHET_WITH_MCP
 
 #include <ghc/filesystem.hpp>
+// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
+// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
+// CliCommandRunner TU prologue header is introduced)
 
 #include <chrono>
 #include <cstdint>
@@ -47,6 +50,10 @@
 #if !defined(_WIN32)
 #include <fcntl.h>
 #include <signal.h>
+#include <sys/wait.h> // waitpid(WNOHANG) — PollSpawnedChild liveness probe
+// SMATCHET_DEVIATION(rule=duplication; reason=shared god-file-split TU prologue clone re-entered the delta scan by an
+// include insertion — see the file-top deviation for the full rationale; owner=orchestrator; revisit=when a shared
+// CliCommandRunner TU prologue header is introduced)
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h> // _NSGetExecutablePath (CPP_CODE_AUDIT.md #33g — was only transitively included)
@@ -221,14 +228,77 @@ std::string SpawnLogRandomToken() { return RandomHexToken(2); }
 /// env right after the child is spawned.
 std::string SpawnAuthToken() { return RandomHexToken(4); }
 
-bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath,
+SpawnedChild::~SpawnedChild() {
+#if defined(_WIN32)
+    if (processHandle)
+        CloseHandle(static_cast<HANDLE>(processHandle));
+#endif
+}
+
+SpawnedChild::SpawnedChild(SpawnedChild&& other) noexcept
+    : processHandle(other.processHandle), pid(other.pid), logPath(std::move(other.logPath)) {
+    other.processHandle = nullptr;
+    other.pid = -1;
+}
+
+SpawnedChild& SpawnedChild::operator=(SpawnedChild&& other) noexcept {
+    if (this != &other) {
+#if defined(_WIN32)
+        if (processHandle)
+            CloseHandle(static_cast<HANDLE>(processHandle));
+#endif
+        processHandle = other.processHandle;
+        pid = other.pid;
+        logPath = std::move(other.logPath);
+        other.processHandle = nullptr;
+        other.pid = -1;
+    }
+    return *this;
+}
+
+SpawnedChildStatus PollSpawnedChild(const SpawnedChild& child, int& outExitCode) {
+#if defined(_WIN32)
+    if (!child.processHandle)
+        return SpawnedChildStatus::Unknown;
+    const DWORD wait = WaitForSingleObject(static_cast<HANDLE>(child.processHandle), 0);
+    if (wait == WAIT_TIMEOUT)
+        return SpawnedChildStatus::Running;
+    if (wait != WAIT_OBJECT_0)
+        return SpawnedChildStatus::Unknown; // WAIT_FAILED — never misreport a live child as dead
+    DWORD code = 0;
+    if (!GetExitCodeProcess(static_cast<HANDLE>(child.processHandle), &code))
+        return SpawnedChildStatus::Unknown;
+    outExitCode = static_cast<int>(code);
+    return SpawnedChildStatus::Exited;
+#else
+    if (child.pid <= 0)
+        return SpawnedChildStatus::Unknown;
+    int status = 0;
+    const pid_t r = waitpid(static_cast<pid_t>(child.pid), &status, WNOHANG);
+    if (r == 0)
+        return SpawnedChildStatus::Running;
+    if (r < 0)
+        return SpawnedChildStatus::Unknown; // ECHILD (already reaped) / EINVAL — not observable
+    if (WIFEXITED(status)) {
+        outExitCode = WEXITSTATUS(status);
+        return SpawnedChildStatus::Exited;
+    }
+    if (WIFSIGNALED(status)) {
+        outExitCode = 128 + WTERMSIG(status); // shell convention for signal deaths
+        return SpawnedChildStatus::Exited;
+    }
+    return SpawnedChildStatus::Running; // stopped/continued — the process still exists
+#endif
+}
+
+bool LaunchEphemeralInstance(const std::string& exePath, int port, SpawnedChild* outChild,
                              const std::string& authToken) {
     if (exePath.empty())
         return false;
     const std::string portStr = std::to_string(port);
     const std::string logPath = ComputeSpawnLogPath(port);
-    if (outLogPath)
-        *outLogPath = logPath;
+    if (outChild)
+        outChild->logPath = logPath;
         // main.cpp parses `--mcp-port <port>` as two separate argv entries (space-separated),
         // NOT `--mcp-port=<port>` — using the equals form would silently fall through.
 #if defined(_WIN32)
@@ -292,7 +362,13 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         CloseHandle(hLog); // child holds its own dup; parent can release.
     }
     if (ok) {
-        CloseHandle(pi.hProcess);
+        // Keep hProcess so the --spawn result wait can poll child liveness (the
+        // SpawnedChild dtor releases it); a discarded handle made a crashed child
+        // indistinguishable from a slow one. hThread is never queried — release now.
+        if (outChild)
+            outChild->processHandle = pi.hProcess;
+        else
+            CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
     }
     return ok != FALSE;
@@ -326,6 +402,10 @@ bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* 
         execv(exePath.c_str(), const_cast<char* const*>(args));
         _exit(1);
     }
+    // Parent: keep the pid so the --spawn result wait can waitpid(WNOHANG) for
+    // liveness (setsid detaches the session, not the parent/child relation).
+    if (outChild)
+        outChild->pid = static_cast<long long>(pid);
     return true;
 #endif
 }

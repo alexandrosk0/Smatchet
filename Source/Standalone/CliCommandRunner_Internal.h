@@ -84,7 +84,38 @@ void EmitErrorToStderr(const nlohmann::json& envelope);
 int FindFreePort();
 std::string SpawnLogRandomToken();
 std::string SpawnAuthToken();
-bool LaunchEphemeralInstance(const std::string& exePath, int port, std::string* outLogPath,
+
+/// Tracks the spawned ephemeral child so the --spawn result wait can tell "child died
+/// before writing its result" apart from "child still running at the deadline" — a
+/// dead child used to burn the full wait and then be misreported as a timeout with a
+/// --timeout hint that cannot fix a crash (test 2026-08-03 teardown-assert entry).
+/// Owns the Windows process HANDLE (void* keeps <windows.h> out of this header;
+/// released in the destructor); POSIX tracks the fork pid (waitpid(WNOHANG) needs no
+/// release). Move-only — copying would double-close the HANDLE.
+class SpawnedChild {
+  public:
+    SpawnedChild() = default;
+    ~SpawnedChild();
+    SpawnedChild(const SpawnedChild&) = delete;
+    SpawnedChild& operator=(const SpawnedChild&) = delete;
+    SpawnedChild(SpawnedChild&& other) noexcept;
+    SpawnedChild& operator=(SpawnedChild&& other) noexcept;
+
+    void* processHandle = nullptr; ///< Windows HANDLE; nullptr = not tracked
+    long long pid = -1;            ///< POSIX child pid; -1 = not tracked
+    std::string logPath;           ///< child stdout/stderr capture file ("" = capture unavailable)
+};
+
+enum class SpawnedChildStatus {
+    Running, ///< child is (or must be presumed) still alive
+    Exited,  ///< child has exited; outExitCode is filled (POSIX signal deaths map to 128+sig)
+    Unknown  ///< liveness not observable (untracked handle / query failed) — treat as Running
+};
+SpawnedChildStatus PollSpawnedChild(const SpawnedChild& child, int& outExitCode);
+
+/// Launches the ephemeral --spawn instance. On success fills outChild (process
+/// handle/pid + the child's stdout/stderr capture path) when non-null.
+bool LaunchEphemeralInstance(const std::string& exePath, int port, SpawnedChild* outChild,
                              const std::string& authToken);
 void PostAppQuitBestEffort(httplib::Client& cli);
 void PostAppQuitBestEffort(const std::string& host, int port, const std::string& authToken);
