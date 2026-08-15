@@ -15,8 +15,9 @@
 #      branch, asserting both the printed preset and the routing reason.
 #   5. An explicit --preset wins over auto-detect and every flag forwards intact.
 #   6. cl.exe already on PATH bypasses with-msvc-env.sh.
-#   7. with-msvc-env.sh's toolchain-missing status (78) surfaces install hints —
-#      and a wrapped command that merely exited 2 does not.
+#   7. with-msvc-env.sh's own toolchain-missing failure (out-of-band sentinel +
+#      exit 78) surfaces install hints — and a wrapped command's propagated exit
+#      code never does, not even a wrapped 78 with no sentinel.
 #   8. build-standalone.sh fails fast on every msvc/clang preset with no cl.exe,
 #      before the cmake configure step (including mid-name-token presets).
 #   9. The pre-flight does not over-reach: presets with no msvc/clang token
@@ -163,10 +164,17 @@ echo "STUB build-and-run: Preset=$preset Target=$target BuildOnly=$build_only Ru
 exit 0
 STUB
 
+    # Mirrors the real wrapper's two channels: the exit code (always) and the
+    # out-of-band toolchain-missing sentinel (only when the simulated failure is
+    # the wrapper's own — SMATCHET_TEST_WITHMSVC_SENTINEL=1). Exit-without-
+    # sentinel simulates a WRAPPED command that returned the same code.
     cat > "$sandbox/scripts/dev/with-msvc-env.sh" <<'STUB'
 #!/usr/bin/env bash
 echo "STUB with-msvc: $*"
 if [ -n "${SMATCHET_TEST_WITHMSVC_EXIT:-}" ]; then
+    if [ "${SMATCHET_TEST_WITHMSVC_SENTINEL:-0}" = "1" ] && [ -n "${SMATCHET_MSVC_STATUS_FILE:-}" ]; then
+        printf 'toolchain-missing\n' > "$SMATCHET_MSVC_STATUS_FILE"
+    fi
     exit "$SMATCHET_TEST_WITHMSVC_EXIT"
 fi
 exec "$@"
@@ -179,11 +187,14 @@ STUB
 
 # Runs the sandboxed build.sh; prints its output, returns its exit code.
 # The child PATH holds only the sandbox bin plus the shell's own tool dirs, so
-# the sandbox alone decides which compiler the dispatcher can see.
+# the sandbox alone decides which compiler the dispatcher can see. The third
+# argument sets the stub's sentinel behaviour ("1" = the simulated failure is
+# the wrapper's own; anything else = a plain wrapped-command exit code).
 invoke_sandbox() {
-    local sandbox="$1" with_msvc_exit="$2"; shift 2
+    local sandbox="$1" with_msvc_exit="$2" with_msvc_sentinel="$3"; shift 3
     env PATH="$sandbox/bin:/usr/bin:/bin" \
         SMATCHET_TEST_WITHMSVC_EXIT="$with_msvc_exit" \
+        SMATCHET_TEST_WITHMSVC_SENTINEL="$with_msvc_sentinel" \
         bash "$sandbox/build.sh" "$@" 2>&1
 }
 
@@ -199,7 +210,7 @@ test_autodetect_table() {
     do
         IFS='|' read -r name cl clangcl preset reason <<< "$row"
         sandbox="$(new_sandbox "$cl" "$clangcl")"
-        out="$(invoke_sandbox "$sandbox" "" --build-only)"
+        out="$(invoke_sandbox "$sandbox" "" "" --build-only)"
 
         case "$out" in *"preset $preset (auto-detected)"*) ;;
             *) fail "[$name] expected 'preset $preset (auto-detected)'. Got: $out"; return 1 ;; esac
@@ -217,7 +228,7 @@ test_explicit_preset_wins() {
     local sandbox out
     # No cl.exe, so this also proves the flags survive the with-msvc-env hop.
     sandbox="$(new_sandbox 0 0)"
-    out="$(invoke_sandbox "$sandbox" "" --preset ninja-debug-msvc --build-only -- --version)"
+    out="$(invoke_sandbox "$sandbox" "" "" --preset ninja-debug-msvc --build-only -- --version)"
 
     case "$out" in *"preset ninja-debug-msvc (explicit --preset overrides auto-detect)"*) ;;
         *) fail "Expected the explicit-preset reason line. Got: $out"; return 1 ;; esac
@@ -232,7 +243,7 @@ test_explicit_preset_wins() {
 test_cl_bypasses_with_msvc() {
     local sandbox out rc
     sandbox="$(new_sandbox 1 0)"
-    out="$(invoke_sandbox "$sandbox" "" --build-only)"
+    out="$(invoke_sandbox "$sandbox" "" "" --build-only)"
     rc=$?
 
     case "$out" in *"STUB build-and-run:"*) ;;
@@ -243,19 +254,23 @@ test_cl_bypasses_with_msvc() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 7: exit 78 surfaces install hints; a propagated exit 2 does not.
+# Test 7: the wrapper's own toolchain-missing failure surfaces install hints; a
+# propagated child exit code never does.
 #
 # Row 3 is the regression that motivated SMATCHET_MSVC_ENV_FAIL_RC: with-msvc-env
 # propagates the wrapped command's exit code, so a build that legitimately exited
-# 2 used to be reported as a missing MSVC install.
+# 2 used to be reported as a missing MSVC install. Row 4 is the assertion the
+# exit-code-only design could not make (tooling 2026-08-04): the diagnosis keys
+# on the out-of-band sentinel, so even a wrapped command that returns 78 itself
+# propagates silently — no hints.
 # ---------------------------------------------------------------------------
 test_exit78_hints() {
-    local row name exit_code args want_hints want_llvm sandbox out rc saw_diag saw_llvm
-    while IFS='|' read -r name exit_code args want_hints want_llvm; do
+    local row name exit_code sentinel args want_hints want_llvm sandbox out rc saw_diag saw_llvm
+    while IFS='|' read -r name exit_code sentinel args want_hints want_llvm; do
         [ -n "$name" ] || continue
         sandbox="$(new_sandbox 0 0)"
         # shellcheck disable=SC2086  # $args is a deliberate multi-flag string
-        out="$(invoke_sandbox "$sandbox" "$exit_code" $args)"
+        out="$(invoke_sandbox "$sandbox" "$exit_code" "$sentinel" $args)"
         rc=$?
 
         [ "$rc" -eq "$exit_code" ] || { fail "[$name] expected exit $exit_code to propagate, got $rc. Output: $out"; return 1; }
@@ -289,9 +304,10 @@ test_exit78_hints() {
             return 1
         fi
     done <<'ROWS'
-no toolchain, msvc preset|78|--build-only|1|0
-no toolchain, clang preset|78|--preset ninja-iter-clang --build-only|1|1
-wrapped build exited 2|2|--build-only|0|0
+no toolchain, msvc preset|78|1|--build-only|1|0
+no toolchain, clang preset|78|1|--preset ninja-iter-clang --build-only|1|1
+wrapped build exited 2|2|0|--build-only|0|0
+wrapped build exited 78, no sentinel|78|0|--build-only|0|0
 ROWS
 }
 
@@ -376,7 +392,7 @@ run_test "run-standalone: stale sibling comparison table"                 test_r
 run_test "build.sh: preset auto-detect table (cl / clang-cl / neither)"   test_autodetect_table
 run_test "build.sh: explicit --preset overrides auto-detect and forwards" test_explicit_preset_wins
 run_test "build.sh: cl.exe on PATH bypasses with-msvc-env.sh"             test_cl_bypasses_with_msvc
-run_test "build.sh: exit 78 surfaces install hints; exit 2 does not"      test_exit78_hints
+run_test "build.sh: sentinel surfaces install hints; child exits do not"  test_exit78_hints
 run_test "build-standalone: msvc/clang presets fail fast before cmake"    test_preflight_msvc_presets
 run_test "build-standalone: non-MSVC presets skip the cl.exe pre-flight"  test_preflight_no_overreach
 run_test "build-standalone: clang preset without clang-cl fails fast"     test_preflight_clang_cl_missing

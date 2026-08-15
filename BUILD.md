@@ -94,7 +94,9 @@ Resolves each missing tool to a package on the host's native manager (winget / M
 `ninja-iter-clang`; neither compiler on `PATH` → `ninja-iter-msvc`, because the MSVC environment
 is imported for you), prints its choice, and imports the MSVC environment via
 `scripts/dev/with-msvc-env.sh` when `cl.exe` isn't already on `PATH` — so no VS Developer Command
-Prompt is needed. Exit `78` means no usable Visual Studio install; it prints the winget commands.
+Prompt is needed. When no usable Visual Studio install is found it exits `78` and prints the
+winget install commands (the diagnosis rides an internal out-of-band status file, so a build
+tool's own exit code is never mistaken for a missing toolchain).
 
 Everything below is the **explicit-preset** form: what CI runs, and what to use when the MSVC
 environment is already active.

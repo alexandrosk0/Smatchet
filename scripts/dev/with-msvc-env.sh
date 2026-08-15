@@ -37,6 +37,15 @@
 # wrapped command's exit code (build.sh) cannot otherwise tell "the MSVC env
 # could not be set up" apart from "the build itself exited 2", and would report a
 # missing toolchain for an ordinary build failure.
+#
+# $SMATCHET_MSVC_STATUS_FILE (optional) names a path this script writes a
+# `toolchain-missing` sentinel to on each of its OWN failure exits — an
+# out-of-band status channel. The exit code alone is structurally ambiguous no
+# matter which number it carries: the tail of this script is `exec "$@"`, so
+# every code except the setup-failure one belongs to the wrapped command, and a
+# wrapped command that happens to return the chosen failure code would be
+# misread. Callers should key "the toolchain is missing" on the sentinel's
+# presence and treat the exit code as pass-through only.
 
 set -euo pipefail
 
@@ -48,9 +57,20 @@ if ! printf '%s' "$_FAIL_RC" | grep -qE '^[1-9][0-9]*$' || [ "$_FAIL_RC" -gt 255
     exit 2
 fi
 
+# Every own-failure exit goes through here so the sentinel can never drift out
+# of step with the exit code. The wrapped command runs via `exec` below, so
+# nothing it does can reach this function — sentinel presence is proof the
+# failure was ours.
+fail_env() {
+    if [ -n "${SMATCHET_MSVC_STATUS_FILE:-}" ]; then
+        printf 'toolchain-missing\n' > "$SMATCHET_MSVC_STATUS_FILE" 2>/dev/null || true
+    fi
+    exit "$_FAIL_RC"
+}
+
 if [ $# -eq 0 ]; then
     echo "Usage: bash scripts/dev/with-msvc-env.sh <command> [args...]" >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 # Resolve the MSVC toolset to pin. On a multi-VS box (e.g. VS2022 Community
@@ -82,7 +102,7 @@ fi
 if [ -z "$VCVARS_VER" ]; then
     echo "with-msvc-env: no MSVC toolset version resolved." >&2
     echo "  Set \$SMATCHET_VCVARS_VER or build.msvc_toolset_pin in project.config.json." >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 # Target architecture (x64 default; arm64 for the Windows-on-ARM port). The arch
@@ -109,7 +129,7 @@ case "$SMATCHET_MSVC_ARCH" in
         ;;
     *)
         echo "with-msvc-env: invalid SMATCHET_MSVC_ARCH='$SMATCHET_MSVC_ARCH' (expected x64 or arm64)." >&2
-        exit "$_FAIL_RC"
+        fail_env
         ;;
 esac
 
@@ -119,7 +139,7 @@ VSWHERE="/c/Program Files (x86)/Microsoft Visual Studio/Installer/vswhere.exe"
 if [ ! -x "$VSWHERE" ]; then
     echo "with-msvc-env: vswhere.exe not found at: $VSWHERE" >&2
     echo "  Install Visual Studio 2017 or newer (Community edition is free)." >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 # `-products *` covers BuildTools + IDE editions. `-requires <VCVARS_REQUIRES>`
@@ -165,7 +185,7 @@ if [ -z "$VS_INSTALL" ]; then
         -requires "$VCVARS_REQUIRES" \
         -property installationPath 2>/dev/null | tr -d '\r' | sed 's/^/    /' >&2
     echo "  Install MSVC v$VCVARS_VER build tools (with the ARM64 component for arm64), or set \$SMATCHET_VCVARS_VER to an installed toolset." >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 VCVARS_WIN="$VS_INSTALL\\VC\\Auxiliary\\Build\\$VCVARS_BAT"
@@ -181,7 +201,7 @@ esac
 if [ ! -f "$VCVARS_BASH" ]; then
     echo "with-msvc-env: $VCVARS_BAT not found at: $VCVARS_WIN" >&2
     echo "  (arch $SMATCHET_MSVC_ARCH on $_host_arch host — install the matching VC toolset component.)" >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 # Announce the resolved selection (stderr — never pollutes stdout pass-through).
@@ -212,7 +232,7 @@ while IFS='=' read -r key val; do
         # native form.
         Path|PATH)
             export Path="$val"
-            command -v cygpath >/dev/null 2>&1 || { echo "with-msvc-env: cygpath required (ships with Git for Windows / MSYS2)" >&2; exit "$_FAIL_RC"; }
+            command -v cygpath >/dev/null 2>&1 || { echo "with-msvc-env: cygpath required (ships with Git for Windows / MSYS2)" >&2; fail_env; }
             converted=$(cygpath -p "$val" 2>/dev/null || printf '%s' "$val")
             export PATH="$converted"
             ;;
@@ -253,7 +273,7 @@ fi
 # silently failed (e.g. vcvars64 wrote to a different shell context).
 if ! command -v cl >/dev/null 2>&1; then
     echo "with-msvc-env: cl.exe not on PATH after vcvars64 import; environment may be partial" >&2
-    exit "$_FAIL_RC"
+    fail_env
 fi
 
 exec "$@"
