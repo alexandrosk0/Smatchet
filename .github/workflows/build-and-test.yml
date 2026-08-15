@@ -1032,18 +1032,13 @@ jobs:
           TMPDIR: ${{ github.workspace }}/build/tmp
           SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
           SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
+          SMATCHET_GOLDEN_REPORT_FILE: ${{ github.workspace }}/build/tmp/bucket-c-golden-report.tsv
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "${TMPDIR}"
           bash scripts/dev/test-screenshot-diff.sh
 
-      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
-      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
-      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
-      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
-      # continue-on-error mask. A missing sentinel (driver never reached the
-      # summary — itself a dead-harness symptom) also fails closed.
       - name: Lane-integrity — bucket-C did not pass-nothing
         shell: bash
         env:
@@ -1076,6 +1071,62 @@ jobs:
             exit 1
           fi
 
+      # Report the per-scenario verdicts the continue-on-error mask above would
+      # otherwise DISCARD (tooling 2026-08-06 bucket-c-golden-mask-hides-stale-
+      # goldens). The mask exists because llvmpipe captures are not authoritative
+      # against per-developer GPU goldens — but a TOTAL mask makes a golden that
+      # is stale for a deterministic reason (a deliberate UI change nobody
+      # regenerated for) read exactly like a clean run, so goldens rot unseen
+      # (seven stale ones, no signal ever). This step splits REPORTING from
+      # BLOCKING: it surfaces every verdict + the golden's age in the job summary
+      # so a stale golden is attributable on the PR that changed those pixels,
+      # while never failing the job itself (`|| true` on every branch + always()).
+      - name: Report bucket-C golden verdicts (advisory)
+        if: always()
+        shell: bash
+        env:
+          REPORT: ${{ github.workspace }}/build/tmp/bucket-c-golden-report.tsv
+        run: |
+          set -uo pipefail
+          if [ ! -s "$REPORT" ]; then
+            echo "bucket-C: no golden verdict report at $REPORT (driver never reached a scenario)."
+            exit 0
+          fi
+          {
+            echo "### Bucket-C golden verdicts (advisory — this lane cannot block)"
+            echo ""
+            echo "| scenario | verdict | L_inf | tol | golden date | age (days) |"
+            echo "| --- | --- | ---: | ---: | --- | ---: |"
+            while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+              [ -n "${scen:-}" ] || continue
+              mark="$verdict"
+              [ "$verdict" = "fail" ] && mark="**fail**"
+              printf '| %s | %s | %s | %s | %s | %s |\n' \
+                "$scen" "$mark" "${linf:--}" "${tol:--}" "${mtime:--}" "${age:--}"
+            done < "$REPORT"
+            echo ""
+            echo "A \`fail\` row is EITHER a real pixel regression OR a stale golden — regenerate"
+            echo "per docs/agent-rules/golden-image-approval.md, or fix the regression."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+          echo "===== bucket-C golden verdicts ====="
+          cat "$REPORT" || true
+          echo "===== end bucket-C golden verdicts ====="
+          exit 0
+
+      - name: Upload bucket-C golden verdict report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bucket-c-golden-report-${{ github.run_id }}
+          path: build/tmp/bucket-c-golden-report.tsv
+          if-no-files-found: ignore
+
+      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
+      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
+      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
+      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
+      # continue-on-error mask. A missing sentinel (driver never reached the
+      # summary — itself a dead-harness symptom) also fails closed.
       # Observability — surface the spawned CHILD's stderr (the bucket-C scenario
       # runs via test-screenshot-diff.sh, which --spawns an ephemeral child whose
       # stdout/stderr CliCommandRunner redirects to %TMP%\Smatchet-spawn-*.log;

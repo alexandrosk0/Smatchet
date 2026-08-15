@@ -54,6 +54,25 @@
   property the other two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's
   Mesa per-test run) lack for the same reason. Part 2 is the instance ratchet.
 
+  **Status update 2026-08-15 — part 1 SHIPPED, part 2 still open.** The class fix
+  landed: `scripts/dev/test-screenshot-diff.sh` writes a per-scenario verdict row
+  (`scenario`, `verdict`, `linf`, `tol`, golden date, golden age in days) to its
+  golden-report file on **every** outcome — pass, fail, bootstrap, missing
+  capture, spawn failure — and the bucket-C job renders it into the job summary +
+  uploads it as an artefact from a step that is `if: always()` and exits 0 on
+  every branch, so reporting carries no blocking power. The two new steps sit
+  **after** the lane-integrity step on purpose: a reporting step that could fail
+  ahead of the teeth would skip them (lane-integrity carries no `if: always()`).
+  `tests/bats/bucket_lane_launch_smoke.bats` pins the rows on the failing path,
+  the date/age columns on the passing path, and the opt-in (no env var → no
+  file). The rule generalises in
+  [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
+  masks: *a mask may suppress blocking, never reporting* — the property the other
+  two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's Mesa per-test
+  run) still lack, and the natural next application of this shape.
+  Part 2 (graduate the now-deterministic `user-info-*` subset to an unmasked
+  diff) is unchanged and still needs the golden regeneration below.
+
   Prerequisite for both: the stale goldens need regenerating, which is
   approval-gated by
   [`golden-image-approval.md`](../../../agent-rules/golden-image-approval.md) —
@@ -65,3 +84,7 @@
   since the `ScenarioRunner::Tick` double-call
   ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md))
   double-draws any scenario that renders from `OnFrame`.
+  Status: partially-applied (part 1 — masked-step verdict reporting — shipped
+    2026-08-15; part 2 — graduate the `user-info-*` subset to an unmasked diff —
+    open, gated on regenerating the three remaining stale goldens)
+  Last-reviewed: 2026-08-15

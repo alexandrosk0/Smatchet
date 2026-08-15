@@ -158,3 +158,37 @@ Step 1 without step 2 leaves a CI-green, gate-waived PR still BLOCKED on the ope
 **Scope boundary**: the auto-`gh pr ready` + auto-merge path applies to the orchestrator, `git-janitor`, and `smatchet-merge-watcher`. No other caller has merge authority. The deleted spawned-child agents (`handoff-implementer`, `pr-iterator`) are gone per v1 of `docs/plans/shipped/github-tracker-backend.md`; the watcher runs as a host daemon, not a per-PR subprocess, so the spawned-child draft-only carve-out no longer applies.
 
 Implementation: `agents/scripts/core/merge-gates.sh` (sourceable + CLI), `agents/scripts/core/merge-gates-prompt.sh` (`ask_user_question` shim), `agents/scripts/core/merge-gates.graphql`. Tests: `tests/bats/merge_gates.bats` + `tests/fixtures/merge_gates_*.json`.
+
+## Sanctioned step-level masks
+
+A `continue-on-error` step inside an otherwise-blocking check is sanctioned only
+where the *signal itself* is non-authoritative — a stochastic fuzz run, an
+llvmpipe render diffed against per-developer GPU goldens, a compile-DB-free
+cppcheck. The mask buys "this cannot block merge"; it must never buy "nobody
+learns the verdict."
+
+**Rule: a mask may suppress blocking, never reporting.** A total mask discards
+the pass/fail signal rather than downgrading it, which makes a *deterministically*
+stale artefact — a deliberate, permanent UI change nobody regenerated for — read
+exactly like a clean run. Bucket-C accumulated seven stale goldens that way, none
+of which ever produced a signal (tooling 2026-08-06
+`bucket-c-golden-mask-hides-stale-goldens`); nothing else keys on a masked step
+either, since `postmortem-owed.sh` looks for merge-instant signals a masked step
+never emits.
+
+Concretely, bucket-C's driver (`scripts/dev/test-screenshot-diff.sh`) writes a
+per-scenario verdict row to its golden-report file — named by the project
+env-prefix + `_GOLDEN_REPORT_FILE`, see the driver's env-override header — on
+**every** outcome
+(`scenario \t verdict \t linf \t tol \t golden-date \t age-days`), and the
+`Report bucket-C golden verdicts (advisory)` step renders it into the job summary
++ uploads it as an artefact. That step is `if: always()` and exits 0 on every
+branch, so the reporting carries no blocking power of its own: a stale golden
+becomes attributable on the PR that changed those pixels without giving a flaky
+lane a veto. Pinned by `tests/bats/bucket_lane_launch_smoke.bats`.
+
+When adding a new masked step, wire the same shape — emit the verdicts the mask
+suppresses, then decide blocking separately. Graduating a now-deterministic
+subset to unmasked is the follow-on ratchet, and is gated on the artefacts being
+current first (an unmasked gate over a stale golden is a red check, not a
+signal — see [`golden-image-approval.md`](golden-image-approval.md)).

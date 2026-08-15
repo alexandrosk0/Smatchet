@@ -96,6 +96,60 @@ STUB
     grep -q '^status=ok' "$SMATCHET_LANE_STATUS_FILE"
 }
 
+# --- masked-step verdict reporting (tooling 2026-08-06 bucket-c-golden-mask) ---
+# The CI step that runs this driver is continue-on-error, so a stale golden used
+# to be indistinguishable from a clean run. The driver must therefore emit a
+# per-scenario verdict row REGARDLESS of outcome — these pin that the rows exist
+# on the failing path (the one the mask swallows) and carry the golden's age.
+
+@test "golden report: a FAILING scenario still emits a verdict row" {
+    write_stub_exe dead
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    run bash "$DRIVER"
+    [ "$status" -eq 3 ]   # broken lane — the masked case
+    [ -s "$SMATCHET_GOLDEN_REPORT_FILE" ]
+    # One row per registered scenario, each a non-pass verdict.
+    n="$(awk '/^SCENARIOS=\(/{f=1;next} f&&/^\)/{exit} f&&NF{c++} END{print c+0}' "$DRIVER")"
+    [ "$(wc -l < "$SMATCHET_GOLDEN_REPORT_FILE")" -eq "$n" ]
+    # 6 tab-separated columns: scenario, verdict, linf, tol, mtime, age.
+    while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+        [ -n "$scen" ]
+        [ "$verdict" != "pass" ]
+        [ -n "$tol" ]
+        [ -n "$age" ]
+    done < "$SMATCHET_GOLDEN_REPORT_FILE"
+}
+
+@test "golden report: rows carry the golden's date + age when a golden exists" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    # First --bootstrap run writes the goldens; the second run diffs against them
+    # (SCREENSHOT_DIFF_BIN is the always-rc0 stub), so rows land as `pass` with a
+    # real mtime/age rather than the bootstrap placeholder.
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    [ "$status" -eq 0 ]
+    # grep -P is not portable (BSD/busybox); match the literal tab-delimited field.
+    grep -q "$(printf '\tpass\t')" "$SMATCHET_GOLDEN_REPORT_FILE"
+    # Every pass row's date column must be an ISO date and age a number — that is
+    # the staleness signal the job summary renders.
+    while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+        [ "$verdict" = "pass" ] || continue
+        [[ "$mtime" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]
+        [[ "$age" =~ ^[0-9]+$ ]]
+    done < "$SMATCHET_GOLDEN_REPORT_FILE"
+}
+
+@test "golden report: unset SMATCHET_GOLDEN_REPORT_FILE writes nothing (opt-in)" {
+    write_stub_exe dead
+    unset SMATCHET_GOLDEN_REPORT_FILE
+    run bash "$DRIVER"
+    [ "$status" -eq 3 ]
+    [ ! -e "$WORK/golden-report.tsv" ]
+}
+
 @test "sentinel records exact passed/failed counts" {
     write_stub_exe dead
     run bash "$DRIVER"

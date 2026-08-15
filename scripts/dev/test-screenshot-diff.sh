@@ -22,6 +22,7 @@
 #   SCREENSHOT_DIFF_BIN     pre-built diff helper path; if unset the script g++-compiles one
 #   SMATCHET_GOLDEN_DIR     golden PNG dir (default tests/golden); override to isolate a test harness
 #   SMATCHET_LANE_STATUS_FILE  if set, write `status=<ok|broken|fail> passed=<n> failed=<n>` here
+#   SMATCHET_GOLDEN_REPORT_FILE  if set, write one TSV verdict row per scenario here (see below)
 #
 # Exit codes:
 #   0 — every scenario captured within tolerance (or bootstrap completed)
@@ -41,6 +42,21 @@
 #   written there as `status=<ok|broken|fail> passed=<n> failed=<n>` so a
 #   SEPARATE non-advisory CI step can assert lane integrity OUTSIDE this
 #   continue-on-error job (the only way a broken-lane signal escapes the mask).
+#
+# Per-scenario verdict report (masked-step reporting):
+#   The CI step that runs this driver is continue-on-error BY DESIGN (llvmpipe
+#   captures are not authoritative against per-developer GPU goldens), but a
+#   TOTAL mask discards the pass/fail signal rather than downgrading it: a golden
+#   that is stale for a perfectly deterministic reason — a deliberate UI change
+#   nobody regenerated for — reads exactly like a clean run, so goldens rot
+#   silently (tooling 2026-08-06 bucket-c-golden-mask-hides-stale-goldens; seven
+#   stale goldens, none of which ever produced a signal). When
+#   SMATCHET_GOLDEN_REPORT_FILE is set this driver writes one TAB-separated row
+#   per scenario REGARDLESS of verdict, so the reporting CI step can surface it
+#   without gaining the power to block the lane:
+#     <scenario>\t<verdict>\t<linf>\t<tolerance>\t<golden-mtime-iso>\t<golden-age-days>
+#   verdict ∈ pass | fail | bootstrap | missing-capture | spawn-failed.
+#   linf / mtime / age are `-` when the run never reached a diff.
 #
 # Usage:
 #   bash scripts/dev/test-screenshot-diff.sh                # diff mode (gate)
@@ -122,6 +138,14 @@ PINK_MAX_ALLOWED="${PINK_MAX_ALLOWED:-0}"
 
 PASSED=0
 FAILED=0
+# Truncate the verdict report up front: report_row APPENDS, so a re-run against a
+# pre-existing file (a repeated local run, a reused CI workspace) would otherwise
+# stack this run's rows on top of the last one's and the summary would render a
+# mix of both — stale verdicts reported as current is the exact failure this
+# report exists to prevent.
+if [ -n "${SMATCHET_GOLDEN_REPORT_FILE:-}" ]; then
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+fi
 SCENARIOS=(
     "dock-gap-sentinel"
     "command-palette-fuzzy"
@@ -152,6 +176,33 @@ assert() {
         echo "  FAIL  $label  — $condition"
         FAILED=$((FAILED + 1))
     fi
+}
+
+# Append one per-scenario verdict row to the report (no-op when the caller set no
+# report file). Called on EVERY scenario outcome — the point of the report is
+# that a masked step still reports, so a row missing here is a scenario whose
+# verdict the mask would swallow again.
+report_row() {
+    local scen="$1" verdict="$2" linf="${3:--}" golden="${4:-}"
+    [ -n "${SMATCHET_GOLDEN_REPORT_FILE:-}" ] || return 0
+    local mtime="-" age="-"
+    if [ -n "$golden" ] && [ -f "$golden" ]; then
+        # `stat -c %Y` (GNU/Git-Bash) with a BSD `stat -f %m` fallback; both
+        # absent (or a python-less box) leaves the age columns as '-' rather
+        # than failing the driver over a reporting nicety.
+        local epoch=""
+        epoch="$(stat -c %Y "$golden" 2>/dev/null || stat -f %m "$golden" 2>/dev/null || true)"
+        # Digits-only guard: a non-numeric stat result would abort the whole
+        # driver in the arithmetic below (set -e) — a reporting nicety must never
+        # take the gate down.
+        case "$epoch" in ''|*[!0-9]*) epoch="" ;; esac
+        if [ -n "$epoch" ]; then
+            mtime="$(date -u -d "@$epoch" '+%Y-%m-%d' 2>/dev/null || date -u -r "$epoch" '+%Y-%m-%d' 2>/dev/null || echo '-')"
+            age=$(( ( $(date -u '+%s') - epoch ) / 86400 ))
+        fi
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$scen" "$verdict" "$linf" "$TOL" "$mtime" "$age" \
+        >> "$SMATCHET_GOLDEN_REPORT_FILE"
 }
 
 run_scenario() {
@@ -212,12 +263,14 @@ run_scenario() {
     local req
     req=$(echo "$out" | extract captureRequested 2>/dev/null || echo "MISSING")
     if [ "$req" != "true" ]; then
+        report_row "$scen" "spawn-failed" "-" "$golden"
         assert "$scen captureRequested" "envelope missing captureRequested=true; got=$req"
         return
     fi
 
     # Verify the captured PNG exists and is non-empty.
     if [ ! -s "$captured" ]; then
+        report_row "$scen" "missing-capture" "-" "$golden"
         assert "$scen captured PNG" "captured file missing or empty at $captured"
         return
     fi
@@ -248,6 +301,7 @@ run_scenario() {
     if [ "$BOOTSTRAP" -eq 1 ]; then
         cp "$captured" "$golden"
         echo "  BOOTSTRAP  wrote $golden ($(wc -c < "$golden") bytes)"
+        report_row "$scen" "bootstrap" "-" "$golden"
         assert "$scen golden bootstrap" "ok"
         return
     fi
@@ -261,6 +315,7 @@ run_scenario() {
         echo "  WARN  $golden was missing — bootstrapped from this run."
         echo "        Commit the new golden so future runs gate against it:"
         echo "          git add $golden"
+        report_row "$scen" "bootstrap" "-" "$golden"
         assert "$scen golden auto-bootstrapped" "ok"
         return
     fi
@@ -273,9 +328,16 @@ run_scenario() {
     diff_rc=$?
     set -e
     echo "  $diff_out"
+    # linf=<N> is the helper's first stdout token; '-' when it never printed one
+    # (load failure / dimension mismatch write only stderr).
+    local linf
+    linf="$(printf '%s' "$diff_out" | sed -n 's/.*linf=\([0-9-]*\).*/\1/p' | head -1)"
+    [ -n "$linf" ] || linf="-"
     if [ "$diff_rc" -eq 0 ]; then
+        report_row "$scen" "pass" "$linf" "$golden"
         assert "$scen L_inf <= $TOL" "ok"
     else
+        report_row "$scen" "fail" "$linf" "$golden"
         assert "$scen L_inf <= $TOL" "$diff_out"
     fi
 }
