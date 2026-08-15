@@ -333,12 +333,9 @@ fi
 note "Test 10 — lockfile.py serialises concurrent drains"
 cleanup
 LOCK_PY="$PROJ_DIR/scripts/dev/lockfile.py"
-PY_BIN=""
-for cand in python python3; do
-    # Exec-probe, not just command -v: on Windows `python3` is the Microsoft
-    # Store alias stub — on PATH, but exits non-zero when run.
-    if command -v "$cand" >/dev/null 2>&1 && "$cand" -c "" >/dev/null 2>&1; then PY_BIN="$cand"; break; fi
-done
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY_BIN="$(resolve_py || true)"
 if [[ -z "$PY_BIN" || ! -f "$LOCK_PY" ]]; then
     # The drain's serialisation runs through scripts/dev/lockfile.py; with no
     # Python the drain degrades to no locking by design (see the hook header),
@@ -417,11 +414,11 @@ fi
 note "Test 12 — lint-syntax-both.py --selftest (PCH-drift FP classification)"
 cleanup
 SYNTAX_HOOK="$PROJ_DIR/docs/harness/claude-code/hooks/lint-syntax-both.py"
-if ! command -v python >/dev/null 2>&1; then
+if [[ -z "$PY_BIN" ]]; then
     skip "Test 12 — python not on PATH"
 elif [[ ! -f "$SYNTAX_HOOK" ]]; then
     nope "lint-syntax-both.py missing at $SYNTAX_HOOK"
-elif python "$SYNTAX_HOOK" --selftest >/dev/null 2>&1; then
+elif "$PY_BIN" "$SYNTAX_HOOK" --selftest >/dev/null 2>&1; then
     ok "lint-syntax-both selftest passed"
 else
     nope "lint-syntax-both selftest failed"

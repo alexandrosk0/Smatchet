@@ -196,9 +196,11 @@ lint_run_clang_tidy() {
 # Echoes lint-catch-all.py findings. Flags empty catch(...) blocks and
 # catch(...) without LOG_ calls unless suppressed by // catch-all-ok:.
 lint_run_catch_all() {
-    local abs="$1"
-    command -v python >/dev/null 2>&1 || return 0
-    python "$LINT_NORM_PROJ/.claude/hooks/lint-catch-all.py" "$abs" 2>&1 || true
+    local abs="$1" py
+    # shellcheck source=agents/scripts/core/lib/resolve-py.sh
+    . "$LINT_NORM_PROJ/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
+    py="$(resolve_py)" || return 0
+    "$py" "$LINT_NORM_PROJ/.claude/hooks/lint-catch-all.py" "$abs" 2>&1 || true
 }
 
 # lint_run_dual_target <abs_file> <rel_path>
@@ -206,6 +208,9 @@ lint_run_catch_all() {
 lint_run_dual_target() {
     local abs="$1" rel="$2"
     [[ "$rel" == *.cpp && "$rel" != tests/* ]] || return 0
-    command -v python >/dev/null 2>&1 || return 0
-    python "$LINT_NORM_PROJ/.claude/hooks/lint-syntax-both.py" "$abs" 2>&1 || true
+    local py
+    # shellcheck source=agents/scripts/core/lib/resolve-py.sh
+    . "$LINT_NORM_PROJ/agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || return 0
+    py="$(resolve_py)" || return 0
+    "$py" "$LINT_NORM_PROJ/.claude/hooks/lint-syntax-both.py" "$abs" 2>&1 || true
 }

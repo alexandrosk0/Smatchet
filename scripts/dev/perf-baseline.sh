@@ -21,7 +21,9 @@
 
 set -euo pipefail
 
-command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" >&2; exit 2; }
 
 usage() {
     cat >&2 <<'USAGE'
@@ -118,7 +120,7 @@ capture() {
     # Python here is required tooling per the 2026-05-20 tooling-required-clis
     # backlog entry; same Python the lint pipeline already uses.
     mkdir -p "$(dirname "$outPath")"
-    python - "$tmpRun" "$outPath" "$scen" "$host" "$commit" "$now" <<'PY'
+    "$PY" - "$tmpRun" "$outPath" "$scen" "$host" "$commit" "$now" <<'PY'
 import json, sys, os
 src, dst, scen, host, commit, now = sys.argv[1:7]
 with open(src, "r", encoding="utf-8") as f:
@@ -167,7 +169,7 @@ case "$CMD" in
         printf '%-40s %-22s %s\n' "FILE" "SCENARIO.HOST" "CAPTURE-DATE"
         for f in "${files[@]}"; do
             base="$(basename "$f" .json)"
-            date="$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['captureDate'])" "$f" 2>/dev/null || echo "?")"
+            date="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1]))['captureDate'])" "$f" 2>/dev/null || echo "?")"
             printf '%-40s %-22s %s\n' "$f" "$base" "$date"
         done
         ;;
@@ -189,7 +191,7 @@ case "$CMD" in
         shopt -s nullglob
         orphans=0
         for f in docs/perf/baselines/*.json; do
-            sid="$(python -c "import json,sys; print(json.load(open(sys.argv[1])).get('scenarioId',''))" "$f" 2>/dev/null || echo "")"
+            sid="$("$PY" -c "import json,sys; print(json.load(open(sys.argv[1])).get('scenarioId',''))" "$f" 2>/dev/null || echo "")"
             if [[ -z "$sid" ]]; then
                 echo "WARN: $f has no scenarioId field — skipping." >&2
                 continue

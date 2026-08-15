@@ -23,7 +23,9 @@
 
 set -euo pipefail
 
-command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 cd "$(dirname "$0")/../../.."
 
@@ -45,7 +47,7 @@ trap 'rm -f "$TMP"' EXIT
 # (kept verbatim at the top). Each entry begins with "- 2026-XX-XX ..." and
 # continues until the next entry or EOF (Resolution / Status / Last-reviewed
 # continuation lines are indented or blank-separated).
-python3 - "$APPLIED" "$TMP" <<'PY'
+"$PY" - "$APPLIED" "$TMP" <<'PY'
 import re
 import sys
 

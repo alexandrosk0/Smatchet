@@ -39,6 +39,19 @@ import json
 import os
 import sys
 
+# Windows text-mode stdout maps every "\n" to "\r\n", and the trailing CR of a
+# lock-rows TSV row lands on the LAST field — the path — so `_ltc_norm_path`'s
+# exact-match in lock-table-cache.sh fails for every locked path and a held
+# plan-lock silently covers nothing (py-probe-single-candidate-residual, part
+# 2). Force LF at the source. Guarded: reconfigure() exists on py3.7+ text
+# streams only, and this module still tolerates ancient interpreters (the
+# print_function import above), so anything older degrades to the shell-side CR
+# strip in `_ltc_norm_path` (kept as defence in depth).
+try:
+    sys.stdout.reconfigure(newline="\n")
+except (AttributeError, ValueError, OSError):
+    pass
+
 
 def _utc_now_z():
     # datetime.utcnow() is deprecated in Python 3.12+; emit timezone-aware

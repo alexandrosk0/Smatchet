@@ -19,7 +19,9 @@
 set -euo pipefail
 
 command -v cmake >/dev/null 2>&1 || { echo "cmake required" >&2; exit 2; }
-command -v python3 >/dev/null 2>&1 || { echo "python3 required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 command -v cl.exe >/dev/null 2>&1 || { echo "cl.exe required" >&2; exit 2; }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -139,7 +141,7 @@ echo "=== Phase 5: Validate merge-watcher detection ==="
 # Simulate the status line merge-watcher would see from merge-gates.sh
 SIMULATED_STATUS="Sanitizer (ASAN via MSVC) fail 3m14s https://github.com/..."
 
-python3 - "$REPO_ROOT/agents/scripts/core/merge-watcher.py" "$SIMULATED_STATUS" << 'PYEOF'
+"$PY" - "$REPO_ROOT/agents/scripts/core/merge-watcher.py" "$SIMULATED_STATUS" << 'PYEOF'
 import sys, importlib.util, os
 
 watcher_path = sys.argv[1]
@@ -184,7 +186,7 @@ check "merge-watcher _looks_like_sanitizer_failure matches ASAN status line" \
     test $? -eq 0
 
 # Also test with real ASAN output signature
-python3 -c "
+"$PY" -c "
 s = 'ERROR: AddressSanitizer: heap-use-after-free on address 0x...'
 fn_body = '''
 def _looks_like_sanitizer_failure(status_line):

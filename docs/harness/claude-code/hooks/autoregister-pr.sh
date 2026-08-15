@@ -33,9 +33,11 @@ proj="${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || true)
 
 cli="agents/scripts/core/merge-watcher-cli.py"
 [ -f "$cli" ] || exit 0
-command -v python >/dev/null 2>&1 || exit 0
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "agents/scripts/core/lib/resolve-py.sh" 2>/dev/null || exit 0
+py="$(resolve_py)" || exit 0
 
-out="$(python "$cli" register "$pr" 2>&1 || true)"
+out="$("$py" "$cli" register "$pr" 2>&1 || true)"
 # Sanitize for embedding in a JSON string: backslashes (Windows clone paths like
 # C:\…) and double-quotes would otherwise produce invalid JSON. Map \ -> / and
 # drop " and CR, then clip. (CR #509.)

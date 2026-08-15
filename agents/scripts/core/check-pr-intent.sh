@@ -17,13 +17,15 @@
 # selftest: asserts-failure
 set -euo pipefail
 
-command -v python3 >/dev/null 2>&1 || { echo "check-pr-intent: python3 required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "check-pr-intent: python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # _check <body-text> — mirrors the doc-validation.yml `Intent section` python.
 # Body goes through the ENV (never an inline arg into the python source) so a
 # backtick / $() in a title can't re-parse — same discipline as the CI job.
 _check() {
-    PR_BODY="$1" python3 - <<'PY'
+    PR_BODY="$1" "$PY" - <<'PY'
 import os, re, sys
 body = os.environ.get("PR_BODY", "") or ""
 m = re.search(r'(?ms)^##\s+Intent\s*$(.*?)(?=^##\s|\Z)', body)
@@ -301,7 +303,7 @@ run_selftest() {
 check_workflow_sync() {
     local wf="${CHECK_PR_INTENT_WORKFLOW_PATH:-.github/workflows/doc-validation.yml}"
     local self="${BASH_SOURCE[0]}"
-    WF_PATH="$wf" SELF_PATH="$self" python3 - <<'PY'
+    WF_PATH="$wf" SELF_PATH="$self" "$PY" - <<'PY'
 import os, re, sys
 def extract(path, label):
     try:

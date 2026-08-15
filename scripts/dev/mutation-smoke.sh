@@ -72,7 +72,12 @@ if [ "${SMATCHET_SKIP_MUTATION_SMOKE:-}" = "1" ]; then
 fi
 
 [ -f "$CORPUS" ] || { echo "mutation-smoke: corpus not found: $CORPUS" >&2; exit 3; }
-command -v python3 >/dev/null || { echo "mutation-smoke: python3 required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+# Anchored to THIS SCRIPT's location, not $REPO_ROOT: the bats suite runs
+# mutation-smoke.sh with cwd inside throwaway fixture repos, where
+# `git rev-parse --show-toplevel` resolves to the fixture (no lib there).
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "mutation-smoke: python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
 # Resolve the test exe. Default to the conventional path; if absent, locate the
 # rig binary under the build dir (its subdir varies by generator/preset). Only
@@ -103,7 +108,7 @@ revert_current() {
 trap 'revert_current' EXIT INT TERM
 
 # --- read corpus into parallel arrays via python (jq may be absent) ---------
-mapfile -t ROWS < <(python3 - "$CORPUS" "$ONLY_IDS" <<'PY'
+mapfile -t ROWS < <("$PY" - "$CORPUS" "$ONLY_IDS" <<'PY'
 import json, sys
 corpus = json.load(open(sys.argv[1]))
 only = set(x for x in sys.argv[2].split(',') if x) if len(sys.argv) > 2 else set()
@@ -135,7 +140,7 @@ assert_clean
 # apply exactly one occurrence of search->replace in file (fail if 0 or >1)
 apply_mutant() {
     local file="$1" search_b64="$2" replace_b64="$3"
-    python3 - "$file" "$search_b64" "$replace_b64" <<'PY'
+    "$PY" - "$file" "$search_b64" "$replace_b64" <<'PY'
 import sys, base64
 path, sb, rb = sys.argv[1], sys.argv[2], sys.argv[3]
 search = base64.b64decode(sb).decode()

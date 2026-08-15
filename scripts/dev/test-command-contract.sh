@@ -46,8 +46,11 @@ if [ -s "$SPAWN_ERR" ]; then
 fi
 
 OK="false"
-if command -v python3 >/dev/null 2>&1; then
-    OK=$(printf '%s' "$RESULT" | python3 -c '
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+PY="$(resolve_py || true)"
+if [ -n "$PY" ]; then
+    OK=$(printf '%s' "$RESULT" | "$PY" -c '
 import json, sys
 ok = "false"
 buf = sys.stdin.read()
