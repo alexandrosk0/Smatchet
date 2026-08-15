@@ -374,6 +374,36 @@ JSON
     [[ "$output" == *"override: intent-out-of-band"* || "$output" == *"red-check: Intent section"* ]]
 }
 
+@test "moot cr-out-of-band (CR findings SUCCESS on its own) owes nothing" {
+    # The label dismissed nothing: the required CR findings StatusContext ruled
+    # green by itself. Docs-only diff — but the drop is now justified by the gate
+    # verdict, not by diff scope.
+    prlist <<'JSON'
+[{"number":3020,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"cr1"},"labels":[{"name":"cr-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_3020.json"
+    echo '{"files":[{"path":"docs/notes.md"}]}' > "$PM_DATA/files_3020.json"
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #3020"* ]]
+}
+
+@test "load-bearing cr-out-of-band (CR findings wedged PENDING) owes a postmortem despite a non-Core diff (#1948 shape)" {
+    # The wedge class the scope heuristic used to hide: the required CR findings
+    # gate never ruled (stuck PENDING on a body-less on-head review); the label was
+    # the only exit from mergeStateStatus=BLOCKED. The diff touches no Core cpp —
+    # which is exactly why the old Core-scope drop swallowed it. Must owe.
+    prlist <<'JSON'
+[{"number":3021,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"cr2"},"labels":[{"name":"cr-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_3021.json"
+    echo '{"files":[{"path":"CMakeLists.txt"},{"path":"cmake/SmatchetFontAssets.cmake"}]}' > "$PM_DATA/files_3021.json"
+    run_detector
+    [[ "$output" == *"PR #3021 — override: cr-out-of-band"* ]]
+}
+
 # ============================================================================
 # Trigger 4 — PR-less direct push (item 3)
 # ============================================================================
@@ -461,6 +491,38 @@ JSON
     run_detector
     [[ "$output" == *"PR #5002"* ]]
     [[ "$output" == *"override: perf-out-of-band"* ]]
+}
+
+@test "snapshot cr-out-of-band with the gate wedged (PENDING) is KEPT on a non-Core diff" {
+    # Snapshot path, redChecks=[] (a wedged-PENDING gate is not red, so the
+    # snapshot's red-check part cannot self-distinguish this class). The old
+    # Core-scope de-noise dropped this outright; the drop must now require the CR
+    # findings gate to have RULED green, which it did not.
+    prlist <<'JSON'
+[{"number":5003,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c3"},"labels":[{"name":"cr-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":5003,"mergeCommit":"c3","redChecks":[],"overrideLabels":["cr-out-of-band"]}' > "$SNAPSHOT_LEDGER"
+    echo '{"statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_5003.json"
+    echo '{"files":[{"path":"docs/notes.md"}]}' > "$PM_DATA/files_5003.json"
+    run_detector
+    [[ "$output" == *"PR #5003"* ]]
+    [[ "$output" == *"override: cr-out-of-band"* ]]
+}
+
+@test "snapshot cr-out-of-band with the gate SUCCESS on a non-Core diff still drops (evidence-justified)" {
+    # Today's drop behaviour survives when the evidence supports it: the gate ruled
+    # green on its own, so the recorded label dismissed nothing.
+    prlist <<'JSON'
+[{"number":5004,"mergedAt":"2026-06-10T10:00:00Z","mergeCommit":{"oid":"c4"},"labels":[{"name":"cr-out-of-band"}],
+  "statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}]
+JSON
+    echo '{"pr":5004,"mergeCommit":"c4","redChecks":[],"overrideLabels":["cr-out-of-band"]}' > "$SNAPSHOT_LEDGER"
+    echo '{"statusCheckRollup":[{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"SUCCESS","startedAt":"2026-06-10T09:00:00Z"}]}' > "$PM_DATA/rollup_5004.json"
+    echo '{"files":[{"path":"docs/notes.md"}]}' > "$PM_DATA/files_5004.json"
+    run_detector
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"PR #5004"* ]]
 }
 
 # ============================================================================

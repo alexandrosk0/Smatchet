@@ -172,7 +172,7 @@ defect lives in the gate machinery, not the change under review.
 ### Filed as
 (a) [`categories/process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](categories/applied.md)
 (P1, process — shipped in PR #1953, `ec41fe86`) ·
-(b) [`categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md`](categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md)
+(b) [`categories/process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.md`](categories/applied.md)
 (P2, process).
 
 Sibling hole found while auditing this one — a poller **false-block**, opposite sign, **not** an escape

@@ -386,13 +386,19 @@ has_sha_entry() {
     grep -qiE "(^|[^0-9A-Fa-f])$1([^0-9A-Fa-f]|\$)" "$LEDGER"
 }
 
-# Both the `Test-delta gate` (coverage-delta-gate.sh) and the `cr-out-of-band` override
-# are Core-cpp-scoped: the delta gate PASSES any diff with zero `Source/Core/src/*.cpp`
-# files (PROD_CHANGES==0 → exit 0), and cr-out-of-band only waives the (advisory)
-# CodeRabbit review. So when a flagged PR's SOLE trigger(s) are those two AND it touches
-# no Core cpp, the "escape" is a false positive — a transient non-terminal check state
-# captured at snapshot time, or an advisory CR waiver on a docs/prose diff. Drop it (same
-# spirit as the revert-subject false-positive fix). Genuine Core-cpp escapes still flag.
+# The `Test-delta gate` (coverage-delta-gate.sh) is Core-cpp-scoped: it PASSES any
+# diff with zero `Source/Core/src/*.cpp` files (PROD_CHANGES==0 → exit 0), so when a
+# flagged PR's SOLE trigger is that red-check AND it touches no Core cpp, the "escape"
+# is a false positive — a transient non-terminal check state captured at snapshot time.
+# Drop it (same spirit as the revert-subject false-positive fix); genuine Core-cpp
+# escapes still flag. `cr-out-of-band` rides in the same shapes but is NOT diff-scoped:
+# the label waives the advisory CodeRabbit review AND is the only exit from a WEDGED
+# required `CR findings` gate (a body-less on-head review leaves the StatusContext
+# stuck PENDING — PR #1948), and in the wedge class the diff scope is irrelevant to
+# whether the label was load-bearing. So the drop for a trigger carrying the label is
+# additionally conditioned on the gate having actually RULED green — see the de-noise
+# branch in the trigger-1 loop (process/2026-08-06-postmortem-owed-cr-override-denoise-
+# hides-wedged-gate).
 core_scoped_only_trigger() {
     case "$1" in
         "override: cr-out-of-band") return 0 ;;
@@ -464,9 +470,17 @@ override_is_moot() {
             # Moot iff the Intent section gate passed on its own (gate-specific,
             # like Coverage/Perf). pr-intent-capture-hardening #5 / ADR-0022.
             [ "$(gate_conclusion "$pr" 'Intent section')" = "SUCCESS" ] ;;
+        cr-out-of-band)
+            # Moot iff the required `CR findings` StatusContext ruled SUCCESS on
+            # its own — then the label dismissed nothing. PENDING / non-SUCCESS /
+            # absent means the label was the exit from a wedged or red gate:
+            # load-bearing, owes a postmortem, regardless of diff scope. This was
+            # the one override exempted from the moot test (routed to a Core-cpp
+            # scope heuristic instead), which hid the wedged-gate class (#1948) —
+            # process/2026-08-06-postmortem-owed-cr-override-denoise-hides-wedged-gate.
+            [ "$(gate_conclusion "$pr" 'CR findings')" = "SUCCESS" ] ;;
         *)
-            # cr-out-of-band (advisory CR only — handled by core_scoped_only_trigger)
-            # and any unknown label: never treated as moot here.
+            # Unknown label: never treated as moot here.
             return 1 ;;
     esac
 }
@@ -954,9 +968,24 @@ for row in "${ROWS[@]}"; do
             trigger="${trigger:+$trigger; }absent-allowlisted: ${absent_names}"
         fi
     fi
-    # De-noise: Core-cpp-scoped trigger(s) on a PR that touched no Core cpp = false escape.
+    # De-noise: Core-cpp-scoped trigger(s) on a PR that touched no Core cpp = false
+    # escape. A trigger carrying the cr-out-of-band part is dropped only when the
+    # required `CR findings` gate actually RULED green — evidence, not diff scope
+    # (the label is also the only exit from a wedged required gate, where scope is
+    # irrelevant; #1948). Evidence source: a snapshot that names a bypassed-RED gate
+    # carries a red-check part that already breaks the shape match above (kept), so
+    # the triggers reaching this test are redChecks=[] snapshots and live fallbacks —
+    # for those, gate_conclusion's live rollup is the only per-context evidence.
+    # That rollup is re-run-lossy (the documented fallback caveat): a post-merge
+    # re-run stamping green can still over-drop, but a wedged-PENDING context that
+    # nobody re-ran now correctly KEEPS the trigger instead of vanishing.
     if [ -n "$trigger" ] && core_scoped_only_trigger "$trigger" && ! pr_touches_core_cpp "$num"; then
-        continue
+        case "$trigger" in
+            *"override: cr-out-of-band"*)
+                [ "$(gate_conclusion "$num" 'CR findings')" = "SUCCESS" ] && continue ;;
+            *)
+                continue ;;
+        esac
     fi
     [ -n "$trigger" ] && owed+=("PR #$num — $trigger")
 done
