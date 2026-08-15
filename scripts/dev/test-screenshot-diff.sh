@@ -11,8 +11,11 @@
 #
 # Bootstrap mode (--bootstrap or first run when golden is missing): copies the
 # captured PNG into tests/golden/ so the next run has something to diff against.
-# Bootstrap runs always PASS — they're a one-time capture, not a regression
-# gate. Commit the new goldens by hand to make them authoritative.
+# Bootstrap skips the DIFF — it's a one-time capture, not a regression gate — so
+# no bootstrap run fails on pixels. It is NOT unconditionally green, though: the
+# golden-independent assertions still run (the dock-gap pink scan), and a failure
+# there still counts a FAILED, exits non-zero, and reports `fail-assert`. Commit
+# the new goldens by hand to make them authoritative.
 #
 # Env overrides:
 #   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msvc/...)
