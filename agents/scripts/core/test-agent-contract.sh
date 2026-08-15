@@ -74,7 +74,9 @@ case "${1:---check}" in
   *)          echo "usage: test-agent-contract.sh [--check|--selftest]" >&2; exit 2 ;;
 esac
 
-command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" >&2; exit 2; }
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -257,7 +259,7 @@ fi
 # -------------------------------------------------------------------------
 echo
 echo "[8/15] agents/_shared/token-tracking/tests/test_infer_outcome.py"
-if python agents/_shared/token-tracking/tests/test_infer_outcome.py; then
+if "$PY" agents/_shared/token-tracking/tests/test_infer_outcome.py; then
   check_pass "_infer_outcome unit tests"
 else
   check_fail "_infer_outcome unit tests"

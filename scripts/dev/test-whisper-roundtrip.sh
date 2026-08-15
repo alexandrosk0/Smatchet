@@ -66,13 +66,16 @@ fi
 # parser when available, fall back to a grep that matches the literal
 # `"passed": true` line emitted by nlohmann::json::dump(2).
 PASSED="false"
-if command -v python >/dev/null 2>&1; then
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+PY="$(resolve_py || true)"
+if [ -n "$PY" ]; then
     # Pipe the captured envelope through python's JSON parser. The spawn
     # wrapper prints `[spawn] ...` log lines before the JSON envelope; we
     # walk lines bottom-up and parse the first one that loads cleanly as a
     # JSON object carrying `data` or `ok`. Falls through to "false" on any
     # parse error so a malformed envelope can't accidentally pass the gate.
-    PASSED=$(printf '%s' "$RESULT" | python -c '
+    PASSED=$(printf '%s' "$RESULT" | "$PY" -c '
 import json, sys
 lines = [ln for ln in sys.stdin.read().splitlines() if ln.strip().startswith("{")]
 for ln in reversed(lines):

@@ -202,3 +202,33 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"claimed at"* ]]
 }
+
+@test "_lock-json.py lock-rows stays LF-only through a CRLF text stream (Windows text-mode shape)" {
+    # On Windows, text-mode stdout maps \n -> \r\n and the trailing CR lands on
+    # the row's LAST field (the path), breaking _ltc_norm_path's exact match so
+    # a held plan-lock silently covers nothing. The module now forces LF via a
+    # guarded sys.stdout.reconfigure(newline="\n"); simulate the Windows text
+    # stream with a \r\n TextIOWrapper and assert no CR survives.
+    # shellcheck source=agents/scripts/core/lib/resolve-py.sh
+    . "$REPO_ROOT/agents/scripts/core/lib/resolve-py.sh"
+    PY="$(resolve_py)" || skip "no working python interpreter"
+    run "$PY" - "$SCRIPTS_DIR/_lock-json.py" <<'PYEOF'
+import io, json, runpy, sys
+script = sys.argv[1]
+claims = [{"slug": "s1", "branch": "feat/x", "started": "2026-08-15T00:00:00Z",
+           "updated": "2026-08-15T01:00:00Z", "write_set": ["docs/a.md", "src/b.cpp"]}]
+buf = io.BytesIO()
+sys.stdin = io.StringIO(json.dumps(claims))
+sys.stdout = io.TextIOWrapper(buf, encoding="utf-8", newline="\r\n")
+sys.argv = [script, "lock-rows"]
+runpy.run_path(script, run_name="__main__")
+sys.stdout.flush()
+data = buf.getvalue()
+sys.stdout = sys.__stdout__
+assert data, "no lock-rows output produced"
+assert b"\r" not in data, "CR leaked into lock-rows output: %r" % data
+print("rows=%d cr-free" % data.count(b"\n"))
+PYEOF
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"rows=2 cr-free"* ]]
+}

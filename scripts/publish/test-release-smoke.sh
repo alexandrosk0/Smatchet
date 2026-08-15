@@ -66,7 +66,9 @@ die() { echo "test-release-smoke: $*" >&2; exit 1; }
 
 [ -n "${RELEASE_DIR//[[:space:]]/}" ] || die "--release-dir is required."
 
-command -v python >/dev/null 2>&1 && PYTHON=python || PYTHON=python3
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/agents/scripts/core/lib/resolve-py.sh"
+PYTHON="$(resolve_py)" || PYTHON=""
 command -v "$PYTHON" >/dev/null 2>&1 || die "python is required."
 
 abs_path() { "$PYTHON" -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1"; }

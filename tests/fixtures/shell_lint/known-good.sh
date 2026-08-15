@@ -2,7 +2,9 @@
 # Fixture: all 5 rules clean.
 set -euo pipefail
 command -v curl >/dev/null 2>&1 || { echo "curl required" >&2; exit 2; }
-command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(git rev-parse --show-toplevel)/agents/scripts/core/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python required" >&2; exit 2; }
 
 THRESHOLD=0
 while [ $# -gt 0 ]; do
@@ -27,4 +29,4 @@ echo "threshold=$input"
 curl -fsSL "https://example.com/x.bin" -o /tmp/x.bin
 echo "deadbeef  /tmp/x.bin" | sha256sum -c -
 
-python -c 'print("hi")'
+"$PY" -c 'print("hi")'

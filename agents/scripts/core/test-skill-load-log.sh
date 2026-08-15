@@ -13,7 +13,9 @@
 
 set -euo pipefail
 
-command -v python >/dev/null 2>&1 || { echo "python required" >&2; exit 2; }
+# shellcheck source=agents/scripts/core/lib/resolve-py.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
+PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" >&2; exit 2; }
 
 PROJ_DIR="${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 export CLAUDE_PROJECT_DIR="$PROJ_DIR"
@@ -57,7 +59,7 @@ PAYLOAD='{
     "tool_response": {"success": true},
     "duration_ms": 17
 }'
-echo "$PAYLOAD" | python "$HOOK"
+echo "$PAYLOAD" | "$PY" "$HOOK"
 if [[ -f "$LOG" ]] && [[ "$(wc -l < "$LOG")" -eq 1 ]]; then
     ok "PostToolUse Skill wrote exactly 1 row"
 else
@@ -73,7 +75,7 @@ PAYLOAD_PRE='{
     "tool_name": "Skill",
     "tool_input": {"skill": "anything"}
 }'
-echo "$PAYLOAD_PRE" | python "$HOOK"
+echo "$PAYLOAD_PRE" | "$PY" "$HOOK"
 if [[ ! -f "$LOG" ]] || [[ "$(wc -l < "$LOG")" -eq 0 ]]; then
     ok "PreToolUse Skill produced no log row"
 else
@@ -90,7 +92,7 @@ PAYLOAD_OTHER='{
     "tool_input": {"command": "ls"},
     "tool_response": {"success": true}
 }'
-echo "$PAYLOAD_OTHER" | python "$HOOK"
+echo "$PAYLOAD_OTHER" | "$PY" "$HOOK"
 if [[ ! -f "$LOG" ]] || [[ "$(wc -l < "$LOG")" -eq 0 ]]; then
     ok "non-Skill tool_name produced no log row"
 else
@@ -100,7 +102,7 @@ fi
 # -------------------------------------------------------------------- Test 4
 note "Test 4 — plugin-namespaced skill: skill_md_path=null, approx_tokens=0"
 rm -f "$LOG"
-echo "$PAYLOAD" | python "$HOOK"
+echo "$PAYLOAD" | "$PY" "$HOOK"
 RECORD="$(cat "$LOG")"
 if echo "$RECORD" | grep -q '"skill": "caveman:caveman-help"'; then
     ok "plugin skill name preserved"
@@ -135,16 +137,16 @@ if [[ -e "$PROJ_DIR/.claude/skills/perf-measure/SKILL.md" ]]; then
         "tool_response": {"success": true},
         "duration_ms": 42
     }'
-    echo "$PAYLOAD_PROJ" | python "$HOOK"
+    echo "$PAYLOAD_PROJ" | "$PY" "$HOOK"
     RECORD="$(cat "$LOG")"
     # Path uses platform separator; check substring + non-null instead of regex.
-    PATH_FIELD=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read()).get('skill_md_path') or '')" || true)  # malformed record -> empty, let the assertion below report
+    PATH_FIELD=$(echo "$RECORD" | "$PY" -c "import json,sys; print(json.loads(sys.stdin.read()).get('skill_md_path') or '')" || true)  # malformed record -> empty, let the assertion below report
     if [[ -n "$PATH_FIELD" ]] && [[ "$PATH_FIELD" == *"perf-measure"* ]] && [[ "$PATH_FIELD" == *"SKILL.md" ]]; then
         ok "project skill skill_md_path resolved ($PATH_FIELD)"
     else
         nope "project skill skill_md_path not resolved (got: $PATH_FIELD)"
     fi
-    APPROX=$(echo "$RECORD" | python -c "import json,sys; print(json.loads(sys.stdin.read())['approx_tokens'])" || echo 0)  # missing key -> 0, let the assertion below report
+    APPROX=$(echo "$RECORD" | "$PY" -c "import json,sys; print(json.loads(sys.stdin.read())['approx_tokens'])" || echo 0)  # missing key -> 0, let the assertion below report
     if [[ "$APPROX" -gt 0 ]]; then
         ok "project skill approx_tokens > 0 (got $APPROX)"
     else

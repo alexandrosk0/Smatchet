@@ -33,20 +33,19 @@
 #      msys ignores SIGPIPE). Closes the #1593 follow-up (feed the reader from a
 #      temp file). Requires while+read+break in the fn body, so a full-drain
 #      reader is not flagged.
-#   9. resolve-only python-interpreter picker — a probe that SELECTS among two
-#      or more python names (`for c in python3 python`, or an
-#      `if command -v python3 … elif command -v python` chain) using only
-#      `command -v` / `which` / `type -p`, with no exec-validation of the
-#      candidate. On Windows `python3` normally resolves to the Microsoft Store
-#      App Execution Alias stub under %LOCALAPPDATA%\Microsoft\WindowsApps\: it
-#      is on PATH, so a resolve-only probe picks it, but running it prints an
-#      "install from the Microsoft Store" banner and exits non-zero. The picker
-#      therefore selects the stub OVER a working later candidate — the failure
-#      is silent-wrong (parsed nothing / skipped tests), not a clean not-found.
-#      Fix: pair the resolve with an exec check (`"$c" -c ""` or
-#      `"$c" --version`) in the same loop/chain. Single-candidate hard-require
-#      guards (`command -v python3 || exit 2`) are deliberately NOT flagged —
-#      they have nothing to mis-select and fail loudly.
+#   9. python-interpreter probe outside the blessed resolver. Two arms:
+#      (a) a candidate LOOP (`for c in python3 python py; do … command -v "$c"`)
+#      with no exec-validation — on Windows `python3` normally resolves to the
+#      Microsoft Store App Execution Alias stub under
+#      %LOCALAPPDATA%\Microsoft\WindowsApps\: on PATH, so a resolve-only probe
+#      picks it, but running it exits non-zero. The picker selects the stub
+#      OVER a working later candidate — silent-wrong. An exec-validated loop
+#      (`"$p" -c ""` in the window) stays accepted (the pre-lib canonical
+#      form). (b) ANY literal python-name probe (`command -v python3`,
+#      single-candidate guards included, validated or not) — those must route
+#      through `agents/scripts/core/lib/resolve-py.sh` (`resolve_py()`), the
+#      one blessed home for the probe, so downstream call sites use "$PY"
+#      instead of re-probing per script (py-probe-single-candidate-residual).
 #
 # Targets: scripts/dev/*.sh + agents/scripts/{core,project}/*.sh (post-#609
 # layout; maxdepth 1, so scripts/dev/local/ is excluded) + scripts/mobile/**
@@ -419,23 +418,21 @@ check_nul_byte() {
     fi
 }
 
-# Rule 9 — resolve-only python-interpreter picker (Windows Store-alias stub).
-# Fires ONLY on the picker shape: a probe choosing among >= 2 python candidate
-# names with no exec-validation. That is the silent-wrong class — the stub wins
-# the selection over a working later candidate, so the script proceeds with an
-# interpreter that cannot run. A single-candidate `command -v python3 || exit 2`
-# guard is not flagged: it selects nothing and fails loudly.
-#
-# Two shapes, both requiring >= 2 DISTINCT python names so ordinary one-tool
-# preflights stay quiet:
+# Rule 9 — python-interpreter probe (Windows Store-alias stub). Two arms:
 #   (a) candidate loop — `for c in python3 python py; do … command -v "$c" …`
-#   (b) literal chain  — `if command -v python3 … elif command -v python …`,
-#       or a one-line `$(command -v python || command -v python3)`.
-# An exec-validation anywhere in the shape's window clears it. The window check
-# is deliberately generic (any `<cmd> -c` / `--version` / `-V`) rather than
-# anchored to the loop variable: the canonical repo form validates a DIFFERENT
-# variable than it probes (`_p="$(command -v "$_c")"` … `"$_p" -c ""`), and a
-# stray unrelated `-c` in the window only makes this rule quieter, never louder.
+#       with no exec-validation: silent-wrong, the stub wins the selection over
+#       a working later candidate. An exec-validation anywhere in the loop's
+#       window clears it — the window check is deliberately generic (any
+#       `<cmd> -c` / `--version` / `-V`) rather than anchored to the loop
+#       variable: the canonical repo form validates a DIFFERENT variable than
+#       it probes (`_p="$(command -v "$_c")"` … `"$_p" -c ""`), and a stray
+#       unrelated `-c` in the window only makes this rule quieter, never louder.
+#   (b) literal python-name probe — `command -v python3` in any shape (chain,
+#       one-liner, single-candidate hard-require guard), exec-validated or not.
+#       These must route through lib/resolve-py.sh's resolve_py() — the one
+#       blessed home for the probe — so the guard-then-bare-`python3` split
+#       (loud only at the FIRST invocation) stops re-appearing per script
+#       (py-probe-single-candidate-residual).
 #
 # Here-strings throughout, never `printf | grep -q`: grep -q exits on the first
 # match and SIGPIPEs the producer, which under this script's own `set -o
@@ -472,43 +469,23 @@ check_py_probe() {
             "python candidate loop resolves with 'command -v' but never runs the candidate: on Windows python3 is the Microsoft Store alias stub (on PATH, exits non-zero), so this picks a non-working interpreter — add an exec check (\"\$$var\" -c \"\")"
     done < <(grep -nE '(^|[[:space:]])for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*[[:space:]]+in[[:space:]]' <<<"$nc" || true)
 
-    # -- shape (b): literal multi-candidate chain. Cluster probe lines that sit
-    # within 3 lines of each other; a cluster naming >= 2 distinct python
-    # interpreters is a picker.
-    local -a cl_lnos=() cl_toks=()
-    local toks prev_lno=-99 c_start=0 c_toks=""
-    _flush_cluster() {
-        local start="$1" last="$2" t="$3" n w
-        [ -n "$t" ] || return 0
-        n=$(tr ' ' '\n' <<<"$t" | sort -u | grep -c . || true)
-        [ "${n:-0}" -ge 2 ] || return 0
-        w=$(sed -n "${start},$((last + 2))p" <<<"$nc")
-        if grep -qE "$PY_EXEC_RE" <<<"$w"; then return 0; fi
-        emit "$script" "$start" "SHELL_LINT_PY_PROBE" \
-            "python interpreter chosen among $n candidates by 'command -v' alone, with no exec check: on Windows python3 is the Microsoft Store alias stub (on PATH, exits non-zero), so the chain can select a non-working interpreter — add an exec check (\"\$PY\" -c \"\")"
-    }
-    while IFS=: read -r lno content; do
-        toks=$(grep -oE "${probe}[[:space:]]+\"?${PY_NAME_RE}" <<<"$content" \
-            | sed -E "s/^${probe}[[:space:]]+\"?//" | sort -u | tr '\n' ' ')
-        [ -n "${toks// /}" ] || continue
-        cl_lnos+=("$lno")
-        cl_toks+=("$toks")
+    # -- shape (b), WIDENED (py-probe-single-candidate-residual): ANY literal
+    # python-name probe outside the blessed resolver. The original shape (b)
+    # accepted a single-candidate guard (`command -v python3 || exit 2` … then a
+    # bare `python3 foo.py`) because it fails loudly rather than silently — but
+    # it fails only at the FIRST invocation, and every script re-implemented the
+    # probe its own way. lib/resolve-py.sh is now the one blessed home for the
+    # probe (exec-validating resolve_py()), so a literal probe here flags
+    # regardless of any exec-validation next to it: one shape to enforce
+    # instead of a regex guessing at intent. Exec-validated VARIABLE loops
+    # (shape (a) above) remain accepted — they are the pre-lib canonical form.
+    case "$script" in
+        */lib/resolve-py.sh) return 0 ;;
+    esac
+    while IFS=: read -r lno _content; do
+        emit "$script" "$lno" "SHELL_LINT_PY_PROBE" \
+            "literal python probe outside lib/resolve-py.sh: source agents/scripts/core/lib/resolve-py.sh, resolve once via PY=\"\$(resolve_py)\" (exec-validating — on Windows python3 is the Store alias stub), and invoke \"\$PY\" downstream"
     done < <(grep -nE "${probe}[[:space:]]+\"?${PY_NAME_RE}\"?([[:space:]]|\)|;|\"|$)" <<<"$nc" || true)
-    local i last_lno=0
-    for i in "${!cl_lnos[@]}"; do
-        lno="${cl_lnos[$i]}"
-        if [ "$prev_lno" -ge 0 ] && [ $((lno - prev_lno)) -le 3 ]; then
-            c_toks="$c_toks ${cl_toks[$i]}"
-        else
-            _flush_cluster "$c_start" "$last_lno" "$c_toks"
-            c_start="$lno"
-            c_toks="${cl_toks[$i]}"
-        fi
-        prev_lno="$lno"
-        last_lno="$lno"
-    done
-    _flush_cluster "$c_start" "$last_lno" "$c_toks"
-    unset -f _flush_cluster
 }
 
 PASSED=0

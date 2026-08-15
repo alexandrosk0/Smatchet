@@ -195,22 +195,35 @@ setup() {
 
 # ---------- rule 9: resolve-only python-interpreter picker ----------
 
-@test "rule 9 (py-probe): fires on both picker shapes (candidate loop + literal chain)" {
+@test "rule 9 (py-probe): fires on the unvalidated loop and EVERY literal probe shape" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-bad-9-py-probe.sh"
     [ "$status" -eq 1 ]
     [[ "$output" == *"SHELL_LINT_PY_PROBE"* ]]
-    # Both shapes must be reported, not just whichever runs first: the loop at
-    # line 11 (shape a) and the if/elif chain at line 17 (shape b).
-    [[ "$output" == *"known-bad-9-py-probe.sh:11: SHELL_LINT_PY_PROBE"* ]]
-    [[ "$output" == *"known-bad-9-py-probe.sh:17: SHELL_LINT_PY_PROBE"* ]]
+    # All four sites must be reported, not just whichever runs first: the
+    # unvalidated loop probe (shape a, line 13), the if/elif literal chain
+    # (lines 19 and 21), the single-candidate hard-require guard (line 27),
+    # and the exec-VALIDATED literal chain (line 29) — validation does not
+    # excuse a literal probe from routing through lib/resolve-py.sh
+    # (py-probe-single-candidate-residual).
+    [[ "$output" == *"known-bad-9-py-probe.sh:13: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:19: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:21: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:27: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:29: SHELL_LINT_PY_PROBE"* ]]
     [[ "$output" == *"Passed: 0  Failed: 1"* ]]
 }
 
-@test "rule 9 (py-probe): does NOT fire on exec-validated pickers nor a single-candidate guard" {
+@test "rule 9 (py-probe): does NOT fire on the exec-validated variable loop nor the blessed lib usage" {
     run bash "$LINT" --target "$FIXTURE_DIR/known-good-9-py-probe.sh"
     [ "$status" -eq 0 ]
     [[ "$output" != *"SHELL_LINT_PY_PROBE"* ]]
     [[ "$output" == *"Passed: 1  Failed: 0"* ]]
+}
+
+@test "rule 9 (py-probe): does NOT fire on lib/resolve-py.sh itself (the blessed home)" {
+    run bash "$LINT" --target "$REPO_ROOT/agents/scripts/core/lib/resolve-py.sh"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SHELL_LINT_PY_PROBE"* ]]
 }
 
 @test "rule 9 (py-probe): does NOT fire on the canonical in-tree resolver" {
