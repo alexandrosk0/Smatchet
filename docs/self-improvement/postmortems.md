@@ -178,7 +178,7 @@ defect lives in the gate machinery, not the change under review.
 Sibling hole found while auditing this one — a poller **false-block**, opposite sign, **not** an escape
 (no unsafe merge; masked on current `develop` by the 2026-06-20 self-improvement auto-exemption), so no
 postmortem is owed for it. Filed as
-[`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md)
+[`categories/tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](categories/applied.md)
 (P2, tooling) plus the stale-checkout hazard that made it visible,
 `2026-08-06 · [process] · P1 — gate tooling run from a long-lived session branch`,
 since archived as applied in [`categories/applied.md`](categories/applied.md).

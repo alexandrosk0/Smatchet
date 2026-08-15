@@ -579,8 +579,9 @@ poll_merge_gates() {
     # 19 crSizeSkipped (CR posted a "review skipped — too many files" comment) ·
     # 20 crContextPresent · 21 reqAbsentNames (", "-joined config-required
     # contexts absent from the head rollup) · 22 reqAbsentCount (their count) ·
-    # 23 crReviewSkipped (bool: CR StatusContext SUCCESS + description "Review
-    # skipped" and NOT the too-many-files size-skip — a TERMINAL generic skip) ·
+    # 23 crReviewSkipped (bool: TERMINAL generic skip — CR StatusContext SUCCESS
+    # + description "Review skipped", OR a CR comment with the structural
+    # "## Review skipped" heading; either way NOT the too-many-files size-skip) ·
     # 24 bbState (latest cursor[bot] review state on head, e.g. COMMENTED;
     # else TERMINAL = a "couldn't run"/"usage limit" conversation comment, else
     # STALE = cursor[bot] reviewed a prior commit only, else ABSENT = no
@@ -705,8 +706,11 @@ poll_merge_gates() {
         local has_cr_oob="${fields[18]}"
 
         # cr_size_skipped — true when CodeRabbit posted a PR conversation comment
-        # saying it skipped review because the PR exceeds its file limit (marker:
-        # `skip review by coderabbit.ai`). This is NOT a review object, so
+        # saying it skipped review because the PR exceeds its file limit (the
+        # generic skip marker or "## Review skipped" heading PLUS the
+        # "too many files" reason text — the marker alone is reason-agnostic and
+        # must not classify; see the $crskip comment in 10-gate-filter.sh).
+        # This is NOT a review object, so
         # reviewDecision stays NONE and cr_state computes to NONE — meaning the
         # passive NONE grace-then-pass backstop would otherwise wave a huge,
         # entirely-unreviewed PR straight through. The NONE branch below treats a
@@ -978,9 +982,13 @@ poll_merge_gates() {
                     cr_pass=true
                 elif [ "$cr_review_skipped" = "true" ]; then
                     # Generic terminal "Review skipped" — CR's StatusContext is
-                    # SUCCESS with description "Review skipped" (NOT the
+                    # SUCCESS with description "Review skipped", OR CR posted a
+                    # conversation comment with the structural "## Review
+                    # skipped" heading (CR often posts the comment while the
+                    # status description reads "Review completed", so the
+                    # comment surface is load-bearing). Either way NOT the
                     # too-many-files size-skip, which the first arm caught and
-                    # short-circuited). CR processed the PR and deliberately
+                    # short-circuited. CR processed the PR and deliberately
                     # declined an incremental review (docs-only / path-filtered /
                     # trivial diff per .coderabbit.yaml). This is TERMINAL, not
                     # pending: no inline review will ever land, so the
