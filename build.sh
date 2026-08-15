@@ -14,7 +14,9 @@
 #   ./build.sh --verify                           # build, then the delta-lint gates
 #   ./build.sh -- --version                       # args after -- go to the app
 #
-# Exit codes: pass-through from the delegate; 78 = no usable MSVC toolchain.
+# Exit codes: pass-through from the delegate; 78 = no usable MSVC toolchain
+# (the install-hint diagnosis itself keys on the wrapper's out-of-band status
+# sentinel, not on the code — a delegate that returned 78 propagates silently).
 
 set -uo pipefail
 
@@ -108,16 +110,25 @@ if [ "$HAVE_CL" -eq 1 ] || [ "$RUN_ONLY" -eq 1 ]; then
     rc=$?
 else
     echo "build.sh: no cl.exe on PATH - importing the MSVC environment via with-msvc-env.sh"
-    # with-msvc-env.sh exits 2 for "could not set up the MSVC environment", which
-    # is indistinguishable from a wrapped build that legitimately exited 2. Ask it
-    # for a distinct status so the install hints below fire only for a genuinely
-    # missing toolchain.
-    SMATCHET_MSVC_ENV_FAIL_RC=78 \
+    # The wrapper's exit code is a single shared channel: its tail is `exec`, so
+    # every code except its own setup-failure one belongs to the wrapped build.
+    # SMATCHET_MSVC_ENV_FAIL_RC=78 keeps the code outside the range cmake/ninja/
+    # ctest use, but the ambiguity is structural, not numeric — a wrapped command
+    # that ever returned 78 would still be misread. The install hints below
+    # therefore key on an OUT-OF-BAND sentinel the wrapper writes only on its own
+    # failure paths (SMATCHET_MSVC_STATUS_FILE); the exit code is pass-through.
+    # If mktemp fails the sentinel channel is simply absent (empty env var, no
+    # hints) — never a bare-root "/toolchain-missing" path a stray file could
+    # spuriously satisfy.
+    MSVC_STATUS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/smatchet-msvc-status.XXXXXX")" || MSVC_STATUS_DIR=""
+    trap 'rm -rf "$MSVC_STATUS_DIR"' EXIT
+    MSVC_STATUS_FILE="${MSVC_STATUS_DIR:+$MSVC_STATUS_DIR/toolchain-missing}"
+    SMATCHET_MSVC_ENV_FAIL_RC=78 SMATCHET_MSVC_STATUS_FILE="$MSVC_STATUS_FILE" \
         bash "$REPO_ROOT/scripts/dev/with-msvc-env.sh" "${DELEGATE[@]}"
     rc=$?
 fi
 
-if [ "$rc" -eq 78 ]; then
+if [ -n "${MSVC_STATUS_FILE:-}" ] && [ -f "$MSVC_STATUS_FILE" ]; then
     echo "" >&2
     echo "build.sh: no usable MSVC toolchain found." >&2
     echo "  Install Visual Studio Build Tools with the C++ workload:" >&2
