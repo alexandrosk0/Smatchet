@@ -14,22 +14,25 @@
 #   of guessing at intent from regexes.
 #
 # CONTRACT — resolve_py
-#   Prints the first WORKING python interpreter (resolved path) to stdout and
-#   returns 0, or prints nothing and returns 1 when no candidate both resolves
-#   AND executes. Candidates, in order: python3, python, py. Callers decide
-#   their own degrade contract:
+#   Prints the first WORKING Python 3 interpreter (ABSOLUTE path) to stdout and
+#   returns 0, or prints nothing and returns 1 when no candidate resolves,
+#   executes, AND is Python 3. Candidates, in order: python3, python, py.
+#   Callers decide their own degrade contract:
 #     * hard-require:  PY="$(resolve_py)" || { echo "python required" >&2; exit 2; }
 #     * skip-if-absent: PY="$(resolve_py || true)"; [ -n "$PY" ] || skip
 #   Every downstream invocation must use "$PY", never a bare `python3`.
 #
+#   Python 3 is part of the validation (CR #2019 round 1): a lingering Python 2
+#   `python` must not win the fallback — callers run py3-only code
+#   (`open(..., encoding=…)`, f-strings), so a py2 pick trades the loud
+#   stub-failure this lib exists to prevent for a quieter mid-script one.
+#   The printed path is made ABSOLUTE (same round): `command -v` echoes a
+#   relative path for a relative PATH entry, which breaks the first caller
+#   that cd's between resolving and invoking.
+#
 #   SMATCHET_RESOLVE_PY_FORCE_NONE=1 forces the "no working python" branch —
 #   a test seam so no-python degrade paths are testable in an environment that
 #   DOES have python (mirrors SMATCHET_PRESHIP_FORCE_NO_PY in review-ack.sh).
-#
-#   NOTE resolve_py answers "does a python RUN here", not "which version" — a
-#   caller that needs Python 3 specifically (e.g. a #!/usr/bin/env python3
-#   module that must not meet a lingering py2) still owns its version check:
-#       "$PY" -c 'import sys; sys.exit(0 if sys.version_info[0] >= 3 else 1)'
 #
 # This file is sourced; it defines one function and does NOT `set -e`
 # (the sourcing script owns shell options).
@@ -41,7 +44,12 @@ resolve_py() {
     local _rp_cand _rp_path
     for _rp_cand in python3 python py; do
         _rp_path="$(command -v "$_rp_cand" 2>/dev/null)" || continue
-        if "$_rp_path" -c "" >/dev/null 2>&1; then
+        if "$_rp_path" -c 'import sys; raise SystemExit(0 if sys.version_info[0] >= 3 else 1)' \
+            >/dev/null 2>&1; then
+            case "$_rp_path" in
+                /*|[A-Za-z]:[/\\]*) ;;   # already absolute (POSIX or Windows drive)
+                *) _rp_path="$(cd "$(dirname "$_rp_path")" 2>/dev/null && pwd)/$(basename "$_rp_path")" || continue ;;
+            esac
             printf '%s\n' "$_rp_path"
             return 0
         fi

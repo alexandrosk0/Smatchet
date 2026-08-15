@@ -199,17 +199,19 @@ setup() {
     run bash "$LINT" --target "$FIXTURE_DIR/known-bad-9-py-probe.sh"
     [ "$status" -eq 1 ]
     [[ "$output" == *"SHELL_LINT_PY_PROBE"* ]]
-    # All four sites must be reported, not just whichever runs first: the
-    # unvalidated loop probe (shape a, line 13), the if/elif literal chain
-    # (lines 19 and 21), the single-candidate hard-require guard (line 27),
-    # and the exec-VALIDATED literal chain (line 29) — validation does not
-    # excuse a literal probe from routing through lib/resolve-py.sh
-    # (py-probe-single-candidate-residual).
-    [[ "$output" == *"known-bad-9-py-probe.sh:13: SHELL_LINT_PY_PROBE"* ]]
-    [[ "$output" == *"known-bad-9-py-probe.sh:19: SHELL_LINT_PY_PROBE"* ]]
-    [[ "$output" == *"known-bad-9-py-probe.sh:21: SHELL_LINT_PY_PROBE"* ]]
-    [[ "$output" == *"known-bad-9-py-probe.sh:27: SHELL_LINT_PY_PROBE"* ]]
-    [[ "$output" == *"known-bad-9-py-probe.sh:29: SHELL_LINT_PY_PROBE"* ]]
+    # All the sites must be reported, not just whichever runs first: the
+    # unvalidated loop probe (shape a, line 14), the if/elif literal chain
+    # (lines 20 and 22), the single-candidate hard-require guard (line 28),
+    # the exec-VALIDATED literal chain (line 30) — validation does not excuse
+    # a literal probe from routing through lib/resolve-py.sh — and the
+    # SINGLE-QUOTED literal probe (line 34; CR #2019: `command -v 'python3'`
+    # must not slip past the quote handling).
+    [[ "$output" == *"known-bad-9-py-probe.sh:14: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:20: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:22: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:28: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:30: SHELL_LINT_PY_PROBE"* ]]
+    [[ "$output" == *"known-bad-9-py-probe.sh:34: SHELL_LINT_PY_PROBE"* ]]
     [[ "$output" == *"Passed: 0  Failed: 1"* ]]
 }
 

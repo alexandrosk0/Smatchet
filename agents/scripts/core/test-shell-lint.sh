@@ -485,7 +485,7 @@ check_py_probe() {
     while IFS=: read -r lno _content; do
         emit "$script" "$lno" "SHELL_LINT_PY_PROBE" \
             "literal python probe outside lib/resolve-py.sh: source agents/scripts/core/lib/resolve-py.sh, resolve once via PY=\"\$(resolve_py)\" (exec-validating — on Windows python3 is the Store alias stub), and invoke \"\$PY\" downstream"
-    done < <(grep -nE "${probe}[[:space:]]+\"?${PY_NAME_RE}\"?([[:space:]]|\)|;|\"|$)" <<<"$nc" || true)
+    done < <(grep -nE "${probe}[[:space:]]+['\"]?${PY_NAME_RE}['\"]?([[:space:]]|\)|;|\"|'|$)" <<<"$nc" || true)
 }
 
 PASSED=0
