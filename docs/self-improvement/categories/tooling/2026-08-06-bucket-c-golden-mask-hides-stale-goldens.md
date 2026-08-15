@@ -87,6 +87,19 @@
   lane-integrity stayed green and the mask swallowed all seven — exactly the
   silent rot described above, now visible on every run.
 
+  **Reporting must not be able to block either** (CodeRabbit round 1 on #2023,
+  both findings accepted). `if-no-files-found: ignore` covers only an *absent*
+  file, so a genuine `upload-artifact` error (timeout, blob-storage 5xx) would
+  have redded this advisory lane *after* lane-integrity already passed — the
+  blocking power the design explicitly disclaims, reintroduced through the
+  publication path. Every pure-reporting step in the lane now carries
+  `continue-on-error: true` (the verdict report and its upload, plus the
+  pre-existing capture-PNG and child-log uploads, which had the same flaw), so
+  lane-integrity is the lane's only teeth by construction rather than by luck.
+  The lane's checkout also takes `persist-credentials: false`: it runs
+  branch-controlled code and needs only local `git log` reads, never an
+  authenticated fetch or push (zizmor `artipacked`).
+
   The rule generalises in
   [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
   masks: *a mask may suppress blocking, never reporting* — the property the other

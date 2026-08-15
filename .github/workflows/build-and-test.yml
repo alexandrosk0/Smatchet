@@ -1008,6 +1008,11 @@ jobs:
           # months-old golden as 0 days old, the fresh-looking lie the report
           # exists to kill. Three other jobs already take this cost.
           fetch-depth: 0
+          # This job runs branch-controlled code (the driver + the exe artefact)
+          # and needs only local `git log` reads — never an authenticated fetch
+          # or push — so it keeps no checkout credentials around for that code to
+          # reach (zizmor `artipacked`).
+          persist-credentials: false
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1091,6 +1096,10 @@ jobs:
       # while never failing the job itself (`|| true` on every branch + always()).
       - name: Report bucket-C golden verdicts (advisory)
         if: always()
+        # Belt-and-braces: the body already exits 0 on every branch, but the
+        # no-blocking-power property should hold structurally, not only because
+        # the shell logic is correct.
+        continue-on-error: true
         shell: bash
         env:
           REPORT: ${{ github.workspace }}/build/tmp/bucket-c-golden-report.tsv
@@ -1123,6 +1132,11 @@ jobs:
 
       - name: Upload bucket-C golden verdict report
         if: always()
+        # Reporting must never gain blocking power: `if-no-files-found: ignore`
+        # only covers an ABSENT file, so a genuine upload error (timeout, blob
+        # storage 5xx) would still red this advisory lane after lane-integrity
+        # already passed. continue-on-error keeps the artefact best-effort.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-golden-report-${{ github.run_id }}
@@ -1166,6 +1180,9 @@ jobs:
 
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
+        # Same rule as the verdict-report upload: a pure-reporting step in this
+        # advisory lane must not be able to red it on a transient upload error.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-captures-${{ github.run_id }}
@@ -1175,6 +1192,9 @@ jobs:
 
       - name: Upload bucket-C spawned-child log
         if: always()
+        # Same rule as the verdict-report upload: a pure-reporting step in this
+        # advisory lane must not be able to red it on a transient upload error.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-childlog-${{ github.run_id }}
