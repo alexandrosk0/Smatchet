@@ -26,6 +26,11 @@
           },
           {
             "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge",
+            "timeout": 10000
+          },
+          {
+            "type": "command",
             "command": "bash \"$CLAUDE_PROJECT_DIR/agents/scripts/core/cost-ceiling-nudge.sh\"",
             "timeout": 5000
           },
