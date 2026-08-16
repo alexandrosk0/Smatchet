@@ -72,7 +72,14 @@ fetch_rows() {
         return 0
     fi
     command -v gh >/dev/null 2>&1 || return 0
-    gh pr list --state open --limit 100 \
+    # Bounded: SessionStart is bounded by the harness (Claude 10s, Codex 60s),
+    # but a direct `--list` / CI / cron caller has no such ceiling, and a stalled
+    # network makes `gh` hang rather than fail. `timeout` is not universal
+    # (absent on some macOS setups), so it is used only when present.
+    local tmo="${SMATCHET_UNWATCHED_PR_GH_TIMEOUT:-8}"
+    local runner=()
+    command -v timeout >/dev/null 2>&1 && runner=(timeout "$tmo")
+    "${runner[@]}" gh pr list --state open --limit 100 \
         --json number,headRefName,updatedAt,isDraft \
         --jq '.[] | [(.number|tostring), .headRefName, .updatedAt, (.isDraft|tostring)] | @tsv' \
         2>/dev/null || true
@@ -103,9 +110,16 @@ except re.error: sys.exit(0)
 
 now_s = os.environ.get("SMATCHET_UNWATCHED_PR_NOW", "").strip()
 def parse(ts):
+    # An offset-less value parses to a NAIVE datetime, and .timestamp() then
+    # reads it as LOCAL time — skewing quiet-time by the machine's UTC offset.
+    # gh always emits `Z`, so the production path never hits this; a
+    # hand-set SMATCHET_UNWATCHED_PR_NOW like `2026-08-16T12:00:00` does.
     ts = (ts or "").strip().replace("Z", "+00:00")
-    try: return datetime.fromisoformat(ts).timestamp()
+    try: dt = datetime.fromisoformat(ts)
     except ValueError: return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
 now = parse(now_s) if now_s else time.time()
 if now is None: sys.exit(0)
 
@@ -131,7 +145,9 @@ PY
 
 run_selftest() {
     local tmp rc=0 out
-    tmp="$(mktemp)"; trap 'rm -f "$tmp"' RETURN
+    tmp="$(mktemp 2>/dev/null)" || return 0
+    [ -n "$tmp" ] || return 0
+    trap 'rm -f "$tmp"' RETURN
     export SMATCHET_UNWATCHED_PR_NOW="2026-08-16T12:00:00Z"
     export SMATCHET_UNWATCHED_PR_STALE_SECONDS=7200
     unset SMATCHET_UNWATCHED_PR_BRANCH_RE
@@ -183,16 +199,27 @@ if [ "$MODE" = "selftest" ]; then
     run_selftest; exit $?
 fi
 
-rows_file="$(mktemp)"; trap 'rm -f "$rows_file"' EXIT
+# An unchecked mktemp leaves rows_file empty, and the redirection below then
+# fails LOUDLY to stderr — straight into SessionStart output, which is exactly
+# the silence this script promises. Exit quietly instead.
+rows_file="$(mktemp 2>/dev/null)" || exit 0
+[ -n "$rows_file" ] || exit 0
+trap 'rm -f "$rows_file"' EXIT
 fetch_rows > "$rows_file"
 [ -s "$rows_file" ] || exit 0
 stale="$(detect "$rows_file")" || exit 0
 [ -n "$stale" ] || exit 0
 
+# The threshold is operator-configurable, so integer hours would render every
+# sub-hour report as `quiet 0h` — losing the one number the line exists to carry.
+fmt_quiet() {
+    if [ "$1" -ge 3600 ]; then printf '%dh' "$(( $1 / 3600 ))"; else printf '%dm' "$(( $1 / 60 ))"; fi
+}
+
 if [ "$MODE" = "list" ]; then
     while IFS=$'\t' read -r num branch quiet; do
         [ -n "$num" ] || continue
-        printf 'stale: PR #%s — %s quiet %dh\n' "$num" "$branch" "$(( quiet / 3600 ))"
+        printf 'stale: PR #%s — %s quiet %s\n' "$num" "$branch" "$(fmt_quiet "$quiet")"
     done <<< "$stale"
     exit 0
 fi
@@ -200,7 +227,7 @@ fi
 echo "🔔 === open agent PR with no recent activity ==="
 while IFS=$'\t' read -r num branch quiet; do
     [ -n "$num" ] || continue
-    printf '  PR #%s (%s) has been quiet for %dh.\n' "$num" "$branch" "$(( quiet / 3600 ))"
+    printf '  PR #%s (%s) has been quiet for %s.\n' "$num" "$branch" "$(fmt_quiet "$quiet")"
 done <<< "$stale"
 cat <<'EOS'
   A scheduled check-in that fires while the container is suspended is recorded

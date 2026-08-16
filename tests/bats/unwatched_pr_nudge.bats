@@ -26,6 +26,10 @@ setup() {
     export SMATCHET_UNWATCHED_PR_FIXTURE="$FIX"
     export SMATCHET_UNWATCHED_PR_NOW="2026-08-16T12:00:00Z"
     export SMATCHET_UNWATCHED_PR_STALE_SECONDS=7200
+    # An inherited branch filter would silently change what the agent-branch and
+    # human-branch cases below actually assert — run_selftest unsets it for the
+    # same reason.
+    unset SMATCHET_UNWATCHED_PR_BRANCH_RE
     # A working interpreter is required; skip cleanly when absent (mirrors the
     # other suites — the script itself degrades silent, which would make every
     # assertion here vacuous rather than failing).
@@ -146,6 +150,25 @@ row() { printf '%s\t%s\t%s\t%s\n' "$1" "$2" "$3" "$4" >> "$FIX"; }
     [ "$status" -eq 0 ]
     [[ "$output" == *"PR #2028"* ]]
     [[ "$output" != *"2105"* ]]
+}
+
+# The threshold is operator-configurable, so a sub-hour quiet time must not
+# render as `quiet 0h` — that drops the only number the line carries.
+@test "a sub-hour quiet time reports minutes, not 0h" {
+    row 2106 claude/x 2026-08-16T11:30:00Z false
+    SMATCHET_UNWATCHED_PR_STALE_SECONDS=600 run bash "$NUDGE" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"quiet 30m"* ]]
+    [[ "$output" != *"quiet 0h"* ]]
+}
+
+# An offset-less NOW parses to a naive datetime, and .timestamp() would read it
+# as LOCAL time — so this asserts the same verdict under a non-UTC TZ.
+@test "an offset-less NOW is read as UTC, not local time" {
+    row 2107 claude/x 2026-08-16T00:30:00Z false
+    SMATCHET_UNWATCHED_PR_NOW="2026-08-16T12:00:00" TZ="Asia/Tokyo" run bash "$NUDGE" --list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"stale: PR #2107 — claude/x quiet 11h"* ]]
 }
 
 @test "an unknown argument is an infra error, not a silent full run" {
