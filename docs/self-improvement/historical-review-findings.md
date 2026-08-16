@@ -588,9 +588,21 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   persisted workflow over the full `(1174, 1322]` work-list (recipe below; ~123 PRs ≈
   6–7M tokens) and append as Batch 13.
 - **Resume instructions (for PRs merged after #1174):**
-  1. List the new batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number > 1174) | .number] | sort |
-     reverse'` (raise the `> 1174` bound as the marker advances).
+  1. **Build the work-list with the gate, not by hand** —
+     `bash agents/scripts/core/historical-review-worklist.sh --range <lo> <hi> [--merged-list <file>]`.
+     It emits `{pr, sha}` units on stdout and a computed coverage triple on stderr,
+     cross-validating GitHub's merged set against the develop-log `(#N)` scrape and
+     **failing loudly** when they disagree or when no authority is available. Do NOT
+     go back to a bare `gh pr list` + subject scrape: the scrape cannot see a PR
+     merged with a merge commit, which is how Batch 20 lost 7 PRs while reporting a
+     contiguous frontier, and how Batch 13 nearly lost 4
+     (`categories/tooling/2026-08-16-historical-review-worklist-misses-merge-commit-prs.md`).
+     In a `gh`-less session (every remote session) pass `--merged-list <file>` built
+     from `list_pull_requests(base=develop, state=closed)` filtered on a non-null
+     `merged_at` — the script refuses to emit a scrape-only list rather than
+     silently understating coverage. Merge shas are expanded to one unit per
+     constituent automatically (blame never attributes to a merge commit, so the
+     merge sha alone yields a falsely-clean `FULLY SUPERSEDED`).
   2. Run the persisted workflow, passing the batch as `args`:
      `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
      Pass a JSON array — but note this harness delivers `args` to the script as a

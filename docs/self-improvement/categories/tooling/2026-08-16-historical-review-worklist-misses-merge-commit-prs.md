@@ -56,5 +56,20 @@
   Batch 16 § the #1593 per-constituent special; Batch 20 header (the incorrect
   contiguity claim); the #1987 review-ref bug, the other case where the extractor
   degraded silently rather than failing loudly.
-  Status: open
+  Status: partially applied (2026-08-16 — shipped: parts (1) + (2). New gate
+    [`historical-review-worklist.sh`](../../../../agents/scripts/core/historical-review-worklist.sh)
+    builds the work-list from the GitHub merged set cross-validated against the
+    develop-log scrape, **refuses to emit a scrape-only list** when no authority is
+    available (`gh` absent and no `--merged-list`), reports any PR the scrape missed,
+    fails loudly on a merged PR with no resolvable commit, and expands merge shas to
+    per-constituent units. Validated by replaying the motivating bug against the real
+    range: `--range 1878 1940` reports `authoritative 60 / scrape 53 / MISSED 1883
+    1919 1920 1921 1923 1927 1932 / coverage 60/60 -> 64 units`, independently
+    reconstructing the hand-built Batch 20-REDO work-list. `--selftest` carries 3 e2e
+    fixtures, two of them asserts-failure (no-authority must exit 2; an unresolvable
+    merged PR must exit 2). Wired into § Sweep status resume instructions and used to
+    build Batch 22. **Remaining: part (3)** — have the sweep workflow itself return
+    the coverage triple so a batch header quotes the computed number instead of
+    re-asserting one; today the gate prints it to stderr and the orchestrator
+    transcribes it.)
   Last-reviewed: 2026-08-16
