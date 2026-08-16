@@ -365,6 +365,114 @@ else:
 # but stops at whitespace (defensive against malformed links).
 LINK_RE = re.compile(r'(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)')
 
+# An inline code span: a run of N backticks, content, then the SAME run. Prose
+# that quotes link syntax inside a span is literal, not a navigable link, so the
+# span must come out of the line BEFORE LINK_RE sees it — otherwise a doc that
+# needs to discuss link syntax is reported as carrying a dangling link (the
+# false-positive half of tooling 2026-08-07).
+_CODE_SPAN_RE = re.compile(r"(?<!`)(`+)(?!`)(.+?)(?<!`)\1(?!`)")
+
+
+def strip_code_spans(line):
+    """(line_with_spans_blanked, [(span_text, end_offset), ...]).
+
+    Spans are replaced by an equal run of SPACES rather than deleted, so column
+    offsets stay truthful and two halves of a line can never be glued into a
+    link shape that the author did not write."""
+    spans = []
+
+    def _blank(m):
+        spans.append((m.group(2), m.end()))
+        return " " * len(m.group(0))
+
+    return _CODE_SPAN_RE.sub(_blank, line), spans
+
+
+# A code span that LOOKS like a repo path: a known top-level dir, then a path
+# with a file extension. Anchored and space-free so prose in a span never
+# matches; an optional `:NNN[:NNN]` line-anchor suffix is tolerated because
+# backlog entries cite file:line constantly.
+_REPO_PATH_SPAN_RE = re.compile(
+    r"^(?:scripts|Source|docs|agents|tests|tools)/"
+    r"[A-Za-z0-9._/-]*\.[A-Za-z0-9]+(?::\d+(?::\d+)?)?$"
+)
+# The code-span path rule is scoped to the backlog: an entry is read months
+# later by someone who will act on it, and its whole value is that the cited
+# path is real. `applied.md` is exempt — it is the ARCHIVE of entries already
+# actioned, so a path that has since moved or been deleted is expected there and
+# nobody is going to act on it. Warning on it produced ~100 rows of pure noise
+# that would drown the live signal.
+CODE_SPAN_SCOPE = "docs/self-improvement/categories/"
+CODE_SPAN_EXEMPT_BASENAMES = ("applied.md",)
+
+# A backlog entry's PROPOSAL block names files it exists to CREATE — "Concrete
+# next action: add a `scripts/dev/install-security-tools.sh`". Those paths are
+# absent by design, and they are the single most common repo-path code span in
+# the backlog: on the first real run they were 8 of 12 warnings. Warning on them
+# would train readers to ignore the rule, which is the same failure the
+# applied.md exemption avoids. The block is structural, not a verb guess: it
+# opens at one of these labels...
+_PROPOSAL_OPEN_RE = re.compile(r"^\s*-?\s*(?:Concrete next action|Proposed)\b.*?:")
+# ...and closes at the next sibling label, or at the next entry header (`- YYYY-
+# MM-DD ...` at column 0). Sub-bullets inside a proposal must NOT close it, so a
+# bare `- ` is deliberately not a terminator.
+_PROPOSAL_CLOSE_RE = re.compile(
+    r"^(?:\s{0,3}(?:Status|Last-reviewed|Cross-ref|Details|Related|Mechanics)\b.*?:"
+    r"|- \d{4}-\d{2}-\d{2}\b)"
+)
+
+
+def _develop_tree():
+    """Repo-relative paths tracked at origin/develop, or None when that ref is
+    unavailable (shallow clone / fresh fork). None means 'cannot answer', and
+    the caller must then stay silent rather than warn on every path."""
+    try:
+        out = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "origin/develop"],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return {ln.strip() for ln in out.splitlines() if ln.strip()}
+
+
+def _added_lines(rel_path):
+    """Line numbers ADDED/MODIFIED vs origin/develop for rel_path, or None for
+    'every line' (untracked file, or git unavailable). Delta-scoping keeps the
+    existing backlog from having to be clean on day one — only what a change
+    actually writes is held to the rule."""
+    # An UNTRACKED file has no baseline, so `git diff` reports no hunks for it —
+    # indistinguishable from "tracked and unchanged" by hunk count alone. Ask git
+    # directly, or a brand-new backlog entry (the common case for this rule)
+    # would be scoped to zero lines and checked not at all.
+    try:
+        subprocess.run(["git", "ls-files", "--error-unmatch", "--", rel_path],
+                       capture_output=True, text=True, check=True)
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    added = set()
+    saw_git = False
+    for args in (["git", "diff", "-U0", "origin/develop...HEAD", "--", rel_path],
+                 ["git", "diff", "-U0", "HEAD", "--", rel_path]):
+        try:
+            out = subprocess.run(args, capture_output=True, text=True, check=True).stdout
+        except (subprocess.CalledProcessError, OSError):
+            continue
+        saw_git = True
+        for ln in out.splitlines():
+            m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", ln)
+            if m:
+                start = int(m.group(1))
+                count = 1 if m.group(2) is None else int(m.group(2))
+                added.update(range(start, start + count))
+    if not saw_git:
+        return None
+    # A tracked-but-unchanged file yields an empty set (nothing to check); an
+    # untracked file yields empty too, but there git reported no hunks because
+    # it has no baseline — so treat a file git does not track as all-lines.
+    return added
+
+
 # Match a tier-LESS plan path `docs/plans/<slug>.md` (no active/shipped/deferred
 # segment) anywhere in the repo-relative resolved target.
 _TIERLESS_PLAN_RE = re.compile(r"(?:^|/)docs/plans/([A-Za-z0-9._-]+\.md)$")
@@ -387,12 +495,24 @@ def plan_tierless_resolves(target):
 
 
 violations = []
+span_warnings = []
+_develop_cache = []  # lazily filled once; [] = not yet looked up
 checked = 0
 for path in TARGETS:
+    rel_src_path = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
+    span_scope = (rel_src_path.startswith(CODE_SPAN_SCOPE)
+                  and os.path.basename(rel_src_path) not in CODE_SPAN_EXEMPT_BASENAMES)
+    span_lines = _added_lines(rel_src_path) if (span_scope and SCOPE == "diff") else None
+    in_proposal = False
     try:
         with open(path, encoding="utf-8") as fh:
             in_fence = False
             for lineno, line in enumerate(fh, 1):
+                if span_scope:
+                    if _PROPOSAL_CLOSE_RE.match(line):
+                        in_proposal = False
+                    if _PROPOSAL_OPEN_RE.match(line):
+                        in_proposal = True
                 stripped = line.lstrip()
                 # Skip fenced code blocks (``` / ~~~): a link inside a fence is
                 # illustrative/literal (e.g. example paths in a doc template),
@@ -402,6 +522,46 @@ for path in TARGETS:
                     continue
                 if in_fence:
                     continue
+                line, code_spans = strip_code_spans(line)
+                # WARN-first: a repo path cited in a backlog code span must
+                # resolve. Checked at HEAD (the worktree) FIRST, falling back to
+                # origin/develop — checking only develop would false-warn on
+                # every path the same PR adds, which is the common case, while
+                # checking only HEAD would miss the failure this rule exists for
+                # (a path that lives on some other feature branch).
+                if span_scope and not in_proposal and (span_lines is None or lineno in span_lines):
+                    for span_text, span_end in code_spans:
+                        cand = span_text.strip()
+                        if not _REPO_PATH_SPAN_RE.match(cand):
+                            continue
+                        # `Source/Core/.../Commands/Foo.h` is an ELIDED path —
+                        # prose shorthand for "somewhere under", never a literal
+                        # file. It can't resolve and was never meant to.
+                        if "..." in cand:
+                            continue
+                        # Skip a link LABEL span — `[`docs/x.md`](docs/x.md)` —
+                        # the href half is already checked as a real link, and
+                        # reporting both would double-count one mistake.
+                        if line[span_end:span_end + 2] == "](":
+                            continue
+                        bare = re.sub(r":\d+(?::\d+)?$", "", cand)
+                        if os.path.exists(os.path.join(REPO_ROOT, bare)):
+                            continue
+                        # A tier-less `docs/plans/<slug>.md` resolves when the
+                        # slug exists in any tier — same rule the link checker
+                        # already applies, so a plan moving active -> shipped
+                        # does not turn every citation of it into a warning.
+                        if plan_tierless_resolves(os.path.join(REPO_ROOT, bare)):
+                            continue
+                        if not _develop_cache:
+                            _develop_cache.append(_develop_tree())
+                        tracked = _develop_cache[0]
+                        # Unknown develop (shallow clone / fresh fork) means we
+                        # cannot answer — stay silent rather than warn on every
+                        # path in the file.
+                        if tracked is None or bare in tracked:
+                            continue
+                        span_warnings.append((rel_src_path, lineno, cand))
                 for m in LINK_RE.finditer(line):
                     href = m.group(1)
                     # Skip absolute / external / anchor-only / mailto.
@@ -461,6 +621,15 @@ if SCOPE == "all":
     if stale:
         print(f"NOTE: {len(stale)} baselined link(s) already fixed — re-run --baseline to shrink "
               f"the grandfather set: " + ", ".join(f"{s}::{h}" for s, h in stale), file=sys.stderr)
+
+# WARN-first and deliberately NOT part of the exit code: a reference to a path on
+# another unmerged branch is legitimate, and that entry should then carry the
+# "not on develop yet" caveat in prose — which is exactly the review this warning
+# prompts (tooling 2026-08-07).
+for src, lineno, cand in span_warnings:
+    print(f"{src}:{lineno}: WARN: code-span path '{cand}' resolves neither in the worktree "
+          f"nor at origin/develop — fix it, or note in prose that it is not on develop yet.",
+          file=sys.stderr)
 
 passed = checked - (1 if reportable else 0)
 failed = 1 if reportable else 0

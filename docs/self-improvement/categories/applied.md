@@ -5533,3 +5533,70 @@ needs its risky work step-scoped.
   Related: the same file's `--diff` mode graduated `duplication` from WARN to
   **BLOCKING** on 2026-06-21, which `AGENTS.md` and `agents/core/code-review.md`
   still describe as WARN-first calibration — see the sibling entry.
+
+- 2026-08-07 · claude-code · [tooling] · P2 — repo paths written as inline code spans in backlog entries are never checked, so a backlog entry can cite a file that does not exist
+
+  [`agents/scripts/core/test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh)
+  resolves markdown **links** — its `LINK_RE` matches only the bracketed-label-then-parenthesised-
+  href form. A repo path written as a bare code span
+  — `` `scripts/dev/test-ui-window-expand.sh` `` — is invisible to it. In this session I wrote a
+  [tooling] entry whose entire proposal was anchored on such a path, and the file does not exist
+  on `develop` (it lives only on a feature branch). The docs gate went green. A `code-review`
+  pass caught it as a Critical; nothing mechanical would have.
+
+  This matters more in `docs/self-improvement/categories/**` than elsewhere: a backlog entry is
+  read months later by someone who will act on it, and its whole value is that the cited
+  file:line is real. A stale entry there wastes the reader's time in exactly the way the backlog
+  exists to avoid.
+
+  Proposed: extend the markdown-link checker (or add a sibling) with a **WARN-first** rule scoped
+  to `docs/self-improvement/categories/**` — for each inline code span that looks like a repo path
+  (leading `scripts/`, `Source/`, `docs/`, `agents/`, `tests/`, `tools/` plus a file extension),
+  assert it resolves — **at `HEAD` first, falling back to `origin/develop`**. Checking only
+  `origin/develop` would false-warn on every path added by the same PR that adds the entry, which
+  is the common case; checking only `HEAD` would miss the failure this entry exists for. WARN-first
+  because a *deliberate* reference to a path on some other unmerged branch is legitimate; that
+  entry should then carry the "not on `develop` yet" caveat in prose, which is exactly the review
+  the warning prompts.
+
+  Same delta-gate shape as the other doc gates: only newly-added or modified lines, so the whole
+  existing backlog does not have to be clean on day one.
+
+  The blindness cuts both ways, and this entry tripped the other edge while being written: prose
+  quoting the *shape* of a markdown link inside a code span is read by the checker as a real link
+  and reported as a dangling one. So the same fix — teach the tokenizer about inline code spans —
+  removes a false negative (paths in spans never checked) and a false positive (link-shaped spans
+  checked as if they were links). Until then, a doc that needs to discuss link syntax has to
+  describe it in words, which is why the sentence above does.
+
+- 2026-08-16 · orchestrator · [process] · P2 — a review finding was fixed at the flagged line instead of swept as a class, so ONE wrong statement cost THREE review rounds (PR #2023 rounds 4, 5, 6) — the class-sweep rule exists for exactly this and was not applied to review findings
+  Details: PR #2023 changed bootstrap's reporting contract, which made the
+    long-standing claim "Bootstrap runs always PASS" false. CodeRabbit flagged it
+    three times, each at a wider scope, because each fix was applied only where
+    the reviewer pointed: round 4 = the driver's file header; round 5 = the inline
+    `# Bootstrap mode: ... No diff, always PASS.` comment 300 lines below it (plus
+    the auto-bootstrap "soft PASS" comment and the exit-code table, swept only
+    once round 5 forced a file-wide look); round 6 = the SAME claim in
+    `tests/bats/bucket_lane_launch_smoke.bats`'s header, because round 5's sweep
+    was scoped to the driver file rather than to every file in the diff. Each
+    round costs a full CodeRabbit cycle — on an OSS repo that is a rate-limited,
+    ~25-55 min wait plus a re-stamp of the verdict and a PR-body edit, so this
+    single stale sentence consumed roughly an hour of wall-clock and three of the
+    PR's seven review rounds. The repo ALREADY has this rule for a different
+    trigger: `process-rules.md` § fabricated-quote class-sweep says that on a
+    fabricated/incorrect quote you grep the class across the tree rather than
+    fixing the cited line. Nothing said to apply the same move to a REVIEW
+    FINDING, and the finding's own framing ("Line 322 says X") invites the
+    narrow fix.
+  Concrete next action: add a short rule to
+    [`process-rules.md`](../../agent-rules/process-rules.md) § Cadence and
+    verification — *when a review finding reports a stale/incorrect STATEMENT
+    (comment, doc line, header claim), fix the class, not the instance: grep the
+    offending phrase across every file in the PR diff (`git diff --name-only
+    <base>...HEAD`) before replying, and state in the reply that the sweep was
+    diff-wide.* Cheap and mechanical; it generalises the existing
+    fabricated-quote rule from "quotes" to "any statement a reviewer proves
+    wrong". Optional follow-on if it recurs: a `pre-ship.sh` helper that takes a
+    phrase and greps it across the diff's files, so the sweep is one command.
+  Status: applied (flipped at archival)
+  Last-reviewed: 2026-08-16
