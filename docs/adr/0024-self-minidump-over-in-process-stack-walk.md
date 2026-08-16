@@ -2,11 +2,13 @@
 
 # Status
 
-**Accepted (2026-08-16).** Emerged from the `grill-with-docs` pass on [`docs/plans/autonomous-debug-live-evidence.md`](../plans/active/autonomous-debug-live-evidence.md), which originally specified the rejected option.
+**Accepted (2026-08-16).** Emerged from the `grill-with-docs` pass on [`docs/plans/autonomous-debug-live-evidence.md`](../plans/autonomous-debug-live-evidence.md), which originally specified the rejected option.
+
+**Amendment (2026-08-16, at implementation).** The decision below stands unchanged — self-minidump over in-process stack walking, Win32 confined to `Source/Standalone`. Only the *publication mechanism* differs from what § Decision describes: the provider ships as a dedicated `Source/Core/include/Diagnostics/SelfDump.h` seam rather than a `HostCallbacks` entry. `HostCallbacks`' own header documents its contract as "consumers read on the UI thread", and `debug.dump_self` is read from whichever thread serves the command — deliberately, so it still answers while the UI thread is wedged. Rather than silently widen a documented contract, the provider got its own atomic-backed seam shaped like the neighbouring `CrashSink` free-function API.
 
 # Context
 
-`debug.thread_dump` has always been a stub returning `hardwareConcurrency` and a note (`Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp:103-117`), on the stated reasoning that OS-specific code does not belong in `Source/Core`. The consequence is that a process which wedges *without crashing* produces no evidence at all — the minidump pipeline only fires on a crash. That is not hypothetical: `docs/self-improvement/categories/infra/2026-07-05-texture-guard-llvmpipe-spawn-hang.md` is an open P2 deterministic deadlock whose concrete next action is "capture the hung child's stack", and [`ui-freeze-pillar2-blocking.md`](../plans/shipped/ui-freeze-pillar2-blocking.md) tracks seven more hang-class issues.
+`debug.thread_dump` has always been a stub returning `hardwareConcurrency` and a note (`Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp:103-117`), on the stated reasoning that OS-specific code does not belong in `Source/Core`. The consequence is that a process which wedges *without crashing* produces no evidence at all — the minidump pipeline only fires on a crash. That is not hypothetical: `docs/self-improvement/categories/infra/2026-07-05-texture-guard-llvmpipe-spawn-hang.md` is an open P2 deterministic deadlock whose concrete next action is "capture the hung child's stack", and [`ui-freeze-pillar2-blocking.md`](../plans/ui-freeze-pillar2-blocking.md) tracks seven more hang-class issues.
 
 The obvious implementation — `SuspendThread` + `StackWalk64` in the command handler, returning inline JSON frames — turns out to be the expensive one, for a reason that is invisible from the command TU itself.
 

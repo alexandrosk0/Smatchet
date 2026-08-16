@@ -1,11 +1,14 @@
 #include "SmatchetCrashHandler.h"
 
 #include "Diagnostics/CrashSink.h"
+#include "Diagnostics/SelfDump.h"
 
 #include <atomic>
 #include <csignal>
 #include <cstdlib>
 #include <exception>
+#include <mutex>
+#include <string>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -38,6 +41,16 @@ const DWORD kSyntheticTerminateException = 0xE0535343; // 0xE0000000 | 'SCS'
 
 // Whether a dump's exception record was OS-supplied (real SEH) vs app-synthesized (terminate/signal).
 enum class DumpExceptionOrigin { Real, Synthetic };
+
+// The dump TYPE is the security-relevant decision, and it is the one thing the crash
+// path and the on-demand self-dump path below MUST agree on — everything else about
+// them legitimately differs. Named once so neither writer can drift: the richer scopes
+// (MiniDumpWithIndirectlyReferencedMemory / MiniDumpScanMemory) walk the stack for
+// pointers and pull the referenced heap in, which sweeps in-memory secrets (config API
+// tokens, GitHub PAT, MCP auth token, AI keys held in std::string) into a .dmp that the
+// bug reporter auto-attaches to an off-host report. See the audit note at the
+// MiniDumpWriteDump call below.
+const MINIDUMP_TYPE kSmatchetDumpType = MiniDumpNormal;
 
 // `realExPtrs` is the OS-supplied EXCEPTION_POINTERS (SEH path) or null. `origin` records whether
 // the record is OS-supplied or app-synthesized so the first-rich-dump-wins arbitration treats a
@@ -102,8 +115,7 @@ void WriteMiniDumpImpl(EXCEPTION_POINTERS* realExPtrs, DumpExceptionOrigin origi
     // heap) into a .dmp the bug-reporter auto-attaches to an off-host crash report. Normal still
     // carries the faulting thread's stack + the exception record (meiPtr), which is what the
     // next-launch triage actually needs; the lost heap context is not worth the secret-spill risk.
-    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, MiniDumpNormal, meiPtr,
-                      nullptr, nullptr);
+    MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, kSmatchetDumpType, meiPtr, nullptr, nullptr);
     CloseHandle(file);
     // Only a REAL (OS-supplied) exception record marks "rich dump written" — a synthesized
     // terminate/signal record stays low-priority so a subsequent real SEH dump can still win.
@@ -113,15 +125,11 @@ void WriteMiniDumpImpl(EXCEPTION_POINTERS* realExPtrs, DumpExceptionOrigin origi
 }
 
 // SEH path: OS-supplied EXCEPTION_POINTERS — a real exception record.
-void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept {
-    WriteMiniDumpImpl(exPtrs, DumpExceptionOrigin::Real);
-}
+void WriteMiniDump(EXCEPTION_POINTERS* exPtrs) noexcept { WriteMiniDumpImpl(exPtrs, DumpExceptionOrigin::Real); }
 
 // terminate/signal path: no OS record — synthesize one (captured context + synthetic code) so the
 // dump still carries an analyzable ExceptionStream instead of being context-less.
-void WriteSyntheticMiniDump() noexcept {
-    WriteMiniDumpImpl(nullptr, DumpExceptionOrigin::Synthetic);
-}
+void WriteSyntheticMiniDump() noexcept { WriteMiniDumpImpl(nullptr, DumpExceptionOrigin::Synthetic); }
 
 LONG WINAPI TopLevelExceptionFilter(EXCEPTION_POINTERS* exPtrs) {
     diagnostics::CrashSinkWriteMarkerAsyncSafe("unhandled SEH exception");
@@ -186,6 +194,79 @@ void SignalHandler(int sig) {
 }
 
 } // namespace
+
+#if defined(_WIN32)
+namespace {
+
+// On-demand self-dump provider behind Source/Core's SelfDump seam. This is NOT the
+// crash path and deliberately shares none of its machinery. Nothing has faulted, so
+// there is no exception record to attach — passing none is correct here, and every
+// thread's stack is still captured, which is the whole point. There is no
+// first-rich-dump arbitration either, because that arbitrates between CRASH dumps
+// and must not let an on-demand capture suppress a later real one. And the caller
+// owns the path rather than CrashSink's pre-built buffer. The one thing the two
+// writers share is kSmatchetDumpType.
+//
+// Runs on whichever thread served the command, by design — the target case is a
+// wedged UI thread. MiniDumpWriteDump suspends the other threads itself for the
+// duration, so this never hand-rolls thread suspension.
+//
+// DbgHelp is explicitly single-threaded: concurrent MiniDumpWriteDump calls in one
+// process are not supported and can deadlock inside the library — which for a
+// hang-diagnosis tool would be the worst possible failure, wedging the process it
+// was called to explain. Two agents polling a stuck instance is a realistic way to
+// get there, so on-demand dumps serialise against each other and a caller that
+// arrives mid-dump is told so rather than queued behind a multi-hundred-ms write.
+// Residual, accepted: a CRASH landing mid-dump still reenters DbgHelp on the crash
+// path, which deliberately takes no locks (a crash handler must never block). That
+// window is tiny and the process is already dying; buying it back would mean
+// putting a lock in the crash path, which is a worse trade.
+std::mutex g_selfDumpMutex;
+
+bool WriteSelfDumpWin32(const char* absPath, std::string& errOut) noexcept {
+    if (absPath == nullptr || absPath[0] == '\0') {
+        errOut = "empty dump path";
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(g_selfDumpMutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        errOut = "a self-dump is already in progress";
+        return false;
+    }
+    HANDLE file = CreateFileA(absPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        // Input-free message: the caller already knows the path it asked for, and the
+        // OS code is the part it cannot see.
+        errOut = "could not create dump file (win32 error " +
+                 std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
+        return false;
+    }
+    const BOOL ok = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), file, kSmatchetDumpType, nullptr,
+                                      nullptr, nullptr);
+    if (ok == FALSE) {
+        errOut =
+            "MiniDumpWriteDump failed (win32 error " + std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
+    }
+    CloseHandle(file);
+    if (ok == FALSE) {
+        // CREATE_ALWAYS already made the file, so a failed write leaves a truncated or
+        // empty .dmp behind. Left in place it consumes the retention budget and, worse,
+        // triages as a real capture. Best-effort delete: if it fails there is nothing
+        // useful to add to the error the caller is already getting.
+        DeleteFileA(absPath);
+    }
+    return ok != FALSE;
+}
+
+} // namespace
+#endif // _WIN32
+
+void InstallSelfDumpProvider() {
+#if defined(_WIN32)
+    diagnostics::SetSelfDumpProvider(&WriteSelfDumpWin32);
+#endif
+    // Off Windows there is no writer; Source/Core reports the capability as absent.
+}
 
 void InstallCrashHandlers() {
 #if defined(_WIN32)
