@@ -169,6 +169,22 @@ void SmatchetUI::selectDockedTab(const char* windowName) {
     ImGui::FocusWindow(window);
 }
 
+// selectDockedTab for the window that is CURRENTLY between Begin/End — same mechanism, no
+// name lookup. A freshly created grid pane cannot use the by-name variant: its window name
+// carries a "###GridPane:<id>" settings id that the localization transform in
+// WindowTitleFromSource is not meant to see, and the window is right here on the stack anyway.
+void SmatchetUI::selectCurrentDockedTab() {
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window == nullptr || window->DockNode == nullptr || window->DockNode->TabBar == nullptr) {
+        // Floating, or docked on a frame where the node's tab bar does not exist yet — the
+        // caller re-tries for a few frames, so a miss here is not terminal.
+        return;
+    }
+    window->DockNode->TabBar->NextSelectedTabId = window->TabId;
+    // Selection alone leaves the node's chrome in the unfocused palette (see selectDockedTab).
+    ImGui::FocusWindow(window);
+}
+
 void SmatchetUI::repairTopLevelWindow(UiDrawSession& d, const char* layoutKey, float minW, float minH) {
     if (ImGui::IsWindowDocked()) {
         return;
