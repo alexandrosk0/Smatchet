@@ -168,9 +168,29 @@ _sam_ci_downgrade_labels() {
     done < <(printf '%s\n' "$body" | grep -E 'any\(\. == "[a-z0-9-]*-out-of-band"\)\) as \$') | sort -u
 }
 
-# _run_parity <merge-gates.sh> <safe-admin-merge.sh> — assert set equality.
+# _run_parity <merge-gates.sh> <safe-admin-merge.sh> — assert the SANCTIONED
+# relationship between the two downgrade sets. Since the stale-override guard
+# (merge-pipeline-01) the sets are deliberately ASYMMETRIC: the poller honours
+# the LABEL-REACTIVE pair (tests-/perf-out-of-band — freshness-guarded, their
+# workflows re-run on `labeled`) that the admin guard, having no label-event
+# timestamps, must NOT honour. So the invariant is:
+#   (1) every guard-honoured label is also poller-honoured (subset), AND
+#   (2) any poller-only label is one of the sanctioned label-reactive pair
+#       (so equal sets — the parity fixtures — still validate, and a NEW label
+#       wired into only the poller still fails).
+# The reverse regression (the guard re-honouring tests/perf) is pinned by
+# safe-admin-merge --selftest CASE4, not here.
 _run_parity() {
     local mg="$1" sam="$2" mg_set sam_set
+    # Pin collation: the callers' `sort -u` and the `comm` calls below must
+    # agree on ordering regardless of the ambient locale. `local` alone does
+    # NOT carry the export attribute, so the child processes (sort/comm/sed)
+    # would still read the ambient locale — export it explicitly. The `local`
+    # keeps the override function-scoped; the caller's value is restored on
+    # return.
+    local LC_ALL=C
+    export LC_ALL
+    local reactive=$'perf-out-of-band\ntests-out-of-band'
     [ -r "$mg" ] && [ -r "$sam" ] || { echo "test-oob-label-impl: parity sources unreadable ($mg / $sam)" >&2; return 2; }
     mg_set="$(_mg_ci_downgrade_labels "$mg")" || return 2
     sam_set="$(_sam_ci_downgrade_labels "$sam")" || return 2
@@ -178,14 +198,27 @@ _run_parity() {
         echo "test-oob-label-impl: parity extraction found an EMPTY downgrade set (mg: '${mg_set}' sam: '${sam_set}') — refusing (fail-closed; the extraction anchors may have drifted)." >&2
         return 2
     fi
-    if [ "$mg_set" != "$sam_set" ]; then
-        echo "test-oob-label-impl: FAIL — CI-downgrade label sets DIVERGE between the two merge paths:" >&2
+    local sam_only mg_only unsanctioned
+    sam_only="$(comm -13 <(printf '%s\n' "$mg_set") <(printf '%s\n' "$sam_set"))"
+    mg_only="$(comm -23 <(printf '%s\n' "$mg_set") <(printf '%s\n' "$sam_set"))"
+    unsanctioned="$(comm -23 <(printf '%s\n' "$mg_only" | sed '/^$/d') <(printf '%s\n' "$reactive"))"
+    if [ -n "$sam_only" ] || [ -n "$unsanctioned" ]; then
+        echo "test-oob-label-impl: FAIL — CI-downgrade label sets DIVERGE beyond the sanctioned label-reactive asymmetry:" >&2
         echo "  merge-gates.sh \$downgraded:        $(printf '%s' "$mg_set" | tr '\n' ' ')" >&2
         echo "  safe-admin-merge evaluate_rollup:  $(printf '%s' "$sam_set" | tr '\n' ' ')" >&2
-        echo "  Wire the missing label into BOTH paths (a half-wired override refuses labelled PRs on one path — #1435)." >&2
+        echo "  Sanctioned poller-only labels:     $(printf '%s' "$reactive" | tr '\n' ' ')" >&2
+        echo "  Wire a new label into BOTH paths (a half-wired override refuses labelled PRs on one path — #1435), or add it to the sanctioned label-reactive pair here ONLY with a stale-override-guard rationale (merge-pipeline-01)." >&2
         return 1
     fi
-    echo "test-oob-label-impl: PASS — poller and admin-merge honor the same CI-downgrade label set ($(printf '%s' "$mg_set" | tr '\n' ' '))."
+    # Two PASS shapes, distinct messages: exact equality keeps the historical
+    # wording (nothing about that invariant changed for a label set with no
+    # label-reactive members); an asymmetric-but-sanctioned pass names the gap
+    # so the operator sees WHICH labels the admin path deliberately skips.
+    if [ -z "$mg_only" ]; then
+        echo "test-oob-label-impl: PASS — poller and admin-merge honor the same CI-downgrade label set ($(printf '%s' "$mg_set" | tr '\n' ' '))."
+    else
+        echo "test-oob-label-impl: PASS — poller/admin downgrade sets match modulo the sanctioned label-reactive pair (poller-only, by design: $(printf '%s' "$mg_only" | tr '\n' ' ')· admin honors: $(printf '%s' "$sam_set" | tr '\n' ' '))."
+    fi
     return 0
 }
 

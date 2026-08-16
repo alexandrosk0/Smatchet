@@ -120,6 +120,14 @@ If the build fails because of instrumentation, fix the instrumentation only — 
 ls -la <absolute-path-to-Smatchet.exe>
 ```
 
+**When the investigation needs the production NDJSON channel**, build the agent-debug preset instead — `SMATCHET_AGENT_DEBUG` is OFF in `ninja-iter-msvc`, so `SMATCHET_AGENT_DEBUG_LOG` compiles to `((void)0)` there and the sink stays empty no matter how the code is instrumented:
+
+```bash
+cmake --build --preset ninja-iter-agentdebug-msvc --target SmatchetStandalone
+```
+
+It is `ninja-iter-msvc` + `SMATCHET_AGENT_DEBUG=ON` with its **own** `build/ninja-iter-agentdebug-msvc/` tree. Two iter-shaped exes now exist, so name the absolute path you built and the one you ran — an empty NDJSON file is a real signal (§ Read evidence), but only once you have ruled out having run the other exe.
+
 ## Run — unified CLI reference
 
 Auto-repro path (preferred): run the deterministic reproducer yourself, capture stderr + the NDJSON log.
@@ -140,7 +148,17 @@ Smatchet.exe cmd commands.search --query=<q>
 
 Command groups (details via the discovery commands above):
 
-- `debug.*` — `log` (emit a known breadcrumb into the runtime log) · `mcp_status` (MCP reachability / last activity) · `thread_dump` · `dock.dump` (ImGui dock nodes) · `dock.reset` (recovery only, not a diagnosis) · `window.resize` (reproduce layout regressions) · `window.screenshot` (viewport evidence) · `lua_eval` (probe runtime state without rebuilding).
+- `debug.*` — `log` (emit a known breadcrumb into the runtime log) · `log_tail` (read the last N ring entries back; `--minLevel`, `--contains`) · `dump_self` (minidump of the live process, every thread's stack) · `mcp_status` (MCP reachability / last activity) · `thread_dump` (counts + whether `dump_self` has a writer here) · `dock.dump` (ImGui dock nodes) · `dock.reset` (recovery only, not a diagnosis) · `window.resize` (reproduce layout regressions) · `window.screenshot` (viewport evidence) · `lua_eval` (probe runtime state without rebuilding).
+
+**Which `debug.*` commands survive a hang.** `RunOnUiThreadAsCommandResult` blocks with **no timeout**, so the marshalling commands are useless in exactly the situation you would reach for them. When the app is unresponsive:
+
+| Safe (inline, answers while the UI thread is stuck) | Will block forever (marshals to the UI thread) |
+|---|---|
+| `debug.log_tail` · `debug.dump_self` · `debug.log` · `debug.mcp_status` | `debug.dock.dump` · `debug.dock.reset` · `debug.window.resize` · `debug.window.screenshot` · `debug.grid.edit-burst` |
+
+`debug.lua_eval` is inline but does not belong in the safe column: it is destructive and drives the shared Lua state on the calling thread, so during a hang it races the wedged thread rather than observing it.
+
+A `--spawn` child proves MCP reachability before its command dispatches, so a child that then wedges still has a live server on a known port — `debug.dump_self` against it is the capture path.
 - `scenario.*` — `list` (discover deterministic scenarios) · `run --name=<n> --frames=<N> --yes` · `cancel` (stop active automation).
 - `tickets.list_active` / `tickets.get --id=<id>` (ticket state) · `sync.tracker_status` (sync-layer state) · `app.version` (confirm build hash/version).
 

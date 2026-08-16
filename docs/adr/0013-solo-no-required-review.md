@@ -18,6 +18,11 @@ remain).
 - **Keep 1 required review** — rejected: unsatisfiable solo; forces an admin
   merge on every PR (`enforce_admins: false` already lets the maintainer bypass,
   so the "1 review" provided essentially no real protection — only friction).
+  *(Amendment 2026-08-16, merge-pipeline-06: `enforce_admins` has since flipped
+  to `true` — the admin bypass this rationale references no longer exists
+  server-side; the sanctioned admin path is `safe-admin-merge.sh`, which only
+  merges when the full gate set is green. The decision this ADR records —
+  review-count 0 — stands on its remaining grounds.)*
 - **A second identity to self-approve** — rejected: none exists; a sock-puppet
   approver is worse than no gate.
 - **Review-count 0 + codify (chosen)** — aligns GitHub with the harness's

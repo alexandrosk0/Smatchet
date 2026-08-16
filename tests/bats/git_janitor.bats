@@ -33,6 +33,7 @@ if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
     # ${VAR-…} (no colon): an explicitly-EMPTY value stays empty (the
     # "gh returned nothing" case) — only a genuinely-unset var defaults.
     case "$*" in
+        *"mergeCommit"*)  printf '%s\n' "${GH_PR_MERGED_JSON-}" ;;
         *"state"*)        printf '%s\n' "${GH_PR_STATE-MERGED}" ;;
         *"headRefName"*)  printf '%s\n' "${GH_PR_BRANCH-claude/feature}" ;;
         *) echo "" ;;
@@ -153,4 +154,77 @@ janitor() {
     SMATCHET_REGISTRY_OS=posix janitor --post-merge 123
     [ "$status" -eq 0 ]
     [[ "$output" != *"DEFER"* ]]
+}
+
+# ---------- Step 5.5: merge-snapshot ledger backfill (merge-pipeline-02) ------
+
+@test "backfill: un-ledgered fresh merge appends a BACKFILLED row (actor git-janitor)" {
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf1"},"mergedAt":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","headRefOid":"headbf1","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    janitor --post-merge 4242
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SNAPSHOT_LEDGER" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"pr":4242,'* ]]
+    [[ "$output" == *'"mergeCommit":"mcbf1"'* ]]
+    [[ "$output" == *'"gates":"BACKFILLED"'* ]]
+    [[ "$output" == *'"redChecks":["Perf PR-fast (windows-2022)"]'* ]]
+    [[ "$output" == *'"overrideLabels":["perf-out-of-band"]'* ]]
+    [[ "$output" == *'"mergeActor":"git-janitor"'* ]]
+}
+
+@test "backfill: row already present -> no duplicate, no BACKFILLED write" {
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    printf '%s\n' '{"pr":4242,"mergeCommit":"mcbf1","headSha":"headbf1","mergedAt":"2026-08-16T10:00:00Z","gates":"GATES_PASSED","redChecks":[],"overrideLabels":[],"mergeActor":"orchestrator","schema":2}' > "$MERGE_SNAPSHOT_LEDGER"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf1"},"mergedAt":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'","headRefOid":"headbf1","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4242
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already present"* ]]
+    run bash -c 'wc -l < "$MERGE_SNAPSHOT_LEDGER"'
+    [ "${output// /}" = "1" ]
+}
+
+@test "backfill: merge older than the age cap is LEFT AS A HOLE (stale line worse than hole)" {
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf2"},"mergedAt":"2020-01-01T00:00:00Z","headRefOid":"headbf2","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4243
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"worse than a hole"* ]]
+}
+
+@test "backfill: empty mergedAt fails closed (GNU date -d \"\" would stamp today's midnight)" {
+    # Pins the explicit empty-mergedAt branch: GNU `date -u -d ""` SUCCEEDS
+    # (returns today 00:00 UTC), so without the guard an undatable merge would
+    # pass the age cap before 06:00 UTC and land a row stamped with the
+    # janitor's own run time — the post-hoc-stale row ADR-0017 forbids.
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf3"},"mergedAt":null,"headRefOid":"headbf3","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4245
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"mergedAt unavailable"* ]]
+}
+
+@test "backfill: non-integer age cap fails closed (arithmetic error would fail OPEN)" {
+    # A typo'd cap ("6h") makes $((age_cap * 3600)) raise an arithmetic error;
+    # the enclosing `[` then returns non-zero and the skip branch is NOT taken,
+    # backfilling an arbitrarily old merge. Must fail closed instead.
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS="6h"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf4"},"mergedAt":"2020-01-01T00:00:00Z","headRefOid":"headbf4","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4246
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"not a non-negative integer"* ]]
+}
+
+@test "backfill: PR metadata unavailable -> skip note, cleanup still exit 0" {
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export GH_PR_MERGED_JSON=""
+    janitor --post-merge 4244
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"backfill skipped"* ]]
 }

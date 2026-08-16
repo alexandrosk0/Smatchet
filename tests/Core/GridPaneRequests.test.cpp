@@ -46,9 +46,8 @@ TEST_CASE("Pane requests: closing the focused pane reassigns focus + reports it;
 
     panes[1].open = false; // tab X on the focused pane
 
-    const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
-                                                                          emptyBuckets);
+    const auto outcome = SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId,
+                                                                                           addRequest, emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK(outcome.FocusReassigned); // HIGH-2: host must replay as a focus switch
@@ -70,9 +69,8 @@ TEST_CASE("Pane requests: closing a NON-focused pane does not report a focus rea
 
     panes[1].open = false;
 
-    const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
-                                                                          emptyBuckets);
+    const auto outcome = SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId,
+                                                                                           addRequest, emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK_FALSE(outcome.FocusReassigned);
@@ -89,9 +87,8 @@ TEST_CASE("Pane requests: min-1 invariant — last pane survives a close request
 
     panes[0].open = false;
 
-    const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
-                                                                          emptyBuckets);
+    const auto outcome = SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId,
+                                                                                           addRequest, emptyBuckets);
 
     CHECK_FALSE(outcome.Changed);
     CHECK_FALSE(outcome.FocusReassigned);
@@ -108,9 +105,8 @@ TEST_CASE("Pane requests: '+' duplicate consumes the request, focuses the new pa
     addRequest.sourceId = "main";
     const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
 
-    const auto outcome =
-        SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest,
-                                                                          emptyBuckets);
+    const auto outcome = SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId,
+                                                                                           addRequest, emptyBuckets);
 
     CHECK(outcome.Changed);
     CHECK(outcome.FocusReassigned);
@@ -237,4 +233,41 @@ TEST_CASE("Pane view self-repair: cross-backend pane viewId is never rebound (HI
 
     // Pre-bootstrap placeholder pane (empty key): repair allowed.
     CHECK(SmatchetGridPaneWindows::detail::PaneViewSelfRepairAllowed("", "Jira"));
+}
+
+TEST_CASE("Pane add: the new pane inherits the source pane's live dock node + a tab-select arm") {
+    std::vector<GridPane> panes;
+    panes.push_back(MakePane("main", "Jira", "jira_view_a"));
+    panes[0].lastDockId = 0x1234u; // where the source window was docked last frame
+    std::string focusedPaneId = "main";
+    PaneAddRequest addRequest;
+    addRequest.sourceId = "main";
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
+
+    const auto outcome = SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId,
+                                                                                           addRequest, emptyBuckets);
+
+    CHECK(outcome.Changed);
+    REQUIRE(panes.size() == 2);
+    // The defect this closes: "+" opened a pane that never joined the source's tab bar.
+    CHECK(panes[1].pendingDockId == 0x1234u);
+    CHECK(panes[1].selectTabFrames > 0); // docking alone leaves the tab unselected (imgui #2304)
+    // The hand-off is one-directional — the source's own placement is untouched.
+    CHECK(panes[0].lastDockId == 0x1234u);
+    CHECK(panes[0].pendingDockId == 0u);
+}
+
+TEST_CASE("Pane add: a floating source hands off no dock node (nothing to tab into)") {
+    std::vector<GridPane> panes;
+    panes.push_back(MakePane("main", "Jira", "jira_view_a")); // lastDockId stays 0 = floating
+    std::string focusedPaneId = "main";
+    PaneAddRequest addRequest;
+    addRequest.sourceId = "main";
+    addRequest.targetBackendKey = "Plane"; // cross-backend add inherits placement the same way
+    const std::unordered_map<std::string, ViewWorkspaceState> emptyBuckets;
+
+    SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore(panes, focusedPaneId, addRequest, emptyBuckets);
+
+    REQUIRE(panes.size() == 2);
+    CHECK(panes[1].pendingDockId == 0u); // ImGui cannot dock into a node that does not exist
 }

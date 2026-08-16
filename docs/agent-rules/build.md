@@ -19,6 +19,8 @@ The raw `cmake --build --preset …` form below stays valid and is what CI runs;
 
 `cmake --build --preset ninja-iter-msvc` (iter), `ninja-debug-msvc` (debug), `ninja-publish-msvc` (publish). Clang equivalents: `ninja-iter-clang`, `ninja-debug-clang`. Exe at `build/<preset>/Smatchet.exe` (the CMake target is `SmatchetStandalone` but `OUTPUT_NAME` ships as `Smatchet`).
 
+`ninja-iter-agentdebug-msvc` is `ninja-iter-msvc` plus `SMATCHET_AGENT_DEBUG=ON`, so `SMATCHET_AGENT_DEBUG_LOG` emits NDJSON instead of compiling to `((void)0)` — use it when a debug loop needs the structured agent channel, and stay on plain `ninja-iter-msvc` otherwise (the iter/publish default is OFF on purpose, for zero per-frame overhead). It has its **own** `build/ninja-iter-agentdebug-msvc/` tree, so the § Debug techniques exe-staleness check matters more than usual here: two iter-shaped exes now exist and testing the wrong one is silent.
+
 ## ctest presets
 
 `CMakePresets.json` carries a `testPresets` section so `ctest --preset <name>` resolves for every test-bearing configure preset (`ninja-test-{msvc,clang}`, `ninja-debug-{msvc,clang}`, `ninja-{msvc,clang}-asan`, `ninja-publish-msvc`, `ninja-publish-msvc-arm64`, `ninja-tsan-linux`, `ninja-test-linux`, `ninja-fuzzer-linux`); each sets `output.outputOnFailure: true` to match the bare `ctest --output-on-failure` the CI workflows run. The two forms are equivalent: `ctest --preset <name>` from the repo root, or `cd build/<preset> && ctest --output-on-failure` (the `working-directory` form the CI YAMLs use). Verify a preset resolves without running anything via `ctest --preset <name> -N` (list-only). `tests/fuzz/README.md` documents both forms for the fuzzer lane.

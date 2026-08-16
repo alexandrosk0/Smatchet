@@ -17,6 +17,23 @@ query($owner: String!, $repo: String!, $pr: Int!) {
         pageInfo { hasNextPage }
         nodes { name }
       }
+      # Label-application times — load-bearing for the stale-override guard
+      # (merge-pipeline-01): the gate filter compares each label-reactive
+      # override label's latest LabeledEvent.createdAt against the failing
+      # run's completedAt and refuses the FAIL→WARN downgrade when the run
+      # predates the label (a post-label re-run is already in flight — the
+      # labeled: workflow trigger guarantees it). `last: 100` is deliberate:
+      # only the NEWEST application per label matters, so truncation loses
+      # only older events — do NOT fold a pageInfo flag into the global
+      # pagination-overflow OR (older-event truncation must not wedge the poll).
+      timelineItems(last: 100, itemTypes: [LABELED_EVENT]) {
+        nodes {
+          ... on LabeledEvent {
+            createdAt
+            label { name }
+          }
+        }
+      }
       # Changed-file paths — load-bearing for the $selfImpOnly auto-exemption
       # (merge-gates.sh): a PR whose diff is ENTIRELY under docs/self-improvement/**
       # auto-skips the CR + Bugbot gates. first:100 is ample (a self-improvement PR
@@ -44,6 +61,10 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                     # rollup nodes. We pick the one with the latest startedAt
                     # per name so stale FAILUREs don't falsely block merge.
                     startedAt
+                    # completedAt drives the stale-override guard: a failing
+                    # run that COMPLETED before the override label was applied
+                    # is not downgraded (see timelineItems above).
+                    completedAt
                     isRequired(pullRequestNumber: $pr)
                   }
                   ... on StatusContext {

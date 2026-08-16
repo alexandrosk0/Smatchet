@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agents/scripts/core/merge-gates.d/10-gate-filter.sh
 # ----------------------------------------------------------------------------
-# The one `gh api graphql --jq` GATE_FILTER program — the 33-field projection
+# The one `gh api graphql --jq` GATE_FILTER program — the 35-field projection
 # that turns the GraphQL response into the fixed-order field stream the poll
 # loop reads with `mapfile`. Relocated VERBATIM from merge-gates.sh (the former
 # in-function `GATE_FILTER='...'` literal) into a single-quoted global so the
@@ -35,6 +35,33 @@ _MG_GATE_FILTER_TEMPLATE='
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
+# Stale-override guard inputs (merge-pipeline-01): the latest LabeledEvent
+# createdAt per LABEL-REACTIVE override label. tests-/perf-out-of-band guard
+# workflows that read labels LIVE and re-run on `labeled` (coverage-gate.yml,
+# perf-pr-fast.yml) — a failing run that COMPLETED before the label landed was
+# evaluated under a different label-world, so its FAIL must not be downgraded;
+# the labeled-triggered re-run (guaranteed by the workflow trigger) supersedes
+# it within minutes and the poll simply defers until then. intent-/plan-lock-
+# out-of-band are deliberately EXEMPT: their workflows are label-blind and have
+# no `labeled` trigger, so the pre-label red is exactly as accurate post-label
+# (the gate-side downgrade IS the dismissal mechanism, not a claim the run
+# would now pass) and a freshness demand would wedge the gate until an
+# unrelated push.
+# Missing-timestamp semantics are TWO distinct cases:
+#  * timeline field ABSENT (legacy fixture / pre-guard caller): "" label-time,
+#    "anything >= empty" is true — pre-guard behaviour preserved.
+#  * timeline PRESENT but no application event for an ACTIVE label (the
+#    `last:100` window truncated it away — >100 label events landed after the
+#    application): FAIL CLOSED with a far-future sentinel, refusing the
+#    downgrade. An un-timestampable active override must not waive a red run
+#    (CR #2033 finding); the operator escape is the same as any stale
+#    override — a fresh run or re-apply after the noise subsides.
+| ([$pr.timelineItems.nodes[]? | select((.label.name // "") != "")]) as $labelEvents
+| (($pr.timelineItems // null) != null) as $timelineKnown
+| ((([$labelEvents[] | select(.label.name == "tests-out-of-band") | (.createdAt // "")] | sort | last) // "")
+   | if $timelineKnown and . == "" then "9999-12-31T23:59:59Z" else . end) as $testsAt
+| ((([$labelEvents[] | select(.label.name == "perf-out-of-band") | (.createdAt // "")] | sort | last) // "")
+   | if $timelineKnown and . == "" then "9999-12-31T23:59:59Z" else . end) as $perfAt
 # crDisposition — an explicit operator attestation supplied EITHER as a label
 # prefixed `cr-disposition:` (e.g. `cr-disposition:rate-limit-acked`) OR as a
 # grep-able `cr-disposition:<reason>` marker line in the PR BODY. Whenever
@@ -93,11 +120,30 @@ _MG_GATE_FILTER_TEMPLATE='
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
            | (test("__BLOCK_ALLOWLIST_RE__"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
+# Downgrade arms. tests/perf carry the stale-override freshness conjunct: the
+# failing run must have completed — or, when completedAt is null (the repo
+# fixtures treat that as a realistic COMPLETED shape), STARTED — at-or-after
+# the latest label application: a run started post-label is definitionally a
+# post-label evaluation. "" label-time = no timeline data = legacy behaviour;
+# ISO-8601 Z strings compare correctly as strings. A run with NEITHER
+# timestamp and a known label-time fails closed (no downgrade).
+# intent/plan-lock: no conjunct (see the $labelEvents comment above).
+# $labelReactiveRed binds the name-predicate-only set once so $staleOverride
+# below is derived by SUBTRACTION — the freshness rule exists in exactly one
+# place and the two sets can never drift out of complement.
 | ([$failing[] | select(
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))) or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))))]) as $labelReactiveRed
+| ([$failing[] | select(
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // .startedAt // "") >= $testsAt)) or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // .startedAt // "") >= $perfAt)) or
       ($intent and .__typename == "CheckRun" and .name == "Intent section") or
       ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
+# $staleOverride — the label-reactive reds whose downgrade the freshness
+# conjunct REFUSED (label applied after the run completed). Surfaced as fields
+# 33/34 so the poll loop can print an actionable WARN instead of a silent
+# block.
+| ($labelReactiveRed - $downgraded) as $staleOverride
 | ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
 | (if ($crall | length) == 0 then "NONE"
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur
@@ -274,6 +320,8 @@ _MG_GATE_FILTER_TEMPLATE='
     ($crdisposition | tostring),
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length),
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-        and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)
+        and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length),
+    ([$staleOverride[].name] | join(", ")),
+    ($staleOverride | length)
   )
 '

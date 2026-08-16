@@ -421,6 +421,10 @@ static GLFWwindow* BootInitGlfwAndWindow(MainBootState& boot, const char*& outGl
     // the async handlers use; InstallCrashHandlers wires SEH/terminate/signals.
     smatchet::diagnostics::CrashSinkInit(ConfigManager::GetUserDataDirectory(), logPath);
     smatchet::InstallCrashHandlers();
+    // debug.dump_self's writer. Installed here, beside the crash handlers and after
+    // CrashSinkInit has created <userData>/crashes, and BEFORE any command-serving
+    // thread exists — the SelfDump seam relies on that ordering rather than a lock.
+    smatchet::InstallSelfDumpProvider();
     smatchet::diagnostics::CrashSinkBreadcrumb("startup");
 
     // Peek window state from saved config so we can hint MAXIMIZED + initial size.
