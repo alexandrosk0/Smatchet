@@ -41,6 +41,12 @@ Once every check went terminal-green and `mergeStateStatus` flipped to `CLEAN`, 
 next daemon cycle had no remaining reason to hold. The orchestrator ran
 `merge-watch unregister 2027` by hand to restore the user's stated intent.
 
+**Reproduced by the PR that files this entry.** Opening the backlog PR fired the hook
+again — `merge-watch list` showed `{"pr": 2031, "registered_at": 1786895461, ...}`
+seconds after `gh pr create`, with no authorization asked for or given, and the user
+had authorized no merge. Unregistered by hand a second time. Two for two: the bypass
+is the default path, not an edge case.
+
 ## Why it matters
 
 This inverts the autonomy model. [`AI_POLICY.md`](../../../../AI_POLICY.md) makes agent
@@ -112,4 +118,5 @@ open
 - AGENTS.md § Merge gates (auto-merge authorization), § Autonomous ship-loop default
   (post-ship 4-option question)
 - `AI_POLICY.md` § Two loop modes (autonomy as granted / revocable)
-- PR #2027 (observed instance), PR #2024 (second registered entry, same session)
+- PR #2027 (observed instance), PR #2024 (second registered entry, same session),
+  PR #2031 (this entry's own PR — reproduced the bypass on creation)
