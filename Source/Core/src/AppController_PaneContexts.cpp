@@ -50,14 +50,6 @@ namespace {
 /// plan item 17). Long enough that tab-flipping never churns contexts; short enough that a
 /// pane parked behind another all session frees its sync worker + ticket memory.
 const std::chrono::milliseconds kHiddenContextGrace(30000);
-
-/// Composite key for paneOwnedTicketIds_. '\n' cannot occur in a backend key (a tracker-type
-/// token) or a pane id (a ConfigManager_Panes identifier), so the join is unambiguous and the
-/// map stays ordered by backend key first — which is what lets the retention sweep prefix-scan
-/// one namespace with lower_bound instead of walking every pane in the process.
-std::string PaneOwnedIdsKey(const std::string& backendKey, const std::string& paneId) {
-    return backendKey + '\n' + paneId;
-}
 } // namespace
 
 void AppController::refreshFocusedContextPtr_() {
@@ -840,12 +832,16 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
             ctx.fieldCatalog.projectComponentOptions_.clear();
         }
         // Deliberate: retirement (unlike LRU eviction) means this pane is gone for good as far as
-        // the retention sweep is concerned, so its owned-id set is dropped and its rows become
-        // eligible for a sibling's stale deletion again. Keeping the set would pin rows in
+        // the retention sweep is concerned, so its owned-id set is emptied and its rows become
+        // eligible for a sibling's stale deletion again. Keeping the ids would pin rows in
         // tickets_v2 forever — there is no pane-close hook, so retirement is the only reclaim point.
-        // Same lock discipline as the two blocks above: map-mutex outermost, then this context's
-        // backendKeyMutex_, then the innermost paneOwnedIdsMutex_ — never the reverse.
-        ForgetPaneOwnedTicketIds(ctx.CacheBackendKeyCopy(), ctx.PaneId);
+        // Keyed on the pane id ALONE (issue #2049): a pane whose backend was swapped mid-session
+        // filed its set under the key that was live when its sync published, so keying the retire
+        // on the key live NOW would leave that orphan pinning rows for the rest of the process.
+        // The emptied entry is kept as a tombstone (issue #2063) so a revived pane is still
+        // distinguishable from one that has never synced. No lock ordering concern: the store's
+        // mutex is innermost and nothing else is taken inside it.
+        ForgetPaneOwnedTicketIds(ctx.PaneId);
         // Defer-free husk: a worker may have latched a pointer to this context (it was the
         // focused context once) — keep the now-tiny object alive until ~AppController, the
         // ADR-0012 graveyard pattern applied to contexts.
@@ -895,18 +891,8 @@ std::vector<std::string> AppController::CollectTicketIdsRetainedByOtherContexts(
     // tickets_v2, so relying on ActiveTickets alone would let the next focused-pane full sync
     // delete exactly the rows that pane is about to re-seed from. The recorded owned-id set
     // survives eviction, and is dropped only when the context is genuinely retired.
-    {
-        const std::string prefix = PaneOwnedIdsKey(selfKey, std::string());
-        std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
-        for (std::map<std::string, std::vector<std::string>>::const_iterator it =
-                 paneOwnedTicketIds_.lower_bound(prefix);
-             it != paneOwnedTicketIds_.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
-            if (it->first.compare(prefix.size(), std::string::npos, self.PaneId) == 0) {
-                continue; // this pane's own set — never self-retaining
-            }
-            ids.insert(ids.end(), it->second.begin(), it->second.end());
-        }
-    }
+    const std::vector<std::string> recorded = paneOwnedTicketIds_.CollectRetainedByOtherPanes(selfKey, self.PaneId);
+    ids.insert(ids.end(), recorded.begin(), recorded.end());
     return ids;
 }
 
@@ -933,48 +919,27 @@ std::vector<std::shared_ptr<const std::vector<CachedTicket>>> AppController::Col
     return snaps;
 }
 
+// The five owned-id accessors are thin forwarders onto the header-only store
+// (Sync/PaneOwnedTicketIdStore.h), which owns the innermost mutex and carries the absent /
+// recorded / tombstoned state machine + its unit tests.
 void AppController::SetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
                                           const std::vector<std::string>& ids) {
-    if (paneId.empty()) {
-        return; // context not registered in gridContexts_ yet — nothing to key on
-    }
-    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
-    paneOwnedTicketIds_[PaneOwnedIdsKey(backendKey, paneId)] = ids;
+    paneOwnedTicketIds_.Set(backendKey, paneId, ids);
 }
 
-std::vector<std::string> AppController::GetPaneOwnedTicketIds(const std::string& backendKey,
-                                                              const std::string& paneId) const {
-    if (paneId.empty()) {
-        return std::vector<std::string>();
-    }
-    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
-    std::map<std::string, std::vector<std::string>>::const_iterator it =
-        paneOwnedTicketIds_.find(PaneOwnedIdsKey(backendKey, paneId));
-    return it == paneOwnedTicketIds_.end() ? std::vector<std::string>() : it->second;
+bool AppController::TryGetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                                             std::vector<std::string>& outIds) const {
+    return paneOwnedTicketIds_.TryGet(backendKey, paneId, outIds);
+}
+
+bool AppController::AddPaneOwnedTicketId(const std::string& backendKey, const std::string& paneId,
+                                         const std::string& id) {
+    return paneOwnedTicketIds_.Add(backendKey, paneId, id);
 }
 
 void AppController::DropPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
                                            const std::vector<std::string>& ids) {
-    if (paneId.empty() || ids.empty()) {
-        return;
-    }
-    const std::set<std::string> drop(ids.begin(), ids.end());
-    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
-    std::map<std::string, std::vector<std::string>>::iterator it =
-        paneOwnedTicketIds_.find(PaneOwnedIdsKey(backendKey, paneId));
-    if (it == paneOwnedTicketIds_.end()) {
-        return;
-    }
-    std::vector<std::string>& owned = it->second;
-    owned.erase(std::remove_if(owned.begin(), owned.end(),
-                               [&drop](const std::string& id) { return drop.find(id) != drop.end(); }),
-                owned.end());
+    paneOwnedTicketIds_.Drop(backendKey, paneId, ids);
 }
 
-void AppController::ForgetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId) {
-    if (paneId.empty()) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
-    paneOwnedTicketIds_.erase(PaneOwnedIdsKey(backendKey, paneId));
-}
+void AppController::ForgetPaneOwnedTicketIds(const std::string& paneId) { paneOwnedTicketIds_.Forget(paneId); }
