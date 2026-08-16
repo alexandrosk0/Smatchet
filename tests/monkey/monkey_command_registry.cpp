@@ -88,9 +88,13 @@ bool IsDenied(const std::string& name) { return name == "app.quit" || name == "u
 // Source/Core/src/Commands/Builtin/BuiltinCommands_{Meta,Config,Perf}.cpp). Grown by
 // reading handlers — never auto-expanded. Everything else is skipped-by-default.
 bool IsHandlerAllowListed(const std::string& name) {
+    // debug.log_tail joins the list on the same reading: it copies the Logger's own
+    // ring under the Logger's mutex and touches no g_ui/ImGui state and no UI hop.
+    // debug.dump_self is deliberately NOT here — it writes a file, so it is not
+    // read-only, even though it is equally free of UI-thread coupling.
     return name == "commands.list" || name == "commands.help" || name == "commands.search" ||
            name == "commands.recents" || name == "config.get" || name == "config.path" || name == "perf.snapshot" ||
-           name == "perf.frame_count" || name == "debug.thread_dump";
+           name == "perf.frame_count" || name == "debug.thread_dump" || name == "debug.log_tail";
 }
 
 const char* SourceName(CommandSource s) { return smatchet::cmd::CommandSourceString(s); }

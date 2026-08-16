@@ -13,6 +13,8 @@
 #include "Interfaces/IAppDebug.h"
 #include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
+#include "Diagnostics/LogTailSelect.h"
+#include "Diagnostics/SelfDump.h"
 #include "Logger.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUI.h"
@@ -22,6 +24,7 @@
 #include "imgui_internal.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -30,6 +33,15 @@
 #include <thread>
 #include <utility>
 #include <vector>
+
+// Process id for the on-demand dump filename, mirroring the per-PID log-file naming
+// in Source/Standalone/main.cpp: two instances (a --spawn child plus a manual one)
+// can be alive at once, so the pid is what keeps their dumps from colliding.
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 
 // Pulled from SmatchetUI.cpp via extern — same singleton pattern used by
 // ViewToggleCommands.cpp and the dock diagnostics block.
@@ -44,6 +56,14 @@ using builtin_detail::PString;
 using builtin_detail::ToLowerAscii;
 
 namespace {
+
+long long CurrentProcessIdForDump() {
+#if defined(_WIN32)
+    return static_cast<long long>(_getpid());
+#else
+    return static_cast<long long>(getpid());
+#endif
+}
 
 // --- debug.log --------------------------------------------------------------
 static void RegisterDebugLogCommand(CommandRegistry& reg) {
@@ -107,12 +127,174 @@ static void RegisterDebugThreadDumpCommand(CommandRegistry& reg) {
                                 // C++14 doesn't expose thread IDs without platform headers.
                                 // Return what we can without OS-specific code in Source/Core.
                                 nlohmann::json out;
-                                out["note"] =
-                                    "Thread dump requires OS-specific APIs; counts are unavailable via this command.";
+                                out["note"] = "Thread dump requires OS-specific APIs; counts are unavailable via this "
+                                              "command. For per-thread stacks, call debug.dump_self and triage the "
+                                              "minidump with agents/scripts/core/dump-triage.sh.";
                                 out["hardwareConcurrency"] = static_cast<int>(std::thread::hardware_concurrency());
+                                out["selfDumpAvailable"] = smatchet::diagnostics::HasSelfDumpProvider();
                                 return CommandResult::Success(std::move(out));
                             });
-    c.Description = "Returns hardware_concurrency. Full OS thread dump not available cross-platform.";
+    c.Description = "Returns hardware_concurrency plus whether debug.dump_self can capture per-thread stacks on this "
+                    "host. Full inline OS thread dump is not available cross-platform.";
+    reg.Register(std::move(c));
+}
+
+// --- debug.log_tail ---------------------------------------------------------
+// Read-back of the Logger's in-memory ring so an agent can pull recent log lines
+// over CLI/MCP instead of locating %LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log on
+// disk (impossible for a purely-MCP client, e.g. a --spawn child).
+//
+// Deliberately NOT marshalled to the UI thread. This is one of the commands an
+// agent reaches for precisely when the UI thread is wedged, and
+// RunOnUiThreadAsCommandResult blocks with no timeout (MainThreadDispatch.h) —
+// marshalling here would make the command useless in the situation it exists for.
+// GetEntriesSnapshot takes only the Logger's own mutex, which the render loop
+// never holds across a frame.
+//
+// No redaction happens here: Logger::Log applies privacy::RedactLogLine at ingest,
+// so every ring entry is already redacted. LogTailSelect.h documents that and a
+// test pins it, because the property is what makes the ring safe to hand to MCP.
+static void RegisterDebugLogTailCommand(CommandRegistry& reg) {
+    Command c =
+        MakeCommand("debug.log_tail", "Return the tail of the in-memory runtime log (oldest first).",
+                    [](const nlohmann::json& args, const CommandContext&) {
+                        const long long requested =
+                            args.value("lines", static_cast<long long>(smatchet::diagnostics::kLogTailDefaultLines));
+                        const std::size_t maxLines = smatchet::diagnostics::ClampLogTailLines(requested);
+                        const LogLevel minLevel =
+                            Logger::ParseLogLevelString(args.value("minLevel", std::string("trace")), LogLevel::Trace);
+                        const std::string contains = args.value("contains", std::string());
+
+                        const std::vector<LogEntry> snapshot = Logger::Instance().GetEntriesSnapshot();
+                        std::size_t totalMatched = 0;
+                        const std::vector<LogEntry> selected =
+                            smatchet::diagnostics::SelectLogTail(snapshot, minLevel, contains, maxLines, &totalMatched);
+
+                        nlohmann::json lines = nlohmann::json::array();
+                        for (std::size_t i = 0; i < selected.size(); ++i) {
+                            nlohmann::json row;
+                            row["tsMonotonic"] = selected[i].timestampSeconds;
+                            row["level"] = Logger::LogLevelToString(selected[i].level);
+                            row["message"] = selected[i].message;
+                            lines.push_back(std::move(row));
+                        }
+
+                        nlohmann::json out;
+                        out["lines"] = std::move(lines);
+                        out["returned"] = static_cast<long long>(selected.size());
+                        out["totalMatched"] = static_cast<long long>(totalMatched);
+                        out["ringSize"] = static_cast<long long>(snapshot.size());
+                        out["truncated"] = totalMatched > selected.size();
+                        return CommandResult::Success(std::move(out));
+                    });
+    // ValidateAndResolveArgs enforces MinInt/MaxInt centrally, so an out-of-range
+    // request is a ValidationError naming the bound rather than a silent clamp.
+    // ClampLogTailLines stays as the in-handler net for any path that resolves args
+    // without the validator.
+    ParamSpec lines = PInt("lines", "How many matching entries to return (newest kept).",
+                           static_cast<long long>(smatchet::diagnostics::kLogTailDefaultLines));
+    lines.MinInt = std::make_shared<long long>(static_cast<long long>(smatchet::diagnostics::kLogTailMinLines));
+    lines.MaxInt = std::make_shared<long long>(static_cast<long long>(smatchet::diagnostics::kLogTailMaxLines));
+    ParamSpec minLevel = PString("minLevel", "Lowest level to include: trace|debug|info|warn|error.");
+    minLevel.Default = std::make_shared<nlohmann::json>("trace");
+    minLevel.Enum = {"trace", "debug", "info", "warn", "error"};
+    c.Params = {
+        std::move(lines),
+        std::move(minLevel),
+        PString("contains", "Only entries whose message contains this substring."),
+    };
+    c.Title = "Log Tail";
+    c.Description = "Returns {lines:[{tsMonotonic,level,message}], returned, totalMatched, ringSize, truncated}. "
+                    "tsMonotonic is Logger's steady_clock seconds — monotonic since process start, NOT wall "
+                    "clock, so it orders entries but does not correlate with a dump filename's epoch ms. Entries are "
+                    "oldest-first and already redacted. Filtering is applied BEFORE the tail, so lines=10 with "
+                    "contains=sync yields the 10 most recent sync entries. Examples: "
+                    "`Smatchet.exe cmd debug.log_tail --lines=50` | "
+                    "`Smatchet.exe cmd debug.log_tail --minLevel=warn --contains=tracker`.";
+    reg.Register(std::move(c));
+}
+
+// --- debug.dump_self --------------------------------------------------------
+// Write a minidump of THIS process on demand. The crash pipeline only fires on a
+// crash, so a wedged-but-alive process had no capture path at all; a minidump
+// carries every thread's stack, and dump-triage.sh already reads it.
+//
+// Same no-marshalling rule as debug.log_tail, and for the same reason: the target
+// case is a hung UI thread. See docs/adr/0024-self-minidump-over-in-process-stack-walk.md.
+//
+// No caller-supplied path: the filename is derived from clock + pid and joined under
+// <userData>agent-dumps/, so this command has no path-injection surface at all (unlike
+// debug.window.screenshot, which must confine an argument).
+static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
+    Command c = MakeCommand(
+        "debug.dump_self", "Write a minidump of this process (every thread's stack) for hang diagnosis.",
+        [](const nlohmann::json&, const CommandContext& ctx) -> CommandResult {
+            // Availability is checked FIRST, before anything about configuration.
+            // On a host with no writer (DX12/Unreal, Android, the POSIX gate) the
+            // user-data dir is irrelevant, and "not available on this host" is the
+            // answer an agent needs in order to fall back to the out-of-process
+            // procdump recipe — reporting a config problem instead would send it
+            // chasing the wrong thing. Not an error: absence is a fact about the host.
+            if (!smatchet::diagnostics::HasSelfDumpProvider()) {
+                nlohmann::json out;
+                out["wrote"] = false;
+                out["available"] = false;
+                out["reason"] = "no self-dump provider installed on this host";
+                return CommandResult::Success(std::move(out));
+            }
+
+            const std::string userData = ConfigManager::GetUserDataDirectory();
+            if (userData.empty()) {
+                return CommandResult::Failure(ErrorCode::HandlerError,
+                                              "no user-data directory configured; cannot place the dump");
+            }
+            const long long epochMs = static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                                 std::chrono::system_clock::now().time_since_epoch())
+                                                                 .count());
+            const std::string fileName =
+                smatchet::diagnostics::MakeSelfDumpFileName(epochMs, CurrentProcessIdForDump());
+            // Deliberately NOT <userData>crashes/: CrashSink rotates that
+            // directory to the 5 newest *.dmp, so a handful of diagnostic
+            // captures would silently evict the archived crash-<ts>.dmp files
+            // the next-launch reporter depends on. On-demand dumps get their
+            // own directory. GetUserDataDirectory() already ends in a
+            // separator — every caller joins as `GetUserDataDirectory() +
+            // "sub/"` — so no leading slash here.
+            const std::string dumpDir = userData + "agent-dumps/";
+            const std::string absPath = dumpDir + fileName;
+
+            if (ctx.DryRun) {
+                nlohmann::json dry;
+                dry["wouldWrite"] = absPath;
+                dry["available"] = true;
+                return CommandResult::Success(std::move(dry));
+            }
+
+            std::error_code dirEc;
+            ghc::filesystem::create_directories(ghc::filesystem::path(dumpDir), dirEc);
+            if (dirEc) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "could not create the on-demand dump directory");
+            }
+
+            std::string err;
+            if (!smatchet::diagnostics::WriteSelfDump(absPath, err)) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "self-dump failed: " + err);
+            }
+            LOG_INFO("debug.dump_self: wrote minidump to %s", absPath.c_str());
+            nlohmann::json out;
+            out["wrote"] = true;
+            out["available"] = true;
+            out["path"] = absPath;
+            return CommandResult::Success(std::move(out));
+        });
+    c.Title = "Dump Self";
+    c.Description = "Returns {wrote, available, path} on success, or {wrote:false, available:false, reason} on a host "
+                    "with no writer (DX12/Unreal, Android). Writes <userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp "
+                    "using MiniDumpNormal — the same scope the crash handler uses, chosen so heap-resident secrets are "
+                    "not swept into the dump. Triage with `bash agents/scripts/core/dump-triage.sh <path>`. Example: "
+                    "`Smatchet.exe cmd debug.dump_self`.";
+    c.Idempotent = false;
+    c.DryRunSupported = true;
     reg.Register(std::move(c));
 }
 
@@ -363,34 +545,33 @@ static void RegisterDebugWindowScreenshotCommand(CommandRegistry& reg, IMainThre
 // Next launch should open a pre-filled bug report. Destructive; requires --yes.
 // kind selects segv null-deref, abort, or throw.
 static void RegisterDebugCrashCommand(CommandRegistry& reg) {
-    Command c = MakeCommand("debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
-                            [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
-                                const std::string kind = args.value("kind", std::string("segv"));
-                                if (ctx.DryRun) {
-                                    return CommandResult::Success({{"wouldCrash", kind}});
-                                }
-                                LOG_ERROR("debug.crash: intentionally crashing the process (kind=%s)", kind.c_str());
-                                if (kind == "abort") {
-                                    std::abort();
-                                } else if (kind == "throw") {
-                                    // DR27: CommandRegistry::Dispatch wraps every handler in
-                                    // try/catch, so a direct throw here is swallowed and the crash
-                                    // reporter never runs. Let the exception escape a worker thread's
-                                    // top-level function instead: an exception propagating out of a
-                                    // std::thread entry calls std::terminate (with the exception in
-                                    // flight), firing the terminate handler installed by
-                                    // InstallCrashHandlers — the unhandled-exception path this kind
-                                    // exercises — with no noexcept-throws boundary that MSVC /WX
-                                    // rejects as C4297.
-                                    std::thread([]() {
-                                        throw std::runtime_error("debug.crash: intentional unhandled exception");
-                                    }).join();
-                                }
-                                // Default: null dereference -> SIGSEGV / access violation.
-                                volatile int* p = nullptr;
-                                *p = 42;
-                                return CommandResult::Success({{"crashed", false}}); // unreachable
-                            });
+    Command c = MakeCommand(
+        "debug.crash", "Deliberately crash the process (tests the crash reporter). Requires --yes.",
+        [](const nlohmann::json& args, const CommandContext& ctx) -> CommandResult {
+            const std::string kind = args.value("kind", std::string("segv"));
+            if (ctx.DryRun) {
+                return CommandResult::Success({{"wouldCrash", kind}});
+            }
+            LOG_ERROR("debug.crash: intentionally crashing the process (kind=%s)", kind.c_str());
+            if (kind == "abort") {
+                std::abort();
+            } else if (kind == "throw") {
+                // DR27: CommandRegistry::Dispatch wraps every handler in
+                // try/catch, so a direct throw here is swallowed and the crash
+                // reporter never runs. Let the exception escape a worker thread's
+                // top-level function instead: an exception propagating out of a
+                // std::thread entry calls std::terminate (with the exception in
+                // flight), firing the terminate handler installed by
+                // InstallCrashHandlers — the unhandled-exception path this kind
+                // exercises — with no noexcept-throws boundary that MSVC /WX
+                // rejects as C4297.
+                std::thread([]() { throw std::runtime_error("debug.crash: intentional unhandled exception"); }).join();
+            }
+            // Default: null dereference -> SIGSEGV / access violation.
+            volatile int* p = nullptr;
+            *p = 42;
+            return CommandResult::Success({{"crashed", false}}); // unreachable
+        });
     c.Params = {
         PString("kind", "Crash kind: segv (default) | abort | throw."),
     };
@@ -404,8 +585,10 @@ static void RegisterDebugCrashCommand(CommandRegistry& reg) {
 
 void RegisterDebugCommands(CommandRegistry& reg, IAppDebug& app, IMainThreadPoster& poster) {
     RegisterDebugLogCommand(reg);
+    RegisterDebugLogTailCommand(reg);
     RegisterDebugMcpStatusCommand(reg, app);
     RegisterDebugThreadDumpCommand(reg);
+    RegisterDebugDumpSelfCommand(reg);
     RegisterDebugLuaLogTestCommand(reg, app);
     RegisterDebugLuaEvalCommand(reg, app);
     RegisterDebugDockDumpCommand(reg, poster);

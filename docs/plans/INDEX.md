@@ -152,6 +152,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | 2026-06-13 | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
 | [`sanitizer-nightly-asan-ubsan-fix`](shipped/sanitizer-nightly-asan-ubsan-fix.md) | 2026-06-13 | Plan — Sanitizer nightly (ASan+UBSan) fix + config-skew preventing gate |
 | [`ui-freeze-pillar2-blocking`](shipped/ui-freeze-pillar2-blocking.md) | 2026-06-13 | Plan — Pillar-2 UI-thread blocking elimination (future-destructor + sync-I/O cluster) |
+| [`agentic-infra-audit-campaign-2026-06`](shipped/agentic-infra-audit-campaign-2026-06.md) | 2026-06-14 | Plan — Agentic-infrastructure audit campaign (2026-06 salvage) |
 | [`core-include-dag`](shipped/core-include-dag.md) | 2026-06-14 | Plan — DAG-ify the Source/Core include graph |
 | [`http-fault-injection`](shipped/http-fault-injection.md) | 2026-06-14 | Plan — HTTP fault-injection + retry wiring (testing-surface Slice D + D3) |
 | [`image-dim-cap`](shipped/image-dim-cap.md) | 2026-06-14 | Plan — Image-dimension cap in the attachment-preview parser (testing-surface Slice E1) |
@@ -212,6 +213,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-07 | Plan — Window Expand Button |
 | [`keybindings-multi-combo`](shipped/keybindings-multi-combo.md) | 2026-08-14 | Plan — Multi-combo keybindings (several alternative combos per action) |
 | [`parallel-review-gate`](shipped/parallel-review-gate.md) | 2026-08-15 | Plan — Parallel code-review gate (review runs *with* the lint gate, not after it) |
+| [`autonomous-debug-live-evidence`](shipped/autonomous-debug-live-evidence.md) | 2026-08-16 | close the live-process evidence gaps in the autonomous debug loop — agent-debug preset, log read-back, and on-demand self-minidump for hang diagnosis |
 <!-- END auto-plan-index -->
 
 ### Notes

@@ -15,6 +15,10 @@
 #   3. fetch + prune remotes.
 #   4. Switch to develop, fast-forward to origin/develop.
 #   5. Delete the local PR branch (after GitHub remote-delete on squash-merge).
+#   5.5. Backfill the merge-snapshot ledger row when the merge actor left none
+#      (human/UI merges — merge-pipeline-02; verdict BACKFILLED, actor
+#      git-janitor, age-capped via SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS,
+#      default 6h, 0 = uncapped; best-effort, never fails the cleanup).
 #   6. Run `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
 #      as the final regression gate.
 #   7. Print a concise report.
@@ -174,6 +178,120 @@ if [ -n "$PR_BRANCH" ] && git show-ref --quiet "refs/heads/$PR_BRANCH"; then
 else
     echo "[git-janitor] local branch ${PR_BRANCH:-<unknown>} already gone (or never existed locally)."
 fi
+
+# ---------- Step 5.5: merge-snapshot ledger backfill (ADR-0017) ---------------
+# The sanctioned merge actors append their own ledger row at the decision
+# instant; a HUMAN/UI merge — or an automerge-arming session that died before
+# the merge event — leaves a ledger hole (merge-pipeline-02). This janitor runs
+# minutes after a merge, so it is the post-merge hook that closes the hole:
+# when the just-cleaned PR has NO row for pr+mergeCommit, compose one from the
+# live PR state (labels persist on merged PRs outside the watcher path; the
+# rollup is minutes-fresh — strictly fresher than the SessionStart live
+# fallback that otherwise covers the hole) and append it with verdict
+# BACKFILLED + actor git-janitor. BACKFILLED (never GATES_PASSED) marks the row
+# post-hoc-composed; the detector keys on redChecks/overrideLabels, which ARE
+# captured (via safe-admin-merge.sh's shared projections). Age cap: a merge
+# older than SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS (default 6; 0 = uncapped)
+# is LEFT AS A HOLE — ADR-0017: a stale line is worse than a hole, and an
+# unparseable mergedAt fails closed to "too old". Best-effort throughout: no
+# failure here ever fails the cleanup (the || invocation also suspends -e
+# inside, so each parse degrades instead of aborting).
+backfill_merge_snapshot() {
+    local jdir view mc merged_at head_sha ledger red_csv override_csv ma age_cap
+    command -v jq >/dev/null 2>&1 || { echo "[git-janitor] ledger backfill skipped (jq not on PATH; live fallback covers)."; return 0; }
+    jdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    # Ledger path: anchored to the SCRIPT's repo root (jdir/../../..), the same
+    # anchor merge-snapshot-append.sh uses — NOT $JANITOR_TREE (the cwd's
+    # toplevel), which can be a different worktree; the dedup check and the
+    # append must always target the same file, so the resolved path is also
+    # passed to the helper explicitly.
+    ledger="${MERGE_SNAPSHOT_LEDGER:-$(cd "$jdir/../../.." && pwd)/docs/self-improvement/merge-snapshots.jsonl}"
+    # Fast path BEFORE any network call: a GitHub PR merges at most once, so a
+    # pr-number match alone proves a row exists (fixed-string grep; the
+    # helper's pr+mergeCommit idempotency guard stays the authoritative dedup).
+    if [ -f "$ledger" ] && grep -qF "\"pr\":${PR_NUMBER}," "$ledger"; then
+        echo "[git-janitor] ledger row for PR #${PR_NUMBER} already present (merge actor wrote it) — no backfill needed."
+        return 0
+    fi
+    view="$(gh pr view "$PR_NUMBER" --json mergeCommit,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null || echo "")"
+    mc="$(jq -r '.mergeCommit.oid // ""' <<<"$view" 2>/dev/null || echo "")"
+    merged_at="$(jq -r '.mergedAt // ""' <<<"$view" 2>/dev/null || echo "")"
+    head_sha="$(jq -r '.headRefOid // ""' <<<"$view" 2>/dev/null || echo "")"
+    if [ -z "$mc" ] || [ -z "$head_sha" ]; then
+        echo "[git-janitor] ledger backfill skipped (mergeCommit/headRefOid unavailable; live fallback covers)."
+        return 0
+    fi
+    # An empty mergedAt must be checked EXPLICITLY: GNU `date -d ""` succeeds
+    # (today 00:00 UTC), so feeding it through the age math would fail OPEN
+    # before 06:00 UTC and stamp the row with the janitor's run time — exactly
+    # the post-hoc-stale row ADR-0017 forbids.
+    if [ -z "$merged_at" ]; then
+        echo "[git-janitor] ledger backfill skipped (mergedAt unavailable — undatable fails closed; live fallback covers PR #${PR_NUMBER})." >&2
+        return 0
+    fi
+    age_cap="${SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS:-6}"
+    # A non-integer cap (operator typo like "6h") makes $((age_cap * 3600))
+    # below raise an arithmetic error; the enclosing `[` then returns non-zero,
+    # the skip branch is NOT taken, and an arbitrarily old merge gets
+    # backfilled — fail-OPEN, the exact stale row ADR-0017 forbids. Fail closed
+    # instead, matching the undatable-mergedAt / undatable-NOW_TS branches.
+    case "$age_cap" in
+        ''|*[!0-9]*)
+            echo "[git-janitor] ledger backfill skipped — SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS='${age_cap}' is not a non-negative integer (fails closed; live fallback covers PR #${PR_NUMBER})." >&2
+            return 0 ;;
+    esac
+    # NOW_TS is assigned under set -e at startup, but validate it anyway: an
+    # empty/garbage value would make $((NOW_TS - ma)) treat it as 0 and accept
+    # arbitrarily old merges (fail-open). Undatable "now" fails closed too.
+    case "$NOW_TS" in
+        ''|*[!0-9]*)
+            echo "[git-janitor] ledger backfill skipped (current timestamp unavailable — undatable fails closed; live fallback covers PR #${PR_NUMBER})." >&2
+            return 0 ;;
+    esac
+    if [ "$age_cap" != "0" ]; then
+        # GNU date first, BSD/macOS fallback (mirrors safe-admin-merge.sh's
+        # grace math) — without it every mergedAt is "undatable" on BSD hosts
+        # and the backfill silently never fires.
+        ma="$(date -u -d "$merged_at" +%s 2>/dev/null \
+              || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$merged_at" +%s 2>/dev/null \
+              || echo "")"
+        if [ -z "$ma" ] || [ $(( NOW_TS - ma )) -gt $(( age_cap * 3600 )) ]; then
+            echo "[git-janitor] ledger backfill skipped — merge older than ${age_cap}h (or undatable): a post-hoc row this stale is worse than a hole (ADR-0017); postmortem-owed live fallback covers PR #${PR_NUMBER}." >&2
+            return 0
+        fi
+    fi
+    # The redChecks/overrideLabels projections live in safe-admin-merge.sh.
+    # Source it inside a SUBSHELL: although its CLI entry point is guarded,
+    # sourcing still executes its top level, which can `exit 2` fail-closed
+    # (e.g. the merge-gates allowlist failing to load) — and `exit` in a file
+    # sourced HERE would kill the whole janitor past the point it already
+    # mutated HEAD. The subshell contains any exit; a non-zero rc (source
+    # failure OR jq failure, pipefail) skips the append entirely — degrading
+    # to empty arrays and appending anyway would write an authoritative-looking
+    # "clean" row that suppresses postmortem-owed's live fallback.
+    if ! red_csv="$( ( set -o pipefail; . "$jdir/safe-admin-merge.sh" >/dev/null 2>&1
+                       downgraded_red_checks "$view" | paste -sd, - ) 2>/dev/null )"; then
+        echo "[git-janitor] WARN — redChecks projection failed; ledger row NOT written (live fallback covers PR #${PR_NUMBER})." >&2
+        return 0
+    fi
+    if ! override_csv="$( ( . "$jdir/safe-admin-merge.sh" >/dev/null 2>&1
+                            override_labels_csv "$view" ) 2>/dev/null )"; then
+        echo "[git-janitor] WARN — overrideLabels projection failed; ledger row NOT written (live fallback covers PR #${PR_NUMBER})." >&2
+        return 0
+    fi
+    if MERGE_SNAPSHOT_LEDGER="$ledger" SNAPSHOT_MERGED_AT="$merged_at" \
+        bash "$jdir/merge-snapshot-append.sh" \
+        "$PR_NUMBER" "$mc" "$head_sha" BACKFILLED "$red_csv" "$override_csv" git-janitor; then
+        echo "[git-janitor] ledger row BACKFILLED for PR #${PR_NUMBER} (redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
+    else
+        echo "[git-janitor] WARN — ledger backfill append failed; live fallback covers PR #${PR_NUMBER}." >&2
+    fi
+    return 0
+}
+# ||-context suspends -e inside the function; the function itself always
+# returns 0 (every failure path degrades + logs), so `|| true` is honest —
+# there is no reachable error branch to report here.
+backfill_merge_snapshot || true
 
 # ---------- Step 6: dual-target regression build -----------------------------
 echo "[git-janitor] running dual-target regression build..."

@@ -1,5 +1,5 @@
 - 2026-08-16 · orchestrator · [infra] · P2 — four docs still describe the pre-all-gates-blocking world, so a reader planning CI-gating work inherits a blocker that no longer exists
-  Details: Surfaced while grounding `docs/plans/active/autonomous-debug-live-evidence.md`
+  Details: Surfaced while grounding `docs/plans/shipped/autonomous-debug-live-evidence.md`
     against the tree; unrelated to that plan's subject, so filed here rather than
     bundled into it (`docs/agent-rules/ship-loops.md` § "Unrelated work never
     shares a PR").

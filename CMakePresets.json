@@ -74,6 +74,18 @@
             }
         },
         {
+            "name": "ninja-iter-agentdebug-msvc",
+            "inherits": [
+                "ninja-iter-msvc"
+            ],
+            "displayName": "Ninja Iteration + agent-debug NDJSON (MSVC)",
+            "description": "ninja-iter-msvc with SMATCHET_AGENT_DEBUG=ON, so SMATCHET_AGENT_DEBUG_LOG emits NDJSON instead of compiling to ((void)0). For agent debug loops that need the structured channel at iteration speed. Separate binaryDir from ninja-iter-msvc — check the exe path before testing.",
+            "binaryDir": "${sourceDir}/build/ninja-iter-agentdebug-msvc",
+            "cacheVariables": {
+                "SMATCHET_AGENT_DEBUG": "ON"
+            }
+        },
+        {
             "name": "ninja-debug-msvc",
             "inherits": [
                 "_smatchet-msvc-base"
@@ -445,6 +457,14 @@
         {
             "name": "ninja-iter-msvc",
             "configurePreset": "ninja-iter-msvc",
+            "inheritConfigureEnvironment": true,
+            "targets": [
+                "SmatchetStandalone"
+            ]
+        },
+        {
+            "name": "ninja-iter-agentdebug-msvc",
+            "configurePreset": "ninja-iter-agentdebug-msvc",
             "inheritConfigureEnvironment": true,
             "targets": [
                 "SmatchetStandalone"

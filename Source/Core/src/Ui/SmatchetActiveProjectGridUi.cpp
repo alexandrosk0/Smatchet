@@ -127,6 +127,24 @@ static void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
     }
 }
 
+// Pre-Begin placement for an EXTRA (non-bootstrap) pane. Extra panes deliberately do not
+// share the bootstrap pane's "active" layout key: d.pendingReDockWindows is keyed by that
+// string, so the first pane in the loop consumes the arm and a later floating pane re-inserts
+// it — N windows fighting over one latch written for exactly one window. The static "active"
+// dock slot would also scatter every new pane into the default grid node instead of the tab
+// bar whose "+" the user actually clicked. Placement comes from the source pane's live node
+// instead (seeded at creation by ApplyPaneAddAndCloseRequestsCore).
+void PrepareExtraPaneWindow(GridPane& pane, bool wantFocus) {
+    if (pane.pendingDockId != 0) {
+        ImGui::SetNextWindowDockID(static_cast<ImGuiID>(pane.pendingDockId), ImGuiCond_Always);
+        pane.pendingDockId = 0; // consume-once — from here the user owns the placement
+    }
+    ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_FirstUseEver);
+    if (wantFocus) {
+        ImGui::SetNextWindowFocus();
+    }
+}
+
 } // namespace
 
 // Re-entrant per-pane grid window (multi-grid-tabs Slice 2, plan item 14). Called once
@@ -143,8 +161,13 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
     // directly into the page child; skip the dock-window chrome (prepareTopLevelWindow/
     // Begin/End/focus-report) and the multi-pane "+" strip (mobile is single-pane). The
     // desktop path below is byte-identical to the pre-slice-4 flow.
+    const bool isBootstrapPane = (pane.id == "main");
     if (!embedded) {
-        prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
+        if (isBootstrapPane) {
+            prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
+        } else {
+            PrepareExtraPaneWindow(pane, wantFocus);
+        }
         // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
         // geometry and the default-layout ini keep applying; extra panes carry their
         // title with a stable ###GridPane:<id> settings id (cached — no per-frame build).
@@ -160,16 +183,35 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         // The main pane normally hides its title bar (docked, it shows only its tab).
         // Expanded it is floating, and a floating window with no title bar has nowhere
         // to put the minimize half of the toggle — so the flag lifts for those frames.
-        if (pane.id == "main" && !SmatchetWindowExpand::IsWindowExpanded(d, pane.cachedWindowName.c_str())) {
+        if (isBootstrapPane && !SmatchetWindowExpand::IsWindowExpanded(d, pane.cachedWindowName.c_str())) {
             paneFlags |= ImGuiWindowFlags_NoTitleBar;
         }
         SmatchetWindowExpand::BeginWindow(d, pane.cachedWindowName.c_str());
-        if (!ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags)) {
+        const bool paneVisible = ImGui::Begin(pane.cachedWindowName.c_str(), paneOpen, paneFlags);
+        // Record where this pane ended up EVERY frame, including the clipped/unselected-tab
+        // frames that return false — a pane sitting behind its sibling's tab is still docked,
+        // and it is exactly the pane a later "+" needs to hand its node to.
+        pane.lastDockId = static_cast<unsigned int>(ImGui::GetWindowDockID());
+        // Fire the tab-select arm BEFORE the visibility early-return. A pane that docked
+        // behind its sibling is exactly the case this fixes, and Begin returns false for it —
+        // gating on paneVisible would leave the arm set forever on the one frame it matters.
+        if (pane.selectTabFrames > 0) {
+            --pane.selectTabFrames;
+            selectCurrentDockedTab();
+        }
+        if (!paneVisible) {
             ImGui::End();
             return;
         }
         SmatchetWindowExpand::DrawToggle(d);
-        repairTopLevelWindow(d, "active", 420.0f, 300.0f);
+        if (isBootstrapPane) {
+            repairTopLevelWindow(d, "active", 420.0f, 300.0f);
+        } else {
+            // Unregistered key → no dock slot → repairTopLevelWindow takes the rect-repair-only
+            // path: a deliberately floating extra pane keeps its position, but is still rescued
+            // if it lands off-screen or degenerate. It never arms the shared "active" latch.
+            repairTopLevelWindow(d, "grid-pane", 420.0f, 300.0f);
+        }
         if (wantFocus) {
             ImGui::SetWindowFocus();
             d.requestActiveProjectFocus = false;

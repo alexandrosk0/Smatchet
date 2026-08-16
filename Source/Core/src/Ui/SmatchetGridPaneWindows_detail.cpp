@@ -112,6 +112,15 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
         GridPane dup;
         dup.id = GenerateUniquePaneId(panes);
         dup.title = src->title;
+        // Inherit the source pane's LIVE dock node so the new window opens as a TAB next to
+        // the pane whose "+" was clicked — following the source even after the user has
+        // dragged it somewhere else. 0 (source floating / never drawn) means "no hand-off":
+        // ImGui cannot tab a window into a node that does not exist, so the new pane falls
+        // back to its own first-use placement. Plain ImGuiID-by-value keeps this core
+        // ImGui-free. Tab selection is forced for a few frames because docking alone leaves
+        // the new tab behind its sibling (imgui #2304).
+        dup.pendingDockId = src->lastDockId;
+        dup.selectTabFrames = 4;
         const bool crossBackend =
             !addRequest.targetBackendKey.empty() && addRequest.targetBackendKey != src->backendKey;
         if (crossBackend) {
