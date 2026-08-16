@@ -8,7 +8,7 @@
     and `tracker_first_run_setup.test.cpp` covers the explainer render + the close-clears-fingerprint
     path, but the probe→save→`ReadOnlyMode`-clear chain is only ever walked by a human.
   Concrete next action: add a **credentialled opt-in lane** modelled on the existing local-data opt-in
-    pattern in `tests/Core/data_dependent_windows_smoke.test.cpp` — a doctest/bucket-E case that
+    pattern in `tests/ui/data_dependent_windows_smoke.test.cpp` — a doctest/bucket-E case that
     `SKIP`s unless a developer-local env var (`SMATCHET_LIVE_TRACKER_SMOKE=1` plus the usual
     `SMATCHET_JIRA_*` config env) is set, and when set drives config-wipe → probe → save → assert
     `BackendHasBeenReachable == true` and `ReadOnlyMode == false`. Never enabled in CI; the value is
@@ -16,7 +16,7 @@
     of a prose checklist a human re-derives each time. Est ~0.5d.
   Cross-ref: `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` § Verification § Manual residue
     (the bullet that requires this entry); `tests/ui/tracker_first_run_setup.test.cpp`;
-    `tests/Core/TrackerSetupPure.test.cpp`; `tests/Core/data_dependent_windows_smoke.test.cpp`
+    `tests/Core/TrackerSetupPure.test.cpp`; `tests/ui/data_dependent_windows_smoke.test.cpp`
     (the opt-in pattern to copy); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp`
     (`onPreferencesSaveAndSync` — the fingerprint-gated `ReadOnlyMode` clear this lane would pin).
   Status: open

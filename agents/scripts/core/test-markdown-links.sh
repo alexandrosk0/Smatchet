@@ -405,6 +405,22 @@ _REPO_PATH_SPAN_RE = re.compile(
 CODE_SPAN_SCOPE = "docs/self-improvement/categories/"
 CODE_SPAN_EXEMPT_BASENAMES = ("applied.md",)
 
+# A backlog entry's PROPOSAL block names files it exists to CREATE — "Concrete
+# next action: add a `scripts/dev/install-security-tools.sh`". Those paths are
+# absent by design, and they are the single most common repo-path code span in
+# the backlog: on the first real run they were 8 of 12 warnings. Warning on them
+# would train readers to ignore the rule, which is the same failure the
+# applied.md exemption avoids. The block is structural, not a verb guess: it
+# opens at one of these labels...
+_PROPOSAL_OPEN_RE = re.compile(r"^\s*-?\s*(?:Concrete next action|Proposed)\b.*?:")
+# ...and closes at the next sibling label, or at the next entry header (`- YYYY-
+# MM-DD ...` at column 0). Sub-bullets inside a proposal must NOT close it, so a
+# bare `- ` is deliberately not a terminator.
+_PROPOSAL_CLOSE_RE = re.compile(
+    r"^(?:\s{0,3}(?:Status|Last-reviewed|Cross-ref|Details|Related|Mechanics)\b.*?:"
+    r"|- \d{4}-\d{2}-\d{2}\b)"
+)
+
 
 def _develop_tree():
     """Repo-relative paths tracked at origin/develop, or None when that ref is
@@ -487,10 +503,16 @@ for path in TARGETS:
     span_scope = (rel_src_path.startswith(CODE_SPAN_SCOPE)
                   and os.path.basename(rel_src_path) not in CODE_SPAN_EXEMPT_BASENAMES)
     span_lines = _added_lines(rel_src_path) if (span_scope and SCOPE == "diff") else None
+    in_proposal = False
     try:
         with open(path, encoding="utf-8") as fh:
             in_fence = False
             for lineno, line in enumerate(fh, 1):
+                if span_scope:
+                    if _PROPOSAL_CLOSE_RE.match(line):
+                        in_proposal = False
+                    if _PROPOSAL_OPEN_RE.match(line):
+                        in_proposal = True
                 stripped = line.lstrip()
                 # Skip fenced code blocks (``` / ~~~): a link inside a fence is
                 # illustrative/literal (e.g. example paths in a doc template),
@@ -507,7 +529,7 @@ for path in TARGETS:
                 # every path the same PR adds, which is the common case, while
                 # checking only HEAD would miss the failure this rule exists for
                 # (a path that lives on some other feature branch).
-                if span_scope and (span_lines is None or lineno in span_lines):
+                if span_scope and not in_proposal and (span_lines is None or lineno in span_lines):
                     for span_text, span_end in code_spans:
                         cand = span_text.strip()
                         if not _REPO_PATH_SPAN_RE.match(cand):

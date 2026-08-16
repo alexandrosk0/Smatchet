@@ -19,7 +19,7 @@
   Cross-ref: `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` § Verification bucket-E items
     2-6 + § Deviations (the entry recording the descope); `tests/ui/tracker_first_run_setup.test.cpp`
     (the 2 shipped tests); `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` (probe dispatch +
-    `onPreferencesSaveAndSync`); `Source/Core/include/Tracker/ITrackerBackendFactory.h`;
+    `onPreferencesSaveAndSync`); `Source/Core/include/ITrackerBackendFactory.h`;
     PR #1833 (shipped the probe as an `AppController` member, closing the planned accessor seam).
   Status: open
   Last-reviewed: 2026-08-03

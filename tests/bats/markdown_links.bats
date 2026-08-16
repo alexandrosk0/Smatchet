@@ -370,3 +370,79 @@ _mk_span_repo() {
     [ "$status" -eq 0 ]
     [[ "$output" != *"WARN: code-span path"* ]]
 }
+
+# A backlog entry's PROPOSAL block names files it exists to CREATE. Those paths
+# are absent by design and were 8 of the 12 warnings on the first real run —
+# warning on them would train readers to ignore the rule, the same failure the
+# applied.md exemption avoids. The block is structural (label-delimited), not a
+# verb guess.
+@test "a path proposed under 'Concrete next action' draws no warning" {
+    _mk_span_repo
+    {
+        printf -- '- 2026-08-16 entry\n'
+        printf '  Details: something is missing.\n'
+        printf '  Concrete next action: add a `scripts/dev/install-security-tools.sh` mirror.\n'
+        printf '  Status: open\n'
+    } > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+@test "'Proposed:' opens a proposal block too" {
+    _mk_span_repo
+    {
+        printf -- '- 2026-08-16 entry\n'
+        printf '  Proposed: extract the helper into `scripts/dev/lib/ui-test-home.sh` and source it.\n'
+        printf '  Status: open\n'
+    } > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+# The proposal block must CLOSE at the next sibling label, or a stale citation in
+# Cross-ref/Status would be swallowed by a proposal earlier in the same entry —
+# which is exactly where two of the three real staleness bugs lived.
+@test "a stale path in Cross-ref AFTER a proposal block still warns" {
+    _mk_span_repo
+    {
+        printf -- '- 2026-08-16 entry\n'
+        printf '  Concrete next action: add a `scripts/dev/brand-new-thing.sh` helper.\n'
+        printf '  Cross-ref: `tests/Core/moved-away-xyz.test.cpp` (the pattern to copy)\n'
+        printf '  Status: open\n'
+    } > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN: code-span path 'tests/Core/moved-away-xyz.test.cpp'"* ]]
+    [[ "$output" != *"brand-new-thing.sh"* ]]
+}
+
+# A sub-bullet inside a proposal must not close it — proposals routinely list
+# steps, and closing early would re-enable the false positives.
+@test "a sub-bullet does not close a proposal block" {
+    _mk_span_repo
+    {
+        printf -- '- 2026-08-16 entry\n'
+        printf '  Concrete next action: do these:\n'
+        printf '    - author `agents/scripts/core/brand-new-helper.sh` first\n'
+        printf '  Status: open\n'
+    } > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+# A new entry header resets proposal state, so entry N's proposal cannot silence
+# entry N+1's stale citation in a monolith category file.
+@test "a new entry header closes the previous entry's proposal block" {
+    _mk_span_repo
+    {
+        printf -- '- 2026-08-15 first entry\n'
+        printf '  Concrete next action: add a `scripts/dev/brand-new-thing.sh` helper.\n'
+        printf -- '- 2026-08-16 second entry citing `tests/Core/moved-away-xyz.test.cpp` as real\n'
+    } > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"WARN: code-span path 'tests/Core/moved-away-xyz.test.cpp'"* ]]
+}
