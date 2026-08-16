@@ -105,12 +105,15 @@ TEST_CASE("CollaborationErrorToVoidResult: an error surfaces its Detail verbatim
     CHECK(invalid.error() == "bad watcher payload");
 }
 
-TEST_CASE("CollaborationErrorToVoidResult: an error with an empty Detail still maps to a (empty) Err") {
-    // A failure with no Detail is still a failure — it must not be misread as success.
+TEST_CASE("CollaborationErrorToVoidResult: an error with an empty Detail gets a non-empty message") {
+    // A failure with no Detail is still a failure. The watch-self caller
+    // (TrackerGridFieldDisplay.cpp) encodes success as an empty string and only shows the failure
+    // tooltip when the message is non-empty, so an Err("") renders exactly like success.
     TrackerError e = TrackerErrorInvalidRequest("");
     const VoidResult r = CollaborationErrorToVoidResult(e);
     REQUIRE_FALSE(r.has_value());
-    CHECK(r.error().empty());
+    CHECK_FALSE(r.error().empty());
+    CHECK(r.error() == std::string(smatchet::collab::CollaborationErrorFallbackMessage()));
 }
 
 TEST_CASE("CollaborationResultToResult: an Ok payload passes through by move") {
@@ -136,9 +139,11 @@ TEST_CASE("CollaborationResultToResult: an error surfaces its Detail verbatim") 
     CHECK(invalid.error() == "bad query");
 }
 
-TEST_CASE("CollaborationResultToResult: an error with an empty Detail still maps to a (empty) Err") {
-    // A payload fetch that fails with no Detail is still a failure — never misread as an empty-Ok list.
+TEST_CASE("CollaborationResultToResult: an error with an empty Detail gets a non-empty message") {
+    // A payload fetch that fails with no Detail is still a failure — never misread as an empty-Ok
+    // list, and never surfaced to a caller that treats an empty message as success.
     Result<int> r = CollaborationResultToResult<int>(Result<int, TrackerError>::Err(TrackerErrorInvalidRequest("")));
     REQUIRE_FALSE(r.has_value());
-    CHECK(r.error().empty());
+    CHECK_FALSE(r.error().empty());
+    CHECK(r.error() == std::string(smatchet::collab::CollaborationErrorFallbackMessage()));
 }

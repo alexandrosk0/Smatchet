@@ -16,16 +16,16 @@
 namespace smatchet {
 namespace tracker {
 
-/// KNOWN GAP, deliberately preserved: `TrackerConfig::NewIssueInheritFieldIdsGitHub` exists and the
-/// Preferences UI both loads and saves it ("New issue: inherit fields from last row (GitHub)"), but
-/// no draft path has ever read it — GitHub falls through to the default list below, so that setting
-/// is accepted, persisted and silently ignored. Behaviour is kept identical here rather than fixed
-/// in passing, because changing what a GitHub draft inherits is a user-visible change that deserves
-/// its own decision. Add the `kBackendGitHub` branch when that decision is made.
+/// GitHub reads its own list like every other backend. It used to fall through to the Jira list,
+/// which made "New issue: inherit fields from last row (GitHub)" a setting the Preferences UI
+/// loaded and saved but no draft path consumed.
 inline const std::vector<std::string>& NewIssueInheritFieldIdsFor(const TrackerConfig& cfg) {
     const int kind = BackendIndexFromType(cfg.TrackerType);
     if (kind == kBackendPlane) {
         return cfg.NewIssueInheritFieldIdsPlane;
+    }
+    if (kind == kBackendGitHub) {
+        return cfg.NewIssueInheritFieldIdsGitHub;
     }
     if (kind == kBackendLinear) {
         return cfg.NewIssueInheritFieldIdsLinear;
