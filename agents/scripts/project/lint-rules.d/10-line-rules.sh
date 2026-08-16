@@ -22,6 +22,15 @@ scan_file_rules() {
                     revisit=*) prev_dev_revisit="${kv#revisit=}" ;;
                 esac
             done
+            # DEV_RE's body capture is `[^)]*`, so it stops at the FIRST ')' — a reason= carrying a
+            # parenthetical hides everything after it, revisit= included. That loses the EXPIRY while
+            # keeping the SUPPRESSION (rule= precedes any paren): the fail-open direction, and it hid
+            # a real date on 8 live markers. Recover revisit= from the whole marker line, but only
+            # when the body split found none — never override a value the documented parse produced.
+            if [ -z "$prev_dev_revisit" ] && [[ "$line" =~ $DEV_REVISIT_RE ]]; then
+                prev_dev_revisit="${BASH_REMATCH[1]}"
+                prev_dev_revisit="${prev_dev_revisit%"${prev_dev_revisit##*[![:space:]]}"}"
+            fi
             # deviation-overdue fires on the comment line itself.
             if [ -n "$prev_dev_revisit" ] && revisit_overdue "$prev_dev_revisit"; then
                 printf 'deviation-overdue\t%s:%s\t%s\n' "$f" "$lineno" "$line"

@@ -10,3 +10,11 @@ ReferenceAlignment: Pointer
 SortIncludes: Never
 IncludeBlocks: Preserve
 NamespaceIndentation: None
+# Never reflow a SMATCHET_DEVIATION marker. Every deviation consumer matches the whole
+# `SMATCHET_DEVIATION(...)` on a SINGLE line, so wrapping one at ColumnLimit does not produce a
+# syntax error — it silently stops being a deviation and the rule it escaped fires again (or, for
+# deviation-overdue, stops firing forever). Without this pragma `clang-format -i` — which
+# scripts/dev/pre-ship.sh runs on every changed first-party TU before the gate — rewrites 15 live
+# markers, four of them bare-json-parse-untrusted escapes. Marker lines are exempt from ColumnLimit
+# by design; keep reason= terse anyway so the line stays readable.
+CommentPragmas: '^ *SMATCHET_DEVIATION'

@@ -72,6 +72,14 @@ has_inline_exempt() {
 # Also emits deviation-overdue when revisit is a passed calendar marker.
 DEV_RE='SMATCHET_DEVIATION\(([^)]*)\)'
 
+# Companion to DEV_RE for the `revisit=` field only. DEV_RE's body capture is `[^)]*`, so it stops
+# at the FIRST ')': a reason= carrying a parenthetical ("... include set (ConfigManager / backends);
+# owner=...; revisit=2026-12-31)") hides owner= and revisit= from the split above. Suppression
+# survives that (rule= precedes any paren) but the EXPIRY does not — the marker becomes permanently
+# un-auditable, which is the fail-open direction. Read revisit= off the whole marker line instead,
+# bounded by the next ';' or ')'.
+DEV_REVISIT_RE='revisit=([^;)]+)'
+
 today_ymd() { date +%Y-%m-%d; }
 
 revisit_overdue() {

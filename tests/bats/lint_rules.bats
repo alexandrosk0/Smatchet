@@ -690,6 +690,23 @@ _resolve_py() {
     [[ "$output" != *"no-raw-new"* ]]
 }
 
+@test "deviation-overdue fires when reason= contains a parenthetical" {
+    # DEV_RE's body capture is `[^)]*` and stops at the first ')', so a reason= with a
+    # parenthetical hid revisit= entirely: the marker still suppressed its rule but could never
+    # go overdue — escape granted, expiry lost. 40 live markers were in that shape.
+    run bash "$LINT" --scan-file "$FIX/deviation-overdue-paren-reason.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"deviation-overdue"* ]]
+    [[ "$output" != *"no-raw-new"* ]]
+}
+
+@test "a parenthetical reason= with a FUTURE revisit suppresses without firing overdue" {
+    run bash "$LINT" --scan-file "$FIX/deviation-current-paren-reason.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-raw-new"* ]]
+    [[ "$output" != *"deviation-overdue"* ]]
+}
+
 # ---------- known-good ----------
 
 @test "known-good fixture produces no findings" {
