@@ -14,6 +14,18 @@
 # failure here, i.e. one gate failing on another gate's evidence file. Regenerate it
 # with `test-markdown-links.sh --baseline`; burning an entry down there removes the
 # line here too.
+#
+# Same rationale for docs/self-improvement/historical-review-findings-*.jsonl — the
+# historical-code-review sweep's raw finding records. Two structural reasons a
+# findings record manufactures dangling plan refs through no fault of its own:
+#   (1) a finding QUOTES the path it is reporting as broken/moved — the citation IS
+#       the defect, so rewriting it destroys the record;
+#   (2) a fix PROPOSES a path that does not exist yet ("flip Status to shipped and
+#       move to docs/plans/shipped/<slug>.md") — a proposal, not a citation, exactly
+#       like the § Archive git-mv carve-out below.
+# Both are verbatim agent output stored for the reconcile pass, so they must not be
+# edited to satisfy a gate. Prose in the ledger itself (historical-review-findings.md)
+# IS still scanned and should use the move-proof tier-less form.
 set -uo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -47,6 +59,7 @@ mapfile -t refs < <(git grep -hoE --untracked 'docs/plans/((active|shipped|defer
                       -- ':!.understand-anything/' ':!agents/scripts/core/test-plan-ref-integrity.sh' \
                       ':!agents/scripts/core/archive-plan.sh' ':!agents/scripts/core/test-archive-plan.sh' \
                       ':!docs/high-integrity/markdown-link-baseline.md' \
+                      ':!docs/self-improvement/historical-review-findings-*.jsonl' \
                       2>/dev/null | sort -u)
 
 # resolves <ref> — true if the ref points at a real plan file. A tier-less
@@ -163,7 +176,40 @@ PLAN
   gotC=$?; rm -rf "$repoC"
   [ "$gotC" = "1" ] || { echo "FAIL: untracked plan's dangling ref NOT flagged (exit $gotC, want 1)"; fail=1; }
 
-  if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5 unit + 4 e2e)"; exit 0; fi
+  # Fixture D — a historical-review findings sidecar carrying a dangling plan ref
+  # (a finding quoting a moved path / proposing a not-yet-existing shipped/ path)
+  # must NOT be flagged: it is an evidence record, not a citation. PASS(0).
+  repoD="$(mktemp -d)"
+  (
+    cd "$repoD" || exit 99
+    scaffold_fixture
+    mkdir -p docs/self-improvement
+    printf '{"fix":"move to docs/plans/shipped/ghost-sidecar.md","pr":1}\n' \
+      > docs/self-improvement/historical-review-findings-2026-08-16.jsonl
+    git add -A
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotD=$?; rm -rf "$repoD"
+  [ "$gotD" = "0" ] || { echo "FAIL: findings sidecar's evidence ref wrongly flagged (exit $gotD, want 0)"; fail=1; }
+
+  # Fixture D2 — the sidecar skip must NOT leak to its neighbours: the same
+  # dangling ref in the LEDGER prose (historical-review-findings.md, no -<date>
+  # suffix, not .jsonl) is a real citation and must still FAIL(1).
+  # selftest: asserts-failure — ledger prose stays in scope.
+  repoD2="$(mktemp -d)"
+  (
+    cd "$repoD2" || exit 99
+    scaffold_fixture
+    mkdir -p docs/self-improvement
+    printf 'see docs/plans/shipped/ghost-ledger.md\n' \
+      > docs/self-improvement/historical-review-findings.md
+    git add -A
+    bash "$SUT_REL"
+  ) >/dev/null 2>&1
+  gotD2=$?; rm -rf "$repoD2"
+  [ "$gotD2" = "1" ] || { echo "FAIL: ledger prose dangling ref NOT flagged (exit $gotD2, want 1)"; fail=1; }
+
+  if [ "$fail" = "0" ]; then echo "test-plan-ref-integrity --selftest: PASS (5 unit + 6 e2e)"; exit 0; fi
   echo "test-plan-ref-integrity --selftest: FAIL"; exit 1
 fi
 
