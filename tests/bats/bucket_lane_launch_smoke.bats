@@ -8,7 +8,10 @@
 # build. A stub that emits NO valid capture envelope makes every scenario FAIL
 # -> Passed:0 Failed:N -> the broken-lane guard must hard-exit 3 + write
 # status=broken to the sentinel. A stub that emits a valid envelope + PNG, run
-# in --bootstrap mode (always-PASS), must NOT trip the guard (status=ok).
+# in --bootstrap mode (which skips the DIFF, so nothing fails on pixels), must
+# NOT trip the guard (status=ok). Bootstrap is not unconditionally green: the
+# golden-independent assertions still run, and a failed one (the dock-gap pink
+# scan) fails the run and reports `fail-assert` — see the mixed-outcome test.
 #
 # Also exercises the negative-test fixture (build-log-regex lesson): the broken
 # case MUST exit nonzero, asserted explicitly so a regression to pass-through is
