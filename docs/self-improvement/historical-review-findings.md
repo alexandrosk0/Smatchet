@@ -69,7 +69,7 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 - `agents/scripts/core/test-markdown-links.sh` — 1 MEDIUM, 2 LOW — #2028:373, #2028:419, #2028:455
 - `agents/scripts/core/test-plan-claim-anchors.sh` — 1 MEDIUM, 2 LOW — #1999:459, #1999:704, #1999:710
 - `docs/agent-rules/review-panels.md` — 1 MEDIUM, 2 LOW — #1980:8, #1978:27, #1978:104
-- `docs/plans/active/autonomous-debug-live-evidence.md` — 2 MEDIUM, 1 LOW — #2032:50, #2032:86, #2032:104
+- `docs/plans/autonomous-debug-live-evidence.md` — 2 MEDIUM, 1 LOW — #2032:50, #2032:86, #2032:104
 - `scripts/common/unreal-batch.sh` — 2 MEDIUM, 1 LOW — #1965:41, #1965:45, #1965:49
 - `scripts/dev/pre-ship.sh` — 2 MEDIUM, 1 LOW — #2027:300, #1974:352, #1974:626
 - `scripts/dev/test-screenshot-diff.sh` — 1 MEDIUM, 2 LOW — #2023:159, #2023:232, #2023:384
@@ -77,8 +77,8 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 - `Source/Core/src/Ui/ImGuiHotkey.cpp` — 2 LOW — #2013:154, #2013:238
 - `agents/scripts/core/postmortem-owed.sh` — 1 MEDIUM, 1 LOW — #1998:726, #2018:982
 - `agents/scripts/core/work_item_lint.py` — 1 MEDIUM, 1 LOW — #1979:64, #1979:283
-- `docs/plans/active/agentic-infra-audit-campaign-2026-06.md` — 2 LOW — #1956:267, #1956:276
-- `docs/plans/shipped/preferences-ia-resegmentation-and-search.md` — 2 LOW — #1941:212, #1941:338
+- `docs/plans/agentic-infra-audit-campaign-2026-06.md` — 2 LOW — #1956:267, #1956:276
+- `docs/plans/preferences-ia-resegmentation-and-search.md` — 2 LOW — #1941:212, #1941:338
 - `docs/self-improvement/categories/debt/2026-08-07-dock-node-id-slot-liveness-followups.md` — 2 LOW — #1984:8, #2020:58
 - `docs/self-improvement/categories/tooling.md` — 1 MEDIUM, 1 LOW — #1972:11, #1972:11
 - `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM, 1 LOW — #1991:16, #1991:54
@@ -131,10 +131,10 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 - `docs/agent-rules/work-items.md` — 1 MEDIUM — #1978:172
 - `docs/design/separate-agents-repo.md` — 1 LOW — #1960:100
 - `docs/harness/SETUP.md` — 1 LOW — #1960:79
-- `docs/plans/active/pane-stale-delete-collision.md` — 1 LOW — #2024:54
-- `docs/plans/deferred/cursor-vexp-coexistence.md` — 1 LOW — #1956:11
-- `docs/plans/shipped/msvc-build-onboarding-hardening.md` — 1 LOW — #1960:77
-- `docs/plans/shipped/window-expand-button.md` — 1 LOW — #1966:313
+- `docs/plans/pane-stale-delete-collision.md` — 1 LOW — #2024:54
+- `docs/plans/cursor-vexp-coexistence.md` — 1 LOW — #1956:11
+- `docs/plans/msvc-build-onboarding-hardening.md` — 1 LOW — #1960:77
+- `docs/plans/window-expand-button.md` — 1 LOW — #1966:313
 - `docs/self-improvement/categories/debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md` — 1 LOW — #1962:1
 - `docs/self-improvement/categories/infra/2026-08-05-merge-watcher-liveness-unmonitored.md` — 1 LOW — #2007:103
 - `docs/self-improvement/categories/tooling/2026-08-05-dual-target-syntax-hook-vacuous-without-clang-preset.md` — 1 LOW — #1952:9
@@ -202,13 +202,13 @@ Full problem + fix. Everything below this block is one-line; the complete struct
 
 All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
 
-- `docs/plans/active/refactor-quickwins-parser-lua-service.md` — 4 MEDIUM, 2 LOW — #1898:27, #1898:28, #1898:29, #1898:30, #1898:39, #1898:40
+- `docs/plans/refactor-quickwins-parser-lua-service.md` — 4 MEDIUM, 2 LOW — #1898:27, #1898:28, #1898:29, #1898:30, #1898:39, #1898:40
 - `scripts/dev/verifier-produce.py` — 2 MEDIUM, 4 LOW — #1885:161, #1885:189, #1885:205, #1891:274, #1891:520, #1887:521
 - `scripts/dev/verifier-calibrate.py` — 3 MEDIUM, 2 LOW — #1887:95, #1887:108, #1887:201, #1887:356, #1887:383
-- `docs/plans/active/duration-parser-unification.md` — 3 MEDIUM, 1 LOW — #1913:34, #1913:44, #1913:46, #1913:60
+- `docs/plans/duration-parser-unification.md` — 3 MEDIUM, 1 LOW — #1913:34, #1913:44, #1913:46, #1913:60
 - `docs/self-improvement/postmortems.md` — 1 MEDIUM, 3 LOW — #1929:286, #1929:286, #1931:286, #1931:292
 - `.github/workflows/release.yml` — 1 MEDIUM, 2 LOW — #1883:143, #1883:174, #1930:195
-- `docs/plans/active/py-probe-exec-validation-gate.md` — 1 MEDIUM, 2 LOW — #1939:3, #1939:53, #1939:191
+- `docs/plans/py-probe-exec-validation-gate.md` — 1 MEDIUM, 2 LOW — #1939:3, #1939:53, #1939:191
 - `scripts/dev/verifier-endpoint.py` — 2 MEDIUM, 1 LOW — #1889:177, #1889:186, #1889:286
 - `scripts/dev/verifier-sidecar.py` — 1 MEDIUM, 2 LOW — #1884:9, #1884:143, #1884:537
 - `tests/ui/ai_prefs_autosave_flow.test.cpp` — 2 MEDIUM, 1 LOW — #1888:270, #1888:304, #1888:318
@@ -231,9 +231,9 @@ All `userVisible:false`. Listed per file rather than per finding — the full pr
 - `agents/scripts/project/migrate-bugs-to-issues.sh` — 1 MEDIUM — #1936:38
 - `agents/scripts/project/test-about-buildinfo-bats.sh` — 1 LOW — #1937:45
 - `docs/agent-rules/verifier-sidecar.md` — 1 LOW — #1884:3
-- `docs/plans/active/build-quality-velocity-hardening.md` — 1 LOW — #1908:239
-- `docs/plans/shipped/about-dialog-help-menu.md` — 1 LOW — #1937:42
-- `docs/plans/shipped/gate-blind-spot-sweep.md` — 1 LOW — #1917:59
+- `docs/plans/build-quality-velocity-hardening.md` — 1 LOW — #1908:239
+- `docs/plans/about-dialog-help-menu.md` — 1 LOW — #1937:42
+- `docs/plans/gate-blind-spot-sweep.md` — 1 LOW — #1917:59
 - `docs/self-improvement/categories/applied.md` — 1 LOW — #1886:15
 - `docs/self-improvement/categories/tooling/2026-08-04-gate-scripts-resolve-only-python-probes.md` — 1 MEDIUM — #1940:26
 - `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM — #1878:378
