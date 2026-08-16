@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cerrno>
+#include <cmath>
 #include <cstdlib>
 #include <string>
 #include <unordered_set>
@@ -42,6 +43,12 @@ static bool ParseWholeDouble(const std::string& s, double& out) {
     const char* const c = s.c_str();
     out = std::strtod(c, &end);
     if (end != c + s.size()) {
+        return false;
+    }
+    // strtod whole-string-matches "nan" / "inf"; a NaN cell would make the comparator
+    // return +1 for both Compare(a,b) and Compare(b,a) — not a strict weak ordering,
+    // which is UB in stable_sort. Reject non-finite so the caller falls back to strings.
+    if (!std::isfinite(out)) {
         return false;
     }
     return errno != ERANGE;
@@ -96,8 +103,11 @@ int CompareNumericValues(const std::string& aVal, const std::string& bVal, bool 
         const bool bNum = ParseWholeDouble(bVal, db);
         if (aNum && bNum) {
             outNumeric = true;
-            if (da != db) {
-                return (da < db) ? -1 : 1;
+            if (da < db) {
+                return -1;
+            }
+            if (db < da) {
+                return 1;
             }
             return 0;
         }
@@ -153,6 +163,11 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
 }
 
 bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field) {
+    // Duration columns hold raw seconds, not dates — check them first (same ordering
+    // CompareFieldValuesForSort uses) so the "time" word-heuristic below can't claim them.
+    if (kTimeTrackingFieldIds.count(fieldId)) {
+        return false;
+    }
     if (kDateFieldIds.count(fieldId)) {
         return true;
     }

@@ -9,6 +9,7 @@
 #include <doctest/doctest.h>
 
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -60,6 +61,68 @@ TEST_CASE("CompareFieldValuesForSort — numeric fields compare numerically, not
     // Non-numeric text falls back to case-insensitive compare.
     CHECK(Sgn(CompareFieldValuesForSort("summary", nullptr, "apple", "Banana", 1)) == -1);
     CHECK(CompareFieldValuesForSort("summary", nullptr, "ABC", "abc", 1) == 0); // case-insensitive equal
+}
+
+TEST_CASE("CompareFieldValuesForSort — non-finite number cells never claim a numeric order") {
+    const TrackerField num = Field("story_points", "number");
+    // strtod whole-string-matches these; two NaN cells used to report "unequal but neither
+    // smaller" (+1 both ways). They must now compare as equivalent / consistently ordered.
+    CHECK(CompareFieldValuesForSort("story_points", &num, "nan", "nan", 1) == 0);
+    CHECK(CompareFieldValuesForSort("story_points", &num, "nan", "NaN", 1) == 0); // case-insensitive fallback
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "nan", "inf", 1)) ==
+          -Sgn(CompareFieldValuesForSort("story_points", &num, "inf", "nan", 1)));
+    CHECK(CompareFieldValuesForSort("story_points", &num, "inf", "inf", 1) == 0);
+    // Finite values keep comparing numerically.
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "2", "10", 1)) == -1);
+}
+
+TEST_CASE("CompareFieldValuesForSort — number column with NaN is a strict weak ordering") {
+    const TrackerField num = Field("story_points", "number");
+    // The grid's stable_sort predicate: SmatchetActiveProjectGridTable feeds the comparator
+    // through `(cmp * dir) < 0`. Exercise that exact shape over a NaN/inf-laden value set.
+    const std::vector<std::string> values = {"", "-inf", "1", "2", "3", "inf", "nan", "NaN", "zz"};
+    const int dirs[2] = {1, -1};
+    for (int d = 0; d < 2; ++d) {
+        const int dir = dirs[d];
+        auto less = [&num, dir](const std::string& x, const std::string& y) {
+            return (CompareFieldValuesForSort("story_points", &num, x, y, dir) * dir) < 0;
+        };
+        for (size_t i = 0; i < values.size(); ++i) {
+            CHECK_FALSE(less(values[i], values[i])); // irreflexive
+            for (size_t j = 0; j < values.size(); ++j) {
+                if (less(values[i], values[j])) {
+                    CHECK_FALSE(less(values[j], values[i])); // asymmetric
+                }
+                for (size_t k = 0; k < values.size(); ++k) {
+                    if (less(values[i], values[j]) && less(values[j], values[k])) {
+                        CHECK(less(values[i], values[k])); // transitive
+                    }
+                    // Transitivity of equivalence (the half a NaN comparator classically breaks).
+                    const bool eqIJ = !less(values[i], values[j]) && !less(values[j], values[i]);
+                    const bool eqJK = !less(values[j], values[k]) && !less(values[k], values[j]);
+                    if (eqIJ && eqJK) {
+                        CHECK(!less(values[i], values[k]));
+                        CHECK(!less(values[k], values[i]));
+                    }
+                }
+            }
+        }
+    }
+}
+
+TEST_CASE("IsTrackerDateOrDateTimeField — time-tracking duration ids are not dates") {
+    // Raw-seconds duration columns; the "time" word heuristic used to swallow all of them.
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("timespent", nullptr));
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("timeestimate", nullptr));
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("timeoriginalestimate", nullptr));
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("aggregatetimespent", nullptr));
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("aggregatetimeestimate", nullptr));
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("aggregatetimeoriginalestimate", nullptr));
+    // Catalog metadata must not resurrect them either — the id decides first.
+    const TrackerField spent = Field("timespent", "number", "Time Spent");
+    CHECK_FALSE(IsTrackerDateOrDateTimeField("timespent", &spent));
+    // A genuinely date-ish "time" id is still a date.
+    CHECK(IsTrackerDateOrDateTimeField("start_time", nullptr));
 }
 
 TEST_CASE("IsTrackerDateOrDateTimeField — ids, catalog type/family, and word heuristics") {
