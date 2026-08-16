@@ -338,27 +338,38 @@ Build when: a "merged green but broke develop" incident happens, OR PR throughpu
 
 **Recipe** (UI path): Settings → Branches → develop → "Require merge queue". Configure required status checks list (`build-and-test`, `coverage-gate`, plus any others). Merge queue auto-rebases each PR against develop tip + re-runs required checks before final merge. PR throughput trade-off: queue is single-threaded per branch; slow CI degrades throughput.
 
-**Recipe** (API path):
+**Recipe** (API path — the protection object is OWNED by `agents/scripts/core/setup-branch-protection.sh`, which builds the full `PUT` body from `project.config.json` `branch_protection` — the endpoint takes `PUT` with a complete JSON body, not `PATCH` with nested `-F` form fields, and `enforce_admins` is TRUE since merge-pipeline-06, 2026-08-16. To adopt merge-queue settings: add them to the config block + script, then re-run it rather than hand-crafting the call):
 ```bash
-gh api -X PATCH repos/alexandrosk0/Smatchet/branches/develop/protection \
-  -F required_status_checks.strict=true \
-  -F 'required_status_checks.contexts[]=build-and-test' \
-  -F 'required_status_checks.contexts[]=coverage-gate' \
-  -F required_linear_history=true \
-  -F enforce_admins=false \
-  -f restrictions= \
-  -f required_pull_request_reviews.dismiss_stale_reviews=true
-gh api -X PUT repos/alexandrosk0/Smatchet/rulesets \
-  --input <<<'{
-    "name": "develop-merge-queue",
-    "target": "branch",
-    "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["refs/heads/develop"], "exclude": []}},
-    "rules": [{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]
-  }'
+# 1. Protection object (strict/required contexts/enforce_admins/…):
+bash agents/scripts/core/setup-branch-protection.sh          # or --dry-run first
+# 2. Merge-queue ruleset. CREATE is POST .../rulesets (PUT is the UPDATE verb
+#    and needs a ruleset_id: `gh api repos/OWNER/REPO/rulesets --jq
+#    '.[] | select(.name=="develop-merge-queue") | .id'`). The merge_queue rule
+#    requires the FULL parameter set — omitting any of these is rejected.
+gh api -X POST repos/alexandrosk0/Smatchet/rulesets \
+  --input - <<'JSON'
+{
+  "name": "develop-merge-queue",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/heads/develop"], "exclude": []}},
+  "rules": [{
+    "type": "merge_queue",
+    "parameters": {
+      "merge_method": "SQUASH",
+      "grouping_strategy": "ALLGREEN",
+      "check_response_timeout_minutes": 60,
+      "max_entries_to_build": 5,
+      "max_entries_to_merge": 5,
+      "min_entries_to_merge": 1,
+      "min_entries_to_merge_wait_minutes": 5
+    }
+  }]
+}
+JSON
 ```
 
-(API shape may need adjusting per GitHub Actions API drift — verify the response.)
+(Verify the response — this is an untested recipe for a deferred phase; re-check the parameter set against the current [rules API](https://docs.github.com/en/rest/repos/rules) before running.)
 
 ## Verification
 

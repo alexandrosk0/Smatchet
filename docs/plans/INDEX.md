@@ -152,6 +152,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`mobile-ci-smoke-gate`](shipped/mobile-ci-smoke-gate.md) | 2026-06-13 | Plan — Mobile CI smoke gate for the #1122 texture-lifetime crash class |
 | [`sanitizer-nightly-asan-ubsan-fix`](shipped/sanitizer-nightly-asan-ubsan-fix.md) | 2026-06-13 | Plan — Sanitizer nightly (ASan+UBSan) fix + config-skew preventing gate |
 | [`ui-freeze-pillar2-blocking`](shipped/ui-freeze-pillar2-blocking.md) | 2026-06-13 | Plan — Pillar-2 UI-thread blocking elimination (future-destructor + sync-I/O cluster) |
+| [`agentic-infra-audit-campaign-2026-06`](shipped/agentic-infra-audit-campaign-2026-06.md) | 2026-06-14 | Plan — Agentic-infrastructure audit campaign (2026-06 salvage) |
 | [`core-include-dag`](shipped/core-include-dag.md) | 2026-06-14 | Plan — DAG-ify the Source/Core include graph |
 | [`http-fault-injection`](shipped/http-fault-injection.md) | 2026-06-14 | Plan — HTTP fault-injection + retry wiring (testing-surface Slice D + D3) |
 | [`image-dim-cap`](shipped/image-dim-cap.md) | 2026-06-14 | Plan — Image-dimension cap in the attachment-preview parser (testing-surface Slice E1) |

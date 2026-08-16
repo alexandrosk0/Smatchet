@@ -78,7 +78,7 @@
       "C++ lint (catch-all + cppcheck)"
     ],
     "required_review_count": 0,
-    "enforce_admins": false,
+    "enforce_admins": true,
     "strict": false
   },
   "ci": {
@@ -89,7 +89,7 @@
   },
   "merge_gates": {
     "cr_bot_logins": ["coderabbitai[bot]", "coderabbitai"],
-    "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band", "coverage-out-of-band", "intent-out-of-band"]
+    "override_labels": ["tests-out-of-band", "perf-out-of-band", "cr-out-of-band", "coverage-out-of-band", "intent-out-of-band", "plan-lock-out-of-band"]
   },
   "coverage": {
     "_doc": "Numeric line-coverage gate (coverage.yml). threshold = blocking floor; excluded = paths carved out of the measured surface (UI is bucket-E/screenshot-tested, not ctest-testable). Graduated advisory->blocking 2026-06-04; first real measurement 67%, floor set at 65 with a raise-to-70 ramp. Ramp COMPLETE 2026-07-14: backend-impl HTTP-fixture tests (JiraUserAndMeta/JiraIssueSearch/JiraIssueMutation) lifted the measured rate to 71%, floor raised 65->70 (categories/test.md; roadmap PR-14). See docs/plans/shipped/coverage-threshold-graduation.md.",

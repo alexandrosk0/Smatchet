@@ -186,6 +186,14 @@ poll_pr() { # $1=pr
     # that is gating (required OR allow-listed-non-advisory) and not downgraded
     # by a *-out-of-band PR label. Mirrors the merge-gates $failing contract so a
     # non-gating / OOB-waived red is silent, not noise.
+    # KNOWN DIVERGENCE (advisory tool; poller is authoritative): the poller's
+    # stale-override guard (merge-pipeline-01) additionally REFUSES a tests-/
+    # perf-out-of-band downgrade when the failing run completed before the
+    # label was applied — this watch has no label-event timestamps (`gh pr
+    # view` carries no timeline) and waives unconditionally, so during that
+    # race window it can show clean while poll_merge_gates blocks with its
+    # stale-override WARN. Trust the poller, not this display, for merge
+    # decisions.
     failed="$(printf '%s' "$j" | jq -r \
         --argjson req "$REQ_JSON" \
         --arg allow "$MERGE_GATES_BLOCK_ALLOWLIST_RE" '
