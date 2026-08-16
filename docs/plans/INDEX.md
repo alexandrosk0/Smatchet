@@ -213,6 +213,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`window-expand-button`](shipped/window-expand-button.md) | 2026-08-07 | Plan — Window Expand Button |
 | [`keybindings-multi-combo`](shipped/keybindings-multi-combo.md) | 2026-08-14 | Plan — Multi-combo keybindings (several alternative combos per action) |
 | [`parallel-review-gate`](shipped/parallel-review-gate.md) | 2026-08-15 | Plan — Parallel code-review gate (review runs *with* the lint gate, not after it) |
+| [`branch-protection-config-completeness`](shipped/branch-protection-config-completeness.md) | 2026-08-16 | Plan — branch-protection config completeness (stop the full-object PUT from silently clearing live gates) |
 <!-- END auto-plan-index -->
 
 ### Notes

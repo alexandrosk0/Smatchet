@@ -1,8 +1,9 @@
 # Plan — branch-protection config completeness (stop the full-object PUT from silently clearing live gates)
+<!-- plan-date: 2026-08-16 -->
 
 > **Slug**: `branch-protection-config-completeness` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -102,20 +103,31 @@ Per `AGENTS.md` § Verification automation — zero manual steps. Buckets:
 - **`required_contexts` ordering** — live is chronological-append, config is curated order. Set-equal is the invariant that matters (the API does not treat the array as ordered); no normalization is proposed.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `3978eafd` · `wip(plan): branch-protection-config-completeness` — this plan, committed before implementation per plan-doc safety.
+- `33c92f8b` · `fix(agentic): make branch_protection config a complete PUT-body statement` — config + schema + body builder + 10-case bats suite + wrapper, and the plan revision folded into the same commit.
+- Out-of-band, no commit: `POST /repos/alexandrosk0/Smatchet/branches/develop/protection/enforce_admins` → `{"enabled": true}`. The sub-resource call, *not* a run of the script — the whole point of this plan is that a full-object PUT was not yet safe to fire.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Added — the app-id pin (`required_checks_app_id`, `checks[]` projection, bats case 7).** Not in the original plan; surfaced by `grill-with-docs`. The plan reasoned about omission-is-removal via *missing keys* and missed that the deprecated `contexts[]` **spelling** is the same bug through a different door — it drops `app_id` on all 22 contexts, unpinning them from GitHub Actions to "any app". Fixed in-scope rather than deferred, because this is the PR that claims the PUT is a faithful transcription; shipping it with a known widening would have made its own thesis false. § Risks entry added.
+- **Added — `required_signatures` named as a deliberate exclusion** (script header, schema `description`, § Risks). Also from the grill: it is the one live key the body will never carry, and an undocumented absence invites a future reader to "fix" it by adding a key the endpoint rejects. The plan's "COMPLETE desired state" wording was softened to "complete over the PUT body surface" everywhere it appears.
+- **Corrected — `_doc_optional_flags` → `_doc`.** The plan named a key that was never created; the note landed in the block's existing `_doc` string instead.
+- **Corrected — shell-lint path.** The plan cited `scripts/dev/test-shell-lint.sh`, which does not exist. The real gate is `agents/scripts/core/test-shell-lint.sh`.
+- **Corrected — "expected delta: none"** in § Verification was false as written: the GET always returns `required_signatures`, which the body cannot carry. Rewritten to scope the claim to the PUT body surface.
+- **Scoped out, logged not fixed** — `test-gate-selftests.sh --selftest` fails all 11 negative fixtures on Windows/msys (the untracked-file mode fallback is `[ -x "$f" ]`, which msys answers TRUE for every temp file). Proven byte-identical to `origin/develop` and green there, so it is a platform divergence, not a regression from this diff. Filed at `docs/self-improvement/categories/tooling/2026-08-16-gate-selftests-untracked-mode-fallback-msys.md` rather than absorbed into this PR's scope.
+- **Fixed in passing** — `test-agent-contract` drift on the gitignored `.claude/hooks/agent-token-log.py`, repaired with the gate's own `cp -f` (local-only, no diff).
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- **Bucket A (bats)** — `bash agents/scripts/core/test-setup-branch-protection-bats.sh` → `Passed: 10  Failed: 0`. **PASSED.**
+- **Mutation-tested (3 ways), each confirming the suite actually bites** — (a) drop `required_conversation_resolution` from `TOP_LEVEL_FLAGS` → cases 3 + 8 red, rest green; (b) revert `checks` → `contexts[]` → cases 6 + 7 red, rest green; (c) pin a wrong `app_id` (99999) → case 7 red, rest green. Restored green after each. **PASSED.**
+- **Test-quality fix found by mutation (b)** — case 7's `jq -e 'has("contexts") | not'` probed the *top-level* body, where `contexts` never lives; it was vacuously true and would have passed against the exact body it exists to reject (the floor guard caught the mutation instead). Re-pointed at `.required_status_checks` and paired with a positive `has("checks")`.
+- **Live re-verification (non-mutating)** — `--dry-run` body normalised and diffed against `gh api repos/alexandrosk0/Smatchet/branches/develop/protection`: **delta over the PUT body surface: none** (all 22 `{context, app_id}` pairs, `strict`, `enforce_admins`, the review object, `restrictions`, and all 7 top-level flags equal). GET-only keys: `required_signatures` — exactly the one documented exclusion. **PASSED.**
+- **Shell lint** — `shellcheck -x -S style` clean over both touched shell files. The repo-wide `agents/scripts/core/test-shell-lint.sh` sweep was still running at commit time; CI's Shell lint lane is the binding gate. **PASSED (touched files) / deferred to CI (repo-wide).**
+- **Orphan-bats gate** — `bash agents/scripts/core/test-orphan-bats.sh` → `PASS — all 91 bats suite(s) have a test-*.sh wrapper`. **PASSED.**
+- **JSON validity** — `jq -e .` green on both `project.config.json` and `project.config.schema.json`. **PASSED.**
+- **Doc validation / config-schema validation** — via `bash scripts/dev/pre-ship.sh`; see § Deviations for the one standing Windows-local failure (`test-gate-selftests`), which is pre-existing and filed, not introduced here.
+- **Plan stress-test — `grill-with-docs`** — run against this plan. Confirmed the load-bearing claims against code (`merge-gates.sh:1580` and `pr-blocked-why.sh:121` do probe `required_conversation_resolution`; `setup-locks-ruleset.sh` drives the separate rulesets API and does not inherit this bug). Produced the two additions and the one-directionality finding recorded above. **PASSED — outcome folded into § Risks + § Deviations.**
+- **Manual residue** — none.
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
