@@ -125,9 +125,6 @@ const TranslationEntry kEntries[] = {
     {"about.link_copy", "Copy Link", u8"Copier le lien"},
     {"about.hint", "Select any value to copy it. Right-click a link for actions.",
      u8"Sélectionnez une valeur pour la copier. Clic droit sur un lien pour les actions."},
-    // Placeholder shown in place of a fact the build did not record. It is chrome (the modal
-    // invents it), not one of the copy-pasteable data values above.
-    {"about.unknown", "unknown", u8"inconnu"},
 
     {"window.about", "About Smatchet", u8"À propos de Smatchet"},
     {"window.preferences", "Preferences", u8"Préférences"},
@@ -223,8 +220,8 @@ const TranslationEntry kEntries[] = {
     {"keybindings.quickbind.title", "Set shortcut", u8"Définir le raccourci"},
     {"keybindings.quickbind.forCommand", "Shortcut for:", u8"Raccourci pour :"},
     {"keybindings.quickbind.conflict", "Already bound to:", u8"Déjà attribué à :"},
-    {"keybindings.quickbind.replacesAll",
-     "Set replaces every combo, currently:", u8"« Définir » remplace toutes les combinaisons, actuellement :"},
+    {"keybindings.quickbind.replacesAll", "Set replaces every combo, currently:",
+     u8"« Définir » remplace toutes les combinaisons, actuellement :"},
     {"keybindings.quickbind.set", "Set", u8"Définir"},
     {"keybindings.quickbind.clear", "Clear", u8"Effacer"},
     {"keybindings.quickbind.cancel", "Cancel", u8"Annuler"},

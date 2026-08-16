@@ -36,17 +36,6 @@ inline void OpenPopup(const char* str_id, ImGuiPopupFlags popup_flags = 0) {
 // from qualified lookup in aliased TUs.
 inline void OpenPopup(ImGuiID id, ImGuiPopupFlags popup_flags = 0) { ::ImGui::OpenPopup(id, popup_flags); }
 
-// A popup-open QUERY has to hash the same id the OpenPopup/BeginPopupModal pair registered, so
-// it runs the same WindowTitleFromSource transform. A raw ::ImGui::IsPopupOpen on the English
-// literal hashes a different id the moment the title gains a catalog entry, so it returns false
-// unconditionally in that locale — silently killing whatever guard it protects (Issue #2055).
-// Because the transform appends a "###"-suffixed English id and ImHashStr restarts the hash at
-// "###", the id this queries is keyed on that English id, never on the translated text — and it
-// is by construction the same id the paired Open/Begin registered, in every locale.
-inline bool IsPopupOpen(const char* str_id, ImGuiPopupFlags flags = 0) {
-    return ::ImGui::IsPopupOpen(SmatchetLocalization::WindowTitleFromSource(str_id), flags);
-}
-
 inline bool BeginPopup(const char* str_id, ImGuiWindowFlags flags = 0) {
     return ::ImGui::BeginPopup(SmatchetLocalization::WindowTitleFromSource(str_id), flags);
 }
