@@ -45,7 +45,8 @@ bool HasSelfDumpProvider() noexcept;
 bool WriteSelfDump(const std::string& absPath, std::string& errOut);
 
 /// Deterministic dump filename for an on-demand capture: `ondemand-<epochMs>-<pid>.dmp`.
-/// Pure so a test can pin the shape; the command joins it under <userData>/crashes/.
+/// Pure so a test can pin the shape; the command joins it under <userData>agent-dumps/
+/// — deliberately not the crash dir, which CrashSink rotates to the 5 newest dumps.
 /// Caller supplies the clock + pid so the function stays testable.
 std::string MakeSelfDumpFileName(long long epochMs, long long pid);
 

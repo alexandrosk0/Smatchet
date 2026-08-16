@@ -289,7 +289,7 @@ static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
         });
     c.Title = "Dump Self";
     c.Description = "Returns {wrote, available, path} on success, or {wrote:false, available:false, reason} on a host "
-                    "with no writer (DX12/Unreal, Android). Writes <userData>/crashes/ondemand-<epochMs>-<pid>.dmp "
+                    "with no writer (DX12/Unreal, Android). Writes <userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp "
                     "using MiniDumpNormal — the same scope the crash handler uses, chosen so heap-resident secrets are "
                     "not swept into the dump. Triage with `bash agents/scripts/core/dump-triage.sh <path>`. Example: "
                     "`Smatchet.exe cmd debug.dump_self`.";
