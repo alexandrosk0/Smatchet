@@ -5598,3 +5598,62 @@ needs its risky work step-scoped.
     phrase and greps it across the diff's files, so the sweep is one command.
   Status: applied (flipped at archival)
   Last-reviewed: 2026-08-16
+
+- 2026-08-16 · orchestrator · [tooling] · P1 — the `CR findings` gate treats CodeRabbit's `Review skipped: manual review required for this OSS repository` status as "CR reviewed and found nothing", so on this repo it goes GREEN on an entirely unreviewed head — and that is the DEFAULT state of every new PR, not an edge case
+  Details: [`cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
+    disambiguates a head with no CR review node via CR's own `CodeRabbit`
+    StatusContext. It already special-cases ONE not-a-review description —
+    `grep -qiE 'rate.?limit|limit reached'` — and correctly resolves that to
+    PENDING plus a full-review nudge. Everything else falls through to
+    `SUCCESS) post success "CodeRabbit completed with no review on head
+    (skipped/clean)"; exit 0`. The in-file comment states the intent: *SUCCESS ->
+    CR is done and skipped the review (trivial / workflow / docs change)*.
+    But `Review skipped: manual review required for this OSS repository` does
+    NOT mean that. It means the opposite: CR has **not** looked and is waiting to
+    be asked. CodeRabbit requires a manual `@coderabbitai review` on repositories
+    with fewer than 10 stars, so this status is posted on **every** PR here at
+    creation time. The gate is therefore green-by-default on unreviewed code, and
+    only turns honest if a real review later lands.
+    Observed live on PR #2028: CR posted the skip status at 03:46:17, the gate
+    posted `success` at 03:46:30, and the PR then sat for **11.5 hours** with
+    `mergeable_state: clean`, all 36 CI checks green, and the CR gate green —
+    with zero review having occurred. The only thing that stopped an unreviewed
+    merge was the orchestrator manually applying the repo learning ("a skipped /
+    rate-limited stamp is NOT review evidence"). A `smatchet-merge-watcher`
+    registration, a `governance.auto_merge: on` grant, or any operator trusting
+    the checks would have merged it. #2023 and #2025 showed the same green.
+    This is the exact fail-open the rate-limit branch was added to close
+    (its comment: *"the branch below would translate that into 'completed with no
+    review on head (skipped/clean)' and pass an entirely unreviewed commit"*) —
+    the same sentence describes this case verbatim, only with a different
+    description string. The scoping decision ("an unrecognised description must
+    keep its existing pass behaviour instead of hanging every PR") was a
+    deliberate fail-open for UNKNOWN markers; `manual review required` is no
+    longer unknown.
+  Concrete next action: extend the not-a-review description match from
+    `rate.?limit|limit reached` to also cover `manual review required` /
+    `review skipped` (keeping the deliberate fail-open for genuinely unrecognised
+    descriptions), so the head resolves to PENDING and `maybe_nudge_full_review`
+    fires — which is already the right recovery and is proven to work (a manual
+    `@coderabbitai review` on #2028 produced a clean review in ~3 min). Guard
+    against the sibling risk the existing comment names: a docs-only PR whose
+    files are all path-excluded must still pass, and that case is already handled
+    up front by the `selfImpOnly` head-accurate file-list check, so widening this
+    match does not re-wedge it. Add a `merge_gates`/`cr_finding_gate` bats case
+    per description string (rate-limited, manual-review-required, genuinely
+    unknown) so the vocabulary cannot silently regress — the sibling entry
+    2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop records the same
+    class of brittleness in the auto-nudge's own regexes. Est ~0.5d.
+  Status: applied — the CI action now classifies `manual review required` as a
+    not-a-review marker (PENDING, not a pass) and self-heals with a new
+    `never-reviewed` nudge that posts a plain `@coderabbitai review`; the
+    pre-existing nudge could not cover this state because it REQUIRED a prior
+    clean pass to key on. Matched on `manual review required`, never a bare
+    `review skipped`, so CR's terminal path-filter skip still passes. Correction
+    to this entry's original framing: the CLIENT-side poller was never
+    vulnerable — `merge-gates.d/10-gate-filter.sh` already excludes this string
+    (plus `available on request` and the rate-limit texts) from
+    `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
+    gate never received the same treatment, despite its own header describing
+    itself as lifting the client-side verdict server-side.
+  Last-reviewed: 2026-08-16
