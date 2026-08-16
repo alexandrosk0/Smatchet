@@ -542,13 +542,17 @@ run_nudge() {
     [ "$(grep -c '@coderabbitai full review' "$POST_LOG")" -eq 1 ]
 }
 
-@test "workflow grants the comment-POST scope and NOT more (least privilege)" {
-    # issues:write alone authorizes the nudge's PR-comment POST (PR comments go
-    # through the issues endpoint); pull-requests stays read for the metadata /
-    # file-list fetches. pull-requests:write would be unused token surface.
-    grep -qE '^  issues: write$'         "$WF"
-    grep -qE '^  pull-requests: read$'   "$WF"
-    ! grep -qE '^  pull-requests: write$' "$WF"
+@test "workflow grants the scope the nudge POST actually needs" {
+    # Was: issues:write only, on the theory that the issues ENDPOINT implies the
+    # issues PERMISSION. A live 403 disproved it (PR #2036, run 95197383453) —
+    # the fine-grained permission is keyed on the TARGET TYPE, and every target
+    # this gate comments on is a pull request. Without pull-requests:write the
+    # nudge can never post, so the gate's self-heal is inert and a PR that needs
+    # a review request just sits there.
+    grep -qE '^  pull-requests: write$' "$WF"
+    grep -qE '^  issues: write$'        "$WF"
+    # Still least-privilege on the axes the job genuinely does not use.
+    ! grep -qE '^  contents: write$'    "$WF"
 }
 
 @test "nudge: a forged marker from a non-bot commenter does not suppress recovery" {

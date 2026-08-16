@@ -37,14 +37,23 @@ on:
 permissions:
   contents: read
   statuses: write
-  # pull-requests stays READ: the action only reads PR metadata / file lists.
-  # The stale-evidence auto-nudge POSTs one `@coderabbitai full review` issue
-  # comment (once per head, budget-capped — see maybe_nudge_review in the
-  # action); PR comments go through the issues endpoint, and issues:write ALONE
-  # authorizes that POST — granting pull-requests:write too would be more
-  # token surface than the job uses (CodeRabbit round-1 finding, verified
-  # against the REST fine-grained-permission docs).
-  pull-requests: read
+  # The auto-nudge POSTs one `@coderabbitai review` / `full review` comment
+  # (once per head, budget-capped — see maybe_nudge_review in the action).
+  #
+  # pull-requests must be WRITE, not read. This block previously granted only
+  # issues:write, reasoning that "PR comments go through the issues endpoint, so
+  # issues:write alone authorizes the POST" — that reasoning is wrong and a live
+  # 403 disproved it: PR #2036, run 95197383453, logged
+  #   CR finding gate: posting @coderabbitai review nudge (never-reviewed on …)
+  #   gh: Resource not accessible by integration (HTTP 403)
+  #   WARN: nudge comment POST failed (missing issues:write?)
+  # The fine-grained permission is keyed on the TARGET TYPE, not the endpoint
+  # path: `POST /repos/{o}/{r}/issues/{n}/comments` needs Issues:write for an
+  # issue and Pull requests:write for a pull request. Every target this gate
+  # comments on is a PR, so the nudge had NEVER been able to post — it warned
+  # and moved on, silently, for as long as the feature has existed.
+  # issues:write is retained because that is the endpoint's nominal scope.
+  pull-requests: write
   issues: write
 
 # NO concurrency block — deliberately (cr-finding-gate-pending-queue-collapse,
