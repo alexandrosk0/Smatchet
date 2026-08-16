@@ -148,7 +148,15 @@ Smatchet.exe cmd commands.search --query=<q>
 
 Command groups (details via the discovery commands above):
 
-- `debug.*` — `log` (emit a known breadcrumb into the runtime log) · `mcp_status` (MCP reachability / last activity) · `thread_dump` · `dock.dump` (ImGui dock nodes) · `dock.reset` (recovery only, not a diagnosis) · `window.resize` (reproduce layout regressions) · `window.screenshot` (viewport evidence) · `lua_eval` (probe runtime state without rebuilding).
+- `debug.*` — `log` (emit a known breadcrumb into the runtime log) · `log_tail` (read the last N ring entries back; `--minLevel`, `--contains`) · `dump_self` (minidump of the live process, every thread's stack) · `mcp_status` (MCP reachability / last activity) · `thread_dump` (counts + whether `dump_self` has a writer here) · `dock.dump` (ImGui dock nodes) · `dock.reset` (recovery only, not a diagnosis) · `window.resize` (reproduce layout regressions) · `window.screenshot` (viewport evidence) · `lua_eval` (probe runtime state without rebuilding).
+
+**Which `debug.*` commands survive a hang.** `RunOnUiThreadAsCommandResult` blocks with **no timeout**, so the marshalling commands are useless in exactly the situation you would reach for them. When the app is unresponsive:
+
+| Safe (inline, answers while the UI thread is stuck) | Will block forever (marshals to the UI thread) |
+|---|---|
+| `debug.log_tail` · `debug.dump_self` · `debug.log` · `debug.mcp_status` · `debug.lua_eval` | `debug.dock.dump` · `debug.dock.reset` · `debug.window.resize` · `debug.window.screenshot` · `debug.grid.edit-burst` |
+
+A `--spawn` child proves MCP reachability before its command dispatches, so a child that then wedges still has a live server on a known port — `debug.dump_self` against it is the capture path.
 - `scenario.*` — `list` (discover deterministic scenarios) · `run --name=<n> --frames=<N> --yes` · `cancel` (stop active automation).
 - `tickets.list_active` / `tickets.get --id=<id>` (ticket state) · `sync.tracker_status` (sync-layer state) · `app.version` (confirm build hash/version).
 

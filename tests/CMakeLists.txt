@@ -133,6 +133,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # Logger.cpp now routes the file sink through RedactLogLine (audit
         # 2026-06-13 LOW) — link the pure redactor so the closure resolves.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
+        # debug.log_tail selection (header-only over Logger's ring). ImGui-free and
+        # allocation-light, so it rides this curated subset — which also gives the
+        # Linux ninja-test-linux lane a runnable signal for it, not just Windows.
+        Core/LogTailSelect.test.cpp
         # --- Sync layer: the ADR-0012 atomic backend-swap race + ADR-0020 ISyncCache
         #     seam. GridLiveContext owns the live TicketSyncService (atomic Backend slot,
         #     latched strong handles surviving live swaps); TicketSyncService drives the
@@ -981,6 +985,12 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Diagnostics/BugReportBody.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Privacy/TextRedaction.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Imaging/ScreenshotCensor.cpp"
+    # debug.log_tail selection rules (header-only; Logger.cpp + TextRedaction.cpp are
+    # already linked into this rig). The command body is only dispatchable from the
+    # Linux-only SmatchetCommandsTests target, so the selection semantics — newest-N,
+    # filter-before-tail, and the redacted-at-ingest property the command relies on —
+    # are covered here so the required Windows lane carries them too.
+    Core/LogTailSelect.test.cpp
     # docs/plans/shipped/about-dialog-help-menu.md Slice 3 — Help > About pure data
     # layer. AboutInfo.cpp takes no AppController (version/repo arrive as strings),
     # so the rig links it without cpr/SQLite; it does pull HostMachineInfo.cpp (the

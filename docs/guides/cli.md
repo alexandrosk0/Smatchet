@@ -390,9 +390,13 @@ Smatchet.exe cmd scenario.run --name=priority-grid-scroll --frames=300 --yes
 | Command | Params | Notes |
 |---|---|---|
 | `debug.log` | `message` *(required)*, `level?` (trace/debug/info/warn/error) | Emit a Logger entry from the agent. Useful as breadcrumbs. |
+| `debug.log_tail` | `lines?` (1–300, default 100), `minLevel?` (trace/debug/info/warn/error), `contains?` | `{lines:[{ts,level,message}], returned, totalMatched, ringSize, truncated}`. Reads the in-memory log ring (last 1000 entries), oldest-first, already redacted. Filtering runs **before** the tail, so `--lines=10 --contains=sync` returns the 10 most recent sync entries. |
 | `debug.lua_eval` | `code` *(required)* | Destructive (`--yes`). Evaluate a Lua snippet; returns `{result}`. |
 | `debug.mcp_status` | — | `{mcpEnabled, hasClientActivity, lastActivityMsAgo, activityLog:[...]}` |
-| `debug.thread_dump` | — | `{hardwareConcurrency}` |
+| `debug.thread_dump` | — | `{hardwareConcurrency, note, selfDumpAvailable}`. No inline stacks — use `debug.dump_self` for those. |
+| `debug.dump_self` | — | `{wrote, available, path}`, or `{wrote:false, available:false, reason}` where no writer exists (Unreal/DX12, Android). Writes `<userData>/crashes/ondemand-<epochMs>-<pid>.dmp` with every thread's stack; triage with `bash agents/scripts/core/dump-triage.sh <path>`. Supports `--dry-run`. |
+
+**Diagnosing a hang.** `debug.log_tail`, `debug.dump_self`, `debug.log`, `debug.mcp_status` and `debug.lua_eval` run inline on the calling thread, so they still answer while the UI thread is wedged. `debug.dock.dump`, `debug.dock.reset`, `debug.window.resize`, `debug.window.screenshot` and `debug.grid.edit-burst` marshal to the UI thread and will block indefinitely in that situation — do not reach for them first when the app is unresponsive.
 
 ---
 

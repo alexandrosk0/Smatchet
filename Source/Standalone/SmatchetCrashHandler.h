@@ -12,6 +12,16 @@ namespace smatchet {
 /// Install all crash handlers. Call once at startup AFTER CrashSinkInit.
 void InstallCrashHandlers();
 
+/// Install the on-demand self-minidump writer into Source/Core's SelfDump seam, so
+/// debug.dump_self can capture every thread's stack from a process that has WEDGED
+/// without crashing (docs/adr/0024-self-minidump-over-in-process-stack-walk.md).
+/// Standalone-only: this is where dbghelp is already linked, which is precisely why
+/// Source/Core carries no Win32 and no dbghelp dependency. Hosts that never call
+/// this (Unreal/DX12, Android) simply report the capability as unavailable.
+/// Call once at startup, before any thread that can serve commands exists — the
+/// seam relies on that ordering for its happens-before edge. No-op off Windows.
+void InstallSelfDumpProvider();
+
 #if defined(_WIN32) && defined(_MSC_VER)
 // SEH filter for main.cpp's __try/__except around the frame loop. Writes the
 // crash marker + minidump, then returns EXCEPTION_EXECUTE_HANDLER so the existing

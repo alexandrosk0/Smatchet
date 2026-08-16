@@ -17,6 +17,7 @@
 #include "Commands/BuiltinCommands.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
+#include "Logger.h" // debug.log_tail round-trip drives the Logger ring directly
 
 #include <nlohmann/json.hpp>
 
@@ -237,6 +238,79 @@ TEST_CASE("builtins — ByCategory partitions the full registry") {
         sum += fx.Reg.ByCategory(cat).size();
     }
     CHECK(sum == all.size());
+}
+
+TEST_CASE("builtins — debug.log_tail round-trips a breadcrumb through the Logger ring") {
+    // Unlike the matrices above, this DOES run a handler body: debug.log_tail is
+    // read-only (a snapshot of the in-memory ring) so it is safe to dispatch here,
+    // and running it is the only way to cover the command end-to-end — the pure
+    // selection rules live in SmatchetTests/Core/LogTailSelect.test.cpp.
+    BuiltinsFixture fx;
+    Logger::Instance().Clear();
+    Logger::Instance().SetMinLevel(LogLevel::Trace);
+
+    const CommandResult wrote =
+        fx.Reg.Dispatch("debug.log", nlohmann::json{{"level", "warn"}, {"message", "dispatch-harness-canary"}}, fx.Ctx);
+    REQUIRE(wrote.Ok);
+
+    const CommandResult r =
+        fx.Reg.Dispatch("debug.log_tail", nlohmann::json{{"contains", "dispatch-harness-canary"}}, fx.Ctx);
+    REQUIRE(r.Ok);
+    REQUIRE(r.Data != nullptr);
+    REQUIRE(r.Data->contains("lines"));
+    REQUIRE((*r.Data)["lines"].is_array());
+    REQUIRE((*r.Data)["lines"].size() == 1);
+    CHECK((*r.Data)["lines"][0]["message"].get<std::string>().find("dispatch-harness-canary") != std::string::npos);
+    // Lowercase on purpose: the level string round-trips into the minLevel enum, so
+    // an agent can feed a returned level straight back as a filter.
+    CHECK((*r.Data)["lines"][0]["level"].get<std::string>() == std::string("warn"));
+    CHECK((*r.Data)["returned"].get<long long>() == 1);
+    CHECK((*r.Data)["totalMatched"].get<long long>() == 1);
+    CHECK_FALSE((*r.Data)["truncated"].get<bool>());
+
+    Logger::Instance().Clear();
+}
+
+TEST_CASE("builtins — debug.log_tail rejects an out-of-range line count at the validator") {
+    // The ParamSpec bounds are the primary gate (ClampLogTailLines is the in-handler
+    // net), so an over-ceiling request must surface as a ValidationError naming the
+    // bound rather than silently returning the maximum.
+    BuiltinsFixture fx;
+    const CommandResult tooMany = fx.Reg.Dispatch("debug.log_tail", nlohmann::json{{"lines", 100000}}, fx.Ctx);
+    CHECK_FALSE(tooMany.Ok);
+    CHECK(tooMany.Error.Code == ErrorCode::ValidationError);
+
+    const CommandResult tooFew = fx.Reg.Dispatch("debug.log_tail", nlohmann::json{{"lines", 0}}, fx.Ctx);
+    CHECK_FALSE(tooFew.Ok);
+    CHECK(tooFew.Error.Code == ErrorCode::ValidationError);
+}
+
+TEST_CASE("builtins — debug.dump_self reports the capability as absent with no provider installed") {
+    // The POSIX gate installs no writer (the Win32 one lives in Source/Standalone), so
+    // this target exercises the not-available branch: a host without a provider must
+    // report {wrote:false, available:false} as a FACT, not fail the command — an agent
+    // keys its procdump fallback on that, and a Failure would look like a broken app.
+    BuiltinsFixture fx;
+    const CommandResult r = fx.Reg.Dispatch("debug.dump_self", nlohmann::json::object(), fx.Ctx);
+    REQUIRE(r.Ok);
+    CHECK_FALSE((*r.Data)["wrote"].get<bool>());
+    CHECK_FALSE((*r.Data)["available"].get<bool>());
+    CHECK_FALSE((*r.Data)["reason"].get<std::string>().empty());
+}
+
+TEST_CASE("builtins — debug.dump_self is a non-destructive, dry-runnable, non-idempotent writer") {
+    // Shape assertions: it writes a file so it is not Idempotent, but it only writes
+    // into the app's own crash dir from a fixed name, so it must NOT be Destructive —
+    // arming the confirm gate would block the automation source that needs it during a
+    // hang. debug.window.screenshot sets the same combination.
+    BuiltinsFixture fx;
+    const Command* c = fx.Reg.FindLocked("debug.dump_self");
+    REQUIRE(c != nullptr);
+    CHECK(c->Category == "debug");
+    CHECK_FALSE(c->Destructive);
+    CHECK_FALSE(c->Idempotent);
+    CHECK(c->DryRunSupported);
+    CHECK(c->Params.empty()); // no caller-supplied path == no path-injection surface
 }
 
 TEST_CASE("builtins — issue.quick_create.open registers as a non-destructive opener") {
