@@ -14,8 +14,16 @@
 # Steps, over the first-party C++ files changed vs the base ref:
 #   0. git add --intent-to-add untracked files   (so diff/grep gates see them)
 #   1. clang-format -i   (apply formatting in place)
+#   1b. comment-noise auto-strip   (the second and LAST diff-mutating step)
 #   2. test-lint-rules.sh --diff <base>   (comment-noise + function-size + strict-zone)
 #   3. md_lint / test-list consistency / test-docs.sh (doc-validation CI mirror)
+#
+# Steps 0-1b MUTATE the diff; every stage after them is read-only w.r.t. the C++
+# diff. That split is load-bearing, not cosmetic — it is what lets a code review
+# run CONCURRENTLY with the read-only stages (`--format-only` first, then the gate
+# and the reviewer dispatched together — ship-loops.md § pre-first-push gate). A
+# reviewer dispatched alongside a mutating stage would review pre-format code and
+# stamp a fingerprint that goes stale the moment clang-format lands.
 #
 # It deliberately does NOT build or run tests — that is the caller's job and is
 # already covered once-per-slice. This is purely the lint half that CI gates on
@@ -23,6 +31,8 @@
 #
 # Usage:
 #   bash scripts/dev/pre-ship.sh [<base-ref>]   # default base: origin/develop
+#   bash scripts/dev/pre-ship.sh --format-only [<base-ref>]
+#   bash scripts/dev/pre-ship.sh --review-fingerprint [<base-ref>]
 #   bash scripts/dev/pre-ship.sh --help
 #
 # Exit codes:
@@ -39,15 +49,20 @@ pre-ship.sh — format changed C++ then run the CI delta lint gate locally.
 
   bash scripts/dev/pre-ship.sh [<base-ref>]              default base: origin/develop
   bash scripts/dev/pre-ship.sh --ack-review [<base-ref>] record a code-review ack for the diff
+  bash scripts/dev/pre-ship.sh --format-only [<base-ref>]       run ONLY the diff-mutating steps
+  bash scripts/dev/pre-ship.sh --review-fingerprint [<base-ref>] print the diff fingerprint, do nothing else
   bash scripts/dev/pre-ship.sh --help
 
 Runs, over first-party C++ changed vs <base-ref>:
-  1. clang-format -i
+  1. clang-format -i + comment-noise auto-strip   (the diff-MUTATING steps; `--format-only`
+     stops here so a code review can run CONCURRENTLY with steps 2-3 against a stable diff)
   2. agents/scripts/project/test-lint-rules.sh --diff <base-ref>
   3. markdown lint + test-list consistency + doc-validation suite
   4. code-review gate — a SUBSTANTIVE C++ diff (strict-zone touch or
      >= REVIEW_LINE_THRESHOLD changed lines, default 60) must have a current review
-     ack. Run the code-review skill/agent, then `--ack-review` to record it; any later
+     ack AND a .review-findings.json artifact whose "fingerprint" matches the diff (so a
+     bare --ack-review with no review behind it cannot pass). Run the code-review
+     skill/agent — it writes the artifact — then `--ack-review` to record it; any later
      edit re-arms the gate. Bypass: SMATCHET_SKIP_REVIEW_GATE=1 (logged).
   5. verifier verdict (optional) — when VERIFIER_BASE_URL + VERIFIER_MODEL name an
      INDEPENDENT backend, `--ack-review` also scores the diff through
@@ -90,10 +105,26 @@ run_selftest() {
         echo "pre-ship --selftest: FAIL — review gate passed a strict-zone diff with NO ack" >&2
         return 1
     fi
-    # 2. Ack -> MUST PASS.
-    if ! (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --ack-review base >/dev/null 2>&1 &&
+    # 2a. Ack with NO review artifact -> MUST FAIL. This is the whole point of the
+    #     artifact: a bare --ack-review is one keystroke and proves nothing was reviewed.
+    if (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --ack-review base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — --ack-review recorded an ack with no .review-findings.json" >&2
+        return 1
+    fi
+    # 2b. Ack with a MISMATCHED artifact -> MUST FAIL (a review of some other diff).
+    (cd "$tmp" && printf '{"fingerprint":"%064d"}\n' 0 > .review-findings.json)
+    if (cd "$tmp" && SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --ack-review base >/dev/null 2>&1); then
+        echo "pre-ship --selftest: FAIL — --ack-review accepted a stale .review-findings.json" >&2
+        return 1
+    fi
+    # 2c. Artifact stamped via --review-fingerprint, then ack -> MUST PASS (both the ack
+    #     and a plain gate run, which re-checks the artifact independently).
+    if ! (cd "$tmp" &&
+        fp="$(SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --review-fingerprint base)" &&
+        printf '{"fingerprint":"%s","reviewer":"selftest"}\n' "$fp" > .review-findings.json &&
+        SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" --ack-review base >/dev/null 2>&1 &&
         SMATCHET_PRESHIP_GATE_ONLY=1 bash "$script_path" base >/dev/null 2>&1); then
-        echo "pre-ship --selftest: FAIL — gate still blocks after --ack-review" >&2
+        echo "pre-ship --selftest: FAIL — gate still blocks after a stamped artifact + --ack-review" >&2
         return 1
     fi
     # 3. Edit after ack -> fingerprint stale -> MUST FAIL again (re-arm).
@@ -136,12 +167,14 @@ run_selftest() {
         echo "pre-ship --selftest: FAIL — #1116 fail-open: strict detection skipped and the diff N/A-passed with no working python" >&2
         return 1
     fi
-    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, acks, re-arms on edit, bypass works, #1116 fail-closed on no-python."
+    echo "pre-ship --selftest: PASS — gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python."
     return 0
 }
 
 base_ref="origin/develop"
 ack_review=0
+format_only=0
+print_fingerprint=0
 case "${1:-}" in
     --help | -h)
         usage
@@ -160,6 +193,30 @@ case "${1:-}" in
         base_ref="${1#--ack-review=}"
         if [ -z "$base_ref" ]; then
             echo "pre-ship: --ack-review= requires a non-empty base ref (or use bare --ack-review for origin/develop)" >&2
+            exit 2
+        fi
+        ;;
+    --format-only)
+        format_only=1
+        [ -n "${2:-}" ] && base_ref="$2"
+        ;;
+    --format-only=*)
+        format_only=1
+        base_ref="${1#--format-only=}"
+        if [ -z "$base_ref" ]; then
+            echo "pre-ship: --format-only= requires a non-empty base ref (or use bare --format-only for origin/develop)" >&2
+            exit 2
+        fi
+        ;;
+    --review-fingerprint)
+        print_fingerprint=1
+        [ -n "${2:-}" ] && base_ref="$2"
+        ;;
+    --review-fingerprint=*)
+        print_fingerprint=1
+        base_ref="${1#--review-fingerprint=}"
+        if [ -z "$base_ref" ]; then
+            echo "pre-ship: --review-fingerprint= requires a non-empty base ref (or use bare --review-fingerprint for origin/develop)" >&2
             exit 2
         fi
         ;;
@@ -217,6 +274,42 @@ fi
 # SMATCHET_PRESHIP_FORCE_NO_PY is honoured inside ra_resolve_python (selftest hook that
 # forces the #1116 fail-closed path in an environment that DOES have python).
 PRESHIP_PY="$(ra_resolve_python || true)"
+
+# preship_ita_untracked [quiet] — register untracked files with `git add --intent-to-add`.
+#
+# Untracked files are INVISIBLE to every git-diff- and git-grep-based gate below
+# (`git diff <base>` skips them; `git grep` scans tracked only). Running pre-ship
+# before the first `git add` therefore false-passed comment-noise and
+# plan-ref-integrity on brand-new files (PR #953 — two CI-only failures). Intent-
+# to-add registers them in the index (content stays unstaged) so the gates see
+# exactly what CI will see — and so `ra_fingerprint` covers a brand-new .cpp
+# instead of stamping a diff that silently omits it.
+# `quiet` suppresses the stdout note so --review-fingerprint stays machine-readable.
+preship_ita_untracked() {
+    local quiet="${1:-}"
+    local untracked=()
+    mapfile -t untracked < <(git ls-files --others --exclude-standard)
+    [ "${#untracked[@]}" -gt 0 ] || return 0
+    [ "$quiet" = "quiet" ] ||
+        echo "pre-ship: git add --intent-to-add ${#untracked[@]} untracked file(s) so gates can see them"
+    git add --intent-to-add -- "${untracked[@]}"
+    # Undo the ita registrations on EVERY exit (pass or fail) — leaving them
+    # would make scratch files commit-eligible via a later `git commit -a` and
+    # flip their `git status` bucket from untracked to modified (CR-964 review).
+    # shellcheck disable=SC2064  # expand ${untracked[@]} NOW, not at trap time
+    trap "git restore --staged -- $(printf '%q ' "${untracked[@]}") 2>/dev/null || true" EXIT
+}
+
+# --review-fingerprint: print the fingerprint of the current diff and stop. This is the
+# reviewer's stamp — the code-review agent embeds it in .review-findings.json so the ack
+# can prove the review read THIS diff. Read-only and lint-free on purpose: it is called
+# from inside a review that is running concurrently with the gate, and a second mutating
+# pass there would move the very diff it is fingerprinting.
+if [ "$print_fingerprint" -eq 1 ]; then
+    preship_ita_untracked quiet
+    ra_fingerprint branch "$base_ref"
+    exit 0
+fi
 
 # --- Verifier verdict production (docs/plans/verifier-scored-code-review-gate.md, slice 2) ---
 # Drives the INDEPENDENT verifier over the branch diff and attaches the verdict to the ack,
@@ -290,6 +383,11 @@ PY
 # code-review gate. Never set this in normal use — the lint stages are the point.
 gate_only="${SMATCHET_PRESHIP_GATE_ONLY:-0}"
 
+# --- Group A: the diff-MUTATING stages ------------------------------------------------
+# Everything below CHANGES the C++ diff. It must finish BEFORE a code review starts, or
+# the reviewer reads pre-format code and stamps a fingerprint that is stale on arrival.
+# `--format-only` runs exactly this block and stops, which is what lets the review run
+# concurrently with Group B (ship-loops.md § pre-first-push gate).
 if [ "$gate_only" != "1" ]; then
 
     if ! command -v clang-format >/dev/null 2>&1; then
@@ -297,22 +395,7 @@ if [ "$gate_only" != "1" ]; then
         exit 2
     fi
 
-# Untracked files are INVISIBLE to every git-diff- and git-grep-based gate below
-# (`git diff <base>` skips them; `git grep` scans tracked only). Running pre-ship
-# before the first `git add` therefore false-passed comment-noise and
-# plan-ref-integrity on brand-new files (PR #953 — two CI-only failures). Intent-
-# to-add registers them in the index (content stays unstaged) so the gates see
-# exactly what CI will see.
-mapfile -t untracked < <(git ls-files --others --exclude-standard)
-if [ "${#untracked[@]}" -gt 0 ]; then
-    echo "pre-ship: git add --intent-to-add ${#untracked[@]} untracked file(s) so gates can see them"
-    git add --intent-to-add -- "${untracked[@]}"
-    # Undo the ita registrations on EVERY exit (pass or fail) — leaving them
-    # would make scratch files commit-eligible via a later `git commit -a` and
-    # flip their `git status` bucket from untracked to modified (CR-964 review).
-    # shellcheck disable=SC2064  # expand ${untracked[@]} NOW, not at trap time
-    trap "git restore --staged -- $(printf '%q ' "${untracked[@]}") 2>/dev/null || true" EXIT
-fi
+preship_ita_untracked
 
 # First-party C++ changed vs the merge-base with <base-ref> (staged, unstaged, and
 # committed-on-branch). Restrict to the trees the gate scans; skip deletions.
@@ -358,6 +441,36 @@ if [ -n "$PRESHIP_PY" ]; then
 else
     echo "pre-ship: WARN — no working python; comment-noise auto-strip skipped (the gate below still enforces)." >&2
 fi
+
+fi # end of Group A (the diff-mutating stages)
+
+# --- t=0 code-review notice -----------------------------------------------------------
+# The diff is FINAL here: both mutating stages are behind us and nothing after this point
+# rewrites C++. So this is the EARLIEST moment the fingerprint a reviewer must stamp is
+# knowable — and printing the "review required" verdict here, above the multi-minute
+# read-only stages instead of after them, is what turns the review from serial into
+# concurrent. The gate at the bottom still recomputes everything: formatting can shift
+# line counts across REVIEW_LINE_THRESHOLD, so this notice is advisory, never the verdict.
+if ra_is_substantive branch "$base_ref"; then
+    cat <<EOF
+pre-ship: CODE REVIEW REQUIRED — substantive diff ($RA_SUBSTANTIVE_REASON).
+  fingerprint: $(ra_fingerprint branch "$base_ref")
+  Dispatch the code-review agent NOW, concurrently with the stages below. It writes
+  .review-findings.json stamped with that fingerprint; the ack then refuses without it.
+  Record afterwards:  bash scripts/dev/pre-ship.sh --ack-review $base_ref
+EOF
+fi
+
+if [ "$format_only" -eq 1 ]; then
+    echo "pre-ship: PASS (--format-only) — diff-mutating stages done, diff is stable."
+    echo "pre-ship: now run the lint stages and the code review CONCURRENTLY:"
+    echo "  bash scripts/dev/pre-ship.sh $base_ref   ∥   code-review agent"
+    exit 0
+fi
+
+# --- Group B: the READ-ONLY stages ----------------------------------------------------
+# Nothing below mutates the C++ diff, so a code review may run alongside all of it.
+if [ "$gate_only" != "1" ]; then
 
 echo "pre-ship: running delta lint gate vs $base_ref"
 if ! bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
@@ -408,7 +521,7 @@ if ! bash scripts/dev/test-docs.sh; then
     exit 1
 fi
 
-fi # end of the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1
+fi # end of Group B (the lint stages skipped under SMATCHET_PRESHIP_GATE_ONLY=1)
 
 # --- PR-burst advisory ----------------------------------------------------------------
 # Non-blocking nudge: if the author already has >= threshold open PRs, opening
@@ -436,8 +549,72 @@ case "$RA_SUBSTANTIVE_REASON" in
         ;;
 esac
 
+# --- Review ARTIFACT requirement ------------------------------------------------------
+# A fingerprint-pinned ack proves the diff did not move after someone typed --ack-review.
+# It does NOT prove a review happened — an empty ack is one keystroke. So the reviewer
+# must also leave an artifact: .review-findings.json, carrying the fingerprint of the diff
+# it actually read. Ack and gate both refuse without a matching one.
+#
+# Honest about the limit: this closes the "forgot / rubber-stamped" hole, not the
+# adversarial one. A hand-written JSON still passes, as does the logged bypass. The point
+# is that skipping the review now takes a deliberate forgery rather than an omission.
+review_findings_path="$repo_root/.review-findings.json"
+
+# preship_findings_fingerprint — echo the "fingerprint" field of the artifact; rc 1 if
+# absent/unparseable. Parsed with grep, NOT python or jq, deliberately: this gate already
+# has a documented fail-closed path for a missing python (#1116), and a second interpreter
+# dependency would either widen that surface or invite a WARN-degrade that re-opens the
+# very hole the artifact closes. A 64-hex field needs no JSON parser.
+preship_findings_fingerprint() {
+    [ -r "$review_findings_path" ] || return 1
+    local fp
+    fp="$(grep -oE '"fingerprint"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' "$review_findings_path" 2>/dev/null |
+        head -n 1 | grep -oE '[0-9a-f]{64}' || true)"
+    [ -n "$fp" ] || return 1
+    printf '%s\n' "$fp"
+}
+
+# preship_require_findings <want-fingerprint> — rc 0 when a matching artifact exists,
+# rc 1 (with the operator instructions) when it is missing or stale.
+preship_require_findings() {
+    local want="$1" have
+    have="$(preship_findings_fingerprint || true)"
+    if [ -z "$have" ]; then
+        cat >&2 <<EOF
+pre-ship: FAIL — no code-review artifact found (.review-findings.json).
+  An ack with no review behind it is a keystroke, not a review.
+  1) run the code-review agent on the diff vs $base_ref,
+  2) it writes .review-findings.json stamped with the fingerprint from
+     bash scripts/dev/pre-ship.sh --review-fingerprint $base_ref
+  (Emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1 — logged, discouraged.)
+EOF
+        return 1
+    fi
+    if [ "$have" != "$want" ]; then
+        cat >&2 <<EOF
+pre-ship: FAIL — the code-review artifact is stale (.review-findings.json).
+  artifact fingerprint: $have
+  current diff:         $want
+  The diff moved after the review. Re-review the current diff and re-write the artifact.
+  (Emergency bypass: SMATCHET_SKIP_REVIEW_GATE=1 — logged, discouraged.)
+EOF
+        return 1
+    fi
+    return 0
+}
+
 if [ "$ack_review" -eq 1 ]; then
     preship_fp="$(ra_fingerprint branch "$base_ref")"
+    # Refuse to record an ack for a substantive diff no review artifact covers. Checked
+    # HERE rather than only at gate time so the failure lands on the person acking, while
+    # they still have the review in front of them.
+    if [ "$review_substantive" -eq 1 ]; then
+        if [ "${SMATCHET_SKIP_REVIEW_GATE:-0}" = "1" ]; then
+            echo "pre-ship: WARN — review-artifact requirement bypassed (SMATCHET_SKIP_REVIEW_GATE=1)." >&2
+        elif ! preship_require_findings "$preship_fp"; then
+            exit 1
+        fi
+    fi
     preship_verdict=""
     if preship_verifier_ready; then
         preship_vfile="$(mktemp)"
@@ -486,6 +663,13 @@ EOF
         exit 1
     fi
     echo "pre-ship: code-review ack current for this diff (.review-ack matches)."
+    # Re-checked at gate time, not just at ack time: the artifact is an ordinary
+    # (gitignored) file, and an ack whose evidence has since been deleted is back to being
+    # a bare keystroke.
+    if ! preship_require_findings "$want_fp"; then
+        exit 1
+    fi
+    echo "pre-ship: code-review artifact present and matching (.review-findings.json)."
     # A recorded veto must block EVERY run, not just the --ack-review invocation that
     # produced it. Without this the veto is trivially bypassed: `--ack-review` writes the
     # ack and THEN exits 1 on the veto, so a plain re-run finds a matching fingerprint and

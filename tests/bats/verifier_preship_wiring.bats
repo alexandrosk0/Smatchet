@@ -39,7 +39,19 @@ setup() {
     git -C "$REPO_TMP" checkout --quiet -b feature
     printf '// edit\nint touched() { return 1; }\n' >> "$REPO_TMP/Source/Core/src/Sync/S.cpp"
     git -C "$REPO_TMP" commit --quiet -am edit
+    # The gate refuses an ack for a substantive diff that no review artifact covers.
+    # These tests are about the VERDICT half, not artifact presence, so satisfy that
+    # precondition once here; preship_review_artifact.bats owns the artifact rules.
+    printf '{"fingerprint":"%s"}\n' "$(diff_fingerprint)" > "$REPO_TMP/.review-findings.json"
     ENDPOINT_PID=""
+}
+
+# diff_fingerprint — the sha256 pre-ship.sh pins an ack/artifact to, over the same
+# first-party C++ path set ra_fingerprint uses.
+diff_fingerprint() {
+    (cd "$REPO_TMP" && git diff base...HEAD -- 'Source/Core/*.cpp' 'Source/Core/*.h' \
+        'Source/Plugins/*.cpp' 'Source/Plugins/*.h' 'Source/Standalone/*.cpp' \
+        'Source/Standalone/*.h' 'tests/*.cpp' 'tests/*.h' | sha256sum | cut -d' ' -f1)
 }
 
 teardown() {
@@ -140,10 +152,7 @@ marker_fields() {
     # and THEN exits on the veto, so before this fix a plain re-run saw a matching
     # fingerprint and reported "ack current -> safe to push". The veto blocked one
     # invocation, never the gate.
-    printf 'branch\t%s\t0.4\tblock\ttrue\tsecret written to the log\n' \
-        "$(cd "$REPO_TMP" && git diff base...HEAD -- 'Source/Core/*.cpp' 'Source/Core/*.h' \
-            'Source/Plugins/*.cpp' 'Source/Plugins/*.h' 'Source/Standalone/*.cpp' \
-            'Source/Standalone/*.h' 'tests/*.cpp' 'tests/*.h' | sha256sum | cut -d" " -f1)" \
+    printf 'branch\t%s\t0.4\tblock\ttrue\tsecret written to the log\n' "$(diff_fingerprint)" \
         > "$REPO_TMP/.review-ack"
     run bash -c "cd '$REPO_TMP' && SMATCHET_PRESHIP_GATE_ONLY=1 bash scripts/dev/pre-ship.sh base 2>&1"
     [ "$status" -eq 1 ]
@@ -153,10 +162,7 @@ marker_fields() {
 }
 
 @test "a clean recorded verdict reports the score on the gate path without blocking" {
-    printf 'branch\t%s\t0.88\taccept\tfalse\t\n' \
-        "$(cd "$REPO_TMP" && git diff base...HEAD -- 'Source/Core/*.cpp' 'Source/Core/*.h' \
-            'Source/Plugins/*.cpp' 'Source/Plugins/*.h' 'Source/Standalone/*.cpp' \
-            'Source/Standalone/*.h' 'tests/*.cpp' 'tests/*.h' | sha256sum | cut -d" " -f1)" \
+    printf 'branch\t%s\t0.88\taccept\tfalse\t\n' "$(diff_fingerprint)" \
         > "$REPO_TMP/.review-ack"
     run bash -c "cd '$REPO_TMP' && SMATCHET_PRESHIP_GATE_ONLY=1 bash scripts/dev/pre-ship.sh base 2>&1"
     [ "$status" -eq 0 ]
