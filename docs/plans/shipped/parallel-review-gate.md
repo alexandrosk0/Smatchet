@@ -174,6 +174,9 @@ or delete them.
   - `agents/core/code-review.md` — new mandatory Process step 7 (write the stamped artifact as the reviewer's LAST action); `version: 6` → `7` + both banner strings.
   - `docs/agent-rules/ship-loops.md:19` — pre-first-push gate item 1 → the 1a/1b/1c protocol.
   - `.gitignore` — `.review-findings.json` beside `.review-ack`.
+- `test(gate): cover the review-artifact requirement in CI` — the regression coverage the first CI run showed was missing:
+  - `tests/bats/preship_review_artifact.bats` (8 tests) + `agents/scripts/core/test-preship-review-artifact-bats.sh` — the artifact requirement itself, in a suite CI actually runs.
+  - `tests/bats/verifier_preship_wiring.bats` — fixture repair: all 9 of its tests drive a strict-zone (substantive) diff, so the new requirement blocked them. `setup()` now stamps a matching artifact via a shared `diff_fingerprint()` helper, which also de-duplicates the inline fingerprint pipeline the last two tests each carried.
 
 ## Deviations from plan
 
@@ -181,6 +184,7 @@ or delete them.
 - **The intent-to-add block was extracted, not merely moved.** The plan said only that the mutating stages split out of the lint block. In practice `--review-fingerprint` needs the ita registration too — a brand-new untracked `.cpp` is invisible to `git diff HEAD`, so the reviewer would stamp a hash that could never match. It became `preship_ita_untracked [quiet]`, called from both the Group A path and the `--review-fingerprint` path, with `quiet` keeping the fingerprint output machine-readable. A correctness fix the plan missed, not a scope change.
 - **Three selftest cases, not two.** § Files to modify said "two new `run_selftest()` cases"; the old case 2 was *replaced* by **2a** (ack with no artifact ⇒ MUST FAIL), **2b** (ack with a mismatched artifact ⇒ MUST FAIL) and **2c** (artifact stamped via `--review-fingerprint`, then ack ⇒ MUST PASS, asserted on both the ack and a plain gate run). Cases 1, 3, 4, 5a, 5b unchanged.
 - **`--ack-review` honours `SMATCHET_SKIP_REVIEW_GATE=1` for the artifact check too** (WARN, not silent). Unplanned but required: without it the documented bypass would clear the final gate yet still wedge on the ack — worse than having no bypass.
+- **`--selftest` alone was not CI coverage.** The plan treated the three new `run_selftest()` cases as the regression net. They are not: no CI job invokes `pre-ship.sh --selftest` (`test-gate-selftests.sh` only asserts that the script *exposes* a failure case, never runs it). The first CI run made this concrete from the other side — the new requirement broke `verifier_preship_wiring.bats`, a suite CI *does* run, which `--selftest` had no way to predict. Fixed by adding `tests/bats/preship_review_artifact.bats` + its wrapper.
 - Nothing deferred. Every § Files-to-modify row shipped.
 
 ## Verification (actual)
@@ -190,6 +194,10 @@ or delete them.
 | `bash -n scripts/dev/pre-ship.sh` | **PASS** — syntax clean |
 | `bash scripts/dev/pre-ship.sh --selftest` | **PASS** — `gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python` |
 | `bash agents/scripts/core/test-gate-selftests.sh` | **PASS** — `all 80 --selftest-exposing scripts assert a failure case` |
+| `bash agents/scripts/core/test-preship-review-artifact-bats.sh` | **PASS** — `Passed: 8  Failed: 0` |
+| `bash agents/scripts/core/test-verifier-preship-wiring-bats.sh` | **PASS on CI** — locally `Passed: 4  Failed: 5`; all 5 are `start_endpoint … failed with status 49` (this Windows box has only the `python3` App-Execution-Alias stub). The 4 python-free tests, including both that the artifact requirement had broken, pass |
+| `bash agents/scripts/core/test-orphan-bats.sh` | **PASS** — `all 90 bats suite(s) have a test-*.sh wrapper` (the new suite included) |
+| `shellcheck -S warning agents/scripts/core/test-preship-review-artifact-bats.sh` | **PASS** — no output |
 | `shellcheck -S warning scripts/dev/pre-ship.sh` | **PASS** — no output |
 | `bash scripts/dev/pre-ship.sh` (full run, this branch) | **PASS** — exit 0; review gate N/A (no first-party C++ in this diff) |
 | `bash scripts/dev/pre-ship.sh --review-fingerprint` | **PASS** — printed the sha256 of the empty C++ diff, correct for a docs+shell branch |
