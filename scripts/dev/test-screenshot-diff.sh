@@ -28,8 +28,11 @@
 #   SMATCHET_GOLDEN_REPORT_FILE  if set, write one TSV verdict row per scenario here (see below)
 #
 # Exit codes:
-#   0 — every scenario captured within tolerance (or bootstrap completed)
-#   1 — at least one diff exceeded tolerance / dimension mismatch / spawn failure
+#   0 — every scenario captured within tolerance (or bootstrap completed) AND
+#       every golden-independent assertion passed
+#   1 — at least one scenario failed: a diff over tolerance / dimension mismatch /
+#       spawn failure, OR a failed golden-independent assertion (reported
+#       `fail-assert`), which can fail a bootstrap run too
 #   2 — binary or build is missing
 #   3 — BROKEN LANE: Passed==0 && Failed>0 (every scenario failed — the whole
 #       harness is dead, e.g. the exe can't boot, NOT a per-scenario regression).
@@ -319,7 +322,9 @@ run_scenario() {
         fi
     fi
 
-    # Bootstrap mode: copy capture → golden. No diff, always PASS.
+    # Bootstrap mode: copy capture → golden. No diff runs, so the DIFF never
+    # fails here — but a golden-independent assertion (the pink scan above)
+    # still can, and its result reaches both the row and the exit code.
     if [ "$BOOTSTRAP" -eq 1 ]; then
         cp "$captured" "$golden"
         echo "  BOOTSTRAP  wrote $golden ($(wc -c < "$golden") bytes)"
@@ -334,8 +339,10 @@ run_scenario() {
 
     # First-run convenience: if the golden is missing AND we're not in
     # bootstrap mode, write it anyway and warn the user — but DO mark a soft
-    # PASS so the gate doesn't fail on a fresh checkout that hasn't run
-    # bootstrap yet. The next run will diff against this golden.
+    # PASS *for the diff* so the gate doesn't fail on a fresh checkout that
+    # hasn't run bootstrap yet. A failed golden-independent assertion still
+    # stands: it reports fail-assert and the run still exits non-zero. The
+    # next run will diff against this golden.
     if [ ! -f "$golden" ]; then
         cp "$captured" "$golden"
         echo "  WARN  $golden was missing — bootstrapped from this run."
