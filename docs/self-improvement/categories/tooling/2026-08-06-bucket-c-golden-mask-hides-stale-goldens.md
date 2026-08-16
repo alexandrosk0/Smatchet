@@ -54,6 +54,80 @@
   property the other two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's
   Mesa per-test run) lack for the same reason. Part 2 is the instance ratchet.
 
+  **Status update 2026-08-15 — part 1 SHIPPED, part 2 still open.** The class fix
+  landed: `scripts/dev/test-screenshot-diff.sh` writes a per-scenario verdict row
+  (`scenario`, `verdict`, `linf`, `tol`, golden date, golden age in days) to its
+  golden-report file on **every** outcome — pass, fail, bootstrap, missing
+  capture, spawn failure — and the bucket-C job renders it into the job summary +
+  uploads it as an artefact from a step that is `if: always()` and exits 0 on
+  every branch, so reporting carries no blocking power. The two new steps sit
+  **after** the lane-integrity step on purpose: a reporting step that could fail
+  ahead of the teeth would skip them (lane-integrity carries no `if: always()`).
+  `tests/bats/bucket_lane_launch_smoke.bats` pins the rows on the failing path,
+  the git-sourced date on the passing path, the `-` fallback, and the opt-in (no
+  env var → no file).
+
+  **The date must come from git, not the filesystem** — caught by running the
+  first build of this on the real lane (PR #2023, run 31904156001), where every
+  row read `2026-08-15  0` while git dates those same goldens 2026-08-06/09. A
+  CI checkout stamps every file with the checkout time, so an mtime-based age
+  reports a months-old golden as brand new: the fresh-looking lie this report
+  exists to kill, reintroduced by the report itself. The driver now dates each
+  golden by the commit that last changed it and prints `-` when git cannot
+  answer (untracked / shallow clone), never a number; the bucket-C checkout
+  carries `fetch-depth: 0` so that history exists.
+
+  **First-run finding (feeds part 2):** that same run reported all seven
+  scenarios `fail` with `linf=-1` — the diff helper's *dimension mismatch*
+  sentinel, not a pixel delta. Under llvmpipe on the CI runner the captures do
+  not even match the goldens' dimensions, so part 2's ratchet cannot simply be
+  flipped on for `user-info-*`: the CI-native capture size has to be reconciled
+  first (or the ratchet scoped to a developer-GPU run). Lane status was `fail`,
+  not `broken` (8 passed / 7 failed — the non-diff assertions pass), so
+  lane-integrity stayed green and the mask swallowed all seven — exactly the
+  silent rot described above, now visible on every run.
+
+  **Reporting must not be able to block either** (CodeRabbit round 1 on #2023,
+  both findings accepted). `if-no-files-found: ignore` covers only an *absent*
+  file, so a genuine `upload-artifact` error (timeout, blob-storage 5xx) would
+  have redded this advisory lane *after* lane-integrity already passed — the
+  blocking power the design explicitly disclaims, reintroduced through the
+  publication path. Every pure-reporting step in the lane now carries
+  `continue-on-error: true` (the verdict report and its upload, plus the
+  pre-existing capture-PNG and child-log uploads, which had the same flaw), so
+  lane-integrity is the lane's only teeth by construction rather than by luck.
+  The lane's checkout also takes `persist-credentials: false`: it runs
+  branch-controlled code and needs only local `git log` reads, never an
+  authenticated fetch or push (zizmor `artipacked`).
+
+  Round 2 caught a *fourth* instance of the same class — the pre-existing
+  `Surface bucket-C spawned-child log` step, whose body sets `-uo pipefail` but
+  inherits `-e` from the Actions bash wrapper, so a failing `mkdir`/`cp`/`cat`
+  would red the lane after the teeth passed. Three such steps across two review
+  rounds is the signal that the property needs enforcing rather than re-arguing:
+  `bucket_lane_launch_smoke.bats` now asserts the **lane shape** — exactly one
+  lane-integrity step, it keeps its teeth, every step after it is
+  `continue-on-error`, and the checkout carries `fetch-depth: 0` (dating a golden
+  needs real history). The assertion was negative-tested: stripping
+  `continue-on-error` from one upload fails it by name.
+
+  Round 3 found the report contradicting its own driver: `dock-gap-sentinel`'s
+  pink-clear scan is a NON-diff assertion, so a pink failure incremented `FAILED`
+  while a clean image diff still wrote a `pass` row — the summary would have
+  called the scenario healthy on a run the driver failed. Non-diff assertion
+  results now propagate into the row as a distinct `fail-assert` verdict (its
+  `linf` column can look healthy, which is exactly why it needs its own token),
+  covering the bootstrap paths too. Negative-tested: with the fix reverted and
+  the test kept, the row reads `pass` and the assertion fails.
+
+  The rule generalises in
+  [`merge-gates.md`](../../../agent-rules/merge-gates.md) § Sanctioned step-level
+  masks: *a mask may suppress blocking, never reporting* — the property the other
+  two sanctioned masks (fuzz-smoke's stochastic run, bucket-E's Mesa per-test
+  run) still lack, and the natural next application of this shape.
+  Part 2 (graduate the now-deterministic `user-info-*` subset to an unmasked
+  diff) is unchanged and still needs the golden regeneration below.
+
   Prerequisite for both: the stale goldens need regenerating, which is
   approval-gated by
   [`golden-image-approval.md`](../../../agent-rules/golden-image-approval.md) —
@@ -65,3 +139,7 @@
   since the `ScenarioRunner::Tick` double-call
   ([`debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md`](../debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md))
   double-draws any scenario that renders from `OnFrame`.
+  Status: partially-applied (part 1 — masked-step verdict reporting — shipped
+    2026-08-15; part 2 — graduate the `user-info-*` subset to an unmasked diff —
+    open, gated on regenerating the three remaining stale goldens)
+  Last-reviewed: 2026-08-15

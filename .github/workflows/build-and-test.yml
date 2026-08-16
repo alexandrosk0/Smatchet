@@ -1000,6 +1000,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the golden-verdict report dates each golden by the
+          # commit that last changed it (`git log -1 --format=%ct`). A default
+          # depth-1 checkout has no such commit for an untouched golden, and the
+          # filesystem mtime is the CHECKOUT time — which would report a
+          # months-old golden as 0 days old, the fresh-looking lie the report
+          # exists to kill. Three other jobs already take this cost.
+          fetch-depth: 0
+          # This job runs branch-controlled code (the driver + the exe artefact)
+          # and needs only local `git log` reads — never an authenticated fetch
+          # or push — so it keeps no checkout credentials around for that code to
+          # reach (zizmor `artipacked`).
+          persist-credentials: false
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1032,18 +1045,13 @@ jobs:
           TMPDIR: ${{ github.workspace }}/build/tmp
           SMATCHET_KEEP_SCREENSHOT_CAPTURES: "1"
           SMATCHET_LANE_STATUS_FILE: ${{ github.workspace }}/build/tmp/bucket-c-lane-status
+          SMATCHET_GOLDEN_REPORT_FILE: ${{ github.workspace }}/build/tmp/bucket-c-golden-report.tsv
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
         run: |
           mkdir -p "${TMPDIR}"
           bash scripts/dev/test-screenshot-diff.sh
 
-      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
-      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
-      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
-      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
-      # continue-on-error mask. A missing sentinel (driver never reached the
-      # summary — itself a dead-harness symptom) also fails closed.
       - name: Lane-integrity — bucket-C did not pass-nothing
         shell: bash
         env:
@@ -1076,6 +1084,71 @@ jobs:
             exit 1
           fi
 
+      # Report the per-scenario verdicts the continue-on-error mask above would
+      # otherwise DISCARD (tooling 2026-08-06 bucket-c-golden-mask-hides-stale-
+      # goldens). The mask exists because llvmpipe captures are not authoritative
+      # against per-developer GPU goldens — but a TOTAL mask makes a golden that
+      # is stale for a deterministic reason (a deliberate UI change nobody
+      # regenerated for) read exactly like a clean run, so goldens rot unseen
+      # (seven stale ones, no signal ever). This step splits REPORTING from
+      # BLOCKING: it surfaces every verdict + the golden's age in the job summary
+      # so a stale golden is attributable on the PR that changed those pixels,
+      # while never failing the job itself (`|| true` on every branch + always()).
+      - name: Report bucket-C golden verdicts (advisory)
+        if: always()
+        # Belt-and-braces: the body already exits 0 on every branch, but the
+        # no-blocking-power property should hold structurally, not only because
+        # the shell logic is correct.
+        continue-on-error: true
+        shell: bash
+        env:
+          REPORT: ${{ github.workspace }}/build/tmp/bucket-c-golden-report.tsv
+        run: |
+          set -uo pipefail
+          if [ ! -s "$REPORT" ]; then
+            echo "bucket-C: no golden verdict report at $REPORT (driver never reached a scenario)."
+            exit 0
+          fi
+          {
+            echo "### Bucket-C golden verdicts (advisory — this lane cannot block)"
+            echo ""
+            echo "| scenario | verdict | L_inf | tol | golden date | age (days) |"
+            echo "| --- | --- | ---: | ---: | --- | ---: |"
+            while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+              [ -n "${scen:-}" ] || continue
+              mark="$verdict"
+              [ "$verdict" = "fail" ] && mark="**fail**"
+              printf '| %s | %s | %s | %s | %s | %s |\n' \
+                "$scen" "$mark" "${linf:--}" "${tol:--}" "${mtime:--}" "${age:--}"
+            done < "$REPORT"
+            echo ""
+            echo "A \`fail\` row is EITHER a real pixel regression OR a stale golden — regenerate"
+            echo "per docs/agent-rules/golden-image-approval.md, or fix the regression."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+          echo "===== bucket-C golden verdicts ====="
+          cat "$REPORT" || true
+          echo "===== end bucket-C golden verdicts ====="
+          exit 0
+
+      - name: Upload bucket-C golden verdict report
+        if: always()
+        # Reporting must never gain blocking power: `if-no-files-found: ignore`
+        # only covers an ABSENT file, so a genuine upload error (timeout, blob
+        # storage 5xx) would still red this advisory lane after lane-integrity
+        # already passed. continue-on-error keeps the artefact best-effort.
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bucket-c-golden-report-${{ github.run_id }}
+          path: build/tmp/bucket-c-golden-report.tsv
+          if-no-files-found: ignore
+
+      # Lane-integrity (NOT continue-on-error): assert the driver did not finish
+      # Passed==0 && Failed>0. The diff step stays advisory for genuine per-
+      # scenario REGRESSIONS, but "passed nothing" is a broken lane — this step
+      # reads the sentinel the driver wrote and hard-fails OUTSIDE the
+      # continue-on-error mask. A missing sentinel (driver never reached the
+      # summary — itself a dead-harness symptom) also fails closed.
       # Observability — surface the spawned CHILD's stderr (the bucket-C scenario
       # runs via test-screenshot-diff.sh, which --spawns an ephemeral child whose
       # stdout/stderr CliCommandRunner redirects to %TMP%\Smatchet-spawn-*.log;
@@ -1085,6 +1158,10 @@ jobs:
       # green run or a no-log run never reds the job.
       - name: Surface bucket-C spawned-child log
         if: always()
+        # Pure observability, and the Actions bash wrapper runs with -e (the body's
+        # `set -uo pipefail` does not clear it), so a failing mkdir/cp/cat here
+        # would red the advisory lane after lane-integrity already passed.
+        continue-on-error: true
         shell: bash
         run: |
           set -uo pipefail
@@ -1107,6 +1184,9 @@ jobs:
 
       - name: Upload captured PNGs (for golden bootstrap)
         if: always()
+        # Same rule as the verdict-report upload: a pure-reporting step in this
+        # advisory lane must not be able to red it on a transient upload error.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-captures-${{ github.run_id }}
@@ -1116,6 +1196,9 @@ jobs:
 
       - name: Upload bucket-C spawned-child log
         if: always()
+        # Same rule as the verdict-report upload: a pure-reporting step in this
+        # advisory lane must not be able to red it on a transient upload error.
+        continue-on-error: true
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bucket-c-childlog-${{ github.run_id }}

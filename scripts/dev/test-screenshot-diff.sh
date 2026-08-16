@@ -11,8 +11,11 @@
 #
 # Bootstrap mode (--bootstrap or first run when golden is missing): copies the
 # captured PNG into tests/golden/ so the next run has something to diff against.
-# Bootstrap runs always PASS — they're a one-time capture, not a regression
-# gate. Commit the new goldens by hand to make them authoritative.
+# Bootstrap skips the DIFF — it's a one-time capture, not a regression gate — so
+# no bootstrap run fails on pixels. It is NOT unconditionally green, though: the
+# golden-independent assertions still run (the dock-gap pink scan), and a failure
+# there still counts a FAILED, exits non-zero, and reports `fail-assert`. Commit
+# the new goldens by hand to make them authoritative.
 #
 # Env overrides:
 #   SMATCHET_EXE            path to Smatchet.exe (default build/ninja-iter-msvc/...)
@@ -22,10 +25,14 @@
 #   SCREENSHOT_DIFF_BIN     pre-built diff helper path; if unset the script g++-compiles one
 #   SMATCHET_GOLDEN_DIR     golden PNG dir (default tests/golden); override to isolate a test harness
 #   SMATCHET_LANE_STATUS_FILE  if set, write `status=<ok|broken|fail> passed=<n> failed=<n>` here
+#   SMATCHET_GOLDEN_REPORT_FILE  if set, write one TSV verdict row per scenario here (see below)
 #
 # Exit codes:
-#   0 — every scenario captured within tolerance (or bootstrap completed)
-#   1 — at least one diff exceeded tolerance / dimension mismatch / spawn failure
+#   0 — every scenario captured within tolerance (or bootstrap completed) AND
+#       every golden-independent assertion passed
+#   1 — at least one scenario failed: a diff over tolerance / dimension mismatch /
+#       spawn failure, OR a failed golden-independent assertion (reported
+#       `fail-assert`), which can fail a bootstrap run too
 #   2 — binary or build is missing
 #   3 — BROKEN LANE: Passed==0 && Failed>0 (every scenario failed — the whole
 #       harness is dead, e.g. the exe can't boot, NOT a per-scenario regression).
@@ -41,6 +48,28 @@
 #   written there as `status=<ok|broken|fail> passed=<n> failed=<n>` so a
 #   SEPARATE non-advisory CI step can assert lane integrity OUTSIDE this
 #   continue-on-error job (the only way a broken-lane signal escapes the mask).
+#
+# Per-scenario verdict report (masked-step reporting):
+#   The CI step that runs this driver is continue-on-error BY DESIGN (llvmpipe
+#   captures are not authoritative against per-developer GPU goldens), but a
+#   TOTAL mask discards the pass/fail signal rather than downgrading it: a golden
+#   that is stale for a perfectly deterministic reason — a deliberate UI change
+#   nobody regenerated for — reads exactly like a clean run, so goldens rot
+#   silently (tooling 2026-08-06 bucket-c-golden-mask-hides-stale-goldens; seven
+#   stale goldens, none of which ever produced a signal). When
+#   SMATCHET_GOLDEN_REPORT_FILE is set this driver writes one TAB-separated row
+#   per scenario REGARDLESS of verdict, so the reporting CI step can surface it
+#   without gaining the power to block the lane:
+#     <scenario>\t<verdict>\t<linf>\t<tolerance>\t<golden-date-iso>\t<golden-age-days>
+#   verdict ∈ pass | fail | fail-assert | bootstrap | missing-capture |
+#   spawn-failed. `fail` is a failing image diff; `fail-assert` is a scenario
+#   whose NON-diff assertion failed (the dock-gap pink scan) even though the diff
+#   itself was clean or never ran — its linf column may look healthy, which is
+#   exactly why the verdict has its own token.
+#   linf is `-` when the run never reached a diff; the date/age pair is `-` when
+#   git cannot date the golden (untracked, no git, or a shallow clone with no
+#   commit touching it). The date comes from git — NOT the filesystem, whose
+#   mtime is the checkout time on any CI runner.
 #
 # Usage:
 #   bash scripts/dev/test-screenshot-diff.sh                # diff mode (gate)
@@ -122,6 +151,14 @@ PINK_MAX_ALLOWED="${PINK_MAX_ALLOWED:-0}"
 
 PASSED=0
 FAILED=0
+# Truncate the verdict report up front: report_row APPENDS, so a re-run against a
+# pre-existing file (a repeated local run, a reused CI workspace) would otherwise
+# stack this run's rows on top of the last one's and the summary would render a
+# mix of both — stale verdicts reported as current is the exact failure this
+# report exists to prevent.
+if [ -n "${SMATCHET_GOLDEN_REPORT_FILE:-}" ]; then
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+fi
 SCENARIOS=(
     "dock-gap-sentinel"
     "command-palette-fuzzy"
@@ -154,10 +191,61 @@ assert() {
     fi
 }
 
+# Append one per-scenario verdict row to the report (no-op when the caller set no
+# report file). Called on EVERY scenario outcome — the point of the report is
+# that a masked step still reports, so a row missing here is a scenario whose
+# verdict the mask would swallow again.
+report_row() {
+    local scen="$1" verdict="$2" linf="${3:--}" golden="${4:-}"
+    [ -n "${SMATCHET_GOLDEN_REPORT_FILE:-}" ] || return 0
+    local mtime="-" age="-"
+    if [ -n "$golden" ] && [ -f "$golden" ]; then
+        # The date MUST come from git, not the filesystem: a CI checkout stamps
+        # every file with the checkout time, so mtime reports a three-month-old
+        # golden as 0 days old — a fresh-looking lie, which is the exact class of
+        # misleading signal this report exists to kill. `git log -1 --format=%ct`
+        # gives the commit that last changed the golden, i.e. its real age.
+        # Run from the golden's own directory so the lookup works whether the
+        # golden lives in this repo or in a caller-supplied dir. Unknown (no git,
+        # untracked file, shallow clone with no touching commit) stays '-' —
+        # never a number that would read as fresh.
+        #
+        # The commit date only describes the file if the file still HAS that
+        # commit's content. A bootstrap run overwrites the golden in place, and
+        # `git log` would then hand back the PREVIOUS commit's date for bytes
+        # that were just rewritten — a stale date presented as current, the same
+        # misleading-freshness class again. So date it only when the path is
+        # tracked AND its working-tree content matches HEAD; anything else is
+        # honestly unknown and reports '-'.
+        local epoch="" gdir gbase
+        gdir="$(dirname "$golden")"
+        gbase="$(basename "$golden")"
+        if git -C "$gdir" ls-files --error-unmatch -- "$gbase" >/dev/null 2>&1 &&
+            git -C "$gdir" diff --quiet HEAD -- "$gbase" >/dev/null 2>&1; then
+            epoch="$(git -C "$gdir" log -1 --format=%ct -- "$gbase" 2>/dev/null || true)"
+        fi
+        # Digits-only guard: a non-numeric result would abort the whole driver in
+        # the arithmetic below (set -e) — a reporting nicety must never take the
+        # gate down.
+        case "$epoch" in ''|*[!0-9]*) epoch="" ;; esac
+        if [ -n "$epoch" ]; then
+            mtime="$(date -u -d "@$epoch" '+%Y-%m-%d' 2>/dev/null || date -u -r "$epoch" '+%Y-%m-%d' 2>/dev/null || echo '-')"
+            age=$(( ( $(date -u '+%s') - epoch ) / 86400 ))
+        fi
+    fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$scen" "$verdict" "$linf" "$TOL" "$mtime" "$age" \
+        >> "$SMATCHET_GOLDEN_REPORT_FILE"
+}
+
 run_scenario() {
     local scen="$1"
     local captured="$TMP_DIR/$scen.png"
     local golden="$GOLDEN_DIR/$scen.png"
+    # Non-diff assertions (today: the dock-gap pink scan) fail INDEPENDENTLY of the
+    # image diff, and they must reach the report. Without this the driver could
+    # count a scenario failed while its row read `pass` — the report contradicting
+    # the run is the exact misreporting this report exists to prevent.
+    local scen_assert_failed=0
 
     echo
     echo "=== Scenario: $scen ==="
@@ -212,12 +300,14 @@ run_scenario() {
     local req
     req=$(echo "$out" | extract captureRequested 2>/dev/null || echo "MISSING")
     if [ "$req" != "true" ]; then
+        report_row "$scen" "spawn-failed" "-" "$golden"
         assert "$scen captureRequested" "envelope missing captureRequested=true; got=$req"
         return
     fi
 
     # Verify the captured PNG exists and is non-empty.
     if [ ! -s "$captured" ]; then
+        report_row "$scen" "missing-capture" "-" "$golden"
         assert "$scen captured PNG" "captured file missing or empty at $captured"
         return
     fi
@@ -240,27 +330,42 @@ run_scenario() {
         if [ "$pink_rc" -eq 0 ]; then
             assert "$scen pink-pixels == 0 (no dock gap)" "ok"
         else
+            scen_assert_failed=1
             assert "$scen pink-pixels == 0 (no dock gap)" "$pink_out"
         fi
     fi
 
-    # Bootstrap mode: copy capture → golden. No diff, always PASS.
+    # Bootstrap mode: copy capture → golden. No diff runs, so the DIFF never
+    # fails here — but a golden-independent assertion (the pink scan above)
+    # still can, and its result reaches both the row and the exit code.
     if [ "$BOOTSTRAP" -eq 1 ]; then
         cp "$captured" "$golden"
         echo "  BOOTSTRAP  wrote $golden ($(wc -c < "$golden") bytes)"
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "-" "$golden"
+        else
+            report_row "$scen" "bootstrap" "-" "$golden"
+        fi
         assert "$scen golden bootstrap" "ok"
         return
     fi
 
     # First-run convenience: if the golden is missing AND we're not in
     # bootstrap mode, write it anyway and warn the user — but DO mark a soft
-    # PASS so the gate doesn't fail on a fresh checkout that hasn't run
-    # bootstrap yet. The next run will diff against this golden.
+    # PASS *for the diff* so the gate doesn't fail on a fresh checkout that
+    # hasn't run bootstrap yet. A failed golden-independent assertion still
+    # stands: it reports fail-assert and the run still exits non-zero. The
+    # next run will diff against this golden.
     if [ ! -f "$golden" ]; then
         cp "$captured" "$golden"
         echo "  WARN  $golden was missing — bootstrapped from this run."
         echo "        Commit the new golden so future runs gate against it:"
         echo "          git add $golden"
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "-" "$golden"
+        else
+            report_row "$scen" "bootstrap" "-" "$golden"
+        fi
         assert "$scen golden auto-bootstrapped" "ok"
         return
     fi
@@ -273,9 +378,22 @@ run_scenario() {
     diff_rc=$?
     set -e
     echo "  $diff_out"
+    # linf=<N> is the helper's first stdout token; '-' when it never printed one
+    # (load failure / dimension mismatch write only stderr).
+    local linf
+    linf="$(printf '%s' "$diff_out" | sed -n 's/.*linf=\([0-9-]*\).*/\1/p' | head -1)"
+    [ -n "$linf" ] || linf="-"
     if [ "$diff_rc" -eq 0 ]; then
+        # Clean diff, but a non-diff assertion already failed: the scenario is NOT
+        # passing, and the row must not say so.
+        if [ "$scen_assert_failed" -eq 1 ]; then
+            report_row "$scen" "fail-assert" "$linf" "$golden"
+        else
+            report_row "$scen" "pass" "$linf" "$golden"
+        fi
         assert "$scen L_inf <= $TOL" "ok"
     else
+        report_row "$scen" "fail" "$linf" "$golden"
         assert "$scen L_inf <= $TOL" "$diff_out"
     fi
 }
