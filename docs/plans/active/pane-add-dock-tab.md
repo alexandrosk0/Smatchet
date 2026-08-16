@@ -1,6 +1,6 @@
 # Plan — "+" opens the new pane as a tab next to its source
 
-**Status**: implemented, awaiting visual verification
+**Status**: implemented, visually verified by the user (2026-08-16)
 **Branch**: `feat/pane-add-dock-tab`
 **Reported symptom**: "when I press + to open a new pane, it doesn't open in the tabs"
 
@@ -82,7 +82,7 @@ Pillar 1 budget (6.94 ms) unaffected.
 - [x] `clang-format -i` on all six files.
 - [x] Standalone MSVC build green (`ninja-iter-msvc`; `ninja-iter-clang` is broken
       independently — Issue #2029).
-- [ ] **Manual (visual-validation exception — touches `Smatchet*Ui*.cpp`, no bucket-C/E
+- [x] **Manual (visual-validation exception — touches `Smatchet*Ui*.cpp`, no bucket-C/E
       coverage)**: click `+` on a docked pane → new pane appears as the **selected** tab
       in the same tab bar; click `+` again from the new pane → third tab joins the same
       bar; drag a pane out to float, click its `+` → new pane appears floating (no
