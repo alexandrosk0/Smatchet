@@ -32,6 +32,23 @@
     The July concentration of Class B (70 of 82) overlaps the rate-limit cluster
     in the sibling entry, i.e. the same CR-quota window produced both an
     accepted-as-green fail-open and a merged-past-pending one.
+    **Class C — the self-improvement exemption (30 merged, 12 of them inside the
+    unreviewed-80).** Distinct from A and B and *deliberate*
+    (`merge-gates.sh:1443-1453`, mirrored in the action): a diff entirely under
+    `docs/self-improvement/**` greens the gate with `self-improvement-only diff
+    (N file(s)) — CR review exempt`, no review required. Recorded here not as a
+    bug but as the fourth way the gate reads green on an unreviewed head, so a
+    reader counting review coverage does not mistake these 30 for reviewed.
+    **Reproduced by the PR that files these entries.** #2038 (this filing) opened
+    2026-08-16 17:21Z; CR posted `Review skipped: manual review required for this
+    OSS repository`, Cursor Bugbot replied *"couldn't run — usage limit
+    reached"*, and the `CR finding gate` posted `success` at 17:23:11 on the
+    Class-C path — **green in under two minutes with neither reviewer having read
+    a line**. Both fallbacks being unavailable at once is the case the exemption
+    was never scoped against: it was justified as belt-and-suspenders beside a
+    `.coderabbit.yaml` path filter, on the assumption that a real review is
+    merely redundant here, not absent. A manual `@coderabbitai review` was
+    triggered on #2038 rather than merging on that green.
   Concrete next action: (1) maintainer to dump `develop`'s required-status-check
     set and confirm `CR findings (0 actionable)` is in it and that admin
     enforcement is on — Class B is either a protection-config gap or an `--admin`
