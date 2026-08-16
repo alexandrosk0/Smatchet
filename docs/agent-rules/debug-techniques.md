@@ -18,6 +18,18 @@ Local bucket-E runs use the native GPU/GL on the dev box. The Mesa software-GL p
 
 A crash that vanishes with **no Windows Error Reporting dump and no Event-1000** is a *deliberate* `ExitProcess` from a caught SEH fault (the frame-loop filter handles the access violation and exits), not an unhandled exception — so WER never records it. Recovering the real faulting stack needs procdump (capture the death) plus a first-chance debugger break (the app's filter swallows the fault before procdump's `-e` sees it), and a per-frame autocycle harness reproduces interaction-driven crashes hands-free. Full workflow + ready-to-run scripts: [`docs/guides/crash-capture.md`](../guides/crash-capture.md).
 
+## Hang capture (no crash, so no dump)
+
+A process that **wedges without crashing** never trips the crash pipeline, so nothing is written and there is no stack to read. Ask the live process to dump itself instead:
+
+Call `debug.dump_self` over the CLI or MCP surface — it returns `{wrote, path}` and the dump carries every thread's stack — then triage it with the existing tooling:
+
+```
+bash agents/scripts/core/dump-triage.sh <path>
+```
+
+This works while the UI thread is stuck because the command runs inline on the serving thread — `debug.log_tail` and `debug.mcp_status` are safe the same way, while every marshalling `debug.*` command blocks forever (`debug-instrument` SKILL.md § Run has the full table). For a hung `--spawn` child, the readiness handshake proves it had a live MCP server on a known port, so target that port. `{available:false}` means the host has no writer (Unreal/DX12, Android) — fall back to the procdump recipe in [`docs/guides/crash-capture.md`](../guides/crash-capture.md). Design + rejected alternatives: [`docs/adr/0024-self-minidump-over-in-process-stack-walk.md`](../adr/0024-self-minidump-over-in-process-stack-walk.md).
+
 ## Dump triage (.dmp)
 
 Once a minidump (`.dmp`) is captured (procdump, or the in-app crash handler), triage it. Two tiers:

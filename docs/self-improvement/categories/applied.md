@@ -688,9 +688,7 @@ before push. Archive to `applied.md` on the next sweep.
     Est ~0.5–1d. ADR-0022 keeps Intent off branch-protection required-contexts on purpose (merge-queue
     deadlock reversibility), so enforcement must stay on the merge-actor side — do NOT "fix" this by
     promoting Intent to a required context.
-  Triggered-follow-up: supersedes the advisory remedy in the 2026-06-11 process.md entry "authorized
-    auto-merge armed via raw `gh pr merge --auto`" — when this wrapper lands, update that entry's status to
-    note the advisory was promoted to an enforced gate.
+  Triggered-follow-up: when=file-age:agents/scripts/core/safe-merge.sh;days=0; action=supersede the advisory remedy in the 2026-06-11 process entry "authorized auto-merge armed via raw `gh pr merge --auto`" — record on that entry that the advisory was promoted to an enforced gate; baseline=advisory-only "DEFAULT to the poller" guidance was bypassed 3x in one 07:55-07:58Z batch (#1406/#1414/#1415); fired=2026-08-16
   Cross-ref: postmortems.md 2026-06-19 PR #1406, #1414, #1415; merge commits 96e79412 (#1414),
     7bb77daa (#1406), f6bb3972 (#1415); merge-gates.sh `MERGE_GATES_BLOCK_ALLOWLIST_RE`;
     docs/agent-rules/merge-gates.md:84; docs/adr/0022-intent-gate-promotion.md; safe-admin-merge.sh.
@@ -1671,8 +1669,8 @@ before push. Archive to `applied.md` on the next sweep.
 - 2026-06-11 · orchestrator · [process] · P2 — authorized auto-merge armed via raw `gh pr merge --auto` instead of the merge-gates poller → CR gating reduced to manual vigilance
   Details: Auto-merging PR #1130 (under a "merge everything" authorization) I armed GitHub auto-merge with `gh pr merge --squash --auto`. GitHub's `--auto` only waits on the 6 *required* status checks; CodeRabbit is PR-advisory and NOT a required context, so `--auto` would merge the instant the required Windows builds greened regardless of CR state. It was safe THIS time only because CR finished (~3 min) well before the ~16-30 min builds and I manually re-verified `CR finding gate` / `CR findings (0 actionable)` before each wait — but had CR lagged the build, raw `--auto` merges past an unreviewed / findings CR, violating "CR is a gate" (AGENTS.md § Merge gates). The sanctioned `agents/scripts/core/merge-gates.sh` poller gates CR structurally (per the 2026-06-05 tooling.md hardening, now applied), so correctness there does not depend on watching the clock.
   Concrete next action: for authorized auto-merge, DEFAULT to the merge-gates poller path (or `MERGE_GATES_FLIP_READY=true` + the watcher's PASS handler) rather than a bare `gh pr merge --auto`, so the CR + unresolved-comment gates are enforced by code, not manual re-checks. If raw `--auto` is used as a convenience, the orchestrator must hold until CR reaches a terminal pass on the FINAL head before treating the merge as sanctioned. Add a note to `docs/agent-rules/merge-gates.md` that `--auto` alone ≠ the full gate set (CR + user-comment gates are not GitHub-required contexts).
-  Status: applied (2026-06-20 roadmap campaign — shipped #1503)
-  Last-reviewed: 2026-06-20
+  Status: applied (2026-06-20 roadmap campaign — shipped #1503). **Advisory promoted to an enforced gate** — the "DEFAULT to the poller" remedy above is no longer guidance: `agents/scripts/core/safe-merge.sh` (shipped #1503, backed by `tests/bats/safe_merge.bats`) runs the full merge-gates poll and arms `--auto` ONLY on GATES_PASSED, and `ship-loops.md` / `merge-gates.md` now forbid bare `gh pr merge --auto` + direct REST `PUT …/merge` in the ship-loop. Superseded per the 2026-06-19 `intent-gate-bypassed-via-non-poller-merge` triggered-follow-up (this file, § 2026-06-19).
+  Last-reviewed: 2026-08-16
 
 - 2026-06-11 · debug-detective · [process] · P2 — solo single-pass RCA on P0 #1122 was falsified TWICE before the fix held → P0 root-causing needs adversarial verification BEFORE coding
   Details: The #1122 ImGui 1.92 texture-orphan crash had its root-cause hypothesis falsified twice en route to the shipped fix: (1) the first fix addressed only the in-list re-arm path and missed the out-of-list orphan; (2) the list-walk-only recovery was STRUCTURALLY incapable of seeing the doomed command because it inspected `drawData->Textures` but never the per-command `TexRef._TexData`. Each miss was caught late (one on-device), after code had been written against the wrong/incomplete model. A single-pass solo RCA produced a plausible-but-incomplete cause both times; the real cause held only once the per-command path was considered.
@@ -5599,4 +5597,73 @@ needs its risky work step-scoped.
     wrong". Optional follow-on if it recurs: a `pre-ship.sh` helper that takes a
     phrase and greps it across the diff's files, so the sweep is one command.
   Status: applied (flipped at archival)
+  Last-reviewed: 2026-08-16
+
+- 2026-08-16 · orchestrator · [tooling] · P1 — the `CR findings` gate treats CodeRabbit's `Review skipped: manual review required for this OSS repository` status as "CR reviewed and found nothing", so on this repo it goes GREEN on an entirely unreviewed head — and that is the DEFAULT state of every new PR, not an edge case
+  Details: [`cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
+    disambiguates a head with no CR review node via CR's own `CodeRabbit`
+    StatusContext. It already special-cases ONE not-a-review description —
+    `grep -qiE 'rate.?limit|limit reached'` — and correctly resolves that to
+    PENDING plus a full-review nudge. Everything else falls through to
+    `SUCCESS) post success "CodeRabbit completed with no review on head
+    (skipped/clean)"; exit 0`. The in-file comment states the intent: *SUCCESS ->
+    CR is done and skipped the review (trivial / workflow / docs change)*.
+    But `Review skipped: manual review required for this OSS repository` does
+    NOT mean that. It means the opposite: CR has **not** looked and is waiting to
+    be asked. CodeRabbit requires a manual `@coderabbitai review` on repositories
+    with fewer than 10 stars, so this status is posted on **every** PR here at
+    creation time. The gate is therefore green-by-default on unreviewed code, and
+    only turns honest if a real review later lands.
+    Observed live on PR #2028: CR posted the skip status at 03:46:17, the gate
+    posted `success` at 03:46:30, and the PR then sat for **11.5 hours** with
+    `mergeable_state: clean`, all 36 CI checks green, and the CR gate green —
+    with zero review having occurred. The only thing that stopped an unreviewed
+    merge was the orchestrator manually applying the repo learning ("a skipped /
+    rate-limited stamp is NOT review evidence"). A `smatchet-merge-watcher`
+    registration, a `governance.auto_merge: on` grant, or any operator trusting
+    the checks would have merged it. #2023 and #2025 showed the same green.
+    This is the exact fail-open the rate-limit branch was added to close
+    (its comment: *"the branch below would translate that into 'completed with no
+    review on head (skipped/clean)' and pass an entirely unreviewed commit"*) —
+    the same sentence describes this case verbatim, only with a different
+    description string. The scoping decision ("an unrecognised description must
+    keep its existing pass behaviour instead of hanging every PR") was a
+    deliberate fail-open for UNKNOWN markers; `manual review required` is no
+    longer unknown.
+  Concrete next action: extend the not-a-review description match from
+    `rate.?limit|limit reached` to also cover `manual review required` /
+    `review skipped` (keeping the deliberate fail-open for genuinely unrecognised
+    descriptions), so the head resolves to PENDING and `maybe_nudge_full_review`
+    fires — which is already the right recovery and is proven to work (a manual
+    `@coderabbitai review` on #2028 produced a clean review in ~3 min). Guard
+    against the sibling risk the existing comment names: a docs-only PR whose
+    files are all path-excluded must still pass, and that case is already handled
+    up front by the `selfImpOnly` head-accurate file-list check, so widening this
+    match does not re-wedge it. Add a `merge_gates`/`cr_finding_gate` bats case
+    per description string (rate-limited, manual-review-required, genuinely
+    unknown) so the vocabulary cannot silently regress — the sibling entry
+    2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop records the same
+    class of brittleness in the auto-nudge's own regexes. Est ~0.5d.
+  Status: applied — the CI action now classifies `manual review required` as a
+    not-a-review marker (PENDING, not a pass) and self-heals with a new
+    `never-reviewed` nudge that posts a plain `@coderabbitai review`; the
+    pre-existing nudge could not cover this state because it REQUIRED a prior
+    clean pass to key on. Matched on `manual review required`, never a bare
+    `review skipped`, so CR's terminal path-filter skip still passes. Correction
+    to this entry's original framing: the CLIENT-side poller was never
+    vulnerable — `merge-gates.d/10-gate-filter.sh` already excludes this string
+    (plus `available on request` and the rate-limit texts) from
+    `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
+    gate never received the same treatment, despite its own header describing
+    itself as lifting the client-side verdict server-side.
+    Merge-history evidence added 2026-08-16 (PR #2038, after the fix landed): a
+    sweep of all 1,416 merged PRs above #500 — each merged head SHA's status
+    contexts plus CR's reviews/comments on that same SHA — shows this class had
+    already merged **4 PRs with CR never having looked at all**: #2014, #2024,
+    #2027, #2031 (2026-08-15 → 08-16), none carrying an override label, and
+    #2024 is not docs (`fix(sync): stop multi-pane full syncs from deleting each
+    other's cached tickets`, 19 code files). #2030 carries the same green status
+    but did get a CR walkthrough on its head, so it is an instance of the status
+    and not of the never-reviewed outcome. The #2028 near-miss in the original
+    framing was the case that got caught; these four are the ones that did not.
   Last-reviewed: 2026-08-16

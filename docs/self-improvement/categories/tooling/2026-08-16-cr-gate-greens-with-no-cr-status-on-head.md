@@ -65,7 +65,8 @@
     own definition and none of the 136 were filed as one. Est ~0.5 d for (2)+(3),
     (1) is a maintainer action. Cross-ref:
     `2026-08-16-cr-gate-greens-on-rate-limited-review.md`,
-    `2026-08-16-cr-gate-greens-on-manual-review-required-skip.md`,
+    the manual-review-required sibling (archived in `applied.md`, fixed by
+    #2036),
     `docs/adr/0017-merge-time-snapshot-ledger.md`.
   Status: open
   Last-reviewed: 2026-08-16

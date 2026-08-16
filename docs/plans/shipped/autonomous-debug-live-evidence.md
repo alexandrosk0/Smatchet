@@ -1,9 +1,10 @@
 <!-- index-summary: close the live-process evidence gaps in the autonomous debug loop — agent-debug preset, log read-back, and on-demand self-minidump for hang diagnosis -->
 # Plan — Live-process evidence for the autonomous debug loop
+<!-- plan-date: 2026-08-16 -->
 
 > **Slug**: `autonomous-debug-live-evidence` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — authored 2026-08-16; `grill-with-docs` pass complete (see § Verification), unstarted.
+> **Status**: `shipped` — authored 2026-08-16; `grill-with-docs` pass complete (see § Verification); all three slices shipped in PR #2035.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 >
@@ -17,7 +18,7 @@ ADR-0009 gave `debug-detective` a reproducer it can run without a human and with
 2. **Nothing reads the runtime log back.** `debug.log` writes into the Logger, but no command returns log content, so an agent must locate and read `%LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log` off disk — fine locally, unavailable to a purely-MCP client (a `--spawn` child, a remote session).
 3. **A hang has no capture path at all.** `debug.thread_dump` is a stub (`Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp:103-117`) returning `hardwareConcurrency` and a note. The minidump pipeline only fires on a crash, so a process that wedges without crashing produces no evidence whatsoever.
 
-Gap 3 is not theoretical. `docs/self-improvement/categories/infra/2026-07-05-texture-guard-llvmpipe-spawn-hang.md` is an **open P2**: a *deterministic* deadlock that forced the `Mobile texture-guard smoke` lane to stay advisory, is marked "needs debug-detective", and whose **concrete next action #1 is literally "capture the hung child's stack."** The repo has no tool that can do that. It is not an isolated case either — [`docs/plans/ui-freeze-pillar2-blocking.md`](../shipped/ui-freeze-pillar2-blocking.md) tracks seven issues across two hang mechanisms (blocking `std::future` destructors, sync I/O on the render path), and `docs/self-improvement/categories/security.md:109` carries a still-open UI-thread-starvation finding.
+Gap 3 is not theoretical. `docs/self-improvement/categories/infra/2026-07-05-texture-guard-llvmpipe-spawn-hang.md` is an **open P2**: a *deterministic* deadlock that forced the `Mobile texture-guard smoke` lane to stay advisory, is marked "needs debug-detective", and whose **concrete next action #1 is literally "capture the hung child's stack."** The repo has no tool that can do that. It is not an isolated case either — [`docs/plans/ui-freeze-pillar2-blocking.md`](ui-freeze-pillar2-blocking.md) tracks seven issues across two hang mechanisms (blocking `std::future` destructors, sync I/O on the render path), and `docs/self-improvement/categories/security.md:109` carries a still-open UI-thread-starvation finding.
 
 Intended outcome: *after this lands, `debug-detective` can read the log and capture every thread's stack from a live, wedged process over MCP, with no human at the keyboard and no rebuild to turn observability on.*
 
@@ -47,7 +48,7 @@ No wiring change is needed: `Source/Standalone/CMakeLists.txt:55` compiles `${CO
 
 4. `Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` — new read-only command over `Logger::GetEntriesSnapshot()`. Params via `PInt`/`PString` (`BuiltinCommands_Helpers.cpp:127,136`): `lines` (clamped, adopting the `kMaxLogTailLines = 300` precedent at `Source/Core/src/Diagnostics/EngineContextFormat.cpp:17`), optional `minLevel` (enum), optional `contains`. Returns `{lines[], total, truncated}`. Register the static in the call list at `:405-416`. Set `Description` with returns-shape + examples — `Source/Core/include/Commands/Command.h:173` makes that a stated contract, not a nicety.
 5. `tests/monkey/monkey_command_registry.cpp:88-94` — add the name to the hand-curated read-only allow-list (`debug.thread_dump` is already there at `:93`); the list is explicitly never auto-expanded.
-6. `docs/guides/cli.md:388-395` — catalogue entry. The § debug section documents 4 of 10 registered `debug.*` commands; do not widen that drift. [`docs/plans/cli-guide-registry-parity-gate.md`](cli-guide-registry-parity-gate.md) is the plan that will gate it (unimplemented — none of its four planned files are on disk), and its planned scanner keys on the literal `MakeCommand("<name>"` spelling, so use that form.
+6. `docs/guides/cli.md:388-395` — catalogue entry. The § debug section documents 4 of 10 registered `debug.*` commands; do not widen that drift. [`docs/plans/cli-guide-registry-parity-gate.md`](../active/cli-guide-registry-parity-gate.md) is the plan that will gate it (unimplemented — none of its four planned files are on disk), and its planned scanner keys on the literal `MakeCommand("<name>"` spelling, so use that form.
 
 **Slice 3 — `debug.dump_self`**
 
@@ -89,7 +90,7 @@ Two extractions.
 
 ## Perf-review-system gates
 
-Mandatory: the diff touches `Source/Core/`. Per [`docs/plans/pillar-1-2-perf-review-system.md`](../shipped/pillar-1-2-perf-review-system.md).
+Mandatory: the diff touches `Source/Core/`. Per [`docs/plans/pillar-1-2-perf-review-system.md`](pillar-1-2-perf-review-system.md).
 
 1. **PR-fast CI** — **fires.** `command-contract-sweep` **auto-enrols** new commands (`Source/Core/src/Commands/Scenarios/CommandContractSweepScenario.cpp`, driven by `scripts/dev/test-command-contract.sh`), so both new registrations must satisfy the error-envelope contract. Pair with `idle` as the baseline floor. Subset declared in `scripts/dev/perf-pr-fast-set.json`.
 2. **Pillar 2 static scanner** — **fires** on slice 3 (minidump write reachable from the palette frontend); resolution per the Pillar-2 callout. Slice 2 should not trip it.
@@ -130,24 +131,39 @@ Per `AGENTS.md` § Verification automation — zero manual steps.
 - **A scripted-`cdb` breakpoint tier (agent-driven breakpoints / value-at-a-moment capture).** Cut by the grill for lack of evidenced demand: the only evidenced diagnosis gap was hang-stack capture, which slice 3 now serves, and the other stuck investigation (the 2026-05-17 bucket-E spawn flake) is a *race*, which breakpoints perturb rather than reveal. **Revisit trigger**: a real investigation blocked on a value-at-a-moment question that neither `debug.log_tail` nor a dump can answer. Until then this stays unbuilt on purpose — it remains the capability neither Cursor nor Claude Code ships natively, so it is a deliberate deferral, not an oversight.
 - **A true MCP↔DAP bridge** (stepping, watch expressions). Strictly larger than the tier above; same trigger, higher bar.
 - **Stale CI-lane documentation.** Four docs describe the pre-all-gates-blocking world (bucket-C/E "fully advisory", `bucket-mesa-exe-boot`'s moved entry, the TSan plan header). Real, but unrelated to live-process evidence — filed as `docs/self-improvement/categories/infra/2026-08-16-stale-advisory-lane-docs.md` and `…-tsan-lane-advisory-label-drift.md`.
-- **Finishing TSan coverage.** A nightly Linux TSan job already exists (`.github/workflows/tsan-linux-nightly.yml`); the remaining work is slices 2c/3 of [`docs/plans/tsan-imgui-linked-target.md`](tsan-imgui-linked-target.md).
-- **Removing the bucket-C / bucket-E step masks.** Belongs to [`docs/plans/testing-surface-roadmap.md`](testing-surface-roadmap.md) Slice B.
-- **DX12 / Unreal parity for the new commands.** `debug.dump_self` returns not-available where no provider is installed; wiring the Unreal host is [`docs/plans/dx12-backbuffer-readback-screenshot.md`](dx12-backbuffer-readback-screenshot.md)-adjacent territory, not this plan's.
+- **Finishing TSan coverage.** A nightly Linux TSan job already exists (`.github/workflows/tsan-linux-nightly.yml`); the remaining work is slices 2c/3 of [`docs/plans/tsan-imgui-linked-target.md`](../active/tsan-imgui-linked-target.md).
+- **Removing the bucket-C / bucket-E step masks.** Belongs to [`docs/plans/testing-surface-roadmap.md`](../active/testing-surface-roadmap.md) Slice B.
+- **DX12 / Unreal parity for the new commands.** `debug.dump_self` returns not-available where no provider is installed; wiring the Unreal host is [`docs/plans/dx12-backbuffer-readback-screenshot.md`](../active/dx12-backbuffer-readback-screenshot.md)-adjacent territory, not this plan's.
 - **A CPU/allocation profiler or flamegraph integration.** Different subsystem (perf) and owner (`perf-detective`).
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+All three slices shipped together in **PR #2035** (squash SHA lands at merge; branch commits below, newest last). The plan-authoring + `grill-with-docs` pass was PR #2032.
+
+- `bfcddf1d` · **Slice 1** — `ninja-iter-agentdebug-msvc` preset (inherits `ninja-iter-msvc`, adds `SMATCHET_AGENT_DEBUG=ON`, own `binaryDir`) + `BUILD.md`, `docs/agent-rules/build.md`, `debug-instrument` SKILL.md § Build. No existing preset changed.
+- `1481055b` · **Slices 2 + 3** — `debug.log_tail` over `Logger::GetEntriesSnapshot()` backed by the pure `Diagnostics/LogTailSelect.h`; `debug.dump_self` over a new `Diagnostics/SelfDump` provider seam with the Win32 writer in `Source/Standalone/SmatchetCrashHandler.cpp`, installed from `main.cpp`. Plus the marshal-vs-inline hang table in `cli.md` / the skill / `debug-techniques.md`, the `debug.thread_dump` note pointing at `dump_self`, and the monkey read-only allow-list entry.
+- `2fd69751` · **Code-review fixes** — six findings from a `/code-review high` pass (see § Deviations).
+- `100d5725` · **CodeRabbit P2** — `dump_self` help text and a `SelfDump.h` comment still named `<userData>/crashes/` after the write path moved to `agent-dumps/`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **Slice 3's seam is a dedicated `Diagnostics/SelfDump`, not a `HostCallbacks` entry** (which is what [ADR-0024](../../adr/0024-self-minidump-over-in-process-stack-walk.md) and this plan specified). `HostCallbacks`' own header documents its contract as "consumers read on the UI thread"; `debug.dump_self` is read from whichever thread serves the command — deliberately, so it answers while the UI thread is wedged. Rather than silently widen that contract, the provider got its own atomic-backed seam shaped like the neighbouring `CrashSink` API. ADR-0024's actual decision (self-minidump over in-process stack walking; Win32 stays in `Source/Standalone`) is unchanged.
+- **The two dump writers share only `kSmatchetDumpType`, not an extracted body.** § Extraction sizing planned to extract the dump-writing body so both paths share one implementation. On reading it, ~90% of `WriteMiniDumpImpl` is crash-specific — CrashSink's pre-built path buffer, the synthesized exception record, the first-rich-dump arbitration — and sharing it would have coupled an on-demand diagnostic to crash arbitration. What genuinely must not drift is the `MiniDumpNormal` choice (the secret-hygiene decision), so that is named once and used by both.
+- **Dumps go to `<userData>agent-dumps/`, not `<userData>crashes/`.** Found in review: CrashSink rotates the crash dir to the 5 newest `*.dmp`, so five diagnostic captures would have silently evicted every archived crash dump the next-launch reporter depends on.
+- **`debug.dump_self` takes no path parameter at all.** The plan had it "resolve a confined output path" via `ConfinePathUnderSubdir`. Deriving the name from clock + pid instead removes the path-injection surface entirely rather than bounding it, and needs no confinement code.
+- **`debug.log_tail` returns structured rows, not `FillLogViewLinesFromEntries` output.** The plan reused the panel formatter "so the command and the Runtime Log panel cannot drift". Structured `{tsMonotonic, level, message}` is materially better for the agent read-path this exists for (jq-filterable, and the level round-trips into `minLevel`), and drift risk is low because both read the same ring.
+- **`tsMonotonic`, not `ts`.** Logger stamps entries from `steady_clock`, so the value is monotonic-since-start, not wall clock, and does not correlate with the epoch-ms in a dump filename. The key name is the only thing that carries that warning to a caller.
+- **Slice 1 cost more doc surface than planned.** The new preset means a second iter-shaped exe exists, which is the wrong-exe footgun `debug-techniques.md` § Exe staleness exists to prevent — so `build.md` and the skill both gained explicit "name the path you built and the path you ran" guidance.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*In the SAME PR that fills the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+Ran on Linux, where the repo's `SmatchetCore_PosixCheck` archive and Linux test rigs allow real compilation and execution:
 
-*(Delete this `## Archive` block as part of step 2.)*
+- **Bucket A — PASSED.** `SmatchetTsanTests` 245/245 (2219 assertions) including 9 new `SelectLogTail` cases: clamp saturation at `LLONG_MAX`, newest-N ordering, filter-before-tail, level+substring composition, empty input, and a redaction-at-ingest pin. `SmatchetCommandsTests` 14/14 (1367 assertions) including 6 new dispatch cases that run the real handler bodies — a `debug.log` → `debug.log_tail` round-trip, out-of-range `lines` rejected by the validator, the no-provider `{available:false}` branch, command-shape flags, the `agent-dumps/` path (via a stub provider installed through the seam) and the `tsMonotonic` key.
+- **Build — PASSED (clang).** `SmatchetCore_PosixCheck` clean under `clang -Werror`. This compiles the new TUs into the same glob-fed source set the DX12/Android/POSIX targets use, and exercises the **non-`_WIN32`** side of both `#ifdef`s.
+- **Lint / docs — PASSED.** `test-lint-rules.sh --diff origin/develop` clean (comment-noise, Pillar-2 off-thread `g_ui` write, strict-zone, include-cycle, fan-in ratchet, agent-size). `test-docs.sh` 19/19. `test-agent-build-facts.sh` 2/2 — load-bearing for slice 1, since it requires every preset named in `agents/**/*.md` to resolve in `CMakePresets.json`. `clang-format` applied.
+- **Review — PASSED after fixes.** 7 findings total, all fixed: 6 from a local `/code-review high` pass (DbgHelp concurrency deadlock, crash-dump rotation eviction, junk file left by a failed write, monotonic-vs-wall-clock timestamp, `lua_eval` mis-listed as hang-safe, doubled path separator) and 1 P2 from CodeRabbit (stale `crashes/` path in the help text).
+- **Windows MSVC — GATED ON PR #2035's CI, not run locally.** No MSVC toolchain in the authoring environment. The Windows lanes on that PR are the first MSVC compile of this code and must be green before merge.
+- **`SmatchetStandalone` link — NOT RUN.** Pre-existing environment limit, not caused by this work: `Source/Standalone/CMakeLists.txt` links GL only under `WIN32`/`APPLE`, so the target has never linked on Linux. Every TU compiled; only `gl*` symbols were unresolved.
+- **Manual residue — one item, named.** The body of `WriteSelfDumpWin32` sits inside `#if defined(_WIN32)` and is therefore **uncompiled by every check above**. The seam, the command, the not-available branch, the path construction and all selection logic are covered; the `MiniDumpWriteDump` / `CreateFileA` / `DeleteFileA` calls and the `try_lock` are not. First Windows run should invoke `debug.dump_self` once and confirm a `.dmp` lands in `<userData>agent-dumps/` that `agents/scripts/core/dump-triage.sh` parses.
+- **End-to-end acceptance — OPEN.** The plan's real proof is reproducing the open P2 in `docs/self-improvement/categories/infra/2026-07-05-texture-guard-llvmpipe-spawn-hang.md` under Mesa/llvmpipe and capturing the wedged child's stacks. Not attempted here (needs the Windows + Mesa lane); it remains that entry's "concrete next action" and is the first real use of this capability.

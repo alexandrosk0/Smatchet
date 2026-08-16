@@ -60,9 +60,14 @@
     limited`, `Review skipped: manual review required…`, `Review skipped`,
     `Review completed`, and a genuinely unknown string — asserting
     PENDING/PENDING/SUCCESS/SUCCESS/SUCCESS, so the vocabulary cannot regress
-    silently again. Est ~0.5 d. Cross-ref: sibling
-    `2026-08-16-cr-gate-greens-on-manual-review-required-skip.md` (same fail-open,
-    different description string, 4 merged PRs);
+    silently again. Est ~0.5 d. **Partially shipped by #2036** (merged
+    2026-08-16, after this entry was written): the action now classifies
+    `manual review required` as a not-a-review marker and self-heals with a
+    `never-reviewed` nudge — but it matches that string only, so a
+    `Review rate limited` head is untouched by it — that string was #1996's
+    job, and #1994 is the open question about whether #1996 actually holds. Items (1)-(4) stand for the rate-limit vocabulary. Cross-ref: the
+    manual-review-required sibling, now archived in `applied.md` (fixed by
+    #2036; its 4 merged PRs are recorded there);
     `2026-08-16-cr-gate-greens-with-no-cr-status-on-head.md` (third string: none
     at all); #1996; #2004.
   Status: open

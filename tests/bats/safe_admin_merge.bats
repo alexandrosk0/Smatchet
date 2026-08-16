@@ -34,6 +34,9 @@ setup() {
     # the merge fired (or did NOT). Any other gh call is a no-op success.
     STUB_BIN_DIR="$(mktemp -d)"
     export STUB_BIN_DIR
+    # Never let a test append to the repo's real ledger — the merge-success
+    # tests otherwise rely only on the gh stub failing `pr view` (indirect).
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
     MERGE_SENTINEL="$STUB_BIN_DIR/merge-fired"
     export MERGE_SENTINEL
     cat > "$STUB_BIN_DIR/gh" <<'STUB'
@@ -178,11 +181,26 @@ JSON
     [ ! -f "$MERGE_SENTINEL" ]
 }
 
-@test "perf-out-of-band downgrades a RED Perf PR-fast (exit 0, merge fires)" {
+@test "perf-out-of-band does NOT waive a RED Perf PR-fast (stale-override guard: exit 1, no merge)" {
+    # merge-pipeline-01: tests-/perf-out-of-band are label-reactive (their
+    # workflows re-run on `labeled` and self-report green); this guard has no
+    # label-event timestamps, so waiving a red run here would re-open the
+    # pre-label-run race. The red blocks until the re-run goes green.
     export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
       {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
       {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Perf PR-fast"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "intent-out-of-band still downgrades a RED Intent section (label-blind workflow: exit 0, merge fires)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[{"name":"intent-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
     run bash "$SCRIPT" 1180
     [ "$status" -eq 0 ]
     [ -f "$MERGE_SENTINEL" ]
@@ -319,4 +337,95 @@ JSON
     run bash -c "grep -rl 'MERGE_GATES_BLOCK_ALLOWLIST_RE=' '$REPO_ROOT/agents/scripts/core/merge-gates.sh' '$REPO_ROOT/agents/scripts/core/merge-gates.d'"
     [ "$status" -eq 0 ]
     [ -n "$output" ]
+}
+
+# ---------- Merge-time snapshot ledger (ADR-0017 "remaining writer") ----------
+
+@test "ledger: clean green admin-merge appends a snapshot row (actor safe-admin-merge, empty redChecks)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha1","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc1"},"mergedAt":"2026-08-16T12:00:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    [ -f "$MERGE_SNAPSHOT_LEDGER" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"pr":1180,'* ]]
+    [[ "$output" == *'"mergeCommit":"mc1"'* ]]
+    [[ "$output" == *'"headSha":"headsha1"'* ]]
+    [[ "$output" == *'"mergedAt":"2026-08-16T12:00:00Z"'* ]]
+    [[ "$output" == *'"gates":"GATES_PASSED"'* ]]
+    [[ "$output" == *'"redChecks":[]'* ]]
+    [[ "$output" == *'"mergeActor":"safe-admin-merge"'* ]]
+}
+
+@test "ledger: intent-out-of-band downgraded RED lands in redChecks + overrideLabels" {
+    # intent-out-of-band is the gate-side-only downgrade the guard still
+    # honours (tests/perf no longer merge past a red here — see the
+    # stale-override tests above), so it is the arm that exercises the
+    # load-bearing-override redChecks capture end-to-end.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha2","labels":[{"name":"intent-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc2"},"mergedAt":"2026-08-16T12:05:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1181
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":["Intent section"]'* ]]
+    [[ "$output" == *'"overrideLabels":["intent-out-of-band"]'* ]]
+}
+
+@test "ledger: cr-out-of-band waiving a REAL CR block records the literal CodeRabbit in redChecks" {
+    # CR installed but ABSENT from the rollup (never showed on this head), grace
+    # not expired — sans-label the CR gate would BLOCK ("has not reviewed this
+    # head yet"), so the waiver is load-bearing and redChecks must name it
+    # (the watcher-path convention, ADR-0017). A PENDING CodeRabbit rollup row
+    # would instead block at the CI-pending stage, before the CR gate.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha3","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc3"},"mergedAt":"2026-08-16T12:10:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1182
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":["CodeRabbit"]'* ]]
+    [[ "$output" == *'"overrideLabels":["cr-out-of-band"]'* ]]
+}
+
+@test "ledger: a moot cr-out-of-band (CR green anyway) writes redChecks [] (no false flag)" {
+    # The label is present but CR is green — the waiver bypassed nothing, so
+    # postmortem-owed must be able to tell this moot label from a load-bearing one.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha4","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc4"},"mergedAt":"2026-08-16T12:15:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1183
+    [ "$status" -eq 0 ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":[]'* ]]
+    [[ "$output" == *'"overrideLabels":["cr-out-of-band"]'* ]]
+}
+
+@test "ledger: post-merge mergeCommit unavailable -> WARN, no row, merge still exit 0 (best-effort)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha5","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":null,"mergedAt":""}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1184
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"ledger snapshot NOT written"* ]]
 }

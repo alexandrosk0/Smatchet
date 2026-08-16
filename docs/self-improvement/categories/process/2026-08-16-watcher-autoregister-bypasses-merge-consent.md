@@ -106,7 +106,13 @@ coupling between registration and authorization is the only thing actually broke
 
 ## Status
 
-open
+applied 2026-08-16 — all 6 steps shipped on `fix/watcher-merge-authorization`.
+Registry entries carry `authorized` (default `false`); `merge-watcher.py` gates
+**both** write verbs on it — the merge in `handle_pass` and, beyond this entry's
+literal text, the earlier C4 draft→ready flip in `poll_one` (a ready-flip is a
+write to the user's PR, so leaving it ungated would reproduce the bypass one verb
+earlier). An unauthorized non-draft PR still polls gates, nudges and escalates;
+only a genuinely-draft one parks at the new `DRAFT_UNAUTHORIZED` state.
 
 ## Cross-ref
 

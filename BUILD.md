@@ -69,6 +69,7 @@ Resolves each missing tool to a package on the host's native manager (winget / M
 **MSVC (primary):**
 
 - `ninja-iter-msvc`: fast standalone iteration (`RelWithDebInfo`)
+- `ninja-iter-agentdebug-msvc`: iteration + `SMATCHET_AGENT_DEBUG=ON` (agent NDJSON channel; own build dir)
 - `ninja-debug-msvc`: full standalone debug (`Debug`)
 - `ninja-test-msvc`: doctest rig (`RelWithDebInfo`)
 - `ninja-msvc-asan`: ASAN via MSVC `/fsanitize=address`

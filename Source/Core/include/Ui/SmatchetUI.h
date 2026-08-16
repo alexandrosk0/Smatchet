@@ -599,6 +599,9 @@ class SmatchetUI {
     // drives the real implementation rather than a replica — the imgui#2304 workaround
     // reaches into imgui_internal.h and would silently rot if the test used a copy.
     static void selectDockedTab(const char* windowName);
+    // Same, for the window currently between Begin/End (no name lookup). Used by a freshly
+    // created grid pane, whose window name carries a "###GridPane:<id>" settings id.
+    static void selectCurrentDockedTab();
 
   private:
     void resetWindowLayoutToDefault(UiDrawSession& d);

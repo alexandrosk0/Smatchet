@@ -11,7 +11,257 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
-## Batch 20 (SCREENED) — #1940–#1878 (53-PR sweep, 2026-08-08)
+## Batch 21 — #2032–#1941 (86-PR sweep, 2026-08-16)
+
+Coverage: **86 reviewed — 65 with findings, 14 clean, 7 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 6 HIGH, 67 MEDIUM, 105 LOW** (179 findings, 12 `userVisible`). **The frontier is now #1-#2032 contiguous; the next sweep resumes from #2033.** Survivor-filtered against `origin/develop` @ `3dc6695f` with `--against origin/develop` explicit. Reviewer model `code-review` (opus/high), 86/86 returned; ~5.21M tokens, ~84 min.
+
+Work-list cross-validated against GitHub's merged list before running: 86 merged PRs in (#1940, #2032], and the squash-subject scrape agreed on all 86 (no merge commits in this range), so no constituent expansion was needed here.
+
+**Supersede rate is near zero** — 7 of 86 fully superseded, and most survivors are days old. This range is 8 days of merges, so the blame-survivor filter had almost nothing to subtract and the pass degrades toward an ordinary re-review. That is the same effect the 2026-08-08 targeted pass recorded, and it is the standing argument for choosing the next slice by **age, not count**. Read the 179 findings with that in mind: they are real, but they are not the "survived N later PRs" signal an older slice gives.
+
+#1941, #1952, #1954 and #1962 were re-swept deliberately even though the 2026-08-08 targeted pass covered part of them — that pass read only ~3,000 of their `Source/` survivor lines and its two fixes shipped in #1989, so those specific lines are re-attributed and drop out by construction, while the rest of each PR had never been swept. Excluding them would have reproduced exactly the coverage hole Batch 20 left.
+
+**12 `userVisible` findings are Issue candidates under ADR-0014 and are NOT yet filed.**
+
+### Actionable set — CRITICAL / HIGH / every `userVisible` finding (18)
+
+Full problem + fix. Everything below this block is one-line; the complete structured set, fixes included, is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+
+**CRITICAL (1)**
+- **#1941 (c7fb2236) · `Source/Core/src/Ui/SmatchetPreferencesUi_General.cpp:247`** · **userVisible** — DrawGeneralStorageSection re-resolves the storage preference every frame: ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref) does a FileExists() stat plus an ifstream open + line-by-line parse of smatchet_storage_mode.txt (ConfigManager_PathUtils.cpp:623-657), and GetUserDataDirectory()/GetStoragePreferenceFlagPath() run again at :300-301. This is synchronous disk I/O on the ImGui render path for every frame the General > Storage section is expanded — AGENTS.md Quality Pillar 2 states 'sync I/O on UI thread = code-review CRITICAL'. The section's own help text advertises the runtime-asset dir may be a network share or source-controlled tree, exactly where the per-frame stat+read stalls the UI thread. **Fix:** Resolve currentPref (and the two displayed paths) once on the section/page open-edge and cache it in UiDrawSession — the same pattern drawPreferencesTrackerTab already uses via RefreshCachedProjectsSnapshotOnOpen — and refresh the cached value only after a successful ConfigManager::SetStoragePreference.
+
+**HIGH (6)**
+- **#1952 (2df7bb4e) · `docs/harness/claude-code/hooks/lint-syntax-both.py:199`** — The new bare-filename banner filter plus the widened system-header allow-list turn the dual-target syntax gate into a fail-open: when a compile aborts at the first system header (the documented no-VS-Developer-shell case), every produced line is FP-filtered or is the banner, `real_lines` is empty, no failure is appended, and the hook exits 0 — reporting PASS for a run that never parsed a single first-party token. The PR's own self-improvement entry records that an injected `undeclared_symbol_probe()` returns rc=0. **Fix:** Distinguish "no first-party diagnostics" from "compilation never reached first-party code": if a TU's returncode!=0 and 100% of its lines matched FP patterns/banner, record an inconclusive result and emit a distinct non-zero-or-WARN outcome naming the missing `ninja-iter-clang` preset, instead of silently dropping the target.
+- **#1957 (1ec9fb0c) · `scripts/publish/test-installer-smoke.sh:168`** — Bare `"$INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART` (and the identical uninstall call at line 115) invoke a native Windows exe with `/switch` args from Git Bash without `MSYS_NO_PATHCONV=1`. MSYS rewrites `/VERYSILENT` into `C:/Program Files/Git/VERYSILENT`, so Inno drops the silent switches and shows the interactive wizard — the smoke test hangs (or dies with "Installer exited non-zero") on any headless/CI run. This is the exact bug class the same PR introduced `native_exec()` for in release-github.sh, and the later `tests/bats/msys_argv_switches.bats` gate only inspects `$ISCC_EXE`/`$SIGN_TOOL`/`cmd.exe` sites, so these two survive unguarded. Note line 199 already uses `taskkill //F //PID`, showing the escaping was known. **Fix:** Prefix both invocations with `MSYS_NO_PATHCONV=1` (or a local `native_exec` helper), and extend msys_argv_switches.bats to cover `$INSTALLER`/`$uninstaller`/`signtool` call sites in tracked *.sh.
+- **#1958 (cf622ad6) · `scripts/dev/worktree.sh:218`** — cmd_resync rewrites EVERY registry entry in the tree to the current branch/sha, with no self-filter. Running `worktree.sh resync` in the shared integration tree silently re-baselines other LIVE sessions' entries, so guard-head-drift.sh stops denying for them — the drift that already happened under those siblings is erased. git-janitor.sh solves the same problem by self-excluding via CLAUDE_SESSION_ID (documented in docs/agent-rules/process-rules.md line 87); resync has no equivalent. **Fix:** Re-baseline only the caller's own entry by default (match CLAUDE_SESSION_ID / SMATCHET_JANITOR_SELF_SESSION against the entry basename), and require an explicit flag (e.g. --all) to touch sibling entries.
+- **#1996 (79891e09) · `agents/scripts/core/lib/script-freshness.sh:98`** — script_freshness_fingerprint_one sets SCRIPT_FRESHNESS_INCOMPLETE when EITHER side is missing, so a glob-matched file that exists LOCALLY but not on origin/develop (i.e. a newly added file on the working branch) blanks BOTH fingerprints and forces `unverifiable` — which warn_if_script_stale prints NOTHING for. Reproduced: in a repo declaring `entry.sh` + `rules.d/*.sh`, adding an untracked `rules.d/99-local-only.sh` AND drifting `entry.sh` away from origin/develop yields verdict=unverifiable and zero output, instead of the `stale` WARN. pre-ship.sh declares `agents/scripts/project/lint-rules.d/*.sh`, so any branch that adds one lint rule silently disables the whole freshness caveat — the false-green class this detector exists to prevent, one direction over from the develop-only case the same commit deliberately fixed to report `stale`. **Fix:** Treat a local-only glob match as 'ahead', not 'unknown': in the glob branch, when the develop blob is missing for a locally-matched file, drop that file from BOTH fingerprints (set _matched=true, do not set SCRIPT_FRESHNESS_INCOMPLETE) so the remaining declared files still decide fresh/stale. Keep the INCOMPLETE blanking only for the literal-relpath branch and for a locally-MISSING declared file. Add a bats case mirroring `glob: a file develop has and the checkout LACKS reads stale` for the reverse direction.
+- **#2017 (c85b3521) · `agents/scripts/core/merge-gates.d/10-gate-filter.sh:140`** — $pureDocs reuses the is-pure-docs-diff.sh allow-list, which includes `agents/scripts/` — shell/gate code, not docs. It is then used as the ONLY guard on the comment-surface terminal-pass arm of $crreviewskipped (line 181), whose stated purpose is to stop a STALE CodeRabbit skip comment (comments persist across pushes) from fast-passing a fresh CODE push. A PR touching only `agents/scripts/**` (including merge-gates.sh / merge-gates.d/*.sh themselves) is classified pureDocs, so a leftover `## Review skipped` comment terminal-PASSes the CR bucket for an unreviewed gate-script push. Fail-open on the highest-leverage code class in the repo. **Fix:** Do not reuse the build-need allow-list as a review-safety allow-list. Bind a separate predicate for this arm, e.g. `all(test("^(docs/|backlog/|.*[.]md$)"))` (drop `agents/scripts/`), or additionally require the skip comment to be newer than the head commit's pushedDate.
+- **#2020 (acccaddb) · `agents/core/code-review.md:37`** — The no-arg review scope is documented backwards. `git diff origin/develop...` is IDENTICAL to `git diff origin/develop...HEAD` (git substitutes HEAD for the omitted right side), so it is merge-base -> HEAD, committed-only. Verified in-repo: with README.md dirty, both forms omit it; only `git diff $(git merge-base origin/develop HEAD)` shows it. The doc asserts the opposite ("merge-base -> working tree, so unstaged hunks are in scope") and calls the HEAD form the one that "silently drops them". A reviewer following this contract reviews a diff that drops every unstaged hunk while being told it cannot — the exact fail-open the sibling `MM` rule at lines 43-48 was added to close. It also breaks the `--intent-to-add` claim on lines 39-40: intent-to-add files appear in worktree diffs, not in a commit-to-commit `A...B` diff. **Fix:** Replace the scope command with the two-dot/working-tree form: `git diff "$(git merge-base origin/develop HEAD)"` (merge-base -> working tree). Drop the false contrast against `origin/develop...HEAD` or restate it as `A...B` == committed-only in both spellings.
+
+**MEDIUM (10)**
+- **#1952 (2df7bb4e) · `Source/Core/src/Commands/Scenarios/UserInfoScreenshotScenarios.cpp:168`** · **userVisible** — Deferring `restoreState()` via QueuePostCaptureRestore makes the unwind conditional on another frame being drawn, but restoreState restores PERSISTED config fields (cfg.GitHubPat, GitCommitRepos, GitHubOwner, GitHubRepo, UiMode, VcsFeedLayout, WhisperSetupCompleted), not just session state. ScenarioCaptureQuiesce.h:57-61 asserts the opposite ("every field they restore is session-scoped, which is harmless") and explicitly blesses a process exiting before the drain. An in-process `scenario.run` whose app exits (or saves config) before the next frame persists the cleared GitHub PAT/repos and WhisperSetupCompleted=true to the user's config. **Fix:** Either keep the cfg-field unwind inline in OnFinish (only the g_ui view/identity pins need deferring), or drain the pending queue on shutdown as well; and correct the ScenarioCaptureQuiesce.h contract comment, which currently claims the deferred callbacks touch only session-scoped state.
+- **#1962 (a7fa2a32) · `Source/Core/src/Ui/SmatchetUI.cpp:1111`** · **userVisible** — selectDockedTab() is called BEFORE the window's Begin(), and the focus request is consumed on that same frame (g_ui.requestUserInfoFocus cleared at :1117; the Preferences twin at SmatchetPreferencesUi.cpp:194 clears d.requestPreferencesFocus at :202/:211). ImGui only creates the ImGuiWindow inside Begin(), so on the first-ever open of the window in a process FindWindowByName() returns nullptr, selectDockedTab early-returns as a no-op, and the request is gone by the next frame — the exact 'comes up behind its sibling and stays there' failure the PR fixes can still occur on the first open when the sibling tab (Preferences / User Info) was created first. **Fix:** Keep the focus request armed until selectDockedTab actually resolves a window: either clear requestUserInfoFocus/requestPreferencesFocus only when FindWindowByName() succeeded (have selectDockedTab return bool), or re-arm for one extra frame when the window did not yet exist.
+- **#1966 (1f42859f) · `Source/Core/src/Ui/SmatchetWindowExpand.cpp:258`** · **userVisible** — The per-frame pin (SetNextWindowDockID(0)/SetNextWindowPos/Size on WorkPos/WorkSize) IS the window's live state, and ImGui's settings writer snapshots Pos/Size/DockId off the live window (omitting DockId= while 0). Quitting the app while a window is expanded therefore persists it to imgui.ini as floating + fullscreen; on relaunch SmatchetUI_Layout's pendingReDockWindows force-redocks it to its DEFAULT slot, silently discarding the user's customised dock placement for that window. No test bucket can observe it (documented in docs/self-improvement/categories/test/2026-08-05-no-bucket-e-shutdown-relaunch-primitive.md). **Fix:** Make the transition ini-safe: either write the pre-expand WindowExpandSaved placement into the window's ImGuiWindowSettings entry when the override is applied, or drop the expansion (replay the saved placement) during shutdown before ImGui::DestroyContext saves, so the persisted state is the home slot.
+- **#1984 (e8713063) · `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:1496`** · **userVisible** — ApplyAssistantDocking rewrites and persists the user's AssistantPanelOnSecondarySide preference whenever the requested side bar is not live. The block runs every frame and is not gated on assistantPendingSideSwap/needsReDock, so it fires even when no dock write happens (mouse held, or FirstUseEver already satisfied). Since kSecondarySideBar is cut by no DockBuilder call and is absent from the embedded default ini (per the PR's own debt note), an existing config with AssistantPanelOnSecondarySide=true is silently flipped to false on the first frame and ScheduleConfigSaveDetached persists it. The setting is lost durably, and the swap button is BeginDisabled in exactly that state, so the user cannot set it back. **Fix:** Record the fallback side only when a dock write actually lands (inside the targetDockId != 0 branch that consumes the pending flags) and keep it as a session-only override on UiDrawSession instead of persisting, so the stored preference returns once a real secondary node exists. Alternatively cut a real kSecondarySideBar node in the default layout, or delete the constant and the swap feature.
+- **#1993 (bcd1e90d) · `Source/Core/src/Ui/SmatchetPreferencesUi.cpp:1196`** · **userVisible** — The keybinding-row match scan was reduced from every-frame to an edge-triggered cache whose invalidation set is incomplete. `prefsKeybindRowsMatchDirty` is set only in the Preferences keybindings editor (SmatchetPreferencesUi_Keybindings.cpp:430), but `d.cfg.Keybindings` is also mutated outside that editor — `quickBind_.Draw(d.cfg)` in SmatchetUI.cpp:1054 (toolbar / command-palette quick-bind) calls only `MarkKeybindingsDirty()`. With Preferences open under an active query, a quick-bind that adds/changes a matching hotkey leaves `prefsKeybindRowsMatchQuery` stale until the user edits the query or the language changes: the Shortcuts section stays hidden (or stays visible with zero matching rows) and the "showing N of M" readout disagrees with the rows. **Fix:** Invalidate at the single source of binding mutation rather than at each UI call site: have `MarkKeybindingsDirty()` (or the quick-bind path in SmatchetUI.cpp:1054) also set `d.prefsKeybindRowsMatchDirty = true`, or key the cache off a monotonically-bumped keybindings revision counter compared each frame in drawPreferencesWindow.
+- **#1994 (d665b65e) · `Source/Core/include/Tracker/NewIssueInheritFields.h:25`** · **userVisible** — NewIssueInheritFieldIdsFor() has no kBackendGitHub branch, so a GitHub config falls through to cfg.NewIssueInheritFieldIds (the Jira list). TrackerConfig::NewIssueInheritFieldIdsGitHub is loaded (ConfigManager_Load.cpp:498), saved (ConfigManager_Save.cpp:100) and edited in Preferences (SmatchetPreferencesUi.cpp:243/981), but no draft path reads it — the user's "New issue: inherit fields from last row (GitHub)" setting is accepted, persisted and silently ignored. The PR documents this as a deliberately preserved known gap and pins it in tests, but it remains a live user-visible defect. **Fix:** Add `if (kind == kBackendGitHub) { return cfg.NewIssueInheritFieldIdsGitHub; }` and flip the pinning expectation in tests/Core/NewIssueInheritFields.test.cpp:72-83; or, if the behaviour change needs its own decision, disable/label the GitHub inherit-fields row in Preferences so the UI stops offering a setting nothing consumes.
+- **#2013 (8579fd47) · `Source/Core/src/Ui/SmatchetToolbarUi.cpp:279`** · **userVisible** — The toolbar tooltip switched from BoundHotkeyDisplay(bindings, commandId) to BoundHotkeyDisplayAll(bindings, commandId, "{}"). The old call used the command-id-only rule (prefer the "{}" row, otherwise fall back to ANY row for that command); the new call uses semantic args matching against a hardcoded "{}" with no fallback. ToolbarButton carries its own ArgsJson (ToolbarConfig.h:31) and it is ignored here, so a customized toolbar button whose command is bound with non-default args (e.g. view.toggle.performance {"action":"show"}, view.sidebar.primary {"action":"toggle"}) now shows no shortcut at all where it previously showed one. **Fix:** Pass the button's own args: BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, b.CommandId, b.ArgsJson) — matching what DispatchButton actually dispatches.
+- **#2024 (964a05d8) · `Source/Core/src/AppController_PaneContexts.cpp:848`** · **userVisible** — ForgetPaneOwnedTicketIds() keys the erase with ctx.CacheBackendKeyCopy() read AT RETIREMENT TIME, but the entry was stored under whatever backend key was live when PublishOwnedTicketIds ran. SwapBackendIfTrackerChanged (TicketSyncService.cpp:665 -> SetCacheBackendKey) re-stamps a pane's key at runtime, so a pane that switched tracker kind leaves an orphan paneOwnedTicketIds_ entry under the OLD key. Nothing else erases it, and CollectTicketIdsRetainedByOtherContexts prefix-scans that namespace with no liveness check, so those ids pin cache rows against every sibling pane's stale sweep permanently (tickets_v2 rows never reclaimed; ghost rows keep resurfacing in siblings' namespace-wide reads). **Fix:** Erase by pane id across all backend keys at retirement (scan paneOwnedTicketIds_ for the '\n'+paneId suffix), or re-key/drop the pane's entry inside GridLiveContext::SetCacheBackendKey when the key changes.
+- **#2024 (964a05d8) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:100`** · **userVisible** — Non-atomic read-modify-write of the pane owned-id set: `owned` is snapshotted at line 64, then a full SQLite `Cache->GetAllTickets` read and a mutex acquisition happen before SetPaneOwnedTicketIds writes `owned + admitId` back at line 100. Any PublishOwnedTicketIds that lands in that window (sync-session finalize) is silently clobbered and the pane's recorded set reverts to the pre-sync ids — the next RefreshLocalData then filters the freshly-synced rows out of the grid and stops pinning them against a sibling's stale deletion. AppController.h:1206 explicitly documents this path as worker-invoked, so the write is not UI-thread-serialized by contract. **Fix:** Make the admit an atomic append under paneOwnedIdsMutex_ (e.g. an AddPaneOwnedTicketId(key, paneId, id) that re-reads the map entry inside the lock) instead of writing back a stale copied vector.
+- **#2024 (964a05d8) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:65`** · **userVisible** — The pane-scoping filter is skipped whenever the recorded set is empty, falling back to the whole shared namespace. That is not only the true cold-start case: RetireHiddenPaneContexts calls ForgetPaneOwnedTicketIds after the 30 s hidden grace, so a pane the user returns to gets a fresh context with an EMPTY recorded set and the bootstrap refresh repopulates its grid with every sibling pane's tickets until its own sync finishes — exactly the cross-pane row leak F2/F3 was meant to close. **Fix:** Distinguish 'never synced' from 'set forgotten' (e.g. keep a per-pane hasSyncedOnce flag or a tombstone entry) and render empty rather than the sibling union for a revived pane.
+
+**LOW (1)**
+- **#1950 (1401376b) · `Source/Core/src/Ui/SmatchetAboutUi.cpp:68`** · **userVisible** — The empty-value placeholder literal "unknown" is emitted straight into the InputText buffer, bypassing TranslateSource — every other chrome string in this TU is localized (and pinned by AboutLocalization.test.cpp), so a French user sees an untranslated "unknown" for any missing fact. **Fix:** Use SmatchetLocalization::TranslateSource("unknown") (and add the row to the localization table) for the placeholder.
+
+### Internal debt — 57 MEDIUM + 104 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `docs/self-improvement/categories/applied.md` — 3 MEDIUM, 11 LOW — #1947:2279, #1998:3637, #2006:4363, #2010:4747, #2012:5001, #2016:5057, #2016:5115, #2017:5165, #2017:5179, #2018:5196, #2018:5225, #2020:5259, #2025:5496, #2025:5498
+- `.github/actions/cr-finding-gate/action.yml` — 2 MEDIUM, 4 LOW — #2004:131, #2004:150, #2004:152, #2004:469, #2004:470, #1977:518
+- `docs/self-improvement/postmortems.md` — 6 LOW — #1985:68, #1961:139, #2010:173, #1961:176, #1944:259, #1944:270
+- `agents/scripts/core/lib/review-ack.sh` — 2 MEDIUM, 2 LOW — #1970:50, #1964:126, #1964:129, #1964:169
+- `docs/self-improvement/categories/process/2026-08-16-watcher-autoregister-bypasses-merge-consent.md` — 1 MEDIUM, 3 LOW — #2031:18, #2031:25, #2031:60, #2031:71
+- `scripts/dev/setup-env.sh` — 2 MEDIUM, 2 LOW — #1946:49, #1946:156, #1946:204, #1946:326
+- `scripts/dev/worktree.sh` — 3 MEDIUM, 1 LOW — #1958:172, #1958:219, #1958:266, #1958:297
+- `tests/bats/msys_argv_switches.bats` — 3 MEDIUM, 1 LOW — #1963:39, #1963:90, #1963:97, #1963:117
+- `agents/scripts/core/test-markdown-links.sh` — 1 MEDIUM, 2 LOW — #2028:373, #2028:419, #2028:455
+- `agents/scripts/core/test-plan-claim-anchors.sh` — 1 MEDIUM, 2 LOW — #1999:459, #1999:704, #1999:710
+- `docs/agent-rules/review-panels.md` — 1 MEDIUM, 2 LOW — #1980:8, #1978:27, #1978:104
+- `docs/plans/autonomous-debug-live-evidence.md` — 2 MEDIUM, 1 LOW — #2032:50, #2032:86, #2032:104
+- `scripts/common/unreal-batch.sh` — 2 MEDIUM, 1 LOW — #1965:41, #1965:45, #1965:49
+- `scripts/dev/pre-ship.sh` — 2 MEDIUM, 1 LOW — #2027:300, #1974:352, #1974:626
+- `scripts/dev/test-screenshot-diff.sh` — 1 MEDIUM, 2 LOW — #2023:159, #2023:232, #2023:384
+- `.github/workflows/cr-finding-gate.yml` — 1 MEDIUM, 1 LOW — #1977:144, #1977:154
+- `Source/Core/src/Ui/ImGuiHotkey.cpp` — 2 LOW — #2013:154, #2013:238
+- `agents/scripts/core/postmortem-owed.sh` — 1 MEDIUM, 1 LOW — #1998:726, #2018:982
+- `agents/scripts/core/work_item_lint.py` — 1 MEDIUM, 1 LOW — #1979:64, #1979:283
+- `docs/plans/agentic-infra-audit-campaign-2026-06.md` — 2 LOW — #1956:267, #1956:276
+- `docs/plans/preferences-ia-resegmentation-and-search.md` — 2 LOW — #1941:212, #1941:338
+- `docs/self-improvement/categories/debt/2026-08-07-dock-node-id-slot-liveness-followups.md` — 2 LOW — #1984:8, #2020:58
+- `docs/self-improvement/categories/tooling.md` — 1 MEDIUM, 1 LOW — #1972:11, #1972:11
+- `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM, 1 LOW — #1991:16, #1991:54
+- `docs/work/closed/01-spawn-honors-timeout.md` — 2 LOW — #1982:8, #1982:14
+- `scripts/dev/local/package-unreal-plugin-msvc.sh` — 1 MEDIUM, 1 LOW — #1959:28, #1959:118
+- `scripts/dev/local/test-build-wrapper.sh` — 2 MEDIUM — #1955:101, #1955:353
+- `scripts/dev/new-session.sh` — 2 LOW — #1958:32, #1958:57
+- `tests/bats/bucket_lane_launch_smoke.bats` — 2 MEDIUM — #2023:200, #2023:255
+- `tests/bats/cr_finding_gate.bats` — 2 MEDIUM — #2014:141, #1977:160
+- `tests/bats/font_asset_resolve.bats` — 1 MEDIUM, 1 LOW — #1948:48, #1948:104
+- `.github/workflows/build-and-test.yml` — 1 LOW — #2023:1146
+- `CMakeLists.txt` — 1 LOW — #1954:565
+- `Source/Core/include/Commands/CommandPaletteUi.h` — 1 LOW — #1952:40
+- `Source/Core/include/Config/KeybindingsConfig.h` — 1 LOW — #2013:23
+- `Source/Core/include/Persistence/SmatchetIcoDecode.h` — 1 LOW — #1954:27
+- `Source/Core/include/Tracker/TrackerBackendKind.h` — 1 MEDIUM — #1989:15
+- `Source/Core/include/Ui/SmatchetWindowExpand.h` — 1 MEDIUM — #1966:42
+- `Source/Core/src/Diagnostics/BugReportService.cpp` — 1 LOW — #2005:86
+- `Source/Core/src/SmatchetTicketChangeNotifications.cpp` — 1 LOW — #2024:72
+- `Source/Core/src/Tracker/GitHubFixtureBackend.cpp` — 1 LOW — #2005:37
+- `Source/Core/src/Tracker/LinearFixtureBackend.cpp` — 1 LOW — #2005:52
+- `Source/Core/src/Ui/PreferencesFilter.cpp` — 1 LOW — #1989:59
+- `Source/Core/src/Ui/SmatchetAboutUi.cpp` — 1 LOW — #1950:70
+- `Source/Core/src/Ui/SmatchetAutocompleteUi.cpp` — 1 LOW — #1992:220
+- `Source/Core/src/Ui/SmatchetHotkeyCapture.cpp` — 1 LOW — #2013:168
+- `Source/Standalone/CliDispatch.cpp` — 1 LOW — #2022:255
+- `Source/Standalone/CliExitCodes.cpp` — 1 LOW — #2022:43
+- `Source/Standalone/CliSpawn.cpp` — 1 MEDIUM — #2022:300
+- `agents/_shared/skills/address-review-feedback/SKILL.md` — 1 MEDIUM — #1987:86
+- `agents/core/code-review.md` — 1 LOW — #2027:87
+- `agents/scripts/core/archive-backlog-entry.sh` — 1 MEDIUM — #1998:393
+- `agents/scripts/core/lib/resolve-py.sh` — 1 MEDIUM — #2019:59
+- `agents/scripts/core/merge-gates.d/10-gate-filter.sh` — 1 MEDIUM — #2017:175
+- `agents/scripts/core/merge-gates.sh` — 1 MEDIUM — #2006:419
+- `agents/scripts/core/merge-watcher-install-autostart.ps1` — 1 LOW — #2007:210
+- `agents/scripts/core/panel_verdicts.py` — 1 LOW — #1981:16
+- `agents/scripts/core/record-review-verdict.sh` — 1 LOW — #2003:57
+- `agents/scripts/core/review-ack.sh` — 1 LOW — #1970:158
+- `agents/scripts/core/run-review.sh` — 1 LOW — #1979:397
+- `agents/scripts/core/test-gate-selftests.sh` — 1 MEDIUM — #2002:60
+- `agents/scripts/core/test-shell-lint.sh` — 1 LOW — #2019:483
+- `agents/scripts/project/test-cr-finding-gate-bats.sh` — 1 MEDIUM — #1977:46
+- `assets/fonts/README.md` — 1 LOW — #1948:28
+- `cmake/SmatchetFontAssets.cmake` — 1 LOW — #1948:45
+- `docs/CONTEXT.md` — 1 MEDIUM — #2032:122
+- `docs/agent-rules/build.md` — 1 LOW — #2021:14
+- `docs/agent-rules/cpp-rules.md` — 1 LOW — #2025:86
+- `docs/agent-rules/merge-gates.md` — 1 LOW — #1996:152
+- `docs/agent-rules/verifier-sidecar.md` — 1 MEDIUM — #1970:63
+- `docs/agent-rules/work-items.md` — 1 MEDIUM — #1978:172
+- `docs/design/separate-agents-repo.md` — 1 LOW — #1960:100
+- `docs/harness/SETUP.md` — 1 LOW — #1960:79
+- `docs/plans/pane-stale-delete-collision.md` — 1 LOW — #2024:54
+- `docs/plans/cursor-vexp-coexistence.md` — 1 LOW — #1956:11
+- `docs/plans/msvc-build-onboarding-hardening.md` — 1 LOW — #1960:77
+- `docs/plans/window-expand-button.md` — 1 LOW — #1966:313
+- `docs/self-improvement/categories/debt/2026-08-06-scenario-runner-ticks-twice-per-frame.md` — 1 LOW — #1962:1
+- `docs/self-improvement/categories/infra/2026-08-05-merge-watcher-liveness-unmonitored.md` — 1 LOW — #2007:103
+- `docs/self-improvement/categories/tooling/2026-08-05-dual-target-syntax-hook-vacuous-without-clang-preset.md` — 1 LOW — #1952:9
+- `project.config.schema.json` — 1 LOW — #1955:38
+- `scripts/dev/local/rebuild-testproject-plugin.sh` — 1 LOW — #1959:17
+- `scripts/dev/lockfile.py` — 1 LOW — #1951:122
+- `scripts/dev/run-with-procdump.sh` — 1 LOW — #1958:84
+- `scripts/dev/test_work_item_lint.py` — 1 MEDIUM — #1979:474
+- `scripts/dev/verify.sh` — 1 LOW — #1955:92
+- `scripts/dev/with-msvc-env.sh` — 1 MEDIUM — #2021:65
+- `scripts/git-hooks/pre-push` — 1 LOW — #2003:332
+- `scripts/publish/release-github.sh` — 1 MEDIUM — #1957:218
+- `scripts/publish/test-installer-smoke.sh` — 1 MEDIUM — #1957:135
+- `tests/bats/archive_backlog_entry.bats` — 1 LOW — #1998:106
+- `tests/ui/docked_tab_focus.test.cpp` — 1 LOW — #1962:131
+- `tests/ui/prefs_schema_coverage.test.cpp` — 1 MEDIUM — #1941:163
+
+**Clean (14, surviving lines read in full, no findings):** #2030, #2015, #2011, #2009, #2008, #2001, #2000, #1995, #1990, #1986, #1975, #1973, #1969, #1945.
+
+**Fully superseded (7, no review surface):** #1997, #1988, #1976, #1971, #1968, #1953, #1949 — every introduced line was changed or removed by a later PR; excluded by construction.
+
+## Batch 20-REDO — #1940–#1878 (60-PR full re-sweep, 2026-08-16) — SUPERSEDES Batch 20
+
+Coverage: **60 PRs / 64 units — 38 with findings, 16 clean, 6 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 9 HIGH, 39 MEDIUM, 47 LOW** (96 findings, 13 `userVisible`). Survivor-filtered against `origin/develop` @ `3dc6695f`, with `--against origin/develop` passed explicitly on every extractor call. Reviewer model `code-review` (opus/high), 64/64 agents returned; ~3.16M tokens, ~38 min.
+
+**This REPLACES Batch 20's result. Batch 20 reported 0 findings over 53 PRs; a full read of the same range found 96 over 60.** Two independent defects in that batch are corrected here.
+
+**1 — Batch 20 was screened, not read.** It swept only the 2,882 surviving product-C++ lines with a 13-pattern hazard scan and left ~10,400 surviving lines (tests, scripts, agents, CI workflows, docs) unreviewed. Its own header said so and called the zero "a weaker claim". It was weaker than that: **the screen also cleared two real defects it had surfaced.** `SmatchetPlanDocViewerUi.cpp:254` was cleared because `future::get()` sits behind a `wait_for(0ms) != ready` guard — but that guard covers *readiness*, never *exceptions*; the call is still made before `loadInFlight` is cleared and without a `try/catch`, and the batch even noted the Lua sibling clears its flag first without drawing the conclusion. `LocalCacheManager.cpp:186` was cleared on "no UI TU calls `LocalCacheManager` — the two `Ui/` files that name it do so only in comments"; the reach is three hops, so grepping `Ui/` for the class name could not see it (`Ui/SmatchetCommentsModalUi.cpp:82` -> `AppController::UpdateCachedCommentCount`, whose own comment reads "Called on the UI thread from the modal's main-thread post-back" -> `UpdateTicket` -> `Cache->SaveTicket`). Both re-verified by hand against HEAD before writing this. The generalizable lesson: **a pattern screen finds sites; clearing a site needs call-chain and exception-path tracing, which a screen does not do.** Five candidates were recorded as "cleared on inspection" — that is positive evidence the method could not actually produce.
+
+**2 — the frontier was never contiguous.** GitHub reports **60** PRs merged to `develop` in #1878-#1940; the `(#N)` squash-subject scrape that built Batch 20's work-list returns **53**. The 7 it cannot see — #1883, #1919, #1920, #1921, #1923, #1927, #1932 — all landed as true merge commits. Recovered here as 11 per-constituent units (blame attributes lines to a merge commit's constituents, never to the merge commit, so the merge sha yields a falsely-clean `FULLY SUPERSEDED`; the Batch 16 #1593 special is the precedent). Yield was small — 6 constituents fully superseded, 4 clean, 2 findings on #1883's `release.yml` — but the release-publishing pipeline had never been survivor-reviewed at all. Filed as [`categories/tooling/2026-08-16-historical-review-worklist-misses-merge-commit-prs.md`](categories/tooling/2026-08-16-historical-review-worklist-misses-merge-commit-prs.md) (P1, recurrence of the Batch 13 #1439/#1577/#1593/#1597 class).
+
+**13 `userVisible` findings are Issue candidates under ADR-0014 and are NOT yet filed** — held pending review rather than opened unreviewed.
+
+### Actionable set — CRITICAL / HIGH / every `userVisible` finding (17)
+
+Full problem + fix. Everything below this block is one-line; the complete structured set, fixes included, is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+
+**CRITICAL (1)**
+- **#1903 (4c1f7e7d) · `Source/Core/src/TicketFieldEditor.cpp:1067`** · **userVisible** — HandleWorklogSave() is called straight from the ImGui render path (RenderTimeTrackingModal -> HandleWorklogSave, TicketFieldEditor.cpp:1226) and calls app.SubmitWorklog(), which synchronously does ConfigManager::Load() plus a blocking HTTP POST (backend->Collaboration()->AddWorklog). The whole UI freezes for the duration of the Jira round-trip with no spinner/progress cue — a Pillar-1 violation, and on a slow/hung tracker the app appears hung. **Fix:** Move the submit off the render path: kick the SubmitWorklog call into a background task (LaunchBackgroundTask/std::async like the sibling watcher/comment posters), keep an 'in-flight' flag in s_ActiveWorklogState that disables Save and draws a progress cue, and apply the VoidResult (close popup or set ErrorMsg) via PostToMainThread on completion.
+
+**HIGH (9)**
+- **#1881 (2966edc7) · `agents/scripts/core/test-agent-contract.sh:440`** — Check 15 fails OPEN on the case it exists to catch: `[[ -z "$hint_model" ]] && continue` skips any agent whose harness-hints claude-code model is missing, and the check never asserts that a top-level `model:` exists at all. Check 5 skips on the same condition (line 186), so an agent file with NO model keys passes every gate and silently inherits the opus-class session model — the exact regression this PR was written to prevent. The check's own header comment (lines 427-431) says "Both must exist and agree". **Fix:** Split the two cases: only `continue` when the agent legitimately has no claude-code hint block at all; when either key is present-but-partial, or when both are absent on a non-README agent, record a mismatch (e.g. `model_mismatch+=("$base: no model: key — agent will inherit the session model")`) instead of skipping.
+- **#1885 (6094b058) · `scripts/dev/verifier-produce.py:178`** — extract_scalar scans EVERY character of the response text and returns on the first one that happens to fall in A-T, with no anchoring. Any preamble silently yields a wrong score instead of an error: "Score: B" returns 'S' -> 0.053 (near-worst) rather than B -> 0.947; "The answer" returns 'T' -> 0.0. Scalar mode is exactly the path used for backends prone to a short preamble, so candidates get silently mis-ranked with no failure signal. **Fix:** Anchor the letter parse: only accept the response when the stripped text is a single A-T letter (or the first token after stripping punctuation is one char in _LETTER_SET); otherwise fall through to the numeric parse and raise ProduceError if that fails too.
+- **#1891 (0c68611b) · `scripts/dev/verifier-produce.py:269`** — is_degenerate() treats len(dist) < 2 as degenerate, but `dist` is not the raw top_logprobs — extract_logprobs() filters it down to A-T letter tokens only. A healthy, highly confident backend whose top-20 contains just one letter token (remaining slots being whitespace/punctuation/word-piece variants) yields len(dist)==1, so --strict aborts the entire run with "backend returned degenerate logprobs" on a perfectly good response. The DeepSeek recipe added in the same PR puts --strict in the copy-paste command, making this the default path. **Fix:** Only treat a single-letter dist as degenerate when the raw top_logprobs list itself was short/uninformative (e.g. pass the pre-filter token count into is_degenerate), or drop the len<2 rule and rely solely on the placeholder/flat-value checks.
+- **#1894 (b472830e) · `Source/Core/src/Persistence/LocalCacheManager.cpp:186`** · **userVisible** — RunWriteTxnWithBusyRetry blocks the calling thread with std::this_thread::sleep_for between attempts, and each of the 5 attempts can additionally sit up to the armed busy_timeout (setBusyTimeout(5000) in ApplyWalPragmas) before SQLite returns BUSY. Worst-case SaveTicket/SaveTickets latency goes from ~5s to ~25s + 375ms of sleeps, with no total-deadline cap. This is not purely a background path: AppController::UpdateCachedCommentCount -> UpdateTicket -> Cache->SaveTicket is documented (AppController_CatalogAndFieldEdit.cpp:852) as "Called on the UI thread from the modal's main-thread post-back", so under real cache contention the retry loop stalls the frame pump with no progress cue. Each attempt also holds stmtMutex_ for its full BEGIN..COMMIT, serializing every other statement on the instance. **Fix:** Bound the whole retry by a wall-clock deadline (e.g. give up after ~500ms total) instead of only an attempt count, and/or lower the per-attempt busy_timeout while retrying; alternatively make the UI-thread caller (UpdateCachedCommentCount) route the cache write off the render thread so no sleep_for ever runs on the main thread.
+- **#1902 (8e91dafb) · `.github/workflows/plan-lock-gate.yml:39`** — This Dependabot bump pinned actions/checkout to the full SHA 3d3c42e5aac5ba805825da76410c181273ba90b1 in all 28 other workflows, but here it wrote the mutable tag `uses: actions/checkout@v7.0.1`. Verified repo-wide: this is the ONLY unpinned third-party action in .github/workflows, and no gate enforces SHA pinning (test-workflow-yaml.sh has no pin check), so nothing will catch it. A moved/retagged v7.0.1 executes attacker-controlled code inside the plan-lock hard-net gate job. **Fix:** Replace with `uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1` to match the other 28 workflows; optionally add a SHA-pin assertion to agents/scripts/core/test-workflow-yaml.sh so drift fails CI.
+- **#1928 (08cdde44) · `Source/Core/src/Ui/SmatchetPlanDocViewerUi.cpp:238`** · **userVisible** — StartLoadSelected latches `s.loadInFlight = true;` BEFORE the `std::async` launch on line 239. `std::async` can throw (std::system_error when threads are exhausted, std::bad_alloc), and there is no try/catch — the throw escapes into the ImGui frame and, if caught anywhere upstream, leaves loadInFlight permanently true with an invalid loadFuture, so PollLoadResult early-outs forever and the plan-doc viewer never loads another document for the rest of the session. The sibling site added by this same PR (LuaConsolePlugin::KickScriptLoad, lines 305-326) explicitly documents and avoids exactly this ordering. **Fix:** Mirror KickScriptLoad: build the future into a local inside try/catch, LOG_ERROR + surface a message on failure, and only assign `s.loadFuture` / set `s.loadInFlight = true` after the launch succeeded.
+- **#1928 (08cdde44) · `Source/Core/src/Ui/SmatchetPlanDocViewerUi.cpp:254`** · **userVisible** — PollLoadResult calls `s.loadFuture.get()` (line 254) BEFORE clearing `s.loadInFlight` (line 255) and without a try/catch. A worker exception (bad_alloc on the up-to-1 MiB buffer, an ifstream exception) is rethrown here on the render thread: the future is consumed but loadInFlight stays latched true, permanently wedging the viewer. LuaConsolePlugin::PollScriptLoad (lines 365-385) clears its flag before get() and catches, with a comment naming this precise hazard; the viewer was not given the same treatment. **Fix:** Clear `s.loadInFlight = false;` before `get()`, and wrap the `get()` in `try { ... } catch (const std::exception& ex) { LOG_ERROR(...); s.body = <error text>; return; }`.
+- **#1928 (08cdde44) · `Source/Plugins/LuaConsole/LuaConsolePlugin.cpp:397`** · **userVisible** — In PollScriptLoad the `if (result.name != selectedScriptName_) return;` bail leaves the editor blank (StartLoadSelectedScriptIntoEditor blanked it and re-baselined diskSnapshot_ onto the blank) with scriptLoadInFlight_ false and scriptLoadRefusedReason_ empty (KickScriptLoad cleared it) — so SaveCurrentScript's two blank-buffer guards (lines 432 and 439) are both open. Reachable: select A -> read kicked; RefreshScriptList/SyncSelectionToList clears the selection because A vanished from disk; result A lands and is dropped here; a later SyncSelectionToList tick auto-selects the first script B; Save then writes the empty buffer over B, truncating a real script. Every other non-applying outcome in this function (TooLarge, worker throw, launch failure) sets scriptLoadRefusedReason_ for exactly this reason. **Fix:** On the name-mismatch bail, set `scriptLoadRefusedReason_` (e.g. "The script never loaded — reselect it before saving.") and clear reloadNoticeName_, so Save stays gated while the editor holds a blank buffer that matches no loaded file.
+- **#1935 (ec7321cf) · `Source/Core/src/Tracker/TrackerSetupPure.cpp:71`** · **userVisible** — ApplyVerifiedSaveUnlock is documented as the FIRST-RUN unlock but has no first-run condition — it fires on any session where ReadOnlyMode is true and the pin matches. A veteran (BackendHasBeenReachable already true) who ticks "Read-only mode" (SmatchetPreferencesUi.cpp:289 writes d.cfg directly), presses Test connection (green -> pin set), then Save & Sync has their deliberate write-protection silently cleared, with only a LOG_INFO and no UI cue. The one-shot pin consumption (a4133112) only closed the re-enable-AFTER-save ordering, not enable-then-probe-then-save. **Fix:** Gate on actual first-run: add `|| cfg.BackendHasBeenReachable` to the early-return guard so the unlock can only fire on an install that has never latched reachability; add a bucket-A case for the veteran-enables-read-only path.
+
+**MEDIUM (5)**
+- **#1879 (2d347dbf) · `Source/Core/src/TicketGridSortPure.cpp:99`** · **userVisible** — CompareNumericValues' double path accepts NaN: strtod parses "nan"/"NaN" (and "inf") as a whole-string match, so for a "number"-typed column with two NaN cells `da != db` is true and `(da < db)` is false, returning +1 for BOTH Compare(a,b) and Compare(b,a). That comparator is fed straight into std::stable_sort in Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp:205, violating strict weak ordering (UB / nondeterministic grid order). **Fix:** In ParseWholeDouble, reject non-finite results (return false unless std::isfinite(out)); in CompareNumericValues decide with `if (da < db) return -1; if (db < da) return 1; return 0;` instead of `da != db`.
+- **#1879 (2d347dbf) · `Source/Core/src/TicketGridSortPure.cpp:165`** · **userVisible** — The date-like word heuristic `idLower.find("time") != npos` matches every time-tracking id the same file deliberately special-cases (timespent, timeestimate, timeoriginalestimate, aggregate*), so IsTrackerDateOrDateTimeField returns true for duration columns. Callers then treat them as dates: TicketGridModel.cpp:204 sets IsDateLike, and SmatchetGridUiSupport.cpp:359 routes copy through DisplayValueForTrackerDateField for a raw seconds value. **Fix:** Short-circuit at the top of IsTrackerDateOrDateTimeField with `if (kTimeTrackingFieldIds.count(fieldId)) return false;` (the set is already file-local), mirroring the ordering CompareFieldValuesForSort already uses.
+- **#1896 (50352045) · `Source/Core/include/Tracker/CollaborationPreconditionPure.h:58`** · **userVisible** — CollaborationErrorToVoidResult maps a failing TrackerError with an empty Detail to VoidResult::Err("") (the PR's own test at CollaborationPreconditionPure.test.cpp:108 pins this). Downstream the empty message is indistinguishable from success: the watch-self caller in Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:232-233 encodes success as an empty std::string (`r.has_value() ? std::string() : r.error()`) and the tooltip at line 242 only reports failure when `!watchSelfError.empty()`, so a backend error with no Detail is silently swallowed and the user believes the watch succeeded. **Fix:** In CollaborationErrorToVoidResult, fall back to a non-empty message when err.Detail is empty, e.g. `return VoidResult::Err(err.Detail.empty() ? std::string("Tracker collaboration request failed.") : err.Detail);` (and update the empty-Detail test to assert the fallback text). Same treatment for the read-side CollaborationResultToResult mapping.
+- **#1903 (4c1f7e7d) · `Source/Core/src/Commands/Builtin/BuiltinCommands_TicketMutations.cpp:103`** · **userVisible** — ticket.add_worklog does not validate the 'seconds' arg. args.value("seconds", 0) defaults to 0 when the caller omits it, and a negative value is also accepted; the formatter then falls to the final branch and submits timeSpent="0s" (or "-30s") to the tracker, producing an opaque backend rejection instead of a clear argument error. The formatter also silently drops the seconds remainder (e.g. 3630s -> "1h", 90s handled but 3690s -> "1h 1m" loses 30s). **Fix:** Reject non-positive seconds up front with CommandResult::Failure(ErrorCode::InvalidArgument, "seconds must be > 0"), and either append the "%ds" remainder to the h/m string or document the truncation to minute granularity.
+- **#1937 (fce0951c) · `Source/Core/src/Ui/SmatchetAboutUi.cpp:456`** · **userVisible** — The dismissal guard calls raw `::ImGui::IsPopupOpen(kAboutPopupId, ...)` while the open/begin calls two lines earlier go through the localized shim (`ImGui` is #defined to SmatchetLocalizedImGui, whose OpenPopup/BeginPopupModal run WindowTitleFromSource). `kAboutPopupId` == "About Smatchet" has a catalog entry ({"window.about", "About Smatchet", "À propos de Smatchet"}), so under a non-English locale the popup is registered under the translated ID and this raw lookup hashes the English literal — it returns false unconditionally. The very protection the adjacent comment describes (do not clear state when a deeper popup owns the frame) is therefore dead in that locale: showAbout is cleared and the cached snapshot released while the modal is still open. **Fix:** Route it through the shim like its siblings — `ImGui::IsPopupOpen(kAboutPopupId, ImGuiPopupFlags_AnyPopupLevel)` (adding an IsPopupOpen forwarder to SmatchetLocalizedImGui.h that applies WindowTitleFromSource), or compare against `::ImGui::GetID(SmatchetLocalization::WindowTitleFromSource(kAboutPopupId))`.
+
+**LOW (2)**
+- **#1904 (1af13407) · `Source/Core/src/Ui/AnnotateAnalysisUi_Modals.cpp:271`** · **userVisible** — The Result-unpack here takes `gerr = r.error()` with no empty-message fallback, unlike the two sibling sites this same PR added in SmatchetUserInfoUi.cpp (lines 266/294, which use `r.error().empty() ? "Group lookup failed." : r.error()`). The PR's own seam test (CollaborationPreconditionPure.test.cpp:139) asserts a backend error with an empty Detail still maps to an Err, so gerr can legitimately be empty; the post-back then guards with `if (State().profileGroups.empty() && !gerr.empty())`, so that failure renders as an empty group list with no error shown — a silent failure in the user-profile modal. **Fix:** Mirror the sibling sites: `gerr = r.error().empty() ? "Group lookup failed." : r.error();`
+- **#1905 (bc1c5030) · `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:784`** · **userVisible** — SearchUsersByQuery's backend-absent error is hardcoded to "Jira backend is not initialized." while its two siblings introduced by the same change (FetchIssueWatchers L715, FetchIssueVotes L762) say "Tracker backend is not initialized.". Smatchet supports Linear/GitHub backends, so a non-Jira user hitting this path (users.search command, JQL autocomplete, annotate assign resolve) sees a wrong tracker name. **Fix:** Change the L784 message to "Tracker backend is not initialized." to match the sibling reads (and update any test pinning the literal).
+
+### Internal debt — 34 MEDIUM + 45 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `docs/plans/refactor-quickwins-parser-lua-service.md` — 4 MEDIUM, 2 LOW — #1898:27, #1898:28, #1898:29, #1898:30, #1898:39, #1898:40
+- `scripts/dev/verifier-produce.py` — 2 MEDIUM, 4 LOW — #1885:161, #1885:189, #1885:205, #1891:274, #1891:520, #1887:521
+- `scripts/dev/verifier-calibrate.py` — 3 MEDIUM, 2 LOW — #1887:95, #1887:108, #1887:201, #1887:356, #1887:383
+- `docs/plans/duration-parser-unification.md` — 3 MEDIUM, 1 LOW — #1913:34, #1913:44, #1913:46, #1913:60
+- `docs/self-improvement/postmortems.md` — 1 MEDIUM, 3 LOW — #1929:286, #1929:286, #1931:286, #1931:292
+- `.github/workflows/release.yml` — 1 MEDIUM, 2 LOW — #1883:143, #1883:174, #1930:195
+- `docs/plans/py-probe-exec-validation-gate.md` — 1 MEDIUM, 2 LOW — #1939:3, #1939:53, #1939:191
+- `scripts/dev/verifier-endpoint.py` — 2 MEDIUM, 1 LOW — #1889:177, #1889:186, #1889:286
+- `scripts/dev/verifier-sidecar.py` — 1 MEDIUM, 2 LOW — #1884:9, #1884:143, #1884:537
+- `tests/ui/ai_prefs_autosave_flow.test.cpp` — 2 MEDIUM, 1 LOW — #1888:270, #1888:304, #1888:318
+- `Source/Plugins/Mcp/McpPlugin.cpp` — 1 MEDIUM, 1 LOW — #1893:963, #1893:999
+- `agents/scripts/core/small_helper_audit.py` — 1 MEDIUM, 1 LOW — #1914:101, #1914:101
+- `agents/scripts/core/test-agent-contract.sh` — 2 MEDIUM — #1938:72, #1881:439
+- `agents/scripts/core/test-shell-lint.sh` — 1 MEDIUM, 1 LOW — #1939:462, #1939:465
+- `tests/Core/AboutInfo.test.cpp` — 1 MEDIUM, 1 LOW — #1937:141, #1937:172
+- `.github/workflows/tsan-linux-nightly.yml` — 1 LOW — #1886:92
+- `PRIVACY.md` — 1 MEDIUM — #1916:45
+- `QUICKSTART.md` — 1 MEDIUM — #1933:3
+- `README.md` — 1 LOW — #1912:30
+- `Source/Core/src/AttachmentAppUpdateService.cpp` — 1 LOW — #1911:159
+- `Source/Core/src/TicketGridSortPure.cpp` — 1 LOW — #1879:33
+- `Source/Core/src/Tracker/TrackerSetupPure.cpp` — 1 LOW — #1935:20
+- `agents/_shared/skills/git-cleanup-procedures/SKILL.md` — 1 MEDIUM — #1881:160
+- `agents/scripts/core/dead_export_audit.py` — 1 LOW — #1914:151
+- `agents/scripts/core/issue-sweep.sh` — 1 MEDIUM — #1936:62
+- `agents/scripts/core/test-markdown-links.sh` — 1 LOW — #1914:44
+- `agents/scripts/project/migrate-bugs-to-issues.sh` — 1 MEDIUM — #1936:38
+- `agents/scripts/project/test-about-buildinfo-bats.sh` — 1 LOW — #1937:45
+- `docs/agent-rules/verifier-sidecar.md` — 1 LOW — #1884:3
+- `docs/plans/build-quality-velocity-hardening.md` — 1 LOW — #1908:239
+- `docs/plans/about-dialog-help-menu.md` — 1 LOW — #1937:42
+- `docs/plans/gate-blind-spot-sweep.md` — 1 LOW — #1917:59
+- `docs/self-improvement/categories/applied.md` — 1 LOW — #1886:15
+- `docs/self-improvement/categories/tooling/2026-08-04-gate-scripts-resolve-only-python-probes.md` — 1 MEDIUM — #1940:26
+- `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM — #1878:378
+- `scripts/dev/test-mutation-smoke.sh` — 1 LOW — #1886:3
+- `tests/bats/capture_intent.bats` — 1 LOW — #1924:375
+- `tests/bats/fail_open_gate_cluster.bats` — 1 MEDIUM — #1936:33
+- `tests/bats/lint_rules.bats` — 1 LOW — #1936:36
+- `tests/bats/verifier_endpoint.bats` — 1 LOW — #1889:67
+- `tests/bats/verifier_produce.bats` — 1 LOW — #1885:78
+- `tests/ui/mcp_resources.test.cpp` — 1 LOW — #1893:158
+- `tests/ui/tracker_first_run_setup.test.cpp` — 1 LOW — #1935:110
+- `tools/repo-health/generate.py` — 1 LOW — #1917:90
+
+**Clean (16, surviving lines read in full, no findings):** #1926, #1923, #1921, #1920, #1910, #1909, #1907, #1906, #1901, #1900, #1899, #1895, #1892, #1890, #1882, #1880.
+
+**Fully superseded (6, no review surface):** #1934, #1932, #1927, #1922, #1919, #1918 — every introduced line was changed or removed by a later PR; excluded by construction.
+
+## Batch 20 (SCREENED) — #1940–#1878 (53-PR sweep, 2026-08-08) — ⚠️ SUPERSEDED
+
+> **⚠️ SUPERSEDED 2026-08-16 by § Batch 20-REDO above. Do not cite this batch's zero or its
+> coverage claim.** Both were wrong, independently: (a) the pass was a 13-pattern hazard *screen*
+> over product-C++ survivors only, and a full agent read of the same range found **96 findings**
+> (1 CRITICAL, 9 HIGH) — the screen additionally *cleared* two real defects it had surfaced
+> (`SmatchetPlanDocViewerUi.cpp:254`, `LocalCacheManager.cpp:186`), so its "cleared on inspection"
+> list is not evidence; (b) the range holds **60** merged PRs, not 53 — the `(#N)` squash-subject
+> scrape cannot see a true merge commit, so #1883/#1919/#1920/#1921/#1923/#1927/#1932 never entered
+> the work-list and the "contiguous" claim below was false when written. Kept unedited as the record
+> of what was claimed; the corrected result is the REDO section.
 
 Coverage: **53 reviewed — 0 with findings, 51 clean, 2 fully superseded, 0 errored.** Net: **0 CRITICAL, 0 HIGH, 0 MEDIUM, 0 LOW.** Closes the gap Batch 19 left: everything merged after #1876 up to #1940, joining this run to the targeted pass above. **The frontier is now #1–#1940 contiguous; the next sweep resumes from #1941.** Survivor-filtered against `origin/develop` @ `c00197d4`, with the extractor's review-ref bug fixed (see the caveat below) and `--against origin/develop` passed explicitly.
 
@@ -300,9 +550,20 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   55 PRs (#1738–#1795), 8 findings (5 MEDIUM incl. 1 user-visible data-loss →
   Issue #1797, + 3 LOW), 45 clean, 2 superseded. **Batch 19 (2026-07-12) extended
   the frontier to #1876** — 72 PRs (#1796–#1876), 5 findings (2 MEDIUM + 3 LOW),
-  65 clean, 2 superseded, 0 user-visible. **The next sweep resumes from #1877**
+  65 clean, 2 superseded, 0 user-visible. ~~**The next sweep resumes from #1877**~~
   (same recipe; sha-resolved variant recipe in the Batch 13 header for gh-less
   environments).
+  **2026-08-16 — frontier now #1–#2032; the next sweep resumes from #2033.**
+  Batch 20 (2026-08-08) is **SUPERSEDED**: it screened rather than read, and its
+  work-list missed 7 merge-commit PRs, so it never covered #1878–#1940. § Batch
+  20-REDO re-swept that range in full (60 PRs / 64 units, 96 findings) and
+  § Batch 21 took #1941–#2032 (86 PRs, 179 findings). **Build the next work-list
+  from GitHub's merged list, not the `(#N)` squash-subject scrape** — the scrape
+  cannot see a true merge commit, and a merge sha must be expanded to its
+  constituents before extraction or the digest reads falsely `FULLY SUPERSEDED`
+  (`categories/tooling/2026-08-16-historical-review-worklist-misses-merge-commit-prs.md`).
+  Full problem + fix for all 275 findings from both batches:
+  [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
 - **Swept:** **#1–#1174** (batches 1–11) — **the entire merged-PR history reviewed.**
   **SWEEP COMPLETE** — Batch 11 (#116–#1, 113 PRs, the final tail incl. the early
   base-`main` PRs #1–#5) added 2026-06-13;

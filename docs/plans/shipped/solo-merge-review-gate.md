@@ -9,6 +9,8 @@
 
 **Re-scoped 2026-06-02 (grill against live state):** the original "deadlock" premise is **stale**. Live `develop` protection already reports `required_pull_request_reviews: null` (0 required reviews) — the review requirement was dropped at some point via the GitHub UI, which is why PRs merge cleanly today. So the plan's *core change* (set the count to 0) is **already done in the live state**; what remains valid is the **codify-so-it-can't-drift** half (a reproducible script + a config block + an ADR). The historical premise is kept below for the rationale.
 
+> **2026-08-16 note (merge-pipeline-06):** every `enforce_admins: false` below is historical narration of the 2026-06 state this plan shipped against. The live/expected value is now **`true`** (see `project.config.json` `branch_protection` + ADR-0013 amendment) — do not read any passage here as instruction to keep or restore `false`.
+
 *(Historical premise.)* `develop` branch protection had required **1 approving review** (`required_approving_review_count: 1`, `require_code_owner_reviews: false`, `enforce_admins: false`). On a solo repo that was a **deadlock**: GitHub forbids approving your own PR, so the sole maintainer (`alexandrosk0`) could never satisfy it — every PR sat in `mergeStateStatus: BLOCKED` even when CI + CodeRabbit were fully green (observed on #747).
 
 This requirement also **contradicts the repo's own merge model**. `agents/scripts/core/merge-gates.sh:460` treats `reviewDecision ∈ {APPROVED, NONE/null}` as a **pass** — the autonomous merge-watcher and the orchestrator ship-loop deliberately do **not** require a human approval; CodeRabbit (hard-blocking) + the required CI checks are the real gates. So GitHub branch protection is enforcing a gate the harness already decided it doesn't want, and the only ways past it today are admin-merge (manual, every PR) or a second identity (none exists).
@@ -69,7 +71,7 @@ N/A — no Source/Core code; no C++. Adds a shell script + project.config.json +
 ## Verification
 
 - **Bucket A / E**: N/A — no code.
-- **Live-state check**: after `setup-branch-protection.sh`, `gh api repos/<owner>/<repo>/branches/develop/protection/required_pull_request_reviews --jq .required_approving_review_count` returns `0`; `…/required_status_checks --jq .contexts` still lists the four required names; `…/protection --jq .enforce_admins.enabled` still `false`.
+- **Live-state check**: after `setup-branch-protection.sh`, `gh api repos/<owner>/<repo>/branches/develop/protection/required_pull_request_reviews --jq .required_approving_review_count` returns `0`; `…/required_status_checks --jq .contexts` still lists the four required names; `…/protection --jq .enforce_admins.enabled` still `false`. *(Superseded 2026-08-16, merge-pipeline-06: `enforce_admins` is now `true` — the expected live value flipped with `project.config.json`; do NOT treat `true` as drift or revert it. The rest of the check stands.)*
 - **End-to-end**: a fresh CR-clean, CI-green docs PR reaches `mergeStateStatus` other than `BLOCKED` (i.e. `CLEAN`/`UNSTABLE`) with no approval — confirming the deadlock is gone.
 - **Idempotence**: re-running `setup-branch-protection.sh` is a no-op (same state in → same state out); `--dry-run` matches the applied object.
 - **Shell lint**: `test-shell-lint.sh` on the new script.

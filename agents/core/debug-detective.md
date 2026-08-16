@@ -104,6 +104,8 @@ Each round of evidence either **rejects** a hypothesis (narrowing the search) or
 
 Prefer existing evidence before adding logs. Only instrument when existing evidence cannot distinguish the hypotheses from each other. **The evidence-source catalogue (stack trace / assertions / existing logs / command output / state dumps / sanitizer reports / debugger backtrace / existing tests) → [`debug-instrument` SKILL.md](../_shared/skills/debug-instrument/SKILL.md) § Evidence-source catalogue.**
 
+**Live-process evidence comes before instrumentation.** If the process is still running, `debug.log_tail` reads the log ring back over CLI/MCP (no disk path needed), and for a **hang** — the class the crash pipeline never sees — `debug.dump_self` captures every thread's stack for `dump-triage.sh`. Only the inline `debug.*` commands answer while the UI thread is wedged; the marshalling ones block forever. Table + hang recipe → [`debug-instrument` SKILL.md](../_shared/skills/debug-instrument/SKILL.md) § Run and [`debug-techniques.md`](../../docs/agent-rules/debug-techniques.md) § Hang capture.
+
 **Pick a concrete metric** — an observable value or sequence that the bug produces, and what the fixed behaviour should produce instead. Write the metric down before instrumenting. After the fix, re-run the reproducer and check the same metric. Never accept "I think it's fixed" without comparing the metric before / after. **Worked metric examples → [`debug-instrument` SKILL.md](../_shared/skills/debug-instrument/SKILL.md) § Hypothesis + metric examples.**
 
 ### 4. Instrument
