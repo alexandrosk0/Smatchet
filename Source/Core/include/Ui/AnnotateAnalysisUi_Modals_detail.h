@@ -60,4 +60,11 @@ std::string BuildAnnotatedRowTsv(const P4AnnotatedLine& ln);
 bool PickJiraAccountForP4User(const std::vector<TrackerUser>& users, const std::string& p4User,
                               std::string& outAccountId, std::string& outError);
 
+/** User-facing message for a failed group lookup. A backend `Result` error can legitimately
+ *  carry an empty Detail (CollaborationPreconditionPure maps an empty-Detail failure to
+ *  `Err("")`), and the profile modal only shows a message when it is non-empty — so passing the
+ *  raw detail through renders the failure as an empty group list with no error at all
+ *  (Issue #2064). Never returns an empty string. */
+std::string GroupLookupErrorMessage(const std::string& detail);
+
 } // namespace AnnotateUiPure

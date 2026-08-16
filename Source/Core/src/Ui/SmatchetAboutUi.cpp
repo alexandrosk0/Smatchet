@@ -21,6 +21,7 @@
 #include "IconsFontAwesome6.h"
 #include "Privacy/TextRedaction.h"
 #include "SmatchetImGuiFonts.h"
+#include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetAboutIcon.h"
@@ -65,7 +66,10 @@ struct AboutDrawCtx {
 /// text so a SameLine() can follow. `dim` renders in the disabled text colour,
 /// matching the TextDisabled() call this replaced.
 void SelectableValue(const char* id, const std::string& value, float width = 0.0f, bool dim = false) {
-    const char* text = value.empty() ? "unknown" : value.c_str();
+    // The placeholder is chrome, not data: it is the only string this helper ever invents, so
+    // it goes through the dictionary like every other literal in the TU. The VALUE branch stays
+    // verbatim — a SHA or a path must remain copy-pasteable in any locale.
+    const char* text = value.empty() ? SmatchetLocalization::TranslateSource("unknown") : value.c_str();
     const std::size_t len = std::strlen(text);
     std::vector<char> buf(text, text + len + 1);
 
@@ -453,7 +457,12 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
         // via Escape or the title-bar X), or it is still open but a popup at a
         // deeper stack level owns this frame. Only the first is a dismissal —
         // clearing state on the second silently drops the user's request.
-        if (!::ImGui::IsPopupOpen(kAboutPopupId, ImGuiPopupFlags_AnyPopupLevel)) {
+        // Routed through the shim, exactly like the OpenPopup/BeginPopupModal calls above: it
+        // applies the same WindowTitleFromSource transform, so the query hashes the stable
+        // "###"-suffixed English id the popup was registered under instead of the raw English
+        // literal — which stops matching the moment the title gains a catalog entry, leaving
+        // this guard permanently false in that locale (Issue #2055).
+        if (!ImGui::IsPopupOpen(kAboutPopupId, ImGuiPopupFlags_AnyPopupLevel)) {
             // Drop the flag and the snapshot so the next open re-reads config,
             // and so the menu item is not re-opening a popup ImGui already closed.
             d.showAbout = false;
