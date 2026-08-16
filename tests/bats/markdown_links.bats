@@ -266,3 +266,107 @@ print('src:', is_active_md('Source/Core/foo.md'))
     [[ "$output" == *"Passed:"* ]]
     [[ "$output" == *"Failed:"* ]]
 }
+
+# ---------- inline code spans (tooling 2026-08-07) ----------
+#
+# Two halves of one blindness: a repo path written as a bare code span was never
+# checked (so a backlog entry could cite a file that does not exist), and prose
+# quoting LINK SYNTAX inside a code span was parsed as a real link and reported
+# dangling. Teaching the tokenizer about code spans fixes both.
+
+# Build a fixture repo with a real `origin/develop` ref — the code-span rule
+# falls back to that tree, and stays SILENT when it cannot be resolved, so a
+# git-less fixture would vacuously pass every warning assertion below.
+_mk_span_repo() {
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" \
+             "$FIXTURE_DIR/docs/self-improvement/categories/tooling"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    git -C "$FIXTURE_DIR" init -q
+    git -C "$FIXTURE_DIR" config user.email t@t
+    git -C "$FIXTURE_DIR" config user.name t
+    git -C "$FIXTURE_DIR" add -A
+    git -C "$FIXTURE_DIR" commit -qm base
+    git -C "$FIXTURE_DIR" update-ref refs/remotes/origin/develop HEAD
+}
+
+@test "a backlog code span citing a nonexistent repo path WARNs without failing" {
+    _mk_span_repo
+    printf -- '- entry\n\n  Proposal anchored on `scripts/dev/does-not-exist-xyz.sh` here.\n' \
+        > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]   # WARN-first: never changes the exit code
+    [[ "$output" == *"WARN: code-span path 'scripts/dev/does-not-exist-xyz.sh'"* ]]
+}
+
+@test "a backlog code span citing a path that EXISTS draws no warning" {
+    _mk_span_repo
+    printf -- '- entry\n\n  Anchored on `agents/scripts/core/test-markdown-links.sh` which exists.\n' \
+        > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+# applied.md is the ARCHIVE of already-actioned entries: a path that has since
+# moved is expected there and nobody will act on it. Without this exemption the
+# real repo emits ~100 rows of noise that drown the live signal.
+@test "applied.md is exempt from the code-span path rule" {
+    _mk_span_repo
+    printf -- '- old entry citing `scripts/dev/does-not-exist-xyz.sh`\n' \
+        > "$FIXTURE_DIR/docs/self-improvement/categories/applied.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+# `Source/Core/.../Commands/Foo.h` is prose shorthand for "somewhere under",
+# never a literal file — it cannot resolve and was never meant to.
+@test "an ELIDED code-span path (...) draws no warning" {
+    _mk_span_repo
+    printf -- '- entry citing `Source/Core/.../Commands/PathConfinement.h` loosely\n' \
+        > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
+
+# The false-positive half: a doc that needs to DISCUSS link syntax had to
+# describe it in words, because a link-shaped code span was checked as a link.
+@test "link-shaped text inside a code span is not parsed as a link" {
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" "$FIXTURE_DIR/docs"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    printf '# a\n\nThe checker matches `[label](some-missing-target.md)` shaped text.\n' \
+        > "$FIXTURE_DIR/docs/a.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"BROKEN_LINK"* ]]
+}
+
+# A REAL link whose label happens to be a code span must still be checked —
+# blanking spans must not blind the checker to the href half.
+@test "a real link with a code-span label is still checked" {
+    mkdir -p "$FIXTURE_DIR/agents/scripts/core" "$FIXTURE_DIR/docs"
+    cp "$LINT" "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh"
+    printf '# a\n\nSee [`docs/gone.md`](gone-missing-target.md) for detail.\n' \
+        > "$FIXTURE_DIR/docs/a.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"BROKEN_LINK: 'gone-missing-target.md'"* ]]
+}
+
+# The common case the entry calls out: an entry and the file it cites land in
+# the SAME PR. That path is in the worktree but not yet at origin/develop, so a
+# develop-only check would false-warn on nearly every new entry. HEAD is
+# therefore consulted FIRST, with develop only as the fallback.
+@test "a code-span path added by this change (worktree-only, not on develop) draws no warning" {
+    _mk_span_repo
+    # Created AFTER the base commit, so it exists in the worktree and is absent
+    # from the origin/develop tree.
+    mkdir -p "$FIXTURE_DIR/scripts/dev"
+    printf '#!/usr/bin/env bash\n' > "$FIXTURE_DIR/scripts/dev/brand-new-helper.sh"
+    printf -- '- entry\n\n  Anchored on `scripts/dev/brand-new-helper.sh` added by this same change.\n' \
+        > "$FIXTURE_DIR/docs/self-improvement/categories/tooling/e.md"
+    run bash "$FIXTURE_DIR/agents/scripts/core/test-markdown-links.sh" --all
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"WARN: code-span path"* ]]
+}
