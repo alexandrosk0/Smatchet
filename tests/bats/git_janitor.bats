@@ -194,6 +194,32 @@ janitor() {
     [[ "$output" == *"worse than a hole"* ]]
 }
 
+@test "backfill: empty mergedAt fails closed (GNU date -d \"\" would stamp today's midnight)" {
+    # Pins the explicit empty-mergedAt branch: GNU `date -u -d ""` SUCCEEDS
+    # (returns today 00:00 UTC), so without the guard an undatable merge would
+    # pass the age cap before 06:00 UTC and land a row stamped with the
+    # janitor's own run time — the post-hoc-stale row ADR-0017 forbids.
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf3"},"mergedAt":null,"headRefOid":"headbf3","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4245
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"mergedAt unavailable"* ]]
+}
+
+@test "backfill: non-integer age cap fails closed (arithmetic error would fail OPEN)" {
+    # A typo'd cap ("6h") makes $((age_cap * 3600)) raise an arithmetic error;
+    # the enclosing `[` then returns non-zero and the skip branch is NOT taken,
+    # backfilling an arbitrarily old merge. Must fail closed instead.
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
+    export SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS="6h"
+    export GH_PR_MERGED_JSON='{"mergeCommit":{"oid":"mcbf4"},"mergedAt":"2020-01-01T00:00:00Z","headRefOid":"headbf4","labels":[],"statusCheckRollup":[]}'
+    janitor --post-merge 4246
+    [ "$status" -eq 0 ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"not a non-negative integer"* ]]
+}
+
 @test "backfill: PR metadata unavailable -> skip note, cleanup still exit 0" {
     export MERGE_SNAPSHOT_LEDGER="$STUB_BIN/ledger.jsonl"
     export GH_PR_MERGED_JSON=""

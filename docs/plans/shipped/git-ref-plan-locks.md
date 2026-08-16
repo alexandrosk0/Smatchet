@@ -342,18 +342,34 @@ Build when: a "merged green but broke develop" incident happens, OR PR throughpu
 ```bash
 # 1. Protection object (strict/required contexts/enforce_admins/…):
 bash agents/scripts/core/setup-branch-protection.sh          # or --dry-run first
-# 2. Merge-queue ruleset:
-gh api -X PUT repos/alexandrosk0/Smatchet/rulesets \
-  --input <<<'{
-    "name": "develop-merge-queue",
-    "target": "branch",
-    "enforcement": "active",
-    "conditions": {"ref_name": {"include": ["refs/heads/develop"], "exclude": []}},
-    "rules": [{"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}]
-  }'
+# 2. Merge-queue ruleset. CREATE is POST .../rulesets (PUT is the UPDATE verb
+#    and needs a ruleset_id: `gh api repos/OWNER/REPO/rulesets --jq
+#    '.[] | select(.name=="develop-merge-queue") | .id'`). The merge_queue rule
+#    requires the FULL parameter set — omitting any of these is rejected.
+gh api -X POST repos/alexandrosk0/Smatchet/rulesets \
+  --input - <<'JSON'
+{
+  "name": "develop-merge-queue",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {"ref_name": {"include": ["refs/heads/develop"], "exclude": []}},
+  "rules": [{
+    "type": "merge_queue",
+    "parameters": {
+      "merge_method": "SQUASH",
+      "grouping_strategy": "ALLGREEN",
+      "check_response_timeout_minutes": 60,
+      "max_entries_to_build": 5,
+      "max_entries_to_merge": 5,
+      "min_entries_to_merge": 1,
+      "min_entries_to_merge_wait_minutes": 5
+    }
+  }]
+}
+JSON
 ```
 
-(API shape may need adjusting per GitHub Actions API drift — verify the response.)
+(Verify the response — this is an untested recipe for a deferred phase; re-check the parameter set against the current [rules API](https://docs.github.com/en/rest/repos/rules) before running.)
 
 ## Verification
 

@@ -230,6 +230,16 @@ backfill_merge_snapshot() {
         return 0
     fi
     age_cap="${SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS:-6}"
+    # A non-integer cap (operator typo like "6h") makes $((age_cap * 3600))
+    # below raise an arithmetic error; the enclosing `[` then returns non-zero,
+    # the skip branch is NOT taken, and an arbitrarily old merge gets
+    # backfilled — fail-OPEN, the exact stale row ADR-0017 forbids. Fail closed
+    # instead, matching the undatable-mergedAt / undatable-NOW_TS branches.
+    case "$age_cap" in
+        ''|*[!0-9]*)
+            echo "[git-janitor] ledger backfill skipped — SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS='${age_cap}' is not a non-negative integer (fails closed; live fallback covers PR #${PR_NUMBER})." >&2
+            return 0 ;;
+    esac
     # NOW_TS is assigned under set -e at startup, but validate it anyway: an
     # empty/garbage value would make $((NOW_TS - ma)) treat it as 0 and accept
     # arbitrarily old merges (fail-open). Undatable "now" fails closed too.
