@@ -69,6 +69,11 @@ struct GridContextGroupRoster {
     std::string LastGroupRosterError;
 };
 
+/// Next backend-generation seed — one disjoint 2^32-wide band per context, so no two live contexts
+/// can ever hold the same generation value (see GridLiveContext::backendGeneration_). Defined in
+/// GridLiveContext.cpp over a function-local atomic counter (thread-safe init, C++11 onwards).
+std::uint64_t NextBackendGenerationSeed();
+
 struct GridLiveContext {
     // Ctor/dtor are out-of-line (GridLiveContext.cpp) so the sync-service member only needs
     // a forward declaration here; pulling the full TicketSyncService header into
@@ -89,7 +94,17 @@ struct GridLiveContext {
     /// applying results into this context — a mismatch means the backend was swapped/retired
     /// mid-flight and the stale apply is dropped (capture-then-check; cancel/await was rejected:
     /// it would block the UI thread up to an HTTP timeout, Pillar 2).
-    std::atomic<std::uint64_t> backendGeneration_{0};
+    /// SEEDED PER CONTEXT, not from 0: a focus-following GridContextDepsAdapter can capture the
+    /// generation from one pane and re-resolve a different pane at apply time (focus moved
+    /// mid-flight), and two zero-initialised counters would compare EQUAL and wave the stale apply
+    /// through onto the wrong pane. NextBackendGenerationSeed() hands every context a disjoint
+    /// 2^32-wide band, so a cross-context comparison always mismatches.
+    std::atomic<std::uint64_t> backendGeneration_{NextBackendGenerationSeed()};
+
+    /// The pane this context belongs to (`AppController::kDefaultPaneId` for the default context).
+    /// Set at construction time by EnsurePaneContextLive; empty only for a context that is not in
+    /// `gridContexts_` yet. Used to key the per-pane owned-ticket-id map.
+    std::string PaneId;
 
     std::vector<CachedTicket> ActiveTickets;
     mutable std::shared_ptr<const std::vector<CachedTicket>> activeTicketsPublished_;
@@ -97,6 +112,18 @@ struct GridLiveContext {
     /// Guards ActiveTickets + activeTicketsPublished_ (same contract as the old
     /// AppController::activeTicketsMutex_).
     mutable std::mutex activeTicketsMutex_;
+
+    /// THIS context's published active-tickets snapshot, materialised on first read. Mirrors
+    /// AppController::GetActiveTicketsSnapshot() but without the focused-context re-resolve, so a
+    /// pane-frozen adapter answers with its OWN pane's rows. Takes activeTicketsMutex_ — never call
+    /// it while already holding that mutex.
+    std::shared_ptr<const std::vector<CachedTicket>> ActiveTicketsSnapshot() const {
+        std::lock_guard<std::mutex> lock(activeTicketsMutex_);
+        if (!activeTicketsPublished_) {
+            activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ActiveTickets);
+        }
+        return activeTicketsPublished_;
+    }
 
     /// Cache/queue namespacing key (NormalizeViewsBackendKey output). Wired in Slice 1b:
     /// set from the resolved tracker type at backend init and on every backend-kind swap;

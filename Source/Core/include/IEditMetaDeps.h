@@ -49,6 +49,17 @@ class IEditMetaDeps {
     /// `ResolveIssueTypeKeyForIssue`, and the warm-start representative scan.
     virtual std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const = 0;
 
+    /// Published roster snapshot of EVERY live grid pane. The editmeta cache is process-wide while
+    /// `GetActiveTicketsSnapshot()` answers for one pane, so `PruneEditMetaCacheToActiveTickets`
+    /// must retain the union — pruning to a single pane evicts entries another pane's open editor
+    /// is still using, and every such miss costs a fresh editmeta round-trip. Defaulted to the
+    /// single-pane snapshot so the test fakes and any single-context implementation keep working.
+    virtual std::vector<std::shared_ptr<const std::vector<CachedTicket>>> GetActiveTicketsSnapshotsAllPanes() const {
+        std::vector<std::shared_ptr<const std::vector<CachedTicket>>> one;
+        one.push_back(GetActiveTicketsSnapshot());
+        return one;
+    }
+
     /// Catalog lookup for a field id (avoids re-scanning); used by `CanEditFieldForIssue` to
     /// detect sprint fields. Returns null when the field is unknown.
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;

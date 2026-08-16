@@ -25,6 +25,7 @@
 #include "ITrackerActivity.h"
 #include "JiraClient.h"
 #include "ProjectResolver.h"
+#include "Sync/TicketRosterFilterPure.h" // shared keep-set roster filter (also used by TicketSyncService)
 #include "TrackerFieldPayload.h"
 #include "TrackerHttpUtils.h"
 
@@ -47,13 +48,32 @@ bool IsNonEditableTimetrackingFieldId(const std::string& fieldId) {
 
 void AppController::RefreshLocalData() { RefreshLocalDataCheckedImpl_(focusedContext(), nullptr); }
 
-void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration) {
+void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
+                                                 const std::string& admitId) {
     if (Cache) {
         // Full-table read stays OUTSIDE activeTicketsMutex_ (SQLite I/O under the tickets
         // mutex would block the UI-thread readers, Pillar 2); the generation re-check below
         // is therefore the authoritative gate, taken immediately before the swap-in.
         const std::string cacheKey = ctx.CacheBackendKeyCopy();
         auto latestTickets = Cache->GetAllTickets(cacheKey);
+        // GetAllTickets returns the WHOLE backend-keyed namespace, which every pane shares
+        // (ADR-0018 decision 4) — so a bare replace repopulates this pane with its siblings'
+        // rows. Filter down to the ids this pane's own sync recorded. An empty recorded set means
+        // a true cold start (nothing has synced yet), where the whole namespace IS the best
+        // available seed — that is what AppController_Init's bootstrap refresh relies on.
+        const std::vector<std::string> owned = GetPaneOwnedTicketIds(cacheKey, ctx.PaneId);
+        if (!owned.empty()) {
+            std::unordered_set<std::string> keep(owned.begin(), owned.end());
+            if (!admitId.empty()) {
+                keep.insert(admitId); // the row the caller just saved — never filtered out
+            }
+            const std::size_t dropped = smatchet::RetainTicketsInKeepSet(latestTickets, keep);
+            if (dropped != 0) {
+                LOG_DEBUG("AppController::RefreshLocalData scoped namespace read to pane '%s' (dropped %zu of %zu "
+                          "sibling rows).",
+                          ctx.PaneId.c_str(), dropped, dropped + latestTickets.size());
+            }
+        }
         {
             std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
             // Capture-then-check (issue #1081): the caller latched ctx's backend generation
@@ -71,6 +91,13 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
             }
             ctx.ActiveTickets = std::move(latestTickets);
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
+        }
+        // The admitted row now belongs to this pane for good — record it, or the NEXT refresh
+        // (which re-reads the recorded set) would filter the freshly-saved ticket back out.
+        if (!admitId.empty() && !owned.empty() && std::find(owned.begin(), owned.end(), admitId) == owned.end()) {
+            std::vector<std::string> next = owned;
+            next.push_back(admitId);
+            SetPaneOwnedTicketIds(cacheKey, ctx.PaneId, next);
         }
         PruneEditMetaCacheToActiveTickets();
         ctx.ActiveTicketsRevision.fetch_add(1);
@@ -115,7 +142,9 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
         }
         Cache->SaveTicket(capturedKey, ticket);
         // Push changes back to ActiveTickets — checked against the SAME latched ctx (MEDIUM-1).
-        RefreshLocalDataCheckedImpl_(ctx, &capturedGeneration);
+        // `ticket.id` is admitted explicitly: the pane-scoping filter inside the refresh works off
+        // the last SYNCED id set, which cannot yet contain a row created/edited this instant.
+        RefreshLocalDataCheckedImpl_(ctx, &capturedGeneration, ticket.id);
     }
 }
 

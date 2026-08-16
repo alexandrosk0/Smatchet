@@ -326,19 +326,28 @@ void EditMetaCacheService::InvalidateIssueEditMeta(const std::string& issueId) {
 }
 
 void EditMetaCacheService::PruneEditMetaCacheToActiveTickets() {
-    const auto ticketsSnap = deps_.GetActiveTicketsSnapshot();
-    const auto& tickets = *ticketsSnap;
+    // Union across EVERY live pane, not just the calling one: this cache is process-wide, so a
+    // prune scoped to one pane's roster evicts the entries another pane's open editor is using and
+    // forces a fresh editmeta round-trip on its next keystroke (multi-pane scoping audit).
+    const std::vector<std::shared_ptr<const std::vector<CachedTicket>>> snaps =
+        deps_.GetActiveTicketsSnapshotsAllPanes();
     std::unordered_set<std::string> keep;
     std::unordered_set<std::string> keepTypes;
-    keep.reserve(tickets.size());
-    keepTypes.reserve(tickets.size());
-    for (const auto& t : tickets) {
-        if (!t.id.empty()) {
-            keep.insert(t.id);
+    for (std::size_t s = 0; s < snaps.size(); ++s) {
+        if (!snaps[s]) {
+            continue;
         }
-        const std::string typeKey = ToLowerAsciiCopy(TrimCopy(t.GetFieldValue("issuetype")));
-        if (!typeKey.empty()) {
-            keepTypes.insert(typeKey);
+        const std::vector<CachedTicket>& tickets = *snaps[s];
+        keep.reserve(keep.size() + tickets.size());
+        keepTypes.reserve(keepTypes.size() + tickets.size());
+        for (const auto& t : tickets) {
+            if (!t.id.empty()) {
+                keep.insert(t.id);
+            }
+            const std::string typeKey = ToLowerAsciiCopy(TrimCopy(t.GetFieldValue("issuetype")));
+            if (!typeKey.empty()) {
+                keepTypes.insert(typeKey);
+            }
         }
     }
 

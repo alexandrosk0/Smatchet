@@ -152,6 +152,14 @@ class TicketSyncService {
     /// (a partial fetch cannot prove any row is gone). UI thread, once per session.
     void SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession);
 
+    /// Phase 4c: converge this pane's in-memory roster onto exactly the ids its OWN query returned
+    /// this session, then publish that set through `ITicketSyncDeps::PublishOwnedTicketIds` so a
+    /// sibling pane's stale sweep can subtract it. The batch apply reads a cache namespace shared
+    /// by every pane (ADR-0018 decision 4), so without this a pane can keep displaying rows only a
+    /// sibling's query covers. No-op unless the session completed a full sync that kept at least
+    /// one row. UI thread, once per session.
+    void ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompleted, std::size_t keptThisSession);
+
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};
     StreamingSyncState activeStreamingSync_;

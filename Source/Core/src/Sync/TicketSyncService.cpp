@@ -7,6 +7,7 @@
 #include "ISyncCache.h"
 #include "Logger.h"
 #include "StringUtil.h"
+#include "Sync/TicketRosterFilterPure.h" // shared keep-set roster filter (also used by the local-data refresh)
 #include "Views.h"
 
 #include <algorithm>
@@ -470,6 +471,7 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
     }
 
     SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
+    ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
 
     LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
              "fullSync=%d err=%s",
@@ -531,6 +533,44 @@ void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std:
         totalStaleToDelete_ = staleIdsToDelete_.size();
         staleDeletedSoFar_ = 0;
     }
+}
+
+void TicketSyncService::ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompleted, std::size_t keptThisSession) {
+    // Only a completed full sync knows the whole answer for this pane's query, and only a
+    // non-empty one is trusted (a zero-keep full sync is the suspect case SeedStaleDeletionForSession
+    // refuses to act on — pruning here would empty the grid on the same transient glitch).
+    if (!fullSyncCompleted || keptThisSession == 0) {
+        return;
+    }
+    // KeepIds is read without QueueMutex on purpose: the streaming worker has already exited by the
+    // time TickStreamingApply finalizes a session (same lock-free read as the LOG_INFO above).
+    const std::unordered_set<std::string>& keep = activeStreamingSync_.KeepIds;
+
+    // The shared backend-keyed cache spans every pane (ADR-0018 decision 4), so a batch apply can
+    // have admitted rows belonging to a sibling pane's query. Converge this pane's in-memory roster
+    // onto exactly what its OWN query returned, republishing the immutable snapshot and bumping the
+    // revision once under one lock (same contract as DrainStaleDeletionBudget) so readers never see
+    // a half-pruned roster.
+    std::vector<std::string> ownedIds;
+    {
+        std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+        std::vector<CachedTicket>& rows = deps_.ActiveTickets();
+        const std::size_t dropped = smatchet::RetainTicketsInKeepSet(rows, keep);
+        ownedIds.reserve(rows.size());
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            ownedIds.push_back(rows[i].id);
+        }
+        if (dropped != 0) {
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(rows));
+            deps_.BumpActiveTicketsRevision();
+            LOG_INFO("TicketSyncService::TickStreamingApply converged pane roster to its own query (dropped %zu, "
+                     "%zu remain).",
+                     dropped, rows.size());
+        }
+    }
+    // Published OUTSIDE the roster lock: the adapter reads the context's backend key under its own
+    // mutex, and activeTicketsMutex_ must stay the innermost of that pair.
+    deps_.PublishOwnedTicketIds(ownedIds);
 }
 
 bool TicketSyncService::IsActive() const {

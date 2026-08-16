@@ -21,7 +21,15 @@
 #include <utility>
 #include <vector>
 
-GridContextDepsAdapter::GridContextDepsAdapter(AppController& app, GridLiveContext& ctx) : app_(app), ctx_(ctx) {}
+GridContextDepsAdapter::GridContextDepsAdapter(AppController& app, GridLiveContext& ctx) : app_(app), ctx_(&ctx) {}
+
+GridContextDepsAdapter::GridContextDepsAdapter(AppController& app) : app_(app), ctx_(nullptr) {}
+
+// Pane-frozen adapters answer with their latched context; focus-following adapters re-resolve the
+// focused pane on EVERY call. focusedContext() is never null (the default context is permanent) and
+// returns a non-const reference through app_ — constness does not propagate through a reference
+// member, so this stays callable from the const overrides below.
+GridLiveContext& GridContextDepsAdapter::ctx() const { return ctx_ != nullptr ? *ctx_ : app_.focusedContext(); }
 
 // ---- IOfflineQueueDeps (and shared with ITicketSyncDeps) ------------------------------
 
@@ -38,7 +46,7 @@ std::shared_ptr<ISyncCache> GridContextDepsAdapter::CacheShared() { return std::
 // whole backend alive for as long as the caller holds the role handle — stronger than the
 // ADR-0012 graveyard alone, which only covers swaps, not Slice-3 context retirement.
 std::shared_ptr<ITrackerIssueReader> GridContextDepsAdapter::ReaderShared() const {
-    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx_.Backend);
+    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx().Backend);
     if (!b) {
         return nullptr;
     }
@@ -46,7 +54,7 @@ std::shared_ptr<ITrackerIssueReader> GridContextDepsAdapter::ReaderShared() cons
 }
 
 std::shared_ptr<ITrackerIssueMutations> GridContextDepsAdapter::MutationsShared() const {
-    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx_.Backend);
+    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx().Backend);
     if (!b || b->Mutations() == nullptr) {
         return nullptr;
     }
@@ -54,14 +62,14 @@ std::shared_ptr<ITrackerIssueMutations> GridContextDepsAdapter::MutationsShared(
 }
 
 ITrackerConnectivity* GridContextDepsAdapter::BackendConnectivity() {
-    auto b = std::atomic_load(&ctx_.Backend);
+    auto b = std::atomic_load(&ctx().Backend);
     return b ? &b->Connectivity() : nullptr;
 }
 
 // Per-context (multi-grid Slice 3): the catalog moved into GridLiveContext, so replay /
 // sync paths read THIS context's catalog — not whichever pane happens to be focused.
 const std::vector<TrackerField>& GridContextDepsAdapter::AvailableFields() const {
-    return ctx_.fieldCatalog.AvailableFields;
+    return ctx().fieldCatalog.AvailableFields;
 }
 
 RequiredFieldSet GridContextDepsAdapter::GetRequiredFieldSet(const std::string& projectKey,
@@ -77,9 +85,14 @@ void GridContextDepsAdapter::LaunchBackgroundTask(std::function<void()> task) {
 void GridContextDepsAdapter::RefreshLocalData() { app_.RefreshLocalData(); }
 
 // Friend access: the checked impl is private on purpose — every checked caller must name the
-// context it latched the generation from, and this adapter's ctx_ is exactly that context.
+// context it latched the generation from, and this adapter's ctx() is exactly that context.
+// Focus-following adapters can resolve a DIFFERENT context here than the one BackendGeneration()
+// was captured from (a focus switch mid-replay). That is safe rather than silently wrong because
+// backendGeneration_ is seeded per context from a process-wide stride (GridLiveContext.h), so a
+// cross-context comparison always mismatches and the apply is dropped instead of landing on the
+// wrong pane.
 void GridContextDepsAdapter::RefreshLocalData(std::uint64_t capturedBackendGeneration) {
-    app_.RefreshLocalDataCheckedImpl_(ctx_, &capturedBackendGeneration);
+    app_.RefreshLocalDataCheckedImpl_(ctx(), &capturedBackendGeneration);
 }
 
 void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
@@ -87,39 +100,44 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() {
 }
 
 // Declared in both IOfflineQueueDeps and ITicketSyncDeps; this single override satisfies both.
-std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx_.CacheBackendKeyCopy(); }
+std::string GridContextDepsAdapter::CacheBackendKey() const { return ctx().CacheBackendKeyCopy(); }
 
-std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx_.backendGeneration_.load(); }
+std::uint64_t GridContextDepsAdapter::BackendGeneration() const { return ctx().backendGeneration_.load(); }
 
 // ---- ITicketSyncDeps ------------------------------------------------------------------
 
 ITrackerIssueReader* GridContextDepsAdapter::Backend() {
-    auto b = std::atomic_load(&ctx_.Backend);
+    auto b = std::atomic_load(&ctx().Backend);
     return b ? &b->Reader() : nullptr;
 }
 
 void GridContextDepsAdapter::SetBackend(std::unique_ptr<ITrackerBackend> backend) {
     // Live tracker swap. atomic_exchange swaps the slot AND returns the old backend in one
-    // synchronised step — off-thread workers read ctx_.Backend via std::atomic_load, and a plain
+    // synchronised step — off-thread workers read ctx().Backend via std::atomic_load, and a plain
     // assignment would data-race the shared_ptr instance in C++14). The old backend is then
     // RETIRED (defer-free) into the AppController-shared graveyard, not freed, so any raw
     // Reader/Mutations/Connectivity pointer a worker captured before the swap stays valid
     // until shutdown. See ADR 0012.
     std::shared_ptr<ITrackerBackend> incoming(std::move(backend));
-    std::shared_ptr<ITrackerBackend> old = std::atomic_exchange(&ctx_.Backend, incoming);
+    std::shared_ptr<ITrackerBackend> old = std::atomic_exchange(&ctx().Backend, incoming);
     // Invalidate in-flight work captured against the OLD backend (issue #1081): workers
     // capture backendGeneration_ at work-capture time and drop their apply on mismatch
     // (capture-then-check — see GridLiveContext.h).
-    ctx_.backendGeneration_.fetch_add(1);
+    ctx().backendGeneration_.fetch_add(1);
     app_.RetireBackend(std::move(old));
 }
 
 ITrackerBackendFactory* GridContextDepsAdapter::BackendFactory() { return app_.backendFactory_.get(); }
 
-void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx_.SetCacheBackendKey(key); }
+void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx().SetCacheBackendKey(key); }
 
 std::vector<std::string> GridContextDepsAdapter::TicketIdsRetainedByOtherContexts() const {
-    return app_.CollectTicketIdsRetainedByOtherContexts(ctx_);
+    return app_.CollectTicketIdsRetainedByOtherContexts(ctx());
+}
+
+void GridContextDepsAdapter::PublishOwnedTicketIds(const std::vector<std::string>& ids) {
+    GridLiveContext& c = ctx();
+    app_.SetPaneOwnedTicketIds(c.CacheBackendKeyCopy(), c.PaneId, ids);
 }
 
 // Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
@@ -179,32 +197,32 @@ void GridContextDepsAdapter::OnStreamingSyncSessionFinished(bool fetchOk) {
         // Failed session: re-arm so the next focus switch / visibility kick retries the
         // sync instead of treating the pane as sync-live forever.
         // UI thread — same single-thread discipline as the latch.
-        ctx_.initialSyncKicked = false;
-        ctx_.lastSyncedJql.clear();
+        ctx().initialSyncKicked = false;
+        ctx().lastSyncedJql.clear();
         // Storm damping (issue #1081): the re-arm above + the per-frame kick site retried a
         // fast-failing backend at FRAME RATE. Open a 30 s retry window instead — the kick
         // site bails while now < syncRetryAfter (PaneSyncKickPolicy.h; mirrors the
         // projectComponentsRetryAfter_ backoff). UI thread — same discipline as the latch.
-        ctx_.syncRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+        ctx().syncRetryAfter = std::chrono::steady_clock::now() + std::chrono::seconds(30);
     }
 }
 
-std::mutex& GridContextDepsAdapter::ActiveTicketsMutex() { return ctx_.activeTicketsMutex_; }
+std::mutex& GridContextDepsAdapter::ActiveTicketsMutex() { return ctx().activeTicketsMutex_; }
 
-std::vector<CachedTicket>& GridContextDepsAdapter::ActiveTickets() { return ctx_.ActiveTickets; }
+std::vector<CachedTicket>& GridContextDepsAdapter::ActiveTickets() { return ctx().ActiveTickets; }
 
 void GridContextDepsAdapter::SetActiveTicketsPublished(std::shared_ptr<const std::vector<CachedTicket>> snap) {
-    // CONTRACT (issue #1081): the caller MUST hold ctx_.activeTicketsMutex_ —
+    // CONTRACT (issue #1081): the caller MUST hold ctx().activeTicketsMutex_ —
     // activeTicketsPublished_ is guarded by it (GridLiveContext.h). An unguarded publish
     // races worker-thread writers and locked readers on the shared_ptr control block
     // (C++14 UB → std::terminate). Enforced by the publish-under-lock doctest case
     // (BackendSwitchRace1081.test.cpp); std::mutex has no portable same-thread "is held
     // by me" probe, so a runtime assert here would itself be UB — keep new call sites
     // inside an ActiveTicketsMutex() lock scope.
-    ctx_.activeTicketsPublished_ = std::move(snap);
+    ctx().activeTicketsPublished_ = std::move(snap);
 }
 
-void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx_.ActiveTicketsRevision.fetch_add(1); }
+void GridContextDepsAdapter::BumpActiveTicketsRevision() { ctx().ActiveTicketsRevision.fetch_add(1); }
 
 void GridContextDepsAdapter::PruneEditMetaCacheToActiveTickets() { app_.PruneEditMetaCacheToActiveTickets(); }
 
@@ -224,13 +242,21 @@ void GridContextDepsAdapter::SetPendingLuaWindowBump(bool value) { app_.pendingL
 // the shared_ptr-instance read can't race a live SetBackend swap. The whole backend stays alive as
 // long as the warm worker holds the returned shared_ptr (ADR-0012).
 std::shared_ptr<ITrackerBackend> GridContextDepsAdapter::BackendShared() const {
-    return std::atomic_load(&ctx_.Backend);
+    return std::atomic_load(&ctx().Backend);
 }
 
 bool GridContextDepsAdapter::IsShuttingDown() const { return app_.IsShuttingDown(); }
 
+// THIS adapter's context, not AppController::GetActiveTicketsSnapshot() (which always re-resolves
+// the focused pane). A pane-frozen adapter must answer with its OWN pane's rows — otherwise an
+// edit-meta / field-edit call raised by a background pane validated against the focused pane's grid.
 std::shared_ptr<const std::vector<CachedTicket>> GridContextDepsAdapter::GetActiveTicketsSnapshot() const {
-    return app_.GetActiveTicketsSnapshot();
+    return ctx().ActiveTicketsSnapshot();
+}
+
+std::vector<std::shared_ptr<const std::vector<CachedTicket>>>
+GridContextDepsAdapter::GetActiveTicketsSnapshotsAllPanes() const {
+    return app_.CollectActiveTicketSnapshotsAcrossContexts();
 }
 
 const TrackerField* GridContextDepsAdapter::FindFieldById(const std::string& fieldId) const {
@@ -246,7 +272,7 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() co
 // #975: THIS context's catalog, captured on the UI thread at kick time. The warm worker writes
 // projectComponentOptions_/InFlight_/RetryAfter_ under cat.availableFieldsMutex_ via this pointer —
 // never a completion-time fieldCatalog() re-resolve.
-GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx_.fieldCatalog; }
+GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx().fieldCatalog; }
 
 // ---- IFieldEditDeps -------------------------------------------------------------------
 // BackendShared / GetActiveTicketsSnapshot / RefreshLocalData / const-RequestDeferred are reused
@@ -259,9 +285,9 @@ bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
 void GridContextDepsAdapter::UpdateTicket(const CachedTicket& ticket) { app_.UpdateTicket(ticket); }
 
 // ---- IConnectivityDeps ----------------------------------------------------------------
-// DISTINCT from the frozen-ctx_ BackendShared() / catalog accessors above (Phase 3 R1): the
+// DISTINCT from the ctx()-routed BackendShared() / catalog accessors above (Phase 3 R1): the
 // connectivity FSM re-resolves the FOCUSED context LIVE every call, so these forward to
-// app_.BackendShared() / app_.fieldCatalog() (focused-context routing), NOT ctx_. IsShuttingDown()
+// app_.BackendShared() / app_.fieldCatalog() (focused-context routing), NOT ctx(). IsShuttingDown()
 // is reused from the IEditMetaDeps override above. Catalog reads/clears stay UNLOCKED — preserving
 // the UI-thread-only single-kick-time-latch discipline (no availableFieldsMutex_).
 
@@ -302,7 +328,7 @@ void GridContextDepsAdapter::RestartReplayTimers(std::chrono::steady_clock::time
 }
 
 // ---- IAttachmentAppUpdateDeps (Phase 4) ----------------------------------------------
-// Global host state — these forward to app_ regardless of ctx_ (the host callbacks + URL-open +
+// Global host state — these forward to app_ regardless of the adapter's mode (the host callbacks + URL-open +
 // app-quit are AppController-global, not per-pane). The adapter is a friend of AppController, so the
 // HostCallbacks struct read is direct. OpenUrl / RequestAppQuit are the existing public const methods
 // (scheme-allowlist + null-handler guard live inside them).
