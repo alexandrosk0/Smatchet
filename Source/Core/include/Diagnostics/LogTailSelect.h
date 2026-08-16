@@ -2,7 +2,7 @@
 #define SMATCHET_DIAGNOSTICS_LOG_TAIL_SELECT_H
 
 // LogTailSelect.h — pure selection over a Logger entry snapshot, backing the
-// debug.log_tail command (docs/plans/active/autonomous-debug-live-evidence.md
+// debug.log_tail command (docs/plans/shipped/autonomous-debug-live-evidence.md
 // slice 2). Header-only and dependency-free beyond Logger.h + std, so the logic is
 // testable in the fast SmatchetTests rig rather than only through the Linux-only
 // SmatchetCommandsTests dispatch harness.

@@ -1,5 +1,5 @@
 // Pure-logic cover for the debug.log_tail selection (slice 2 of
-// docs/plans/active/autonomous-debug-live-evidence.md). Lives in the fast
+// docs/plans/shipped/autonomous-debug-live-evidence.md). Lives in the fast
 // SmatchetTests rig — the command itself can only be dispatched from the Linux-only
 // SmatchetCommandsTests target, but the selection rules are what actually carry the
 // behaviour, and they must be covered on the required Windows lane too.
