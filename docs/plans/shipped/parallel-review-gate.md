@@ -1,8 +1,9 @@
 # Plan — Parallel code-review gate (review runs *with* the lint gate, not after it)
+<!-- plan-date: 2026-08-15 -->
 
 > **Slug**: `parallel-review-gate` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
+> **Status**: `shipped` — the machine-readable lifecycle marker. Values: `active` (driving in-flight work) · `shipped` (post-ship sections populated + all cited PRs merged — this file belongs in `docs/plans/shipped/`) · `blocked` / `deferred` (paused — one-line why). **Flip to `shipped` in the SAME post-ship PR that fills § Implementation log AND `git mv`s this file active → shipped** (see § Archive). `agents/scripts/core/plan-archival-owed.sh` nags at SessionStart if any `active/` plan is marked `shipped` but never moved.
 >
 > **Mandatory rules cross-link**: see `AGENTS.md` § Project rules § Plan location, § Plan-doc safety, § Plan revision after implementation, § Plan stress-test, § Plan template, § Plan-doc perf-gate section.
 
@@ -166,28 +167,36 @@ or delete them.
   counts, but nothing acts on them yet. Natural next slice; not designed here.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+
+- `1b27872b` · `wip(plan): parallel-review-gate` — this plan doc, committed before implementation per § Plan-doc safety.
+- `f3de34d5` · `feat(gate): run code review concurrently with the pre-ship lint gate` — the whole change, four files:
+  - `scripts/dev/pre-ship.sh` — split into **Group A** (the two diff-MUTATING stages: `clang-format -i`, `comment_audit.py --fix`) and **Group B** (the read-only stages: delta lint, md_lint, test-list, orphan-bats, `test-docs.sh`), each its own `if [ "$gate_only" != "1" ]` block closed by a `fi # end of Group X` comment naming the invariant. New flags `--format-only` (runs Group A, prints the concurrency instructions, exits 0) and `--review-fingerprint` (prints `ra_fingerprint branch <base>` and exits, nothing else). The t=0 "CODE REVIEW REQUIRED" notice + fingerprint print between the groups. New `preship_findings_fingerprint` / `preship_require_findings` enforce `.review-findings.json` on both `--ack-review` and the final gate.
+  - `agents/core/code-review.md` — new mandatory Process step 7 (write the stamped artifact as the reviewer's LAST action); `version: 6` → `7` + both banner strings.
+  - `docs/agent-rules/ship-loops.md:19` — pre-first-push gate item 1 → the 1a/1b/1c protocol.
+  - `.gitignore` — `.review-findings.json` beside `.review-ack`.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+
+- **`version: 5` → `6` was predicted; `6` → `7` shipped.** § Files to modify pinned the version current when the plan was written; `code-review.md` had already been bumped by implementation time.
+- **The intent-to-add block was extracted, not merely moved.** The plan said only that the mutating stages split out of the lint block. In practice `--review-fingerprint` needs the ita registration too — a brand-new untracked `.cpp` is invisible to `git diff HEAD`, so the reviewer would stamp a hash that could never match. It became `preship_ita_untracked [quiet]`, called from both the Group A path and the `--review-fingerprint` path, with `quiet` keeping the fingerprint output machine-readable. A correctness fix the plan missed, not a scope change.
+- **Three selftest cases, not two.** § Files to modify said "two new `run_selftest()` cases"; the old case 2 was *replaced* by **2a** (ack with no artifact ⇒ MUST FAIL), **2b** (ack with a mismatched artifact ⇒ MUST FAIL) and **2c** (artifact stamped via `--review-fingerprint`, then ack ⇒ MUST PASS, asserted on both the ack and a plain gate run). Cases 1, 3, 4, 5a, 5b unchanged.
+- **`--ack-review` honours `SMATCHET_SKIP_REVIEW_GATE=1` for the artifact check too** (WARN, not silent). Unplanned but required: without it the documented bypass would clear the final gate yet still wedge on the ack — worse than having no bypass.
+- Nothing deferred. Every § Files-to-modify row shipped.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-*The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-   > **Keep the literal `<slug>` placeholder in this committed step — do NOT
-   > expand it to this plan's real filename.** Writing the actual basename here
-   > manufactures a `docs/plans/shipped/<name>.md` path that points at a file
-   > still living in `active/` (the move hasn't happened yet), which
-   > `test-plan-ref-integrity.sh` reports as a dangling self-reference. The gate
-   > carves out the *placeholder* form on the Archive `git mv` line; the
-   > expanded form defeats that carve-out. Run the literal command with your
-   > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+| Check | Result |
+|---|---|
+| `bash -n scripts/dev/pre-ship.sh` | **PASS** — syntax clean |
+| `bash scripts/dev/pre-ship.sh --selftest` | **PASS** — `gate blocks unacked substantive diffs, refuses an ack with a missing/stale review artifact, acks with a stamped one, re-arms on edit, bypass works, #1116 fail-closed on no-python` |
+| `bash agents/scripts/core/test-gate-selftests.sh` | **PASS** — `all 80 --selftest-exposing scripts assert a failure case` |
+| `shellcheck -S warning scripts/dev/pre-ship.sh` | **PASS** — no output |
+| `bash scripts/dev/pre-ship.sh` (full run, this branch) | **PASS** — exit 0; review gate N/A (no first-party C++ in this diff) |
+| `bash scripts/dev/pre-ship.sh --review-fingerprint` | **PASS** — printed the sha256 of the empty C++ diff, correct for a docs+shell branch |
+| `bash scripts/dev/pre-ship.sh --format-only` | **PASS** — printed the diff-stable PASS + the concurrency instructions, exited 0 |
+| `bash agents/scripts/core/test-plan-index.sh` | **PASS** — `index up to date (189 plans)` while this plan sat under `active/` (the index covers `shipped/` only); re-run with `--fix` after the archive `git mv` → `rewrote index (190 plans)` |
+| Bucket A (ctest `test-rig`) | **N/A** — no C++ logic changed |
+| Bucket E (ImGui Test Engine) | **N/A** — no UI surface |
+| Build gate | **N/A** — no C++ in the diff |
 
-*No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
-
-*(Delete this `## Archive` block as part of step 2 — once moved to `shipped/`, the file is reference material and the checklist has served its purpose.)*
+Manual residue: **none** — every row above is a command, and `--selftest` is enrolled in `test-gate-selftests.sh`, which CI runs.
