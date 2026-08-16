@@ -178,11 +178,26 @@ JSON
     [ ! -f "$MERGE_SENTINEL" ]
 }
 
-@test "perf-out-of-band downgrades a RED Perf PR-fast (exit 0, merge fires)" {
+@test "perf-out-of-band does NOT waive a RED Perf PR-fast (stale-override guard: exit 1, no merge)" {
+    # merge-pipeline-01: tests-/perf-out-of-band are label-reactive (their
+    # workflows re-run on `labeled` and self-report green); this guard has no
+    # label-event timestamps, so waiving a red run here would re-open the
+    # pre-label-run race. The red blocks until the re-run goes green.
     export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
       {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
       {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Perf PR-fast"* ]]
+    [ ! -f "$MERGE_SENTINEL" ]
+}
+
+@test "intent-out-of-band still downgrades a RED Intent section (label-blind workflow: exit 0, merge fires)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","labels":[{"name":"intent-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
     run bash "$SCRIPT" 1180
     [ "$status" -eq 0 ]
     [ -f "$MERGE_SENTINEL" ]
@@ -343,19 +358,23 @@ JSON
     [[ "$output" == *'"mergeActor":"safe-admin-merge"'* ]]
 }
 
-@test "ledger: perf-out-of-band downgraded RED lands in redChecks + overrideLabels" {
-    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha2","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
+@test "ledger: intent-out-of-band downgraded RED lands in redChecks + overrideLabels" {
+    # intent-out-of-band is the gate-side-only downgrade the guard still
+    # honours (tests/perf no longer merge past a red here — see the
+    # stale-override tests above), so it is the arm that exercises the
+    # load-bearing-override redChecks capture end-to-end.
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha2","labels":[{"name":"intent-out-of-band"}],"statusCheckRollup":[
       {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
       {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
-      {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+      {"__typename":"CheckRun","name":"Intent section","status":"COMPLETED","conclusion":"FAILURE"}]}'
     export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc2"},"mergedAt":"2026-08-16T12:05:00Z"}'
     export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
     run bash "$SCRIPT" 1181
     [ "$status" -eq 0 ]
     [ -f "$MERGE_SENTINEL" ]
     run cat "$MERGE_SNAPSHOT_LEDGER"
-    [[ "$output" == *'"redChecks":["Perf PR-fast (windows-2022)"]'* ]]
-    [[ "$output" == *'"overrideLabels":["perf-out-of-band"]'* ]]
+    [[ "$output" == *'"redChecks":["Intent section"]'* ]]
+    [[ "$output" == *'"overrideLabels":["intent-out-of-band"]'* ]]
 }
 
 @test "ledger: cr-out-of-band waiving a REAL CR block records the literal CodeRabbit in redChecks" {

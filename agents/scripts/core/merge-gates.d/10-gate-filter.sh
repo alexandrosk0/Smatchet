@@ -110,24 +110,29 @@ _MG_GATE_FILTER_TEMPLATE='
            | (test("__BLOCK_ALLOWLIST_RE__"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
 # Downgrade arms. tests/perf carry the stale-override freshness conjunct: the
-# failing run must have COMPLETED at-or-after the latest label application
-# ("" label-time = no timeline data = legacy behaviour; ISO-8601 Z strings
-# compare correctly as strings). A known label-time with a null completedAt
-# fails closed (no downgrade) — a COMPLETED CheckRun always carries
-# completedAt in live data. intent/plan-lock: no conjunct (see the
-# $labelEvents comment above).
+# failing run must have completed — or, when completedAt is null (the repo
+# fixtures treat that as a realistic COMPLETED shape), STARTED — at-or-after
+# the latest label application: a run started post-label is definitionally a
+# post-label evaluation. "" label-time = no timeline data = legacy behaviour;
+# ISO-8601 Z strings compare correctly as strings. A run with NEITHER
+# timestamp and a known label-time fails closed (no downgrade).
+# intent/plan-lock: no conjunct (see the $labelEvents comment above).
+# $labelReactiveRed binds the name-predicate-only set once so $staleOverride
+# below is derived by SUBTRACTION — the freshness rule exists in exactly one
+# place and the two sets can never drift out of complement.
 | ([$failing[] | select(
-      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // "") >= $testsAt)) or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // "") >= $perfAt)) or
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))))]) as $labelReactiveRed
+| ([$failing[] | select(
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // .startedAt // "") >= $testsAt)) or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // .startedAt // "") >= $perfAt)) or
       ($intent and .__typename == "CheckRun" and .name == "Intent section") or
       ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
-# $staleOverride — failing checks whose downgrade was REFUSED by the freshness
-# conjunct (label applied after the run completed). Surfaced as fields 33/34 so
-# the poll loop can print an actionable WARN ("waiting for the post-label
-# re-run") instead of a silent block.
-| ([$failing[] | select(
-      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // "") < $testsAt)) or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // "") < $perfAt)))]) as $staleOverride
+# $staleOverride — the label-reactive reds whose downgrade the freshness
+# conjunct REFUSED (label applied after the run completed). Surfaced as fields
+# 33/34 so the poll loop can print an actionable WARN instead of a silent
+# block.
+| ($labelReactiveRed - $downgraded) as $staleOverride
 | ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
 | (if ($crall | length) == 0 then "NONE"
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur

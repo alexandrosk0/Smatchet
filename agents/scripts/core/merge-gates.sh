@@ -567,7 +567,7 @@ poll_merge_gates() {
     # Option B: parse the GraphQL response with gh's BUNDLED jq (`gh api --jq`)
     # — no standalone `jq` binary required (gh is the only dep). One filter
     # computes every gate field and emits them as a fixed-order, one-per-line
-    # stream (33 lines) that the poll loop reads with `mapfile`. The exact jq
+    # stream (35 lines) that the poll loop reads with `mapfile`. The exact jq
     # sub-expressions are the same ones the per-field `jq` calls used before;
     # they're just composed into one program. ORCH_USER is spliced in as a
     # string literal because `gh --jq` (unlike standalone jq) takes no --arg.
@@ -751,7 +751,7 @@ poll_merge_gates() {
         local stale_ov_names="${fields[33]}"
         local stale_ov_count="${fields[34]:--1}"
         if [ "$stale_ov_count" -gt 0 ]; then
-            echo "WARN: out-of-band label applied AFTER the latest run of ${stale_ov_count} failing check(s) completed — downgrade refused (stale-override guard): ${stale_ov_names}. Waiting for the post-label re-run." >&2
+            echo "WARN: out-of-band label applied AFTER the latest run of ${stale_ov_count} failing check(s) completed — downgrade refused (stale-override guard): ${stale_ov_names}. Waiting for the post-label re-run (the labeled trigger starts one). If none is coming — label applied by GITHUB_TOKEN automation (does not trigger workflows), an Actions outage, or a renamed check — re-run the workflow manually (gh run rerun <run-id> / gh workflow run) or push a commit; re-applying the label only moves the label-time later and cannot help." >&2
         fi
 
         # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.

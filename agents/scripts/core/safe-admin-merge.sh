@@ -75,11 +75,19 @@
 # is the lever for those edge cases here.
 #
 # `*-out-of-band` PR labels downgrade the matching check, same as the poller
-# (test-oob-label-impl.sh --parity asserts this set stays equal to merge-gates.sh
-# $downgraded — a half-wired label was the ADR-0022 intent-out-of-band bug):
-#   tests-out-of-band  → "Test-delta gate"   ·  perf-out-of-band → "Perf PR-fast*"
+# (test-oob-label-impl.sh --parity asserts the GATE-SIDE-ONLY subset stays in
+# sync with merge-gates.sh $downgraded — a half-wired label was the ADR-0022
+# intent-out-of-band bug):
 #   intent-out-of-band → "Intent section" (mirrors poll_merge_gates $intent downgrade)
 #   plan-lock-out-of-band → "Plan-lock gate" (mirrors poll_merge_gates $planlock)
+#   tests-out-of-band / perf-out-of-band → NOT honoured by this guard
+#                        (stale-override guard, merge-pipeline-01): their
+#                        workflows are label-reactive — they re-run on `labeled`
+#                        and self-report green — and this guard has no
+#                        label-event timestamps, so waiving a red run here
+#                        would re-open the pre-label-run race the poller now
+#                        refuses. A red Test-delta / Perf PR-fast blocks until
+#                        the post-label re-run reports green server-side.
 #   cr-out-of-band     → waives the CodeRabbit-completion wait above (it still does
 #                        NOT downgrade any CI check — CR is its only scope).
 #
@@ -169,6 +177,54 @@ read_required_contexts() {
 }
 
 # ----------------------------------------------------------------------------
+# _SAM_JQ_DEFS — jq defs shared by evaluate_rollup + downgraded_red_checks so
+# the two projections can never disagree on "latest run per check" or on the
+# green/red predicates (the drift the merge snapshot exists to prevent).
+#
+# sam_latest — dedup-to-latest-run BEFORE judging green/red (mirrors
+# merge-gates.sh $ctx). A check name can appear MULTIPLE times in
+# statusCheckRollup when a job is re-run / superseded: an older CANCELLED /
+# FAILURE run plus a newer SUCCESS run. Judging every raw row would let the
+# stale non-green run veto a check whose LATEST run is green — a false REFUSAL
+# (e.g. a doc-validation CANCELLED by a body-edit re-trigger that then re-ran
+# green). Group by (typename, name/context) and keep only the latest run per
+# group — latest = max completedAt, then max startedAt as a tie-break (a
+# still-running rerun of a finished job has no completedAt; startedAt still
+# orders it newest). StatusContexts have neither timestamp, but GitHub already
+# overwrites a StatusContext in place by context, so each appears once and the
+# group is a singleton (the sort is a harmless no-op). The missing-timestamp
+# default is a FAR-FUTURE sentinel ("9999-..."), NOT "": a null completedAt
+# means the run is still IN PROGRESS (a re-trigger of a finished job), and a
+# still-running re-trigger is genuinely the NEWEST run — so it must sort LAST
+# (win as the latest), not first. With a "" default the in-progress row sorted
+# FIRST lexicographically and a completed older SUCCESS could be wrongly picked
+# as "latest" over the live re-run. The same far-future sentinel is used for
+# both completedAt and startedAt so the tie-break stays consistent.
+#
+# sam_name / sam_green / sam_red — per-row name + verdict predicates.
+# sam_red is TERMINAL red (mirrors the merge-gates $failing conclusion set),
+# NOT merely "not green": a PENDING/IN_PROGRESS row must never be recorded in
+# the ledger's redChecks as a bypassed failure.
+# ----------------------------------------------------------------------------
+# shellcheck disable=SC2016  # single-quoted jq literal — $-refs are jq vars
+_SAM_JQ_DEFS='
+def sam_latest: (((.statusCheckRollup) // [])
+    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
+                    else ["StatusContext", (.context // "")] end)})
+    | group_by(._k)
+    | map(sort_by((.completedAt // "9999-12-31T23:59:59Z"), (.startedAt // "9999-12-31T23:59:59Z")) | .[-1] | del(._k)));
+def sam_name: (if .__typename == "CheckRun" then (.name // "") else (.context // "") end);
+def sam_green: (if .__typename == "CheckRun"
+    then (.status == "COMPLETED"
+          and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
+    else ((.state // "") | ascii_upcase | . == "SUCCESS") end);
+def sam_red: (if .__typename == "CheckRun"
+    then (.status == "COMPLETED"
+          and ((.conclusion // "") | ascii_upcase | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")))
+    else ((.state // "") | ascii_upcase | IN("FAILURE","ERROR")) end);
+'
+
+# ----------------------------------------------------------------------------
 # evaluate_rollup <rollup-json> — the PURE core, fully testable with no `gh`.
 # Reads a `gh pr view --json statusCheckRollup,state,labels` object on stdin-arg
 # and the required-context list on $2 (newline-separated). Emits the list of
@@ -195,52 +251,28 @@ evaluate_rollup() {
 
     printf '%s' "$view_json" | jq -r \
         --argjson req "$req_json" \
-        --arg allow "$MERGE_GATES_BLOCK_ALLOWLIST_RE" '
-        # Label-driven downgrades (mirror merge-gates $downgraded).
+        --arg allow "$MERGE_GATES_BLOCK_ALLOWLIST_RE" \
+        "$_SAM_JQ_DEFS"'
+        # Label-driven downgrades — GATE-SIDE-ONLY labels (merge-gates
+        # $downgraded minus its stale-override-guarded arms). tests-/perf-
+        # out-of-band are deliberately NOT honoured here (stale-override guard,
+        # merge-pipeline-01): their workflows read labels LIVE and re-run on
+        # `labeled`, so the check itself self-reports green shortly after the
+        # label lands — and this guard has NO label-event timestamps (`gh pr
+        # view` carries no timeline), so honouring the label against a
+        # red/absent run would re-open the exact pre-label-run race the poller
+        # now refuses. Fail closed: block until the post-label re-run goes
+        # green server-side. intent-/plan-lock-out-of-band stay honoured:
+        # their workflows are label-blind (no labeled re-run will ever come),
+        # so the gate-side downgrade IS the dismissal mechanism and a
+        # freshness demand would wedge the guard.
         ([.labels[]?.name] // []) as $labels
-        | ($labels | any(. == "tests-out-of-band")) as $testsOob
-        | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
-        # Dedup-to-latest-run BEFORE judging green/red (mirrors merge-gates.sh
-        # $ctx). A check name can appear MULTIPLE times in statusCheckRollup when a
-        # job is re-run / superseded: an older CANCELLED / FAILURE run plus a newer
-        # SUCCESS run. Judging every raw row would let the stale non-green run veto
-        # a check whose LATEST run is green — a false REFUSAL (e.g. a doc-validation
-        # CANCELLED by a body-edit re-trigger that then re-ran green). Group by
-        # (typename, name/context) and keep only the latest run per group — latest =
-        # max completedAt, then max startedAt as a tie-break (a still-running rerun
-        # of a finished job has no completedAt; startedAt still orders it newest).
-        # StatusContexts have neither timestamp, but GitHub already overwrites a
-        # StatusContext in place by context, so each appears once and the group is a
-        # singleton (the sort is a harmless no-op).
-        #
-        # The missing-timestamp default is a FAR-FUTURE sentinel ("9999-..."), NOT
-        # "": a null completedAt means the run is still IN PROGRESS (a re-trigger of
-        # a finished job), and a still-running re-trigger is genuinely the NEWEST
-        # run — so it must sort LAST (win as the latest), not first. With a ""
-        # default the in-progress row sorted FIRST lexicographically and a completed
-        # older SUCCESS could be wrongly picked as "latest" over the live re-run.
-        # The same far-future sentinel is used for both completedAt and startedAt so
-        # the tie-break stays consistent (an in-progress run with neither timestamp
-        # still sorts newest).
-        | (((.statusCheckRollup) // [])
-            | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
-                            else ["StatusContext", (.context // "")] end)})
-            | group_by(._k)
-            | map(sort_by((.completedAt // "9999-12-31T23:59:59Z"), (.startedAt // "9999-12-31T23:59:59Z")) | .[-1] | del(._k))) as $latest
+        | (sam_latest) as $latest
         # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
         # the absent-required cross-check below can see which names are present.
-        | ($latest
-            | map(
-                (if .__typename == "CheckRun" then (.name // "")
-                 else (.context // "") end) as $name
-                | (if .__typename == "CheckRun"
-                   then (.status == "COMPLETED"
-                         and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
-                   else ((.state // "") | ascii_upcase | . == "SUCCESS") end) as $green
-                | {name: $name, green: $green}
-              )) as $rows
+        | ($latest | map({name: sam_name, green: sam_green})) as $rows
         | ([$rows[].name]) as $present
         # Blockers among rows that EXIST: gating (required OR allow-listed-non-
         # advisory) and non-green, after out-of-band downgrades. Bind the row to
@@ -253,19 +285,15 @@ evaluate_rollup() {
                       and (($r.name | ascii_downcase | contains("advisory")) | not)))}) as $g
              | ($g + {gating:
                  ($g.gating
-                  and (($testsOob and $g.name == "Test-delta gate") | not)
-                  and (($perfOob and ($g.name | startswith("Perf PR-fast"))) | not)
                   and (($intentOob and $g.name == "Intent section") | not)
                   and (($planlockOob and $g.name == "Plan-lock gate") | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
         # Absent-required cross-check (fail-closed): a required context missing
-        # from the rollup is a blocker, NOT a silent green — same out-of-band
-        # downgrades apply.
+        # from the rollup is a blocker, NOT a silent green — same gate-side-only
+        # downgrades apply (see the label comment above).
         | ([ $req[]
              | select(. as $rn | ($present | any(. == $rn)) | not)
-             | select(($testsOob and . == "Test-delta gate") | not)
-             | select(($perfOob and (. | startswith("Perf PR-fast"))) | not)
              | select(($intentOob and . == "Intent section") | not)
              | select(($planlockOob and . == "Plan-lock gate") | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
@@ -404,24 +432,21 @@ evaluate_cr() {
 # ----------------------------------------------------------------------------
 downgraded_red_checks() {
     local view_json="$1"
-    printf '%s' "$view_json" | jq -r '
+    # All four label arms stay here (unlike evaluate_rollup, which no longer
+    # honours tests/perf): this projection also serves git-janitor's BACKFILL of
+    # merges made by OTHER actors (human/UI, watcher), where a tests/perf label
+    # may genuinely have been load-bearing. sam_red (terminal red), not
+    # not-green: a PENDING row at capture time is unknown, never a bypassed red.
+    printf '%s' "$view_json" | jq -r "$_SAM_JQ_DEFS"'
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "tests-out-of-band")) as $testsOob
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
-        | (((.statusCheckRollup) // [])
-            | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
-                            else ["StatusContext", (.context // "")] end)})
-            | group_by(._k)
-            | map(sort_by((.completedAt // "9999-12-31T23:59:59Z"), (.startedAt // "9999-12-31T23:59:59Z")) | .[-1] | del(._k))) as $latest
+        | (sam_latest) as $latest
         | $latest[]
-        | (if .__typename == "CheckRun" then (.name // "") else (.context // "") end) as $name
-        | (if .__typename == "CheckRun"
-           then (.status == "COMPLETED"
-                 and ((.conclusion // "") | ascii_upcase | IN("SUCCESS","NEUTRAL","SKIPPED")))
-           else ((.state // "") | ascii_upcase | . == "SUCCESS") end) as $green
-        | select(($green | not)
+        | sam_name as $name
+        | select((sam_red)
                  and (($testsOob and $name == "Test-delta gate")
                       or ($perfOob and ($name | startswith("Perf PR-fast")))
                       or ($intentOob and $name == "Intent section")
@@ -447,9 +472,16 @@ override_labels_csv() {
         cfg_json=$(jq -c '[.merge_gates.override_labels[]?]' "$cfg" 2>/dev/null) || cfg_json='[]'
         [ -n "$cfg_json" ] || cfg_json='[]'
     fi
+    # The config list (merge_gates.override_labels — now including
+    # plan-lock-out-of-band) is the source of truth all writers share. The
+    # hardcoded union below is ONLY the config-read-failure fallback and must
+    # stay the COMPLETE label set: an incomplete fallback silently drops a
+    # load-bearing label from the ledger row exactly when config is unreadable
+    # (the coverage-out-of-band omission a review caught).
     printf '%s' "$view_json" | jq -r --argjson cfg "$cfg_json" '
         ($cfg + ["tests-out-of-band","perf-out-of-band","intent-out-of-band",
-                 "plan-lock-out-of-band","cr-out-of-band"] | unique) as $known
+                 "plan-lock-out-of-band","cr-out-of-band","coverage-out-of-band"]
+         | unique) as $known
         | [.labels[]?.name | select(. as $n | $known | any(. == $n))]
         | join(",")
     '
@@ -475,8 +507,11 @@ append_admin_merge_snapshot() {
 
     if [ -n "${SAFE_ADMIN_MERGE_STUB_MERGED_JSON:-}" ]; then
         merged_json="$SAFE_ADMIN_MERGE_STUB_MERGED_JSON"
-    elif ! merged_json=$(gh pr view "$pr" --json mergeCommit,mergedAt 2>&1); then
-        echo "safe-admin-merge: WARN — post-merge 'gh pr view' failed ($merged_json); ledger snapshot NOT written (postmortem-owed live fallback covers this PR)" >&2
+    # stdout ONLY — folding stderr in (2>&1) would let a benign gh notice
+    # (update banner, proxy warning) corrupt the JSON and silently kill every
+    # ledger write in that environment.
+    elif ! merged_json=$(gh pr view "$pr" --json mergeCommit,mergedAt 2>/dev/null); then
+        echo "safe-admin-merge: WARN — post-merge 'gh pr view' failed; ledger snapshot NOT written (postmortem-owed live fallback covers this PR)" >&2
         return 0
     fi
     mc=$(printf '%s' "$merged_json" | jq -r '.mergeCommit.oid // ""' 2>/dev/null) || mc=""
@@ -486,16 +521,26 @@ append_admin_merge_snapshot() {
         return 0
     fi
 
-    red_lines=$(downgraded_red_checks "$view_json") || red_lines=""
+    # Projection failure => SKIP the write (leave the hole). Degrading to empty
+    # arrays and appending anyway would write an authoritative-looking "clean"
+    # row that suppresses postmortem-owed's live fallback — converting
+    # "unknown" into "clean", the opposite of what the ledger is for.
+    if ! red_lines=$(downgraded_red_checks "$view_json"); then
+        echo "safe-admin-merge: WARN — redChecks projection failed; ledger snapshot NOT written (live fallback covers this PR)" >&2
+        return 0
+    fi
     red_csv=$(printf '%s\n' "$red_lines" | paste -sd, -)
     if [ "$cr_waived_red" = "1" ]; then
         if [ -n "$red_csv" ]; then red_csv="$red_csv,CodeRabbit"; else red_csv="CodeRabbit"; fi
     fi
-    override_csv=$(override_labels_csv "$view_json") || override_csv=""
+    if ! override_csv=$(override_labels_csv "$view_json"); then
+        echo "safe-admin-merge: WARN — overrideLabels projection failed; ledger snapshot NOT written (live fallback covers this PR)" >&2
+        return 0
+    fi
 
     if SNAPSHOT_MERGED_AT="$merged_at" bash "$SCRIPT_DIR/merge-snapshot-append.sh" \
         "$pr" "$mc" "$head_sha" GATES_PASSED "$red_csv" "$override_csv" safe-admin-merge; then
-        echo "Merge snapshot appended (actor safe-admin-merge; redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Land it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
+        echo "Merge snapshot appended (actor safe-admin-merge; redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
     else
         echo "safe-admin-merge: WARN — merge-snapshot-append failed; ledger row NOT written (live fallback covers this PR)" >&2
     fi
@@ -554,15 +599,19 @@ run_selftest() {
         fails=$((fails + 1))
     fi
 
-    # CASE 4 — out-of-band label downgrades a RED gated check to non-blocking.
+    # CASE 4 — perf-out-of-band does NOT downgrade here (stale-override guard,
+    # merge-pipeline-01): the guard has no label-event timestamps, so honouring
+    # a label-reactive override against a red run would re-open the pre-label-
+    # run race. The red Perf check must BLOCK until the labeled-triggered
+    # re-run self-reports green server-side.
     local oob_rollup
     oob_rollup='{"state":"OPEN","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
       {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
     blockers=$(evaluate_rollup "$oob_rollup" "")
-    if [ -z "$blockers" ]; then
-        echo "selftest CASE4 PASS — perf-out-of-band downgrades RED Perf PR-fast"
+    if printf '%s' "$blockers" | grep -q 'Perf PR-fast'; then
+        echo "selftest CASE4 PASS — perf-out-of-band no longer waives a RED Perf PR-fast (label-reactive; guard is timestamp-blind)"
     else
-        echo "selftest CASE4 FAIL — perf-out-of-band check should not block (got: '$blockers')" >&2
+        echo "selftest CASE4 FAIL — red Perf PR-fast should block despite perf-out-of-band (got: '$blockers')" >&2
         fails=$((fails + 1))
     fi
 
@@ -864,12 +913,18 @@ main() {
     esac
 
     # cr_waived_red — did cr-out-of-band waive a CR gate that would otherwise
-    # have BLOCKED? Re-evaluate with the label stripped: BLOCK sans-label means
-    # the waiver was load-bearing, so the ledger's redChecks records the literal
-    # "CodeRabbit" (same convention as the watcher path, ADR-0017). Any jq
-    # hiccup degrades to 0 (unrecorded waiver, never a blocked merge).
-    local cr_waived_red=0
-    if [ "$cr_verdict" = "PASS cr-out-of-band label waives the CodeRabbit wait" ]; then
+    # have BLOCKED? Trigger on the LABEL being present (not on evaluate_cr's
+    # verdict prose — a reworded reason string must not silently disable this
+    # capture), then re-evaluate with the label stripped: BLOCK sans-label
+    # means the waiver was load-bearing, so the ledger's redChecks records the
+    # literal "CodeRabbit" (same convention as the watcher path, ADR-0017). A
+    # PASS that never needed the label (CR green / not installed) re-evaluates
+    # PASS sans-label too and stays 0. Any jq hiccup degrades to 0 (unrecorded
+    # waiver, never a blocked merge).
+    local cr_waived_red=0 has_cr_oob_label
+    has_cr_oob_label=$(printf '%s' "$view_json" \
+        | jq -r '[.labels[]?.name] | any(. == "cr-out-of-band")' 2>/dev/null) || has_cr_oob_label=false
+    if [ "$has_cr_oob_label" = "true" ]; then
         local sans_label_json sans_verdict
         sans_label_json=$(printf '%s' "$view_json" \
             | jq -c '.labels |= map(select(.name != "cr-out-of-band"))' 2>/dev/null) || sans_label_json=""

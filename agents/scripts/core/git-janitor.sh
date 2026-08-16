@@ -200,6 +200,19 @@ backfill_merge_snapshot() {
     local jdir view mc merged_at head_sha ledger red_csv override_csv ma age_cap
     command -v jq >/dev/null 2>&1 || { echo "[git-janitor] ledger backfill skipped (jq not on PATH; live fallback covers)."; return 0; }
     jdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    # Ledger path: anchored to the SCRIPT's repo root (jdir/../../..), the same
+    # anchor merge-snapshot-append.sh uses — NOT $JANITOR_TREE (the cwd's
+    # toplevel), which can be a different worktree; the dedup check and the
+    # append must always target the same file, so the resolved path is also
+    # passed to the helper explicitly.
+    ledger="${MERGE_SNAPSHOT_LEDGER:-$(cd "$jdir/../../.." && pwd)/docs/self-improvement/merge-snapshots.jsonl}"
+    # Fast path BEFORE any network call: a GitHub PR merges at most once, so a
+    # pr-number match alone proves a row exists (fixed-string grep; the
+    # helper's pr+mergeCommit idempotency guard stays the authoritative dedup).
+    if [ -f "$ledger" ] && grep -qF "\"pr\":${PR_NUMBER}," "$ledger"; then
+        echo "[git-janitor] ledger row for PR #${PR_NUMBER} already present (merge actor wrote it) — no backfill needed."
+        return 0
+    fi
     view="$(gh pr view "$PR_NUMBER" --json mergeCommit,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null || echo "")"
     mc="$(jq -r '.mergeCommit.oid // ""' <<<"$view" 2>/dev/null || echo "")"
     merged_at="$(jq -r '.mergedAt // ""' <<<"$view" 2>/dev/null || echo "")"
@@ -208,26 +221,48 @@ backfill_merge_snapshot() {
         echo "[git-janitor] ledger backfill skipped (mergeCommit/headRefOid unavailable; live fallback covers)."
         return 0
     fi
-    ledger="${MERGE_SNAPSHOT_LEDGER:-$JANITOR_TREE/docs/self-improvement/merge-snapshots.jsonl}"
-    if [ -f "$ledger" ] && grep -qE "\"pr\":${PR_NUMBER},.*\"mergeCommit\":\"${mc}\"" "$ledger"; then
-        echo "[git-janitor] ledger row for PR #${PR_NUMBER} already present (merge actor wrote it) — no backfill needed."
+    # An empty mergedAt must be checked EXPLICITLY: GNU `date -d ""` succeeds
+    # (today 00:00 UTC), so feeding it through the age math would fail OPEN
+    # before 06:00 UTC and stamp the row with the janitor's run time — exactly
+    # the post-hoc-stale row ADR-0017 forbids.
+    if [ -z "$merged_at" ]; then
+        echo "[git-janitor] ledger backfill skipped (mergedAt unavailable — undatable fails closed; live fallback covers PR #${PR_NUMBER})." >&2
         return 0
     fi
     age_cap="${SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS:-6}"
     if [ "$age_cap" != "0" ]; then
-        ma="$(date -u -d "$merged_at" +%s 2>/dev/null || echo "")"
+        # GNU date first, BSD/macOS fallback (mirrors safe-admin-merge.sh's
+        # grace math) — without it every mergedAt is "undatable" on BSD hosts
+        # and the backfill silently never fires.
+        ma="$(date -u -d "$merged_at" +%s 2>/dev/null \
+              || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$merged_at" +%s 2>/dev/null \
+              || echo "")"
         if [ -z "$ma" ] || [ $(( NOW_TS - ma )) -gt $(( age_cap * 3600 )) ]; then
             echo "[git-janitor] ledger backfill skipped — merge older than ${age_cap}h (or undatable): a post-hoc row this stale is worse than a hole (ADR-0017); postmortem-owed live fallback covers PR #${PR_NUMBER}." >&2
             return 0
         fi
     fi
-    # safe-admin-merge.sh is entry-guarded (sourcing only defines functions) and
-    # provides the shared redChecks/overrideLabels projections used here.
-    # shellcheck source=agents/scripts/core/safe-admin-merge.sh
-    . "$jdir/safe-admin-merge.sh"
-    red_csv="$(downgraded_red_checks "$view" | paste -sd, -)" || red_csv=""
-    override_csv="$(override_labels_csv "$view")" || override_csv=""
-    if SNAPSHOT_MERGED_AT="$merged_at" bash "$jdir/merge-snapshot-append.sh" \
+    # The redChecks/overrideLabels projections live in safe-admin-merge.sh.
+    # Source it inside a SUBSHELL: although its CLI entry point is guarded,
+    # sourcing still executes its top level, which can `exit 2` fail-closed
+    # (e.g. the merge-gates allowlist failing to load) — and `exit` in a file
+    # sourced HERE would kill the whole janitor past the point it already
+    # mutated HEAD. The subshell contains any exit; a non-zero rc (source
+    # failure OR jq failure, pipefail) skips the append entirely — degrading
+    # to empty arrays and appending anyway would write an authoritative-looking
+    # "clean" row that suppresses postmortem-owed's live fallback.
+    if ! red_csv="$( ( set -o pipefail; . "$jdir/safe-admin-merge.sh" >/dev/null 2>&1
+                       downgraded_red_checks "$view" | paste -sd, - ) 2>/dev/null )"; then
+        echo "[git-janitor] WARN — redChecks projection failed; ledger row NOT written (live fallback covers PR #${PR_NUMBER})." >&2
+        return 0
+    fi
+    if ! override_csv="$( ( . "$jdir/safe-admin-merge.sh" >/dev/null 2>&1
+                            override_labels_csv "$view" ) 2>/dev/null )"; then
+        echo "[git-janitor] WARN — overrideLabels projection failed; ledger row NOT written (live fallback covers PR #${PR_NUMBER})." >&2
+        return 0
+    fi
+    if MERGE_SNAPSHOT_LEDGER="$ledger" SNAPSHOT_MERGED_AT="$merged_at" \
+        bash "$jdir/merge-snapshot-append.sh" \
         "$PR_NUMBER" "$mc" "$head_sha" BACKFILLED "$red_csv" "$override_csv" git-janitor; then
         echo "[git-janitor] ledger row BACKFILLED for PR #${PR_NUMBER} (redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
     else
@@ -235,7 +270,10 @@ backfill_merge_snapshot() {
     fi
     return 0
 }
-backfill_merge_snapshot || echo "[git-janitor] WARN — ledger backfill errored; live fallback covers PR #${PR_NUMBER}." >&2
+# ||-context suspends -e inside the function; the function itself always
+# returns 0 (every failure path degrades + logs), so `|| true` is honest —
+# there is no reachable error branch to report here.
+backfill_merge_snapshot || true
 
 # ---------- Step 6: dual-target regression build -----------------------------
 echo "[git-janitor] running dual-target regression build..."

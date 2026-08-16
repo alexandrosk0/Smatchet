@@ -69,7 +69,7 @@ N/A — no Source/Core code; no C++. Adds a shell script + project.config.json +
 ## Verification
 
 - **Bucket A / E**: N/A — no code.
-- **Live-state check**: after `setup-branch-protection.sh`, `gh api repos/<owner>/<repo>/branches/develop/protection/required_pull_request_reviews --jq .required_approving_review_count` returns `0`; `…/required_status_checks --jq .contexts` still lists the four required names; `…/protection --jq .enforce_admins.enabled` still `false`.
+- **Live-state check**: after `setup-branch-protection.sh`, `gh api repos/<owner>/<repo>/branches/develop/protection/required_pull_request_reviews --jq .required_approving_review_count` returns `0`; `…/required_status_checks --jq .contexts` still lists the four required names; `…/protection --jq .enforce_admins.enabled` still `false`. *(Superseded 2026-08-16, merge-pipeline-06: `enforce_admins` is now `true` — the expected live value flipped with `project.config.json`; do NOT treat `true` as drift or revert it. The rest of the check stands.)*
 - **End-to-end**: a fresh CR-clean, CI-green docs PR reaches `mergeStateStatus` other than `BLOCKED` (i.e. `CLEAN`/`UNSTABLE`) with no approval — confirming the deadlock is gone.
 - **Idempotence**: re-running `setup-branch-protection.sh` is a no-op (same state in → same state out); `--dry-run` matches the applied object.
 - **Shell lint**: `test-shell-lint.sh` on the new script.
