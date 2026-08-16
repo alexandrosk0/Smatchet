@@ -78,7 +78,7 @@
       "C++ lint (catch-all + cppcheck)"
     ],
     "required_review_count": 0,
-    "enforce_admins": false,
+    "enforce_admins": true,
     "strict": false
   },
   "ci": {

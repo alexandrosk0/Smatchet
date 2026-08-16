@@ -320,3 +320,90 @@ JSON
     [ "$status" -eq 0 ]
     [ -n "$output" ]
 }
+
+# ---------- Merge-time snapshot ledger (ADR-0017 "remaining writer") ----------
+
+@test "ledger: clean green admin-merge appends a snapshot row (actor safe-admin-merge, empty redChecks)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha1","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc1"},"mergedAt":"2026-08-16T12:00:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1180
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    [ -f "$MERGE_SNAPSHOT_LEDGER" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"pr":1180,'* ]]
+    [[ "$output" == *'"mergeCommit":"mc1"'* ]]
+    [[ "$output" == *'"headSha":"headsha1"'* ]]
+    [[ "$output" == *'"mergedAt":"2026-08-16T12:00:00Z"'* ]]
+    [[ "$output" == *'"gates":"GATES_PASSED"'* ]]
+    [[ "$output" == *'"redChecks":[]'* ]]
+    [[ "$output" == *'"mergeActor":"safe-admin-merge"'* ]]
+}
+
+@test "ledger: perf-out-of-band downgraded RED lands in redChecks + overrideLabels" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha2","labels":[{"name":"perf-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"CheckRun","name":"Perf PR-fast (windows-2022)","status":"COMPLETED","conclusion":"FAILURE"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc2"},"mergedAt":"2026-08-16T12:05:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1181
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":["Perf PR-fast (windows-2022)"]'* ]]
+    [[ "$output" == *'"overrideLabels":["perf-out-of-band"]'* ]]
+}
+
+@test "ledger: cr-out-of-band waiving a REAL CR block records the literal CodeRabbit in redChecks" {
+    # CR installed but ABSENT from the rollup (never showed on this head), grace
+    # not expired — sans-label the CR gate would BLOCK ("has not reviewed this
+    # head yet"), so the waiver is load-bearing and redChecks must name it
+    # (the watcher-path convention, ADR-0017). A PENDING CodeRabbit rollup row
+    # would instead block at the CI-pending stage, before the CR gate.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha3","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc3"},"mergedAt":"2026-08-16T12:10:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1182
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":["CodeRabbit"]'* ]]
+    [[ "$output" == *'"overrideLabels":["cr-out-of-band"]'* ]]
+}
+
+@test "ledger: a moot cr-out-of-band (CR green anyway) writes redChecks [] (no false flag)" {
+    # The label is present but CR is green — the waiver bypassed nothing, so
+    # postmortem-owed must be able to tell this moot label from a load-bearing one.
+    export SAFE_ADMIN_MERGE_CR_INSTALLED=true
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha4","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":{"oid":"mc4"},"mergedAt":"2026-08-16T12:15:00Z"}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1183
+    [ "$status" -eq 0 ]
+    run cat "$MERGE_SNAPSHOT_LEDGER"
+    [[ "$output" == *'"redChecks":[]'* ]]
+    [[ "$output" == *'"overrideLabels":["cr-out-of-band"]'* ]]
+}
+
+@test "ledger: post-merge mergeCommit unavailable -> WARN, no row, merge still exit 0 (best-effort)" {
+    export SAFE_ADMIN_MERGE_STUB_ROLLUP='{"state":"OPEN","headRefOid":"headsha5","labels":[],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"Windows + MSVC","state":"SUCCESS"},
+      {"__typename":"StatusContext","context":"Test-delta gate","state":"SUCCESS"}]}'
+    export SAFE_ADMIN_MERGE_STUB_MERGED_JSON='{"mergeCommit":null,"mergedAt":""}'
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
+    run bash "$SCRIPT" 1184
+    [ "$status" -eq 0 ]
+    [ -f "$MERGE_SENTINEL" ]
+    [ ! -f "$MERGE_SNAPSHOT_LEDGER" ]
+    [[ "$output" == *"ledger snapshot NOT written"* ]]
+}

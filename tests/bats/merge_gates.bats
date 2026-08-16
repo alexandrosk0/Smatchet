@@ -1229,6 +1229,46 @@ set_fixture() {
     [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Perf PR-fast"* ]]
 }
 
+@test "stale-override guard: label applied AFTER the failing run completed -> downgrade refused, gate blocks (merge-pipeline-01)" {
+    # The race window: Test-delta ran (and failed) at 11:55; the operator applied
+    # tests-out-of-band at 12:10. That run was evaluated under a different
+    # label-world (coverage-gate.yml reads labels live and self-dismisses), so the
+    # gate must NOT downgrade it — the labeled-triggered re-run supersedes it.
+    local f g
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_label_tests_oob.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.0.completedAt" \
+        '"2026-05-22T11:55:00Z"')"
+    g="$(fixture_override "$f" \
+        "data.repository.pullRequest.timelineItems" \
+        '{"nodes":[{"createdAt":"2026-05-22T12:10:00Z","label":{"name":"tests-out-of-band"}}]}')"
+    set_fixture "$g"
+    run poll_merge_gates org repo 1
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"stale-override guard"* ]]
+    [[ "$output" == *"Test-delta gate"* ]]
+    rm -f "$f" "$g"
+}
+
+@test "stale-override guard: run completed AFTER the label was applied -> downgrade honoured, gates pass" {
+    # Freshness satisfied: the label landed at 12:10, the (still-failing) run
+    # completed at 12:15 — a post-label evaluation, so the classic downgrade
+    # applies unchanged.
+    local f g
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_label_tests_oob.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.0.completedAt" \
+        '"2026-05-22T12:15:00Z"')"
+    g="$(fixture_override "$f" \
+        "data.repository.pullRequest.timelineItems" \
+        '{"nodes":[{"createdAt":"2026-05-22T12:10:00Z","label":{"name":"tests-out-of-band"}}]}')"
+    set_fixture "$g"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"GATE_SNAPSHOT cr_override=0 downgraded=Test-delta gate"* ]]
+    rm -f "$f" "$g"
+}
+
 @test "non-required Intent section FAILURE blocks (pr-intent-capture-hardening #5)" {
     # "Intent section" joined the meant-to-block allow-list (ADR-0022): the
     # doc-validation Intent gate now exits non-zero on a missing/empty `## Intent`,
@@ -3024,10 +3064,10 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 33; the
-    # -ne 33 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 35; the
+    # -ne 35 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
-    # + thread-count fields rely on).
+    # + thread-count + stale-override fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -3035,7 +3075,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 33"* ]]
+    [[ "$output" == *"expected 35"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }

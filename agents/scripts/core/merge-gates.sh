@@ -191,7 +191,7 @@ DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
 #   00-common.sh      — the meant-to-block allow-list constant, the prompt-shim
 #                        lazy-source, and gh_pr_ready_idempotent (top-level).
 #   10-gate-filter.sh — the one giant `gh api graphql --jq` GATE_FILTER program
-#                        (the 33-field projection) as a template emitter.
+#                        (the 35-field projection) as a template emitter.
 # The four gate-condition verdicts (CI / CodeRabbit / Bugbot / user-comments)
 # stay INLINE in poll_merge_gates: they share one tightly-coupled per-poll local
 # state (cr_pass, cr_open_blocks, streak counters, the nudge_coderabbit closure)
@@ -600,15 +600,20 @@ poll_merge_gates() {
     # 31 thrUnresolvedTotal (UNFILTERED unresolved non-outdated review-thread
     # count — what required_conversation_resolution actually gates on; the
     # user-comment gate's filtered view excludes bot threads, #1937) ·
-    # 32 thrUnresolvedUser (the user-authored subset of 31; bot = 31 - 32).
+    # 32 thrUnresolvedUser (the user-authored subset of 31; bot = 31 - 32) ·
+    # 33 staleOverrideNames (", "-joined names of failing checks whose
+    # tests-/perf-out-of-band downgrade was REFUSED because the run completed
+    # before the label was applied — stale-override guard, merge-pipeline-01;
+    # may be empty) · 34 staleOverrideCount (their count).
     # The trailing fields must all be non-empty so the `data=$(gh …)` command
     # substitution (trailing-newline collapse) never strips one and deflates the
-    # 33-field count (tripping the fail-closed assertion). reqAbsentCount (22),
+    # 35-field count (tripping the fail-closed assertion). reqAbsentCount (22),
     # crReviewSkipped (23), bbState (24, ABSENT-default), bbOpen (25, numeric),
     # bbOob (26), selfImpOnly (27), pureDocs (28), crRateLimited (29),
-    # crDisposition (30) and the two numeric thread counts (31/32) are all
-    # non-empty tokens, so they are safe at the tail.
-    # GATE_FILTER — the 33-field jq projection (see field-order map above).
+    # crDisposition (30), the two numeric thread counts (31/32) and
+    # staleOverrideCount (34, numeric — deliberately AFTER the possibly-empty
+    # names field 33) are all non-empty tokens, so they are safe at the tail.
+    # GATE_FILTER — the 35-field jq projection (see field-order map above).
     # Copied byte-for-byte from the _MG_GATE_FILTER_TEMPLATE global that
     # merge-gates.d/10-gate-filter.sh defines (single-quoted literal → no
     # command-substitution newline trim); placeholders spliced below as before.
@@ -654,7 +659,7 @@ poll_merge_gates() {
         fi
         gh_fails=0
 
-        # Parse the gh --jq field stream — 33 fixed-order lines (see GATE_FILTER
+        # Parse the gh --jq field stream — 35 fixed-order lines (see GATE_FILTER
         # field map above). gh --jq errors already routed through the gh-fail
         # path above; this guards a truncated/partial body → fail closed (retry).
         local fields
@@ -663,11 +668,11 @@ poll_merge_gates() {
         # "OPEN\r" != "OPEN" → spurious return-4).
         data="${data//$'\r'/}"
         mapfile -t fields <<<"$data"
-        if [ "${#fields[@]}" -ne 33 ]; then
-            # Exactly 33 expected. Any other count (a field value with an embedded
+        if [ "${#fields[@]}" -ne 35 ]; then
+            # Exactly 35 expected. Any other count (a field value with an embedded
             # newline would inflate it, misaligning fields[n]) → fail closed (CR #511).
             gh_fails=$((gh_fails+1))
-            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 33); transient ($gh_fails/3)"
+            echo "Poll $((p+1)): gate filter returned ${#fields[@]} fields (expected 35); transient ($gh_fails/3)"
             if [ "$gh_fails" -ge 3 ]; then echo "GH_API_DOWN"; return 3; fi
             local elapsed_short=$(( $(date +%s) - start ))
             if [ "$elapsed_short" -ge "$TIMEOUT_SECONDS" ]; then echo "GATES_TIMEOUT"; return 2; fi
@@ -736,6 +741,17 @@ poll_merge_gates() {
         # label hid. Mirrors the "Skip gates and merge anyway" LOG_WARN pattern.
         if [ "$ci_warn_downgraded" -gt 0 ]; then
             echo "WARN: out-of-band label(s) downgraded ${ci_warn_downgraded} failing check(s) to WARN: ${dg_names}" >&2
+        fi
+
+        # Stale-override guard (merge-pipeline-01): a tests-/perf-out-of-band
+        # downgrade was REFUSED because the failing run completed BEFORE the
+        # label was applied. The check stays in ci_fail (the gate keeps
+        # blocking); the labeled-triggered re-run supersedes it within minutes,
+        # so this is a defer, not a terminal state. Advisory print only.
+        local stale_ov_names="${fields[33]}"
+        local stale_ov_count="${fields[34]:--1}"
+        if [ "$stale_ov_count" -gt 0 ]; then
+            echo "WARN: out-of-band label applied AFTER the latest run of ${stale_ov_count} failing check(s) completed — downgrade refused (stale-override guard): ${stale_ov_names}. Waiting for the post-label re-run." >&2
         fi
 
         # CodeRabbit — four-bucket discrimination with body-aware actionable parsing.

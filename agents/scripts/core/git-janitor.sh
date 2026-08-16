@@ -15,6 +15,10 @@
 #   3. fetch + prune remotes.
 #   4. Switch to develop, fast-forward to origin/develop.
 #   5. Delete the local PR branch (after GitHub remote-delete on squash-merge).
+#   5.5. Backfill the merge-snapshot ledger row when the merge actor left none
+#      (human/UI merges — merge-pipeline-02; verdict BACKFILLED, actor
+#      git-janitor, age-capped via SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS,
+#      default 6h, 0 = uncapped; best-effort, never fails the cleanup).
 #   6. Run `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12`
 #      as the final regression gate.
 #   7. Print a concise report.
@@ -174,6 +178,64 @@ if [ -n "$PR_BRANCH" ] && git show-ref --quiet "refs/heads/$PR_BRANCH"; then
 else
     echo "[git-janitor] local branch ${PR_BRANCH:-<unknown>} already gone (or never existed locally)."
 fi
+
+# ---------- Step 5.5: merge-snapshot ledger backfill (ADR-0017) ---------------
+# The sanctioned merge actors append their own ledger row at the decision
+# instant; a HUMAN/UI merge — or an automerge-arming session that died before
+# the merge event — leaves a ledger hole (merge-pipeline-02). This janitor runs
+# minutes after a merge, so it is the post-merge hook that closes the hole:
+# when the just-cleaned PR has NO row for pr+mergeCommit, compose one from the
+# live PR state (labels persist on merged PRs outside the watcher path; the
+# rollup is minutes-fresh — strictly fresher than the SessionStart live
+# fallback that otherwise covers the hole) and append it with verdict
+# BACKFILLED + actor git-janitor. BACKFILLED (never GATES_PASSED) marks the row
+# post-hoc-composed; the detector keys on redChecks/overrideLabels, which ARE
+# captured (via safe-admin-merge.sh's shared projections). Age cap: a merge
+# older than SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS (default 6; 0 = uncapped)
+# is LEFT AS A HOLE — ADR-0017: a stale line is worse than a hole, and an
+# unparseable mergedAt fails closed to "too old". Best-effort throughout: no
+# failure here ever fails the cleanup (the || invocation also suspends -e
+# inside, so each parse degrades instead of aborting).
+backfill_merge_snapshot() {
+    local jdir view mc merged_at head_sha ledger red_csv override_csv ma age_cap
+    command -v jq >/dev/null 2>&1 || { echo "[git-janitor] ledger backfill skipped (jq not on PATH; live fallback covers)."; return 0; }
+    jdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+    view="$(gh pr view "$PR_NUMBER" --json mergeCommit,mergedAt,headRefOid,labels,statusCheckRollup 2>/dev/null || echo "")"
+    mc="$(jq -r '.mergeCommit.oid // ""' <<<"$view" 2>/dev/null || echo "")"
+    merged_at="$(jq -r '.mergedAt // ""' <<<"$view" 2>/dev/null || echo "")"
+    head_sha="$(jq -r '.headRefOid // ""' <<<"$view" 2>/dev/null || echo "")"
+    if [ -z "$mc" ] || [ -z "$head_sha" ]; then
+        echo "[git-janitor] ledger backfill skipped (mergeCommit/headRefOid unavailable; live fallback covers)."
+        return 0
+    fi
+    ledger="${MERGE_SNAPSHOT_LEDGER:-$JANITOR_TREE/docs/self-improvement/merge-snapshots.jsonl}"
+    if [ -f "$ledger" ] && grep -qE "\"pr\":${PR_NUMBER},.*\"mergeCommit\":\"${mc}\"" "$ledger"; then
+        echo "[git-janitor] ledger row for PR #${PR_NUMBER} already present (merge actor wrote it) — no backfill needed."
+        return 0
+    fi
+    age_cap="${SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS:-6}"
+    if [ "$age_cap" != "0" ]; then
+        ma="$(date -u -d "$merged_at" +%s 2>/dev/null || echo "")"
+        if [ -z "$ma" ] || [ $(( NOW_TS - ma )) -gt $(( age_cap * 3600 )) ]; then
+            echo "[git-janitor] ledger backfill skipped — merge older than ${age_cap}h (or undatable): a post-hoc row this stale is worse than a hole (ADR-0017); postmortem-owed live fallback covers PR #${PR_NUMBER}." >&2
+            return 0
+        fi
+    fi
+    # safe-admin-merge.sh is entry-guarded (sourcing only defines functions) and
+    # provides the shared redChecks/overrideLabels projections used here.
+    # shellcheck source=agents/scripts/core/safe-admin-merge.sh
+    . "$jdir/safe-admin-merge.sh"
+    red_csv="$(downgraded_red_checks "$view" | paste -sd, -)" || red_csv=""
+    override_csv="$(override_labels_csv "$view")" || override_csv=""
+    if SNAPSHOT_MERGED_AT="$merged_at" bash "$jdir/merge-snapshot-append.sh" \
+        "$PR_NUMBER" "$mc" "$head_sha" BACKFILLED "$red_csv" "$override_csv" git-janitor; then
+        echo "[git-janitor] ledger row BACKFILLED for PR #${PR_NUMBER} (redChecks: ${red_csv:-none}; overrides: ${override_csv:-none}). Commit it with your next develop-bound commit (chore(ledger) if nothing else is in flight)."
+    else
+        echo "[git-janitor] WARN — ledger backfill append failed; live fallback covers PR #${PR_NUMBER}." >&2
+    fi
+    return 0
+}
+backfill_merge_snapshot || echo "[git-janitor] WARN — ledger backfill errored; live fallback covers PR #${PR_NUMBER}." >&2
 
 # ---------- Step 6: dual-target regression build -----------------------------
 echo "[git-janitor] running dual-target regression build..."

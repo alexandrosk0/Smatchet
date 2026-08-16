@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # agents/scripts/core/merge-gates.d/10-gate-filter.sh
 # ----------------------------------------------------------------------------
-# The one `gh api graphql --jq` GATE_FILTER program — the 33-field projection
+# The one `gh api graphql --jq` GATE_FILTER program — the 35-field projection
 # that turns the GraphQL response into the fixed-order field stream the poll
 # loop reads with `mapfile`. Relocated VERBATIM from merge-gates.sh (the former
 # in-function `GATE_FILTER='...'` literal) into a single-quoted global so the
@@ -35,6 +35,22 @@ _MG_GATE_FILTER_TEMPLATE='
 | ($labels | any(. == "intent-out-of-band")) as $intent
 | ($labels | any(. == "plan-lock-out-of-band")) as $planlock
 | ($labels | any(. == "cr-out-of-band")) as $cr
+# Stale-override guard inputs (merge-pipeline-01): the latest LabeledEvent
+# createdAt per LABEL-REACTIVE override label. tests-/perf-out-of-band guard
+# workflows that read labels LIVE and re-run on `labeled` (coverage-gate.yml,
+# perf-pr-fast.yml) — a failing run that COMPLETED before the label landed was
+# evaluated under a different label-world, so its FAIL must not be downgraded;
+# the labeled-triggered re-run (guaranteed by the workflow trigger) supersedes
+# it within minutes and the poll simply defers until then. intent-/plan-lock-
+# out-of-band are deliberately EXEMPT: their workflows are label-blind and have
+# no `labeled` trigger, so the pre-label red is exactly as accurate post-label
+# (the gate-side downgrade IS the dismissal mechanism, not a claim the run
+# would now pass) and a freshness demand would wedge the gate until an
+# unrelated push. Empty createdAt set (legacy fixture / no timeline) yields ""
+# and "anything >= empty" is true, preserving pre-guard behaviour.
+| ([$pr.timelineItems.nodes[]? | select((.label.name // "") != "")]) as $labelEvents
+| (([$labelEvents[] | select(.label.name == "tests-out-of-band") | (.createdAt // "")] | sort | last) // "") as $testsAt
+| (([$labelEvents[] | select(.label.name == "perf-out-of-band") | (.createdAt // "")] | sort | last) // "") as $perfAt
 # crDisposition — an explicit operator attestation supplied EITHER as a label
 # prefixed `cr-disposition:` (e.g. `cr-disposition:rate-limit-acked`) OR as a
 # grep-able `cr-disposition:<reason>` marker line in the PR BODY. Whenever
@@ -93,11 +109,25 @@ _MG_GATE_FILTER_TEMPLATE='
        or ((if .__typename == "CheckRun" then (.name // "") else (.context // "") end)
            | (test("__BLOCK_ALLOWLIST_RE__"; "i")
               and (ascii_downcase | contains("advisory") | not)))))]) as $failing
+# Downgrade arms. tests/perf carry the stale-override freshness conjunct: the
+# failing run must have COMPLETED at-or-after the latest label application
+# ("" label-time = no timeline data = legacy behaviour; ISO-8601 Z strings
+# compare correctly as strings). A known label-time with a null completedAt
+# fails closed (no downgrade) — a COMPLETED CheckRun always carries
+# completedAt in live data. intent/plan-lock: no conjunct (see the
+# $labelEvents comment above).
 | ([$failing[] | select(
-      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate") or
-      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast"))) or
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // "") >= $testsAt)) or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // "") >= $perfAt)) or
       ($intent and .__typename == "CheckRun" and .name == "Intent section") or
       ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
+# $staleOverride — failing checks whose downgrade was REFUSED by the freshness
+# conjunct (label applied after the run completed). Surfaced as fields 33/34 so
+# the poll loop can print an actionable WARN ("waiting for the post-label
+# re-run") instead of a silent block.
+| ([$failing[] | select(
+      ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // "") < $testsAt)) or
+      ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // "") < $perfAt)))]) as $staleOverride
 | ([$pr.reviews.nodes[] | select(.author.login == "coderabbitai" or .author.login == "coderabbitai[bot]")]) as $crall
 | (if ($crall | length) == 0 then "NONE"
    else (([$crall[] | select(.commit.oid == $sha)]) as $cur
@@ -274,6 +304,8 @@ _MG_GATE_FILTER_TEMPLATE='
     ($crdisposition | tostring),
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false)] | length),
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
-        and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length)
+        and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length),
+    ([$staleOverride[].name] | join(", ")),
+    ($staleOverride | length)
   )
 '
