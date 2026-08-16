@@ -9,7 +9,10 @@
 #
 # For a SYMBOLIZED stack, install a debugger and use cdb instead:
 #     cdb -z <dump.dmp> -c "!analyze -v; q"
-# (canonical invocation documented in docs/agent-rules/debug-techniques.md).
+# cdb is NOT on a stock dev box and `winget install Microsoft.WinDbg` does not
+# provide it (that is the MSIX Store app, no console driver) — the verified
+# install recipe and the full canonical invocation both live in
+# docs/agent-rules/debug-techniques.md § Installing cdb.
 # This wrapper is the no-debugger fallback — fast, lossy (no symbol resolution).
 #
 # Usage:

@@ -34,13 +34,7 @@ This works while the UI thread is stuck because the command runs inline on the s
 
 Once a minidump (`.dmp`) is captured (procdump, or the in-app crash handler), triage it. Two tiers:
 
-- **Symbolized stack (preferred)** — with a debugger installed (`winget install Microsoft.WinDbg`), the canonical one-shot is:
-
-  ```
-  cdb -z <dump.dmp> -c "!analyze -v; q"
-  ```
-
-  Point it at symbols for resolved frames: `-y "<build-dir>;srv*C:\Tools\symcache*https://msdl.microsoft.com/download/symbols"`.
+- **Symbolized stack (preferred)** — needs `cdb.exe`, which is **not** on a stock dev box and is **not** what `winget install Microsoft.WinDbg` installs (that is the MSIX Store app `WinDbgX` — no headless console driver). Install recipe + verified invocation: § Installing cdb (Debugging Tools for Windows) below.
 
 - **No-debugger fallback** — when no `cdb`/WinDbg/`kd` is on the box, run the dependency-free triage wrapper, which extracts the exception record (code + faulting address + crashing thread) and the loaded-module list, and attributes the faulting address to a module:
 
@@ -50,3 +44,52 @@ Once a minidump (`.dmp`) is captured (procdump, or the in-app crash handler), tr
   ```
 
   It is fast but lossy (no symbol resolution) — use it to classify the fault (e.g. `0xC0000005` AV in which module) before deciding whether a full `cdb` session is warranted. Underlying scanner: `agents/scripts/core/minidump-triage.py`.
+
+## Installing cdb (Debugging Tools for Windows)
+
+`cdb.exe` is the headless console debugger — the only tool in this doc that is **not** on a stock dev box. Check before assuming one is present:
+
+```
+ls "C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe"
+```
+
+A `Windows Kits\10` tree with **no `Debuggers\` subdir** is the normal state after a build-only SDK install: Debugging Tools is a separate SDK *feature*, off by default. `winget install Microsoft.WinDbg` does not fix it — that installs the MSIX Store app `WinDbgX`, which ships no console driver.
+
+Verified install (Windows 11 26200, cdb 10.0.26100.7705) — needs **admin/UAC**, ~2 min, no reboot:
+
+```
+# 1. fetch the SDK bootstrapper — winget verifies the publisher SHA256,
+#    which a bare download.microsoft.com URL does not
+winget download --id Microsoft.WindowsSDK.10.0.26100 --exact \
+    --accept-package-agreements --accept-source-agreements -d "<scratch>/sdk"
+
+# 2. install ONLY the debuggers feature (run elevated)
+"<scratch>/sdk/winsdksetup.exe" /features OptionId.WindowsDesktopDebuggers \
+    /quiet /norestart /ceip off /log "<scratch>/sdk-install.log"
+```
+
+`/features OptionId.WindowsDesktopDebuggers` is what keeps this from being a multi-GB full-SDK install. Result: `C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\` holding `cdb.exe`, `windbg.exe`, `kd.exe`, `ntsd.exe`, `dumpchk.exe`, `symchk.exe`, `gflags.exe`, `umdh.exe`. It is **not** added to `PATH` — invoke by absolute path.
+
+### Canonical one-shot
+
+```
+"C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" \
+    -z <dump.dmp> \
+    -y "<build-dir>;srv*<symcache>*https://msdl.microsoft.com/download/symbols" \
+    -i "<build-dir>" -logo <out.log> \
+    -c ".symopt+0x40; .reload /f; vertarget; !analyze -v; .echo ===ALLSTACKS===; ~*kb; q"
+```
+
+- `-y` with the **build dir first** — the locally-built `.pdb` must win over the symbol server.
+- `-i` is the executable search path, so cdb can pair the dump's module list back to the exe.
+- `.symopt+0x40` (`SYMOPT_LOAD_ANYTHING`) tolerates the benign `WARNING: Unable to verify checksum for <app>.exe` that a locally-linked build produces.
+- `~*kb` walks **every** thread; `!analyze -v` alone only walks the faulting one — a hang dump needs both.
+- `-logo` because useful output runs 70 KB+; read the log file rather than scrolling stdout.
+
+The exe and its `.pdb` must be the **same build** as the dump — compare both mtimes against the dump before trusting any frame (§ Exe staleness check applies to symbols too).
+
+### Known limits (not defects)
+
+- **Third-party modules resolve only to `module!Export+0xNNN`.** The NVIDIA display DLLs (`nvwgf2umx`, `nvldumdx`, `nvgpucomp64`, `NvMemMapStoragex`, `nvspcap64`, `nvppex`) plus `VCRUNTIME140_1` and `directxdatabasehelper` publish no PDBs to msdl, so `.reload /f` reports "The system cannot find the file specified" for them. First-party frames are unaffected.
+- **The capture thread's own stack is degenerate** in a `debug.dump_self` dump: the thread that called `MiniDumpWriteDump` shows ~3 frames topped by `ntdll!NtGetContextThread` and then garbage, because dbghelp snapshots its own caller mid-syscall. Immaterial — that is by definition not the thread under diagnosis, and it is a positive marker for *which* thread served the command.
+- **The symbol cache grows fast** (≈375 MB for one session). Point the `srv*` leg at a durable path, not a per-session scratch dir, or every run re-downloads.
