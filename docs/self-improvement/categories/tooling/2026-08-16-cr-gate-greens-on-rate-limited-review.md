@@ -40,6 +40,12 @@
     Sibling note on the same block: the pure-docs auto-downgrade (:1341-1345)
     counts `agents/scripts/**` as docs — "markdown is never compiled" is not true
     of the shell that runs the merge gates. #1938 took that path.
+    Widened sweep (same day, re-run over all 1,416 merged PRs rather than only
+    the green-gate ones): the rate-limit class is **51**, not 48 — the extra 3
+    merged with the gate still `pending`, so they are also Class B of the sibling
+    entry. Split by whether CR ever reviewed *any* head of the PR: 28 were never
+    reviewed at all; 23 were reviewed on an earlier head, so real findings exist
+    but the merged diff was never seen.
   Concrete next action: (1) verify #1994 against the #1996 action revision — if
     the fixed action greened a `Review rate limited` head, the description match
     is not reached on that code path and the bug is still live server-side;
@@ -56,7 +62,7 @@
     PENDING/PENDING/SUCCESS/SUCCESS/SUCCESS, so the vocabulary cannot regress
     silently again. Est ~0.5 d. Cross-ref: sibling
     `2026-08-16-cr-gate-greens-on-manual-review-required-skip.md` (same fail-open,
-    different description string, 5 merged PRs);
+    different description string, 4 merged PRs);
     `2026-08-16-cr-gate-greens-with-no-cr-status-on-head.md` (third string: none
     at all); #1996; #2004.
   Status: open

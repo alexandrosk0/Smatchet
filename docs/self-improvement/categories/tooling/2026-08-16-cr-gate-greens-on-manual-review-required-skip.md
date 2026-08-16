@@ -32,9 +32,12 @@
     **Merge-history sweep 2026-08-16** (added after filing): this is no longer a
     near-miss. A sweep of all 1,416 merged PRs above #500 — reading each merged
     head SHA's status contexts plus CR reviews/comments on that SHA — found
-    **5 PRs already merged** with this exact status green on an unreviewed head:
-    #2014, #2024, #2027, #2030, #2031 (2026-08-15 → 08-16), none carrying an
-    override label. #2024 is not docs: `fix(sync): stop multi-pane full syncs
+    **4 PRs already merged** with this exact status green and CR never having
+    looked at all: #2014, #2024, #2027, #2031 (2026-08-15 → 08-16), none carrying
+    an override label. (#2030 carries the same green status but CR did leave a
+    walkthrough comment on its head, so it is a fifth instance of the *status*
+    and not of the never-reviewed outcome — counted separately on purpose.)
+    #2024 is not docs: `fix(sync): stop multi-pane full syncs
     from deleting each other's cached tickets`, 19 code files, merged with zero
     CR review evidence on the head. The 11.5h window on #2028 was the case that
     got caught; these five are the ones that did not. Two sibling fail-opens in
