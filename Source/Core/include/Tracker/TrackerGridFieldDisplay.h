@@ -68,7 +68,20 @@ class TrackerGridFieldDisplay {
                                     float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
     static void RenderVotesField(AppController& app, const std::string& issueKey, const std::string& currentValue,
                                  float availWidth, bool tooltipsEnabled, TrackerGridFieldAsyncState& async);
-    static void RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
+    /**
+     * Renders the `worklog` ("Log Work") cell as a flat, full-width action button carrying the
+     * work-log summary (or "Log work" when nothing is logged yet).
+     * @return true on the frame the user clicked it — the caller opens the time-tracking dialog.
+     *         Always false for an unparseable non-empty payload, which stays read-only text.
+     */
+    static bool RenderWorklogField(const std::string& currentValue, float availWidth, bool tooltipsEnabled);
+
+    /**
+     * Flat, chrome-less, full-width cell button (transparent until hovered, left-aligned label) —
+     * the affordance shared by the grid's in-cell actions (`timespent`, `worklog`).
+     * @param availWidth cell width; <= 0 stretches to the remaining content region.
+     */
+    static bool DrawCellActionButton(const std::string& label, float availWidth);
 
     /** Column key `aggregateprogress` (Jira schema id; case-insensitive). */
     static bool IsProgressStyleColumnId(const std::string& fieldId);
