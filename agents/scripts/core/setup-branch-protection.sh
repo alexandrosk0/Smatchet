@@ -21,7 +21,28 @@
 #
 # Needs a repo-admin-scoped token (the protection API is admin-only).
 #
-# Idempotent: a PUT replaces the full protection object; re-running converges.
+# Idempotent: a PUT REPLACES the full protection object; re-running converges.
+#
+# That replace is a trap, not a convenience: the endpoint is not a patch, so an
+# optional protection flag omitted from the body is reset to its API default
+# (false). Omission is a silent REMOVAL, and the script converges on whatever
+# the body states — not on the live state. This bit an apply once already: the
+# body used to omit `required_conversation_resolution`, which was true live, so
+# running the script would have turned that gate off while ostensibly tightening
+# `enforce_admins` (see docs/plans/branch-protection-config-completeness.md).
+# Hence the contract: project.config.json § branch_protection is the COMPLETE
+# desired state over the PUT BODY SURFACE, every flag it states is projected into
+# the body below, and tests/bats/setup_branch_protection.bats fails if a config
+# flag stops reaching the wire. Add a flag to the config -> add it to the
+# projection below.
+#
+# "Complete over the PUT body surface" is narrower than "complete over the GET
+# response", deliberately: `required_signatures` comes back from the GET but is
+# NOT a PUT body parameter — GitHub owns it through its own sub-resource
+# (POST/DELETE .../protection/required_signatures), so this script can neither
+# set nor clear it and a PUT leaves it untouched. It is therefore absent from
+# the config block on purpose. Do not read the enumeration below as covering
+# every key the GET returns; it covers every key the PUT accepts.
 #
 # Exit codes:
 #   0 — applied (or dry-run printed)
@@ -59,21 +80,64 @@ bp = cfg.get("branch_protection")
 if not bp:
     sys.stderr.write("setup-branch-protection: no 'branch_protection' block in project.config.json\n")
     sys.exit(2)
+# Optional protection flags, projected config -> wire. The endpoint replaces
+# the whole object, so a flag missing from this projection is switched OFF on
+# every apply regardless of its live value (see the header comment). Config key
+# and wire key are identical today; the explicit lists keep the projection
+# greppable and give the bats suite something to assert completeness against.
+TOP_LEVEL_FLAGS = [
+    "required_conversation_resolution",
+    "required_linear_history",
+    "allow_force_pushes",
+    "allow_deletions",
+    "block_creations",
+    "lock_branch",
+    "allow_fork_syncing",
+]
+# These live INSIDE required_pull_request_reviews on the wire, but are stated
+# flat in the config block (matching `strict`, which is flat in config and
+# nested under required_status_checks on the wire).
+REVIEW_FLAGS = [
+    "dismiss_stale_reviews",
+    "require_code_owner_reviews",
+    "require_last_push_approval",
+]
+
+# Keep the reviews object (not null) so the dismiss_stale / code_owner /
+# last-push knobs stay available; the approving-review COUNT comes from
+# required_review_count (0 — docs/adr/0013-solo-no-required-review.md).
+reviews = {"required_approving_review_count": int(bp.get("required_review_count", 0))}
+for k in REVIEW_FLAGS:
+    reviews[k] = bool(bp.get(k, False))
+
+# Emit the `checks` form, NOT the deprecated `contexts` string array. They are
+# not interchangeable on the wire: a check entry is {context, app_id}, and the
+# contexts[] spelling carries no app id, so a PUT built from it sets app_id=null
+# on EVERY required context — "any GitHub App may report this check". That is a
+# silent widening of who can turn a required gate green, applied by a script
+# whose whole job is to tighten protection. required_checks_app_id pins it
+# (15368 = GitHub Actions); null means deliberately unpinned, and then the
+# app_id key is omitted rather than sent as null so the intent is legible in
+# the request body.
+APP_ID = bp.get("required_checks_app_id")
+checks = []
+for ctx in bp.get("required_contexts", []):
+    entry = {"context": ctx}
+    if APP_ID is not None:
+        entry["app_id"] = int(APP_ID)
+    checks.append(entry)
+
 body = {
     "required_status_checks": {
         "strict": bool(bp.get("strict", False)),
-        "contexts": bp.get("required_contexts", []),
+        "checks": checks,
     },
     "enforce_admins": bool(bp.get("enforce_admins", False)),
-    # Keep the object (not null) so dismiss_stale / code_owner knobs stay
-    # available; only the approving-review COUNT is set to the config value.
-    "required_pull_request_reviews": {
-        "required_approving_review_count": int(bp.get("required_review_count", 0)),
-        "dismiss_stale_reviews": False,
-        "require_code_owner_reviews": False,
-    },
+    "required_pull_request_reviews": reviews,
     "restrictions": None,
 }
+for k in TOP_LEVEL_FLAGS:
+    body[k] = bool(bp.get(k, False))
 print(json.dumps(body))
 PY
 )" || exit 2

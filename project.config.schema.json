@@ -89,14 +89,33 @@
     "branch_protection": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Desired GitHub branch-protection state for the default branch, codified so it can't drift. Applied by agents/scripts/core/setup-branch-protection.sh. See docs/adr/0013-solo-no-required-review.md for why required_review_count is 0.",
+      "description": "Desired GitHub branch-protection state for the default branch, codified so it can't drift. Applied by agents/scripts/core/setup-branch-protection.sh, which PUTs the FULL object — a REPLACE, not a patch — so an optional flag absent from this block is reset to its API default (false) on every apply. This block must therefore be the COMPLETE desired state over the PUT body surface: state each optional flag explicitly, even when false. Complete over the PUT body, NOT over every key the GET returns — required_signatures is deliberately absent because it is not a PUT body parameter (GitHub owns it via the protection/required_signatures sub-resource). See docs/adr/0013-solo-no-required-review.md for why required_review_count is 0.",
       "required": ["branch", "required_contexts", "required_review_count"],
       "properties": {
+        "_doc": { "type": "string" },
         "branch": { "type": "string" },
         "required_contexts": { "type": "array", "items": { "type": "string" } },
+        "required_checks_app_id": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "GitHub App id allowed to satisfy the required checks (15368 = GitHub Actions). Projected into the wire's required_status_checks.checks[] form as {context, app_id}. Load-bearing: the deprecated contexts[] form carries no app id, so a PUT built from it unpins EVERY required context to 'any app may report this check' — a silent widening of who can turn a required gate green. Null means deliberately unpinned (any app)."
+        },
         "required_review_count": { "type": "integer", "minimum": 0 },
         "enforce_admins": { "type": "boolean" },
-        "strict": { "type": "boolean" }
+        "strict": { "type": "boolean" },
+        "required_conversation_resolution": {
+          "type": "boolean",
+          "description": "Every PR conversation must be resolved before merge. Load-bearing and NOT substitutable by the harness: merge-gates.sh and scripts/dev/pr-blocked-why.sh probe it as ground truth for a silent-BLOCKED PR, and it counts bot review threads the gate-poller deliberately filters out."
+        },
+        "dismiss_stale_reviews": { "type": "boolean" },
+        "require_code_owner_reviews": { "type": "boolean" },
+        "require_last_push_approval": { "type": "boolean" },
+        "required_linear_history": { "type": "boolean" },
+        "allow_force_pushes": { "type": "boolean" },
+        "allow_deletions": { "type": "boolean" },
+        "block_creations": { "type": "boolean" },
+        "lock_branch": { "type": "boolean" },
+        "allow_fork_syncing": { "type": "boolean" }
       }
     },
     "ci": {

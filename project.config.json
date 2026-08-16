@@ -77,9 +77,21 @@
       "Mobile — Android APK (Gradle assembleDebug arm64-v8a)",
       "C++ lint (catch-all + cppcheck)"
     ],
+    "required_checks_app_id": 15368,
     "required_review_count": 0,
     "enforce_admins": true,
-    "strict": false
+    "strict": false,
+    "_doc": "The keys below are the protection endpoint's OPTIONAL flags, stated explicitly even when false. Rationale: setup-branch-protection.sh PUTs the FULL object, and that endpoint is a replace, not a patch — an omitted optional flag is reset to its API default (false), a silent REMOVAL rather than a no-op. Writing them out makes this block the complete desired state, so any change shows up as a config diff instead of vanishing on the next apply. required_conversation_resolution is the load-bearing one: merge-gates.sh and scripts/dev/pr-blocked-why.sh both probe it as ground truth for a silent-BLOCKED PR, and it counts bot review threads the gate-poller filters out. Two related keys sit outside this flag set: required_checks_app_id (above) pins WHICH app may satisfy a required check — the wire's checks[] form carries it, the deprecated contexts[] form does not, so projecting contexts[] would silently unpin every context to 'any app'; and required_signatures is deliberately absent because it is not a PUT body parameter at all (GitHub owns it via its own protection/required_signatures sub-resource), so this block is complete over the PUT body surface, not over every key the GET returns.",
+    "required_conversation_resolution": true,
+    "dismiss_stale_reviews": false,
+    "require_code_owner_reviews": false,
+    "require_last_push_approval": false,
+    "required_linear_history": false,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "block_creations": false,
+    "lock_branch": false,
+    "allow_fork_syncing": false
   },
   "ci": {
     "path_filters": {
