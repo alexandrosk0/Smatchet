@@ -11,6 +11,45 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 22 — #2041–#2033 (7-PR sweep, 2026-08-16)
+
+Coverage: **7 reviewed — 5 with findings, 2 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 1 HIGH, 7 MEDIUM, 5 LOW** (13 findings, 2 `userVisible`). **The frontier is now #1–#2041 contiguous; the next sweep resumes from #2042.** Reviewer model `code-review` (opus/high), 7/7 returned; ~0.49M tokens, ~9 min.
+
+**First batch whose work-list was COMPUTED, not asserted.** Built with the new [`historical-review-worklist.sh`](../../agents/scripts/core/historical-review-worklist.sh) gate (shipped in this same PR, closing parts 1–2 of the merge-commit work-list entry): `--range 2033 2041` reported *authoritative merged PRs 7 / develop-log scrape 7 / scrape MISSED none / coverage 7/7 → 7 review units*. The coverage line above is that computed triple, not a hand count. No merge-commit PRs in this range, so no constituent expansion was needed — but the enumerators were cross-validated rather than assumed, which is the whole point.
+
+> **Read the near-zero supersede rate as an artefact of timing, not as a clean range.** 0 of 7 PRs were fully superseded and 4 of the 7 show *every* introduced line still alive (`~235/235`, `~645/645`, `~717/717`). This slice was **hours old** when swept — running it this soon was an explicit maintainer decision — so the blame-survivor filter had nothing to subtract and the pass degraded into an ordinary re-review. That is the same effect Batch 21 recorded over an 8-day slice, more extreme here. The 13 findings are real; what this batch does **not** carry is the "survived N later PRs" evidence an older slice gives. **Age, not count** — recorded again because two consecutive batches have now paid this cost.
+
+**Self-review note.** #2039 is this ledger's own previous PR, in scope like any other develop commit. Its review flagged that the 25 `userVisible` findings from Batches 20-REDO/21 were recorded as prose only rather than filed under ADR-0014 — correct at the moment it was reviewed, **already resolved**: they are now Issues **#2042–#2066**. Left in the record rather than deleted, since a finding that was true when made and has since been fixed is exactly what the ledger is for.
+
+### Actionable set — CRITICAL / HIGH / every `userVisible` finding (2)
+
+Full problem + fix. Everything below this block is one-line; the complete structured set, fixes included, is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+
+**HIGH (1)**
+- **#2035 (52640de2) · `Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp:280`** · **userVisible** — debug.dump_self runs MiniDumpWriteDump inline on whatever thread dispatched it. That is correct for CLI/MCP, but the command palette dispatches synchronously on the UI thread (CommandPaletteUi::drainPendingDispatch called from the palette draw at CommandPaletteUi.cpp:254), so a palette invocation suspends every thread and blocks the render loop for the whole dump write (hundreds of ms to seconds) with no progress cue. The plan itself notes the Pillar-2 scanner fires here. **Fix:** Keep the inline path only for non-UI sources: when ctx.Source is the palette/UI, run the write on a worker thread and return an async/pending result, or at minimum show a modal busy cue, so the render loop is never blocked by MiniDumpWriteDump.
+
+**LOW (1)**
+- **#2034 (?) · `Source/Core/src/Ui/SmatchetActiveProjectGridUi.cpp:213`** · **userVisible** — Every extra pane passes the same unregistered layout key "grid-pane" to repairTopLevelWindow. The unregistered key correctly skips the re-dock arm, but still reaches DefaultLayoutRectFor("grid-pane", 420, 300), which falls through to the centered-default rect. With d.layoutForceDefaultsFrames > 0 (Reset Layout), or when several floating extra panes are off-screen/degenerate, every floating extra pane is snapped to the identical centered rect and they stack exactly on top of one another — the same one-key-for-N-windows class this PR fixed for docking, left in place for rect repair. **Fix:** Derive the fallback rect per pane (cascade-offset by pane index, or keep the pane's own position and only clamp size/on-screen) instead of one shared centered rect for all "grid-pane" windows.
+
+### Internal debt — 7 MEDIUM + 4 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `docs/audits/AGENTIC_INFRA_AUDIT.md` — 1 MEDIUM, 1 LOW — #2033:7, #2033:173
+- `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM, 1 LOW — #2039:24, #2039:59
+- `Source/Core/src/Commands/Builtin/BuiltinCommands_Debug.cpp` — 1 MEDIUM — #2035:263
+- `Source/Standalone/SmatchetCrashHandler.cpp` — 1 LOW — #2035:240
+- `agents/scripts/core/merge-gates.sh` — 1 MEDIUM — #2033:754
+- `agents/scripts/core/merge-watcher.py` — 1 MEDIUM — #2041:3196
+- `docs/harness/claude-code/hooks/autoregister-pr.sh` — 1 MEDIUM — #2041:57
+- `docs/plans/active/pane-add-dock-tab.md` — 1 MEDIUM — #2034:3
+- `tests/Commands/BuiltinCommandsDispatch.test.cpp` — 1 LOW — #2035:353
+
+**Clean (2, surviving lines read in full, no findings):** #2040, #2037.
+
+**Fully superseded (0, no review surface):**  — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Batch 21 — #2032–#1941 (86-PR sweep, 2026-08-16)
 
 Coverage: **86 reviewed — 65 with findings, 14 clean, 7 fully superseded, 0 errored, 0 died.** Net: **1 CRITICAL, 6 HIGH, 67 MEDIUM, 105 LOW** (179 findings, 12 `userVisible`). **The frontier is now #1-#2032 contiguous; the next sweep resumes from #2033.** Survivor-filtered against `origin/develop` @ `3dc6695f` with `--against origin/develop` explicit. Reviewer model `code-review` (opus/high), 86/86 returned; ~5.21M tokens, ~84 min.
@@ -553,7 +592,10 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   65 clean, 2 superseded, 0 user-visible. ~~**The next sweep resumes from #1877**~~
   (same recipe; sha-resolved variant recipe in the Batch 13 header for gh-less
   environments).
-  **2026-08-16 — frontier now #1–#2032; the next sweep resumes from #2033.**
+  **2026-08-16 — frontier now #1–#2041; the next sweep resumes from #2042.**
+  Batch 22 (#2033–#2041) is the first batch whose work-list was **computed** by
+  `historical-review-worklist.sh` rather than asserted — its coverage line is the
+  gate's own triple.
   Batch 20 (2026-08-08) is **SUPERSEDED**: it screened rather than read, and its
   work-list missed 7 merge-commit PRs, so it never covered #1878–#1940. § Batch
   20-REDO re-swept that range in full (60 PRs / 64 units, 96 findings) and
@@ -588,9 +630,21 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   persisted workflow over the full `(1174, 1322]` work-list (recipe below; ~123 PRs ≈
   6–7M tokens) and append as Batch 13.
 - **Resume instructions (for PRs merged after #1174):**
-  1. List the new batch — `gh pr list --state merged --base develop --limit 900
-     --json number --jq '[.[] | select(.number > 1174) | .number] | sort |
-     reverse'` (raise the `> 1174` bound as the marker advances).
+  1. **Build the work-list with the gate, not by hand** —
+     `bash agents/scripts/core/historical-review-worklist.sh --range <lo> <hi> [--merged-list <file>]`.
+     It emits `{pr, sha}` units on stdout and a computed coverage triple on stderr,
+     cross-validating GitHub's merged set against the develop-log `(#N)` scrape and
+     **failing loudly** when they disagree or when no authority is available. Do NOT
+     go back to a bare `gh pr list` + subject scrape: the scrape cannot see a PR
+     merged with a merge commit, which is how Batch 20 lost 7 PRs while reporting a
+     contiguous frontier, and how Batch 13 nearly lost 4
+     (`categories/tooling/2026-08-16-historical-review-worklist-misses-merge-commit-prs.md`).
+     In a `gh`-less session (every remote session) pass `--merged-list <file>` built
+     from `list_pull_requests(base=develop, state=closed)` filtered on a non-null
+     `merged_at` — the script refuses to emit a scrape-only list rather than
+     silently understating coverage. Merge shas are expanded to one unit per
+     constituent automatically (blame never attributes to a merge commit, so the
+     merge sha alone yields a falsely-clean `FULLY SUPERSEDED`).
   2. Run the persisted workflow, passing the batch as `args`:
      `Workflow({ name: 'historical-review-sweep', args: [<the numbers>] })`.
      Pass a JSON array — but note this harness delivers `args` to the script as a
