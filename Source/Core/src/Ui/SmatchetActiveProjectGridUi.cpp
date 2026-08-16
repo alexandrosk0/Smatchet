@@ -192,13 +192,16 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         // frames that return false — a pane sitting behind its sibling's tab is still docked,
         // and it is exactly the pane a later "+" needs to hand its node to.
         pane.lastDockId = static_cast<unsigned int>(ImGui::GetWindowDockID());
-        if (!paneVisible) {
-            ImGui::End();
-            return;
-        }
+        // Fire the tab-select arm BEFORE the visibility early-return. A pane that docked
+        // behind its sibling is exactly the case this fixes, and Begin returns false for it —
+        // gating on paneVisible would leave the arm set forever on the one frame it matters.
         if (pane.selectTabFrames > 0) {
             --pane.selectTabFrames;
             selectCurrentDockedTab();
+        }
+        if (!paneVisible) {
+            ImGui::End();
+            return;
         }
         SmatchetWindowExpand::DrawToggle(d);
         if (isBootstrapPane) {
