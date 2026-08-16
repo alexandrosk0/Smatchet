@@ -173,7 +173,7 @@ static void RegisterDebugLogTailCommand(CommandRegistry& reg) {
                         nlohmann::json lines = nlohmann::json::array();
                         for (std::size_t i = 0; i < selected.size(); ++i) {
                             nlohmann::json row;
-                            row["ts"] = selected[i].timestampSeconds;
+                            row["tsMonotonic"] = selected[i].timestampSeconds;
                             row["level"] = Logger::LogLevelToString(selected[i].level);
                             row["message"] = selected[i].message;
                             lines.push_back(std::move(row));
@@ -204,7 +204,9 @@ static void RegisterDebugLogTailCommand(CommandRegistry& reg) {
         PString("contains", "Only entries whose message contains this substring."),
     };
     c.Title = "Log Tail";
-    c.Description = "Returns {lines:[{ts,level,message}], returned, totalMatched, ringSize, truncated}. Entries are "
+    c.Description = "Returns {lines:[{tsMonotonic,level,message}], returned, totalMatched, ringSize, truncated}. "
+                    "tsMonotonic is Logger's steady_clock seconds — monotonic since process start, NOT wall "
+                    "clock, so it orders entries but does not correlate with a dump filename's epoch ms. Entries are "
                     "oldest-first and already redacted. Filtering is applied BEFORE the tail, so lines=10 with "
                     "contains=sync yields the 10 most recent sync entries. Examples: "
                     "`Smatchet.exe cmd debug.log_tail --lines=50` | "
@@ -221,57 +223,70 @@ static void RegisterDebugLogTailCommand(CommandRegistry& reg) {
 // case is a hung UI thread. See docs/adr/0024-self-minidump-over-in-process-stack-walk.md.
 //
 // No caller-supplied path: the filename is derived from clock + pid and joined under
-// <userData>/crashes/, so this command has no path-injection surface at all (unlike
+// <userData>agent-dumps/, so this command has no path-injection surface at all (unlike
 // debug.window.screenshot, which must confine an argument).
 static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
-    Command c =
-        MakeCommand("debug.dump_self", "Write a minidump of this process (every thread's stack) for hang diagnosis.",
-                    [](const nlohmann::json&, const CommandContext& ctx) -> CommandResult {
-                        // Availability is checked FIRST, before anything about configuration.
-                        // On a host with no writer (DX12/Unreal, Android, the POSIX gate) the
-                        // user-data dir is irrelevant, and "not available on this host" is the
-                        // answer an agent needs in order to fall back to the out-of-process
-                        // procdump recipe — reporting a config problem instead would send it
-                        // chasing the wrong thing. Not an error: absence is a fact about the host.
-                        if (!smatchet::diagnostics::HasSelfDumpProvider()) {
-                            nlohmann::json out;
-                            out["wrote"] = false;
-                            out["available"] = false;
-                            out["reason"] = "no self-dump provider installed on this host";
-                            return CommandResult::Success(std::move(out));
-                        }
+    Command c = MakeCommand(
+        "debug.dump_self", "Write a minidump of this process (every thread's stack) for hang diagnosis.",
+        [](const nlohmann::json&, const CommandContext& ctx) -> CommandResult {
+            // Availability is checked FIRST, before anything about configuration.
+            // On a host with no writer (DX12/Unreal, Android, the POSIX gate) the
+            // user-data dir is irrelevant, and "not available on this host" is the
+            // answer an agent needs in order to fall back to the out-of-process
+            // procdump recipe — reporting a config problem instead would send it
+            // chasing the wrong thing. Not an error: absence is a fact about the host.
+            if (!smatchet::diagnostics::HasSelfDumpProvider()) {
+                nlohmann::json out;
+                out["wrote"] = false;
+                out["available"] = false;
+                out["reason"] = "no self-dump provider installed on this host";
+                return CommandResult::Success(std::move(out));
+            }
 
-                        const std::string userData = ConfigManager::GetUserDataDirectory();
-                        if (userData.empty()) {
-                            return CommandResult::Failure(ErrorCode::HandlerError,
-                                                          "no user-data directory configured; cannot place the dump");
-                        }
-                        const long long epochMs =
-                            static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                                       std::chrono::system_clock::now().time_since_epoch())
-                                                       .count());
-                        const std::string fileName =
-                            smatchet::diagnostics::MakeSelfDumpFileName(epochMs, CurrentProcessIdForDump());
-                        const std::string absPath = userData + "/crashes/" + fileName;
+            const std::string userData = ConfigManager::GetUserDataDirectory();
+            if (userData.empty()) {
+                return CommandResult::Failure(ErrorCode::HandlerError,
+                                              "no user-data directory configured; cannot place the dump");
+            }
+            const long long epochMs = static_cast<long long>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                                                 std::chrono::system_clock::now().time_since_epoch())
+                                                                 .count());
+            const std::string fileName =
+                smatchet::diagnostics::MakeSelfDumpFileName(epochMs, CurrentProcessIdForDump());
+            // Deliberately NOT <userData>crashes/: CrashSink rotates that
+            // directory to the 5 newest *.dmp, so a handful of diagnostic
+            // captures would silently evict the archived crash-<ts>.dmp files
+            // the next-launch reporter depends on. On-demand dumps get their
+            // own directory. GetUserDataDirectory() already ends in a
+            // separator — every caller joins as `GetUserDataDirectory() +
+            // "sub/"` — so no leading slash here.
+            const std::string dumpDir = userData + "agent-dumps/";
+            const std::string absPath = dumpDir + fileName;
 
-                        if (ctx.DryRun) {
-                            nlohmann::json dry;
-                            dry["wouldWrite"] = absPath;
-                            dry["available"] = true;
-                            return CommandResult::Success(std::move(dry));
-                        }
+            if (ctx.DryRun) {
+                nlohmann::json dry;
+                dry["wouldWrite"] = absPath;
+                dry["available"] = true;
+                return CommandResult::Success(std::move(dry));
+            }
 
-                        std::string err;
-                        if (!smatchet::diagnostics::WriteSelfDump(absPath, err)) {
-                            return CommandResult::Failure(ErrorCode::HandlerError, "self-dump failed: " + err);
-                        }
-                        LOG_INFO("debug.dump_self: wrote minidump to %s", absPath.c_str());
-                        nlohmann::json out;
-                        out["wrote"] = true;
-                        out["available"] = true;
-                        out["path"] = absPath;
-                        return CommandResult::Success(std::move(out));
-                    });
+            std::error_code dirEc;
+            ghc::filesystem::create_directories(ghc::filesystem::path(dumpDir), dirEc);
+            if (dirEc) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "could not create the on-demand dump directory");
+            }
+
+            std::string err;
+            if (!smatchet::diagnostics::WriteSelfDump(absPath, err)) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "self-dump failed: " + err);
+            }
+            LOG_INFO("debug.dump_self: wrote minidump to %s", absPath.c_str());
+            nlohmann::json out;
+            out["wrote"] = true;
+            out["available"] = true;
+            out["path"] = absPath;
+            return CommandResult::Success(std::move(out));
+        });
     c.Title = "Dump Self";
     c.Description = "Returns {wrote, available, path} on success, or {wrote:false, available:false, reason} on a host "
                     "with no writer (DX12/Unreal, Android). Writes <userData>/crashes/ondemand-<epochMs>-<pid>.dmp "

@@ -7,6 +7,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <exception>
+#include <mutex>
 #include <string>
 
 #if defined(_WIN32)
@@ -41,7 +42,6 @@ const DWORD kSyntheticTerminateException = 0xE0535343; // 0xE0000000 | 'SCS'
 // Whether a dump's exception record was OS-supplied (real SEH) vs app-synthesized (terminate/signal).
 enum class DumpExceptionOrigin { Real, Synthetic };
 
-#if defined(_WIN32)
 // The dump TYPE is the security-relevant decision, and it is the one thing the crash
 // path and the on-demand self-dump path below MUST agree on — everything else about
 // them legitimately differs. Named once so neither writer can drift: the richer scopes
@@ -51,7 +51,6 @@ enum class DumpExceptionOrigin { Real, Synthetic };
 // bug reporter auto-attaches to an off-host report. See the audit note at the
 // MiniDumpWriteDump call below.
 const MINIDUMP_TYPE kSmatchetDumpType = MiniDumpNormal;
-#endif
 
 // `realExPtrs` is the OS-supplied EXCEPTION_POINTERS (SEH path) or null. `origin` records whether
 // the record is OS-supplied or app-synthesized so the first-rich-dump-wins arbitration treats a
@@ -211,9 +210,27 @@ namespace {
 // Runs on whichever thread served the command, by design — the target case is a
 // wedged UI thread. MiniDumpWriteDump suspends the other threads itself for the
 // duration, so this never hand-rolls thread suspension.
+//
+// DbgHelp is explicitly single-threaded: concurrent MiniDumpWriteDump calls in one
+// process are not supported and can deadlock inside the library — which for a
+// hang-diagnosis tool would be the worst possible failure, wedging the process it
+// was called to explain. Two agents polling a stuck instance is a realistic way to
+// get there, so on-demand dumps serialise against each other and a caller that
+// arrives mid-dump is told so rather than queued behind a multi-hundred-ms write.
+// Residual, accepted: a CRASH landing mid-dump still reenters DbgHelp on the crash
+// path, which deliberately takes no locks (a crash handler must never block). That
+// window is tiny and the process is already dying; buying it back would mean
+// putting a lock in the crash path, which is a worse trade.
+std::mutex g_selfDumpMutex;
+
 bool WriteSelfDumpWin32(const char* absPath, std::string& errOut) noexcept {
     if (absPath == nullptr || absPath[0] == '\0') {
         errOut = "empty dump path";
+        return false;
+    }
+    std::unique_lock<std::mutex> lock(g_selfDumpMutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        errOut = "a self-dump is already in progress";
         return false;
     }
     HANDLE file = CreateFileA(absPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -231,6 +248,13 @@ bool WriteSelfDumpWin32(const char* absPath, std::string& errOut) noexcept {
             "MiniDumpWriteDump failed (win32 error " + std::to_string(static_cast<unsigned long>(GetLastError())) + ")";
     }
     CloseHandle(file);
+    if (ok == FALSE) {
+        // CREATE_ALWAYS already made the file, so a failed write leaves a truncated or
+        // empty .dmp behind. Left in place it consumes the retention budget and, worse,
+        // triages as a real capture. Best-effort delete: if it fails there is nothing
+        // useful to add to the error the caller is already getting.
+        DeleteFileA(absPath);
+    }
     return ok != FALSE;
 }
 

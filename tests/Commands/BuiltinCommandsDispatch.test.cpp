@@ -17,7 +17,9 @@
 #include "Commands/BuiltinCommands.h"
 #include "Commands/Command.h"
 #include "Commands/CommandRegistry.h"
-#include "Logger.h" // debug.log_tail round-trip drives the Logger ring directly
+#include "ConfigManager.h"        // dump_self path test pins the user-data join
+#include "Diagnostics/SelfDump.h" // dump_self path test installs a stub provider
+#include "Logger.h"               // debug.log_tail round-trip drives the Logger ring directly
 
 #include <nlohmann/json.hpp>
 
@@ -296,6 +298,54 @@ TEST_CASE("builtins — debug.dump_self reports the capability as absent with no
     CHECK_FALSE((*r.Data)["wrote"].get<bool>());
     CHECK_FALSE((*r.Data)["available"].get<bool>());
     CHECK_FALSE((*r.Data)["reason"].get<std::string>().empty());
+}
+
+TEST_CASE("builtins — debug.dump_self writes outside the crash dir, so it cannot evict crash dumps") {
+    // CrashSink rotates <userData>crashes/ to the 5 newest *.dmp. If on-demand captures
+    // landed there, five diagnostic dumps would silently evict every archived
+    // crash-<ts>.dmp the next-launch reporter depends on. Pin the separation, and pin
+    // that the join produces no doubled separator (GetUserDataDirectory already ends
+    // in one — every other caller relies on that).
+    BuiltinsFixture fx;
+    const std::string tmpBase = std::string("/tmp/smatchet-dumpself-test/");
+    ConfigManager::SetUserDataDirectory(tmpBase);
+
+    static std::string s_captured;
+    s_captured.clear();
+    smatchet::diagnostics::SetSelfDumpProvider([](const char* absPath, std::string&) -> bool {
+        s_captured = absPath;
+        return true;
+    });
+
+    const CommandResult r = fx.Reg.Dispatch("debug.dump_self", nlohmann::json::object(), fx.Ctx);
+    REQUIRE(r.Ok);
+    CHECK((*r.Data)["wrote"].get<bool>());
+    const std::string path = (*r.Data)["path"].get<std::string>();
+    CHECK(path == s_captured); // the reported path is the one the writer was handed
+    CHECK(path.find("agent-dumps/") != std::string::npos);
+    CHECK(path.find("crashes/") == std::string::npos);
+    CHECK(path.find("//") == std::string::npos); // no doubled separator from the join
+
+    smatchet::diagnostics::SetSelfDumpProvider(nullptr);
+    ConfigManager::SetUserDataDirectory("");
+}
+
+TEST_CASE("builtins — debug.log_tail names its timestamp as monotonic, not wall clock") {
+    // Logger stamps entries from steady_clock, so the value orders entries but does not
+    // correlate with anything wall-clock — including the epoch-ms in a dump filename.
+    // The key name is the only thing carrying that warning to a caller, so pin it.
+    BuiltinsFixture fx;
+    Logger::Instance().Clear();
+    Logger::Instance().SetMinLevel(LogLevel::Trace);
+    REQUIRE(fx.Reg.Dispatch("debug.log", nlohmann::json{{"message", "clock-shape-canary"}}, fx.Ctx).Ok);
+
+    const CommandResult r =
+        fx.Reg.Dispatch("debug.log_tail", nlohmann::json{{"contains", "clock-shape-canary"}}, fx.Ctx);
+    REQUIRE(r.Ok);
+    REQUIRE((*r.Data)["lines"].size() == 1);
+    CHECK((*r.Data)["lines"][0].contains("tsMonotonic"));
+    CHECK_FALSE((*r.Data)["lines"][0].contains("ts")); // the ambiguous name must not come back
+    Logger::Instance().Clear();
 }
 
 TEST_CASE("builtins — debug.dump_self is a non-destructive, dry-runnable, non-idempotent writer") {
