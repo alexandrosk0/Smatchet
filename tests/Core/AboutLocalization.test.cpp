@@ -23,6 +23,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstddef>
 #include <string>
 
 namespace {
@@ -72,8 +73,7 @@ TEST_CASE("About chrome strings hold their English table value") {
     // Under en-US the source-string path is an identity, so this pins the literal
     // the .cpp passes rather than the table's own column. Combined with the fr-FR
     // case above, a typo on either side fails one of the two.
-    CHECK(std::string(SmatchetLocalization::TranslateSource("Open on GitHub")) ==
-          "Open on GitHub");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Open on GitHub")) == "Open on GitHub");
     CHECK(std::string(SmatchetLocalization::T("about.link_open", nullptr)) == "Open in Browser");
     CHECK(std::string(SmatchetLocalization::T("about.link_copy", nullptr)) == "Copy Link");
     CHECK(std::string(SmatchetLocalization::T("about.hint", nullptr)) ==
@@ -89,12 +89,61 @@ TEST_CASE("The retired about.check_updates key is gone, the surviving ones are n
     CHECK(std::string(SmatchetLocalization::T("about.check_updates", nullptr)).empty());
 
     // Help and Preferences still own the action under their own distinct literals.
-    CHECK(std::string(SmatchetLocalization::TranslateSource("Check for Updates...")) ==
-          "Check for Updates...");
-    CHECK(std::string(SmatchetLocalization::TranslateSource("Check for Updates Now")) ==
-          "Check for Updates Now");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Check for Updates...")) == "Check for Updates...");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("Check for Updates Now")) == "Check for Updates Now");
 
     // The section headers the modal still draws.
     CHECK(std::string(SmatchetLocalization::T("about.section.build", nullptr)) == "Build");
     CHECK(std::string(SmatchetLocalization::T("about.section.runtime", nullptr)) == "Runtime");
+}
+
+TEST_CASE("The empty-value placeholder is localized like the rest of the chrome (#2066)") {
+    LanguageResetGuard restore;
+
+    // SelectableValue() substitutes this literal for any AboutInfo fact the build did not
+    // record. It is the one string the modal invents rather than displays, so it is chrome and
+    // must translate — it was written straight into the InputText buffer, so a French user saw
+    // "unknown" in an otherwise fully translated dialog.
+    SmatchetLocalization::SetLanguage("en-US");
+    CHECK(std::string(SmatchetLocalization::T("about.unknown", nullptr)) == "unknown");
+    CHECK(std::string(SmatchetLocalization::TranslateSource("unknown")) == "unknown");
+
+    SmatchetLocalization::SetLanguage("fr-FR");
+    const std::string fr = SmatchetLocalization::TranslateSource("unknown");
+    CHECK(fr == u8"inconnu");
+    CHECK(fr != "unknown");
+}
+
+TEST_CASE("The About popup id survives translation of its title (#2055)") {
+    LanguageResetGuard restore;
+
+    // The dismissal guard in DrawAboutModal asks whether the About popup is still open. That
+    // query has to hash the id OpenPopup/BeginPopupModal registered, which is what the shim's
+    // WindowTitleFromSource produces — not the raw English literal, which stops matching the
+    // moment the title gains a catalog entry (it has one: window.about).
+    const char* const kAboutPopupId = "About Smatchet";
+
+    // en-US is an identity transform, so the raw literal happens to be the registered id —
+    // which is exactly why the bug was invisible in English.
+    SmatchetLocalization::SetLanguage("en-US");
+    const std::string en = SmatchetLocalization::WindowTitleFromSource(kAboutPopupId);
+    CHECK(en == kAboutPopupId);
+
+    SmatchetLocalization::SetLanguage("fr-FR");
+    const std::string fr = SmatchetLocalization::WindowTitleFromSource(kAboutPopupId);
+
+    // Under fr-FR it is NOT: a raw ::ImGui::IsPopupOpen(kAboutPopupId, ...) hashes a string the
+    // popup was never registered under, so the guard could only ever return false.
+    CHECK(fr != kAboutPopupId);
+    CHECK(fr.find(u8"À propos de Smatchet") == 0);
+
+    // What it hashes to is still a NON-localized id: ImHashStr restarts at "###", so only the
+    // English tail feeds the ImGuiID — the translated half never reaches it.
+    const std::size_t tail = fr.find("###");
+    REQUIRE(tail != std::string::npos);
+    CHECK(fr.substr(tail) == std::string("###") + kAboutPopupId);
+
+    // And the transform is stable within a locale, so the shim's OpenPopup, BeginPopupModal and
+    // IsPopupOpen all derive the same id from the same literal.
+    CHECK(std::string(SmatchetLocalization::WindowTitleFromSource(kAboutPopupId)) == fr);
 }
