@@ -120,6 +120,14 @@ If the build fails because of instrumentation, fix the instrumentation only — 
 ls -la <absolute-path-to-Smatchet.exe>
 ```
 
+**When the investigation needs the production NDJSON channel**, build the agent-debug preset instead — `SMATCHET_AGENT_DEBUG` is OFF in `ninja-iter-msvc`, so `SMATCHET_AGENT_DEBUG_LOG` compiles to `((void)0)` there and the sink stays empty no matter how the code is instrumented:
+
+```bash
+cmake --build --preset ninja-iter-agentdebug-msvc --target SmatchetStandalone
+```
+
+It is `ninja-iter-msvc` + `SMATCHET_AGENT_DEBUG=ON` with its **own** `build/ninja-iter-agentdebug-msvc/` tree. Two iter-shaped exes now exist, so name the absolute path you built and the one you ran — an empty NDJSON file is a real signal (§ Read evidence), but only once you have ruled out having run the other exe.
+
 ## Run — unified CLI reference
 
 Auto-repro path (preferred): run the deterministic reproducer yourself, capture stderr + the NDJSON log.
