@@ -1140,10 +1140,12 @@ class AppController : public IAppThreading,
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and
     /// every delegator stay valid for the controller's whole lifetime.
     static const std::string kDefaultPaneId;
-    /// Per-pane deps adapters for the NON-default contexts created by EnsurePaneContextLive
-    /// (the default pane keeps `depsAdapter_` above). Declared BEFORE `gridContexts_` so each
-    /// context (whose TicketSyncService teardown joins the sync worker and may call back into
-    /// its deps) is destroyed BEFORE the adapter it references.
+    /// PANE-FROZEN deps adapters, one per live pane INCLUDING the default one (`depsAdapter_`
+    /// above is the separate focus-following adapter the process-wide services use). Each pane's
+    /// TicketSyncService must keep talking to the context it was created for even while another
+    /// pane holds focus. Declared BEFORE `gridContexts_` so each context (whose TicketSyncService
+    /// teardown joins the sync worker and may call back into its deps) is destroyed BEFORE the
+    /// adapter it references.
     std::map<std::string, std::unique_ptr<GridContextDepsAdapter>> paneAdapters_;
     /// Per-pane live engine bundles (backend + TicketSyncService + ActiveTickets snapshot +
     /// field catalog; see GridLiveContext.h), keyed by GridPane id. Visibility-driven
@@ -1172,6 +1174,39 @@ class AppController : public IAppThreading,
     /// (unknown id / retired mid-flight). Never null — the default context is permanent.
     GridLiveContext& paneContextOrFocused_(const std::string& paneId);
     const GridLiveContext& paneContextOrFocused_(const std::string& paneId) const;
+    /// Ticket ids held by every live context OTHER than `self` that shares `self`'s cache
+    /// backend key. Backs `ITicketSyncDeps::TicketIdsRetainedByOtherContexts` so a pane's
+    /// full-sync stale-deletion does not delete rows a sibling pane is displaying (the SQLite
+    /// cache is one shared backend-keyed namespace, ADR-0018 decision 4, while each pane syncs
+    /// its own query). Follows the issue-#1457 lock order: snapshot the context pointers under
+    /// gridContextsMutex_, release it, THEN take each per-context activeTicketsMutex_.
+    std::vector<std::string> CollectTicketIdsRetainedByOtherContexts(const GridLiveContext& self) const;
+    /// Published roster snapshot of every LIVE context, across all cache namespaces. Backs the
+    /// editmeta-cache prune: that cache is process-wide, so pruning it to ONE pane's snapshot
+    /// evicts entries the other panes' open editors still need. Returns shared_ptr snapshots (not
+    /// ids) because the prune also unions the issue-type keys off each ticket.
+    std::vector<std::shared_ptr<const std::vector<CachedTicket>>> CollectActiveTicketSnapshotsAcrossContexts() const;
+    /// --- Per-pane owned-ticket-id sets (multi-pane cache scoping) --------------------------
+    /// The SQLite cache is ONE backend-keyed namespace shared by every pane (ADR-0018 decision
+    /// 4), so `GetAllTickets(backendKey)` returns the union of all panes' queries. These record
+    /// which ids each pane's own sync actually kept, so a namespace-wide read can be filtered
+    /// back down to the pane that asked. Keyed `backendKey + '\n' + paneId`; survives LRU
+    /// eviction of a hidden pane's context (the context is gone but its rows are still in the
+    /// shared cache and must not be stale-deleted by a sibling), and is dropped explicitly on
+    /// 30 s retirement via ForgetPaneOwnedTicketIds.
+    void SetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                               const std::vector<std::string>& ids);
+    std::vector<std::string> GetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId) const;
+    /// Subtract specific ids from one pane's recorded set without disturbing the rest — used when
+    /// a 404 reconcile purges cache rows, so the set stops whitelisting (and pinning) dead ids.
+    void DropPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                                const std::vector<std::string>& ids);
+    void ForgetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId);
+    /// Guards paneOwnedTicketIds_ only. Written on the UI thread (sync finalize / retirement),
+    /// read from the UI thread and from RefreshLocalDataCheckedImpl_'s worker-invoked path.
+    /// INNERMOST — never take gridContextsMutex_ or a per-context mutex while holding it.
+    mutable std::mutex paneOwnedIdsMutex_;
+    std::map<std::string, std::vector<std::string>> paneOwnedTicketIds_;
     /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
     /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
     /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the
@@ -1179,7 +1214,10 @@ class AppController : public IAppThreading,
     /// capture + check + apply on the SAME context. Worker-safe: a reference latched before
     /// retirement stays valid via the retiredContexts_ husk graveyard (until ~AppController).
     /// The full-table cache read runs OUTSIDE the mutex; only the re-check + swap-in lock it.
-    void RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration);
+    /// `admitId` (empty = none) is a ticket id that must survive the pane-scoping filter even
+    /// though this pane's last recorded sync set predates it — the row UpdateTicket just saved.
+    void RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
+                                      const std::string& admitId = std::string());
     /// Re-resolve focusedContextPtr_ from focusedPaneId_ (default-context fallback).
     void refreshFocusedContextPtr_();
     /// Atomic: workers (MCP / Lua / replay) read focusedContext() while the UI thread

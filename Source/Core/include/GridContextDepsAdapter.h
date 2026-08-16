@@ -7,11 +7,15 @@
 // AppControllerDepsAdapter in multi-grid Slice 1 (ADR-0018): the adapter is the chokepoint
 // that lets `ITicketSyncDeps` — and therefore TicketSyncService, its tests, and every
 // external call site — stay unchanged while the engine state de-singletons.
-// Owned by AppController via `std::unique_ptr`; constructed in `AppController::Initialize`
-// and destroyed before any AppController member it forwards to (the GridLiveContext it
-// references is declared after it in AppController, so the context dies first — the adapter
-// never dereferences `ctx_` after that because the context's TicketSyncService, the only
-// caller, dies with it).
+// TWO MODES (see the constructors): PANE-FROZEN latches one `GridLiveContext&` for life, and
+// FOCUS-FOLLOWING re-resolves `app.focusedContext()` on every call. Every per-context method
+// goes through the private `ctx()` accessor, which resolves whichever mode this adapter is in.
+// Owned by AppController via `std::unique_ptr` (`depsAdapter_` for the focus-following one,
+// `paneAdapters_[paneId]` for the pane-frozen ones); constructed in `AppController::Initialize`
+// / `EnsurePaneContextLive` and destroyed before any AppController member it forwards to. A
+// pane-frozen adapter never dereferences a dead `ctx_`: retired contexts park as ADR-0012 husks
+// in `retiredContexts_` until `~AppController`, and the only caller of a pane-frozen adapter is
+// that context's own TicketSyncService, which dies with it.
 // Why two interfaces, one adapter: both interfaces surface overlapping state
 // (`Cache`, `Backend`, the connectivity-banner / deferred-notify pair). Implementing both on a
 // single adapter keeps the wiring trivial — AppController owns one adapter, passes the same
@@ -55,7 +59,17 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
                                public IConnectivityDeps,
                                public IAttachmentAppUpdateDeps {
   public:
+    /// PANE-FROZEN mode: every per-context method resolves to `ctx` for the adapter's whole life.
+    /// Used for a pane's own `TicketSyncService` — the service must keep talking to the context it
+    /// was created for even while another pane holds focus.
     GridContextDepsAdapter(AppController& app, GridLiveContext& ctx);
+
+    /// FOCUS-FOLLOWING mode: every per-context method resolves to `app.focusedContext()` at CALL
+    /// time. Used for the process-wide services AppController owns one of (edit-meta, field-edit,
+    /// offline-queue, connectivity, attachment/app-update): they act on whatever pane the user is
+    /// looking at, so freezing them to the default pane at Initialize time made a Plane-pane cell
+    /// edit submit against the default pane's Jira backend + cache key.
+    explicit GridContextDepsAdapter(AppController& app);
 
     // ---- IOfflineQueueDeps ------------------------------------------------------------
     ISyncCache* Cache() override;
@@ -70,11 +84,13 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
                                          const std::string& issueTypeName) const override;
     void LaunchBackgroundTask(std::function<void()> task) override;
     void RefreshLocalData() override;
-    /// Generation-checked variant (issue #1081): forwards THIS adapter's latched ctx_ into
-    /// AppController's checked refresh impl so capture + re-check + apply all happen on the
-    /// SAME context (a focused-context re-resolve at apply time could compare another pane's
-    /// independent generation counter — equal-by-coincidence passes the gate). Safe to call
-    /// from replay workers: retired contexts park as defer-free husks in
+    /// Generation-checked variant (issue #1081): forwards THIS adapter's ctx() into
+    /// AppController's checked refresh impl. On a pane-frozen adapter capture + re-check + apply
+    /// all happen on the SAME context. On a focus-following adapter a focus switch mid-flight can
+    /// re-resolve a DIFFERENT context here — that drops the apply rather than landing it on the
+    /// wrong pane, because backendGeneration_ is seeded per context from a disjoint band
+    /// (NextBackendGenerationSeed, GridLiveContext.h) so a cross-context compare never matches.
+    /// Safe to call from replay workers: retired contexts park as defer-free husks in
     /// AppController::retiredContexts_ until ~AppController, so ctx_ never dangles.
     void RefreshLocalData(std::uint64_t capturedBackendGeneration) override;
     void RequestDeferredLiveTrackerBackendSuccessNotify() override;
@@ -91,6 +107,12 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetCacheBackendKey(const std::string& key) override;
+    /// Sibling-pane retention set — forwards to AppController, which walks the other live
+    /// contexts sharing this cache namespace (see ITicketSyncDeps for why).
+    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override;
+    /// Records THIS pane's kept ids under (cache backend key, pane id) so a sibling pane's sweep
+    /// can subtract them even after the hidden-pane LRU has evicted this context's rows.
+    void PublishOwnedTicketIds(const std::vector<std::string>& ids) override;
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override;
@@ -119,6 +141,8 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     std::shared_ptr<ITrackerBackend> BackendShared() const override;
     bool IsShuttingDown() const override;
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
+    /// Every live pane's roster, for the process-wide editmeta prune (see IEditMetaDeps).
+    std::vector<std::shared_ptr<const std::vector<CachedTicket>>> GetActiveTicketsSnapshotsAllPanes() const override;
     const TrackerField* FindFieldById(const std::string& fieldId) const override;
     // CONST overload — distinct from the non-const RequestDeferredLiveTrackerBackendSuccessNotify()
     // above (shared by IOfflineQueueDeps + ITicketSyncDeps). Both are needed; they forward to the
@@ -161,6 +185,11 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void RequestAppQuit() const override;
 
   private:
+    /// The context every per-context method resolves against: `*ctx_` in pane-frozen mode,
+    /// `app_.focusedContext()` (re-resolved per call) in focus-following mode. Defined in the .cpp
+    /// because AppController is only forward-declared here.
+    GridLiveContext& ctx() const;
+
     AppController& app_;   ///< Shared/global state (cache, connectivity, catalog, Lua).
-    GridLiveContext& ctx_; ///< Per-context state (backend slot, active-ticket snapshot).
+    GridLiveContext* ctx_; ///< Frozen per-context state; null = follow the focused pane.
 };

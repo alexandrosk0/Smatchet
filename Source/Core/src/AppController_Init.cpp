@@ -176,8 +176,13 @@ void AppController::WireCoreServices() {
     // the destructor ordering: ~AppController joins the streaming-sync worker via
     // `CancelAndJoinActiveStreamingSync` before any member is destroyed, so the adapter is live for
     // every `deps_.X` call). All constructions are idempotent (`if (!x)` guards).
+    // FOCUS-FOLLOWING (not frozen to the default context): the five services below are owned
+    // one-per-process and act on whatever pane the user is looking at. Freezing this adapter to
+    // `focusedContext()` at Initialize time latched the DEFAULT pane forever, so a cell edit in a
+    // Plane pane submitted through the default pane's Jira backend and cache key. `ctx()` now
+    // re-resolves `focusedContext()` per call.
     if (!depsAdapter_) {
-        depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this, focusedContext());
+        depsAdapter_ = std::make_unique<GridContextDepsAdapter>(*this);
     }
     // GLOBAL ConnectivityMonitorService — every connectivity delegator (TickTrackerConnectivityMonitor,
     // the per-frame banner, the recovery/refetch latches) and the adapter's three re-pointed
@@ -212,8 +217,18 @@ void AppController::WireCoreServices() {
     }
     // TicketSyncService — its `CancelAndJoinActiveStreamingSync` is called by RecreateLocalCacheDatabase
     // (which the legacy-pending cleanup may trigger), so it must exist before that path runs (item 11).
+    // PANE-FROZEN adapter, unlike the five services above: a TicketSyncService must keep talking to
+    // the context it was created for even while another pane holds focus (a focus-following adapter
+    // would make the default pane's background sync write into whichever pane is focused). Mirrors
+    // what EnsurePaneContextLive does for every non-default pane via paneAdapters_.
     if (!focusedContext().ticketSync_) {
-        focusedContext().ticketSync_ = std::make_unique<TicketSyncService>(*depsAdapter_);
+        GridLiveContext& ctx = focusedContext(); // == the default context: focusedPaneId_ is still kDefaultPaneId
+        ctx.PaneId = focusedPaneId_;
+        std::unique_ptr<GridContextDepsAdapter>& adapter = paneAdapters_[focusedPaneId_];
+        if (!adapter) {
+            adapter = std::make_unique<GridContextDepsAdapter>(*this, ctx);
+        }
+        ctx.ticketSync_ = std::make_unique<TicketSyncService>(*adapter);
     }
 }
 

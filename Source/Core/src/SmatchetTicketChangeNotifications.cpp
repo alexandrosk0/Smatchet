@@ -1,6 +1,7 @@
 #include "SmatchetTicketChangeNotifications.h"
 
 #include <algorithm>
+#include <map>
 #include <string>
 
 #include "SmatchetLocalization.h"
@@ -64,13 +65,17 @@ void NotifyTicketChanges(const std::vector<smatchet::TicketChangeSummary>& chang
         return;
     }
     // Function-static last-signature guard (UI thread only — see header). Suppress an identical
-    // consecutive batch from an overlapping/retried poll.
-    static std::string s_lastSignature;
+    // consecutive batch from an overlapping/retried poll. Keyed BY PANE: a single shared signature
+    // let two panes polling different queries cancel each other out — pane B's batch overwrote the
+    // key pane A would next compare against, so A's genuine repeat slipped through while B's real
+    // change was suppressed whenever the two batches happened to match.
+    static std::map<std::string, std::string> s_lastSignatureByPane;
     const std::string signature = ChangeBatchSignature(changes);
-    if (signature == s_lastSignature) {
+    std::string& lastSignature = s_lastSignatureByPane[paneId];
+    if (signature == lastSignature) {
         return;
     }
-    s_lastSignature = signature;
+    lastSignature = signature;
 
     const std::string body = smatchet::FormatTicketChangeToast(changes, 1);
     if (body.empty()) {

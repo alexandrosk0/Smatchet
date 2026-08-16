@@ -368,6 +368,9 @@ add_executable(SmatchetTests
     # multi-grid-tabs.md Slice 5a (plan item 21) — pure hidden-pane LRU eviction decision
     # (least-recently-visible first; visible + busy-sync never evicted). Header-only policy.
     Core/GridPaneEvictionPolicy.test.cpp
+    # pane-stale-delete-collision — pure keep-set roster filter shared by TicketSyncService's
+    # session convergence and AppController's namespace-wide refresh. Header-only.
+    Core/TicketRosterFilterPure.test.cpp
     # issue #1457 — gridContexts_ map-structure race (worker snapshot-find vs UI
     # retire-erase / emplace). Seam-level fixture; header-only, also in SmatchetTsanTests.
     Core/GridContextsMapRace1457.test.cpp

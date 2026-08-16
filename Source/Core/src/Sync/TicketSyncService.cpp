@@ -7,6 +7,7 @@
 #include "ISyncCache.h"
 #include "Logger.h"
 #include "StringUtil.h"
+#include "Sync/TicketRosterFilterPure.h" // shared keep-set roster filter (also used by the local-data refresh)
 #include "Views.h"
 
 #include <algorithm>
@@ -31,6 +32,20 @@ bool TicketSyncService::ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCo
         return false;
     }
     return consecutiveEmptyFullSyncs < emptyWipeThreshold;
+}
+
+std::vector<std::string>
+TicketSyncService::FilterStaleIdsRetainedElsewhere(const std::vector<std::string>& staleIds,
+                                                   const std::vector<std::string>& retainedElsewhere) {
+    if (retainedElsewhere.empty()) {
+        return staleIds;
+    }
+    std::unordered_set<std::string> retained(retainedElsewhere.begin(), retainedElsewhere.end());
+    std::vector<std::string> kept;
+    kept.reserve(staleIds.size());
+    std::copy_if(staleIds.begin(), staleIds.end(), std::back_inserter(kept),
+                 [&retained](const std::string& id) { return retained.find(id) == retained.end(); });
+    return kept;
 }
 
 void TicketSyncService::CancelAndJoinActiveStreamingSync() {
@@ -117,11 +132,28 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
         // so the empty-full-sync data-loss guard can never drift between the two apply paths.
         if (!ShouldSkipMassDeletionOnEmptyFullSync(keepIds.size(), existing.size(), consecutiveEmptyFullSyncs_,
                                                    kEmptyFullSyncWipeThreshold)) {
+            // Rows a sibling pane is displaying are not stale — this session's query simply does
+            // not cover them (see FilterStaleIdsRetainedElsewhere). Same subtraction as the
+            // streaming path, applied here as a set membership test to keep the single pass.
+            const std::vector<std::string> retainedElsewhereVec = deps_.TicketIdsRetainedByOtherContexts();
+            const std::unordered_set<std::string> retainedElsewhere(retainedElsewhereVec.begin(),
+                                                                    retainedElsewhereVec.end());
+            std::size_t retainedSkipped = 0;
             for (const auto& row : existing) {
-                if (keepIds.find(row.id) == keepIds.end()) {
-                    deps_.Cache()->DeleteTicket(backendKey, row.id);
-                    ++deleted;
+                if (keepIds.find(row.id) != keepIds.end()) {
+                    continue;
                 }
+                if (retainedElsewhere.find(row.id) != retainedElsewhere.end()) {
+                    ++retainedSkipped;
+                    continue;
+                }
+                deps_.Cache()->DeleteTicket(backendKey, row.id);
+                ++deleted;
+            }
+            if (retainedSkipped > 0) {
+                LOG_INFO("TicketSyncService::ApplyIssueFetchPack kept %zu stale-marked row(s) retained by other live "
+                         "pane(s).",
+                         retainedSkipped);
             }
         }
     }
@@ -438,30 +470,8 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         consecutiveEmptyFullSyncs_ = 0;
     }
 
-    if (fullSyncCompleted) {
-        std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-        // Empty-full-sync guard (finding DR4): a completed full sync that kept zero tickets marks
-        // every cached row stale, which would wipe the entire offline cache. Treat a zero-keep
-        // full sync as suspect and hold off the mass deletion until the empty result repeats
-        // kEmptyFullSyncWipeThreshold times, so a transient glitch cannot erase offline data.
-        const bool skipWipe =
-            ShouldSkipMassDeletionOnEmptyFullSync(keptThisSession, activeStreamingSync_.BackgroundStaleIds.size(),
-                                                  consecutiveEmptyFullSyncs_, kEmptyFullSyncWipeThreshold);
-        if (skipWipe) {
-            LOG_WARN("TicketSyncService::TickStreamingApply skipped mass stale deletion on suspect empty full sync "
-                     "(cached=%zu, consecutive_empty=%d).",
-                     activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_);
-            activeStreamingSync_.BackgroundStaleIds.clear();
-        } else {
-            staleIdsToDelete_ = std::move(activeStreamingSync_.BackgroundStaleIds);
-
-            if (!staleIdsToDelete_.empty()) {
-                isDeletingStale_.store(true);
-                totalStaleToDelete_ = staleIdsToDelete_.size();
-                staleDeletedSoFar_ = 0;
-            }
-        }
-    }
+    SeedStaleDeletionForSession(fullSyncCompleted, keptThisSession);
+    ConvergeActiveTicketsToSessionKeepSet(fullSyncCompleted, keptThisSession);
 
     LOG_INFO("TicketSyncService::TickStreamingApply finished sync session. saved_or_kept=%zu total_stale=%zu "
              "fullSync=%d err=%s",
@@ -478,6 +488,89 @@ void TicketSyncService::FinalizeStreamingSessionIfDone() {
         deps_.NotifyLuaTicketDataChanged();
         deps_.SetPendingLuaWindowBump(false);
     }
+}
+
+void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession) {
+    if (!fullSyncCompleted) {
+        return;
+    }
+
+    // Ids sibling panes are displaying, collected BEFORE QueueMutex is taken: the collector locks
+    // gridContextsMutex_ then a per-context activeTicketsMutex_, and DrainPendingStreamingBatches
+    // already takes activeTicketsMutex_ -> QueueMutex, so collecting under QueueMutex would invert
+    // that order.
+    const std::vector<std::string> retainedElsewhere = deps_.TicketIdsRetainedByOtherContexts();
+
+    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+    // Empty-full-sync guard (finding DR4): a completed full sync that kept zero tickets marks
+    // every cached row stale, which would wipe the entire offline cache. Treat a zero-keep
+    // full sync as suspect and hold off the mass deletion until the empty result repeats
+    // kEmptyFullSyncWipeThreshold times, so a transient glitch cannot erase offline data.
+    const bool skipWipe =
+        ShouldSkipMassDeletionOnEmptyFullSync(keptThisSession, activeStreamingSync_.BackgroundStaleIds.size(),
+                                              consecutiveEmptyFullSyncs_, kEmptyFullSyncWipeThreshold);
+    if (skipWipe) {
+        LOG_WARN("TicketSyncService::TickStreamingApply skipped mass stale deletion on suspect empty full sync "
+                 "(cached=%zu, consecutive_empty=%d).",
+                 activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_);
+        activeStreamingSync_.BackgroundStaleIds.clear();
+        return;
+    }
+
+    // Sibling-pane subtraction: a row another live pane is displaying is outside THIS query's
+    // scope, not deleted on the remote (see FilterStaleIdsRetainedElsewhere).
+    const std::size_t markedStale = activeStreamingSync_.BackgroundStaleIds.size();
+    staleIdsToDelete_ = FilterStaleIdsRetainedElsewhere(activeStreamingSync_.BackgroundStaleIds, retainedElsewhere);
+    activeStreamingSync_.BackgroundStaleIds.clear();
+    if (staleIdsToDelete_.size() < markedStale) {
+        LOG_INFO("TicketSyncService::TickStreamingApply kept %zu of %zu stale-marked row(s) retained by other "
+                 "live pane(s).",
+                 markedStale - staleIdsToDelete_.size(), markedStale);
+    }
+
+    if (!staleIdsToDelete_.empty()) {
+        isDeletingStale_.store(true);
+        totalStaleToDelete_ = staleIdsToDelete_.size();
+        staleDeletedSoFar_ = 0;
+    }
+}
+
+void TicketSyncService::ConvergeActiveTicketsToSessionKeepSet(bool fullSyncCompleted, std::size_t keptThisSession) {
+    // Only a completed full sync knows the whole answer for this pane's query, and only a
+    // non-empty one is trusted (a zero-keep full sync is the suspect case SeedStaleDeletionForSession
+    // refuses to act on — pruning here would empty the grid on the same transient glitch).
+    if (!fullSyncCompleted || keptThisSession == 0) {
+        return;
+    }
+    // KeepIds is read without QueueMutex on purpose: the streaming worker has already exited by the
+    // time TickStreamingApply finalizes a session (same lock-free read as the LOG_INFO above).
+    const std::unordered_set<std::string>& keep = activeStreamingSync_.KeepIds;
+
+    // The shared backend-keyed cache spans every pane (ADR-0018 decision 4), so a batch apply can
+    // have admitted rows belonging to a sibling pane's query. Converge this pane's in-memory roster
+    // onto exactly what its OWN query returned, republishing the immutable snapshot and bumping the
+    // revision once under one lock (same contract as DrainStaleDeletionBudget) so readers never see
+    // a half-pruned roster.
+    std::vector<std::string> ownedIds;
+    {
+        std::lock_guard<std::mutex> lock(deps_.ActiveTicketsMutex());
+        std::vector<CachedTicket>& rows = deps_.ActiveTickets();
+        const std::size_t dropped = smatchet::RetainTicketsInKeepSet(rows, keep);
+        ownedIds.reserve(rows.size());
+        for (std::size_t i = 0; i < rows.size(); ++i) {
+            ownedIds.push_back(rows[i].id);
+        }
+        if (dropped != 0) {
+            deps_.SetActiveTicketsPublished(std::make_shared<const std::vector<CachedTicket>>(rows));
+            deps_.BumpActiveTicketsRevision();
+            LOG_INFO("TicketSyncService::TickStreamingApply converged pane roster to its own query (dropped %zu, "
+                     "%zu remain).",
+                     dropped, rows.size());
+        }
+    }
+    // Published OUTSIDE the roster lock: the adapter reads the context's backend key under its own
+    // mutex, and activeTicketsMutex_ must stay the innermost of that pair.
+    deps_.PublishOwnedTicketIds(ownedIds);
 }
 
 bool TicketSyncService::IsActive() const {

@@ -34,11 +34,13 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -48,6 +50,14 @@ namespace {
 /// plan item 17). Long enough that tab-flipping never churns contexts; short enough that a
 /// pane parked behind another all session frees its sync worker + ticket memory.
 const std::chrono::milliseconds kHiddenContextGrace(30000);
+
+/// Composite key for paneOwnedTicketIds_. '\n' cannot occur in a backend key (a tracker-type
+/// token) or a pane id (a ConfigManager_Panes identifier), so the join is unambiguous and the
+/// map stays ordered by backend key first — which is what lets the retention sweep prefix-scan
+/// one namespace with lower_bound instead of walking every pane in the process.
+std::string PaneOwnedIdsKey(const std::string& backendKey, const std::string& paneId) {
+    return backendKey + '\n' + paneId;
+}
 } // namespace
 
 void AppController::refreshFocusedContextPtr_() {
@@ -75,6 +85,7 @@ GridLiveContext* AppController::EnsurePaneContextLive(const std::string& paneId,
     std::map<std::string, std::unique_ptr<GridLiveContext>>::iterator it = gridContexts_.find(paneId);
     if (it == gridContexts_.end()) {
         std::unique_ptr<GridLiveContext> ctx = std::make_unique<GridLiveContext>();
+        ctx->PaneId = paneId; // keys this pane's owned-ticket-id set — set BEFORE the sync service starts
         std::unique_ptr<GridContextDepsAdapter> adapter = std::make_unique<GridContextDepsAdapter>(*this, *ctx);
         ctx->ticketSync_ = std::make_unique<TicketSyncService>(*adapter);
         if (!backendKey.empty()) {
@@ -655,8 +666,11 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
 
     // Fold in the membership reconcile (item 10). Classify the probe verdicts against the pane's
     // roster at apply time (residentIds = `prev`'s ids; UI thread, no mutation since the snapshot):
-    // resident keys are erased + toasted (LeftView/Deleted); every 404 verdict purges the shared
-    // per-backend cache row regardless of pane residency (the cache spans panes). A verdict for a
+    // resident keys are erased + toasted (LeftView/Deleted); a 404 verdict purges the shared
+    // per-backend cache row UNLESS a sibling pane still retains that id (the cache spans panes,
+    // ADR-0018 decision 4 — an unconditional purge yanked a row out from under a pane that is
+    // still displaying it, and that pane has no way to notice). The sibling reaches the same 404
+    // on its own change poll and purges then, so the row still converges away. A verdict for a
     // key the pane no longer holds is a silent in-memory no-op. See ClassifyMembershipRemovals.
     std::vector<std::string> residentIds;
     residentIds.reserve(prev.size());
@@ -665,10 +679,22 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     }
     const smatchet::MembershipReconcilePlan plan = smatchet::ClassifyMembershipRemovals(residentIds, verdicts);
     const std::string backendKey = ctx.CacheBackendKeyCopy();
-    if (Cache) {
+    if (Cache && !plan.cacheDeleteKeys.empty()) {
+        const std::vector<std::string> siblingRetained = CollectTicketIdsRetainedByOtherContexts(ctx);
+        const std::set<std::string> retained(siblingRetained.begin(), siblingRetained.end());
         for (std::size_t i = 0; i < plan.cacheDeleteKeys.size(); ++i) {
-            Cache->DeleteTicket(backendKey, plan.cacheDeleteKeys[i]); // 404 → drop the shared cache row
+            const std::string& key = plan.cacheDeleteKeys[i];
+            if (retained.find(key) != retained.end()) {
+                LOG_DEBUG("AppController::TickChangeMonitors kept cache row '%s' — a sibling pane still holds it.",
+                          key.c_str());
+                continue;
+            }
+            Cache->DeleteTicket(backendKey, key); // 404, nobody else holds it → drop the shared cache row
         }
+        // This pane's recorded owned-id set must lose the purged ids too, or the next
+        // RefreshLocalData would keep whitelisting rows that no longer exist and, worse, keep
+        // pinning them against a sibling's stale sweep.
+        DropPaneOwnedTicketIds(backendKey, paneId, plan.cacheDeleteKeys);
     }
     if (!plan.residentRemovals.empty()) {
         {
@@ -813,6 +839,13 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
             std::vector<TrackerUser>().swap(ctx.fieldCatalog.AvailableUsers);
             ctx.fieldCatalog.projectComponentOptions_.clear();
         }
+        // Deliberate: retirement (unlike LRU eviction) means this pane is gone for good as far as
+        // the retention sweep is concerned, so its owned-id set is dropped and its rows become
+        // eligible for a sibling's stale deletion again. Keeping the set would pin rows in
+        // tickets_v2 forever — there is no pane-close hook, so retirement is the only reclaim point.
+        // Same lock discipline as the two blocks above: map-mutex outermost, then this context's
+        // backendKeyMutex_, then the innermost paneOwnedIdsMutex_ — never the reverse.
+        ForgetPaneOwnedTicketIds(ctx.CacheBackendKeyCopy(), ctx.PaneId);
         // Defer-free husk: a worker may have latched a pointer to this context (it was the
         // focused context once) — keep the now-tiny object alive until ~AppController, the
         // ADR-0012 graveyard pattern applied to contexts.
@@ -820,4 +853,128 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
         paneAdapters_.erase(it->first);
         it = gridContexts_.erase(it);
     }
+}
+
+std::vector<std::string> AppController::CollectTicketIdsRetainedByOtherContexts(const GridLiveContext& self) const {
+    const std::string selfKey = self.CacheBackendKeyCopy();
+    std::vector<GridLiveContext*> others;
+    {
+        // Issue #1457 lock order: map mutex OUTERMOST, snapshot the pointers, release it BEFORE
+        // taking ANY per-context mutex — including backendKeyMutex_ inside CacheBackendKeyCopy,
+        // which is why the key filter happens after this scope. Retired contexts leave the map
+        // with their ActiveTickets already cleared (RetireHiddenPaneContexts above), so a pane
+        // retired between the snapshot and the read contributes nothing rather than dangling.
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        others.reserve(gridContexts_.size());
+        for (std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.begin();
+             it != gridContexts_.end(); ++it) {
+            GridLiveContext* ctx = it->second.get();
+            if (ctx != nullptr && ctx != &self) {
+                others.push_back(ctx);
+            }
+        }
+    }
+
+    std::vector<std::string> ids;
+    for (std::size_t i = 0; i < others.size(); ++i) {
+        GridLiveContext& ctx = *others[i];
+        // Only contexts in the same cache namespace can collide: stale-deletion is scoped by
+        // backend key, so a Plane pane's rows are invisible to a Jira pane's sweep either way.
+        if (ctx.CacheBackendKeyCopy() != selfKey) {
+            continue;
+        }
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        ids.reserve(ids.size() + ctx.ActiveTickets.size());
+        for (std::size_t t = 0; t < ctx.ActiveTickets.size(); ++t) {
+            ids.push_back(ctx.ActiveTickets[t].id);
+        }
+    }
+
+    // A live context's ActiveTickets is not the whole story: the hidden-pane LRU cap
+    // (evictHiddenPanesOverCap_) swaps a hidden pane's rows away while its cache rows stay in
+    // tickets_v2, so relying on ActiveTickets alone would let the next focused-pane full sync
+    // delete exactly the rows that pane is about to re-seed from. The recorded owned-id set
+    // survives eviction, and is dropped only when the context is genuinely retired.
+    {
+        const std::string prefix = PaneOwnedIdsKey(selfKey, std::string());
+        std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
+        for (std::map<std::string, std::vector<std::string>>::const_iterator it =
+                 paneOwnedTicketIds_.lower_bound(prefix);
+             it != paneOwnedTicketIds_.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
+            if (it->first.compare(prefix.size(), std::string::npos, self.PaneId) == 0) {
+                continue; // this pane's own set — never self-retaining
+            }
+            ids.insert(ids.end(), it->second.begin(), it->second.end());
+        }
+    }
+    return ids;
+}
+
+std::vector<std::shared_ptr<const std::vector<CachedTicket>>> AppController::CollectActiveTicketSnapshotsAcrossContexts()
+    const {
+    std::vector<GridLiveContext*> all;
+    {
+        // Same issue-#1457 order as above: snapshot the pointers under the map mutex, materialise
+        // each context's published snapshot (which takes its activeTicketsMutex_) after releasing.
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        all.reserve(gridContexts_.size());
+        for (std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.begin();
+             it != gridContexts_.end(); ++it) {
+            if (it->second) {
+                all.push_back(it->second.get());
+            }
+        }
+    }
+    std::vector<std::shared_ptr<const std::vector<CachedTicket>>> snaps;
+    snaps.reserve(all.size());
+    for (std::size_t i = 0; i < all.size(); ++i) {
+        snaps.push_back(all[i]->ActiveTicketsSnapshot());
+    }
+    return snaps;
+}
+
+void AppController::SetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                                          const std::vector<std::string>& ids) {
+    if (paneId.empty()) {
+        return; // context not registered in gridContexts_ yet — nothing to key on
+    }
+    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
+    paneOwnedTicketIds_[PaneOwnedIdsKey(backendKey, paneId)] = ids;
+}
+
+std::vector<std::string> AppController::GetPaneOwnedTicketIds(const std::string& backendKey,
+                                                              const std::string& paneId) const {
+    if (paneId.empty()) {
+        return std::vector<std::string>();
+    }
+    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
+    std::map<std::string, std::vector<std::string>>::const_iterator it =
+        paneOwnedTicketIds_.find(PaneOwnedIdsKey(backendKey, paneId));
+    return it == paneOwnedTicketIds_.end() ? std::vector<std::string>() : it->second;
+}
+
+void AppController::DropPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                                           const std::vector<std::string>& ids) {
+    if (paneId.empty() || ids.empty()) {
+        return;
+    }
+    const std::set<std::string> drop(ids.begin(), ids.end());
+    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
+    std::map<std::string, std::vector<std::string>>::iterator it =
+        paneOwnedTicketIds_.find(PaneOwnedIdsKey(backendKey, paneId));
+    if (it == paneOwnedTicketIds_.end()) {
+        return;
+    }
+    std::vector<std::string>& owned = it->second;
+    owned.erase(std::remove_if(owned.begin(), owned.end(),
+                               [&drop](const std::string& id) { return drop.find(id) != drop.end(); }),
+                owned.end());
+}
+
+void AppController::ForgetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId) {
+    if (paneId.empty()) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(paneOwnedIdsMutex_);
+    paneOwnedTicketIds_.erase(PaneOwnedIdsKey(backendKey, paneId));
 }
