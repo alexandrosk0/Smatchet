@@ -202,6 +202,10 @@ EOF
 # the "guard is present" test) so this cannot drift into testing a pattern the
 # gate no longer uses.
 RATE_LIMIT_RE='rate.?limit|limit reached'
+# The SECOND not-a-review marker. CodeRabbit auto-reviews only repos at/above
+# 10 stars; below that it posts this on EVERY PR at creation and waits to be
+# asked, so passing it made the gate green-by-default on unreviewed code.
+MANUAL_REVIEW_RE='manual review required'
 
 # The positive half of the shape-3 discrimination: a header-less on-head
 # review resolves clean ONLY when the observed clean-with-nitpicks shape is
@@ -425,11 +429,11 @@ CR_NODE='"author":{"login":"coderabbitai[bot]"},"commit":{"oid":"HEAD"}'
 # stubbed `gh` — same no-drift contract as the jq extraction above.
 # ============================================================================
 
-# Extract maybe_nudge_full_review() from the action's run block. The block's
+# Extract maybe_nudge_review() from the action's run block. The block's
 # base indent is 8 spaces, so the function's closing brace is exactly
 # "        }" — inner constructs sit deeper and cannot end the match early.
 setup_nudge() {
-    awk '/maybe_nudge_full_review\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' \
+    awk '/maybe_nudge_review\(\) \{/{f=1} f{print} f && /^        \}$/{exit}' \
         "$ACTION" > "$BATS_TEST_TMPDIR/nudge.fn"
     # Non-vacuity: an extraction miss must fail loudly, not test nothing.
     grep -q 'cr-full-review-nudge' "$BATS_TEST_TMPDIR/nudge.fn"
@@ -464,7 +468,7 @@ run_nudge() {
     nudge_attempted=false
     # `run` shields bats' errexit: the function tolerates a failing gh fetch
     # by design (the real action runs under `set +e`), and must exit 0 there.
-    run maybe_nudge_full_review
+    run maybe_nudge_review "${NUDGE_MODE:-stale-clean}"
     [ "$status" -eq 0 ]
 }
 
@@ -532,8 +536,8 @@ run_nudge() {
     row 'coderabbitai[bot]' '2026-08-13T12:00:00Z' 'Review complete — no actionable findings.'
     source "$BATS_TEST_TMPDIR/nudge.fn"
     nudge_attempted=false
-    maybe_nudge_full_review
-    maybe_nudge_full_review   # second call in the same run: marker not yet
+    maybe_nudge_review stale-clean
+    maybe_nudge_review stale-clean   # second call in the same run: marker not yet
                               # visible in the fixture — must not double-post
     [ "$(grep -c '@coderabbitai full review' "$POST_LOG")" -eq 1 ]
 }
@@ -564,7 +568,7 @@ run_nudge() {
 @test "the nudge call is wired into the rate-limit branch, not just defined" {
     # The function existing is not enough — it must run where the wedge occurs.
     awk "/grep -qiE 'rate.\?limit\|limit reached'/,/^            fi\$/" "$ACTION" \
-        | grep -q 'maybe_nudge_full_review'
+        | grep -q 'maybe_nudge_review'
 }
 
 @test "nudge: recency - a busy signal newer than the clean reply suppresses it" {
@@ -612,11 +616,104 @@ run_nudge() {
     # on the head (cr_ctx ABSENT) — the wedge parks in the `*)` arm, one door
     # over from the rate-limit branch. The recency guard is what keeps this
     # call quiet while CR is genuinely still working.
-    grep -qE '^\s*\*\)\s*maybe_nudge_full_review; return 1 ;;' "$ACTION"
+    grep -qE '^\s*\*\)\s*maybe_nudge_review stale-clean; return 1 ;;' "$ACTION"
 }
 
 @test "the drifted-header digit guard is present in the action, not just here" {
     # verdict() restates the negative half of the shape-3 discrimination; this
     # pins the action's copy so removing it there cannot pass silently.
     grep -qF "grep -i 'actionable' | grep -q '[0-9]'" "$ACTION"
+}
+
+# ============================================================================
+# `manual review required` is NOT a review (tooling 2026-08-16 P1)
+# ============================================================================
+# The gate special-cased only the rate-limit description as a not-a-review
+# marker; every other SUCCESS fell through to "completed with no review on head
+# (skipped/clean)" and PASSED. On a sub-10-star repo CodeRabbit posts
+# `Review skipped: manual review required for this OSS repository` on every PR
+# at creation, so the gate was green-by-default on unreviewed code (#2028: green
+# 13s after the status appeared, then 11.5h at mergeable_state=clean with all 36
+# checks green and zero review).
+
+@test "the manual-review-required guard is present in the action, not just here" {
+    # Assert the GUARD EXPRESSION, not merely the phrase: the nudge's own
+    # mode comment and blurb also contain "manual review required", so a bare
+    # substring check passes even with the guard deleted (caught by
+    # negative-testing this very assertion).
+    grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"
+    # Inert unless the GraphQL query actually selects description.
+    grep -qF 'on StatusContext{ context state description }' "$ACTION"
+}
+
+@test "selftest: without the guard, a manual-review-required SUCCESS would pass" {
+    setup_jq
+    f="$(payload '[]' SUCCESS 'Review skipped: manual review required for this OSS repository')"
+    state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
+    desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+    [ "$state" = "SUCCESS" ]                                    # old code: -> pass
+    printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"         # new code: -> unsettled
+    # And it must NOT be mistaken for the rate-limit marker — they are distinct
+    # states needing distinct recoveries (full review vs a first review).
+    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+}
+
+# The fail-shut risk of over-matching. CR's PATH-FILTER skip is terminal — there
+# is genuinely nothing to review — so a broad `review skipped` match would wedge
+# every legitimately path-excluded PR not caught by the selfImpOnly check.
+@test "the path-filter skip is NOT caught by the manual-review guard" {
+    setup_jq
+    f="$(payload '[]' SUCCESS 'Review skipped due to path filters')"
+    desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
+    ! printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"
+    ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    # Guard the implementation too: matching a bare "review skipped" would be
+    # the over-broad form, and would swallow the fixture above.
+    ! grep -qE "grep -qi.*'review skipped'" "$ACTION"
+}
+
+@test "the manual-review guard is wired into decide(), not just defined" {
+    grep -qE "maybe_nudge_review never-reviewed; *$" "$ACTION" \
+        || grep -qE 'maybe_nudge_review never-reviewed' "$ACTION"
+}
+
+# --- never-reviewed nudge -------------------------------------------------
+# The pre-existing nudge REQUIRED a completed clean pass to key on, which is
+# exactly why it could not self-heal a head CR had never looked at.
+
+@test "nudge: never-reviewed posts a plain review request with no clean pass" {
+    setup_nudge
+    row coderabbitai[bot] 2026-08-16T03:30:00Z 'Review available on request'
+    NUDGE_MODE=never-reviewed run_nudge
+    grep -q 'coderabbitai review'      "$POST_LOG"
+    grep -q 'cr-first-review-nudge'    "$POST_LOG"
+    # A plain review, NOT a full review: nothing has consumed this head yet.
+    ! grep -q 'coderabbitai full review' "$POST_LOG"
+}
+
+@test "nudge: never-reviewed stays silent while CR is rate limited or working" {
+    setup_nudge
+    row coderabbitai[bot] 2026-08-16T03:30:00Z 'Review limit reached. Next review available in: 9 minutes'
+    NUDGE_MODE=never-reviewed run_nudge
+    # merge-gates.md rule 1: a trigger inside an active window RESETS the
+    # countdown, and a busy CR is already engaged.
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: never-reviewed is once per head" {
+    setup_nudge
+    row github-actions[bot] 2026-08-16T03:31:00Z "marker cr-first-review-nudge:${SHA} here"
+    NUDGE_MODE=never-reviewed run_nudge
+    [ ! -s "$POST_LOG" ]
+}
+
+@test "nudge: the budget is shared across both nudge kinds" {
+    setup_nudge
+    # Three prior nudges of the OTHER kind must still exhaust the budget —
+    # per-kind budgets would silently double the ceiling on one PR.
+    row github-actions[bot] 2026-08-16T03:00:00Z 'cr-full-review-nudge:aaa'
+    row github-actions[bot] 2026-08-16T03:01:00Z 'cr-full-review-nudge:bbb'
+    row github-actions[bot] 2026-08-16T03:02:00Z 'cr-full-review-nudge:ccc'
+    NUDGE_MODE=never-reviewed run_nudge
+    [ ! -s "$POST_LOG" ]
 }

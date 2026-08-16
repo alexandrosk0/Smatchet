@@ -39,7 +39,7 @@ permissions:
   statuses: write
   # pull-requests stays READ: the action only reads PR metadata / file lists.
   # The stale-evidence auto-nudge POSTs one `@coderabbitai full review` issue
-  # comment (once per head, budget-capped — see maybe_nudge_full_review in the
+  # comment (once per head, budget-capped — see maybe_nudge_review in the
   # action); PR comments go through the issues endpoint, and issues:write ALONE
   # authorizes that POST — granting pull-requests:write too would be more
   # token surface than the job uses (CodeRabbit round-1 finding, verified

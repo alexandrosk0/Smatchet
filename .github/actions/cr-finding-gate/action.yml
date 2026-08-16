@@ -97,12 +97,37 @@ runs:
         #     workflow to a real verdict.
         NUDGE_BUDGET="${NUDGE_BUDGET:-3}"
         nudge_attempted=false
-        maybe_nudge_full_review() {
+        # $1 = mode:
+        #   stale-clean    — CR's status is a stale not-a-review success while a
+        #                    completed clean pass exists ONLY as a comment.
+        #                    Nothing will ever re-trigger CR, so ask for a FULL
+        #                    review (a plain `review` is a no-op once CR has
+        #                    consumed the head as "already reviewed").
+        #   never-reviewed — CR has not reviewed this head at all and is waiting
+        #                    to be asked (`manual review required`, the default
+        #                    state of every PR on a repo under 10 stars). A plain
+        #                    `review` is the right ask, and there is no clean
+        #                    pass to key on.
+        maybe_nudge_review() {
+          local mode="${1:-stale-clean}"
           # The poll loop calls decide() repeatedly — evaluate at most once per
           # action run (the cross-run dedup is the marker comment).
           [ "$nudge_attempted" = true ] && return 0
           nudge_attempted=true
-          local marker="cr-full-review-nudge:${SHA}"
+          local marker command blurb
+          case "$mode" in
+            # Historical marker string preserved verbatim: a head that already
+            # carries one from before this change must still dedup.
+            stale-clean)
+              marker="cr-full-review-nudge:${SHA}"
+              command="@coderabbitai full review"
+              blurb="CodeRabbit's status on head ${SHA:0:12} is a stale rate-limit success while a completed clean pass exists only as a comment — a full review creates current-head review evidence." ;;
+            never-reviewed)
+              marker="cr-first-review-nudge:${SHA}"
+              command="@coderabbitai review"
+              blurb="CodeRabbit has not reviewed head ${SHA:0:12} — its status says a manual review is required (this repository is under CodeRabbit's 10-star auto-review threshold). Requesting one so the gate has real review evidence instead of passing an unreviewed head." ;;
+            *) return 0 ;;
+          esac
           # `cmt`, not `body`: the bats suite extracts decide()'s jq programs
           # by literal substring markers keyed on decide()'s assignment names,
           # and this function sits earlier in the file — any line here that
@@ -129,7 +154,11 @@ runs:
             # denial-of-recovery from a drive-by comment (CodeRabbit round-1
             # finding on this gate's own PR).
             if [ "$login" = "github-actions[bot]" ]; then
-              case "$cmt" in *cr-full-review-nudge:*) n_nudges=$((n_nudges + 1)) ;; esac
+              # Budget counts BOTH nudge kinds: the cap exists to stop this gate
+              # spamming a PR, and two half-budgets would double the ceiling.
+              case "$cmt" in
+                *cr-full-review-nudge:*|*cr-first-review-nudge:*) n_nudges=$((n_nudges + 1)) ;;
+              esac
               case "$cmt" in *"$marker"*) mine=true ;; esac
             fi
             if [ "$login" = "coderabbitai[bot]" ] || [ "$login" = "coderabbitai" ]; then
@@ -147,16 +176,28 @@ runs:
               fi
             fi
           done <<< "$tsv"
-          [ -n "$clean_ts" ]                     || return 0
-          [ "$clean_ts" \> "$busy_ts" ]          || return 0
+          if [ "$mode" = "stale-clean" ]; then
+            # Only meaningful when a completed clean pass is the newest CR word:
+            # that is the state nothing else will ever re-trigger.
+            [ -n "$clean_ts" ]                   || return 0
+            [ "$clean_ts" \> "$busy_ts" ]        || return 0
+          else
+            # never-reviewed: there is NO clean pass to key on — requiring one is
+            # exactly why the existing guard could not self-heal this state. The
+            # rate-limit playbook still binds though: never post while a limit /
+            # in-progress notice is CR's newest word, because a trigger inside an
+            # active window RESETS the countdown (merge-gates.md rule 1). A busy
+            # notice also means CR is already engaged, so the nudge is moot.
+            [ -z "$busy_ts" ]                    || return 0
+          fi
           [ "$mine" = false ]                    || return 0
           [ "$n_nudges" -lt "$NUDGE_BUDGET" ]    || return 0
-          echo "CR finding gate: posting @coderabbitai full review nudge (stale evidence on ${SHA:0:12})"
+          echo "CR finding gate: posting ${command} nudge (${mode} on ${SHA:0:12})"
           gh api "repos/${OWNER}/${REPO}/issues/${PR}/comments" \
-            -f body="@coderabbitai full review
+            -f body="${command}
 
         <!-- ${marker} -->
-        _Auto-posted by the CR finding gate: CodeRabbit's status on head ${SHA:0:12} is a stale rate-limit success while a completed clean pass exists only as a comment — a full review creates current-head review evidence._" >/dev/null \
+        _Auto-posted by the CR finding gate: ${blurb}_" >/dev/null \
             || echo "WARN: nudge comment POST failed (missing issues:write?)" >&2
         }
 
@@ -401,7 +442,29 @@ runs:
               # stale status sits here, nothing will ever re-trigger CR — post
               # the full-review nudge (once per head, budget-capped) so the wedge
               # self-heals instead of waiting on a human.
-              maybe_nudge_full_review
+              maybe_nudge_review stale-clean
+              return 1
+            fi
+
+            # Second not-a-review marker, same fail-open, different string:
+            # `Review skipped: manual review required for this OSS repository`.
+            # CodeRabbit auto-reviews only repos at/above 10 stars; below that it
+            # posts this status on EVERY PR at creation and waits to be asked. So
+            # this is not "CR is done and skipped a trivial change" (the case the
+            # SUCCESS->pass shortcut below is for) — it is "CR has not looked".
+            # Passing it made the gate green-BY-DEFAULT on unreviewed code:
+            # observed on #2028, green 13s after the status appeared and then
+            # 11.5h at mergeable_state=clean with all 36 checks green and zero
+            # review; only a human applying the repo learning stopped the merge.
+            #
+            # Matched on `manual review required`, NOT a bare `review skipped`:
+            # CR's path-filter skip reads "Review skipped due to path filters"
+            # and IS terminal (nothing to review), so a broad match would wedge
+            # every legitimately path-excluded PR that is not caught by the
+            # selfImpOnly check above — trading a fail-open for a fail-shut.
+            if [ "$cr_ctx" = "SUCCESS" ] \
+               && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
+              maybe_nudge_review never-reviewed
               return 1
             fi
 
@@ -415,7 +478,7 @@ runs:
               # at all (cr_ctx ABSENT). The recency guard inside the nudge
               # keeps it quiet while CR is genuinely still working (the
               # in-progress / rate-limit edits are newer than any clean reply).
-              *)             maybe_nudge_full_review; return 1 ;;
+              *)             maybe_nudge_review stale-clean; return 1 ;;
             esac
           fi
 
