@@ -25,6 +25,8 @@
 
 > **Update 2026-07-05:** item 24 (the lone PARTIAL) is now **resolved on the graceful path** — `AppController::~AppController` calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`. The crash-handler half is intentionally omitted (superseded by the async-signal-safe `SmatchetCrashHandler`, which must not touch the logger mid-crash) — see **A4** in [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) for the full rationale. No other claim in this doc has gone stale.
 
+> **Triage 2026-08-16:** re-checked — every numbered entry (1–34) is still closed; item 24's graceful half remains wired in `~AppController`. The "validation still pending" list below is **historical**: its build re-verify pins `0a79de5` and the six per-PR smokes are in the SUPERSEDED bucket of the [`MANUAL_TEST_QUEUE.md`](MANUAL_TEST_QUEUE.md) triage. No open items in this doc. Note that three of the fixes here later turned out to have residual holes, all since closed: **DR15** (a deadlock opened by #16), **DR16** (a duplicate-POST hole adjacent to B2), **DR17** (a stale-cache hole in A1) — see [`DEEP_REVIEW_2026-07-07.md`](DEEP_REVIEW_2026-07-07.md).
+
 ### Validation still pending on develop tip (`0a79de5`)
 
 Code is in; these are human-only steps captured in `backlog/MANUAL_TEST_QUEUE.md` (added by [PR #22](https://github.com/alexandrosk0/Smatchet/pull/22)):

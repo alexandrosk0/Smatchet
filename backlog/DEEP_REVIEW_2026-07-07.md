@@ -341,6 +341,13 @@ class definitions (`tests/support/OfflineQueueTestEnv.h:32` vs `tests/support/Te
 into one binary — link-order-dependent destructor (one skips audit cleanup).
 - **Fix:** point these tests at the production symbol; rename one `TestEnvGuard` (or merge the two).
 - **Related:** `TEST_COVERAGE_GAP_MAP.md` hygiene notes track adjacent gaps; add these there too.
+- **Triage 2026-08-16 (verified against develop tip `7da969b`).** Closed since batch 3:
+  - **ODR — fixed.** Only one `TestEnvGuard` class definition remains (`tests/support/TestEnvGuard.h:46`); the offline-queue one is renamed `OfflineQueueTestEnvGuard` (`tests/support/OfflineQueueTestEnv.h:32`). No link-order-dependent destructor.
+  - **`ai_prefs_autosave_flow.test.cpp` — fixed** (comment at `:324` records the swap to a production-observable assertion).
+  - **`MarkdownLanguageDefinition.test.cpp` — fixed**; the cases now drive the production `LD::Markdown()` token regexes.
+  - **`AgentsMdLoader.test.cpp` — fixed**; the tautology is replaced with a determinism pin against the production `AgentsMdLoader::LoadLayered` symbol.
+  - **Still self-referential (the documented residual class):** `BulkImportAbandonNonBlocking.test.cpp:48-68` (`FakeBulkSession` + `FakeBulkImportAbandonFutures`, explicitly "byte-for-byte the production shape"), `UserInfoActivityCancelUaf.test.cpp` (`FakeController`/`FakeUserInfoOwner`), and `LuaTimeout.test.cpp` via `tests/support/LuaHostFixture.h:82` (mirrors `LuaHookGuard`, which lives in the src-private `AppController_LuaBindings_detail.h:74`).
+  - **Verdict:** DR29 stays 🟡 PARTIAL, but the remainder is now a single, well-defined refactor rather than a test-hygiene sweep — **each residual needs its production helper hoisted to a test-linkable header** (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity cancel path). Sequence it as one "hoist production helpers for test linkage" change; do not attempt per-test patches, which is what left the residual last time.
 
 ### DR30. Credentials leaked into logs via unredacted error bodies — ✅ DONE (fix pushed on branch)
 Raw HTTP error bodies are spliced into user-facing/log strings, bypassing `RedactHttpBodyForLog`:

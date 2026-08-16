@@ -10,6 +10,29 @@
 >
 > **43 entries; ~40 still ⏳ PENDING** (1 ✅, 1 🟡, 1 ❌) — the queue has sat essentially unexercised. Every entry references early single/double-digit PRs (#12–#22) against develop tips `93f561b` / `0a79de5`, now buried ~1600 merged PRs deep (current tip ~#1620). In particular the **build-re-verify commands (B1/B2) pin a baseline (`93f561b`) that no longer means anything** — treat those as historical, not runnable as written. The per-PR runtime smokes below validate behaviours that mostly still exist but have been substantially reworked since. Before running any of these, re-baseline against current `develop`, or treat the pre-#22 batch as *superseded / historical*. This is a human-only queue; nothing here was auto-verifiable in the reconciliation pass.
 
+> ## Triage — 2026-08-16 (against develop tip `7da969b`)
+>
+> The ~40 ⏳ rows are not 40 open work items. Triaged into three buckets; treat the bucket verdict as
+> authoritative over the individual ⏳ markers, which were never flipped.
+>
+> - **RETIRE — B1, B2 (2 rows).** These pin a build baseline (`93f561b`) and a preset that no longer
+>   describe this tree, ~1900 merged PRs later. Post-merge build verification is now enforced by CI on
+>   every PR, so the smoke has an automated owner. Not runnable as written; do not re-baseline.
+> - **SUPERSEDED — M1–M12, L1–L3 (15 rows).** Each validates a fix from PRs #12–#21. The behaviours
+>   mostly still exist but have been substantially reworked since, and several now have automated
+>   coverage (the doctest rig is at 270+ files; the Pillar-2 and TSan suites cover the shutdown /
+>   contention classes that L1–L3 describe). Running them as written validates a tree that no longer
+>   exists. Re-derive from current code if the underlying behaviour is ever suspected — don't run these.
+> - **STILL MEANINGFUL — V1–V22 (22 rows).** The Views two-pane redesign, the unsaved-layout strip,
+>   and the JQL suggestion work are user-visible UI flows with no automated equivalent, and unlike the
+>   M-series they are not pinned to a stale baseline. **This is the only bucket worth a human's time.**
+>   Highest value first: V16/V17/V18 (the save-gating behaviour change — silent autosave was removed,
+>   so a regression here loses user layout edits), then V11–V15 and V19/V20, then V1–V10 and V21/V22.
+>
+> Net: **22 actionable rows, all in the V-series**; the other 17 are historical. Nothing here blocks a
+> release, and nothing here should be added to — new work goes to the live self-improvement backlog or
+> a GitHub Issue per ADR-0014.
+
 ---
 
 ## Status legend
