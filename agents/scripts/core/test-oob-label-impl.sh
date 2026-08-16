@@ -198,14 +198,22 @@ _run_parity() {
     mg_only="$(comm -23 <(printf '%s\n' "$mg_set") <(printf '%s\n' "$sam_set"))"
     unsanctioned="$(comm -23 <(printf '%s\n' "$mg_only" | sed '/^$/d') <(printf '%s\n' "$reactive"))"
     if [ -n "$sam_only" ] || [ -n "$unsanctioned" ]; then
-        echo "test-oob-label-impl: FAIL — CI-downgrade label sets diverge beyond the sanctioned label-reactive asymmetry:" >&2
+        echo "test-oob-label-impl: FAIL — CI-downgrade label sets DIVERGE beyond the sanctioned label-reactive asymmetry:" >&2
         echo "  merge-gates.sh \$downgraded:        $(printf '%s' "$mg_set" | tr '\n' ' ')" >&2
         echo "  safe-admin-merge evaluate_rollup:  $(printf '%s' "$sam_set" | tr '\n' ' ')" >&2
         echo "  Sanctioned poller-only labels:     $(printf '%s' "$reactive" | tr '\n' ' ')" >&2
         echo "  Wire a new label into BOTH paths (a half-wired override refuses labelled PRs on one path — #1435), or add it to the sanctioned label-reactive pair here ONLY with a stale-override-guard rationale (merge-pipeline-01)." >&2
         return 1
     fi
-    echo "test-oob-label-impl: PASS — poller/admin downgrade sets match modulo the sanctioned label-reactive pair (poller: $(printf '%s' "$mg_set" | tr '\n' ' ')· admin: $(printf '%s' "$sam_set" | tr '\n' ' '))."
+    # Two PASS shapes, distinct messages: exact equality keeps the historical
+    # wording (nothing about that invariant changed for a label set with no
+    # label-reactive members); an asymmetric-but-sanctioned pass names the gap
+    # so the operator sees WHICH labels the admin path deliberately skips.
+    if [ -z "$mg_only" ]; then
+        echo "test-oob-label-impl: PASS — poller and admin-merge honor the same CI-downgrade label set ($(printf '%s' "$mg_set" | tr '\n' ' '))."
+    else
+        echo "test-oob-label-impl: PASS — poller/admin downgrade sets match modulo the sanctioned label-reactive pair (poller-only, by design: $(printf '%s' "$mg_only" | tr '\n' ' ')· admin honors: $(printf '%s' "$sam_set" | tr '\n' ' '))."
+    fi
     return 0
 }
 

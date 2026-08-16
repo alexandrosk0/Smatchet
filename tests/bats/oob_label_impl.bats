@@ -138,9 +138,37 @@ SH
     [ "$status" -eq 1 ]
 }
 
-@test "parity: real merge-gates.sh and safe-admin-merge.sh agree" {
+@test "parity: real merge-gates.sh and safe-admin-merge.sh agree (modulo the sanctioned label-reactive pair)" {
+    # Since the stale-override guard (merge-pipeline-01) the real sets are
+    # deliberately asymmetric: the poller honours tests-/perf-out-of-band with
+    # a freshness conjunct, the admin guard — which has no label-event
+    # timestamps — honours neither. Everything else must still match, and the
+    # poller-only set must be exactly that sanctioned pair.
     run bash "$GATE"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"same CI-downgrade label set"* ]]
+    [[ "$output" == *"sanctioned label-reactive pair"* ]]
     [[ "$output" == *"plan-lock-out-of-band"* ]]
+    [[ "$output" == *"poller-only, by design: perf-out-of-band tests-out-of-band"* ]]
+}
+
+@test "parity: a label-reactive label wired into the ADMIN path (but not the poller) still FAILS" {
+    # The asymmetry is one-directional: sanctioned poller-only, never
+    # admin-only. An admin path honouring a label the poller does not is the
+    # #1435 half-wired class and must still be caught.
+    write_parity_fixtures
+    cat > "$FIX/sam.sh" <<'SH'
+evaluate_rollup() {
+        | ($labels | any(. == "tests-out-of-band")) as $testsOob
+        | ($labels | any(. == "phantom-out-of-band")) as $phOob
+        | ($labels | any(. == "perf-out-of-band")) as $perfOob
+        | (($testsOob and $g.name == "Test-delta gate") | not)
+        | (($phOob and $g.name == "Phantom gate") | not)
+        | (($perfOob and $g.name == "Perf PR-fast") | not)
+}
+SH
+    run env SMATCHET_OOB_ROOT="$FIX" SMATCHET_OOB_MG_FILE="$FIX/mg.sh" \
+            SMATCHET_OOB_SAM_FILE="$FIX/sam.sh" bash "$GATE"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"DIVERGE"* ]]
+    [[ "$output" == *"perf-out-of-band"* ]]
 }
