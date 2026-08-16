@@ -8,6 +8,7 @@
 // codegen, and nothing here re-derives a value.
 // docs/plans/shipped/about-dialog-help-menu.md Slice 4.
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetAboutUi.h"
 
 // The three things this modal needs live on AppController and nowhere narrower:
