@@ -341,6 +341,9 @@ bool LuaConsolePlugin::StartLoadSelectedScriptIntoEditor(const AppController& ap
     // content), and leaving diskSnapshot_ stale would make the dirty check fire a spurious
     // unsaved-switch modal against a buffer that is about to be replaced anyway.
     luaEditor_.SetText(std::string());
+    // The buffer no longer holds any file's content — drop its provenance so Save cannot write it
+    // back over whatever the selection points at when the read fails to land (#2042).
+    editorContentName_.clear();
     // SetText() strips '\r'; compare dirty state against editor text, not raw file bytes.
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
@@ -395,7 +398,14 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         return;
     }
     if (result.name != selectedScriptName_) {
-        return; // selection cleared or retargeted without a queued kick
+        // Selection cleared or retargeted without a queued kick, so this body is dropped — but the
+        // editor is still the blank placeholder StartLoadSelectedScriptIntoEditor installed, with
+        // diskSnapshot_ re-baselined onto it. Latch the refusal like every other non-applying
+        // outcome here does, otherwise Save is wide open over whichever script the selection landed
+        // on (#2042).
+        scriptLoadRefusedReason_ = "The script never loaded — reselect it before saving.";
+        reloadNoticeName_.clear();
+        return;
     }
     if (result.status == LuaScriptReadStatus::TooLarge) {
         // Deliberately NOT the "-- New file" stub: the file exists and has content, so stubbing it
@@ -407,6 +417,9 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         return;
     }
     luaEditor_.SetText(result.status == LuaScriptReadStatus::Ok ? result.content : std::string("-- New file\n"));
+    // Buffer provenance: this is the one place a read actually lands (Ok content, or the intended
+    // "-- New file" stub for a name with no file behind it), so it is the one place Save is armed.
+    editorContentName_ = result.name;
     diskSnapshot_ = luaEditor_.GetText();
     ClearErrorMarkers();
     if (!reloadNoticeName_.empty() && reloadNoticeName_ == result.name) {
@@ -441,6 +454,16 @@ bool LuaConsolePlugin::SaveCurrentScript(const AppController& app, std::string& 
         // was refused or never landed, not because the file is empty. Writing the buffer back would
         // truncate a real script. The reason string carries the remedy for whichever cause it was.
         outErr = scriptLoadRefusedReason_;
+        return false;
+    }
+    // Positive provenance check, not another negative guard: write the buffer only when it is the
+    // buffer that was loaded FOR this selection. The reason-string guards above each cover one
+    // known way a load can fail to land; this one covers every way at once — including a selection
+    // retargeted behind the editor's back by SyncSelectionToList after a dropped result (#2042).
+    // The predicate is the pure, bucket-A-tested one (this TU is ImGui-bound and not in the Linux
+    // compile lane, so the decision itself lives where a test can reach it).
+    if (!lua_console_detail::EditorBufferMatchesSelection(editorContentName_, selectedScriptName_)) {
+        outErr = "The script never loaded — reselect it before saving.";
         return false;
     }
     // Target the tracked script by identity, never by list index: RefreshScriptList

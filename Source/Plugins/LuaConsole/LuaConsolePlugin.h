@@ -45,6 +45,14 @@ class LuaConsolePlugin : public IPlugin {
     /// (not index) because a refresh can reorder the list before the user picks.
     std::string pendingScriptName_;
     std::string diskSnapshot_;
+    /// Identity of the script whose content the editor buffer actually holds; empty whenever the
+    /// buffer is the blank placeholder installed for an in-flight read. This is the buffer's
+    /// PROVENANCE, distinct from `selectedScriptName_` (the user's current target): the two can
+    /// diverge with no read in flight and no refusal latched — a result dropped by the
+    /// name-mismatch bail in PollScriptLoad leaves the editor blank, and a later
+    /// SyncSelectionToList auto-selects an unrelated script (#2042). SaveCurrentScript writes only
+    /// when the two agree, so a buffer that never loaded can never be written over a real file.
+    std::string editorContentName_;
 
     /// Payload of one off-thread script read (Pillar 2, Issue #1925). `name` is echoed back so
     /// the poll can drop a result whose selection moved while the read was in flight.

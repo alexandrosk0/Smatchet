@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
 
+#include "Config/TrackerConfigSaveRepair.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "SmatchetDefaults.h"
@@ -19,12 +20,16 @@
 // clang-format on
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
+#include <functional>
 #include <iterator>
 #include <mutex>
 #include <string>
+#include <utility>
+#include <vector>
 
 using smatchet::config_detail::GetCachedConfigRef;
 using smatchet::config_detail::GetCacheMutexRef;
@@ -112,11 +117,107 @@ void SaveInheritFieldIds(nlohmann::json& j, const TrackerConfig& config) {
 
 } // namespace
 
-void ConfigManager::Save(const TrackerConfig& config) {
+// --- Persisted-field repair hooks (#2047) -------------------------------------------------------
+// Contract + rationale: Source/Core/include/Config/TrackerConfigSaveRepair.h.
+
+namespace smatchet {
+namespace config_repair {
+namespace {
+
+// Own mutex, deliberately NOT the config RMW mutex: a hook is registered/dropped from the UI thread
+// while a save can be issued from any thread, and Save() already holds the RMW lock when it applies
+// the hooks — reusing that lock here would deadlock. A vector rather than a single slot because two
+// independent actors (a User Info capture scenario and the shared capture-quiesce) pin disjoint
+// fields over overlapping windows.
+struct RepairRegistry {
+    std::mutex mtx;
+    int nextToken = 1;
+    std::vector<std::pair<int, std::function<void(TrackerConfig&)>>> hooks;
+};
+
+RepairRegistry& Repairs() {
+    static RepairRegistry r;
+    return r;
+}
+
+} // namespace
+
+int RegisterTrackerConfigRepair(std::function<void(TrackerConfig&)> fn) {
+    if (!fn) {
+        return 0;
+    }
+    RepairRegistry& r = Repairs();
+    std::lock_guard<std::mutex> lk(r.mtx);
+    const int token = r.nextToken++;
+    r.hooks.push_back(std::make_pair(token, std::move(fn)));
+    return token;
+}
+
+void UnregisterTrackerConfigRepair(int token) {
+    if (token == 0) {
+        return;
+    }
+    RepairRegistry& r = Repairs();
+    std::lock_guard<std::mutex> lk(r.mtx);
+    for (std::size_t i = 0; i < r.hooks.size(); ++i) {
+        if (r.hooks[i].first == token) {
+            r.hooks.erase(r.hooks.begin() + static_cast<std::ptrdiff_t>(i));
+            return;
+        }
+    }
+}
+
+void ApplyTrackerConfigRepairs(TrackerConfig& cfg) {
+    // Copy the hooks out before running them, and run them with the registry lock RELEASED: a hook
+    // is free to unregister itself (a capture unwind racing a save does exactly that), which would
+    // both invalidate the iteration and self-deadlock on a non-recursive mutex.
+    std::vector<std::function<void(TrackerConfig&)>> hooks;
+    {
+        RepairRegistry& r = Repairs();
+        std::lock_guard<std::mutex> lk(r.mtx);
+        if (r.hooks.empty()) {
+            return;
+        }
+        hooks.reserve(r.hooks.size());
+        for (std::size_t i = 0; i < r.hooks.size(); ++i) {
+            hooks.push_back(r.hooks[i].second);
+        }
+    }
+    for (std::size_t i = 0; i < hooks.size(); ++i) {
+        hooks[i](cfg);
+    }
+}
+
+} // namespace config_repair
+} // namespace smatchet
+
+namespace {
+
+// THE chokepoint for persisted-field repairs (#2047). Every TrackerConfig write in the process
+// funnels through ConfigManager::Save — the coalescing worker's drain and several dozen direct
+// `ConfigManager::Save(g_ui.cfg)` call sites across the UI alike — so applying the hooks here is
+// what makes persisting a screenshot scenario's CLEARED GitHub PAT unissuable rather than merely
+// unlikely. Repairing only at the worker's enqueue seam would leave every direct caller (the update
+// modal's "Skip This Version", the layout-schema migration, the preferences debounce, ...) writing
+// the cleared credential. The copy is unconditional: gating it on "are any hooks registered?" would
+// reintroduce a window where a hook armed concurrently is missed, and a struct copy is free next to
+// the JSON merge + atomic file write it precedes.
+TrackerConfig RepairedForSave(const TrackerConfig& configIn) {
+    TrackerConfig repaired = configIn;
+    smatchet::config_repair::ApplyTrackerConfigRepairs(repaired);
+    return repaired;
+}
+
+} // namespace
+
+void ConfigManager::Save(const TrackerConfig& configIn) {
     // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
     // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
     // WriteConfigJson holds internally — no recursive-lock deadlock.
     std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    // Put back any field a capture scenario has temporarily pinned — see RepairedForSave (#2047).
+    const TrackerConfig config = RepairedForSave(configIn);
+
     nlohmann::json j = LoadMergedConfigJson();
 
     // Table-driven plain scalar fields (string / bool / int / float). One source-of-truth row

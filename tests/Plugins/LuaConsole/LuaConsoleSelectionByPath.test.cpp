@@ -106,3 +106,60 @@ TEST_CASE("DR11: an unset selection defaults to the first entry, not a clear") {
     CHECK(index == 0);
     CHECK(name == "a.lua");
 }
+
+// --- #2042: buffer provenance, the hole DR11's identity tracking does NOT cover ----------------
+//
+// DR11 anchored the SELECTION to a file across a background re-sort. #2042 is the complementary
+// gap: the editor BUFFER can stop corresponding to the selection entirely. When an async script
+// read is dropped by PollScriptLoad's name-mismatch bail, the editor is left holding the blank
+// placeholder with diskSnapshot_ re-baselined onto it, no read in flight and no refusal latched —
+// and a later SyncSelectionToList auto-selects an unrelated script, so Save truncates a real file.
+//
+// These exercise the production predicate LuaConsolePlugin::SaveCurrentScript calls, not a copy of
+// it. LuaConsolePlugin.cpp is ImGui-bound and outside the Linux compile lane, which is exactly why
+// the decision was extracted into the pure header.
+
+using lua_console_detail::EditorBufferMatchesSelection;
+
+TEST_CASE("#2042: a buffer loaded for the selected script may be saved") {
+    CHECK(EditorBufferMatchesSelection("m.lua", "m.lua"));
+}
+
+TEST_CASE("#2042: the blank in-flight placeholder is never saveable") {
+    // StartLoadSelectedScriptIntoEditor blanks the editor and clears the provenance before kicking
+    // the read; until PollScriptLoad lands a body, no write may be issued.
+    CHECK_FALSE(EditorBufferMatchesSelection("", "m.lua"));
+}
+
+TEST_CASE("#2042: the reported sequence — dropped read then auto-selected script — cannot save") {
+    // 1. Select A -> read kicked, editor blanked, provenance cleared.
+    std::string editorContentName;
+    std::string selected = "A.lua";
+    CHECK_FALSE(EditorBufferMatchesSelection(editorContentName, selected));
+
+    // 2/3. A vanishes from disk; SyncSelectionToList clears the selection and the in-flight result
+    //      for A is dropped by the name-mismatch bail (provenance stays empty).
+    selected.clear();
+    CHECK_FALSE(EditorBufferMatchesSelection(editorContentName, selected));
+
+    // 4. A later tick auto-selects the first script, B — an unrelated, intact file.
+    selected = "B.lua";
+    // 5. Save must refuse: the blank buffer never loaded B. This is the truncation in the issue.
+    CHECK_FALSE(EditorBufferMatchesSelection(editorContentName, selected));
+
+    // Reselecting B kicks a read that actually lands, which arms the buffer for B and only B.
+    editorContentName = "B.lua";
+    CHECK(EditorBufferMatchesSelection(editorContentName, selected));
+}
+
+TEST_CASE("#2042: a stale buffer is never written to a different selection") {
+    // The editor still holds A's text while the selection has moved to B (a retarget that raced the
+    // editor). Writing here would overwrite B with A's contents — the DR11 failure mode arriving
+    // through the buffer rather than through the index.
+    CHECK_FALSE(EditorBufferMatchesSelection("A.lua", "B.lua"));
+}
+
+TEST_CASE("#2042: an empty selection is never a save target, whatever the buffer holds") {
+    CHECK_FALSE(EditorBufferMatchesSelection("A.lua", ""));
+    CHECK_FALSE(EditorBufferMatchesSelection("", ""));
+}
