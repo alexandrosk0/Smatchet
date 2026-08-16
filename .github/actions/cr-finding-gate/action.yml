@@ -96,6 +96,11 @@ runs:
         #     non-terminal, and the triggered review's events re-run this
         #     workflow to a real verdict.
         NUDGE_BUDGET="${NUDGE_BUDGET:-3}"
+        # How long a CR busy notice (rate limit / review-in-progress) keeps the
+        # never-reviewed nudge quiet. CR quotes a rolling HOUR for its limit and
+        # clears in-progress edits in minutes, so anything older cannot still be
+        # holding a window open.
+        NUDGE_BUSY_WINDOW_SECONDS="${NUDGE_BUSY_WINDOW_SECONDS:-3600}"
         nudge_attempted=false
         # $1 = mode:
         #   stale-clean    — CR's status is a stale not-a-review success while a
@@ -185,10 +190,45 @@ runs:
             # never-reviewed: there is NO clean pass to key on — requiring one is
             # exactly why the existing guard could not self-heal this state. The
             # rate-limit playbook still binds though: never post while a limit /
-            # in-progress notice is CR's newest word, because a trigger inside an
-            # active window RESETS the countdown (merge-gates.md rule 1). A busy
-            # notice also means CR is already engaged, so the nudge is moot.
-            [ -z "$busy_ts" ]                    || return 0
+            # in-progress notice is ACTIVE, because a trigger inside an open
+            # window RESETS the countdown (merge-gates.md rule 1), and a busy CR
+            # is already engaged so the nudge is moot anyway.
+            #
+            # ACTIVE, not merely PRESENT. busy_ts is the newest busy comment over
+            # the WHOLE thread with no recency bound, so `[ -z "$busy_ts" ]`
+            # suppressed the nudge forever once a PR had been rate-limited even
+            # once — which on this repo is nearly every PR, leaving the gate
+            # PENDING with nothing able to un-park it (CodeRabbit, #2036). The
+            # prose here already said "newest word"; only the test was stricter.
+            #
+            # Sized to CR's own limit: its notices quote a rolling HOUR, and
+            # in-progress edits clear in minutes, so a busy notice older than the
+            # window cannot still be holding anything.
+            if [ -n "$busy_ts" ]; then
+              # A `date` that cannot do relative math leaves cutoff empty, and
+              # then we keep the OLD conservative behaviour (suppress). Failing
+              # the other way would post into a live window and reset CR's
+              # countdown — the one outcome the playbook forbids.
+              # Digits-only, defaulted IN the function: an empty or garbage
+              # window is not an error to `date` — GNU date reads `-d "- seconds"`
+              # as NOW, which would put the cutoff at the present instant and let
+              # every busy notice read as expired. That is a fail-OPEN on the one
+              # guard whose whole job is to not post into a live window, and it
+              # is invisible (rc=0). Resolving here also keeps the function
+              # self-contained for the bats harness, which extracts it alone.
+              local busy_win="${NUDGE_BUSY_WINDOW_SECONDS:-3600}"
+              case "$busy_win" in ''|*[!0-9]*) busy_win=3600 ;; esac
+              local busy_cutoff
+              busy_cutoff="$(date -u -d "-${busy_win} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+              # Belt-and-braces, deliberately NOT load-bearing: an empty cutoff
+              # already fails the `\<` below (nothing sorts before ""), so the
+              # guard is suppress-either-way and no test can distinguish it.
+              # Kept because it states the fail-safe DIRECTION explicitly — if
+              # the comparison is ever rewritten, the intent survives the edit
+              # instead of depending on a string-compare side effect.
+              [ -n "$busy_cutoff" ] || return 0
+              [ "$busy_ts" \< "$busy_cutoff" ] || return 0
+            fi
           fi
           [ "$mine" = false ]                    || return 0
           [ "$n_nudges" -lt "$NUDGE_BUDGET" ]    || return 0

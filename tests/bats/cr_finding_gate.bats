@@ -229,6 +229,13 @@ verdict() {
         if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"; then
             printf 'unsettled'; return
         fi
+        # Second not-a-review marker. Without this arm the model diverged from
+        # decide(): a manual-review-required SUCCESS classified as `not-reviewed`
+        # (i.e. PASS) here while the action correctly held it unsettled, so no
+        # test could catch a regression of the fail-open (CodeRabbit, #2036).
+        if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"; then
+            printf 'unsettled'; return
+        fi
         case "$state" in
             SUCCESS)       printf 'not-reviewed' ;;
             FAILURE|ERROR) printf 'cr-failed' ;;
@@ -660,6 +667,9 @@ run_nudge() {
     # And it must NOT be mistaken for the rate-limit marker — they are distinct
     # states needing distinct recoveries (full review vs a first review).
     ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    # Exercise the CLASSIFICATION, not just the fields: inspecting state/desc
+    # cannot tell whether the verdict actually holds unsettled.
+    [ "$(verdict "$f")" = "unsettled" ]
 }
 
 # The fail-shut risk of over-matching. CR's PATH-FILTER skip is terminal — there
@@ -671,6 +681,9 @@ run_nudge() {
     desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
     ! printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"
     ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
+    # The terminal path-filter skip must still PASS through the model — this is
+    # the fail-shut half, and it is what an over-broad match would break.
+    [ "$(verdict "$f")" = "not-reviewed" ]
     # Guard the implementation too: matching a bare "review skipped" would be
     # the over-broad form, and would swallow the fixture above.
     ! grep -qE "grep -qi.*'review skipped'" "$ACTION"
@@ -697,10 +710,38 @@ run_nudge() {
 
 @test "nudge: never-reviewed stays silent while CR is rate limited or working" {
     setup_nudge
-    row coderabbitai[bot] 2026-08-16T03:30:00Z 'Review limit reached. Next review available in: 9 minutes'
+    # The busy notice must be CURRENT: the guard is a live-window test, so a
+    # hard-coded past timestamp would expire and silently stop exercising this.
+    row coderabbitai[bot] "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" 'Review limit reached. Next review available in: 9 minutes'
     NUDGE_MODE=never-reviewed run_nudge
     # merge-gates.md rule 1: a trigger inside an active window RESETS the
     # countdown, and a busy CR is already engaged.
+    [ ! -s "$POST_LOG" ]
+}
+
+# The other side of that guard, and the bug CodeRabbit caught on #2036: busy_ts
+# is the newest busy comment over the WHOLE thread with no recency bound, so a
+# mere-presence test suppressed the never-reviewed nudge FOREVER once a PR had
+# been rate-limited even once — which on this repo is nearly every PR. The gate
+# would then sit PENDING with nothing able to un-park it.
+@test "nudge: never-reviewed fires once the busy window has EXPIRED" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-3 hours' '+%Y-%m-%dT%H:%M:%SZ')" 'Review limit reached. Next review available in: 9 minutes'
+    NUDGE_MODE=never-reviewed run_nudge
+    grep -q 'coderabbitai review'   "$POST_LOG"
+    grep -q 'cr-first-review-nudge' "$POST_LOG"
+}
+
+# Fail-safe direction: if `date` cannot do relative math the window is
+# unknowable, and we keep the OLD conservative behaviour (suppress) rather than
+# posting into a possibly-live window and resetting CR's countdown.
+@test "nudge: an unusable date leaves the busy guard conservative (suppress)" {
+    setup_nudge
+    row coderabbitai[bot] "$(date -u -d '-3 hours' '+%Y-%m-%dT%H:%M:%SZ')" 'Review limit reached'
+    mkdir -p "$BATS_TEST_TMPDIR/nodate"
+    printf '#!/usr/bin/env bash\nexit 1\n' > "$BATS_TEST_TMPDIR/nodate/date"
+    chmod +x "$BATS_TEST_TMPDIR/nodate/date"
+    PATH="$BATS_TEST_TMPDIR/nodate:$PATH" NUDGE_MODE=never-reviewed run_nudge
     [ ! -s "$POST_LOG" ]
 }
 
