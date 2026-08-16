@@ -230,6 +230,14 @@ backfill_merge_snapshot() {
         return 0
     fi
     age_cap="${SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS:-6}"
+    # NOW_TS is assigned under set -e at startup, but validate it anyway: an
+    # empty/garbage value would make $((NOW_TS - ma)) treat it as 0 and accept
+    # arbitrarily old merges (fail-open). Undatable "now" fails closed too.
+    case "$NOW_TS" in
+        ''|*[!0-9]*)
+            echo "[git-janitor] ledger backfill skipped (current timestamp unavailable — undatable fails closed; live fallback covers PR #${PR_NUMBER})." >&2
+            return 0 ;;
+    esac
     if [ "$age_cap" != "0" ]; then
         # GNU date first, BSD/macOS fallback (mirrors safe-admin-merge.sh's
         # grace math) — without it every mergedAt is "undatable" on BSD hosts

@@ -46,11 +46,22 @@ _MG_GATE_FILTER_TEMPLATE='
 # no `labeled` trigger, so the pre-label red is exactly as accurate post-label
 # (the gate-side downgrade IS the dismissal mechanism, not a claim the run
 # would now pass) and a freshness demand would wedge the gate until an
-# unrelated push. Empty createdAt set (legacy fixture / no timeline) yields ""
-# and "anything >= empty" is true, preserving pre-guard behaviour.
+# unrelated push.
+# Missing-timestamp semantics are TWO distinct cases:
+#  * timeline field ABSENT (legacy fixture / pre-guard caller): "" label-time,
+#    "anything >= empty" is true — pre-guard behaviour preserved.
+#  * timeline PRESENT but no application event for an ACTIVE label (the
+#    `last:100` window truncated it away — >100 label events landed after the
+#    application): FAIL CLOSED with a far-future sentinel, refusing the
+#    downgrade. An un-timestampable active override must not waive a red run
+#    (CR #2033 finding); the operator escape is the same as any stale
+#    override — a fresh run or re-apply after the noise subsides.
 | ([$pr.timelineItems.nodes[]? | select((.label.name // "") != "")]) as $labelEvents
-| (([$labelEvents[] | select(.label.name == "tests-out-of-band") | (.createdAt // "")] | sort | last) // "") as $testsAt
-| (([$labelEvents[] | select(.label.name == "perf-out-of-band") | (.createdAt // "")] | sort | last) // "") as $perfAt
+| (($pr.timelineItems // null) != null) as $timelineKnown
+| ((([$labelEvents[] | select(.label.name == "tests-out-of-band") | (.createdAt // "")] | sort | last) // "")
+   | if $timelineKnown and . == "" then "9999-12-31T23:59:59Z" else . end) as $testsAt
+| ((([$labelEvents[] | select(.label.name == "perf-out-of-band") | (.createdAt // "")] | sort | last) // "")
+   | if $timelineKnown and . == "" then "9999-12-31T23:59:59Z" else . end) as $perfAt
 # crDisposition — an explicit operator attestation supplied EITHER as a label
 # prefixed `cr-disposition:` (e.g. `cr-disposition:rate-limit-acked`) OR as a
 # grep-able `cr-disposition:<reason>` marker line in the PR BODY. Whenever

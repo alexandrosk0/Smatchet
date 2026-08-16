@@ -1250,6 +1250,27 @@ set_fixture() {
     rm -f "$f" "$g"
 }
 
+@test "stale-override guard: timeline present but active label's application event truncated away -> fail closed, gate blocks" {
+    # Models the `last:100` window losing the tests-out-of-band LabeledEvent
+    # under >100 newer label events: the timeline is PRESENT (so this is not
+    # the legacy no-timeline case) but carries no application event for the
+    # ACTIVE override label. An un-timestampable active override must not
+    # waive a red run (CR #2033 finding).
+    local f g
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_label_tests_oob.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes.0.completedAt" \
+        '"2026-05-22T11:55:00Z"')"
+    g="$(fixture_override "$f" \
+        "data.repository.pullRequest.timelineItems" \
+        '{"nodes":[{"createdAt":"2026-05-22T12:10:00Z","label":{"name":"some-unrelated-label"}}]}')"
+    set_fixture "$g"
+    run poll_merge_gates org repo 1
+    [ "$status" -ne 0 ]
+    [[ "$output" != *"GATES_PASSED"* ]]
+    [[ "$output" == *"stale-override guard"* ]]
+    rm -f "$f" "$g"
+}
+
 @test "stale-override guard: run completed AFTER the label was applied -> downgrade honoured, gates pass" {
     # Freshness satisfied: the label landed at 12:10, the (still-failing) run
     # completed at 12:15 — a post-label evaluation, so the classic downgrade

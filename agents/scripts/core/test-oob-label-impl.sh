@@ -182,6 +182,9 @@ _sam_ci_downgrade_labels() {
 # safe-admin-merge --selftest CASE4, not here.
 _run_parity() {
     local mg="$1" sam="$2" mg_set sam_set
+    # Pin collation: the callers' `sort -u` and the `comm` calls below must
+    # agree on ordering regardless of the ambient locale.
+    local LC_ALL=C
     local reactive=$'perf-out-of-band\ntests-out-of-band'
     [ -r "$mg" ] && [ -r "$sam" ] || { echo "test-oob-label-impl: parity sources unreadable ($mg / $sam)" >&2; return 2; }
     mg_set="$(_mg_ci_downgrade_labels "$mg")" || return 2

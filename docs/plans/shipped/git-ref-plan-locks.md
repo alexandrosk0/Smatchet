@@ -338,16 +338,11 @@ Build when: a "merged green but broke develop" incident happens, OR PR throughpu
 
 **Recipe** (UI path): Settings → Branches → develop → "Require merge queue". Configure required status checks list (`build-and-test`, `coverage-gate`, plus any others). Merge queue auto-rebases each PR against develop tip + re-runs required checks before final merge. PR throughput trade-off: queue is single-threaded per branch; slow CI degrades throughput.
 
-**Recipe** (API path — NB: `enforce_admins` is TRUE since merge-pipeline-06, 2026-08-16; keep this in sync with `project.config.json` `branch_protection`, and prefer re-running `setup-branch-protection.sh` over hand-PATCHing the protection object):
+**Recipe** (API path — the protection object is OWNED by `agents/scripts/core/setup-branch-protection.sh`, which builds the full `PUT` body from `project.config.json` `branch_protection` — the endpoint takes `PUT` with a complete JSON body, not `PATCH` with nested `-F` form fields, and `enforce_admins` is TRUE since merge-pipeline-06, 2026-08-16. To adopt merge-queue settings: add them to the config block + script, then re-run it rather than hand-crafting the call):
 ```bash
-gh api -X PATCH repos/alexandrosk0/Smatchet/branches/develop/protection \
-  -F required_status_checks.strict=true \
-  -F 'required_status_checks.contexts[]=build-and-test' \
-  -F 'required_status_checks.contexts[]=coverage-gate' \
-  -F required_linear_history=true \
-  -F enforce_admins=true \
-  -f restrictions= \
-  -f required_pull_request_reviews.dismiss_stale_reviews=true
+# 1. Protection object (strict/required contexts/enforce_admins/…):
+bash agents/scripts/core/setup-branch-protection.sh          # or --dry-run first
+# 2. Merge-queue ruleset:
 gh api -X PUT repos/alexandrosk0/Smatchet/rulesets \
   --input <<<'{
     "name": "develop-merge-queue",

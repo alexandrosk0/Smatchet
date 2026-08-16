@@ -221,7 +221,7 @@ Convention: gate/script changes carry their bats coverage **in the same slice** 
 
 This meta-campaign authors **one** file: this tracker. Every fix lands in its slice's own PR with that slice's write set (named inline per slice above). No `Source/Core/` TU is touched by any slice. Grep-before-naming applies per slice, not here.
 
-- `docs/plans/shipped/agentic-infra-audit-campaign-2026-06.md` (this file) — § Implementation log updated as each slice shipped; flipped to `shipped` + moved here 2026-08-16 when the last cluster resolved.
+- `docs/plans/agentic-infra-audit-campaign-2026-06.md` (this file) — § Implementation log updated as each slice shipped; flipped to `shipped` + moved to the shipped tier 2026-08-16 when the last cluster resolved.
 
 ## Existing utilities reused
 
@@ -326,6 +326,6 @@ These survived mining but the verifier found the root cause already tracked; lis
 *(future entries — bullet per shipped slice: `<sha> · <slice> · <one-line summary>`)*
 
 ## Deviations from plan
-- **Slices B1 / B2 (P0 `merge-pipeline-01`/`-02`) + the `enforce_admins` half of B2 (`merge-pipeline-06`) intentionally NOT executed.** The plan's own Risk note already flags the `enforce_admins: true` flip as human-gated ("coordinate the branch-protection flip with the maintainer rather than auto-applying"); the maintainer extended that to the whole branch-protection / admin-merge cluster. These stay OPEN as a maintainer-gated backlog item rather than shipping autonomously.
+- **Slices B1 / B2 (P0 `merge-pipeline-01`/`-02`) + the `enforce_admins` half of B2 (`merge-pipeline-06`) intentionally NOT executed** *(historical as of 2026-07-14 — superseded: the maintainer greenlit the full cluster on 2026-08-16 and B1/B2 shipped in PR #2033; see the final Implementation-log entry)*. The plan's own Risk note already flags the `enforce_admins: true` flip as human-gated ("coordinate the branch-protection flip with the maintainer rather than auto-applying"); the maintainer extended that to the whole branch-protection / admin-merge cluster. These stayed OPEN as a maintainer-gated backlog item rather than shipping autonomously.
 - **`merge-pipeline-04` (Slice B6) shipped only its reconciliation-era partial** — the residual CR-never-ran-with-attestation bypass is deferred (production gate logic; wants its own grill), not closed in this campaign.
 - **C2 / G1 sibling findings resolved as by-design or already-fixed** rather than as code changes — see the close-out bullet. No slice was skipped silently; each is dispositioned in the Implementation log.

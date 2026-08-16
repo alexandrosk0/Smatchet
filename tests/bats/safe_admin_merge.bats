@@ -34,6 +34,9 @@ setup() {
     # the merge fired (or did NOT). Any other gh call is a no-op success.
     STUB_BIN_DIR="$(mktemp -d)"
     export STUB_BIN_DIR
+    # Never let a test append to the repo's real ledger — the merge-success
+    # tests otherwise rely only on the gh stub failing `pr view` (indirect).
+    export MERGE_SNAPSHOT_LEDGER="$STUB_BIN_DIR/ledger.jsonl"
     MERGE_SENTINEL="$STUB_BIN_DIR/merge-fired"
     export MERGE_SENTINEL
     cat > "$STUB_BIN_DIR/gh" <<'STUB'
