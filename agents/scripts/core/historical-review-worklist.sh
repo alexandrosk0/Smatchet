@@ -35,9 +35,11 @@
 #
 # USAGE
 #   historical-review-worklist.sh --range <lo> <hi> [--merged-list <file>]
+#   historical-review-worklist.sh --range=<lo>-<hi> [--merged-list=<file>]
 #   historical-review-worklist.sh --selftest
 #
 #   --range <lo> <hi>     inclusive PR-number range to build units for.
+#   --range=<lo>-<hi>     same, as one token (`,` also accepted as the separator).
 #   --merged-list <file>  authoritative merged-PR numbers, whitespace/newline
 #                         separated (a JSON array of numbers also parses). Use in
 #                         gh-less environments; produce it from the GitHub API /
@@ -66,6 +68,11 @@ LO=""; HI=""; MERGED_LIST=""; AGAINST="origin/develop"
 while [ $# -gt 0 ]; do
     case "$1" in
         --range) LO="${2:-}"; HI="${3:-}"; shift 3 ;;
+        # `--range=<lo>-<hi>` / `--range=<lo>,<hi>` — the single-token twin of the
+        # two-arg form above (shell-lint FLAG_PARITY requires a `=` twin for any
+        # value-taking flag; it is also the form that survives being pasted into a
+        # CI `run:` line without arg-splitting surprises).
+        --range=*) LO="${1#*=}"; HI="${LO#*[-,]}"; LO="${LO%%[-,]*}"; shift ;;
         --merged-list) MERGED_LIST="${2:-}"; shift 2 ;;
         --merged-list=*) MERGED_LIST="${1#*=}"; shift ;;
         --against) AGAINST="${2:-}"; shift 2 ;;
@@ -275,6 +282,13 @@ repoA="$(mktemp -d)"
     n=$(printf '%s' "$out" | grep -o '"pr"' | wc -l)
     [ "$n" = "3" ] || { echo "FAIL(A): want 3 units (1 squash + 2 constituents), got $n: $out"; exit 1; }
     case "$out" in *"constituent 1/2"*) ;; *) echo "FAIL(A): constituents not expanded: $out"; exit 1 ;; esac
+    # The `--range=<lo>-<hi>` twin must produce a byte-identical work-list to the
+    # two-arg form (else the FLAG_PARITY twin is decorative).
+    printf '100\n101\n' > /tmp/auth2.$$
+    out2="$(bash agents/scripts/core/historical-review-worklist.sh \
+              --range=100-101 --merged-list=/tmp/auth2.$$ --against develop 2>/dev/null)"
+    rm -f /tmp/auth2.$$
+    [ "$out2" = "$out" ] || { echo "FAIL(A): --range=lo-hi differs from --range lo hi"; echo "  two-arg: $out"; echo "  =form  : $out2"; exit 1; }
 ) || fail=1
 rm -rf "$repoA"
 
