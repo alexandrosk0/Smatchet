@@ -9,11 +9,15 @@ description: >-
 inputs:
   github-token:
     description: >-
-      Token with statuses:write + pull-requests:read, plus issues:write for
-      the stale-evidence full-review auto-nudge (PR comments POST through the
-      issues endpoint, so issues:write alone authorizes it; the gate still
-      functions read-only without it — the nudge POST just warns and moves
-      on).
+      Token with statuses:write + pull-requests:read, plus pull-requests:write
+      for the review auto-nudge. The nudge POSTs to the /issues/{n}/comments
+      path, which reads like issues:write is enough — it is not. Fine-grained
+      permissions are keyed on the TARGET type, not the endpoint path, and the
+      target here is a pull request, so issues:write alone 403s
+      ("Resource not accessible by integration"). That mistake shipped and
+      went unnoticed for the whole life of the nudge feature, because the gate
+      still functions read-only without the permission — the POST just warns
+      and moves on, so the only symptom is a nudge that never appears.
     required: true
   pr-number:
     description: Pull-request number to evaluate.
@@ -238,7 +242,7 @@ runs:
 
         <!-- ${marker} -->
         _Auto-posted by the CR finding gate: ${blurb}_" >/dev/null \
-            || echo "WARN: nudge comment POST failed (missing issues:write?)" >&2
+            || echo "WARN: nudge comment POST failed (missing pull-requests:write? the /issues/ path needs it — permissions key on target type, not path)" >&2
         }
 
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
