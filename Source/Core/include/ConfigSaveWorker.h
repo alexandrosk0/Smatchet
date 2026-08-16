@@ -31,6 +31,16 @@ void EnqueueTrackerConfig(const TrackerConfig& cfg);
 /// Enqueue the latest `AnnotateAnalysisConfig` snapshot — see `EnqueueTrackerConfig`.
 void EnqueueAnnotateConfig(const AnnotateAnalysisConfig& cfg);
 
+/// Enqueue the latest whole-file `PersistentViewsFile` snapshot (`smatchet_views.json`) — the
+/// third config-kind slot, added for #2026. The worker runs the same read-modify-write
+/// `Views::Save` used to do inline on the UI thread (re-read, fold in out-of-band `ToolbarAppend`
+/// writes via `smatchet::views_merge::MergePersistentViewsToolbarAppend`, write); moving that
+/// re-read onto the worker is what clears the `LoadPersistentViewsFromDisk` + write violation
+/// pair from the frame thread on every pane show/hide. Coalescing is safe: each snapshot is the
+/// COMPLETE intended file image, so latest-wins loses nothing. Same not-running fallback as the
+/// other kinds.
+void EnqueuePersistentViews(const PersistentViewsFile& disk);
+
 } // namespace config_save
 } // namespace smatchet
 

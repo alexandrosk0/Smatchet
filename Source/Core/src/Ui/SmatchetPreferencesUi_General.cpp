@@ -33,11 +33,14 @@
 // SmatchetPreferencesUi_Local.cpp, which dropped its own AppController.h include in the same
 // change, so tree-wide fan-in is net-unchanged. They call app.CheckForAppUpdate / RequestAppQuit /
 // GetResolvedLocalCacheDbPath / RecreateLocalCacheDatabase / SyncWithBackend — no narrower header.
+// clang-format off
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=include relocated from SmatchetPreferencesUi_Local.cpp which dropped its own, net fan-in unchanged; owner=prefs-ia; revisit=2026-12-01)
+// clang-format on
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "SmatchetHelpMarker.h"
 #include "Ui/SmatchetDestructiveButton.h"
+#include "Ui/SmatchetStorageSnapshotPure.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -244,9 +247,20 @@ void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
 #else
     constexpr ConfigManager::StoragePreference kDefaultPref = ConfigManager::StoragePreference::Shared;
 #endif
-    const ConfigManager::StoragePreference currentPref =
-        ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref);
-    int prefIndex = (currentPref == ConfigManager::StoragePreference::Portable) ? 0 : 1;
+    // Pillar 2 (#2044): the marker-file stat + parse and the two displayed paths are resolved
+    // ONCE per (Preferences-window open × runtime-asset dir), not per frame. The predicate is
+    // the cache key — a frame-count throttle would still be wrong, just less often.
+    if (smatchet::prefs_storage::StorageSnapshotStale(d.storageSnapshotValid, d.storageSnapshotRuntimeAssetDir,
+                                                      runtimeAssetDir)) {
+        const ConfigManager::StoragePreference resolvedPref =
+            ConfigManager::GetStoragePreference(runtimeAssetDir, kDefaultPref);
+        d.storageSnapshotPrefIndex = (resolvedPref == ConfigManager::StoragePreference::Portable) ? 0 : 1;
+        d.storageSnapshotUserDataDir = ConfigManager::GetUserDataDirectory();
+        d.storageSnapshotMarkerPath = ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir);
+        d.storageSnapshotRuntimeAssetDir = runtimeAssetDir;
+        d.storageSnapshotValid = true;
+    }
+    int prefIndex = d.storageSnapshotPrefIndex;
     const char* items[] = {SmatchetLocalization::T("prefs.storage.portable", "Portable (next to runtime files)"),
                            SmatchetLocalization::T("prefs.storage.shared", "Shared (OS user-data folder)")};
     static bool s_storageModeChanged = false;
@@ -256,6 +270,9 @@ void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
         const VoidResult stored = ConfigManager::SetStoragePreference(runtimeAssetDir, chosen);
         if (stored.has_value()) {
             s_storageModeChanged = true;
+            // The marker file just changed underneath the snapshot — re-resolve next frame
+            // (rather than assuming `chosen` landed verbatim; the file is the authority).
+            d.storageSnapshotValid = false;
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.storage", "Storage"),
                 chosen == ConfigManager::StoragePreference::Portable
@@ -297,8 +314,8 @@ void DrawGeneralStorageSection(AppController& app, UiDrawSession& d) {
         ImGui::TextDisabled("(spawns a new instance and exits this one)");
 #endif
     }
-    ImGui::TextDisabled("Current writable directory: %s", ConfigManager::GetUserDataDirectory().c_str());
-    ImGui::TextDisabled("Marker file: %s", ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir).c_str());
+    ImGui::TextDisabled("Current writable directory: %s", d.storageSnapshotUserDataDir.c_str());
+    ImGui::TextDisabled("Marker file: %s", d.storageSnapshotMarkerPath.c_str());
 }
 
 // Local database: intro blurb, resolved cache path, the "Recreate database..."

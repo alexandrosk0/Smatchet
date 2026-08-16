@@ -12,6 +12,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "Logger.h"
 #include "SmatchetUiSession.h"
 #include "UiPerfMonitor.h"
@@ -259,7 +260,13 @@ void SmatchetUI::syncFocusedPaneWithActiveView(AppController& app, UiDrawSession
             // review HIGH-4) resets catalog + initial sync next frame, and the sync
             // path performs the actual swap.
             d.cfg.TrackerType = pane.backendKey;
-            ConfigManager::Save(d.cfg);
+            // Pillar 2 (#2026): `ConfigManager::Save` funnels into `WriteConfigJson` (io mutex +
+            // ScopedFileLock + atomic whole-file replace) — the second half of the violation pair
+            // logged on every pane show/hide. Route it through the coalescing config-save worker
+            // (started/stopped by AppController, so nothing outlives it) instead of writing on the
+            // frame thread. In-memory `d.cfg` is already updated above, so every same-frame reader
+            // (EnsureLoaded below included) sees the new tracker type exactly as before.
+            smatchet::config_save::EnqueueTrackerConfig(d.cfg);
             ViewState.EnsureLoaded(d.cfg);
             LOG_INFO("GridPaneWindows: focused pane '%s' re-pointed backend to '%s'", pane.id.c_str(),
                      pane.backendKey.c_str());

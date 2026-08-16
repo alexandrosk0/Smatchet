@@ -162,6 +162,9 @@ void SmatchetUI::resetPreferencesWindowState(UiDrawSession& d) {
     // Pillar 2 (#892): drop the Tracker-tab open-edge latch so reopening the window re-snapshots
     // the cached-project list once (instead of re-reading disk every frame the tab is visible).
     d.prefsTrackerTabWasOpen = false;
+    // Pillar 2 (#2044): drop the General→Storage disk snapshot so reopening the window
+    // re-resolves the marker file once (instead of stat+parse on every frame it is visible).
+    d.storageSnapshotValid = false;
     preferencesState_.templateFlags = SmatchetPreferencesUiTemplateFlags{};
 #if defined(SMATCHET_WITH_AI)
     // Cancel any in-flight Assistant Preferences probe so its posted callback

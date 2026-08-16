@@ -21,6 +21,8 @@
 #include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
+#include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetWorklogSubmitPure.h"
 #include "TouchCellEditGesture.h"
 #include "TextEditor.h"
 #include "Logger.h"
@@ -145,9 +147,24 @@ struct ActiveWorklogDialogState {
     std::string ErrorMsg;
     bool JustOpened = false;
     bool TimeRemainingManuallyEdited = false;
+    /// Pillar 2 (#2043): true from the moment Save dispatches the worklog POST onto a worker
+    /// until its post-back lands. Drives the disabled Save button + the "Saving..." cue.
+    bool SubmitInFlight = false;
+    /// Set by the worker's post-back on success; consumed inside the modal draw, which is the
+    /// only place `ImGui::CloseCurrentPopup()` may legally be called (the dispatcher drains
+    /// before any window is submitted).
+    bool CloseRequested = false;
+    /// Generation token of the in-flight submit — see SmatchetCommentsModalGenPure.h. A
+    /// post-back that lands after the dialog was closed or re-opened on another ticket is
+    /// discarded instead of writing into the fresh state.
+    int Gen = 0;
 };
 
 static ActiveWorklogDialogState s_ActiveWorklogState;
+
+/// Monotonic submit-generation counter, deliberately OUTSIDE the dialog state so it survives
+/// the per-open reset (the #1713 lesson: a counter reset with the state makes the guard inert).
+static int s_WorklogGenCounter = 0;
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -1016,6 +1033,12 @@ void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& curren
         s_ActiveWorklogState.Initialized = true;
         s_ActiveWorklogState.JustOpened = true;
         s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
+        s_ActiveWorklogState.SubmitInFlight = false;
+        s_ActiveWorklogState.CloseRequested = false;
+        // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from
+        // a submit whose dialog was cancelled mid-flight would still match `Gen` after the user
+        // re-opened the SAME ticket and would close the freshly-opened dialog under them.
+        s_ActiveWorklogState.Gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
     }
     ImGui::PopStyleVar();
     ImGui::PopStyleColor(3);
@@ -1048,31 +1071,67 @@ void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& out
     }
 }
 
-// Validates the worklog inputs and, on success, submits via AppController and dismisses the popup.
-// Sets s_ActiveWorklogState.ErrorMsg on any validation/submit failure. Extracted from the modal's
-// Save button handler; behaviour byte-identical.
+// Validates the worklog inputs and, on success, DISPATCHES the submit onto a background worker.
+// Sets s_ActiveWorklogState.ErrorMsg on validation failure (synchronously) or on submit failure
+// (from the worker's post-back).
+//
+// Pillar 2 (#2043): `AppController::SubmitWorklog` does a `ConfigManager::Load()` plus a blocking
+// Jira `AddWorklog` POST. Running that inline froze the render thread for the whole tracker
+// round-trip with no cue — on a hung tracker the app looked dead. It now runs on
+// `LaunchBackgroundTask` and applies its `VoidResult` via `PostToMainThread`, exactly like the
+// comments-modal post path (SmatchetCommentsModalUi.cpp).
+//
+// Lifetime: `AppController` is app-lifetime and `~AppController` joins every
+// LaunchBackgroundTask worker (JoinBackgroundTasks) before member teardown, while
+// PostToMainThread no-ops after BeginShutdown() — so the captured `appPtr` can never dangle and
+// a post-back dropped at exit is harmless. Every other capture is a by-value copy; the lambda
+// touches only the file-static dialog state, which outlives the controller.
 void HandleWorklogSave(AppController& app) {
+    if (!smatchet::worklog::CanSubmitWorklog(s_ActiveWorklogState.SubmitInFlight)) {
+        return; // a submit is already in flight — never queue a duplicate worklog
+    }
     s_ActiveWorklogState.ErrorMsg.clear();
-    long long sVal = ParseWorkDurationToSeconds(s_ActiveWorklogState.TimeSpent);
-    if (sVal <= 0) {
-        s_ActiveWorklogState.ErrorMsg = "Invalid Time spent format. Please use e.g. 2h 30m.";
+    const std::string validationError =
+        smatchet::worklog::ValidateWorklogSubmission(s_ActiveWorklogState.TimeSpent, s_ActiveWorklogState.DateStarted);
+    if (!validationError.empty()) {
+        s_ActiveWorklogState.ErrorMsg = validationError;
         return;
     }
-    ParsedJiraDateTime dummyDt;
-    if (!TryParseJiraDateTime(s_ActiveWorklogState.DateStarted, dummyDt)) {
-        s_ActiveWorklogState.ErrorMsg = "Invalid Date started format.";
-        return;
-    }
-    std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
-    const VoidResult worklogResult = app.SubmitWorklog(
-        s_ActiveWorklogState.IssueId, s_ActiveWorklogState.TimeSpent, s_ActiveWorklogState.TimeRemaining, adjEst,
-        s_ActiveWorklogState.WorkDescription, s_ActiveWorklogState.DateStarted);
-    if (worklogResult.has_value()) {
-        ImGui::CloseCurrentPopup();
-        s_ActiveWorklogState.Initialized = false;
-    } else {
-        s_ActiveWorklogState.ErrorMsg = "Failed: " + worklogResult.error();
-    }
+
+    AppController* appPtr = &app;
+    const std::string issueId = s_ActiveWorklogState.IssueId;
+    const std::string timeSpent = s_ActiveWorklogState.TimeSpent;
+    const std::string timeRemaining = s_ActiveWorklogState.TimeRemaining;
+    const std::string adjEst = s_ActiveWorklogState.TimeRemainingManuallyEdited ? "new" : "auto";
+    const std::string description = s_ActiveWorklogState.WorkDescription;
+    const std::string startedDate = s_ActiveWorklogState.DateStarted;
+
+    const int gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
+    s_ActiveWorklogState.Gen = gen;
+    s_ActiveWorklogState.SubmitInFlight = true;
+
+    app.LaunchBackgroundTask([appPtr, gen, issueId, timeSpent, timeRemaining, adjEst, description, startedDate]() {
+        const VoidResult worklogResult =
+            appPtr->SubmitWorklog(issueId, timeSpent, timeRemaining, adjEst, description, startedDate);
+        const bool ok = worklogResult.has_value();
+        const std::string err = ok ? std::string() : worklogResult.error();
+        appPtr->PostToMainThread([gen, issueId, ok, err]() {
+            // Reuse of the comments-modal stale-guard (#1713): drop the post-back if the dialog
+            // closed, moved to another ticket, or a newer submit superseded this one.
+            if (SmatchetCommentsModalGen::CallbackIsStale(s_ActiveWorklogState.Initialized, s_ActiveWorklogState.Gen,
+                                                          gen, s_ActiveWorklogState.IssueId, issueId)) {
+                return;
+            }
+            s_ActiveWorklogState.SubmitInFlight = false;
+            if (ok) {
+                // CloseCurrentPopup() is only legal inside the popup's own draw — request the
+                // close and let RenderTimeTrackingModal honour it on this frame's draw.
+                s_ActiveWorklogState.CloseRequested = true;
+            } else {
+                s_ActiveWorklogState.ErrorMsg = "Failed: " + err;
+            }
+        });
+    });
 }
 
 // Draws the time-tracking modal popup (logged/remaining bar, duration inputs, date picker, work
@@ -1190,6 +1249,16 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
         return;
     }
 
+    // Pillar 2 (#2043): the async submit's success post-back can only ask for the close; the
+    // actual CloseCurrentPopup must happen inside the popup's own draw scope.
+    if (s_ActiveWorklogState.CloseRequested) {
+        s_ActiveWorklogState.CloseRequested = false;
+        s_ActiveWorklogState.Initialized = false;
+        ImGui::CloseCurrentPopup();
+        ImGui::EndPopup();
+        return;
+    }
+
     ImGui::Text("Time tracking: %s", ticket.id.c_str());
     ImGui::Separator();
     ImGui::Spacing();
@@ -1221,14 +1290,31 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
     ImGui::Separator();
     ImGui::Spacing();
 
-    // Buttons
+    // Buttons. Pillar 2 (#2043): while the worklog POST is in flight the Save button is
+    // disabled and a visible "Saving worklog..." cue is drawn beside it — the dialog stays
+    // interactive (the whole app used to freeze here) and the user can see work is happening.
+    // `wasInFlight` is latched BEFORE the Save button so BeginDisabled/EndDisabled stay paired
+    // across the click that flips the flag; the cue itself re-reads the LIVE flag afterwards so
+    // it appears on the very frame Save dispatched (cue-before-stall ordering — a snapshot here
+    // would delay it by one frame). The labelled id is the bucket-E visible-cue anchor.
+    const bool wasInFlight = s_ActiveWorklogState.SubmitInFlight;
+    if (wasInFlight) {
+        ImGui::BeginDisabled();
+    }
     if (ImGui::Button("Save", ImVec2(80, 0))) {
         HandleWorklogSave(app);
+    }
+    if (wasInFlight) {
+        ImGui::EndDisabled();
     }
     ImGui::SameLine();
     if (ImGui::Button("Cancel", ImVec2(80, 0))) {
         ImGui::CloseCurrentPopup();
         s_ActiveWorklogState.Initialized = false;
+    }
+    if (s_ActiveWorklogState.SubmitInFlight) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("worklog.saving", "Saving worklog..."));
     }
 
     ImGui::EndPopup();

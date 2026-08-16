@@ -617,6 +617,23 @@ struct UiDrawSession {
     /// Open-edge latch for the Preferences Tracker tab (#892). See `projectPillPopupWasOpen`.
     bool prefsTrackerTabWasOpen = false;
 
+    /// Snapshot of Preferences → General → Storage's disk-resolved values (Pillar 2 — #2044).
+    /// `ConfigManager::GetStoragePreference` stats + opens + parses `smatchet_storage_mode.txt`,
+    /// and the two displayed paths re-resolve alongside it; doing that per frame while the
+    /// section is expanded is sync I/O on the render thread. Resolved once whenever
+    /// `smatchet::prefs_storage::StorageSnapshotStale` reports the cache stale — i.e. keyed on
+    /// the runtime-asset dir, plus the explicit invalidations on Preferences-window close
+    /// (`resetPreferencesWindowState`) and after a successful `SetStoragePreference`.
+    bool storageSnapshotValid = false;
+    /// Runtime-asset directory the snapshot below was resolved for — the cache key.
+    std::string storageSnapshotRuntimeAssetDir;
+    /// Combo index of the resolved preference: 0 = Portable, 1 = Shared.
+    int storageSnapshotPrefIndex = 1;
+    /// `ConfigManager::GetUserDataDirectory()` as of the snapshot.
+    std::string storageSnapshotUserDataDir;
+    /// `ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir)` as of the snapshot.
+    std::string storageSnapshotMarkerPath;
+
     char viewNameBuf[128]{};
     /// Dashboard Views JQL editor (buffer + autocomplete state). Extracted into a reusable
     /// JqlEditorState so the omnibar can own a second independent instance (request-id isolation).
