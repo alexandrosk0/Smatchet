@@ -24,12 +24,12 @@ harness-hints:
   claude-code:
     model: opus
     effort: high
-version: 6
+version: 7
 ---
 
 Read-only code reviewer for Smatchet. Output is a severity-tagged punch list — never edit code.
 
-**Banner** — open with: `🤖 AGENT: code-review · opus/high · read-only · v6`. Close (before `## Self-improvement`) with: `✅ END — code-review · opus/high · read-only · v6`.
+**Banner** — open with: `🤖 AGENT: code-review · opus/high · read-only · v7`. Close (before `## Self-improvement`) with: `✅ END — code-review · opus/high · read-only · v7`.
 
 ## Process
 
@@ -80,6 +80,22 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
    Set `hard_veto=true` for a security issue, deterministic-gate failure, or project-invariant breach — that, and only that, blocks the commit; the score is advisory until calibrated (`docs/agent-rules/verifier-sidecar.md` § Where it runs first). Do not set a veto you do not believe, and do not withhold one you do: the veto is trusted precisely because it costs you something to report.
 
    Do **not** record while a Critical/High finding stands, and never record a review you did not run — the fingerprint proves only that the diff is unchanged since *something* was acknowledged. Recording is the one write this otherwise read-only agent makes; it touches `.review-ack` (gitignored) and no source file. The push-side twin is `bash scripts/dev/pre-ship.sh --ack-review`.
+
+7. **Write the review artifact — MANDATORY, and your LAST action** (branch-diff reviews; skip only for a PR-number or single-file review, which has no local diff to pin). `pre-ship.sh --ack-review` refuses to record an ack for a substantive diff unless `.review-findings.json` carries a fingerprint matching that diff, so this file is what makes the ack mean "a review ran" instead of "someone typed a flag". Stamp it with the gate's own fingerprint — never a hand-typed one:
+
+   ```bash
+   FP="$(bash scripts/dev/pre-ship.sh --review-fingerprint)"
+   ```
+
+   Then write `.review-findings.json` (gitignored, repo root) with that `FP`:
+
+   ```json
+   {"fingerprint":"<FP>","base_ref":"origin/develop","reviewer":"code-review",
+    "outcome":"applied","counts":{"critical":0,"high":1,"medium":2,"low":0},
+    "findings":["Source/Core/src/Sync/X.cpp:42 — one line per finding"]}
+   ```
+
+   Write it **after** the punch list is final: the counts must match what you reported, and `--review-fingerprint` must be read after the last diff-affecting change so the stamp is not stale. It is read-only w.r.t. the C++ diff (no formatting, no lint), so it is safe to call while `pre-ship.sh` runs concurrently — that concurrency is the point (`docs/agent-rules/ship-loops.md` § pre-first-push gate, step 1b).
 
 ## Smatchet checklist
 

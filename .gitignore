@@ -137,8 +137,10 @@ assets/fonts/*.ttf
 # output. See AGENTS.md § Subsystem guides + CONTEXT-MAP.md § Harness discovery.
 Source/Core/src/**/CLAUDE.md
 
-# pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack)
+# pre-ship.sh code-review gate marker (local, HEAD/diff-pinned ack) + the review
+# artifact the code-review agent writes beside it (also diff-fingerprint-pinned).
 .review-ack
+.review-findings.json
 .git-msg.tmp
 
 # LocalCacheManager corruption-test droppings (SmatchetTests run from the repo root)
