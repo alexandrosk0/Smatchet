@@ -84,6 +84,10 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     /// Default matches the Jira FakeTrackerClient so SwapBackendIfTrackerChanged's re-stamp
     /// (NormalizeViewsBackendKey) is a no-op for single-backend tests.
     std::string CacheBackendKeyImpl{"Jira"};
+    /// Ticket ids a sibling grid pane is displaying out of the SAME cache namespace. Empty by
+    /// default (single-context tests behave exactly as before); a multi-pane test sets it to
+    /// assert stale-deletion never removes a row another live pane still holds.
+    std::vector<std::string> RetainedByOtherContextsImpl;
 
     ISyncCache* Cache() override { return CacheImpl.get(); }
     /// DR6: CacheImpl is a unique_ptr owned by the fixture for its whole lifetime, so hand back a
@@ -99,6 +103,9 @@ class FakeTicketSyncDeps : public ITicketSyncDeps {
     ITrackerBackendFactory* BackendFactory() override { return Factory.get(); }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     void SetCacheBackendKey(const std::string& key) override { CacheBackendKeyImpl = key; }
+    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override {
+        return RetainedByOtherContextsImpl;
+    }
 
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override {
         LastTrackerTicketSyncWarning = message;

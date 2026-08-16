@@ -81,6 +81,16 @@ class ITicketSyncDeps {
     /// Re-stamp the namespace after a backend-kind swap (`SwapBackendIfTrackerChanged`). The
     /// value MUST be `ConfigManager::NormalizeViewsBackendKey` output.
     virtual void SetCacheBackendKey(const std::string& key) = 0;
+    /// Ticket ids currently held by the OTHER live grid panes sharing this cache namespace.
+    /// A full sync marks every cache row its OWN query did not return as stale, which is only
+    /// correct when that query covers the whole namespace. It does not: the SQLite cache is
+    /// backend-scoped and shared (ADR-0018 decision 4) while each pane syncs its own JQL, so
+    /// without this subtraction two differently-scoped panes delete each other's rows every
+    /// cycle and both grids end up empty. Stale-deletion subtracts these ids before deleting.
+    /// UI thread only, once per completed full-sync session — see the lock-order note at the
+    /// call site. Defaulted empty so single-context deps implementations (the test fakes) keep
+    /// the previous behaviour without a stub.
+    virtual std::vector<std::string> TicketIdsRetainedByOtherContexts() const { return {}; }
 
     // ---- Connectivity + sync-warning banner -------------------------------------------
     /// `transient` = the warning stems from a transport-shaped failure (offline / DNS / timeout /

@@ -91,6 +91,9 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     void SetBackend(std::unique_ptr<ITrackerBackend> backend) override;
     ITrackerBackendFactory* BackendFactory() override;
     void SetCacheBackendKey(const std::string& key) override;
+    /// Sibling-pane retention set — forwards to AppController, which walks the other live
+    /// contexts sharing this cache namespace (see ITicketSyncDeps for why).
+    std::vector<std::string> TicketIdsRetainedByOtherContexts() const override;
     void SetLastTrackerTicketSyncWarning(const std::string& message, bool transient) override;
     void SetLastTrackerConnectivityState(ITicketSyncDeps::ConnectivityState state) override;
     void SetNextTrackerConnectivityProbeAt(std::chrono::steady_clock::time_point at) override;

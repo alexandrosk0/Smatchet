@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <map>
@@ -820,4 +821,41 @@ void AppController::retireExpiredHiddenContexts_(std::chrono::steady_clock::time
         paneAdapters_.erase(it->first);
         it = gridContexts_.erase(it);
     }
+}
+
+std::vector<std::string> AppController::CollectTicketIdsRetainedByOtherContexts(const GridLiveContext& self) const {
+    const std::string selfKey = self.CacheBackendKeyCopy();
+    std::vector<GridLiveContext*> others;
+    {
+        // Issue #1457 lock order: map mutex OUTERMOST, snapshot the pointers, release it BEFORE
+        // taking ANY per-context mutex — including backendKeyMutex_ inside CacheBackendKeyCopy,
+        // which is why the key filter happens after this scope. Retired contexts leave the map
+        // with their ActiveTickets already cleared (RetireHiddenPaneContexts above), so a pane
+        // retired between the snapshot and the read contributes nothing rather than dangling.
+        std::lock_guard<std::mutex> mapLk(gridContextsMutex_);
+        others.reserve(gridContexts_.size());
+        for (std::map<std::string, std::unique_ptr<GridLiveContext>>::const_iterator it = gridContexts_.begin();
+             it != gridContexts_.end(); ++it) {
+            GridLiveContext* ctx = it->second.get();
+            if (ctx != nullptr && ctx != &self) {
+                others.push_back(ctx);
+            }
+        }
+    }
+
+    std::vector<std::string> ids;
+    for (std::size_t i = 0; i < others.size(); ++i) {
+        GridLiveContext& ctx = *others[i];
+        // Only contexts in the same cache namespace can collide: stale-deletion is scoped by
+        // backend key, so a Plane pane's rows are invisible to a Jira pane's sweep either way.
+        if (ctx.CacheBackendKeyCopy() != selfKey) {
+            continue;
+        }
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        ids.reserve(ids.size() + ctx.ActiveTickets.size());
+        for (std::size_t t = 0; t < ctx.ActiveTickets.size(); ++t) {
+            ids.push_back(ctx.ActiveTickets[t].id);
+        }
+    }
+    return ids;
 }

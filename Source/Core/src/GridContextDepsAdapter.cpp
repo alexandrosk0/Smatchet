@@ -118,6 +118,10 @@ ITrackerBackendFactory* GridContextDepsAdapter::BackendFactory() { return app_.b
 
 void GridContextDepsAdapter::SetCacheBackendKey(const std::string& key) { ctx_.SetCacheBackendKey(key); }
 
+std::vector<std::string> GridContextDepsAdapter::TicketIdsRetainedByOtherContexts() const {
+    return app_.CollectTicketIdsRetainedByOtherContexts(ctx_);
+}
+
 // Re-pointed (Phase 3): the connectivity state moved into the GLOBAL ConnectivityMonitorService.
 // Every per-pane adapter forwards its connectivity writes into that one instance (N writers, one
 // service). The service is constructed eagerly in Initialize before the first tick, so these

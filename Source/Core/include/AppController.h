@@ -1172,6 +1172,13 @@ class AppController : public IAppThreading,
     /// (unknown id / retired mid-flight). Never null — the default context is permanent.
     GridLiveContext& paneContextOrFocused_(const std::string& paneId);
     const GridLiveContext& paneContextOrFocused_(const std::string& paneId) const;
+    /// Ticket ids held by every live context OTHER than `self` that shares `self`'s cache
+    /// backend key. Backs `ITicketSyncDeps::TicketIdsRetainedByOtherContexts` so a pane's
+    /// full-sync stale-deletion does not delete rows a sibling pane is displaying (the SQLite
+    /// cache is one shared backend-keyed namespace, ADR-0018 decision 4, while each pane syncs
+    /// its own query). Follows the issue-#1457 lock order: snapshot the context pointers under
+    /// gridContextsMutex_, release it, THEN take each per-context activeTicketsMutex_.
+    std::vector<std::string> CollectTicketIdsRetainedByOtherContexts(const GridLiveContext& self) const;
     /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
     /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
     /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the

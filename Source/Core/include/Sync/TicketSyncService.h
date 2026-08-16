@@ -72,6 +72,15 @@ class TicketSyncService {
     static bool ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
                                                       int consecutiveEmptyFullSyncs, int emptyWipeThreshold);
 
+    /// Drop from `staleIds` every id another live grid pane still holds. The stale set is
+    /// computed as "cached rows this session's query did not return", which over-claims when
+    /// sibling panes sync different queries into the SAME backend-keyed cache namespace — each
+    /// pane would delete the others' rows every cycle (see ITicketSyncDeps::
+    /// TicketIdsRetainedByOtherContexts). Order of the surviving ids is preserved. Pure +
+    /// static so both apply paths share one decision and it is unit-testable.
+    static std::vector<std::string> FilterStaleIdsRetainedElsewhere(const std::vector<std::string>& staleIds,
+                                                                    const std::vector<std::string>& retainedElsewhere);
+
   private:
     /// Streaming-sync FSM state. Moved out of AppController in Phase 1C of the item 11
     /// extraction. Worker thread + UI thread coordinate via the atomics + `QueueMutex`.
@@ -136,6 +145,12 @@ class TicketSyncService {
     /// Phase 4: when the worker finished and the queue is drained, classify fetch error / soft
     /// warning, raise toasts, seed stale-deletion, and emit the coalesced Lua window bump.
     void FinalizeStreamingSessionIfDone();
+
+    /// Phase 4b: seed the progressive stale-deletion queue from the session's background stale
+    /// ids. Applies the empty-full-sync wipe guard and the sibling-pane subtraction, then arms
+    /// `isDeletingStale_` when anything survives. No-op unless the session completed a full sync
+    /// (a partial fetch cannot prove any row is gone). UI thread, once per session.
+    void SeedStaleDeletionForSession(bool fullSyncCompleted, std::size_t keptThisSession);
 
     ITicketSyncDeps& deps_;
     std::atomic<std::uint64_t> currentFetchRequestId_{0};

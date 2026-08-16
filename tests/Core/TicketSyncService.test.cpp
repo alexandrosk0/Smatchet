@@ -117,6 +117,70 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync deletes stale rows o
     CHECK(deps.DeferredLiveNotifyCalls == 1);
 }
 
+TEST_CASE("TicketSyncService::FilterStaleIdsRetainedElsewhere drops sibling-pane ids and preserves order") {
+    std::vector<std::string> stale;
+    stale.push_back("ABC-1");
+    stale.push_back("ABC-2");
+    stale.push_back("ABC-3");
+    stale.push_back("ABC-4");
+
+    SUBCASE("empty retention set is a pass-through") {
+        std::vector<std::string> kept =
+            TicketSyncService::FilterStaleIdsRetainedElsewhere(stale, std::vector<std::string>());
+        CHECK(kept == stale);
+    }
+
+    SUBCASE("ids held by another pane survive, order preserved") {
+        std::vector<std::string> retained;
+        retained.push_back("ABC-3");
+        retained.push_back("ABC-1");
+        retained.push_back("ZZZ-9"); // not stale here — an unrelated id must not disturb the result
+        std::vector<std::string> kept = TicketSyncService::FilterStaleIdsRetainedElsewhere(stale, retained);
+        REQUIRE(kept.size() == 2);
+        CHECK(kept[0] == "ABC-2");
+        CHECK(kept[1] == "ABC-4");
+    }
+
+    SUBCASE("every stale id retained elsewhere yields an empty deletion set") {
+        std::vector<std::string> kept = TicketSyncService::FilterStaleIdsRetainedElsewhere(stale, stale);
+        CHECK(kept.empty());
+    }
+}
+
+TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync keeps rows a sibling pane is displaying" *
+          doctest::test_suite("[high-risk]")) {
+    // Multi-grid collision (ADR-0018 decision 4): panes share ONE backend-keyed cache namespace
+    // but each syncs its own query, so "cached row my query did not return" over-claims. Rows a
+    // sibling pane is displaying must survive this pane's full-sync sweep.
+    FakeTicketSyncDeps deps;
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("ABC-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("SIB-1"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("SIB-2"));
+    deps.CacheImpl->SaveTicket("Jira", MakeTicket("GONE-1"));
+    deps.RetainedByOtherContextsImpl.push_back("SIB-1");
+    deps.RetainedByOtherContextsImpl.push_back("SIB-2");
+    TicketSyncService svc(deps);
+
+    TrackerIssueFetchPack pack;
+    pack.Tickets.push_back(MakeTicket("ABC-1", "kept"));
+    pack.Tickets.push_back(MakeTicket("ABC-2", "kept"));
+    pack.FullSyncCompleted = true;
+    svc.ApplyIssueFetchPack(pack);
+
+    std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
+    std::sort(ids.begin(), ids.end());
+    REQUIRE(ids.size() == 4);
+    CHECK(ids[0] == "ABC-1");
+    CHECK(ids[1] == "ABC-2");
+    CHECK(ids[2] == "SIB-1");
+    CHECK(ids[3] == "SIB-2");
+
+    // A row nobody holds and this query did not return is still genuinely stale.
+    CachedTicket got;
+    CHECK_FALSE(deps.CacheImpl->TryGetTicket("Jira", "GONE-1", got));
+}
+
 TEST_CASE("TicketSyncService::ApplyIssueFetchPack full-sync empty pack rejects stale-deletion and preserves cache" *
           doctest::test_suite("[high-risk]")) {
     // Guard at TicketSyncService.cpp:82-86 — a full-sync that returns zero tickets cannot
