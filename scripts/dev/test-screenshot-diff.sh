@@ -209,8 +209,21 @@ report_row() {
         # golden lives in this repo or in a caller-supplied dir. Unknown (no git,
         # untracked file, shallow clone with no touching commit) stays '-' —
         # never a number that would read as fresh.
-        local epoch=""
-        epoch="$(git -C "$(dirname "$golden")" log -1 --format=%ct -- "$(basename "$golden")" 2>/dev/null || true)"
+        #
+        # The commit date only describes the file if the file still HAS that
+        # commit's content. A bootstrap run overwrites the golden in place, and
+        # `git log` would then hand back the PREVIOUS commit's date for bytes
+        # that were just rewritten — a stale date presented as current, the same
+        # misleading-freshness class again. So date it only when the path is
+        # tracked AND its working-tree content matches HEAD; anything else is
+        # honestly unknown and reports '-'.
+        local epoch="" gdir gbase
+        gdir="$(dirname "$golden")"
+        gbase="$(basename "$golden")"
+        if git -C "$gdir" ls-files --error-unmatch -- "$gbase" >/dev/null 2>&1 &&
+            git -C "$gdir" diff --quiet HEAD -- "$gbase" >/dev/null 2>&1; then
+            epoch="$(git -C "$gdir" log -1 --format=%ct -- "$gbase" 2>/dev/null || true)"
+        fi
         # Digits-only guard: a non-numeric result would abort the whole driver in
         # the arithmetic below (set -e) — a reporting nicety must never take the
         # gate down.

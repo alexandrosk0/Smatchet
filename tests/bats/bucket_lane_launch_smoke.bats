@@ -155,6 +155,37 @@ STUB
     done < "$SMATCHET_GOLDEN_REPORT_FILE"
 }
 
+@test "golden report: a golden rewritten since HEAD reports '-', not the old commit date" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    PINKBIN="$WORK/pinkbin"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$PINKBIN"
+    chmod +x "$PINKBIN"
+    export PINK_PIXEL_COUNT_BIN="$PINKBIN"
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+
+    git -C "$SMATCHET_GOLDEN_DIR" init -q
+    git -C "$SMATCHET_GOLDEN_DIR" config user.email t@example.com
+    git -C "$SMATCHET_GOLDEN_DIR" config user.name t
+    git -C "$SMATCHET_GOLDEN_DIR" add -A
+    GIT_AUTHOR_DATE="2026-01-02T00:00:00Z" GIT_COMMITTER_DATE="2026-01-02T00:00:00Z" \
+        git -C "$SMATCHET_GOLDEN_DIR" commit -q -m goldens
+
+    # Rewrite one golden so its content no longer matches HEAD. `git log` would
+    # still hand back the 2026-01-02 commit — a stale date for bytes that just
+    # changed. The row must say '-' instead (CodeRabbit, PR #2023 round 7).
+    printf 'rewritten-since-HEAD' >> "$SMATCHET_GOLDEN_DIR/command-palette-fuzzy.png"
+
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    rewritten="$(awk -F'\t' '$1=="command-palette-fuzzy"{print $5"|"$6}' "$SMATCHET_GOLDEN_REPORT_FILE")"
+    [ "$rewritten" = "-|-" ]
+    # An untouched golden still dates normally, so the guard is not over-broad.
+    intact="$(awk -F'\t' '$1=="code-syntax-coloring"{print $5}' "$SMATCHET_GOLDEN_REPORT_FILE")"
+    [ "$intact" = "2026-01-02" ]
+}
+
 @test "golden report: an undatable golden reports '-', never a fresh-looking 0" {
     write_stub_exe live
     export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
@@ -233,6 +264,13 @@ i = teeth[0]
 assert not steps[i].get("continue-on-error", False), "lane-integrity must keep its teeth"
 bad = [s.get("name", "?") for s in steps[i + 1:] if not s.get("continue-on-error", False)]
 assert not bad, "reporting steps after lane-integrity must be continue-on-error: %s" % bad
+# The diff step itself must stay advisory too. Checking only the steps AFTER
+# lane-integrity left a hole: if the screenshot-diff step lost
+# continue-on-error it would block BEFORE the sole permitted blocking step and
+# this assertion would still pass (CodeRabbit, PR #2023 round 7).
+diff_step = next(s for s in steps if "Run bucket-C screenshot diff" in str(s.get("name", "")))
+assert diff_step.get("continue-on-error", False), \
+    "the screenshot-diff step must stay advisory (continue-on-error: true)"
 # The report's own history requirement: dating a golden needs real history.
 checkout = next(s for s in steps if "checkout" in str(s.get("uses", "")))
 assert checkout.get("with", {}).get("fetch-depth") == 0, "golden dating needs fetch-depth: 0"
