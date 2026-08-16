@@ -187,6 +187,7 @@ from merge_watcher_registry import (  # noqa: E402
     read_registry,
     write_registry,
     registry_lock,
+    entry_is_authorized,
 )
 
 
@@ -493,29 +494,54 @@ def poll_one(
     # `docs/reference/agentic-infrastructure-2026-05-23.md` and as P0 in
     # `docs/self-improvement/categories/process.md` (2026-05-21).
     #
-    # Registering with the watcher = explicit authorization to flip-ready
-    # (per `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge).
-    # The call is idempotent on already-non-draft PRs, so calling it every
-    # poll has no semantic effect beyond one extra `gh` API hop per minute.
+    # Flipping draft → ready is a WRITE to the user's PR, and
+    # `docs/agent-rules/merge-gates.md` § Auto-`gh pr ready` + merge gates the
+    # ready-flip and the merge behind the SAME authorization. So an entry the
+    # `gh pr create` hook registered (authorized: false) must not flip anything
+    # — otherwise the consent bypass this gate exists to close reappears one
+    # verb earlier (2026-08-16 P1 watcher-autoregister-bypasses-merge-consent).
     #
-    # Per CR feedback on PR #428: if the flip-ready step returns False, the PR
-    # is still observably draft (or we couldn't confirm non-draft state). DO
-    # NOT proceed with the gates poll — that would re-introduce the C4 bypass
-    # this PR is fixing (gates pass via the placeholder StatusContext SUCCESS
-    # branch on a draft PR). Return a transient state the daemon retries on
-    # the next cycle; the underlying issue (auth failure, network blip, PR
-    # genuinely refusing the flip) will surface on a subsequent attempt.
-    if not ensure_pr_ready_for_review(owner, repo, pr):
+    # Unauthorized entries still get everything the hook was written for: an
+    # already-non-draft PR polls gates normally, so stuck-nudges + escalation
+    # keep firing; only merging is withheld (see handle_pass). A genuinely
+    # draft one parks at DRAFT_UNAUTHORIZED rather than polling, because gates
+    # on a draft PR pass via CR's placeholder-StatusContext branch (C4) and
+    # that green would be a lie. On an unknowable draft state we fail OPEN for
+    # polling — observability is the unauthorized entry's whole purpose, and
+    # merging is separately gate-closed downstream.
+    if entry_is_authorized(entry):
+        # Per CR feedback on PR #428: if the flip-ready step returns False, the
+        # PR is still observably draft (or we couldn't confirm non-draft
+        # state). DO NOT proceed with the gates poll — that would re-introduce
+        # the C4 bypass (gates pass via the placeholder StatusContext SUCCESS
+        # branch on a draft PR). Return a transient state the daemon retries on
+        # the next cycle; the underlying issue (auth failure, network blip, PR
+        # genuinely refusing the flip) surfaces on a subsequent attempt.
+        if not ensure_pr_ready_for_review(owner, repo, pr):
+            return {
+                "pr": pr,
+                "clone_path": clone_path,
+                "last_poll_unix": int(time.time()),
+                "last_state": "READY_FLIP_FAILED",
+                "last_status_line": (
+                    "ensure_pr_ready_for_review returned False — PR may still be draft; "
+                    "skipping gates poll this cycle to avoid C4 bypass path. "
+                    "Re-attempts on next poll. If persistent, surface to user via "
+                    "`gh pr view <N> --json isDraft` + manual `gh pr ready <N>`."
+                ),
+            }
+    elif _pr_is_draft(owner, repo, pr) is True:
         return {
             "pr": pr,
             "clone_path": clone_path,
             "last_poll_unix": int(time.time()),
-            "last_state": "READY_FLIP_FAILED",
+            "last_state": "DRAFT_UNAUTHORIZED",
             "last_status_line": (
-                "ensure_pr_ready_for_review returned False — PR may still be draft; "
-                "skipping gates poll this cycle to avoid C4 bypass path. "
-                "Re-attempts on next poll. If persistent, surface to user via "
-                "`gh pr view <N> --json isDraft` + manual `gh pr ready <N>`."
+                f"PR #{pr} is draft and this registry entry is NOT authorized to merge, "
+                "so the watcher will not flip it ready. Gates are not polled: on a draft "
+                "PR they can pass without a CodeRabbit review (C4). Run "
+                f"`merge-watch authorize {pr}` to hand the watcher this PR, or "
+                f"`gh pr ready {pr}` to flip it yourself and keep watch-only polling."
             ),
         }
     # Invoke merge-gates.sh once (single poll iteration — MERGE_GATES_MAX_POLLS=1).
@@ -818,6 +844,38 @@ def ensure_pr_ready_for_review(owner: str, repo: str, pr: int) -> bool:
     if probe.returncode == 0 and probe.stdout.strip() == "false":
         return True
     return False
+
+
+def _pr_is_draft(owner: str, repo: str, pr: int) -> bool | None:
+    """Observable draft state of a PR. True / False, or None when unknowable.
+
+    Split out of `ensure_pr_ready_for_review` (which only answers "is it
+    non-draft NOW", after possibly flipping it) because an UNAUTHORIZED entry
+    must never flip anything: it needs to know whether the PR is draft in order
+    to decide between polling gates normally (non-draft) and parking at
+    DRAFT_UNAUTHORIZED (draft). `None` on any gh failure — callers pick their
+    own fail direction, and for polling that direction is OPEN (see poll_one).
+    """
+    try:
+        probe = subprocess.run(
+            [GH_BIN, "pr", "view", str(pr), "--repo", f"{owner}/{repo}",
+             "--json", "isDraft", "--jq", ".isDraft"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if probe.returncode != 0:
+        return None
+    out = probe.stdout.strip()
+    if out == "true":
+        return True
+    if out == "false":
+        return False
+    return None
 
 
 #: Sentinel return from squash_merge_pr when the PR was placed on a merge queue
@@ -1279,6 +1337,10 @@ NOTIFY_STATES = {
     # check-run — waiting cannot clear it; the state line carries the
     # `gh run rerun <id>` fix. Same silent-wedge hazard as exit 7 (#1937).
     "REQUIRED_MISSING_CANCELLED",
+    # Draft + unauthorized: parked until a human authorizes or flips it ready.
+    # One toast on entry (maybe_notify suppresses same-state repeats), so the
+    # park is visible instead of a silently idle registry row.
+    "DRAFT_UNAUTHORIZED",
 }
 
 
@@ -2951,7 +3013,12 @@ def maybe_emit_agent_event(
     # Carry the most actionable fields when present so a consumer doesn't re-query.
     # rerun_commands: exit 8's `gh run rerun <id>` line(s), untruncated — the
     # 300-char status_line cap above would otherwise be the only carrier.
-    for k in ("merge_sha", "stuck_reason", "triage_attempts", "triage_budget", "rerun_commands"):
+    # merge_action: GATES_PASSED is an END state for `await`, so without it a
+    # consumer can't tell a merged PR from one whose gates passed but was never
+    # authorized to merge ("skipped: not authorized ...") — both arrive as the
+    # same state, and only one is actually finished.
+    for k in ("merge_sha", "merge_action", "stuck_reason", "triage_attempts",
+              "triage_budget", "rerun_commands"):
         if k in state:
             event[k] = state[k]
     append_agent_event(event)
@@ -3118,6 +3185,20 @@ def handle_pass(
     pr = int(entry["pr"])
     clone_path = entry["clone_path"]
     extras: dict[str, Any] = {}
+    # 0. CONSENT GATE — the merge boundary. Registration is bookkeeping (the
+    #    `gh pr create` hook does it unconditionally); only an explicit user act
+    #    sets `authorized: true`. Green gates on an unauthorized entry are
+    #    reported and nothing else: no ready-flip, no merge REST call, no
+    #    cascade. The entry stays registered so polling / nudges / escalation
+    #    continue (2026-08-16 P1 watcher-autoregister-bypasses-merge-consent).
+    #    Missing key ⇒ unauthorized, so entries predating this field park here
+    #    until a human runs `merge-watch authorize <pr>` — the safe direction.
+    if not entry_is_authorized(entry):
+        extras["merge_action"] = (
+            f"skipped: not authorized to merge (run `merge-watch authorize {pr}` "
+            f"to grant merge rights)"
+        )
+        return extras
     or_meta = _gh_owner_repo(clone_path)
     if not or_meta:
         extras["merge_action"] = "skipped: gh repo view failed"
