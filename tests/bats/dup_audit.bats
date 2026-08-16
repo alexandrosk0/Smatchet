@@ -152,3 +152,50 @@ _mk_repo() {
     [ "$status" -eq 0 ]
     [[ "$output" != *"[dup] FAIL"* ]]
 }
+
+# The suppression check is a per-LINE test, so a marker whose reason prose wraps onto following
+# comment lines does NOT suppress — the nearest non-blank line above the clone is then prose, which
+# carries no token. That used to surface as a bare FAIL, reading as "your reason text is wrong" when
+# only the marker's SHAPE was (tooling 2026-08-07). Pin both halves of the fix: still a FAIL, but
+# now with a hint that names the placement.
+@test "--diff hints when a rule=duplication marker is present but WRAPPED (ineffective)" {
+    repo="$BATS_TEST_TMPDIR/dev"
+    _mk_repo "$repo"
+    # The preamble must NOT itself be part of the clone: the maximal-token-run boundary can drift
+    # ABOVE the human-meaningful start, and _suppressed also scans anywhere INSIDE the span — a
+    # drifted span that happens to cover the marker line would suppress and mask the bug. A
+    # structurally-unique preamble in A only (B is the bare block) pins the span to the block line,
+    # which is the shape that actually bit.
+    {
+        echo "struct Preamble { int a; double b; char c; };"
+        echo "// SMATCHET_DEVIATION(rule=duplication; reason=the two window-layout helpers are"
+        echo "// long-standing structural twins; unifying them would couple independent"
+        echo "// subsystems; owner=t; revisit=never)"
+        _block clone v
+    } > "$repo/Source/Core/src/Tracker/A.cpp"
+    _block clone v > "$repo/Source/Core/src/Tracker/B.cpp"
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[dup] FAIL"* ]]
+    [[ "$output" == *"[dup] hint:"* ]]
+    [[ "$output" == *"SINGLE line"* ]]
+}
+
+# The hint must stay specific to duplication markers: firing it on an unrelated rule-id would train
+# readers to skip it.
+@test "--diff does NOT hint when the nearby deviation is for a different rule" {
+    repo="$BATS_TEST_TMPDIR/dev"
+    _mk_repo "$repo"
+    {
+        echo "struct Preamble { int a; double b; char c; };"
+        echo "// SMATCHET_DEVIATION(rule=function-too-long; reason=test; owner=t; revisit=never)"
+        _block clone v
+    } > "$repo/Source/Core/src/Tracker/A.cpp"
+    _block clone v > "$repo/Source/Core/src/Tracker/B.cpp"
+    cd "$repo"
+    run "$PY" "$AUD" --diff HEAD
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"[dup] FAIL"* ]]
+    [[ "$output" != *"[dup] hint:"* ]]
+}

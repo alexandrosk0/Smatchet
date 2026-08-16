@@ -82,3 +82,14 @@ int w = obj["w"].get<int64_t>();  // suppresses `narrowing-conversions` on this 
 ```
 
 `rule` = scanner rule-id (suppresses that rule on the next line). `revisit` calendar markers that have passed emit `deviation-overdue` (a strict rule), forcing the audit loop; slug / `never` don't expire. Legacy markers (`// CLI stdout`, `// pre-logger-init`, `// C-ABI handle`, `// custom-deleter`) stay valid in perpetuity. **Column budget**: the full marker line — `// ` prefix through the `owner=`/`revisit=` suffix — must fit **120 columns**, or `clang-format`'s `ReflowComments` wraps it onto a second line and breaks the single-line suppression match; budget ~60-70 chars for `reason=` and keep it a terse noun phrase (`reason=ParseBounded clone #8`, not a sentence).
+
+**One line, directly above — overflow prose goes ABOVE the marker, never after it.** Every scanner's suppression check is a **per-line** test: the whole `SMATCHET_DEVIATION(...)` must sit on a *single* line, and that line must be the **nearest non-blank line above** the target (`duplication` also accepts a marker anywhere *inside* the clone span — so a wrapped marker sometimes suppresses *by accident*, when the detected span happens to drift up over it. That is why the failure looks intermittent; never rely on it). Splitting a long marker across comment lines silently fails to suppress — the nearest line above the target is then the trailing prose, which carries no token — and the gate reports a bare `FAIL` that reads as if the *reason text* were wrong when only its *shape* is:
+
+```cpp
+// the MCP and Lua-console window-layout helpers are long-standing structural
+// twins; unifying them would couple two independent subsystems
+// SMATCHET_DEVIATION(rule=duplication; reason=cross-subsystem twins; owner=ui-host; revisit=2026-12-31)
+void DrawMcpWindowLayout() { /* ... */ }
+```
+
+`dup_audit.py` names this case explicitly — when a clone FAILs with a well-formed `rule=duplication` marker within 5 lines above it, the gate emits a `[dup] hint:` line pointing at the marker's placement rather than leaving you to re-word a reason that was already fine.
