@@ -15,7 +15,21 @@
 
 ---
 
-## Status snapshot (since 2026-05-10 baseline)
+## Status snapshot (current — 2026-08-16)
+
+| Category | Count | State |
+|----------|-------|-------|
+| A. P0 / safety tails | 4 | 4 ✅ (A1, A2, A3, A4) |
+| B. P1 structural | 5 | 4 ✅ (B2, B3, B4) · B1 reframed won't-do-as-written · B5 improved, remainder design-deferred |
+| C. P2 polish | 7 | 6 ✅ · C5 closed as won't-do-as-written (objective met in substance) |
+| N. New findings (2026-05-16 pass) | 14 | 13 ✅ · N13 ⏳ dormant watch (acceptable; no trigger fired) |
+
+**Net open: zero work items.** N13 is a watch with an unfired trigger, not a task. The only actionable
+residuals are outside this table: the A3 inline-grid-editor glyph (P3, fold-in) and archiving
+`docs/plans/active/n4-trackeractions-interface.md` to `shipped/` (bookkeeping).
+
+<details>
+<summary>Historical snapshot (2026-05-10 baseline, superseded)</summary>
 
 | Category | Count | State |
 |----------|-------|-------|
@@ -26,6 +40,8 @@
 | Post-P0 review | 34 | 33 ✅ · 1 🟡 (B4 FlushFileSink shutdown) |
 
 **Net open before this rewrite:** 14 carry-overs + new findings from this pass.
+
+</details>
 
 ---
 
@@ -60,9 +76,9 @@
 
 **Still genuinely open after this pass:** none blocking — N13 acceptable; B5/C5/N4 partial by design; B1 reframed (won't-do-as-written). N12 closed 2026-07-11 (heuristic deleted, plan archived to `docs/plans/shipped/retire-transport-error-text.md`); B2 objective met (uniform retry on transient failures; N12 was the last B2-adjacent piece). C4 (`properties.<uuid>` serialization) and C6 (blocklist rationale documented) closed 2026-07-10. A4 (graceful half) and N3 were closed 2026-07-05; B5 improved (multi-paragraph + list preservation) with fuller rich-cell fidelity deferred. Everything else on the A/B/C/N carry-over list is resolved. Items already ✅ in the doc (N2, C2, C7, N7, N11, N14) re-verified still true.
 
-**Triple-check pass — 2026-07-13 (against develop tip):** re-verified every still-listed item against live code, not the reconcile text. Corrections: **N5** is now fully moot (`Config/ConfigManager.cpp` = **463 LOC**, split further; the watch is satisfied). **C5** is closed as won't-do-as-written / resolved-in-substance — the atomic-write sharing objective is met (5 callers via the `ConfigManager` static; **no raw temp+rename re-impls remain** to consolidate), `ScopedFileLock` has **zero non-`Config/` consumers**, and `BackendAuditTrail` *appends* (atomic-replace doesn't apply) — a `FileIo.{h,cpp}` module move is churn with no consumer to justify it. **B5** improved-half done (cell logic now in `Ui/AdfToMarkdown.cpp`, `<br>`-join + list items + golden tests); deeper block-content fidelity is design-deferred (GFM can't hold block content in a cell). **B1** confirmed done-differently (`LuaAutomationHost` = 17-LOC coordinator + `ILuaBindingHost`). **N13** still one gated virtual, no new plugin-type accessors landed → capability-tag system still not justified (acceptable). **Genuinely-open, being worked 2026-07-13:** **B4-v2** (server-side Plane `sequence_id__in` — verified NOT implemented, only a comment) + **C3** (edit-meta customs-reporting half — code comment confirms "customs stay unreported until the seam grows a catalog param"); and **N4** (AppController.h grew to **1512 LOC**, no `TrackerActions` — the one real remaining structural refactor; DTO-header slice + a staged interface plan in progress).
+**Triple-check pass — 2026-07-13 (against develop tip):** re-verified every still-listed item against live code, not the reconcile text. Corrections: **N5** is now fully moot (`Config/ConfigManager.cpp` = **463 LOC**, split further; the watch is satisfied). **C5** is closed as won't-do-as-written / resolved-in-substance — the atomic-write sharing objective is met (5 callers via the `ConfigManager` static; **no raw temp+rename re-impls remain** to consolidate), `ScopedFileLock` has **zero non-`Config/` consumers**, and `BackendAuditTrail` *appends* (atomic-replace doesn't apply) — a `FileIo.{h,cpp}` module move is churn with no consumer to justify it. **B5** improved-half done (cell logic now in `Ui/AdfToMarkdown.cpp`, `<br>`-join + list items + golden tests); deeper block-content fidelity is design-deferred (GFM can't hold block content in a cell). **B1** confirmed done-differently (`LuaAutomationHost` = 17-LOC coordinator + `ILuaBindingHost`). **N13** still one gated virtual, no new plugin-type accessors landed → capability-tag system still not justified (acceptable). **Genuinely-open, being worked 2026-07-13:** **B4-v2** (server-side Plane `sequence_id__in` — verified NOT implemented, only a comment) + **C3** (edit-meta customs-reporting half — code comment confirms "customs stay unreported until the seam grows a catalog param"); and **N4** (AppController.h grew to **1512 LOC**, no `TrackerActions` — the one real remaining structural refactor; DTO-header slice + a staged interface plan in progress). ~~C3~~ **[superseded 2026-08-16: C3's customs-reporting half is implemented — `FetchIssueEditMeta` resolves the project and enumerates `FetchPlaneCustomFields`. See §C3 and the 2026-08-16 triage table.]**
 
-**Reconcile — 2026-07-14:** two of the triple-check's "being worked" items have since settled. **B4-v2 has landed** — `smatchet::plane::BuildPlaneSequenceIdInFilter` (`Source/Core/src/Tracker/PlaneIssueMappingPure.cpp`, doctested in `tests/Core/PlaneIssueMappingPure.test.cpp`) is wired through the `FetchIssuesStreamed` URL builder into the page loop (`Source/Core/src/Tracker/PlaneIssueSearch.cpp`), matching §B4's description; the "verified NOT implemented" line above was true at check time and is superseded. **N4's staged interface plan has rendered its verdict**: `docs/plans/n4-trackeractions-interface.md` concludes **do not build `TrackerActions`; close N4 as substantially-resolved** (Part A DTO moves shipped via the fan-in phases; Part B moot) — pending that plan's final grill + archival. **C3** (customs-reporting seam catalog param) remains open.
+**Reconcile — 2026-07-14:** two of the triple-check's "being worked" items have since settled. **B4-v2 has landed** — `smatchet::plane::BuildPlaneSequenceIdInFilter` (`Source/Core/src/Tracker/PlaneIssueMappingPure.cpp`, doctested in `tests/Core/PlaneIssueMappingPure.test.cpp`) is wired through the `FetchIssuesStreamed` URL builder into the page loop (`Source/Core/src/Tracker/PlaneIssueSearch.cpp`), matching §B4's description; the "verified NOT implemented" line above was true at check time and is superseded. **N4's staged interface plan has rendered its verdict**: `docs/plans/n4-trackeractions-interface.md` concludes **do not build `TrackerActions`; close N4 as substantially-resolved** (Part A DTO moves shipped via the fan-in phases; Part B moot) — pending that plan's final grill + archival. ~~**C3** (customs-reporting seam catalog param) remains open.~~ **[superseded 2026-08-16: verified implemented — see §C3 and the triage table. The plan's verdict has since been rendered; only its `active/` → `shipped/` move is outstanding.]**
 
 **Triage — 2026-08-16 (against develop tip `7da969b`).** Re-checked every item this doc still leaves open, partial, or "pending", against live code rather than against the reconcile prose. Verdicts:
 
@@ -258,7 +274,26 @@ PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSna
 
 ---
 
-## Sequencing (revised 2026-05-16)
+## Sequencing (current — 2026-08-16)
+
+Every numbered step of the 2026-05-16 sequencing plan has landed or been closed by decision. What
+remains is not a sequence:
+
+1. **A3 residual (P3)** — add the required-field marker to the inline grid-cell editor
+   (`TicketFieldEditor.cpp`). Fold in when that file is next touched; not worth its own PR.
+2. **N4 bookkeeping** — move `docs/plans/active/n4-trackeractions-interface.md` to `shipped/`.
+   The verdict is rendered; only the archive move is outstanding.
+3. **N13 watch** — no action. Re-check only if a second plugin-type accessor lands on `IPlugin`,
+   which would justify the capability-tag system this item describes.
+
+Deferred by design, tracked elsewhere (do not sequence here):
+
+- **B5** deeper table-cell fidelity → `docs/plans/active/rich-text-editing-v2-remaining.md`.
+  GFM cannot hold block content in a cell; this needs a representation decision, not effort.
+- **B1** / **C5** — closed as won't-do-as-written, with re-open criteria recorded inline.
+
+<details>
+<summary>Original sequencing (2026-05-16, all steps closed — kept for provenance)</summary>
 
 **Now (low-risk, high-leverage):**
 1. **N11** — bootstrap doctest `tests/` with 3–4 starter units. Unblocks everything else.
@@ -279,6 +314,8 @@ PR #20 replaced `dynamic_cast<McpPlugin*>` with `virtual bool TryGetMcpStatusSna
 **Standing:**
 - C1–C7, A3, B4: small enough to fit when adjacent work touches the file.
 - N5, N9, N12, N13: re-check next pass.
+
+</details>
 
 ---
 

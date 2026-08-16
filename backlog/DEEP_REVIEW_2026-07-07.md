@@ -23,13 +23,17 @@
 
 ---
 
-## Status snapshot
+## Status snapshot (re-verified 2026-08-16 against develop tip `7da969b`)
 
 | Severity | Count | State |
 |----------|-------|-------|
 | **P0** — data-loss / security / crash | 17 | 17 ✅ |
-| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29) |
+| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29 — narrowed, see below) |
 | **P2** — polish / consistency | 3 | 3 ✅ |
+
+**DR29 is the only item not closed**, and its scope shrank: the ODR violation and three of the
+vacuous guards are fixed; three self-referential tests remain, all blocked on the same cause — the
+production helper lives in a translation unit the focused test rig cannot link.
 
 Findings landed across three PRs: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32/DR33) via
 PR #1676; batch 2 (the remaining 24) from parallel fix agents; batch 3 closed the **DR6** residual
@@ -387,7 +391,18 @@ invalidation → stale wrapping after a font-size change. `Ui/CodeColorView.cpp:
 
 ---
 
-## Suggested sequencing
+## Sequencing (current — 2026-08-16)
+
+**32 of 33 findings are shipped.** The sequencing plan below is fully executed and kept for provenance.
+
+The single remaining item is **DR29**, and it is one change, not a list: hoist the three production
+helpers its residual tests re-implement (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity
+cancel path) into test-linkable headers, then point `LuaTimeout.test.cpp`,
+`BulkImportAbandonNonBlocking.test.cpp`, and `UserInfoActivityCancelUaf.test.cpp` at the real symbols.
+Do it as one change — the per-test approach is what left this residual behind last time.
+
+<details>
+<summary>Original suggested sequencing (2026-07-07 — all but DR29 shipped)</summary>
 
 **Now (safety, small, high-leverage):** DR1 (merge drop), DR2 (endpoint bypass), DR3 (credential wipe),
 DR14 (CI gates — they gate everything else), DR19 (DeepSeek drift, ~2-line each).
@@ -397,6 +412,8 @@ DR14 (CI gates — they gate everything else), DR19 (DeepSeek drift, ~2-line eac
 **Then (correctness):** DR18, DR20, DR21, DR22, DR23, DR24, DR25, DR26, DR29.
 
 **Standing / fold-in when adjacent:** DR9–DR12, DR27, DR28, DR30, DR31, DR32, DR33.
+
+</details>
 
 ---
 

@@ -13,7 +13,7 @@
 
 ---
 
-## Current status (as of 2026-05-11, after PRs #9–#22 merged)
+## Current status — all 34 closed (2026-05-11 after PRs #9–#22; re-verified 2026-08-16)
 
 | Severity | Total | Done | Partial | Open |
 |----------|-------|------|---------|------|
