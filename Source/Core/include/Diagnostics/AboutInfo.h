@@ -40,6 +40,18 @@ struct AboutBuildInfo {
     std::string ImGuiVersion; ///< IMGUI_VERSION, or "unknown" where imgui.h is off the path
     std::string TargetArch;   ///< compile-time target ("x86_64" / "arm64" / ...)
     std::string BuildTag;     ///< Unreal host build tag, or "standalone"
+    /// SMATCHET_AGENT_DEBUG as this binary was compiled: true means
+    /// LOG_AGENT_DEBUG / SMATCHET_AGENT_DEBUG_LOG emit NDJSON to
+    /// <userData>/agent-debug/, false means they compile out (the macro degrades
+    /// to LOG_DEBUG / ((void)0)). Externally the two states look identical — an
+    /// absent agent-debug dir means "no instrumented call site fired" in one and
+    /// "the define never reached the compiler" in the other, and only the build's
+    /// DEFINES separated them. Reported per-binary, as seen by THIS TU: the define
+    /// is target-level today (Source/Standalone/CMakeLists.txt), so it agrees with
+    /// Logger.cpp's bridge; a future per-source-file define would break that.
+    bool AgentDebug;
+
+    AboutBuildInfo() : AgentDebug(false) {}
 };
 
 /// Git provenance from the generated header. All-"unknown" is a valid state (no
