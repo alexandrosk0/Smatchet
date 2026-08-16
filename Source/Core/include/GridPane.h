@@ -130,6 +130,23 @@ struct GridPane {
     /// title/id change — avoids a per-frame std::string build per pane.
     std::string cachedWindowName;
     std::string cachedWindowNameTitle; ///< Title the cached name was built from.
+
+    /// Dock placement hand-off — "+" opens the new pane as a TAB next to its source.
+    /// Dock GEOMETRY still rides ImGui's .ini (see the file header): these are runtime-only,
+    /// never persisted to smatchet_panes.json, and hold an ImGuiID by value so this header
+    /// (and the pure pane core) stay ImGui-free.
+    /// lastDockId: node this pane's window was docked in on its last drawn frame (0 =
+    ///   floating), refreshed right after ImGui::Begin.
+    /// pendingDockId: node a freshly created pane must dock into, copied from its source
+    ///   pane's lastDockId. Consumed ONCE by the first Begin and then cleared — after that
+    ///   the user owns the placement and re-forcing would fight a tab drag.
+    unsigned int lastDockId = 0;
+    unsigned int pendingDockId = 0;
+    /// Frames left to force this pane's tab selected + focused. Docking a window into a node
+    /// does NOT select its tab (imgui #2304), so a new pane would land BEHIND its source and
+    /// read as "+ did nothing". Counted down over several frames because the dock node's tab
+    /// bar does not exist yet on the frame the window first docks.
+    int selectTabFrames = 0;
 };
 
 /// Linear pane lookup (pane counts are single-digit; no map needed). Returns
