@@ -98,7 +98,9 @@ A rate-limited **code** PR that wedges past its window stays a deliberate BLOCK 
 
 Any "Skip gates and merge anyway" choice logs `LOG_WARN "user skipped gates: code=<n>"` before proceeding.
 
-**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR any PR registered with `smatchet-merge-watcher`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state. Use REST merge per `agents/core/git-janitor.md` § Hard refusals:
+**Auto-`gh pr ready` + merge** apply only when the user has explicitly authorised this PR for merge (post-ship option 3 "Register with watcher", in-session "merge when green", OR a PR whose `smatchet-merge-watcher` registry entry carries `authorized: true`). Without that authorization, gate-pass is reported and the orchestrator stops without flipping draft state.
+
+**Registration is not authorization** (2026-08-16 P1 `watcher-autoregister-bypasses-merge-consent`). The `gh pr create` PostToolUse hook (`docs/harness/claude-code/hooks/autoregister-pr.sh`) registers *every* agent-opened PR so it gets gate-polling + stuck-nudges; that bookkeeping must never imply merge rights, or the post-ship 4-option question becomes decorative. The registry therefore carries a per-entry `authorized` bool (default `false`, and a **missing** key reads as `false` so pre-existing entries park rather than merge). An unauthorized entry still polls gates, still nudges on stuck/stale, still escalates — the daemon just never flips it ready and never merges it. Grant with `merge-watch authorize <pr>` (or `merge-watch register --authorized <pr>`), revoke with `merge-watch deauthorize <pr>`; `merge-watch status` prints an `AUTH` column plus a trailing NOTE naming every watched-but-unauthorized PR. Use REST merge per `agents/core/git-janitor.md` § Hard refusals:
 
 ```bash
 gh api -X PUT "repos/$owner/$repo/pulls/$prNumber/merge" -f merge_method=squash
