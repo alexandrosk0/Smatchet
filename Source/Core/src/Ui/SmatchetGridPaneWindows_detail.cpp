@@ -151,6 +151,27 @@ bool PaneViewSelfRepairAllowed(const std::string& paneBackendKey, const std::str
     return paneBackendKey.empty() || paneBackendKey == cfgBackendKey;
 }
 
+unsigned int ResolveExtraPaneDockTarget(unsigned int& pendingDockId, unsigned int liveCentralNodeId,
+                                        bool layoutResetSettling) {
+    if (layoutResetSettling) {
+        // The reset owns the placement for the whole settle window. Drop any "+" hand-off
+        // unconditionally: the tree rebuild destroyed that source node, and docking into a
+        // dead id mints an orphan root node rather than failing (SmatchetDockNodeIds.h).
+        // Re-force the central node EVERY frame — the freshly loaded node is not
+        // LastFrameAlive on the reset frame, so a single write is silently dropped by
+        // ImGui's liveness guard. A 0 here (node not live yet) simply forces nothing this
+        // frame; the caller re-asks next frame, still inside the settle window.
+        pendingDockId = 0;
+        return liveCentralNodeId;
+    }
+    if (pendingDockId != 0) {
+        const unsigned int target = pendingDockId;
+        pendingDockId = 0; // consume-once — from here the user owns the placement
+        return target;
+    }
+    return 0;
+}
+
 PaneColumnsSource ChoosePaneColumnsSource(const std::string& paneViewId, const std::string& resolvedViewId,
                                           const std::string& activeViewId, bool cachedColumnsValid,
                                           const std::string& cachedColumnsViewId) {
