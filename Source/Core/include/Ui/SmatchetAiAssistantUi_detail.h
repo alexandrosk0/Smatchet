@@ -136,5 +136,33 @@ inline float AiToastAlpha(long long remainingMs, long long fadeOutMs) {
     return static_cast<float>(remainingMs) / static_cast<float>(fadeOutMs);
 }
 
+/// Session-only override recording which side bar the assistant panel ACTUALLY docked
+/// into after ApplyAssistantDocking issued a dock write. -1 = it reached the requested
+/// side, so `cfg.AssistantPanelOnSecondarySide` is the truth again; 0 = primary,
+/// 1 = secondary when the fallback fired because the requested side bar was not live.
+/// This value must NEVER be written back into the config. `kSecondarySideBar` is cut by
+/// no DockBuilder call and is absent from the embedded default ini, so a stored
+/// `AssistantPanelOnSecondarySide = true` fell back to primary on the first frame; the
+/// old code persisted that fallback, destroying the preference — and the swap button is
+/// disabled in exactly that state, so there was no way back through the UI. Keeping the
+/// fallback session-only means the stored preference is honoured again the moment a real
+/// secondary node exists.
+inline int AiAssistantSideFallbackAfterDock(bool wantSecondary, bool landedSecondary) {
+    if (wantSecondary == landedSecondary) {
+        return -1;
+    }
+    return landedSecondary ? 1 : 0;
+}
+
+/// Side the panel is EFFECTIVELY on this frame — what the swap button's label, its
+/// tooltip and any other side-dependent chrome must read. The session-only fallback
+/// above wins while it is set; otherwise the persisted preference does.
+inline bool AiAssistantEffectiveOnSecondary(bool persistedOnSecondary, int sideFallback) {
+    if (sideFallback < 0) {
+        return persistedOnSecondary;
+    }
+    return sideFallback == 1;
+}
+
 } // namespace ai
 } // namespace smatchet

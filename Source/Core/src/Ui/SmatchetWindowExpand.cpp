@@ -197,6 +197,49 @@ void ReserveTabBarSlot(ImGuiDockNode* node, float width) {
     ImGui::DockNodeEndAmendTabBar();
 }
 
+/// Keep the PERSISTED placement of an expanded window at its pre-expand home.
+/// The fullscreen pin IS the window's live state, and ImGui's settings writer snapshots
+/// Pos/Size/DockId off the live window, dropping the DockId line entirely while the dock id
+/// is zero. So the debounced auto-save — and the unconditional save inside DestroyContext
+/// when the user quits while a window is expanded — recorded the window as floating and
+/// fullscreen, and the next launch force-redocked it to its DEFAULT slot, silently
+/// discarding a customised dock placement.
+/// Two steps, both required:
+///  1. Stamp the saved home into the window's ImGuiWindowSettings entry, so the .ini
+///     carries the real placement even when no save happened since the user last moved
+///     the window (the entry would otherwise be stale, not merely un-refreshed).
+///  2. Set ImGuiWindowFlags_NoSavedSettings on the LIVE window. WindowSettingsHandler_
+///     WriteAll skips such windows when refreshing entries from live state, and its
+///     second pass still writes every entry out — so the stamped values survive verbatim.
+///     ImGui does the same thing to a live window in ClearWindowSettings, so setting the
+///     flag outside Begin is a sanctioned move. It costs nothing to undo: the next Begin
+///     reassigns window->Flags from its caller's flags, so the freeze lasts exactly as
+///     long as the expansion.
+void FreezeExpandedSettings(ImGuiWindow* window, const WindowExpandSaved& saved) {
+    ImGuiWindowSettings* settings = ImGui::FindWindowSettingsByWindow(window);
+    if (settings == NULL) {
+        settings = ImGui::CreateNewWindowSettings(window->Name);
+        if (settings != NULL) {
+            window->SettingsOffset = GImGui->SettingsWindows.offset_from_ptr(settings);
+        }
+    }
+    if (settings != NULL) {
+        const detail::WindowExpandPersistedPlacement home = detail::PersistedPlacementForExpanded(saved);
+        settings->ID = window->ID;
+        settings->DockId = static_cast<ImGuiID>(home.DockId);
+        if (home.OverridePosSize) {
+            // Settings store viewport-relative coordinates, exactly as WriteAll does.
+            settings->Pos = ImVec2ih(ImVec2(home.PosX - window->ViewportPos.x, home.PosY - window->ViewportPos.y));
+            settings->Size = ImVec2ih(ImVec2(home.SizeX, home.SizeY));
+        }
+        // An expanded window is by construction neither collapsed (EndFrame turns a
+        // collapse into a minimize) nor pending deletion.
+        settings->Collapsed = false;
+        settings->WantDelete = false;
+    }
+    window->Flags |= ImGuiWindowFlags_NoSavedSettings;
+}
+
 } // namespace
 
 void BeginWindow(UiDrawSession& d, const char* windowName) {
@@ -275,6 +318,15 @@ void DrawToggle(UiDrawSession& d) {
     WindowExpandState& s = d.windowExpand;
     const unsigned int id = static_cast<unsigned int>(window->ID);
     const WindowExpandSaved current = CapturePlacement(window);
+
+    if (s.ExpandedId == id) {
+        // Post-Begin is the only place this can go: Begin reassigns window->Flags from its
+        // caller's argument every frame, so a NoSavedSettings set before it would be lost.
+        const std::unordered_map<unsigned int, WindowExpandSaved>::const_iterator saved = s.Saved.find(id);
+        if (saved != s.Saved.end()) {
+            FreezeExpandedSettings(window, saved->second);
+        }
+    }
 
     if (window->DockNode != NULL && window->DockNode->TabBar != NULL) {
         // Docked: the X lives on the node's tab bar, so the toggle has to go

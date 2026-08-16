@@ -1103,17 +1103,23 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
             };
         }
         const bool wantUserInfoFocus = g_ui.requestUserInfoFocus;
+        // Hidden window: nothing to focus, so the latch is simply consumed below.
+        bool userInfoFocusResolved = true;
         if (g_ui.showUserInfo) {
             prepareTopLevelWindow(g_ui, "user_info", 720.0f, 560.0f, wantUserInfoFocus);
             if (wantUserInfoFocus) {
                 // User Info shares the bottom-panel dock node with Preferences, and
                 // SetNextWindowFocus() cannot raise a docked tab (see selectDockedTab).
-                selectDockedTab("User Info");
+                // On the first-ever open the ImGuiWindow does not exist until DrawWindow's
+                // Begin runs below, so this misses and the latch has to survive the frame.
+                userInfoFocusResolved = selectDockedTab("User Info");
             }
         }
         // Always called (even hidden) so the close-edge cleanup + future drain run.
         userInfoUi_.DrawWindow(app, g_ui, &g_ui.showUserInfo);
-        if (wantUserInfoFocus) {
+        if (wantUserInfoFocus &&
+            !smatchet::ui::FocusRequestStaysArmed(userInfoFocusResolved, g_ui.requestUserInfoFocusRetries,
+                                                  kFocusRequestRetryFrames)) {
             g_ui.requestUserInfoFocus = false;
         }
     }

@@ -40,3 +40,54 @@ TEST_CASE("DateFormat index<->option round-trips for every valid index") {
         CHECK(DateFormatOptionToIndex(DateFormatIndexToOption(i)) == i);
     }
 }
+
+// --- Keybinding-row match cache invalidation (issue #2060) -------------------------
+// The Shortcuts section's "does the query hit any binding row" answer is cached and
+// recomputed only on edges. Its dirty flag is armed solely by the Preferences keybindings
+// editor, but the binding table is also mutated by the toolbar / command-palette
+// quick-bind, which calls only MarkKeybindingsDirty(). Comparing that one monotonic
+// revision each frame is what closes the gap.
+
+using SmatchetPreferencesUiDetail::TakeKeybindMatchCacheRevisionEdge;
+
+TEST_CASE("TakeKeybindMatchCacheRevisionEdge: a steady revision arms nothing") {
+    unsigned int seen = 7u;
+    bool dirty = false;
+    CHECK_FALSE(TakeKeybindMatchCacheRevisionEdge(7u, seen, dirty));
+    CHECK(seen == 7u);
+    CHECK_FALSE(dirty);
+}
+
+TEST_CASE("TakeKeybindMatchCacheRevisionEdge: a bump arms exactly one rescan") {
+    // Frame 1: a quick-bind bumped the revision — rescan next.
+    unsigned int seen = 0u;
+    bool dirty = false;
+    CHECK(TakeKeybindMatchCacheRevisionEdge(1u, seen, dirty));
+    CHECK(seen == 1u);
+    CHECK(dirty);
+
+    // The scan runs and clears the flag; the following frames must not re-arm it.
+    dirty = false;
+    CHECK_FALSE(TakeKeybindMatchCacheRevisionEdge(1u, seen, dirty));
+    CHECK_FALSE(dirty);
+    CHECK_FALSE(TakeKeybindMatchCacheRevisionEdge(1u, seen, dirty));
+    CHECK_FALSE(dirty);
+}
+
+TEST_CASE("TakeKeybindMatchCacheRevisionEdge: an already-dirty flag is never cleared") {
+    // The Preferences editor's own arming must survive a no-edge frame.
+    unsigned int seen = 3u;
+    bool dirty = true;
+    CHECK_FALSE(TakeKeybindMatchCacheRevisionEdge(3u, seen, dirty));
+    CHECK(dirty);
+}
+
+TEST_CASE("TakeKeybindMatchCacheRevisionEdge: several bumps between frames still arm one rescan") {
+    // A frame that misses intermediate bumps (Preferences closed, then reopened) sees a
+    // single edge — the scan is a full recompute, so one is all it needs.
+    unsigned int seen = 2u;
+    bool dirty = false;
+    CHECK(TakeKeybindMatchCacheRevisionEdge(9u, seen, dirty));
+    CHECK(seen == 9u);
+    CHECK(dirty);
+}

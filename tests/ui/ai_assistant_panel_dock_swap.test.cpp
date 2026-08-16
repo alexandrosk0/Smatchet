@@ -53,6 +53,10 @@ void ResetDockSwapState() {
 // swap button only. Provider-name TextDisabled + tooltip omitted (irrelevant to
 // flag transitions; production wraps the same SmallButton block).
 void DrawDockSwapReplica(DockSwapState& s) {
+    // Production resolves the side through AiAssistantEffectiveOnSecondary(cfg flag,
+    // d.assistantSideFallback) so the label describes where the panel actually IS. This
+    // replica models the no-fallback case (assistantSideFallback == -1), where the two are
+    // identical; the fallback branch itself is pinned in tests/Core/AiAssistantUiDetail.test.cpp.
     const bool onRight = s.onSecondarySide;
     const char* swapLabel = onRight ? "<- Left" : "Right ->";
     if (ImGui::SmallButton(swapLabel)) {

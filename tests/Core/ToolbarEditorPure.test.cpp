@@ -58,3 +58,83 @@ TEST_CASE("DragDropDestIndex: dragging up keeps the target index") {
     CHECK(DragDropDestIndex(5, 2) == 2);
     CHECK(DragDropDestIndex(3, 0) == 0);
 }
+
+// --- Toolbar tooltip shortcut resolution (issue #2062) -----------------------------
+// The tooltip must resolve the shortcut against the button's OWN (CommandId, ArgsJson)
+// — the exact pair DispatchButton dispatches. BoundHotkeyDisplayAll matches args
+// semantically and has NO command-id-only fallback, so a hardcoded "{}" silently
+// dropped the shortcut for every customised button bound with non-default args.
+
+using smatchet::toolbar_editor::ToolbarButtonShortcutDisplay;
+
+namespace {
+
+Keybinding MakeBinding(const std::string& commandId, const std::string& argsJson, const std::string& hotkey) {
+    Keybinding b;
+    b.CommandId = commandId;
+    b.ArgsJson = argsJson;
+    b.Hotkeys.push_back(hotkey);
+    b.Enabled = true;
+    return b;
+}
+
+} // namespace
+
+TEST_CASE("ToolbarButtonShortcutDisplay: a button bound with non-default args keeps its shortcut") {
+    std::vector<Keybinding> bindings;
+    bindings.push_back(MakeBinding("view.sidebar.primary", "{\"action\":\"toggle\"}", "Ctrl+1"));
+
+    ToolbarButton b = MakeCmd("view.sidebar.primary");
+    b.ArgsJson = "{\"action\":\"toggle\"}";
+    CHECK(ToolbarButtonShortcutDisplay(bindings, b) == "Ctrl+1");
+
+    // The regression: resolving against the default-args identity finds nothing at all,
+    // because the args match is semantic and unbacked by a command-id-only fallback.
+    ToolbarButton defaultArgs = MakeCmd("view.sidebar.primary");
+    CHECK(ToolbarButtonShortcutDisplay(bindings, defaultArgs).empty());
+}
+
+TEST_CASE("ToolbarButtonShortcutDisplay: args are matched semantically, not by string") {
+    std::vector<Keybinding> bindings;
+    bindings.push_back(MakeBinding("view.toggle.performance", "{\"action\":\"show\",\"pane\":2}", "F9"));
+
+    ToolbarButton b = MakeCmd("view.toggle.performance");
+    b.ArgsJson = "{\"pane\":2,\"action\":\"show\"}"; // same object, different key order
+    CHECK(ToolbarButtonShortcutDisplay(bindings, b) == "F9");
+}
+
+TEST_CASE("ToolbarButtonShortcutDisplay: default-args buttons still resolve, empty args == {}") {
+    std::vector<Keybinding> bindings;
+    bindings.push_back(MakeBinding("view.toggle.log", "{}", "Ctrl+L"));
+
+    CHECK(ToolbarButtonShortcutDisplay(bindings, MakeCmd("view.toggle.log")) == "Ctrl+L");
+
+    ToolbarButton explicitEmpty = MakeCmd("view.toggle.log");
+    explicitEmpty.ArgsJson = "";
+    CHECK(ToolbarButtonShortcutDisplay(bindings, explicitEmpty) == "Ctrl+L");
+}
+
+TEST_CASE("ToolbarButtonShortcutDisplay: every alias of the matched binding is joined") {
+    std::vector<Keybinding> bindings;
+    Keybinding b = MakeBinding("ui.zoom.in", "{}", "Ctrl+=");
+    b.Hotkeys.push_back("Ctrl+NumAdd");
+    bindings.push_back(b);
+    CHECK(ToolbarButtonShortcutDisplay(bindings, MakeCmd("ui.zoom.in")) == "Ctrl+= / Ctrl+NumAdd");
+}
+
+TEST_CASE("ToolbarButtonShortcutDisplay: empty for non-command buttons and unbound commands") {
+    std::vector<Keybinding> bindings;
+    bindings.push_back(MakeBinding("view.toggle.log", "{}", "Ctrl+L"));
+
+    ToolbarButton sep;
+    sep.Kind = ToolbarButtonKind::Separator;
+    CHECK(ToolbarButtonShortcutDisplay(bindings, sep).empty());
+
+    ToolbarButton lua;
+    lua.Kind = ToolbarButtonKind::Lua;
+    lua.LuaCode = "print(1)";
+    CHECK(ToolbarButtonShortcutDisplay(bindings, lua).empty());
+
+    CHECK(ToolbarButtonShortcutDisplay(bindings, MakeCmd("")).empty());
+    CHECK(ToolbarButtonShortcutDisplay(bindings, MakeCmd("no.such.command")).empty());
+}
