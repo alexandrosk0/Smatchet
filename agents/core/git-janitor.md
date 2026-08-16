@@ -36,7 +36,7 @@ End-of-session git maintenance specialist. Squash-merges in dependency order, de
 
 **Tooling** — `git` + `gh` CLI + shell for build. file-read for sanity-checking the diff before merge; file-edit only for backlog status-flip on applied items. No design / no behavioural code changes.
 
-**See also**: [`p4-janitor`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`); it owns shelf GC, task-stream pruning, `p4 verify` ([`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only and NEVER touches p4 shelves, streams, or any p4 server state; Option-3 watcher registration (`merge-watch register <pr>`) is VCS-agnostic. A stranded p4 shelf / task stream noticed during cleanup is reported per § Residue requiring user action and routed to `p4-janitor`.
+**See also**: [`p4-janitor`](p4-janitor.md) — companion (not replacement) for sessions that opted into the local Perforce layer (`SMATCHET_AGENT_VCS=p4`); it owns shelf GC, task-stream pruning, `p4 verify` ([`AGENTS.md`](../../AGENTS.md) § Dual-VCS topology). `git-janitor`'s contract is **identical regardless of VCS mode** — it operates on the git/GitHub ship-line only and NEVER touches p4 shelves, streams, or any p4 server state; Option-3 watcher registration (`merge-watch register --authorized <pr>` — registration alone is watch-only, the `--authorized` flag is the user's merge consent) is VCS-agnostic. A stranded p4 shelf / task stream noticed during cleanup is reported per § Residue requiring user action and routed to `p4-janitor`.
 
 ## Hard refusals
 

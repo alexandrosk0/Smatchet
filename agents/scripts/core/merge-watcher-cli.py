@@ -11,17 +11,22 @@ Phase-1 scope: registry CRUD only. No auto-merge (Phase 2), no triage
 (Phase 3), no notify (Phase 4). The daemon prints per-PR state to stdout;
 state transitions are observed by reading `state/<pr>.json` files.
 
-Owner transfer: `register` prints "watcher now owns this PR; use
-`unregister` to take back control" per the locked design decision. The
-orchestrator is expected to check the registry before any merge-gates
-poll and skip if the PR is registered.
+Registration != merge authorization. `register` alone means "watch this PR"
+(gate-polling, stuck-nudges, escalation); the daemon will NOT merge it. Owner
+transfer — the locked "watcher now owns this PR" design decision — happens on
+`authorize`, which sets `authorized: true` and is reachable ONLY from an
+explicit user act (post-ship option 3, in-session "merge when green"). See
+`docs/self-improvement/categories/process/2026-08-16-watcher-autoregister-
+bypasses-merge-consent.md`.
 
 Usage:
-  merge-watch register <pr>        # add PR to registry (clone_path = cwd repo root)
-  merge-watch unregister <pr>      # remove PR
-  merge-watch status [<pr>]        # show one PR's state or all
-  merge-watch list                 # JSON dump of full registry
-  merge-watch prune [--dry-run]    # unregister PRs gh reports MERGED/CLOSED
+  merge-watch register <pr> [--authorized]   # add PR to registry (clone_path = cwd repo root)
+  merge-watch authorize <pr>                 # grant auto-merge rights (explicit user consent)
+  merge-watch deauthorize <pr>               # revoke them; keep watching
+  merge-watch unregister <pr>                # remove PR
+  merge-watch status [<pr>]                  # show one PR's state or all
+  merge-watch list                           # JSON dump of full registry
+  merge-watch prune [--dry-run]              # unregister PRs gh reports MERGED/CLOSED
 """
 
 from __future__ import annotations
@@ -51,6 +56,8 @@ from merge_watcher_registry import (  # noqa: E402
     registry_lock,
     read_registry,
     write_registry,
+    entry_is_authorized,
+    set_entry_authorized,
 )
 
 
@@ -160,17 +167,44 @@ def _pr_lifecycle_state(pr: int, clone_path: str) -> str:
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
+def _print_authorized_notice(pr: int, clone_path: str) -> None:
+    """The owner-transfer notice `smatchet-merge-watcher.md:102` specifies.
+
+    Printed ONLY on the authorized path — that is the moment ownership actually
+    moves, so this is the one message allowed to claim it.
+    """
+    print(
+        f"merge-watch: PR #{pr} AUTHORIZED for auto-merge (clone {clone_path}).\n"
+        f"  Watcher now owns this PR: it will squash-merge as soon as every merge gate "
+        f"passes, with no further prompt.\n"
+        f"  Take back control with `merge-watch deauthorize {pr}` (keep watching, stop "
+        f"merging) or `merge-watch unregister {pr}` (stop both)."
+    )
+
+
 def cmd_register(args: argparse.Namespace) -> int:
     pr = int(args.pr)
     clone_path = resolve_clone_path()
+    authorized = bool(getattr(args, "authorized", False))
     now = int(time.time())
     with registry_lock():
         entries = read_registry()
         for e in entries:
             if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                # Already registered. `--authorized` UPGRADES in place instead of
+                # erroring: the real-world order is hook-registers-unauthorized at
+                # `gh pr create`, THEN the user picks post-ship option 3 — so
+                # `register --authorized` must be equivalent to `register` followed
+                # by `authorize`, not a no-op that silently withholds consent.
+                if authorized and not entry_is_authorized(e):
+                    e["authorized"] = True
+                    write_registry(entries)
+                    _print_authorized_notice(pr, clone_path)
+                    return 0
                 print(
                     f"merge-watch: PR #{pr} already registered for clone {clone_path} "
-                    f"(registered_at={e.get('registered_at', '?')})",
+                    f"(registered_at={e.get('registered_at', '?')}, "
+                    f"authorized={entry_is_authorized(e)})",
                     file=sys.stderr,
                 )
                 return 1
@@ -180,14 +214,59 @@ def cmd_register(args: argparse.Namespace) -> int:
                 "clone_path": clone_path,
                 "registered_at": now,
                 "triage_attempts": 0,
+                "authorized": authorized,
             }
         )
         write_registry(entries)
+    if authorized:
+        _print_authorized_notice(pr, clone_path)
+        return 0
     print(
-        f"merge-watch: registered PR #{pr} for clone {clone_path}.\n"
-        f"  Watcher now owns this PR; use `merge-watch unregister {pr}` to take back control.\n"
-        f"  The orchestrator must check this registry before any merge-gates poll + skip if "
-        f"the PR is registered."
+        f"merge-watch: registered PR #{pr} for clone {clone_path} (NOT authorized to merge).\n"
+        f"  The watcher will poll merge gates, nudge on stuck/stale, and escalate — but it "
+        f"will NOT merge.\n"
+        f"  Grant merge rights with `merge-watch authorize {pr}`; stop watching entirely with "
+        f"`merge-watch unregister {pr}`."
+    )
+    return 0
+
+
+def cmd_authorize(args: argparse.Namespace) -> int:
+    pr = int(args.pr)
+    clone_path = resolve_clone_path()
+    result = set_entry_authorized(pr, clone_path, True)
+    if result == "missing":
+        print(
+            f"merge-watch: PR #{pr} not registered for clone {clone_path}; "
+            f"run `merge-watch register {pr} --authorized` instead.",
+            file=sys.stderr,
+        )
+        return 1
+    if result == "unchanged":
+        print(f"merge-watch: PR #{pr} already authorized for auto-merge; nothing to do.")
+        return 0
+    _print_authorized_notice(pr, clone_path)
+    return 0
+
+
+def cmd_deauthorize(args: argparse.Namespace) -> int:
+    pr = int(args.pr)
+    clone_path = resolve_clone_path()
+    result = set_entry_authorized(pr, clone_path, False)
+    if result == "missing":
+        print(
+            f"merge-watch: PR #{pr} not registered for clone {clone_path}; nothing to do.",
+            file=sys.stderr,
+        )
+        return 1
+    if result == "unchanged":
+        print(f"merge-watch: PR #{pr} was not authorized for auto-merge; nothing to do.")
+        return 0
+    print(
+        f"merge-watch: PR #{pr} DEAUTHORIZED (clone {clone_path}).\n"
+        f"  Still registered — gate-polling, stuck-nudges and escalation continue — but the "
+        f"watcher will not merge it.\n"
+        f"  Re-grant with `merge-watch authorize {pr}`."
     )
     return 0
 
@@ -258,25 +337,37 @@ def cmd_status(args: argparse.Namespace) -> int:
             (
                 f"#{pr}",
                 pathlib.Path(e.get("clone_path", "?")).name or "?",
+                "yes" if entry_is_authorized(e) else "NO",
                 last_state,
                 last_poll,
                 str(e.get("triage_attempts", 0)),
                 note,
             )
         )
-    header = ("PR", "CLONE", "LAST_STATE", "LAST_POLL", "TRIAGE", "NOTE")
+    header = ("PR", "CLONE", "AUTH", "LAST_STATE", "LAST_POLL", "TRIAGE", "NOTE")
     widths = [max(len(r[i]) for r in [header, *rows]) for i in range(len(header))]
     fmt = "  ".join(f"{{:<{w}}}" for w in widths)
     print(fmt.format(*header))
     print("-" * (sum(widths) + 2 * (len(header) - 1)))
     for r in rows:
         print(fmt.format(*r))
-    stuck_prs = [r[0] for r in rows if r[5].startswith("STUCK[")]
+    stuck_prs = [r[0] for r in rows if r[6].startswith("STUCK[")]
     if stuck_prs:
         print(
             f"\n  WARNING: {len(stuck_prs)} PR(s) STUCK_NEEDS_ATTENTION "
             f"({', '.join(stuck_prs)}) -- wedged and will NOT merge without a human "
             f"action (rebase / fix CI / resolve threads), or `merge-watch unregister <pr>`."
+        )
+    # Registration is bookkeeping, authorization is consent. Say so out loud: a
+    # watched-but-unauthorized PR waits forever on a green board, and the user
+    # must be able to see WHY without reading the daemon's source.
+    unauth_prs = [r[0] for r in rows if r[2] == "NO"]
+    if unauth_prs:
+        print(
+            f"\n  NOTE: {len(unauth_prs)} PR(s) watched but NOT authorized to merge "
+            f"({', '.join(unauth_prs)}) -- gates are polled and stuck-nudges fire, but the "
+            f"watcher will never merge them. Run `merge-watch authorize <pr>` to grant "
+            f"merge rights."
         )
     return 0
 
@@ -495,9 +586,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    r = sub.add_parser("register", help="add a PR to the watcher registry")
+    r = sub.add_parser(
+        "register",
+        help="add a PR to the watcher registry (watch-only unless --authorized)",
+    )
     r.add_argument("pr", help="PR number (e.g. 361)")
+    r.add_argument(
+        "--authorized",
+        action="store_true",
+        help="ALSO grant auto-merge rights — explicit user consent only "
+        "(post-ship option 3, in-session 'merge when green'). Without it the "
+        "watcher polls + nudges but never merges.",
+    )
     r.set_defaults(func=cmd_register)
+
+    au = sub.add_parser(
+        "authorize",
+        help="grant auto-merge rights to an already-registered PR (explicit user consent)",
+    )
+    au.add_argument("pr", help="PR number")
+    au.set_defaults(func=cmd_authorize)
+
+    da = sub.add_parser(
+        "deauthorize",
+        help="revoke auto-merge rights but keep watching the PR",
+    )
+    da.add_argument("pr", help="PR number")
+    da.set_defaults(func=cmd_deauthorize)
 
     u = sub.add_parser("unregister", help="remove a PR from the watcher registry")
     u.add_argument("pr", help="PR number")

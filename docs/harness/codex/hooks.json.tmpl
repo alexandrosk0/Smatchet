@@ -20,6 +20,13 @@
           },
           {
             "type": "command",
+            "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge'",
+            "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/unwatched-pr-nudge.sh\" --nudge'",
+            "statusMessage": "Checking for unwatched open agent PRs",
+            "timeout": 60
+          },
+          {
+            "type": "command",
             "command": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/followup-due-nudge.sh\" --nudge'",
             "commandWindows": "bash -lc 'root=\"$(git rev-parse --show-toplevel 2>/dev/null || true)\"; [ -n \"$root\" ] || exit 0; bash \"$root/agents/scripts/core/followup-due-nudge.sh\" --nudge'",
             "statusMessage": "Checking due follow-ups",

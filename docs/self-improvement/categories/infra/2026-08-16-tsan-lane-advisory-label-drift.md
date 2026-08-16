@@ -1,5 +1,5 @@
 - 2026-08-16 · orchestrator · [infra] · P2 — the TSan lane is documented as advisory in four places but its check name carries no `advisory` token, so the merge poller blocks on it
-  Details: Surfaced while grounding `docs/plans/active/autonomous-debug-live-evidence.md`;
+  Details: Surfaced while grounding `docs/plans/shipped/autonomous-debug-live-evidence.md`;
     unrelated to that plan's subject, filed here per `docs/agent-rules/ship-loops.md`
     § "Unrelated work never shares a PR".
     `.github/workflows/tsan-linux-nightly.yml:51` publishes the check name

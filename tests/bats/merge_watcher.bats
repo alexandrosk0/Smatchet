@@ -302,7 +302,9 @@ mw.maybe_remove_from_registry = lambda pr, cp: None
 mw._gh_json = lambda args, **kw: {'headRefOid': 'head789', 'labels': [
     {'name': 'tests-out-of-band'}, {'name': 'cr-out-of-band'}, {'name': 'unrelated'}]}
 gs = {'downgraded': ['Test-delta gate'], 'cr_override': True}
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=gs)
+# authorized=True: handle_pass refuses to merge an unauthorized entry (consent
+# gate), and this test is about the ledger row, not the gate.
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True}, gate_snapshot=gs)
 print('merge_action:', extras.get('merge_action'))
 print('snapshot:', extras.get('merge_snapshot'))
 "
@@ -338,8 +340,8 @@ mw.find_stacked_children = lambda o, r, b: []
 mw.maybe_remove_from_registry = lambda pr, cp: None
 # Clean merge: no override labels present.
 mw._gh_json = lambda args, **kw: {'headRefOid': 'head000', 'labels': []}
-e1 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=None)
-e2 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=None)
+e1 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True}, gate_snapshot=None)
+e2 = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True}, gate_snapshot=None)
 print('s1:', e1.get('merge_snapshot'))
 print('s2:', e2.get('merge_snapshot'))
 "
@@ -405,11 +407,11 @@ PY
 
 # ---------- register ----------
 
-@test "register creates registry entry with clone_path + registered_at + triage_attempts" {
+@test "register creates registry entry with clone_path + registered_at + triage_attempts + authorized=false" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
     [[ "$output" == *"registered PR #999"* ]]
-    [[ "$output" == *"Watcher now owns this PR"* ]]
+    [[ "$output" == *"NOT authorized to merge"* ]]
     # Verify registry file exists + contains the entry
     run watch_cli list
     [ "$status" -eq 0 ]
@@ -417,14 +419,34 @@ PY
     [[ "$output" == *'"clone_path"'* ]]
     [[ "$output" == *'"registered_at"'* ]]
     [[ "$output" == *'"triage_attempts": 0'* ]]
+    # Registration is bookkeeping, not consent (2026-08-16 P1
+    # watcher-autoregister-bypasses-merge-consent): a bare `register` — what the
+    # `gh pr create` PostToolUse hook fires on EVERY agent-opened PR — must
+    # persist authorized=false.
+    [[ "$output" == *'"authorized": false'* ]]
 }
 
-@test "register prints owner-transfer line (locked decision 5)" {
+@test "plain register does NOT claim ownership (registration != merge authorization)" {
     run watch_cli register 999
     [ "$status" -eq 0 ]
-    [[ "$output" == *"Watcher now owns this PR"* ]]
+    # The locked-decision-5 owner-transfer line moved to the AUTHORIZE path: on a
+    # watch-only registration it would be a lie (and it was the sentence the
+    # bypass hid behind on #2027/#2031).
+    [[ "$output" != *"Watcher now owns this PR"* ]]
+    [[ "$output" == *"will NOT merge"* ]]
+    [[ "$output" == *"merge-watch authorize 999"* ]]
     [[ "$output" == *"merge-watch unregister 999"* ]]
-    [[ "$output" == *"orchestrator must check this registry"* ]]
+}
+
+@test "authorize prints owner-transfer line (locked decision 5)" {
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run watch_cli authorize 999
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"AUTHORIZED for auto-merge"* ]]
+    [[ "$output" == *"Watcher now owns this PR"* ]]
+    [[ "$output" == *"merge-watch deauthorize 999"* ]]
+    [[ "$output" == *"merge-watch unregister 999"* ]]
 }
 
 @test "register dup -> exit 1 + already-registered message" {
@@ -473,6 +495,277 @@ PY
     [ "$status" -eq 0 ]
     [ "$(printf '%s' "$output" | grep -c '"pr": 4242')" -eq 1 ]
     [[ "$output" == *"mainrepo"* ]]
+}
+
+# ---------- authorization (registration != merge consent) ----------
+#
+# 2026-08-16 P1 watcher-autoregister-bypasses-merge-consent: the `gh pr create`
+# PostToolUse hook registers EVERY agent-opened PR, and merge-gates.md used to
+# read "registered with smatchet-merge-watcher" as auto-merge authorization.
+# Composed, that auto-authorized every agent-opened PR at creation time and made
+# the post-ship 4-option question decorative (observed on #2027 / #2031).
+# Registration is now watch-only bookkeeping; merging needs an explicit
+# `authorized: true`, set only by `authorize` / `register --authorized`.
+
+# Shared in-process handle_pass harness. Loads merge-watcher.py, stubs every gh
+# seam with a benign success (so a merge WOULD go through if the consent gate
+# let it), and runs handle_pass over the FIRST registry entry — i.e. over
+# whatever the CLI verbs under test actually persisted, not a hand-built dict.
+# Prints "action: <merge_action>". Requires $LEDGER to be set by the caller.
+handle_pass_first_entry() {
+    python -c "
+import os
+os.environ['MERGE_SNAPSHOT_LEDGER'] = r'$LEDGER'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+mw._gh_owner_repo = lambda clone_path: ('o', 'r')
+mw.ensure_pr_ready_for_review = lambda o, r, pr: True
+mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
+mw.squash_merge_pr = lambda o, r, pr: 'authflip1'
+mw.find_stacked_children = lambda o, r, b: []
+mw.maybe_remove_from_registry = lambda pr, cp: None
+mw._gh_json = lambda args, **kw: {'headRefOid': 'headauth', 'labels': []}
+print('action:', mw.handle_pass(mw.read_registry()[0]).get('merge_action'))
+"
+}
+
+@test "handle_pass on an unauthorized entry reports green gates and merges nothing" {
+    LEDGER="$SMATCHET_TEST_TMP/merge-snapshots-unauth.jsonl"
+    # Every gh seam past the consent gate raises: the test fails loudly if the
+    # merge path is entered at all, rather than relying on an absent side effect.
+    run python -c "
+import os
+os.environ['MERGE_SNAPSHOT_LEDGER'] = r'$LEDGER'
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+def boom(*a, **k):
+    raise AssertionError('merge path reached on an unauthorized entry')
+for seam in ('_gh_owner_repo', 'ensure_pr_ready_for_review', 'detect_merged_branch_name',
+             'squash_merge_pr', 'find_stacked_children', 'maybe_remove_from_registry',
+             '_gh_json'):
+    setattr(mw, seam, boom)
+gs = {'downgraded': [], 'cr_override': False}
+hook = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': False}, gate_snapshot=gs)
+legacy = mw.handle_pass({'pr': 998, 'clone_path': r'$CLONE_PATH'}, gate_snapshot=gs)
+print('hook:', hook.get('merge_action'))
+print('legacy:', legacy.get('merge_action'))
+print('shas:', hook.get('merge_sha'), legacy.get('merge_sha'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"hook: skipped: not authorized to merge"* ]]
+    # An entry written BEFORE the authorized key existed reads as unauthorized,
+    # not as grandfathered-in — missing key parks, never merges.
+    [[ "$output" == *"legacy: skipped: not authorized to merge"* ]]
+    [[ "$output" == *"merge-watch authorize 999"* ]]
+    [[ "$output" == *"shas: None None"* ]]
+    # Nothing merged -> no merge-snapshot row at all.
+    [ ! -f "$LEDGER" ]
+}
+
+@test "authorize flips a watch-only entry to mergeable (end-to-end via the registry)" {
+    LEDGER="$SMATCHET_TEST_TMP/merge-snapshots-authflip.jsonl"
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run handle_pass_first_entry
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"action: skipped: not authorized"* ]]
+    [ ! -f "$LEDGER" ]
+
+    run watch_cli authorize 999
+    [ "$status" -eq 0 ]
+    # Same harness, same registry, same gates — only consent changed.
+    run handle_pass_first_entry
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"action: merged"* ]]
+    [ -f "$LEDGER" ]
+}
+
+@test "register --authorized is equivalent to register then authorize" {
+    run watch_cli register 100 --authorized
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"AUTHORIZED for auto-merge"* ]]
+    run watch_cli register 200
+    [ "$status" -eq 0 ]
+    run watch_cli authorize 200
+    [ "$status" -eq 0 ]
+    # The two entries must agree on every field that is not required to differ
+    # (the PR number and the registration timestamp).
+    run python -c "
+import json
+d = json.load(open(r'$WATCH_ROOT/active.json'))
+by = {int(e['pr']): e for e in d}
+a, b = by[100], by[200]
+assert a['authorized'] is True, a
+assert b['authorized'] is True, b
+strip = lambda e: {k: v for k, v in e.items() if k not in ('pr', 'registered_at')}
+assert strip(a) == strip(b), (strip(a), strip(b))
+print('equivalent')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"equivalent"* ]]
+}
+
+@test "register --authorized upgrades an existing watch-only entry in place" {
+    # The real sequence: the hook registers on `gh pr create`, then the post-ship
+    # menu re-registers WITH --authorized. That second call must upgrade (exit 0),
+    # not collide with the dup-guard (exit 1) and leave the PR unauthorized.
+    run watch_cli register 999
+    [ "$status" -eq 0 ]
+    run python -c "
+import json
+print('at:', json.load(open(r'$WATCH_ROOT/active.json'))[0]['registered_at'])
+"
+    [ "$status" -eq 0 ]
+    local first_at="${output#at: }"
+
+    run watch_cli register 999 --authorized
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"AUTHORIZED for auto-merge"* ]]
+    run python -c "
+import json
+d = json.load(open(r'$WATCH_ROOT/active.json'))
+assert len(d) == 1, d
+assert d[0]['authorized'] is True, d
+print('at:', d[0]['registered_at'])
+"
+    [ "$status" -eq 0 ]
+    # Upgraded in place: still one entry, original registration time preserved.
+    [ "${output#at: }" = "$first_at" ]
+}
+
+@test "authorize on an already-authorized PR -> no-op, exit 0" {
+    run watch_cli register 999 --authorized
+    [ "$status" -eq 0 ]
+    run watch_cli authorize 999
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already authorized"* ]]
+}
+
+@test "authorize on an unregistered PR -> exit 1 pointing at register --authorized" {
+    run watch_cli authorize 9999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not registered"* ]]
+    [[ "$output" == *"register 9999 --authorized"* ]]
+}
+
+@test "deauthorize revokes merge rights but keeps the entry registered" {
+    LEDGER="$SMATCHET_TEST_TMP/merge-snapshots-deauth.jsonl"
+    run watch_cli register 999 --authorized
+    [ "$status" -eq 0 ]
+    run watch_cli deauthorize 999
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DEAUTHORIZED"* ]]
+    [[ "$output" == *"Still registered"* ]]
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"pr": 999'* ]]
+    [[ "$output" == *'"authorized": false'* ]]
+    # Revoked for real: the merge path refuses it again.
+    run handle_pass_first_entry
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"action: skipped: not authorized"* ]]
+    # Idempotent.
+    run watch_cli deauthorize 999
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"was not authorized"* ]]
+}
+
+@test "deauthorize on an unregistered PR -> exit 1" {
+    run watch_cli deauthorize 9999
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"not registered"* ]]
+}
+
+@test "status shows an AUTH column + a NOTE naming the watch-only PRs" {
+    run watch_cli register 100
+    [ "$status" -eq 0 ]
+    run watch_cli register 200 --authorized
+    [ "$status" -eq 0 ]
+    run watch_cli status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"AUTH"* ]]
+    # A daemon holding merge rights on the user's PR is never allowed to be
+    # invisible state — nor is one that only looks like it does.
+    [[ "$output" == *"NOT authorized to merge"* ]]
+    [[ "$output" == *"100"* ]]
+
+    run watch_cli authorize 100
+    [ "$status" -eq 0 ]
+    run watch_cli status
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"NOT authorized to merge"* ]]
+}
+
+@test "poll_one parks an unauthorized DRAFT PR at DRAFT_UNAUTHORIZED without flipping it ready" {
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+def boom(*a, **k):
+    raise AssertionError('ready-flip / gates poll reached on an unauthorized draft PR')
+mw._pr_lifecycle_state = lambda pr, cp: 'OPEN'
+mw._poll_owner_repo = lambda pr, cp: ('o', 'r')
+mw._pr_is_draft = lambda o, r, pr: True
+mw.ensure_pr_ready_for_review = boom
+mw._poll_run_gates = boom
+st = mw.poll_one({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+print('state:', st['last_state'])
+print('line:', st['last_status_line'])
+"
+    [ "$status" -eq 0 ]
+    # Gates on a draft PR can pass without a CodeRabbit review (C4), so that
+    # green would be a lie — park instead of polling, and name both exits.
+    [[ "$output" == *"state: DRAFT_UNAUTHORIZED"* ]]
+    [[ "$output" == *"merge-watch authorize 999"* ]]
+    [[ "$output" == *"gh pr ready 999"* ]]
+}
+
+@test "poll_one still polls gates for an unauthorized NON-draft PR (watch-only observability)" {
+    run python -c "
+import importlib.util, types
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+def boom(*a, **k):
+    raise AssertionError('ensure_pr_ready_for_review is a WRITE to the PR and must not run unauthorized')
+mw._pr_lifecycle_state = lambda pr, cp: 'OPEN'
+mw._poll_owner_repo = lambda pr, cp: ('o', 'r')
+mw.ensure_pr_ready_for_review = boom
+mw._poll_run_gates = lambda o, r, pr, env: types.SimpleNamespace(
+    returncode=0, stdout='Poll 1/1 all gates green', stderr='')
+for draft in (False, None):
+    mw._pr_is_draft = lambda o, r, pr, d=draft: d
+    st = mw.poll_one({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+    print('draft=%s ->' % draft, st['last_state'])
+"
+    [ "$status" -eq 0 ]
+    # Not draft: poll as before — gate-polling, stuck-nudges and escalation are
+    # exactly what the auto-register hook exists for, and none of them merge.
+    [[ "$output" == *"draft=False -> GATES_PASSED"* ]]
+    # Draft state unknowable (gh hiccup): fail OPEN for polling. Observability is
+    # the point of a watch-only entry; merging is separately closed in handle_pass.
+    [[ "$output" == *"draft=None -> GATES_PASSED"* ]]
+}
+
+@test "DRAFT_UNAUTHORIZED is wired into both the notify + agent-event state sets" {
+    # Without this the parked state is silent: no toast, and `merge-watch await`
+    # blocks forever on a PR that will never progress on its own.
+    run python -c "
+import importlib.util
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+mw = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mw)
+assert 'DRAFT_UNAUTHORIZED' in mw.NOTIFY_STATES, mw.NOTIFY_STATES
+assert 'DRAFT_UNAUTHORIZED' in mw.AGENT_EVENT_STATES, mw.AGENT_EVENT_STATES
+print('wired')
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"wired"* ]]
 }
 
 # ---------- unregister ----------
@@ -641,11 +934,15 @@ import importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
 mw = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mw)
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+# authorized=True so the consent gate is not what stops the merge — this test
+# is about the not-mergeable degrade. (The `|| skipped` alternative below is the
+# pre-existing Windows escape: the extensionless gh stub is unresolvable there,
+# so _gh_owner_repo degrades to None and handle_pass skips before the merge.)
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True})
 print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
-    [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped"* ]]
+    [[ "$output" == *"merge_action: merge_failed"* ]] || [[ "$output" == *"merge_action: skipped: gh repo view failed"* ]]
 }
 
 @test "handle_pass enqueues on a merge queue (state OPEN after --auto) -> merge_action: enqueued" {
@@ -674,7 +971,7 @@ mw.squash_merge_pr = lambda o, r, pr: mw.ENQUEUED_SENTINEL
 mw.find_stacked_children = lambda o, r, b: (_ for _ in ()).throw(AssertionError('cascade reached on enqueue'))
 mw._append_merge_snapshot = lambda *a, **k: (_ for _ in ()).throw(AssertionError('snapshot reached on enqueue'))
 mw.maybe_remove_from_registry = lambda pr, cp: (_ for _ in ()).throw(AssertionError('registry-drop reached on enqueue'))
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
 "
@@ -703,7 +1000,7 @@ mw.squash_merge_pr = lambda o, r, pr: 'abc123def456'
 mw._append_merge_snapshot = lambda o, r, pr, sha, gate_snapshot=None: 'snapshot_skipped'
 mw.maybe_remove_from_registry = lambda pr, cp: None
 mw.find_stacked_children = lambda o, r, b: []
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True})
 print('merge_action:', extras.get('merge_action'))
 print('merge_sha:', extras.get('merge_sha', '<none>'))
 "
@@ -783,7 +1080,7 @@ mw.detect_merged_branch_name = lambda o, r, pr: 'feat/foo'
 def boom(*a, **k):
     raise subprocess.TimeoutExpired(cmd='gh pr merge', timeout=60)
 mw.subprocess.run = boom
-extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': r'$CLONE_PATH', 'authorized': True})
 print('merge_action:', extras.get('merge_action'))
 "
     [ "$status" -eq 0 ]
@@ -945,7 +1242,7 @@ def cascade(o, r, child_pr):
         raise subprocess.TimeoutExpired(cmd='gh api PUT update-branch', timeout=30)
     return True, 'update-branch dispatched'
 mw.cascade_update_child = cascade
-extras = mw.handle_pass({'pr': 999, 'clone_path': 'x'})
+extras = mw.handle_pass({'pr': 999, 'clone_path': 'x', 'authorized': True})
 print('merge_action:', extras.get('merge_action'))
 kids = extras.get('cascade_children', [])
 print('child_count:', len(kids))
@@ -1724,7 +2021,7 @@ print('budget default ok')
     [[ "$output" == *"ALL channels failed"* ]]
 }
 
-@test "NOTIFY_STATES contains the 10 expected terminal states (incl. ACTIONS_UNAVAILABLE + REQUIRED_MISSING_CANCELLED)" {
+@test "NOTIFY_STATES contains the 11 expected terminal states (incl. ACTIONS_UNAVAILABLE + REQUIRED_MISSING_CANCELLED + DRAFT_UNAUTHORIZED)" {
     run python -c "
 import sys, importlib.util
 spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
@@ -1736,7 +2033,11 @@ m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec
 # escalation — an escalation nobody is told about is dead under the watcher.
 # REQUIRED_MISSING_CANCELLED joined with the merge-gates exit-8
 # cancelled-while-pending disambiguation (same silent-wedge hazard, #1937).
-expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE', 'REQUIRED_MISSING_CANCELLED'}
+# DRAFT_UNAUTHORIZED joined with the registration-vs-authorization split: a
+# draft PR whose entry is not authorized is parked, not ready-flipped, and the
+# park is only actionable if the user is told (2026-08-16 P1
+# watcher-autoregister-bypasses-merge-consent).
+expected = {'CI_FAIL', 'GH_API_DOWN', 'PR_CLOSED_OR_MERGED', 'PAGINATION_OVERFLOW', 'TIMEOUT', 'TRIAGE_BUDGET_EXHAUSTED', 'READY_FLIP_FAILED', 'STUCK_NEEDS_ATTENTION', 'ACTIONS_UNAVAILABLE', 'REQUIRED_MISSING_CANCELLED', 'DRAFT_UNAUTHORIZED'}
 assert m.NOTIFY_STATES == expected, f'got {m.NOTIFY_STATES}'
 assert 'ACTIONS_UNAVAILABLE' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
 assert 'REQUIRED_MISSING_CANCELLED' in m.AGENT_EVENT_STATES, f'got {m.AGENT_EVENT_STATES}'
@@ -2452,7 +2753,9 @@ print('action:', res.get('cr_none_grace_action'))
     [[ "$output" == *"[]"* ]]
 }
 
-@test "watch-register: SMATCHET_WATCH_ALL_PRS=1 -> registers the PR" {
+@test "watch-register: SMATCHET_WATCH_ALL_PRS=1 -> registers the PR AND authorizes it" {
+    # Setting the flag IS the session-scoped user consent, so this path (unlike
+    # the unconditional gh-pr-create hook) registers with --authorized.
     run env SMATCHET_WATCH_ALL_PRS=1 bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
     [ "$status" -eq 0 ]
     run python -c "
@@ -2460,17 +2763,37 @@ import os, sys, importlib.util
 os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
 spec = importlib.util.spec_from_file_location('cli', r'$SCRIPTS_DIR/merge-watcher-cli.py')
 cli = importlib.util.module_from_spec(spec); sys.modules['cli']=cli; spec.loader.exec_module(cli)
-print('prs:', sorted(int(e['pr']) for e in cli.read_registry()))
+reg = cli.read_registry()
+print('prs:', sorted(int(e['pr']) for e in reg))
+print('auth:', [e.get('authorized') for e in reg])
 "
     [ "$status" -eq 0 ]
     [[ "$output" == *"prs: [951]"* ]]
+    [[ "$output" == *"auth: [True]"* ]]
 }
 
-@test "watch-register: flag on + already-registered -> exit 0 (benign)" {
+@test "watch-register: flag on + already registered WATCH-ONLY -> upgrades to authorized (exit 0)" {
+    # The gh-pr-create hook may have watch-registered the PR seconds earlier.
+    # The opt-in flag must still be able to grant merge rights — `register
+    # --authorized` upgrades the existing entry in place rather than erroring.
     run watch_cli register 951; [ "$status" -eq 0 ]
+    [[ "$output" == *"NOT authorized to merge"* ]]
     run env SMATCHET_WATCH_ALL_PRS=true bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
     [ "$status" -eq 0 ]
-    [[ "$output" == *"already registered"* ]]
+    [[ "$output" == *"AUTHORIZED for auto-merge"* ]]
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"authorized": true'* ]]
+    # One entry, not two — an upgrade, not a duplicate registration.
+    run bash -c "python '$SCRIPTS_DIR/merge-watcher-cli.py' list | grep -c '\"pr\"'"
+    [[ "$output" == "1" ]]
+}
+
+@test "watch-register: flag on + already registered AND authorized -> exit 0 (benign no-op)" {
+    run watch_cli register --authorized 951; [ "$status" -eq 0 ]
+    run env SMATCHET_WATCH_ALL_PRS=true bash "$SCRIPTS_DIR/watch-register-if-enabled.sh" 951
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"already registered and authorized"* ]]
 }
 
 @test "watch-register: missing <pr> arg -> exit 2" {

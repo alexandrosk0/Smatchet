@@ -5598,3 +5598,106 @@ needs its risky work step-scoped.
     phrase and greps it across the diff's files, so the sweep is one command.
   Status: applied (flipped at archival)
   Last-reviewed: 2026-08-16
+
+- 2026-08-16 · orchestrator · [tooling] · P1 — the `CR findings` gate treats CodeRabbit's `Review skipped: manual review required for this OSS repository` status as "CR reviewed and found nothing", so on this repo it goes GREEN on an entirely unreviewed head — and that is the DEFAULT state of every new PR, not an edge case
+  Details: [`cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
+    disambiguates a head with no CR review node via CR's own `CodeRabbit`
+    StatusContext. It already special-cases ONE not-a-review description —
+    `grep -qiE 'rate.?limit|limit reached'` — and correctly resolves that to
+    PENDING plus a full-review nudge. Everything else falls through to
+    `SUCCESS) post success "CodeRabbit completed with no review on head
+    (skipped/clean)"; exit 0`. The in-file comment states the intent: *SUCCESS ->
+    CR is done and skipped the review (trivial / workflow / docs change)*.
+    But `Review skipped: manual review required for this OSS repository` does
+    NOT mean that. It means the opposite: CR has **not** looked and is waiting to
+    be asked. CodeRabbit requires a manual `@coderabbitai review` on repositories
+    with fewer than 10 stars, so this status is posted on **every** PR here at
+    creation time. The gate is therefore green-by-default on unreviewed code, and
+    only turns honest if a real review later lands.
+    Observed live on PR #2028: CR posted the skip status at 03:46:17, the gate
+    posted `success` at 03:46:30, and the PR then sat for **11.5 hours** with
+    `mergeable_state: clean`, all 36 CI checks green, and the CR gate green —
+    with zero review having occurred. The only thing that stopped an unreviewed
+    merge was the orchestrator manually applying the repo learning ("a skipped /
+    rate-limited stamp is NOT review evidence"). A `smatchet-merge-watcher`
+    registration, a `governance.auto_merge: on` grant, or any operator trusting
+    the checks would have merged it. #2023 and #2025 showed the same green.
+    This is the exact fail-open the rate-limit branch was added to close
+    (its comment: *"the branch below would translate that into 'completed with no
+    review on head (skipped/clean)' and pass an entirely unreviewed commit"*) —
+    the same sentence describes this case verbatim, only with a different
+    description string. The scoping decision ("an unrecognised description must
+    keep its existing pass behaviour instead of hanging every PR") was a
+    deliberate fail-open for UNKNOWN markers; `manual review required` is no
+    longer unknown.
+  Concrete next action: extend the not-a-review description match from
+    `rate.?limit|limit reached` to also cover `manual review required` /
+    `review skipped` (keeping the deliberate fail-open for genuinely unrecognised
+    descriptions), so the head resolves to PENDING and `maybe_nudge_full_review`
+    fires — which is already the right recovery and is proven to work (a manual
+    `@coderabbitai review` on #2028 produced a clean review in ~3 min). Guard
+    against the sibling risk the existing comment names: a docs-only PR whose
+    files are all path-excluded must still pass, and that case is already handled
+    up front by the `selfImpOnly` head-accurate file-list check, so widening this
+    match does not re-wedge it. Add a `merge_gates`/`cr_finding_gate` bats case
+    per description string (rate-limited, manual-review-required, genuinely
+    unknown) so the vocabulary cannot silently regress — the sibling entry
+    2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop records the same
+    class of brittleness in the auto-nudge's own regexes. Est ~0.5d.
+  Status: applied — the CI action now classifies `manual review required` as a
+    not-a-review marker (PENDING, not a pass) and self-heals with a new
+    `never-reviewed` nudge that posts a plain `@coderabbitai review`; the
+    pre-existing nudge could not cover this state because it REQUIRED a prior
+    clean pass to key on. Matched on `manual review required`, never a bare
+    `review skipped`, so CR's terminal path-filter skip still passes. Correction
+    to this entry's original framing: the CLIENT-side poller was never
+    vulnerable — `merge-gates.d/10-gate-filter.sh` already excludes this string
+    (plus `available on request` and the rate-limit texts) from
+    `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
+    gate never received the same treatment, despite its own header describing
+    itself as lifting the client-side verdict server-side.
+  Last-reviewed: 2026-08-16
+
+- 2026-08-16 · orchestrator · [infra] · P2 — a `send_later` check-in that fires while the remote container is suspended is silently lost, so an autonomous ship-loop can park a finished PR indefinitely with no alarm and no retry
+  Details: The autonomous backlog loop drives each PR to merge via self-scheduled
+    `send_later` check-ins. On PR #2028 the 04:23Z check-in — whose whole job was
+    to post the `@coderabbitai review` trigger once the rolling-hour quota
+    reopened — never ran: the trigger record shows `last_fired_at
+    2026-08-16T04:24:03Z` with `ended_reason: run_once_fired`, so the scheduler
+    considered it delivered, but the session was suspended and no work happened.
+    The PR then sat **11.5 hours** at head `8c1f1646` with all CI green and no
+    review requested. Nothing surfaced it: the fire-and-forget check-in is
+    one-shot, so a lost firing is indistinguishable from a firing that ran and
+    found nothing actionable (the loop deliberately re-arms *silently* in that
+    case, which is correct behaviour and exactly what makes the failure
+    invisible).
+    Compounding: the CR gate was green the whole time for an unrelated reason
+    (sibling entry 2026-08-16-cr-gate-greens-on-manual-review-required-skip), so
+    every surface signal said "ready to merge". The two failures point the same
+    way — toward an unreviewed merge — which is what makes the pair worth a gate
+    rather than a note.
+  Concrete next action: make loss detectable rather than trying to make delivery
+    reliable (the scheduler is not ours to fix). Cheapest shape: have the check-in
+    prompt stamp a heartbeat — e.g. append `<pr> <head> <iso8601>` to a
+    session-local file on every firing — and have the SessionStart nudge compare
+    the newest heartbeat against any OPEN PR authored by this session whose head
+    is older than ~2h, raising `WARN: PR #<n> has had no check-in for <N>h` so a
+    resumed session immediately re-arms instead of assuming the loop is alive.
+    A cheaper stopgap that needs no new state: on SessionStart, list this
+    account's open PRs on `claude/*` branches and re-poll each one's gates —
+    a resumed session should never assume an in-flight PR is being watched.
+    Related: infra/2026-08-05-merge-watcher-liveness-unmonitored covers the same
+    "the watcher itself is unwatched" shape for the merge-watcher process.
+  Status: applied — `agents/scripts/core/unwatched-pr-nudge.sh` (SessionStart,
+    wired into the claude-code + codex hook templates) reports any OPEN
+    non-draft PR on a `claude/`/`agent/` branch quiet longer than
+    SMATCHET_UNWATCHED_PR_STALE_SECONDS (default 2h), and says to re-poll the
+    gates before assuming anything still drives it. Took the STOPGAP shape from
+    this entry, not the heartbeat: a heartbeat file would be written by the very
+    process that dies, so a suspended container and a fresh checkout both look
+    identical to "never armed" — asking GitHub what is open needs no cooperation
+    from the thing that failed. Degrades silent with no gh / no auth / no
+    network, and skips drafts (parked on purpose) so it does not train readers
+    to ignore it. 14 bats cases + a fixture-driven --selftest, all
+    negative-tested.
+  Last-reviewed: 2026-08-16

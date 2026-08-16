@@ -101,7 +101,10 @@ m._bump_triage_attempts(100, clone, 1)
 }
 
 @test "integration: handle_pass squash-merges via stubbed seams + drops from registry" {
-    run watch_cli register 100
+    # --authorized: handle_pass reads the consent flag off the real registry
+    # entry, and a plain `register` is watch-only (see the unauthorized test
+    # below). Merge rights only come from an explicit act.
+    run watch_cli register --authorized 100
     [ "$status" -eq 0 ]
 
     run python -c "
@@ -129,8 +132,47 @@ print('merge_sha:', extras.get('merge_sha'))
     [[ "$output" == "[]" ]]
 }
 
-@test "integration: handle_pass cascade detects stacked child via stubbed seam" {
+@test "integration: a watch-only entry with green gates is NOT merged and STAYS registered" {
+    # The consent boundary, end-to-end through the real registry file: this is
+    # exactly what the `gh pr create` hook writes (plain `register`, no
+    # --authorized). Even with every merge seam stubbed to succeed, handle_pass
+    # must refuse — and must leave the entry in place so gate-polling, nudges
+    # and escalation keep working (2026-08-16 P1
+    # watcher-autoregister-bypasses-merge-consent, observed on #2027/#2031).
     run watch_cli register 100
+    [ "$status" -eq 0 ]
+
+    run python -c "
+import sys, os, importlib.util, json
+os.environ['LOCALAPPDATA'] = r'$LOCALAPPDATA'
+spec = importlib.util.spec_from_file_location('mw', r'$SCRIPTS_DIR/merge-watcher.py')
+m = importlib.util.module_from_spec(spec); sys.modules['mw']=m; spec.loader.exec_module(m)
+entry = json.load(open(os.path.join(r'$WATCH_ROOT', 'active.json')))[0]
+print('authorized:', entry.get('authorized'))
+def boom(*a, **k):
+    raise AssertionError('merge seam reached on an unauthorized entry')
+m._gh_owner_repo = boom
+m.ensure_pr_ready_for_review = boom
+m.squash_merge_pr = boom
+m.maybe_remove_from_registry = boom
+extras = m.handle_pass(entry)
+print('merge_action:', extras.get('merge_action'))
+print('merge_sha:', extras.get('merge_sha'))
+"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"authorized: False"* ]]
+    [[ "$output" == *"merge_action: skipped: not authorized to merge"* ]]
+    [[ "$output" == *"merge_sha: None"* ]]
+
+    # Still watched — the entry must survive so the daemon keeps polling.
+    run watch_cli list
+    [ "$status" -eq 0 ]
+    [[ "$output" == *'"pr": 100'* ]]
+    [[ "$output" == *'"authorized": false'* ]]
+}
+
+@test "integration: handle_pass cascade detects stacked child via stubbed seam" {
+    run watch_cli register --authorized 100
     [ "$status" -eq 0 ]
 
     run python -c "

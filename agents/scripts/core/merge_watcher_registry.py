@@ -122,6 +122,47 @@ def write_registry(entries: list[dict[str, Any]]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Merge authorization (registration != consent)
+# ---------------------------------------------------------------------------
+def entry_is_authorized(entry: dict[str, Any]) -> bool:
+    """True when the USER explicitly authorized this entry for auto-merge.
+
+    Registration and authorization are SEPARATE (2026-08-16 P1
+    `watcher-autoregister-bypasses-merge-consent`): the `gh pr create`
+    PostToolUse hook registers every agent-opened PR so it gets gate-polling +
+    stuck-nudges, and that bookkeeping must NOT imply merge rights. Only an
+    explicit user act — post-ship option 3 / in-session "merge when green",
+    which run `merge-watch register --authorized` or `merge-watch authorize` —
+    writes `authorized: true`.
+
+    A MISSING key reads as unauthorized: entries registered before this key
+    existed park at DRAFT_UNAUTHORIZED / "PASS but skipped: not authorized"
+    until a human runs `merge-watch authorize <pr>`. That is the safe default —
+    the failure mode is a PR that waits, not a PR that merges unasked.
+    """
+    return bool(entry.get("authorized", False))
+
+
+def set_entry_authorized(pr: int, clone_path: str, authorized: bool) -> str:
+    """Flip one entry's `authorized` flag under the registry lock.
+
+    Returns `"changed"`, `"unchanged"` (already at that value) or `"missing"`
+    (no entry for this `(pr, clone_path)` pair — the identity every registry
+    verb keys on).
+    """
+    with registry_lock():
+        entries = read_registry()
+        for e in entries:
+            if int(e.get("pr", -1)) == pr and e.get("clone_path") == clone_path:
+                if entry_is_authorized(e) == authorized:
+                    return "unchanged"
+                e["authorized"] = authorized
+                write_registry(entries)
+                return "changed"
+    return "missing"
+
+
+# ---------------------------------------------------------------------------
 # Agent-event vocabulary (shared: daemon emits, CLI await filters)
 # ---------------------------------------------------------------------------
 #: Terminal/actionable states an agent wants to wake on. Superset of the
@@ -146,6 +187,11 @@ AGENT_EVENT_STATES = {
     "READY_FLIP_FAILED",
     "ACTIONS_UNAVAILABLE",
     "REQUIRED_MISSING_CANCELLED",
+    # Draft PR on an unauthorized entry: the watcher refuses to flip it ready
+    # (that write needs consent) and refuses to poll a draft PR's gates (C4).
+    # Nothing clears it but a human, so `await` MUST return on it rather than
+    # block forever — the same failure the exit-7/exit-8 additions above fixed.
+    "DRAFT_UNAUTHORIZED",
 }
 
 #: The two end states: the PR needs no further agent action.
