@@ -53,13 +53,18 @@ Once a minidump (`.dmp`) is captured (procdump, or the in-app crash handler), tr
 ls "C:/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe"
 ```
 
-A `Windows Kits\10` tree with **no `Debuggers\` subdir** is the normal state after a build-only SDK install: Debugging Tools is a separate SDK *feature*, off by default. `winget install Microsoft.WinDbg` does not fix it — that installs the MSIX Store app `WinDbgX`, which ships no console driver.
+A `Windows Kits\10` tree with **no `Debuggers\` subdir** is the normal state after a build-only SDK install: Debugging Tools is a separate SDK *feature*, off by default. `winget install Microsoft.WinDbg` does not fix it — that installs the `WinDbgX` Store app under an ACL-restricted `WindowsApps` path, off `PATH`, leaving no invocable `cdb`. (Hand-extracting `amd64/cdb.exe` from the `windbg.msixbundle` is a *different* operation and may work — `docs/guides/crash-capture.md` § Get the PRIMARY faulting stack carries it as an unverified no-admin fallback. If you confirm it, record the result here.)
 
-Verified install (Windows 11 26200, cdb 10.0.26100.7705) — needs **admin/UAC**, ~2 min, no reboot:
+> **Requires an interactive UAC prompt.** Step 2 below is the one step in this document an agent cannot perform unattended — `winsdksetup.exe` elevates, and elevation cannot be granted from git-bash. An autonomous run must **stop and ask a human** rather than retrying, or fall back to `dump-triage.sh` (§ Dump triage) for an unsymbolized classification.
+
+Verified install (Windows 11 26200, cdb 10.0.26100.7705) — needs **admin/UAC**, ~2 min, no reboot. Commands are bash (git-bash); `\` line-continuations are POSIX, not `cmd`/PowerShell:
 
 ```
 # 1. fetch the SDK bootstrapper — winget verifies the publisher SHA256,
 #    which a bare download.microsoft.com URL does not
+# (--id pins the SDK build verified below; if winget reports no such package,
+#  `winget search Microsoft.WindowsSDK` for the current one — the /features
+#  flag in step 2 is what matters and is stable across SDK builds)
 winget download --id Microsoft.WindowsSDK.10.0.26100 --exact \
     --accept-package-agreements --accept-source-agreements -d "<scratch>/sdk"
 
