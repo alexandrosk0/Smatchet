@@ -48,6 +48,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import comment_lib as cl
@@ -357,6 +358,31 @@ def _has_dup_deviation(line):
     return bool(m) and RULE_DUP in [r.strip() for r in m.group(1).split(",")]
 
 
+# How far above a clone start to look for a marker that IS a duplication deviation but sits in the
+# wrong place. Diagnostic radius only — never widens what _suppressed accepts.
+INEFFECTIVE_DEVIATION_WINDOW = 5
+
+
+def _ineffective_dup_deviation(path, start_line):
+    """1-based line of a VALID `rule=duplication` deviation marker within INEFFECTIVE_DEVIATION_WINDOW
+    lines above `start_line`, else 0. Callers use this ONLY to explain a FAIL that already happened:
+    if _suppressed said no while a well-formed marker sits right there, the marker's PLACEMENT is
+    the fault, not its text. The usual cause is a wrapped comment — `_has_dup_deviation` is a
+    per-LINE test, so a marker whose reason prose spills onto following comment lines leaves prose
+    as the nearest non-blank line above the clone, and prose carries no token. Purely diagnostic:
+    this never affects the pass/fail decision."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except OSError:
+        return 0
+    lo = max(0, start_line - 1 - INEFFECTIVE_DEVIATION_WINDOW)
+    for i in range(start_line - 2, lo - 1, -1):
+        if 0 <= i < len(lines) and _has_dup_deviation(lines[i]):
+            return i + 1
+    return 0
+
+
 def _suppressed(path, start_line, end_line):
     """True if a `// SMATCHET_DEVIATION(rule=duplication; ...)` sits on the nearest non-blank line
     ABOVE the clone, or ANYWHERE WITHIN the cloned span [start_line, end_line]. The span scan is
@@ -424,6 +450,18 @@ def run_diff(ref):
         locs = " <-> ".join("%s:%d" % (os.path.basename(p), ln) for p, ln, _e in c.locations)
         print("[dup] FAIL %s — %d-token copy-paste clone (DRY Engineering Pillar 5; blocking; "
               "exempt with SMATCHET_DEVIATION(rule=duplication))" % (locs, c.ntokens), file=sys.stderr)
+        # A marker that IS present but did NOT suppress is a shape error, and the bare FAIL above
+        # reads as "your exemption text is wrong" when the text is fine and only its placement is
+        # not. Name that explicitly so the reader doesn't spend a round re-wording the reason.
+        for p, s, _e in c.locations:
+            ln = _ineffective_dup_deviation(p, s)
+            if ln:
+                print("[dup] hint: %s:%d is a rule=duplication deviation that did NOT suppress this "
+                      "clone — the marker must be a SINGLE line on the nearest non-blank line above "
+                      "the clone (or inside it). Wrapped reason prose leaves a comment line with no "
+                      "token as the nearest line; keep SMATCHET_DEVIATION(...) on one line and put "
+                      "extra prose on comment lines ABOVE it."
+                      % (os.path.basename(p), ln), file=sys.stderr)
     return 1 if new else 0
 
 
@@ -565,6 +603,45 @@ def run_selftest():
         print("SELFTEST FAIL: boundary-drift clone in files unchanged (by norm tokens) vs base was "
               "not grandfathered", file=sys.stderr)
         miss = 1
+    # Deviation SHAPE: suppression is a per-LINE test, so a marker whose reason prose wraps onto
+    # following comment lines does NOT suppress (the nearest non-blank line above the clone is
+    # prose, which carries no token). That silent shape error is what the [dup] hint explains, so
+    # pin both halves: the wrapped marker must still FAIL to suppress, and it must be detected as
+    # an ineffective-but-present marker. A single-line marker must suppress and produce no hint.
+    with tempfile.TemporaryDirectory() as td:
+        wrapped = os.path.join(td, "wrapped.cpp")
+        with open(wrapped, "w", encoding="utf-8") as fh:
+            fh.write("// SMATCHET_DEVIATION(rule=duplication; reason=structural twins across two\n"
+                     "// independent subsystems; unifying them would couple unrelated code;\n"
+                     "// owner=ui-host; revisit=2026-12-31)\n"
+                     "void f() { int a = 1; }\n")
+        if _suppressed(wrapped, 4, 4):
+            print("SELFTEST FAIL: wrapped multi-line deviation suppressed (per-line rule broken)",
+                  file=sys.stderr)
+            miss = 1
+        if _ineffective_dup_deviation(wrapped, 4) != 1:
+            print("SELFTEST FAIL: wrapped deviation not reported as present-but-ineffective",
+                  file=sys.stderr)
+            miss = 1
+        single = os.path.join(td, "single.cpp")
+        with open(single, "w", encoding="utf-8") as fh:
+            fh.write("// reason prose lives above the marker, where it does no harm\n"
+                     "// SMATCHET_DEVIATION(rule=duplication; owner=ui-host; revisit=2026-12-31)\n"
+                     "void f() { int a = 1; }\n")
+        if not _suppressed(single, 3, 3):
+            print("SELFTEST FAIL: single-line deviation directly above the clone did not suppress",
+                  file=sys.stderr)
+            miss = 1
+        # A deviation for a DIFFERENT rule must never draw the duplication hint — otherwise the
+        # hint fires on unrelated markers and trains readers to ignore it.
+        other = os.path.join(td, "other.cpp")
+        with open(other, "w", encoding="utf-8") as fh:
+            fh.write("// SMATCHET_DEVIATION(rule=function-too-long; owner=ui-host; revisit=2026-12-31)\n"
+                     "void f() { int a = 1; }\n")
+        if _ineffective_dup_deviation(other, 2):
+            print("SELFTEST FAIL: non-duplication deviation drew the duplication hint",
+                  file=sys.stderr)
+            miss = 1
     if miss:
         return 1
     print("selftest: normalization + threshold invariants hold (min %d tokens, shingle %d, "
