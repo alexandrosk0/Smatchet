@@ -374,8 +374,12 @@ Surface every match via one combined `AskUserQuestion` (per orphan: `keep` / `ar
 cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
 cmake --build --preset ninja-iter-msvc --target SmatchetCore_DX12
 
-# Lua-off variant catches stub-build drift (cmake -B is idempotent).
-cmake -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja
+# Lua-off variant catches stub-build drift (cmake configure is idempotent).
+# Go through the preset (pins cl.exe) with -B/-D overriding binaryDir + the Lua flag.
+# A bare `cmake -B ... -G Ninja` here picks whatever compiler is on PATH; if that is
+# plain clang++ the WIN32_EXECUTABLE entry-point override in Source/Standalone/CMakeLists.txt
+# is skipped (it sits under `if(MSVC)`) and the link dies on `undefined symbol: WinMain`.
+cmake --preset ninja-iter-msvc -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF
 cmake --build build/lua-off-check --target SmatchetStandalone
 
 # Unified test runner (auto-discovers every scripts/dev/test-*.sh).
