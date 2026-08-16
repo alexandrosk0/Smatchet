@@ -29,6 +29,19 @@
     keep its existing pass behaviour instead of hanging every PR") was a
     deliberate fail-open for UNKNOWN markers; `manual review required` is no
     longer unknown.
+    **Merge-history sweep 2026-08-16** (added after filing): this is no longer a
+    near-miss. A sweep of all 1,416 merged PRs above #500 — reading each merged
+    head SHA's status contexts plus CR reviews/comments on that SHA — found
+    **5 PRs already merged** with this exact status green on an unreviewed head:
+    #2014, #2024, #2027, #2030, #2031 (2026-08-15 → 08-16), none carrying an
+    override label. #2024 is not docs: `fix(sync): stop multi-pane full syncs
+    from deleting each other's cached tickets`, 19 code files, merged with zero
+    CR review evidence on the head. The 11.5h window on #2028 was the case that
+    got caught; these five are the ones that did not. Two sibling fail-opens in
+    the same gate, from the same sweep, are filed separately:
+    `2026-08-16-cr-gate-greens-on-rate-limited-review.md` (48 merges) and
+    `2026-08-16-cr-gate-greens-with-no-cr-status-on-head.md` (27 merges green +
+    136 merged on a never-green gate).
   Concrete next action: extend the not-a-review description match from
     `rate.?limit|limit reached` to also cover `manual review required` /
     `review skipped` (keeping the deliberate fail-open for genuinely unrecognised
