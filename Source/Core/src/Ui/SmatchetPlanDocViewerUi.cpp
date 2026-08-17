@@ -151,8 +151,17 @@ struct ViewerState {
     std::string loadedPath; // path matching the cached body
     std::string body;       // cached markdown source for the active doc
     std::future<IndexResult> indexFuture;
+    // Why the scan produced no list. `body` cannot carry this: the body render is gated on
+    // `loadedPath == SelectedPath`, and a failed scan leaves no files, so the selection is
+    // empty and that gate never opens. Empty means "no failure", not "no message".
+    std::string indexError;
     bool loadInFlight = false; // a document read is running on the worker
     std::future<LoadResult> loadFuture;
+    // The path the in-flight read is FOR. `LoadResult::path` echoes it back on success, but a
+    // worker throw loses the payload, so the failure path has no other way to name the document
+    // it actually failed on — and naming the live selection instead both mislabels the error and
+    // wedges that document (#2076 residual).
+    std::string loadingPath;
 };
 
 ViewerState& State() {
@@ -190,15 +199,32 @@ void StartRescanIndex(ViewerState& s) {
         return;
     }
     s.indexed = false;
-    s.indexInFlight = true;
     s.files.clear();
     s.selectedIdx = -1;
     s.loadedPath.clear();
     s.body.clear();
+    s.indexError.clear();
     // An in-flight document read is left to land on its own — PollLoadResult discards it
     // because its path no longer matches the (now empty) selection. Re-assigning
     // `loadFuture` here instead would block the frame releasing the old shared state.
-    s.indexFuture = std::async(std::launch::async, []() { return BuildIndex(); });
+    //
+    // Latch published only after the launch returns — the same ordering #2056 fixed for the
+    // document read. It matters MORE here: a latch stranded over an invalid future makes
+    // PollIndexResult early-out forever AND makes both `Rescan` buttons dead, because they
+    // route through this function's `indexInFlight` guard above. That is a viewer with no
+    // manual recovery at all for the rest of the session.
+    std::string launchErr;
+    const bool launched = async_load::LaunchIntoSlot(
+        s.indexFuture, s.indexInFlight,
+        []() { return std::async(std::launch::async, []() { return BuildIndex(); }); }, launchErr);
+    if (!launched) {
+        LOG_ERROR("plan-doc viewer: could not start the document scan: %s", launchErr.c_str());
+        s.indexError = "Couldn't scan for documents (the system refused a worker thread). Press Rescan to retry.";
+        // Nothing latched, so `Rescan` still works. Mark the scan attempted so the per-frame
+        // auto-kick in DrawPlanDocViewer does not re-throw every frame — the button is the
+        // retry, exactly as `loadedPath` parks the per-frame kick on the read path.
+        s.indexed = true;
+    }
 }
 
 void PollIndexResult(ViewerState& s) {
@@ -208,10 +234,19 @@ void PollIndexResult(ViewerState& s) {
     if (s.indexFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         return;
     }
-    IndexResult result = s.indexFuture.get();
+    // Latch cleared BEFORE get() — a BuildIndex throw (it walks the filesystem) is otherwise
+    // rethrown with the future spent and the latch still up, wedging the pane and its Rescan
+    // buttons for the session. Same ordering #2057 fixed for the document read.
+    IndexResult result;
+    std::string scanErr;
+    if (!async_load::TakeFromSlot(s.indexFuture, s.indexInFlight, result, scanErr)) {
+        LOG_ERROR("plan-doc viewer: document scan failed: %s", scanErr.c_str());
+        s.indexError = "Couldn't scan for documents. Press Rescan to retry.";
+        s.indexed = true; // park the per-frame auto-kick; Rescan is the retry
+        return;
+    }
     s.repoRoot = std::move(result.repoRoot);
     s.files = std::move(result.files);
-    s.indexInFlight = false;
     s.indexed = true;
     if (s.selectedIdx < 0 && !s.files.empty()) {
         s.selectedIdx = 0; // the per-frame StartLoadSelected kick picks this up
@@ -248,7 +283,9 @@ void StartLoadSelected(ViewerState& s) {
             });
         },
         launchErr);
-    if (!launched) {
+    if (launched) {
+        s.loadingPath = path; // the document this read is for — the throw path has no other record
+    } else {
         // Nothing was latched, so the viewer is still usable — but park `loadedPath` on this
         // selection so the per-frame kick does not retry (and re-throw) every single frame.
         // Picking another document, or re-picking this one after a rescan, kicks a fresh read.
@@ -269,14 +306,28 @@ void PollLoadResult(ViewerState& s) {
     LoadResult result;
     std::string readErr;
     if (!async_load::TakeFromSlot(s.loadFuture, s.loadInFlight, result, readErr)) {
-        // Not an empty catch: the read is abandoned and reported. `loadedPath` is parked on the
-        // live selection so the per-frame kick does not immediately re-run the failing read.
-        const std::string selected = SelectedPath(s);
-        LOG_ERROR("plan-doc viewer: read failed for %s: %s", selected.c_str(), readErr.c_str());
-        s.body = "[Couldn't read this file: " + selected + "]";
-        s.loadedPath = selected;
+        // Not an empty catch: the read is abandoned and reported — but reported against the
+        // document it actually failed on, which is `loadingPath`, NOT the live selection. The
+        // throw loses `result.path`, and an earlier revision reached for `SelectedPath(s)` here.
+        // When the user moved the selection during the failed read that named the wrong file AND
+        // parked `loadedPath` on the NEW selection, which is the same wedge this seam exists to
+        // prevent: `ShouldKickLoad` then sees target == loaded and never reads the new document,
+        // while the body guard happily renders the other file's error under its name.
+        const std::string attempted = s.loadingPath;
+        s.loadingPath.clear();
+        LOG_ERROR("plan-doc viewer: read failed for %s: %s", attempted.c_str(), readErr.c_str());
+        if (async_load::ResultIsCurrent(attempted, SelectedPath(s))) {
+            // Still the live selection: surface it, and park so the per-frame kick does not
+            // re-run the failing read every frame.
+            s.body = "[Couldn't read this file: " + attempted + "]";
+            s.loadedPath = attempted;
+        }
+        // Otherwise the selection moved on: the failure describes a document the user is no
+        // longer looking at, so there is nothing to show and nothing to park — the per-frame
+        // kick reads whatever is selected now.
         return;
     }
+    s.loadingPath.clear(); // the read landed; the slot no longer describes an in-flight document
     if (!async_load::ResultIsCurrent(result.path, SelectedPath(s))) {
         // Selection moved (or the index was rescanned) mid-read — drop this body and let
         // the caller's re-kick load whatever is selected now.
@@ -361,6 +412,14 @@ void DrawPlanDocViewer(UiDrawSession& d) {
 
     if (s.indexInFlight) {
         ImGui::TextDisabled("Scanning plan docs...");
+    } else if (!s.indexError.empty()) {
+        // Ahead of the empty-list branch on purpose: a failed scan also leaves `files` empty, and
+        // "No plan docs found under docs/design or docs/adr" would then state as fact something
+        // the viewer never managed to check.
+        ImGui::TextDisabled("%s", s.indexError.c_str());
+        if (ImGui::Button("Rescan")) {
+            StartRescanIndex(s);
+        }
     } else if (s.files.empty()) {
         ImGui::TextDisabled("No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
         if (ImGui::Button("Rescan")) {
