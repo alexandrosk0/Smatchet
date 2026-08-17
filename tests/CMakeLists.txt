@@ -1160,6 +1160,10 @@ add_executable(SmatchetTests
     # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
     # Header-only pure helper, no production .cpp to link.
     Core/AsyncLoadGatePure.test.cpp
+    # One-line grid-cell preview picker — first line with VISIBLE content, so a
+    # value opening with a blank line (GitHub issue bodies routinely do) no longer
+    # draws an empty cell. Header-only pure helper, no production .cpp to link.
+    Core/FieldPreviewLinePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
