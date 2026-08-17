@@ -76,10 +76,21 @@ _MG_GATE_FILTER_TEMPLATE='
 | (($labels | any(startswith("cr-disposition:")))
    or (($pr.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crdisposition
 | ($labels | any(. == "bugbot-out-of-band")) as $bb
+# Dedup key is (workflow-run id, startedAt), NOT startedAt alone. A rerun reuses
+# its run id, so old-FAILURE/new-SUCCESS still ties on the first key and falls
+# through to startedAt (the rerun-to-green case this dedup exists for). But two
+# DIFFERENT runs publishing one check name — a push or body edit superseding an
+# in-flight run, whose concurrency group cancels the elder — are ordered by run
+# id, which is what the GitHub required-check evaluation reads. Ordering those by
+# startedAt instead reported green on a PR that GitHub then refused to merge
+# (`405 ... is cancelled`, PR #2071). Non-Actions check runs have no workflowRun;
+# they tie at 0 and order by startedAt exactly as before.
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(. + {_k: (if .__typename == "CheckRun" then ["CheckRun", (.name // "")]
-                   else ["StatusContext", (.context // "")] end)})
-   | group_by(._k) | map(sort_by(.startedAt // "") | .[-1]) | map(del(._k))) as $ctx
+                   else ["StatusContext", (.context // "")] end),
+              _r: (.checkSuite.workflowRun.databaseId // 0)})
+   | group_by(._k) | map(sort_by([._r, (.startedAt // "")]) | .[-1])
+   | map(del(._k, ._r))) as $ctx
 | ([$ctx[] | select(.isRequired == true)]) as $req
 # $blocking — the set the gate must wait on: REQUIRED contexts PLUS every
 # non-required, non-advisory-named check (block-on-any-red — the allow-list

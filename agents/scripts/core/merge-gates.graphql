@@ -56,15 +56,33 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                     name
                     conclusion
                     status
-                    # startedAt drives latest-per-name dedup: when a job is
-                    # rerun, GitHub keeps both the old (FAILURE) + new (SUCCESS)
-                    # rollup nodes. We pick the one with the latest startedAt
-                    # per name so stale FAILUREs don't falsely block merge.
+                    # startedAt is the SECOND dedup key (see checkSuite below):
+                    # when a job is rerun GitHub keeps both the old (FAILURE) and
+                    # new (SUCCESS) rollup nodes, and a rerun reuses the same
+                    # workflow run, so startedAt is what separates them.
                     startedAt
                     # completedAt drives the stale-override guard: a failing
                     # run that COMPLETED before the override label was applied
                     # is not downgraded (see timelineItems above).
                     completedAt
+                    # workflowRun.databaseId is the FIRST dedup key. Two DIFFERENT
+                    # workflow runs can publish the same check NAME on one head
+                    # (a push or PR-body edit supersedes an in-flight run, and its
+                    # concurrency group cancels the elder). Ordering those by
+                    # startedAt alone picks whichever job happened to start later
+                    # in wall-clock terms, which is NOT what GitHub's required-
+                    # status-check evaluation does — it reads the newest run. The
+                    # two disagreed on PR #2071: the poller saw the older run's
+                    # later-starting SKIPPED job and reported green, GitHub saw
+                    # the newer run's CANCELLED job and answered
+                    # `405 Required status check "Perf PR-fast (windows-2022)" is
+                    # cancelled`. Sorting by (run id, startedAt) matches GitHub
+                    # while preserving the rerun case above, because a rerun does
+                    # not change the run id and so still ties on this key.
+                    # Null for non-Actions check runs (CodeRabbit, Bugbot); those
+                    # tie at 0 and fall through to startedAt exactly as before.
+                    # See docs/self-improvement/categories/infra/2026-08-17-merge-gate-duplicate-check-name-drift.md
+                    checkSuite { workflowRun { databaseId } }
                     isRequired(pullRequestNumber: $pr)
                   }
                   ... on StatusContext {

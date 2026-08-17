@@ -41,5 +41,36 @@
     Add a `tests/bats/merge_gates.bats` case pinning it: two contexts, same name,
     elder CANCELLED + newer SKIPPED, asserting the gate does NOT report passed.
     Prefer (c)+(b) immediately (docs + one log line), (a) as the real fix.
-  Status: open
+  Update (a) SHIPPED 2026-08-17 — but NOT as proposed above, because the proposal
+    was wrong. "Treat the name as blocking if ANY of its contexts is FAILURE/…"
+    would have regressed the case the dedup exists for: `merge-gates.graphql:59-62`
+    records that a job rerun leaves BOTH the old FAILURE and the new SUCCESS on the
+    head, so an any-blocks rule wedges every PR ever fixed by a rerun. It would also
+    have over-blocked PR #2091, where two elder runs were cancelled by concurrency,
+    the newest succeeded, and GitHub merged on the first attempt.
+    The two cases are indistinguishable in the data the poller fetched, which is the
+    real defect: `startedAt` cannot tell "same job, rerun" from "different run,
+    cancelled by concurrency". Three observations pin the actual rule — GitHub reads
+    the newest WORKFLOW RUN for a name, the poller read the newest `startedAt`, and
+    those diverge only when a newer run is cancelled before an older run finishes.
+    Fix: query `checkSuite { workflowRun { databaseId } }` and sort by
+    `[run id, startedAt]`. A rerun reuses its run id, so it ties on the first key and
+    still resolves by `startedAt` (rerun-to-green preserved); different runs order by
+    run id (matches GitHub). Non-Actions check runs (CodeRabbit, Bugbot) have no
+    `workflowRun`, tie at 0, and behave exactly as before.
+    Four `tests/bats/merge_gates.bats` cases pin it: rerun-same-run, the #2071
+    elder-cancelled shape, the #2091 newest-success shape, and the no-workflowRun
+    fallback. All 213 merge_gates cases plus 359 across the seven sibling suites that
+    source merge-gates pass unchanged — existing fixtures carry no `checkSuite`, so
+    they tie at 0 and keep their old ordering.
+    NOT verified: the GraphQL field path could not be validated against the live
+    schema (this session serves only pinned PR-review operations; docs.github.com is
+    egress-blocked). If the path is wrong the query errors, which returns GH_API_DOWN
+    — a terminal notifying state that blocks rather than merges, so it fails safe and
+    loudly. Watch the first real poller run.
+    (b) and the `merge-gates.md` half of (c) remain open — with (a) shipped the gate
+    now blocks in step with GitHub, so the confusing 405 should not reach an operator
+    in the poller path, but a merge attempted outside the poller can still hit it.
+  Status: partially applied (2026-08-17 — (a) shipped with tests; (b) warning and
+    the (c) merge-gates.md recovery note remain)
   Last-reviewed: 2026-08-17

@@ -1205,6 +1205,76 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "dedup: a rerun (same workflow run) still resolves by startedAt" {
+    # The rerun case the dedup exists for, stated explicitly now that run id is
+    # the first sort key: a rerun does NOT mint a new run id, so both nodes tie
+    # on it and startedAt decides — old FAILURE must not mask the new SUCCESS.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"FAILURE","status":"COMPLETED","startedAt":"2026-05-22T11:00:00Z","checkSuite":{"workflowRun":{"databaseId":100}},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","checkSuite":{"workflowRun":{"databaseId":100}},"isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "dedup: a newer workflow run's CANCELLED beats an older run's later-starting job (PR #2071)" {
+    # Two DIFFERENT runs published one check name: the newer run (31981601014)
+    # was cancelled by its concurrency group at 00:29:03, the older run
+    # (31981596731) went on to finish SKIPPED at 00:43:19 — LATER in wall-clock.
+    # Ordering by startedAt alone picked the SKIPPED node and reported green;
+    # GitHub read the newer run and answered `405 Required status check
+    # "Perf PR-fast (windows-2022)" is cancelled`. Run id must win, so the gate
+    # blocks in step with the merge API instead of reporting an unmergeable pass.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-08-17T00:29:03Z","checkSuite":{"workflowRun":{"databaseId":31981601014}},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SKIPPED","status":"COMPLETED","startedAt":"2026-08-17T00:43:19Z","checkSuite":{"workflowRun":{"databaseId":31981596731}},"isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"1 fail"* ]]
+    rm -f "$f"
+}
+
+@test "dedup: the newest workflow run's SUCCESS beats cancelled elders (PR #2091)" {
+    # The inverse, and why 'any CANCELLED twin blocks' would have been wrong:
+    # two elder runs were cancelled by concurrency and the newest run succeeded.
+    # GitHub merged this on the first attempt, so the gate must pass too — an
+    # over-broad fix would wedge every PR whose body was edited mid-run.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-08-17T01:33:16Z","checkSuite":{"workflowRun":{"databaseId":31985291512}},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-08-17T01:33:25Z","checkSuite":{"workflowRun":{"databaseId":31985298430}},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-08-17T01:36:47Z","checkSuite":{"workflowRun":{"databaseId":31985304025}},"isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
+@test "dedup: a check run with no workflowRun (non-Actions app) still orders by startedAt" {
+    # CodeRabbit / Bugbot check runs carry no checkSuite.workflowRun, so they all
+    # tie at 0 on the first key. Their ordering must be exactly what it was
+    # before run id was introduced — newest startedAt wins.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"FAILURE","status":"COMPLETED","startedAt":"2026-05-22T11:00:00Z","isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    rm -f "$f"
+}
+
 # ---------- Per-PR label overrides ----------
 
 @test "tests-out-of-band label downgrades Test-delta FAILURE -> WARN, gates pass" {
