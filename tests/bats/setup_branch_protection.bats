@@ -21,9 +21,13 @@
 #   8.   restrictions is present-and-null (explicitly cleared, not dropped).
 #   9.   --dry-run performs no gh call at all (safe to run anywhere).
 #   10.  Every required check carries the pinned app_id — the second silent
-#        widening this endpoint affords: the deprecated contexts[] spelling has
-#        no app id, so a body built from it unpins every context to "any app may
-#        report this check".
+#        loosening this endpoint affords: the deprecated contexts[] spelling has
+#        no app id, so a body built from it leaves every context unpinned.
+#   11-12. Case 7 is blind to a DELETED config key: it diffs the keys present in
+#        config against the body, so removing one removes its own assertion and
+#        the apply then writes the API default (false) to the wire as a real
+#        change. 11 pins the expected key set; 12 proves the script hard-fails
+#        (exit 2, no PUT) on an incomplete block rather than defaulting.
 #
 # Every case drives `--dry-run` with $REPO set, so resolve_repo short-circuits
 # and no network call is possible. A stub `gh` sits on PATH only to satisfy the
@@ -114,8 +118,16 @@ dry_run_body() {
     run jq -e '.required_status_checks | has("checks")' "$BODY_FILE"
     [ "$status" -eq 0 ]
     if [ "$WANT" = "null" ]; then
-        # Deliberately unpinned: the key is omitted, not sent as an explicit null.
+        # Deliberate AUTO-SELECTION: the key is omitted, not sent as an explicit
+        # null and not sent as -1. The three spellings are distinct — omitted
+        # means GitHub picks the app that most recently provided each context,
+        # -1 means any app may set the status, a positive id pins. Assert the
+        # omission is total.
         [ "$(jq -r '[.required_status_checks.checks[] | has("app_id")] | any' "$BODY_FILE" | tr -d '\r')" = "false" ]
+        # Floor guard (fail-open shape): `any` over an EMPTY array is also
+        # false, so without this an empty checks[] passes vacuously.
+        N="$(jq -r '.required_status_checks.checks | length' "$BODY_FILE" | tr -d '\r')"
+        [ "${N:-0}" -ge 10 ]
     else
         # Every entry, not just the first — a partial pin is the same hole.
         MISPINNED="$(jq -r --argjson want "$WANT" \
@@ -165,6 +177,51 @@ dry_run_body() {
         echo "completeness check ran against only ${COUNT:-0} config flags — expected the full optional-flag set" >&2
         return 1
     fi
+}
+
+@test "config block states every key the projection reads (deletion cannot hide)" {
+    # Case 8 diffs the keys PRESENT in the config against the body, so it is
+    # blind in exactly one direction: DELETE a config key and its own assertion
+    # leaves with it, the (former) `.get(k, False)` fallback supplies false, and
+    # the next apply writes that false to the wire as a real protection change.
+    # This case closes that hole from the other side — the expected key set is
+    # pinned here, so a deletion fails the suite instead of passing quietly.
+    #
+    # Adding a key is meant to fail here too: the new key needs a line in the
+    # script's projection (TOP_LEVEL_FLAGS / REVIEW_FLAGS / the structural
+    # block), a REQUIRED_KEYS entry, a schema `required` entry, and a line
+    # below. `_doc` is prose, carries nothing to the wire, and is the one key
+    # excluded from REQUIRED_KEYS — so it is excluded here too.
+    WANT="$(printf '%s\n' \
+        allow_deletions allow_force_pushes allow_fork_syncing block_creations \
+        branch dismiss_stale_reviews enforce_admins lock_branch \
+        require_code_owner_reviews require_last_push_approval \
+        required_checks_app_id required_contexts \
+        required_conversation_resolution required_linear_history \
+        required_review_count strict | sort)"
+    GOT="$(jq -r '.branch_protection | keys[] | select(. != "_doc")' project.config.json | tr -d '\r' | sort)"
+    if [ "$WANT" != "$GOT" ]; then
+        echo "branch_protection key set drifted from the projection:" >&2
+        diff <(printf '%s\n' "$WANT") <(printf '%s\n' "$GOT") >&2 || true
+        return 1
+    fi
+}
+
+@test "a missing config key fails the apply loudly (exit 2, no PUT)" {
+    # The pinned-key-set case above catches a deletion in THIS repo's config; this
+    # one proves the script itself refuses to run against an incomplete block, so
+    # a reused project that trims a key gets an error instead of a silent false
+    # written to its branch protection.
+    MUTATED="$TMPDIR_T/config-missing-key.json"
+    jq 'del(.branch_protection.required_conversation_resolution)' project.config.json > "$MUTATED"
+
+    run env REPO="acme/widget" SMATCHET_BP_CONFIG="$MUTATED" PATH="$FAKEBIN:$PATH" \
+        bash "$SCRIPT" --dry-run
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"missing required key(s): required_conversation_resolution"* ]]
+    # Hard-fails BEFORE any network call, on the dry-run path and the apply path
+    # alike — the body build is the first thing either does.
+    [ ! -f "$GH_CALLED" ]
 }
 
 @test "restrictions is present and null (explicitly cleared, not dropped)" {

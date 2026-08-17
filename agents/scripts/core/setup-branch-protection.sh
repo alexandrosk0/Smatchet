@@ -44,10 +44,16 @@
 # the config block on purpose. Do not read the enumeration below as covering
 # every key the GET returns; it covers every key the PUT accepts.
 #
+# Completeness is enforced, not merely documented: every key the projection
+# reads must be PRESENT in the config block. A `.get(key, False)` fallback would
+# turn a deleted key into a silent `false` on the wire — the exact failure this
+# script exists to prevent — and would also delete the bats completeness case's
+# own assertion along with the key it asserted. Missing key -> exit 2.
+#
 # Exit codes:
 #   0 — applied (or dry-run printed)
 #   1 — gh not authenticated / API call failed
-#   2 — argument / environment error (missing config block, no gh)
+#   2 — argument / environment error (missing config block or config key, no gh)
 
 set -euo pipefail
 
@@ -72,10 +78,15 @@ for c in python3 python py; do
 done
 [ -n "$PY" ] || { echo "setup-branch-protection: no working python found" >&2; exit 2; }
 
+# Config path is a test seam only ($SMATCHET_BP_CONFIG lets the bats suite drive
+# a mutated copy without touching the tracked file); production always reads the
+# repo's own project.config.json.
+CFG="${SMATCHET_BP_CONFIG:-project.config.json}"
+
 # Build the GitHub branch-protection PUT body from the config block.
-BODY="$("$PY" - <<'PY'
+BODY="$("$PY" - "$CFG" <<'PY'
 import json, sys
-cfg = json.load(open("project.config.json", encoding="utf-8"))
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
 bp = cfg.get("branch_protection")
 if not bp:
     sys.stderr.write("setup-branch-protection: no 'branch_protection' block in project.config.json\n")
@@ -102,26 +113,65 @@ REVIEW_FLAGS = [
     "require_code_owner_reviews",
     "require_last_push_approval",
 ]
+# Every config key this projection reads. Presence is REQUIRED, never defaulted:
+# a `.get(k, False)` would let a DELETED config key sail through as `false` and
+# be applied as a real protection change on the next PUT — the same silent
+# removal the whole "complete statement" contract exists to stop, just entered
+# from the config side instead of the projection side. It would also gut the
+# bats completeness case, which diffs the keys PRESENT in config against the
+# body: delete a key and its own assertion leaves with it. The schema's nested
+# `required` list carries this same set for the CI jsonschema validator; this
+# check is the local, dependency-free backstop that runs on every apply.
+REQUIRED_KEYS = [
+    "branch",
+    "required_contexts",
+    "required_checks_app_id",
+    "required_review_count",
+    "enforce_admins",
+    "strict",
+] + TOP_LEVEL_FLAGS + REVIEW_FLAGS
+
+missing = [k for k in REQUIRED_KEYS if k not in bp]
+if missing:
+    sys.stderr.write(
+        "setup-branch-protection: project.config.json branch_protection is missing "
+        "required key(s): " + ", ".join(missing) + "\n"
+        "  Every PUT-body key must be stated explicitly. The endpoint REPLACES the\n"
+        "  whole protection object, so an absent key is applied as its API default\n"
+        "  (false) rather than left alone. Re-add the key with the value you want\n"
+        "  live, or drop it from the projection in this script if it is retired.\n")
+    sys.exit(2)
 
 # Keep the reviews object (not null) so the dismiss_stale / code_owner /
 # last-push knobs stay available; the approving-review COUNT comes from
 # required_review_count (0 — docs/adr/0013-solo-no-required-review.md).
-reviews = {"required_approving_review_count": int(bp.get("required_review_count", 0))}
+reviews = {"required_approving_review_count": int(bp["required_review_count"])}
 for k in REVIEW_FLAGS:
-    reviews[k] = bool(bp.get(k, False))
+    reviews[k] = bool(bp[k])
 
 # Emit the `checks` form, NOT the deprecated `contexts` string array. They are
 # not interchangeable on the wire: a check entry is {context, app_id}, and the
-# contexts[] spelling carries no app id, so a PUT built from it sets app_id=null
-# on EVERY required context — "any GitHub App may report this check". That is a
-# silent widening of who can turn a required gate green, applied by a script
-# whose whole job is to tighten protection. required_checks_app_id pins it
-# (15368 = GitHub Actions); null means deliberately unpinned, and then the
-# app_id key is omitted rather than sent as null so the intent is legible in
-# the request body.
-APP_ID = bp.get("required_checks_app_id")
+# contexts[] spelling carries no app id at all, so a PUT built from it leaves
+# every required context unpinned — GitHub then decides per context who may
+# report it, with no statement of intent recorded anywhere. That is a silent
+# loosening of who can turn a required gate green, applied by a script whose
+# whole job is to tighten protection.
+#
+# app_id has THREE distinct spellings on this endpoint, and they are not
+# synonyms (they were once conflated in this comment — CodeRabbit, PR #2070):
+#   * a positive id  — pin: only that app may satisfy the check
+#                      (15368 = GitHub Actions, what this repo uses)
+#   * key OMITTED    — GitHub AUTO-SELECTS the app that most recently provided
+#                      that context; if no app ever set it, any source may
+#   * app_id = -1    — the explicit "any app may set this status" spelling
+# So an omitted key is auto-selection, NOT "any app": those differ the moment a
+# second app starts reporting a context. required_checks_app_id models all
+# three — a positive int pins, -1 sends the explicit any-app value, and null
+# omits the key (deliberate auto-selection, spelled as an omission rather than
+# a JSON null so the request body reads as the API documents it).
+APP_ID = bp["required_checks_app_id"]
 checks = []
-for ctx in bp.get("required_contexts", []):
+for ctx in bp["required_contexts"]:
     entry = {"context": ctx}
     if APP_ID is not None:
         entry["app_id"] = int(APP_ID)
@@ -129,20 +179,23 @@ for ctx in bp.get("required_contexts", []):
 
 body = {
     "required_status_checks": {
-        "strict": bool(bp.get("strict", False)),
+        "strict": bool(bp["strict"]),
         "checks": checks,
     },
-    "enforce_admins": bool(bp.get("enforce_admins", False)),
+    "enforce_admins": bool(bp["enforce_admins"]),
     "required_pull_request_reviews": reviews,
     "restrictions": None,
 }
 for k in TOP_LEVEL_FLAGS:
-    body[k] = bool(bp.get(k, False))
+    body[k] = bool(bp[k])
 print(json.dumps(body))
 PY
 )" || exit 2
 
-BRANCH="$("$PY" -c 'import json;print(json.load(open("project.config.json",encoding="utf-8"))["branch_protection"].get("branch","develop"))')"
+# Subscript, not .get(…, default): the body build above already hard-failed on a
+# missing key, so a default here could only mask a divergence between these two
+# readers of the same block.
+BRANCH="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["branch_protection"]["branch"])' "$CFG")"
 
 if [ "$DRY_RUN" -eq 1 ]; then
     echo "setup-branch-protection: would PUT to repos/${REPO}/branches/${BRANCH}/protection:"
@@ -152,7 +205,7 @@ fi
 
 gh auth status >/dev/null 2>&1 || { echo "setup-branch-protection: gh not authenticated; run 'gh auth login' (needs repo-admin)" >&2; exit 1; }
 
-RC="$("$PY" -c 'import json;print(json.load(open("project.config.json",encoding="utf-8"))["branch_protection"].get("required_review_count",0))')"
+RC="$("$PY" -c 'import json,sys;print(json.load(open(sys.argv[1],encoding="utf-8"))["branch_protection"]["required_review_count"])' "$CFG")"
 if printf '%s' "$BODY" | gh api -X PUT "repos/${REPO}/branches/${BRANCH}/protection" --input - >/dev/null; then
     echo "setup-branch-protection: applied to ${REPO}@${BRANCH} (review_count=${RC})"
 else
