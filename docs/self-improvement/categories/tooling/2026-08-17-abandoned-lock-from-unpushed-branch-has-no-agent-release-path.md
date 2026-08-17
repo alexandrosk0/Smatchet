@@ -9,8 +9,11 @@
 
 `refs/locks/pillar2-ui-thread-config-io` was claimed at `2026-08-17T02:06:56Z` by branch
 `claude/build-run-latest-8adc6a`. That branch was **never pushed**, and its
-`originating_plan` (`docs/plans/active/pillar2-ui-thread-config-io.md`) is not on
-`develop` either — the entire claim exists only as the lock ref.
+`originating_plan` — an `active/` plan named for the `pillar2-ui-thread-config-io`
+slug — is not on `develop` either, so the entire claim exists only as the lock ref.
+(That path is deliberately not written out in full below: it names a document that
+does not exist, and `test-plan-ref-integrity.sh` correctly rejects a literal
+`docs/plans/…` reference that cannot resolve.)
 
 Its 24-file write set overlapped `Views.cpp` and `SmatchetViewsDashboardUi.cpp`, so the
 `Plan-lock gate` went red on PR #2085 and stayed red. Shipping needed the
