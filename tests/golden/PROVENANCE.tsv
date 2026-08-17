@@ -1,0 +1,15 @@
+# tests/golden/PROVENANCE.tsv — which goldens are CI-native, and from where.
+#
+# Written by the bucket-C golden bootstrap job; verified by
+# scripts/dev/check-golden-provenance.sh. A golden whose bytes are not listed
+# here was produced off-CI (a developer GPU), and diffing llvmpipe captures
+# against it is not authoritative — see #2099.
+#
+# Columns: sha256<TAB>basename<TAB>run-id<TAB>mesa<TAB>capture-geometry
+cd956d2bcf645b1bccf8e322eb80a4e6ec226fb5c2355d51bc06721ce351425d	code-syntax-coloring.png	32049223602	24.2.5	1920x1009
+c37dc36981440abd87dd23330ea84eeb32a4dab010e013764bd6c62460d595f9	command-palette-fuzzy.png	32049223602	24.2.5	1920x1009
+77c3723e028735c78b89b9d170168952dcf65f6c937dcc2a49e25153f9f650c2	dock-gap-sentinel.png	32049223602	24.2.5	1920x1009
+0e03c64f529e3ebf434005ad98c382477c6c9cf4608e8f4455e4dd9a4a132d1d	user-info-desktop-separate.png	32049223602	24.2.5	1920x1009
+543fa2ab7092ee48cd6ab5c5cbc1d7793cef6abe908be4ee19496a833595f3f7	user-info-desktop-unified.png	32049223602	24.2.5	1920x1009
+725f021e01296a8c5ab10954c32980a551e9bed3d4ce4ffc1f45fbd5d035156f	user-info-narrow-separate.png	32049223602	24.2.5	480x1009
+c5bd796b1ac4bbf6a10708518cd92dc1a29705ada5a110bb782fdaef8cef58b9	user-info-narrow-unified.png	32049223602	24.2.5	480x1009

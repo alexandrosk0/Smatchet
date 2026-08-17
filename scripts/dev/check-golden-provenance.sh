@@ -34,11 +34,20 @@
 # WHICH renderer version blessed them. Lives here rather than in a second script
 # so the hashing rule can never drift between writer and checker.
 #
-# The three stamped values come from the environment rather than positional
-# arguments (GOLDEN_RUN_ID / GOLDEN_MESA / GOLDEN_GEOMETRY). They describe the
-# CI environment, which is what an Actions `env:` block already carries — and it
+# The stamped values come from the environment rather than positional arguments
+# (GOLDEN_RUN_ID / GOLDEN_MESA / GOLDEN_GEOMETRY). They describe the CI
+# environment, which is what an Actions `env:` block already carries — and it
 # keeps every flag here value-free, which is the shape the repo's flag-parity
 # rule expects (a value-taking `--flag` owes a `--flag=*` twin).
+#
+# Geometry is read PER FILE from each PNG's IHDR, not taken from
+# GOLDEN_GEOMETRY. The scenarios do not share one capture size — the narrow
+# user-info pair is 480x1009 while the rest are 1920x1009 — so stamping a single
+# env value recorded a dimension that was simply false for two of the seven
+# rows. GOLDEN_GEOMETRY survives only as the fallback for when the size cannot
+# be read. A provenance record that states the wrong number is worse than one
+# that states none: the whole point of the column is to tell a reviewer what
+# produced these bytes.
 #
 # Env overrides:
 #   SMATCHET_GOLDEN_DIR   golden PNG dir (default tests/golden)
@@ -102,6 +111,27 @@ manifest_has() {
     return 1
 }
 
+# Read a PNG's pixel dimensions from its IHDR (bytes 16..23, big-endian w,h).
+# Falls back to $EMIT_GEOM when no interpreter is available, so --emit still
+# produces a manifest on a bare runner rather than failing the bootstrap.
+geometry_of() {
+    local png="$1" out=""
+    out="$("${PYTHON:-python}" - "$png" <<'PY' 2>/dev/null || true
+import struct, sys
+with open(sys.argv[1], 'rb') as f:
+    head = f.read(24)
+if len(head) >= 24:
+    w, h = struct.unpack('>II', head[16:24])
+    print("%dx%d" % (w, h))
+PY
+)"
+    if [ -n "$out" ]; then
+        printf '%s' "$out"
+    else
+        printf '%s' "$EMIT_GEOM"
+    fi
+}
+
 if [ "$EMIT" -eq 1 ]; then
     {
         echo "# tests/golden/PROVENANCE.tsv — which goldens are CI-native, and from where."
@@ -115,7 +145,7 @@ if [ "$EMIT" -eq 1 ]; then
         for png in "$GOLDEN_DIR"/*.png; do
             [ -e "$png" ] || continue
             printf '%s\t%s\t%s\t%s\t%s\n' \
-                "$(sha_of "$png")" "$(basename "$png")" "$EMIT_RUN" "$EMIT_MESA" "$EMIT_GEOM"
+                "$(sha_of "$png")" "$(basename "$png")" "$EMIT_RUN" "$EMIT_MESA" "$(geometry_of "$png")"
         done
     } > "$MANIFEST"
     echo "check-golden-provenance: wrote $MANIFEST"
