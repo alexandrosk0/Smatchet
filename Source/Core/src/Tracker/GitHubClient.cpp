@@ -307,7 +307,6 @@ TrackerIssueFetchSummary GitHubClient::FetchIssuesStreamed(const BatchCallback& 
     TrackerIssueFetchSummary summary;
     const TrackerConfig cfg = configOverride ? *configOverride : ConfigManager::Load();
 
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
     std::string fetchError;
     std::string fetchWarning;
     bool fullSyncCompleted = false;
@@ -732,11 +731,10 @@ namespace {
 bool ResolveGitHubMilestoneNumber(const std::string& baseUrl, const cpr::Header& headers,
                                   const smatchet::github::ParsedIssueKey& key, const std::string& title,
                                   std::int64_t& outNumber, TrackerError& outError) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=the paginated GET scaffold (page/per_page URL → TrackerGetLogged →
-    // status guard → bounded parse → short-page break) is deliberately uniform with FetchIssueComments above; a shared
-    // PaginatedGitHubFetch helper would need a Result-type-generic per-page callback spanning the two call shapes
-    // (accumulate-and-map vs find-first-and-stop) for two call sites in one TU — same trade recorded at the
-    // FetchIssueComments guard idiom; owner=tracker-backend; revisit=2026-10-01)
+    // The paginated GET scaffold (page/per_page URL → TrackerGetLogged → status guard → bounded parse →
+    // short-page break) is deliberately uniform with FetchIssueComments above; a shared
+    // PaginatedGitHubFetch helper would need a Result-type-generic per-page callback spanning the two
+    // call shapes (accumulate-and-map vs find-first-and-stop) for two call sites in one TU.
     constexpr int kPerPage = 100;
     constexpr int kMaxPages = 10; // 1000 milestones is well past any real repo
     for (int page = 1; page <= kMaxPages; ++page) {
@@ -1153,7 +1151,6 @@ std::vector<RemoteProject> GitHubClient::ListProjects() {
     std::vector<RemoteProject> projects;
     constexpr int kPerPage = 100;
     constexpr int kMaxPages = 10; // 1000 visible repos is well past a usable picker list
-    // SMATCHET_DEVIATION(rule=duplication; reason=paginated GET scaffold parity; owner=tracker; revisit=2026-12-31)
     for (int page = 1; page <= kMaxPages; ++page) {
         const std::string url = auth.BaseUrl + "/user/repos?sort=full_name&per_page=" + std::to_string(kPerPage) +
                                 "&page=" + std::to_string(page);

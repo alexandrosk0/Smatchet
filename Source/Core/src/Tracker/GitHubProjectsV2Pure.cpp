@@ -288,7 +288,6 @@ std::string DisplayValueFromFieldValueNode(const nlohmann::json& value) {
         return value["date"].get<std::string>();
     }
     if (value.contains("name") && value["name"].is_string()) {
-        // SMATCHET_DEVIATION(rule=duplication; reason=display chain; owner=tracker; revisit=2026-12-31)
         return value["name"].get<std::string>(); // single-select option name
     }
     if (value.contains("title") && value["title"].is_string()) {

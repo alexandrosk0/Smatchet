@@ -364,6 +364,36 @@ computes `changed_files` by comparing *normalized token streams*, and comments a
 normalization. Removing a comment line leaves the token stream identical, so the file stays
 "unchanged" and its clones stay grandfathered.
 
+### Applied
+
+All 20 are removed in this change. Verification, in the order it was run:
+
+- **Marker count** 201 → **181** across `Source/`.
+- **Token neutrality** — re-ran `dup_audit.normalized_stream()` over all 13 touched files against
+  the merge-base: **every one is token-identical** (e.g. `GitHubClient.cpp` 9053 vs 9053,
+  `SmatchetUI.cpp` 8468 vs 8468). The argument above is not just sound in principle; it holds for
+  these exact edits.
+- **`dup_audit.py --diff origin/develop`** — exit 0.
+- **`test-lint-rules.sh --diff origin/develop`** — every gate PASS.
+- **Formatting** — one edit needed a follow-up. Removing the marker from *inside* the
+  `pageUrl` string concatenation in `JiraIssueSearch.cpp:479` let `clang-format` re-join the
+  expression, which would have shown up as drift on the next `pre-ship.sh` run. Reflowed by hand;
+  all 13 files now have zero drift attributable to this change (`CommandRegistry.cpp`'s 3 lines are
+  pre-existing and present at base too).
+
+Two of the 20 had their rationale kept as ordinary prose rather than deleted with the marker —
+`GitHubClient.cpp:735`'s paginated-GET-scaffold note and `LinearFixtureBackend.cpp:49` (whose text
+was already duplicated by the plain comment beneath it). An inert marker is worth removing; the
+reasoning a future reader needs is not.
+
+**Effect on the cliff (S5)**, re-simulated against the real `compute_wide_violations`:
+
+| date | before | after |
+|---|---|---|
+| today | 0 | 0 |
+| 2026-10-01 | 25 | **15** |
+| 2027-01-01 | 94 | **77** |
+
 ### The one retire the skeptic refuted
 
 `Source/Core/src/Tracker/JiraUserAndMeta.cpp:506` — **relocate, do not delete.** Its own target

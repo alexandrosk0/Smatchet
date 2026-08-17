@@ -24,6 +24,10 @@ The live `revisit=` dates are not spread out — they were stamped in bulk by sw
 | 2026-12-02 | 34 | RED |
 | **2027-01-01** | **94** | **RED** |
 
+**Update 2026-08-16** — retiring the 20 markers that suppress no live clone (audit § Retire) cuts
+the near cliff from **25 to 15** and the 2027-01-01 cohort from **94 to 77**. The class is reduced,
+not closed: 15 markers still land on one day, and the remaining 77 are still a single date.
+
 The 25 that land on 2026-10-01 all carry `revisit=2026-09-30` with `owner=security-audit` or
 `owner=cpp-audit` — a single sweep's default date, not 25 exemptions that genuinely come due the
 same Tuesday. The 2027-01-01 spike is the same story with `revisit=2026-12-31`.

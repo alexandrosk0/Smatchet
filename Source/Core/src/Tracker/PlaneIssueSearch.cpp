@@ -651,7 +651,6 @@ PlaneClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std:
 
     TrackerIssueFetchSummary summary =
         FetchIssuesStreamedImpl(onBatch, shouldCancel, &cfg, nullptr, sequenceIdInFilter);
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity errtail; owner=tracker-backend; revisit=2026-12-31)
     if (!summary.FetchError.empty()) {
         // The summary now carries the kind classified at the page-fetch site (item 12); fall back
         // to Unknown only for a legacy path that did not classify.

@@ -489,7 +489,6 @@ void WarnIfIsQualifierMappedZeroRows(const std::string& jqlQueryOrEmpty, const s
 }
 
 } // namespace
-// SMATCHET_DEVIATION(rule=duplication; reason=backend API symmetry; owner=tracker; revisit=2026-12-31)
 
 // SMATCHET_DEVIATION(rule=function-too-long,duplication; reason=N12 fills; owner=tracker; revisit=2026-12-31)
 std::vector<CachedTicket>
