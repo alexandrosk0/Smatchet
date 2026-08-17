@@ -189,6 +189,32 @@ and stop the class regenerating. Filed as
 `docs/plans/`, not in `backlog/`, not in `docs/self-improvement/`. A slug pointing at no tracked
 work is a permanent exemption in slug costume; `revisit=never` at least says so honestly.
 
+### The 9 `ADR-0020 / debt.md` markers: trigger NOT fired — keep them
+
+Worth spelling out, because the obvious reading is wrong and an adversarial pass caught it.
+
+The tempting conclusion is that this trigger has fired. `debt.md:67` records that the narrowing
+ADR-0020 deferred — hoisting `DeadLetterRestoreSummary` / `*DeleteSummary` / the pack types into
+`Source/Core/include/Sync/OfflineQueueTypes.h` — **has shipped** (PR #1282), and
+`OfflineQueueService.h` / `TicketSyncService.h` do now include those rather than `AppController.h`.
+Fan-in has also dropped 115 → 72.
+
+Neither is the trigger. It says *"when **AppController.h** is narrowed"* — the header's own
+surface. That header is **1641 lines today**, against ~1110 when the debt entry was filed and 1410
+at its 2026-06-20 re-verify: it has grown ~48%, never narrowed. `debt.md:61` still reads
+*"partially applied"*; `debt.md:59` warns in as many words **"do NOT confuse with the shipped
+`appcontroller-fan-in` plan … a DIFFERENT axis"**; and `debt.md:60` names the exact residual that
+would fire these markers — the Lua-bindings, AI-assistant and MCP-activity concerns are *"NOT yet
+extracted"*.
+
+So all 9 are **KEEP**. The trigger is live and pending, not spent, and it is causally coupled to
+these files: `AppController_LocalCacheDb.cpp:16-21` documents that it must include
+`OfflineQueueService.h` / `TicketSyncService.h` precisely because `AppController.h` only
+forward-declares those members — an artifact of the last narrowing. Retargeting them to `never`
+would delete the hook for work `debt.md` still tracks.
+
+The datum worth surfacing on its own: **the god-object grew 48% while its P2 debt entry sat open.**
+
 ## S8 · `revisit_overdue()` compared strings, not dates — FIXED HERE
 
 `00-common.sh` validated `revisit=` with a shell glob and then compared **lexically** against
