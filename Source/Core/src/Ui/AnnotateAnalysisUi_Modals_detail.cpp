@@ -123,4 +123,10 @@ bool PickJiraAccountForP4User(const std::vector<TrackerUser>& users, const std::
     return false;
 }
 
+std::string GroupLookupErrorMessage(const std::string& detail) {
+    // Same fallback wording the sibling sites use (SmatchetUserInfoUi.cpp group/member fetch),
+    // so an empty-Detail backend failure is still visible instead of rendering as "no groups".
+    return detail.empty() ? std::string("Group lookup failed.") : detail;
+}
+
 } // namespace AnnotateUiPure

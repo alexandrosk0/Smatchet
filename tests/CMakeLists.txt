@@ -74,6 +74,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Scenario capture-size parse + the request-vs-achieved verdict (#2092). Pure,
+        # ImGui-free, no threads — belongs in the portable subset so the contract that
+        # keeps bucket-C from comparing wrong-sized captures is covered on Linux too,
+        # not only in the Windows-only full rig.
+        Core/ScenarioCaptureSizing.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
@@ -1167,6 +1173,10 @@ add_executable(SmatchetTests
     # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
     # Header-only pure helper, no production .cpp to link.
     Core/AsyncLoadGatePure.test.cpp
+    # One-line grid-cell preview picker — first line with VISIBLE content, so a
+    # value opening with a blank line (GitHub issue bodies routinely do) no longer
+    # draws an empty cell. Header-only pure helper, no production .cpp to link.
+    Core/FieldPreviewLinePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp
@@ -1518,6 +1528,11 @@ add_executable(SmatchetTests
     # (mirrors SmatchetGridHeaderUi_detail.cpp); SmatchetWindowExpand.cpp stays OUT.
     Core/WindowExpand.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetWindowExpand_detail.cpp"
+    # Issue #2058 — bounded retry core for a docked-tab focus request. The latch used to be
+    # cleared on the same frame selectDockedTab was called, i.e. before ImGui had created the
+    # window, so the first-ever open still came up behind its sibling. Ui/SmatchetFocusRequest.h
+    # is header-only and ImGui-free; no extra .cpp link.
+    Core/FocusRequestRetry.test.cpp
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.

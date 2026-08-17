@@ -53,8 +53,7 @@ class PaneOwnedTicketIdStore {
             return false;
         }
         std::lock_guard<std::mutex> lock(mutex_);
-        std::map<std::string, std::vector<std::string>>::const_iterator it =
-            entries_.find(MakeKey(backendKey, paneId));
+        std::map<std::string, std::vector<std::string>>::const_iterator it = entries_.find(MakeKey(backendKey, paneId));
         if (it == entries_.end()) {
             return false;
         }
@@ -117,6 +116,31 @@ class PaneOwnedTicketIdStore {
              ++it) {
             if (KeyBelongsToPane(it->first, paneId)) {
                 std::vector<std::string>().swap(it->second); // tombstone: present, pins nothing
+            }
+        }
+    }
+
+    /// Erase every trace of `paneId`, tombstone included. This is NOT the retirement path — that
+    /// is `Forget`, which deliberately leaves a tombstone so a revived pane renders empty instead
+    /// of inheriting the namespace-wide cold-start seed.
+    /// This is the pane-CREATION path, and it exists because pane ids are RECYCLED:
+    /// `GenerateUniquePaneId` walks `pane-2, pane-3, …` and hands back the lowest unused id, so
+    /// closing `pane-2` and clicking "+" mints `pane-2` again. Without this, the dead pane's
+    /// tombstone would shadow the brand-new pane — `TryGet` would answer "recorded, empty", the
+    /// new pane would be denied its cold-start seed, and offline (or against a down tracker, or
+    /// across a backend swap that discards the kick) nothing would ever clear it, because a
+    /// non-empty completed full sync is the only writer that does. A new pane must start with no
+    /// history at all, which is exactly what erasing gives it.
+    void Erase(const std::string& paneId) {
+        if (paneId.empty()) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (std::map<std::string, std::vector<std::string>>::iterator it = entries_.begin(); it != entries_.end();) {
+            if (KeyBelongsToPane(it->first, paneId)) {
+                entries_.erase(it++);
+            } else {
+                ++it;
             }
         }
     }

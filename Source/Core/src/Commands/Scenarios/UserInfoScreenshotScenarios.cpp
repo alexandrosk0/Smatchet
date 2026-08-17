@@ -21,6 +21,7 @@
 #include <memory>
 
 #include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
+#include "Config/TrackerConfigSaveRepair.h" // persisted-field repair hook — see OnStart (#2047)
 #include "SmatchetUiSession.h"
 
 // g_ui — unconditional extern. Defined in SmatchetUI.cpp without a
@@ -78,6 +79,19 @@ void UserInfoScreenshotScenario::OnStart(IAppScenarioHost& /*app*/, const nlohma
 #if defined(SMATCHET_WITH_WHISPER)
     savedWhisperSetupCompleted_ = g_ui.cfg.WhisperSetupCompleted;
 #endif
+
+    // Seven of the fields saved above are PERSISTED config, not session state — GitHubPat most of
+    // all. Their unwind cannot run inline in OnFinish (it would un-pin them before the captured
+    // frame is drawn; see the comment there), so it is deferred by a frame — and a config save
+    // enqueued inside that window, or a process that exits with the unwind still queued, used to
+    // write the CLEARED PAT to the user's real config (#2047). Arm a repair at the config-save
+    // chokepoint for the whole run instead of reasoning about how narrow the window is: every
+    // outgoing snapshot carries the user's values for exactly these fields, so the destructive
+    // write cannot be issued — ConfigManager::Save is the seam EVERY TrackerConfig write funnels
+    // through, including the dozens of direct `ConfigManager::Save(g_ui.cfg)` calls across the UI.
+    // Dropped by restoreState() — via OnCancel, or via the deferred unwind.
+    configRepairToken_ = smatchet::config_repair::RegisterTrackerConfigRepair(
+        [self = *this](TrackerConfig& cfg) { self.restorePersistedConfigFields(cfg); });
 
     applyPinnedState();
     // Stage the open request; DrawWindow adopts it on the next frame.
@@ -169,16 +183,25 @@ nlohmann::json UserInfoScreenshotScenario::OnFinish(IAppScenarioHost& /*app*/) {
     return out;
 }
 
-void UserInfoScreenshotScenario::restoreState() {
+void UserInfoScreenshotScenario::restorePersistedConfigFields(TrackerConfig& cfg) const {
 #if defined(SMATCHET_WITH_WHISPER)
-    g_ui.cfg.WhisperSetupCompleted = savedWhisperSetupCompleted_;
+    cfg.WhisperSetupCompleted = savedWhisperSetupCompleted_;
 #endif
-    g_ui.cfg.UiMode = savedUiMode_;
-    g_ui.cfg.VcsFeedLayout = savedVcsFeedLayout_;
-    g_ui.cfg.GitHubPat = savedGitHubPat_;
-    g_ui.cfg.GitCommitRepos = savedGitCommitRepos_;
-    g_ui.cfg.GitHubOwner = savedGitHubOwner_;
-    g_ui.cfg.GitHubRepo = savedGitHubRepo_;
+    cfg.UiMode = savedUiMode_;
+    cfg.VcsFeedLayout = savedVcsFeedLayout_;
+    cfg.GitHubPat = savedGitHubPat_;
+    cfg.GitCommitRepos = savedGitCommitRepos_;
+    cfg.GitHubOwner = savedGitHubOwner_;
+    cfg.GitHubRepo = savedGitHubRepo_;
+}
+
+void UserInfoScreenshotScenario::restoreState() {
+    restorePersistedConfigFields(g_ui.cfg);
+    // The live config no longer carries the pins, so the save-chokepoint repair has nothing left to
+    // protect — drop it before touching the session fields, so a save racing the rest of this
+    // unwind is never repaired back to a value the user has since changed.
+    smatchet::config_repair::UnregisterTrackerConfigRepair(configRepairToken_);
+    configRepairToken_ = 0;
     g_ui.userInfoSourcePaneId = savedPaneId_;
     g_ui.userInfoDisplayName = savedDisplayName_;
     g_ui.userInfoEmail = savedEmail_;

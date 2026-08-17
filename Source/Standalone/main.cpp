@@ -51,26 +51,6 @@ static bool g_MainWindowShownAfterFirstFrame = false;
 // stb_image_write emits TGA / BMP / JPG / HDR helpers we never call —
 // suppress -Wunused-function for the impl block so the warnings don't drown
 // out real issues in main.cpp.
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_STATIC
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-#endif
-#if defined(_MSC_VER)
-// Third-party stb header — silence ALL MSVC warnings for the impl block (4996
-// sprintf, 4505 unused-static under reduced-feature/Debug configs, …) so
-// first-party /WX stays strict without whack-a-mole per warning code.
-#pragma warning(push, 0)
-#endif
-#include <stb/stb_image_write.h>
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 #if defined(SMATCHET_BUILD_UI_TESTS)
 // Pulls in the engine API (PostSwap) and the SmatchetActiveUiTestEngine accessor
 // without dragging nlohmann::json into main.cpp (UiTestScenario.h forward-declares
@@ -764,16 +744,8 @@ static void HandleScreenshotRequest(GLFWwindow* window, MainBootState& boot) {
         if (bugReportShot) {
             smatchet::imaging::DownscaleToMaxDimension(rgb, fw, fh, 3, 1280);
         }
-        // Compression level 8 keeps capture cheap (~10 ms for a 1920x1080 frame on
-        // dev hardware) while still cutting the file ~40× vs raw PPM. Stride is
-        // recomputed from the (possibly downscaled) width.
-        stbi_write_png_compression_level = 8;
-        const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
-        if (rc == 0) {
-            LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
-        } else {
-            LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
-        }
+        // Stride is recomputed inside from the (possibly downscaled) width.
+        boot_detail::WriteCapturePng(screenshotPath, rgb, fw, fh);
     } else {
         LOG_ERROR("debug.window.screenshot: invalid framebuffer or empty path");
     }

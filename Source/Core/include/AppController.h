@@ -1243,6 +1243,18 @@ class AppController : public IAppThreading,
     std::vector<std::unique_ptr<GridLiveContext>> retiredContexts_;
 
   public:
+    /// UI thread, pane-CREATION path. Erase every owned-ticket-id record for `paneId`, tombstone
+    /// included — the counterpart to the private ForgetPaneOwnedTicketIds, which deliberately
+    /// LEAVES a tombstone at retirement so a revived pane renders empty rather than inheriting
+    /// the namespace-wide cold-start seed.
+    /// Public because the pane-creation chokepoint lives in the UI layer
+    /// (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests), and because pane ids are
+    /// RECYCLED: GenerateUniquePaneId hands back the lowest unused id, so a new pane routinely
+    /// lands on a closed pane's id. Without this it inherits that pane's tombstone, is denied its
+    /// cold-start seed, and stays blank until a non-empty full sync completes — never, if the
+    /// user is offline or the tracker is down.
+    void ErasePaneOwnedTicketIds(const std::string& paneId);
+
     // --- Multi-grid Slice 3: visibility-driven context lifecycle (plan item 17) ---------
     /// UI thread. Record which pane drives global actions; falls back to the default
     /// context when that pane has no live context yet.

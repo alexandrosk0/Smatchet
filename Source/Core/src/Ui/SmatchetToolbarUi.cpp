@@ -275,8 +275,11 @@ void SmatchetToolbarUi::RenderBar(AppController& app, TrackerConfig& cfg) {
                 std::string tip = b.Tooltip.empty() ? b.CommandId : b.Tooltip;
                 if (b.Kind == ToolbarButtonKind::Command && !b.CommandId.empty()) {
                     // A hover tooltip has room for the whole alias set, unlike the menu
-                    // and palette shortcut columns — so surface every combo here.
-                    const std::string combo = BoundHotkeyDisplayAll(cfg.Keybindings.Bindings, b.CommandId, "{}");
+                    // and palette shortcut columns — so surface every combo here, resolved
+                    // against the button's OWN args (what DispatchButton dispatches), never
+                    // a hardcoded "{}": the args match is semantic and has no fallback.
+                    const std::string combo =
+                        smatchet::toolbar_editor::ToolbarButtonShortcutDisplay(cfg.Keybindings.Bindings, b);
                     if (!combo.empty()) {
                         tip += "  (";
                         tip += combo;

@@ -132,6 +132,7 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
             dup.ticketsSnapshot = src->ticketsSnapshot;
             dup.snapshotRevision = src->snapshotRevision;
         }
+        outcome.CreatedPaneId = dup.id;
         panes.push_back(dup); // invalidates `src` — done reading it above
         focusedPaneId = panes.back().id;
         outcome.FocusReassigned = true;

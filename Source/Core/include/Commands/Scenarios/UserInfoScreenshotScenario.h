@@ -60,6 +60,11 @@
 // sibling screenshot scenarios use). The Ui-touching method bodies are therefore
 // defined out-of-line in UserInfoScreenshotScenarios.cpp.
 
+// Forward-declared rather than including Config/ConfigManager.h: this header only needs the name
+// for restorePersistedConfigFields' signature, and a Commands/Scenarios header pulling in the
+// Config layer would add a needless edge (plus the json.hpp parse cost ConfigManager.h documents).
+struct TrackerConfig;
+
 namespace smatchet {
 namespace cmd {
 
@@ -97,6 +102,13 @@ class UserInfoScreenshotScenario : public IScenario {
     // body — the exact off-state one bucket-C golden was bootstrapped from.
     void applyPinnedState();
 
+    /// Put the PERSISTED config fields this scenario pinned back to the user's values, on an
+    /// arbitrary TrackerConfig. Split out of restoreState() because these fields are not session
+    /// state: they are written to the user's config on disk, so the same unwind has to be
+    /// applicable to a config SNAPSHOT on its way to the config writer, not just to g_ui.cfg
+    /// (#2047). Registered as a config-save repair hook for the whole run — see OnStart.
+    void restorePersistedConfigFields(TrackerConfig& cfg) const;
+
     void restoreState();
 
     std::string name_;
@@ -119,6 +131,9 @@ class UserInfoScreenshotScenario : public IScenario {
     std::string savedGitHubOwner_;
     std::string savedGitHubRepo_;
     UiMode savedUiMode_ = UiMode::Auto;
+    /// Token of the config-save repair hook armed in OnStart; 0 when none is armed. Copied along
+    /// with the rest of the scenario into the deferred unwind closure, which drops the hook.
+    int configRepairToken_ = 0;
 #if defined(SMATCHET_WITH_WHISPER)
     bool savedWhisperSetupCompleted_ = false;
 #endif

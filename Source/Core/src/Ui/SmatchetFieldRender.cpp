@@ -1,6 +1,7 @@
 #include "SmatchetFieldRender.h"
 
 #include "CppSyntaxHighlight.h"
+#include "FieldPreviewLinePure.h"
 #include "MarkdownPreviewRender.h"
 
 #include "imgui.h"
@@ -27,13 +28,12 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     ImGui::AlignTextToFramePadding();
     const std::string& displayValue = rawValue;
 
-    bool hasNewline = false;
-    std::string singleLine = displayValue;
-    const size_t pos = singleLine.find_first_of("\r\n");
-    if (pos != std::string::npos) {
-        singleLine.erase(pos);
-        hasNewline = true;
-    }
+    // First line with VISIBLE content, not literally the first line: a value opening
+    // with a blank line (GitHub issue bodies routinely do) otherwise drew an empty
+    // cell for a ticket that has full text. Tooltip below still shows the raw value.
+    const smatchet::field_preview::PreviewLine preview = smatchet::field_preview::FirstVisibleLine(displayValue);
+    const std::string& singleLine = preview.Text;
+    const bool hasNewline = preview.HasMoreLines;
 
     const ImVec2 textSize = ImGui::CalcTextSize(singleLine.c_str());
     const bool horizontallyClipped = (availWidth > 0.0f && textSize.x > availWidth + 1.0f);

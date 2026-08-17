@@ -165,12 +165,31 @@ void AppController::EnsurePaneLiveSyncStarted(const std::string& paneId, const T
         // snapshot instantly, before the live fetch completes (a restored pane is no longer a
         // cold blank grid). GetAllTickets uses non-cached local statements, safe under the LCM's
         // OPEN_FULLMUTEX connection.
+        // #2063: GetAllTickets is NAMESPACE-wide, so this seed is every pane's rows for the
+        // backend, not this pane's. Filter it to the pane's own recorded set before it reaches
+        // the grid, or a revived pane renders its siblings' tickets until its own sync lands —
+        // which is the leak #2063 reports. Three cases, and the distinction matters:
+        //   * recorded, non-empty  -> seed exactly those ids (the pane's last-synced rows).
+        //   * recorded, EMPTY      -> a retirement tombstone: seed nothing, render empty.
+        //   * NOT recorded         -> never synced: the namespace read IS the best cold-start
+        //                             seed available, which is the documented bootstrap fallback.
+        // Fixing only the refresh path (AppController_CatalogAndFieldEdit.cpp) left this one
+        // unfiltered, so the pane still showed the union and then collapsed to one row on the
+        // first edit, when the refresh finally applied the filter.
         std::vector<CachedTicket> seedTickets;
         if (Cache) {
             const std::string seedKey = ConfigManager::NormalizeViewsBackendKey(cfgCopy.TrackerType);
             if (!seedKey.empty()) {
                 try {
                     seedTickets = Cache->GetAllTickets(seedKey);
+                    std::vector<std::string> ownedIds;
+                    if (TryGetPaneOwnedTicketIds(seedKey, paneId, ownedIds)) {
+                        const std::set<std::string> keep(ownedIds.begin(), ownedIds.end());
+                        seedTickets.erase(
+                            std::remove_if(seedTickets.begin(), seedTickets.end(),
+                                           [&keep](const CachedTicket& t) { return keep.find(t.id) == keep.end(); }),
+                            seedTickets.end());
+                    }
                 } catch (const std::exception& ex) {
                     // Non-fatal: an unreadable cache just means no instant snapshot — the live
                     // fetch still populates the grid. Logged, not swallowed (policy).
@@ -896,8 +915,8 @@ std::vector<std::string> AppController::CollectTicketIdsRetainedByOtherContexts(
     return ids;
 }
 
-std::vector<std::shared_ptr<const std::vector<CachedTicket>>> AppController::CollectActiveTicketSnapshotsAcrossContexts()
-    const {
+std::vector<std::shared_ptr<const std::vector<CachedTicket>>>
+AppController::CollectActiveTicketSnapshotsAcrossContexts() const {
     std::vector<GridLiveContext*> all;
     {
         // Same issue-#1457 order as above: snapshot the pointers under the map mutex, materialise
@@ -943,3 +962,5 @@ void AppController::DropPaneOwnedTicketIds(const std::string& backendKey, const 
 }
 
 void AppController::ForgetPaneOwnedTicketIds(const std::string& paneId) { paneOwnedTicketIds_.Forget(paneId); }
+
+void AppController::ErasePaneOwnedTicketIds(const std::string& paneId) { paneOwnedTicketIds_.Erase(paneId); }

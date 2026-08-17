@@ -17,7 +17,7 @@
 #include "TrackerFieldSchema.h"
 
 #include <algorithm>
-#include <cstdio>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -101,27 +101,25 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations&
         MakeCommand("ticket.add_worklog", "Log time worked on a ticket.",
                     [&app](const nlohmann::json& args, const CommandContext&) {
                         const int seconds = args.value("seconds", 0);
+                        // Reject a non-positive duration HERE, not at the tracker. The registry's
+                        // Required check only catches an omitted `seconds`; 0 (the value.value()
+                        // default, and what a caller sending `"seconds": 0` means) and a negative
+                        // both used to reach SubmitWorklog as timeSpent="0s" / "-30s" and come back
+                        // as an opaque backend rejection the caller cannot act on (#2054).
+                        if (seconds <= 0) {
+                            return CommandResult::Failure(ErrorCode::ValidationError,
+                                                          "Argument 'seconds' for 'ticket.add_worklog' must be > 0.",
+                                                          "Pass --seconds=<positive integer>.");
+                        }
                         const std::string id = args.value("id", std::string());
                         const std::string comment = args.value("comment", std::string());
                         const std::string started = args.value("started", std::string());
-                        // timeSpent format: "1h 30m" — build from seconds.
-                        const int h = seconds / 3600;
-                        const int m = (seconds % 3600) / 60;
-                        const int s = seconds % 60;
-                        char timeSpent[64] = {};
-                        if (h > 0 && m > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh %dm", h, m);
-                        else if (h > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dh", h);
-                        else if (m > 0)
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%dm", m);
-                        else
-                            std::snprintf(timeSpent, sizeof(timeSpent), "%ds", s);
+                        const std::string timeSpent = builtin_detail::FormatWorklogTimeSpent(seconds);
                         const VoidResult r = app.SubmitWorklog(id, timeSpent, "", "auto", comment, started);
                         if (!r.has_value()) {
                             return CommandResult::Failure(ErrorCode::BackendError, "Worklog failed: " + r.error());
                         }
-                        return CommandResult::Success({{"ok", true}, {"timeSpent", std::string(timeSpent)}});
+                        return CommandResult::Success({{"ok", true}, {"timeSpent", timeSpent}});
                     });
     // Destructive-from-automation (CLI/MCP/Lua) audit logging is centralized in
     // CommandRegistry::Dispatch (snapshot.Destructive && IsAutomationSource) — handlers do not log
@@ -134,6 +132,13 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations&
         ps.Type = ParamType::Int;
         ps.Required = true;
         ps.Description = "Time worked in seconds (e.g. 3600 = 1 hour).";
+        // Declare the bound as well as checking it in the handler (#2054). ValidateAndResolveArgs
+        // enforces MinInt centrally — which also publishes the bound in the command schema that
+        // `--help` and the MCP tool list render, so a caller sees "minimum 1" instead of discovering
+        // it by having the tracker reject a timeSpent of "0s". The handler guard stays as the net
+        // for any path that resolves args without the validator (the BuiltinCommands_Debug
+        // `lines` param sets the same belt-and-braces precedent).
+        ps.MinInt = std::make_shared<long long>(1);
         c.Params.push_back(std::move(ps));
     }
     c.Params.push_back(PString("id", "Ticket id.", true));

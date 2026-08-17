@@ -142,7 +142,7 @@ void SmatchetUI::prepareTopLevelWindow(UiDrawSession& d, const char* layoutKey, 
     }
 }
 
-void SmatchetUI::selectDockedTab(const char* windowName) {
+bool SmatchetUI::selectDockedTab(const char* windowName) {
     // ImGui::SetNextWindowFocus() does NOT activate a docked tab: FocusWindow()'s
     // "select in dock node" lines are commented out upstream (imgui.cpp, issue #2304),
     // and DockNodeUpdateTabBar only mirrors nav focus when g.NavWindow->RootWindow IS
@@ -155,9 +155,16 @@ void SmatchetUI::selectDockedTab(const char* windowName) {
     // the localized one (SmatchetLocalizedImGui::Begin runs the same transform), so a raw
     // lookup on the English literal would miss in every non-English locale.
     ImGuiWindow* window = ImGui::FindWindowByName(SmatchetLocalization::WindowTitleFromSource(windowName));
-    if (window == nullptr || window->DockNode == nullptr || window->DockNode->TabBar == nullptr) {
-        // Not docked (floating / first frame before Begin) — SetNextWindowFocus suffices.
-        return;
+    if (window == nullptr) {
+        // The window has never run its Begin, so ImGui has not created it yet — this
+        // call cannot do anything and the caller's focus request must survive to be
+        // retried next frame (it is the FIRST-EVER open that needs the tab raised most).
+        return false;
+    }
+    if (window->DockNode == nullptr || window->DockNode->TabBar == nullptr) {
+        // Floating, or docked on a frame whose node has no tab bar — SetNextWindowFocus
+        // suffices, so the request counts as serviced and the caller stops retrying.
+        return true;
     }
     window->DockNode->TabBar->NextSelectedTabId = window->TabId;
     // Selecting the tab is not enough: the node's tab-bar chrome renders in the
@@ -167,6 +174,7 @@ void SmatchetUI::selectDockedTab(const char* windowName) {
     // picked this frame's colours. Focus the window directly so the node is focused
     // from the next frame on (the request is re-armed every warm-up frame).
     ImGui::FocusWindow(window);
+    return true;
 }
 
 // selectDockedTab for the window that is CURRENTLY between Begin/End — same mechanism, no

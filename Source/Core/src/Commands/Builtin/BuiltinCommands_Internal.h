@@ -51,6 +51,16 @@ std::string CategoryFromName(const std::string& name);
 bool IsSensitiveEnvName(const std::string& name);
 nlohmann::json ObservedSmatchetEnv();
 
+// --- Duration helpers ------------------------------------------------------
+
+/// Render a POSITIVE duration as the tracker's `timeSpent` string: "1h", "1m 30s", "1h 1m 30s".
+/// Every non-zero component is emitted, including the sub-minute tail. The previous inline
+/// formatter had an if/else-if chain that stopped after hours+minutes, so 3630s submitted as "1h"
+/// and 3690s as "1h 1m" — the tracker recorded 30 s less time than the caller logged, silently
+/// (#2054). `ticket.add_worklog` rejects seconds <= 0 before calling this; a non-positive argument
+/// here is a programming error and returns "0s" rather than an empty or negative timeSpent.
+std::string FormatWorklogTimeSpent(int seconds);
+
 // --- Command builders ------------------------------------------------------
 
 Command MakeCommand(std::string name, std::string summary,

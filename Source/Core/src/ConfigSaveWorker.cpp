@@ -1,5 +1,6 @@
 #include "ConfigSaveWorker.h"
 
+#include "Config/TrackerConfigSaveRepair.h" // persisted-field repair hooks (#2047)
 #include "Logger.h"
 // Pure `MergePersistentViewsToolbarAppend` (no ImGui, no UI state) — the views read-modify-write
 // this worker took over from `Views::Save` must keep folding in out-of-band ToolbarAppend writes.
@@ -178,11 +179,17 @@ void Stop() {
 
 void EnqueueTrackerConfig(const TrackerConfig& cfg) {
     auto& s = State();
+    // Repair as the snapshot ENTERS the queue, not only at the ConfigManager::Save chokepoint that
+    // the drain below eventually reaches. The slot can be filled inside a capture scenario's pin
+    // window and drained after that scenario has unregistered its hook, at which point Save would
+    // see an empty registry and happily persist the pinned (cleared) value (#2047).
+    TrackerConfig outgoing = cfg;
+    config_repair::ApplyTrackerConfigRepairs(outgoing);
     bool queued = false;
     {
         std::lock_guard<std::mutex> lk(s.mtx);
         if (s.running) {
-            s.trackerPending = cfg;
+            s.trackerPending = outgoing;
             s.trackerDirty = true;
             queued = true;
         }
@@ -194,7 +201,7 @@ void EnqueueTrackerConfig(const TrackerConfig& cfg) {
     // Worker not running — save synchronously so the write is never lost. RMW-serialized, so safe
     // even if it races the worker on another path.
     try {
-        ConfigManager::Save(cfg);
+        ConfigManager::Save(outgoing);
     } catch (...) { // catch-all-ok: Save logs; never propagate from a fire-and-forget save.
     }
 }

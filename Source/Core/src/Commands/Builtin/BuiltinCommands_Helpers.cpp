@@ -6,6 +6,7 @@
 #include "StringUtil.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <utility>
@@ -111,6 +112,35 @@ nlohmann::json ObservedSmatchetEnv() {
         one["name"] = n;
         one["value"] = IsSensitiveEnvName(n) ? std::string("***") : std::string(v);
         out.push_back(std::move(one));
+    }
+    return out;
+}
+
+// See BuiltinCommands_Internal.h for why every non-zero component is emitted (#2054).
+std::string FormatWorklogTimeSpent(int seconds) {
+    if (seconds <= 0) {
+        return std::string("0s");
+    }
+    const int h = seconds / 3600;
+    const int m = (seconds % 3600) / 60;
+    const int s = seconds % 60;
+    std::string out;
+    char part[24] = {};
+    if (h > 0) {
+        std::snprintf(part, sizeof(part), "%dh", h);
+        out += part;
+    }
+    if (m > 0) {
+        if (!out.empty())
+            out += ' ';
+        std::snprintf(part, sizeof(part), "%dm", m);
+        out += part;
+    }
+    if (s > 0) {
+        if (!out.empty())
+            out += ' ';
+        std::snprintf(part, sizeof(part), "%ds", s);
+        out += part;
     }
     return out;
 }

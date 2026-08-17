@@ -643,14 +643,56 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
         CHECK(fail.Error.Code == ErrorCode::BackendError);
     }
     {
-        // 5400 s -> "1h 30m"; 2700 s -> "45m"; 0 s -> "0s".
+        // 5400 s -> "1h 30m"; 2700 s -> "45m".
         const CommandResult r = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 5400}}, yes);
         REQUIRE(r.Ok);
         CHECK((*r.Data)["timeSpent"] == "1h 30m");
         reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 2700}}, yes);
         CHECK(mut.LastWorklogTimeSpent == "45m");
-        reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 0}}, yes);
-        CHECK(mut.LastWorklogTimeSpent == "0s");
+
+        // #2054: the sub-minute remainder used to be dropped — 3630 s went to the tracker as "1h",
+        // silently logging 30 s less than the caller asked for. Every non-zero component is emitted.
+        reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 3630}}, yes);
+        CHECK(mut.LastWorklogTimeSpent == "1h 30s");
+        reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 3690}}, yes);
+        CHECK(mut.LastWorklogTimeSpent == "1h 1m 30s");
+        reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 90}}, yes);
+        CHECK(mut.LastWorklogTimeSpent == "1m 30s");
+
+        // #2054: zero / negative are rejected as an argument error instead of being submitted as
+        // timeSpent="0s" / "-30s" and coming back as an opaque backend rejection. The fake records
+        // the last timeSpent it saw, so an unchanged value proves SubmitWorklog was never reached.
+        mut.LastWorklogTimeSpent = "sentinel";
+        const CommandResult zero = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 0}}, yes);
+        REQUIRE_FALSE(zero.Ok);
+        CHECK(zero.Error.Code == ErrorCode::ValidationError);
+        CHECK(mut.LastWorklogTimeSpent == "sentinel");
+
+        const CommandResult neg = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", -30}}, yes);
+        REQUIRE_FALSE(neg.Ok);
+        CHECK(neg.Error.Code == ErrorCode::ValidationError);
+        CHECK(mut.LastWorklogTimeSpent == "sentinel");
+
+        // An omitted `seconds` is caught earlier, by the registry's Required check.
+        const CommandResult missing = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}}, yes);
+        REQUIRE_FALSE(missing.Ok);
+        CHECK(missing.Error.Code == ErrorCode::MissingRequiredArg);
+        CHECK(mut.LastWorklogTimeSpent == "sentinel");
+    }
+    {
+        // Direct unit coverage of the shared formatter the handler delegates to (production symbol,
+        // not a re-implementation) — including the boundaries the handler itself never reaches.
+        using smatchet::cmd::builtin_detail::FormatWorklogTimeSpent;
+        CHECK(FormatWorklogTimeSpent(3600) == "1h");
+        CHECK(FormatWorklogTimeSpent(60) == "1m");
+        CHECK(FormatWorklogTimeSpent(1) == "1s");
+        CHECK(FormatWorklogTimeSpent(59) == "59s");
+        CHECK(FormatWorklogTimeSpent(3661) == "1h 1m 1s");
+        CHECK(FormatWorklogTimeSpent(7200) == "2h");
+        // Non-positive is a programming error (the handler rejects it first) — never an empty or
+        // negative timeSpent on the wire.
+        CHECK(FormatWorklogTimeSpent(0) == "0s");
+        CHECK(FormatWorklogTimeSpent(-30) == "0s");
     }
     {
         const CommandResult r = reg.Dispatch("ticket.transition", {{"id", "PROJ-1"}, {"toStatus", "Done"}}, yes);

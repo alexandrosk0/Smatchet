@@ -120,5 +120,12 @@ int ScenarioWaitMs(int timeoutMs, int frames) {
     return (timeoutMs > 0) ? timeoutMs : ((frames / 60 + 30) * 1000);
 }
 
+int ResolveCliTimeoutBudgetMs(int flagMs, int envMs) {
+    if (flagMs >= 0) {
+        return flagMs;
+    }
+    return (envMs > 0) ? envMs : 0;
+}
+
 } // namespace cli
 } // namespace smatchet

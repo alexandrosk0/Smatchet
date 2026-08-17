@@ -15,6 +15,7 @@
 
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "Config/TrackerConfigSaveRepair.h"
 
 #include <doctest/doctest.h>
 
@@ -187,4 +188,159 @@ TEST_CASE("EnqueuePersistentViews falls back to a synchronous write when the wor
     CHECK(reloaded.Backends.at("Jira").ActiveViewId == "sync-view");
     REQUIRE(reloaded.Backends.at("Jira").Views.size() == 1);
     CHECK(reloaded.Backends.at("Jira").Views[0].Id == "sync-view");
+}
+
+// --- Persisted-field repair hooks (Issue #2047) -------------------------------------------------
+//
+// A screenshot-capture scenario clears persisted TrackerConfig fields (GitHubPat above all) for the
+// duration of a capture and unwinds them a frame LATER, so a config save landing inside that window
+// — or a process exiting with the unwind still queued — used to write the cleared credential to the
+// user's real config. The repair hook makes that write unissuable at ConfigManager::Save, the seam
+// every TrackerConfig write in the process funnels through.
+
+TEST_CASE("repair hook rewrites a DIRECT ConfigManager::Save — not just the worker's enqueue") {
+    smatchet_tests::TestEnvGuard env;
+
+    // This is the path that matters most and the one a worker-only repair misses entirely: the UI
+    // has dozens of direct `ConfigManager::Save(g_ui.cfg)` call sites (the update modal's "Skip This
+    // Version", the layout-schema migration, the preferences debounce, ...) and any of them firing
+    // inside a capture window would otherwise persist the scenario's cleared PAT.
+    const int token = smatchet::config_repair::RegisterTrackerConfigRepair(
+        [](TrackerConfig& cfg) { cfg.GitHubPat = "user-real-pat"; });
+    REQUIRE(token != 0);
+
+    TrackerConfig cleared; // what a capture scenario leaves on the live config
+    cleared.TrackerType = "Jira";
+    cleared.Domain = "direct-save-domain";
+    cleared.GitHubPat.clear();
+    ConfigManager::Save(cleared);
+
+    ConfigManager::InvalidateCache();
+    const TrackerConfig onDisk = ConfigManager::Load();
+    // The pinned credential survives...
+    CHECK(onDisk.GitHubPat == "user-real-pat");
+    // ...while every other edit in the same save is written normally.
+    CHECK(onDisk.Domain == "direct-save-domain");
+
+    smatchet::config_repair::UnregisterTrackerConfigRepair(token);
+
+    // Once unregistered the caller's value is authoritative again — the repair never outlives the
+    // window, so a user who really does clear their PAT can still do so.
+    TrackerConfig later;
+    later.TrackerType = "Jira";
+    later.GitHubPat = "pat-the-user-typed";
+    ConfigManager::Save(later);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().GitHubPat == "pat-the-user-typed");
+}
+
+TEST_CASE("repair hook also rewrites the coalescing worker's outgoing snapshot") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Worker not running -> EnqueueTrackerConfig saves synchronously on this thread, which is the
+    // path a process tearing down actually takes.
+    const int token = smatchet::config_repair::RegisterTrackerConfigRepair(
+        [](TrackerConfig& cfg) { cfg.GitHubPat = "user-real-pat"; });
+    REQUIRE(token != 0);
+
+    TrackerConfig cleared;
+    cleared.TrackerType = "Jira";
+    cleared.Domain = "repair-domain";
+    cleared.GitHubPat.clear();
+    smatchet::config_save::EnqueueTrackerConfig(cleared);
+
+    ConfigManager::InvalidateCache();
+    const TrackerConfig onDisk = ConfigManager::Load();
+    CHECK(onDisk.GitHubPat == "user-real-pat");
+    CHECK(onDisk.Domain == "repair-domain");
+
+    smatchet::config_repair::UnregisterTrackerConfigRepair(token);
+}
+
+TEST_CASE("enqueue-time repair survives an owner that unregisters before the queue drains") {
+    // The reason EnqueueTrackerConfig repairs on the way IN rather than relying on the Save
+    // chokepoint alone: the coalescing slot can be filled inside the pin window and drained after
+    // the scenario has unwound, by which point Save would see an empty registry.
+    const int token = smatchet::config_repair::RegisterTrackerConfigRepair(
+        [](TrackerConfig& cfg) { cfg.GitHubPat = "user-real-pat"; });
+
+    TrackerConfig cleared;
+    cleared.GitHubPat.clear();
+    smatchet::config_repair::ApplyTrackerConfigRepairs(cleared); // what enqueue does to the snapshot
+
+    smatchet::config_repair::UnregisterTrackerConfigRepair(token); // scenario unwinds
+
+    // The snapshot already carries the user's value, so the later (hook-free) write is harmless.
+    CHECK(cleared.GitHubPat == "user-real-pat");
+}
+
+TEST_CASE("ApplyTrackerConfigRepairs is a no-op with no hooks and stacks independent owners") {
+    TrackerConfig cfg;
+    cfg.GitHubPat = "untouched";
+    smatchet::config_repair::ApplyTrackerConfigRepairs(cfg);
+    CHECK(cfg.GitHubPat == "untouched");
+
+    // Two independent owners (a capture scenario + the shared capture-quiesce) pin disjoint fields
+    // over overlapping windows, so both hooks must survive and both must run.
+    const int a =
+        smatchet::config_repair::RegisterTrackerConfigRepair([](TrackerConfig& c) { c.GitHubPat = "from-a"; });
+    const int b =
+        smatchet::config_repair::RegisterTrackerConfigRepair([](TrackerConfig& c) { c.UpdateCheckEnabled = true; });
+
+    TrackerConfig both;
+    both.GitHubPat.clear();
+    both.UpdateCheckEnabled = false;
+    smatchet::config_repair::ApplyTrackerConfigRepairs(both);
+    CHECK(both.GitHubPat == "from-a");
+    CHECK(both.UpdateCheckEnabled == true);
+
+    // Dropping one leaves the other armed — the two owners unwind independently.
+    smatchet::config_repair::UnregisterTrackerConfigRepair(a);
+    TrackerConfig onlyB;
+    onlyB.GitHubPat.clear();
+    onlyB.UpdateCheckEnabled = false;
+    smatchet::config_repair::ApplyTrackerConfigRepairs(onlyB);
+    CHECK(onlyB.GitHubPat.empty());
+    CHECK(onlyB.UpdateCheckEnabled == true);
+
+    smatchet::config_repair::UnregisterTrackerConfigRepair(b);
+    // Idempotent: an already-dropped token (and token 0) is a no-op, so an owner can unregister
+    // unconditionally from its unwind path.
+    smatchet::config_repair::UnregisterTrackerConfigRepair(b);
+    smatchet::config_repair::UnregisterTrackerConfigRepair(0);
+    // An empty std::function registers nothing and yields the no-op token.
+    CHECK(smatchet::config_repair::RegisterTrackerConfigRepair(nullptr) == 0);
+
+    TrackerConfig after;
+    after.GitHubPat = "still-mine";
+    smatchet::config_repair::ApplyTrackerConfigRepairs(after);
+    CHECK(after.GitHubPat == "still-mine");
+}
+
+TEST_CASE("a hook that unregisters itself from inside a save neither deadlocks nor corrupts") {
+    smatchet_tests::TestEnvGuard env;
+
+    // The capture unwind can race a save: ApplyTrackerConfigRepairs must therefore run hooks with
+    // the registry lock released, and must not be iterating the live vector while a hook mutates it.
+    static int selfToken = 0;
+    selfToken = smatchet::config_repair::RegisterTrackerConfigRepair([](TrackerConfig& cfg) {
+        cfg.GitHubPat = "user-real-pat";
+        smatchet::config_repair::UnregisterTrackerConfigRepair(selfToken);
+    });
+    REQUIRE(selfToken != 0);
+
+    TrackerConfig cleared;
+    cleared.TrackerType = "Jira";
+    cleared.GitHubPat.clear();
+    ConfigManager::Save(cleared);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().GitHubPat == "user-real-pat");
+
+    // The hook dropped itself, so the next save is unrepaired.
+    TrackerConfig second;
+    second.TrackerType = "Jira";
+    second.GitHubPat = "second-write";
+    ConfigManager::Save(second);
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().GitHubPat == "second-write");
 }

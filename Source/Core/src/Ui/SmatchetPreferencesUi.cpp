@@ -193,15 +193,23 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
     // the window when it is FLOATING. Post-Begin SetWindowFocus is belt-and-braces for that case.
     // A DOCKED tab needs selectDockedTab as well — SetNextWindowFocus does not touch the tab bar.
     prepareTopLevelWindow(d, "preferences", 560.0f, 480.0f, wantFocus || d.layoutForceDefaultsFrames > 0);
+    bool focusResolved = true;
     if (wantFocus) {
-        selectDockedTab("Preferences");
+        focusResolved = selectDockedTab("Preferences");
     }
+    // On the first-ever open the ImGuiWindow does not exist until the Begin below runs, so
+    // selectDockedTab is a no-op and clearing the latch here would drop the request — the
+    // window would come up behind its User Info sibling and stay there. Hold it for a bounded
+    // few frames instead; every clear site below defers to this one decision.
+    const bool keepFocusArmed =
+        wantFocus &&
+        smatchet::ui::FocusRequestStaysArmed(focusResolved, d.requestPreferencesFocusRetries, kFocusRequestRetryFrames);
     // After selectDockedTab, never before: an expanded Preferences is deliberately undocked,
     // so selectDockedTab early-returns on it, and BeginWindow's SetNextWindowDockID(0, Always)
     // must be the LAST next-window write before Begin or prepareTopLevelWindow's slot wins.
     SmatchetWindowExpand::BeginWindow(d, "Preferences");
     if (!ImGui::Begin("Preferences", &d.showPreferences)) {
-        if (wantFocus) {
+        if (wantFocus && !keepFocusArmed) {
             d.requestPreferencesFocus = false;
         }
         ImGui::End();
@@ -211,7 +219,9 @@ bool SmatchetUI::beginPreferencesWindow(UiDrawSession& d) {
     repairTopLevelWindow(d, "preferences", 420.0f, 360.0f);
     if (wantFocus) {
         ImGui::SetWindowFocus();
-        d.requestPreferencesFocus = false;
+        if (!keepFocusArmed) {
+            d.requestPreferencesFocus = false;
+        }
         LOG_DEBUG("Preferences window: focused via menu request");
     }
     return true;
@@ -1196,6 +1206,12 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // on the same frame. The scan itself only reruns on the edges that can change its
     // answer (filter recompute, binding mutation); between edges the cached bool is
     // reused, and re-adding the dynamic match is an idempotent no-op.
+    // prefsKeybindRowsMatchDirty is armed only by the Preferences keybindings editor, but
+    // the binding table is also mutated by the toolbar / command-palette quick-bind, which
+    // calls MarkKeybindingsDirty() and nothing else. Fold that single source of truth in
+    // here rather than teaching every mutation site about this cache.
+    SmatchetPreferencesUiDetail::TakeKeybindMatchCacheRevisionEdge(
+        KeybindingRevision(), d.prefsKeybindRowsMatchRevision, d.prefsKeybindRowsMatchDirty);
     if (d.prefsFilter.MatchesRecomputedThisUpdate() || d.prefsKeybindRowsMatchDirty) {
         if (d.prefsKeybindRowsMatchDirty && !d.prefsFilter.MatchesRecomputedThisUpdate()) {
             // Binding mutation without a query/language edit: Update() skipped its

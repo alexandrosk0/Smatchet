@@ -173,3 +173,49 @@ TEST_CASE("CollectRetainedByOtherPanes unions siblings only, scoped to one cache
     CHECK_FALSE(Contains(retained, "SELF-1"));   // never self-retaining
     CHECK_FALSE(Contains(retained, "OTHER-NS")); // stale-deletion is scoped by backend key
 }
+
+TEST_CASE("Erase removes the tombstone so a RECYCLED pane id starts cold (issue #2075 follow-up)") {
+    // GenerateUniquePaneId hands back the lowest unused id, so closing pane-2 and clicking "+"
+    // mints "pane-2" again. Retirement leaves a tombstone by design (#2063); without an erase on
+    // creation the NEW pane inherits it, TryGet answers "recorded, empty", and the pane is denied
+    // its cold-start seed — permanently, if no non-empty full sync ever completes (offline, or
+    // tracker down, or the kick discarded by a backend swap).
+    smatchet::PaneOwnedTicketIdStore store;
+    store.Set("Jira", "pane-2", {"A", "B"});
+    store.Forget("pane-2"); // retirement: tombstone, present-but-empty
+
+    std::vector<std::string> ids;
+    REQUIRE(store.TryGet("Jira", "pane-2", ids)); // tombstone is present...
+    CHECK(ids.empty());                           // ...and empty
+
+    store.Erase("pane-2"); // pane creation on the recycled id
+    ids.assign(1, std::string("stale"));
+    CHECK_FALSE(store.TryGet("Jira", "pane-2", ids)); // absent => cold start, seed allowed
+}
+
+TEST_CASE("Erase spans every backend key the pane used, and touches no other pane") {
+    // Same cross-key reasoning as Forget (#2049): a pane that switched tracker kind filed sets
+    // under more than one key, and leaving any of them behind reintroduces the shadowing.
+    smatchet::PaneOwnedTicketIdStore store;
+    store.Set("Jira", "pane-2", {"A"});
+    store.Set("GitHub", "pane-2", {"B"});
+    store.Set("Jira", "pane-3", {"C"});
+
+    store.Erase("pane-2");
+
+    std::vector<std::string> ids;
+    CHECK_FALSE(store.TryGet("Jira", "pane-2", ids));
+    CHECK_FALSE(store.TryGet("GitHub", "pane-2", ids));
+    REQUIRE(store.TryGet("Jira", "pane-3", ids)); // sibling untouched
+    CHECK(ids == std::vector<std::string>{"C"});
+}
+
+TEST_CASE("Erase matches the pane id exactly, never as a bare suffix") {
+    smatchet::PaneOwnedTicketIdStore store;
+    store.Set("Jira", "ab", {"A"});
+    store.Erase("b");
+
+    std::vector<std::string> ids;
+    REQUIRE(store.TryGet("Jira", "ab", ids)); // "b" must not match "ab"
+    CHECK(ids == std::vector<std::string>{"A"});
+}

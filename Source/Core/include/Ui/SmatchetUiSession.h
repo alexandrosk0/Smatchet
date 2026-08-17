@@ -29,6 +29,7 @@
 #include "TrackerFieldSchema.h"
 #include "QuerySuggestTypes.h"
 #include "SmatchetProjectPicker.h"
+#include "SmatchetFocusRequest.h"
 #include "SmatchetWindowExpand.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiTypes.h"
@@ -325,6 +326,12 @@ struct UiDrawSession {
     /// Set by the keybindings editor whenever it mutates the binding list (rebind,
     /// clear, enable toggle, add, reset) so the cached scan above reruns next frame.
     bool prefsKeybindRowsMatchDirty = true;
+    /// Last SmatchetUI::KeybindingRevision() the scan above ran against. Bindings are
+    /// also mutated from OUTSIDE the Preferences editor — the toolbar / command-palette
+    /// quick-bind — which never touches the flag above, so the cache went stale and the
+    /// Shortcuts section disagreed with its own "showing N of M" readout. Comparing the
+    /// revision each frame catches every mutation, since they all pass MarkKeybindingsDirty().
+    unsigned int prefsKeybindRowsMatchRevision = 0;
     /// Collapsed PrefsSection ids, persisted as the comma-joined
     /// cfg.PreferencesCollapsedSections string. Parsed lazily on first
     /// Preferences draw (prefsCollapsedLoaded latch) — cfg is loaded after
@@ -357,6 +364,10 @@ struct UiDrawSession {
     /// item; the window consumer calls `ImGui::SetWindowFocus()` and clears it.
     /// Drives the always-reveal-on-menu-click contract (AGENTS.md).
     bool requestPreferencesFocus = false;
+    /// Frames the latch above has been held while selectDockedTab kept missing (the
+    /// window has not run its first Begin yet). Bounded by
+    /// SmatchetUI::kFocusRequestRetryFrames — see Ui/SmatchetFocusRequest.h.
+    int requestPreferencesFocusRetries = 0;
     bool showViewsDashboard = true;
     bool requestActiveProjectFocus = false;
     bool requestViewsDashboardFocus = false;
@@ -383,6 +394,8 @@ struct UiDrawSession {
     bool showUserInfo = false;
     /// One-frame focus latch for the User Info window. See `requestPreferencesFocus`.
     bool requestUserInfoFocus = false;
+    /// Retry counter for the latch above. See `requestPreferencesFocusRetries`.
+    int requestUserInfoFocusRetries = 0;
     /// Staged open/retarget request (SmatchetUserInfoUi::Open writes these;
     /// DrawWindow consumes them next frame via adoptPendingRequest).
     bool userInfoRequestPending = false;
@@ -439,6 +452,14 @@ struct UiDrawSession {
     bool assistantPanelOpen = false;
     bool requestAssistantFocus = false;
     bool assistantPendingSideSwap = false;
+    /// Session-only record of the side the panel ACTUALLY docked to when
+    /// ApplyAssistantDocking's fallback fired (the requested side bar was not live).
+    /// -1 = no fallback in effect. NEVER persisted — writing the fallback into
+    /// cfg.AssistantPanelOnSecondarySide destroyed the user's stored preference with no
+    /// UI path back, because the swap button is disabled in exactly that state. See
+    /// AiAssistantSideFallbackAfterDock / AiAssistantEffectiveOnSecondary in
+    /// Ui/SmatchetAiAssistantUi_detail.h.
+    int assistantSideFallback = -1;
     std::vector<AiMessage> assistantHistory;
     /// Parallel to `assistantHistory`: `assistantHistoryRowIds[i]` is the SQLite row
     /// id assigned to `assistantHistory[i]` by `LocalCacheManager::AppendChatMessage`.
@@ -1031,6 +1052,18 @@ struct UiDrawSession {
     /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
     bool requestScreenshot = false;
     std::string requestScreenshotPath;
+    /// Size a screenshot SCENARIO asked its capture to be (-1 = the pending capture is not
+    /// a scenario golden capture — e.g. a bug-report shot — so no size contract applies).
+    /// Set by RequestScenarioCaptureWindowResize beside the resize request, and still live
+    /// when the capture is serviced several frames later: a scenario's OnFinish only
+    /// REQUESTS the screenshot, so the size cannot be checked there. The capture path is the
+    /// first place both the request and the achieved framebuffer are known, so that is where
+    /// the contract is enforced — see VerifyScenarioCaptureSize (#2092).
+    int expectedCaptureWidth = -1;
+    int expectedCaptureHeight = -1;
+    /// Framebuffer dimensions of the most recent capture actually written (-1 = none yet).
+    int lastCaptureWidth = -1;
+    int lastCaptureHeight = -1;
     /// log-a-bug-github — set by the bug-report modal when its capture request is for the
     /// report (not a debug/test shot). The standalone capture path echoes completion back
     /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.
