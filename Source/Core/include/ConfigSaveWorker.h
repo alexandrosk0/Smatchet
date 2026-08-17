@@ -31,6 +31,12 @@ void EnqueueTrackerConfig(const TrackerConfig& cfg);
 /// Enqueue the latest `AnnotateAnalysisConfig` snapshot — see `EnqueueTrackerConfig`.
 void EnqueueAnnotateConfig(const AnnotateAnalysisConfig& cfg);
 
+// Persisted-field repair hooks (#2047) live in the Config layer, beside the writer they guard:
+// see Config/TrackerConfigSaveRepair.h. `EnqueueTrackerConfig` applies them to the snapshot as it
+// enters the coalescing slot, because that slot can be filled inside a scenario's pin window and
+// drained after the owner has unregistered — by which point the `ConfigManager::Save` chokepoint
+// would see no hooks left to apply.
+
 } // namespace config_save
 } // namespace smatchet
 

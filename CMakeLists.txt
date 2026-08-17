@@ -17,6 +17,40 @@ if(CMAKE_GENERATOR MATCHES "Ninja")
     unset(_NINJA_FROM_PATH CACHE)
 endif()
 
+# ------------------------------------------------------------------------------
+# clang-cl + Ninja: turn OFF cmcldeps-based RC dependency scanning (#2029)
+#
+# On Windows/Ninja, CMake's Windows-MSVC.cmake sets CMAKE_NINJA_CMCLDEPS_RC=1,
+# which wraps every "Building RC object" step in cmcldeps.exe. cmcldeps runs a
+# C PREPROCESSOR over the .rc to harvest /showIncludes dependencies, and CMake
+# hands it CMAKE_C_COMPILER for that job — then appends the argument tail meant
+# for the *resource* compiler, `/fo <out>` included. `/fo` is an rc.exe spelling:
+# cl.exe parses options case-insensitively and quietly accepts it as /Fo, which
+# is why ninja-iter-msvc builds, but clang-cl does not and treats `/fo` as a
+# missing input file:
+#     clang-cl: error: no such file or directory: '/fo'
+# That killed every ninja-*-clang preset at curl's libcurl.rc, so the Clang half
+# of the "must compile on MSVC + Clang" rule could only be exercised in CI.
+#
+# CMake already disables cmcldeps for the llvm-rc toolchain (Windows-Clang.cmake
+# does exactly `set(CMAKE_NINJA_CMCLDEPS_RC 0)`), but that branch is keyed on the
+# RC compiler being llvm-rc; we use the Windows SDK rc.exe, so it never fires.
+# Take the same supported knob explicitly for clang-cl. Both Windows-MSVC.cmake
+# and Windows-Clang.cmake guard their assignment on NOT DEFINED / their own
+# branch, so a value set here (before project(), and cached) wins.
+#
+# Cost: .rc files lose header-dependency tracking under the clang presets — a
+# touched header included by a .rc will not by itself retrigger the resource
+# compile. That is the same trade CMake itself takes for llvm-rc, and it is
+# scoped to the affected toolchain: nothing about the MSVC presets changes, and
+# the resource compiler is still the same rc.exe producing the same .res.
+if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_NINJA_CMCLDEPS_RC
+   AND (CMAKE_C_COMPILER MATCHES "clang-cl" OR CMAKE_CXX_COMPILER MATCHES "clang-cl"))
+    set(CMAKE_NINJA_CMCLDEPS_RC 0 CACHE STRING
+        "Disable cmcldeps RC dep-scanning under clang-cl (#2029: cmcldeps feeds rc.exe's /fo to the preprocessor)")
+    message(STATUS "Smatchet: clang-cl + Ninja detected — CMAKE_NINJA_CMCLDEPS_RC=0 (see CMakeLists.txt, Issue #2029)")
+endif()
+
 project(SmatchetApp VERSION 0.6.9 LANGUAGES C CXX)
 set(SMATCHET_GITHUB_RELEASE_REPO "alexandrosk0/Smatchet" CACHE STRING
     "GitHub owner/repo used by the standalone updater")

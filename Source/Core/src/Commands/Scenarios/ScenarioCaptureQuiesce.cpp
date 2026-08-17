@@ -1,5 +1,6 @@
 #include "Commands/Scenarios/ScenarioCaptureQuiesce.h"
 
+#include "Config/TrackerConfigSaveRepair.h" // persisted-field repair hook for UpdateCheckEnabled (#2047)
 #include "SmatchetUiSession.h"
 #include "Ui/SmatchetToast.h"
 
@@ -30,6 +31,8 @@ struct QuiescedSession {
     bool startupCheckStarted = false;
     bool checkInFlight = false;
     bool modalOpen = false;
+    /// Token of the config-save repair hook covering UpdateCheckEnabled; 0 when none is armed.
+    int configRepairToken = 0;
 };
 
 QuiescedSession g_savedSession;
@@ -67,16 +70,22 @@ void QuiesceCaptureFrame() {
     //  * appUpdateModalOpen=false covers a modal that a drain already opened
     //    before the scenario's first frame.
     //
-    // All four writes are session-scoped — nothing reaches the user's config on
-    // disk — and RestoreCaptureQuiesce() puts them back at scenario teardown, so
-    // an in-process run against a long-lived instance does not leave update
-    // checks disabled. Snapshot on the FIRST quiesce only: the per-frame re-call
-    // would otherwise overwrite the snapshot with the suppressed values.
+    // Three of the four writes are session-scoped, but UpdateCheckEnabled is a PERSISTED config
+    // field: a save enqueued while the suppression is live would write UpdateCheckEnabled=false to
+    // the user's config on disk and silently disable their update checks for good — the same
+    // deferred-unwind hazard as the User Info scenarios' cleared PAT (#2047). So arm a config-save
+    // repair alongside the snapshot; the chokepoint puts the user's value back on every outgoing
+    // snapshot until RestoreCaptureQuiesce() drops it. Snapshot on the FIRST quiesce only: the
+    // per-frame re-call would otherwise overwrite the snapshot with the suppressed values (and
+    // re-arm a duplicate hook).
     if (!g_savedSession.armed) {
         g_savedSession.updateCheckEnabled = g_ui.cfg.UpdateCheckEnabled;
         g_savedSession.startupCheckStarted = g_ui.appUpdateStartupCheckStarted;
         g_savedSession.checkInFlight = g_ui.appUpdateCheckInFlight;
         g_savedSession.modalOpen = g_ui.appUpdateModalOpen;
+        const bool userUpdateCheckEnabled = g_savedSession.updateCheckEnabled;
+        g_savedSession.configRepairToken = config_repair::RegisterTrackerConfigRepair(
+            [userUpdateCheckEnabled](TrackerConfig& cfg) { cfg.UpdateCheckEnabled = userUpdateCheckEnabled; });
         g_savedSession.armed = true;
     }
     g_ui.cfg.UpdateCheckEnabled = false;
@@ -110,6 +119,8 @@ void RestoreCaptureQuiesce() {
     g_ui.appUpdateStartupCheckStarted = g_savedSession.startupCheckStarted;
     g_ui.appUpdateCheckInFlight = g_savedSession.checkInFlight;
     g_ui.appUpdateModalOpen = g_savedSession.modalOpen;
+    config_repair::UnregisterTrackerConfigRepair(g_savedSession.configRepairToken);
+    g_savedSession.configRepairToken = 0;
     g_savedSession.armed = false;
 }
 

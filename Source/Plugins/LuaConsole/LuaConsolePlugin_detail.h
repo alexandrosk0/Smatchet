@@ -62,6 +62,24 @@ inline int ResolveSelectedScriptIndex(const std::vector<std::string>& scriptList
     return static_cast<int>(it - scriptList.begin());
 }
 
+/// True when the editor buffer is the buffer that was actually loaded FOR `selectedName`, and may
+/// therefore be written back to it. `editorContentName` is the buffer's PROVENANCE — the name whose
+/// read landed in the editor — and is empty whenever the editor holds the blank placeholder that
+/// `StartLoadSelectedScriptIntoEditor` installs for an in-flight read.
+/// The two can diverge with no read in flight and no refusal latched, which is #2042: a read result
+/// dropped by `PollScriptLoad`'s name-mismatch bail leaves the editor blank, and a later
+/// `SyncSelectionToList` auto-selects an unrelated script — so Save would truncate a real file with
+/// a buffer that never loaded. This is a POSITIVE check rather than one more negative guard: the
+/// refusal-reason guards each cover one known way a load can fail to land, whereas this covers
+/// every way at once. Distinct from DR11 (`ResolveSelectedScriptIndex` above), which keeps the
+/// SELECTION anchored to a file across a re-sort; this keeps the BUFFER anchored to the selection.
+inline bool EditorBufferMatchesSelection(const std::string& editorContentName, const std::string& selectedName) {
+    if (editorContentName.empty() || selectedName.empty()) {
+        return false; // nothing loaded, or nothing targeted — never write
+    }
+    return editorContentName == selectedName;
+}
+
 /// Join action names into the wrapped display string shown under the run row.
 inline std::string JoinRegisteredActionNames(const std::vector<std::string>& names) {
     std::string joined;

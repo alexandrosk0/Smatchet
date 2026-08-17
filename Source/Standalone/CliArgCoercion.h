@@ -52,6 +52,21 @@ int ScenarioFramesFromJson(const nlohmann::json& framesValue, int defaultFrames)
 /// its own timeout hint advertised the flag (issue #1943).
 int ScenarioWaitMs(int timeoutMs, int frames);
 
+/// Resolve the CLI's async wait budget (`ParsedArgs::timeoutMs`) from the two inputs allowed to
+/// set it: the `--timeout=<ms>` flag and the `SMATCHET_SPAWN_TIMEOUT_MS` environment default that
+/// `cmd --help` and `docs/guides/cli.md` both advertise.
+/// `flagMs` is the parsed flag value, or **-1 when the flag was absent** (an explicit `--timeout=0`
+/// is a real value meaning "no cap" and is NOT the same as absent). `envMs` is the raw env value,
+/// 0 when unset.
+///   - flag present -> the flag wins verbatim, so `--timeout=0` can override a configured env cap.
+///   - flag absent  -> the env value, with a negative (meaningless) value floored to 0 = no cap,
+///     matching the `>= 0` validation the flag itself enforces.
+/// Before this existed, ParseArgs never consulted the env var at all: the docs promised a default
+/// the code did not implement, and an operator's configured cap was silently replaced by the
+/// frames-derived `ScenarioWaitMs` budget (issue #1983 — the same docs-vs-code divergence class as
+/// #1943 above).
+int ResolveCliTimeoutBudgetMs(int flagMs, int envMs);
+
 } // namespace cli
 } // namespace smatchet
 

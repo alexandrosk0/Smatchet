@@ -168,3 +168,28 @@ TEST_CASE("ScenarioWaitMs: characterization of the frames-derived fallback") {
     // Unset and nonsensical timeouts both fall back.
     CHECK(ScenarioWaitMs(-1, 600) == 40000);
 }
+
+TEST_CASE("ResolveCliTimeoutBudgetMs: SMATCHET_SPAWN_TIMEOUT_MS is the --timeout default (#1983)") {
+    using smatchet::cli::ResolveCliTimeoutBudgetMs;
+    using smatchet::cli::ScenarioWaitMs;
+
+    // Flag absent (-1) + env set -> the env value becomes the budget. This is the whole bug:
+    // `cmd --help` and docs/guides/cli.md advertised this default while ParseArgs left timeoutMs 0.
+    CHECK(ResolveCliTimeoutBudgetMs(-1, 120000) == 120000);
+    // Flag absent + env unset -> 0 = no cap (unchanged behaviour).
+    CHECK(ResolveCliTimeoutBudgetMs(-1, 0) == 0);
+    // A negative env value is meaningless; floor it to "no cap" rather than pass a negative budget
+    // downstream (the flag itself is rejected below 0 at parse time).
+    CHECK(ResolveCliTimeoutBudgetMs(-1, -5) == 0);
+
+    // Flag present always wins, verbatim...
+    CHECK(ResolveCliTimeoutBudgetMs(5000, 120000) == 5000);
+    // ...including an explicit --timeout=0, which must be able to turn OFF a configured env cap.
+    // This is why the flag is tracked as -1-when-absent instead of defaulting to 0.
+    CHECK(ResolveCliTimeoutBudgetMs(0, 120000) == 0);
+
+    // End-to-end intent: the operator's configured cap now reaches the scenario wait budget, where
+    // a 9000-frame run would otherwise have silently used the frames-derived 180 s.
+    CHECK(ScenarioWaitMs(ResolveCliTimeoutBudgetMs(-1, 120000), 9000) == 120000);
+    CHECK(ScenarioWaitMs(ResolveCliTimeoutBudgetMs(-1, 0), 9000) == 180000);
+}

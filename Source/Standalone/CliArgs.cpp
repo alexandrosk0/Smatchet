@@ -231,6 +231,10 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
     }
     out.commandName = firstAfterCmd;
     ++i;
+    // -1 = `--timeout=` not seen. Tracked separately from out.timeoutMs so an explicit
+    // `--timeout=0` (no cap) is distinguishable from "flag absent" and can override a configured
+    // SMATCHET_SPAWN_TIMEOUT_MS — see ResolveCliTimeoutBudgetMs after the loop (#1983).
+    int timeoutFlagMs = -1;
     for (; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--help" || a == "-h") {
@@ -286,12 +290,12 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
 #endif
         if (a.rfind("--timeout=", 0) == 0) {
             try {
-                out.timeoutMs = std::stoi(a.substr(10));
+                timeoutFlagMs = std::stoi(a.substr(10));
             } catch (...) { // catch-all-ok: non-integer --timeout -> validation error returned to caller below
                 outError = "invalid --timeout value (expected integer ms)";
                 return false;
             }
-            if (out.timeoutMs < 0) {
+            if (timeoutFlagMs < 0) {
                 outError = "invalid --timeout value (must be >= 0)";
                 return false;
             }
@@ -311,6 +315,12 @@ bool ParseArgs(int argc, char** argv, ParsedArgs& out, std::string& outError) {
         outError = "unexpected argument: " + a;
         return false;
     }
+    // `cmd --help` and docs/guides/cli.md both advertise SMATCHET_SPAWN_TIMEOUT_MS as the
+    // --timeout default, but nothing here ever read it: pa.timeoutMs stayed 0, so an operator who
+    // set the var got the frames-derived ScenarioWaitMs budget instead of their configured cap
+    // (#1983). Resolve it once, here, so EVERY consumer of pa.timeoutMs inherits it — __timeout_ms,
+    // ScenarioWaitMs, and the attach path's HTTP read timeout alike.
+    out.timeoutMs = smatchet::cli::ResolveCliTimeoutBudgetMs(timeoutFlagMs, EnvIntOr("SMATCHET_SPAWN_TIMEOUT_MS", 0));
     return true;
 }
 

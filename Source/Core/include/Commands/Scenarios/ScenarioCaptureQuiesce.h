@@ -36,7 +36,10 @@ void QuiesceCaptureFrame();
 // UpdateCheckEnabled=false + appUpdateStartupCheckStarted=true for the rest of the
 // session, silently disabling startup update checks. Harmless in the ephemeral
 // --spawn child that the screenshot-diff driver uses (it exits after the capture),
-// but a real leak for a dev driving scenarios against their running app.
+// but a real leak for a dev driving scenarios against their running app. Also drops
+// the config-save repair hook QuiesceCaptureFrame armed for UpdateCheckEnabled —
+// that field is persisted, so the in-session value alone is not the whole unwind
+// (#2047).
 //
 // Idempotent and safe to call without a preceding quiesce: it no-ops unless a
 // snapshot is armed, and taking the snapshot is itself first-call-only, so the
@@ -56,9 +59,21 @@ void RestoreCaptureQuiesce();
 //
 // The callback must own everything it touches by value: the runner destroys the
 // scenario (`active_.reset()`) as soon as OnFinish returns, so capturing `this`
-// dangles. Callbacks run once, on the UI thread, then the queue is cleared. A
-// process that exits before the next frame (the --spawn screenshot child) simply
-// never runs them, which is harmless — every field they restore is session-scoped.
+// dangles. Callbacks run once, on the UI thread, then the queue is cleared.
+//
+// A process that exits before the next frame (the --spawn screenshot child) never
+// runs them. Do NOT read that as "the unwind is optional": the callbacks restore
+// PERSISTED `TrackerConfig` fields (`GitHubPat`, the git-repo legs, `UiMode`,
+// `VcsFeedLayout`, `WhisperSetupCompleted`, and `UpdateCheckEnabled` via
+// `RestoreCaptureQuiesce`), not just session state. This header used to claim the
+// opposite, and that false premise is what made "exit before the drain" look safe
+// while it was in fact writing a CLEARED GitHub PAT to the user's real config
+// (#2047). Durability of those fields is therefore NOT this queue's job — every
+// pinning caller must also arm a `config_repair::RegisterTrackerConfigRepair` hook
+// (Config/TrackerConfigSaveRepair.h) for the fields it pinned. That hook runs at
+// `ConfigManager::Save`, the seam every TrackerConfig write funnels through, which
+// makes the bad write unissuable no matter when (or whether) the drain runs. The
+// queue only handles the frame-timing problem.
 void QueuePostCaptureRestore(std::function<void()> fn);
 
 // Drain the QueuePostCaptureRestore queue. Called once per frame from

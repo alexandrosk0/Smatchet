@@ -301,10 +301,11 @@ bool RunCmdAttachHandleHelp(const ParsedArgs& pa, const std::string& host, int p
 int RunCmdAttachDispatch(const ParsedArgs& pa, const std::string& host, int port, const std::string& toolName,
                          const nlohmann::json& argsToSend, nlohmann::json& outEnvelope, bool& outSpawnHandled) {
     outSpawnHandled = false;
-    const int envSpawnTimeout = EnvIntOr("SMATCHET_SPAWN_TIMEOUT_MS", 0);
-    const int readTimeoutSec = (pa.timeoutMs > 0)      ? (pa.timeoutMs / 1000 + 5)
-                               : (envSpawnTimeout > 0) ? (envSpawnTimeout / 1000 + 5)
-                                                       : 30;
+    // pa.timeoutMs now already carries the SMATCHET_SPAWN_TIMEOUT_MS default (ParseArgs resolves it
+    // via ResolveCliTimeoutBudgetMs — #1983), so the separate env read this branch used to do is
+    // gone: it was the ONLY place the advertised default was honoured, and only for this HTTP read
+    // timeout rather than for the wait budget itself.
+    const int readTimeoutSec = (pa.timeoutMs > 0) ? (pa.timeoutMs / 1000 + 5) : 30;
     nlohmann::json body;
     body["name"] = toolName;
     body["arguments"] = argsToSend;
