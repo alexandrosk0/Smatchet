@@ -1,0 +1,1 @@
+{"branch":"claude/build-run-latest-8adc6a","notes":"","originating_plan":"docs/plans/active/pillar2-ui-thread-config-io.md","owner":"orchestrator","schema":"smatchet-plan-lock/1","slug":"pillar2-shutdown-flush","started":"2026-08-17T23:29:37Z","updated":"2026-08-17T23:29:37Z","write_set":["Source/Standalone/main.cpp"]}
