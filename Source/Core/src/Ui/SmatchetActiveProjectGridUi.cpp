@@ -157,6 +157,14 @@ void PrepareExtraPaneWindow(UiDrawSession& d, GridPane& pane, bool wantFocus) {
     }
 }
 
+// ExtraPaneRectRepairSkippedDuringLayoutReset — why drawActiveProjectWindow skips an extra
+// pane's repairTopLevelWindow call while d.layoutForceDefaultsFrames > 0. That path FORCES the
+// fallback rect, and for an unregistered layout key ("grid-pane") the fallback IS the centred
+// one: it is what piled every extra pane in the middle of the screen (#2082). It would also
+// fire on exactly the frames a pane is legitimately still floating, waiting for the rebuilt
+// central node to come alive so the re-dock above can land. Normal off-screen / degenerate-rect
+// rescue resumes the frame the countdown expires.
+
 } // namespace
 
 // Re-entrant per-pane grid window (multi-grid-tabs Slice 2, plan item 14). Called once
@@ -219,15 +227,8 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         if (isBootstrapPane) {
             repairTopLevelWindow(d, "active", 420.0f, 300.0f);
         } else if (d.layoutForceDefaultsFrames <= 0) {
-            // Unregistered key → no dock slot → repairTopLevelWindow takes the rect-repair-only
-            // path: a deliberately floating extra pane keeps its position, but is still rescued
-            // if it lands off-screen or degenerate. It never arms the shared "active" latch.
-            // Skipped while a layout reset is settling: on those frames that path FORCES the
-            // fallback rect, which for an unregistered key is the centred one — it is what piled
-            // every extra pane in the middle of the screen (#2082), and it would fire on the
-            // frames the pane is legitimately still floating, waiting for the rebuilt central
-            // node to come alive so PrepareExtraPaneWindow's re-dock can land. Normal off-screen
-            // rescue resumes the frame the countdown expires.
+            // Rect-repair-only (unregistered key = no dock slot), and skipped while a layout
+            // reset settles — see ExtraPaneRectRepairSkippedDuringLayoutReset above for why.
             repairTopLevelWindow(d, "grid-pane", 420.0f, 300.0f);
         }
         if (wantFocus) {

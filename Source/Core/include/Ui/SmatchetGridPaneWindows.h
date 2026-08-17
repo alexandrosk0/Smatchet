@@ -92,19 +92,16 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
 /// pre-bootstrap placeholder — repair allowed (Pillar 3).
 bool PaneViewSelfRepairAllowed(const std::string& paneBackendKey, const std::string& cfgBackendKey);
 
-/// Dock placement for ONE extra (non-bootstrap) pane this frame — returns the node id the
-/// caller must force via SetNextWindowDockID, or 0 to leave the placement alone. Pure so
-/// bucket-A covers the layout-reset rescue without a UI loop.
-/// `layoutResetSettling` is UiDrawSession::layoutForceDefaultsFrames > 0. While a reset
-/// settles, an extra pane must go home to the central node: its "###GridPane:<id>" window is
-/// absent from the default-layout ini AND from the layout-key table, so the reset's two
-/// re-dock triggers both miss it and it is left floating (issue #2082). `liveCentralNodeId`
-/// is the central node AFTER an EnsureDockSlotAlive check — 0 while the rebuilt node is not
-/// live yet, in which case this frame makes no forced write and the caller re-asks next frame.
-/// A reset always supersedes (and drops) a stale "+" hand-off: the tree rebuild destroyed
-/// that source node, and docking into a dead id mints an orphan root node.
-/// Outside a reset the "+" hand-off applies exactly once — after that the user owns the
-/// placement and re-forcing would fight a tab drag.
+/// Dock placement for ONE extra (non-bootstrap) pane this frame — the node id the caller must
+/// force via SetNextWindowDockID, or 0 to leave the placement alone. Pure so bucket-A covers
+/// the layout-reset rescue without a UI loop.
+/// `layoutResetSettling` (UiDrawSession::layoutForceDefaultsFrames > 0): an extra pane's
+/// "###GridPane:<id>" window is absent from both the default-layout ini and the layout-key
+/// table, so the reset's two re-dock triggers miss it and it floats (#2082) — send it home to
+/// `liveCentralNodeId` (the central node AFTER an EnsureDockSlotAlive check; 0 = not live yet,
+/// so force nothing and the caller re-asks next frame). A reset always drops a stale "+"
+/// hand-off — the rebuild destroyed that node, and docking into a dead id mints an orphan root.
+/// Outside a reset the "+" hand-off applies exactly once; re-forcing would fight a tab drag.
 unsigned int ResolveExtraPaneDockTarget(unsigned int& pendingDockId, unsigned int liveCentralNodeId,
                                         bool layoutResetSettling);
 
