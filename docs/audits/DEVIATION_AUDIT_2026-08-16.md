@@ -189,13 +189,32 @@ and stop the class regenerating. Filed as
 `docs/plans/`, not in `backlog/`, not in `docs/self-improvement/`. A slug pointing at no tracked
 work is a permanent exemption in slug costume; `revisit=never` at least says so honestly.
 
-## S8 · `revisit_overdue()` compares strings, not dates
+## S8 · `revisit_overdue()` compared strings, not dates — FIXED HERE
 
-`00-common.sh:77` lexically compares `YYYY-MM-DD` against `date +%Y-%m-%d`, so it accepts
-impossible dates. `revisit=2026-02-30` and `revisit=0000-Q1` both appear (in
-`agents/scripts/core/test-plan-claim-anchors.sh` — fixture-only, harmless). A typo'd `2026-13-01`
-in real source would sort as a valid future date and never expire. Low severity, zero current
-impact; noted so the well-formedness gate covers it.
+`00-common.sh` validated `revisit=` with a shell glob and then compared **lexically** against
+`date +%Y-%m-%d`. Anything that missed the glob fell through to the slug branch and became a
+**permanent exemption**, silently — the marker kept suppressing, so nothing surfaced. Three shapes
+reached that branch, each proved against the real scanner:
+
+| value | why it never expired |
+|---|---|
+| `2026-19-30` | month 19 passes the `[0-1][0-9]` glob and string-sorts after any real today |
+| `2020-1-1` | a genuinely **past** date, but not zero-padded, so it misses the glob entirely |
+| `2026-02-30` | a day that does not exist in that month; nothing parses the date |
+
+The second is the dangerous one: a real deadline turns permanent because of a formatting slip.
+
+**Fixed in this change**: `revisit_datelike_but_invalid()` rejects a value that clearly *meant* to
+be a calendar date but is not one, and `revisit_overdue()` now **fails closed** on it — a typo'd
+revisit gets re-written instead of quietly buying an exemption. Pure bash (no `date -d`) so
+git-bash and the ubuntu runner agree. Regression fixtures `deviation-revisit-malformed.cpp` (all
+three must fire) and `deviation-revisit-valid-shapes.cpp` (a real leap day, the `YYYY-Qn` form,
+`never`, and free-prose triggers must stay silent — the over-reach guard), plus two bats cases.
+No live marker is affected: whole-tree overdue is still 0.
+
+Not covered, because it is a wrong *key* rather than a wrong value: `revist=2020-01-01` (typo)
+still reads as "no revisit at all" and is indistinguishable from a marker that omits it. That
+belongs to the well-formedness gate deferred in S3/S4.
 
 ## S9 · `BASELINE_FAN_IN` is stale by 43
 

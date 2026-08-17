@@ -82,9 +82,47 @@ DEV_REVISIT_RE='revisit=([^;)]+)'
 
 today_ymd() { date +%Y-%m-%d; }
 
+# True if $1 LOOKS like someone meant a calendar revisit (starts YYYY-) but is not a value
+# revisit_overdue can compare. Every such value used to fall through to the slug branch and
+# silently become a PERMANENT exemption — the fail-open direction, and the failure is invisible
+# because the marker still suppresses. Three shapes were reaching that branch:
+#   2026-19-30  month 19 passes the [0-1][0-9] glob and string-sorts after today -> never overdue
+#   2020-1-1    not zero-padded, misses the glob entirely -> read as a slug -> never overdue
+#   2026-02-30  a day that does not exist in that month; the comparison is lexicographic, not a
+#               date parse, so nothing ever rejects it
+# Pure bash (no `date -d`) so the git-bash toolchain behaves the same as the ubuntu runner.
+revisit_datelike_but_invalid() {
+    local r="$1" y m d dmax
+    case "$r" in
+        [0-9][0-9][0-9][0-9]-Q[1-4]) return 1 ;;                       # valid quarter
+        [0-9][0-9][0-9][0-9]-*) ;;                                     # date-shaped, keep checking
+        *) return 1 ;;                                                 # slug / never — not a date attempt
+    esac
+    case "$r" in
+        [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
+        *) return 0 ;;                                                 # e.g. 2020-1-1, 2026-Q5
+    esac
+    y="${r%%-*}"; m="${r:5:2}"; d="${r:8:2}"
+    case "$m" in 0[1-9]|1[0-2]) ;; *) return 0 ;; esac                 # e.g. 2026-19-30
+    case "$m" in
+        01|03|05|07|08|10|12) dmax=31 ;;
+        04|06|09|11)          dmax=30 ;;
+        02) if [ $((10#$y % 4)) -eq 0 ] && { [ $((10#$y % 100)) -ne 0 ] || [ $((10#$y % 400)) -eq 0 ]; }; then
+                dmax=29
+            else
+                dmax=28
+            fi ;;
+    esac
+    [ "$((10#$d))" -ge 1 ] && [ "$((10#$d))" -le "$dmax" ] && return 1
+    return 0                                                           # e.g. 2026-02-30
+}
+
 revisit_overdue() {
-    # $1 = revisit value. Overdue iff YYYY-MM-DD < today, or YYYY-Qn end < today.
+    # $1 = revisit value. Overdue iff YYYY-MM-DD < today, or YYYY-Qn end < today. A value that was
+    # clearly MEANT as a date but is not one is reported overdue too — failing closed, so a typo'd
+    # revisit gets re-written instead of quietly buying a permanent exemption.
     local r="$1" today; today="$(today_ymd)"
+    if revisit_datelike_but_invalid "$r"; then return 0; fi
     case "$r" in
         [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9])
             [ "$r" \< "$today" ] && return 0 || return 1 ;;
@@ -94,7 +132,7 @@ revisit_overdue() {
             case "$q" in 1) endm=03-31;; 2) endm=06-30;; 3) endm=09-30;; 4) endm=12-31;; esac
             end="$y-$endm"
             [ "$end" \< "$today" ] && return 0 || return 1 ;;
-        *) return 1 ;;  # slug / never / unknown -> never overdue
+        *) return 1 ;;  # slug / never -> never overdue
     esac
 }
 

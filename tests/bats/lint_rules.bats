@@ -707,6 +707,25 @@ _resolve_py() {
     [[ "$output" != *"deviation-overdue"* ]]
 }
 
+@test "a date-shaped but invalid revisit= fails closed instead of buying a permanent exemption" {
+    # revisit_overdue compares strings, not dates. An impossible month (2026-19-30), a past date
+    # that is not zero-padded (2020-1-1), and a day outside its month (2026-02-30) all used to
+    # fall through to the slug branch and never expire — invisibly, since the marker still
+    # suppresses. All three must now report overdue.
+    run bash "$LINT" --scan-file "$FIX/deviation-revisit-malformed.cpp"
+    [ "$status" -eq 0 ]
+    [ "$(grep -c 'deviation-overdue' <<< "$output")" -eq 3 ]
+}
+
+@test "valid revisit= shapes do not trip the malformed-revisit check" {
+    # Guards the over-reach direction: a real leap day, the quarter form, `never`, and free-prose
+    # trigger text are all legitimate and must stay silent.
+    run bash "$LINT" --scan-file "$FIX/deviation-revisit-valid-shapes.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"deviation-overdue"* ]]
+    [[ "$output" != *"no-raw-new"* ]]
+}
+
 # ---------- known-good ----------
 
 @test "known-good fixture produces no findings" {
