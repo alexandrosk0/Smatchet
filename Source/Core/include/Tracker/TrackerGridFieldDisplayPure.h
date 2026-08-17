@@ -49,7 +49,20 @@ struct VotesRenderModel {
 
 struct WorklogRenderModel {
     bool parsed = false;
+    /** Entry count the backend reported (`total`), clamped at 0. Meaningful only when `parsed`. */
+    int total = 0;
     std::string line;
+    std::string tooltip;
+};
+
+/**
+ * Draw model for the `worklog` ("Log Work") grid cell — the interactive wrapper around
+ * WorklogRenderModel. `clickable` false means the payload was neither empty nor recognisable,
+ * so the cell stays read-only clipped text rather than dressing an unknown shape up as an action.
+ */
+struct WorklogCellModel {
+    bool clickable = false;
+    std::string label;
     std::string tooltip;
 };
 
@@ -67,6 +80,7 @@ AttachmentRenderModel BuildAttachmentRenderModel(const std::string& currentValue
 WatchersRenderModel BuildWatchersRenderModel(const std::string& currentValue);
 VotesRenderModel BuildVotesRenderModel(const std::string& currentValue);
 WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue);
+WorklogCellModel BuildWorklogCellModel(const std::string& currentValue);
 IssueRestrictionRenderModel BuildIssueRestrictionRenderModel(const std::string& currentValue);
 ProgressRenderModel BuildProgressRenderModel(const std::string& currentValue);
 

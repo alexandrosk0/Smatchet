@@ -16,6 +16,7 @@
 // SMATCHET_DEVIATION(rule=duplication; reason=UI-shell include boilerplate; owner=tracker-backend; revisit=2026-09-30)
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <exception>
 #include <future>
 #include <string>
@@ -34,12 +35,12 @@ using TrackerGridFieldDisplayPure::BuildIssueRestrictionRenderModel;
 using TrackerGridFieldDisplayPure::BuildProgressRenderModel;
 using TrackerGridFieldDisplayPure::BuildVotesRenderModel;
 using TrackerGridFieldDisplayPure::BuildWatchersRenderModel;
-using TrackerGridFieldDisplayPure::BuildWorklogRenderModel;
+using TrackerGridFieldDisplayPure::BuildWorklogCellModel;
 using TrackerGridFieldDisplayPure::IssueRestrictionRenderModel;
 using TrackerGridFieldDisplayPure::ProgressRenderModel;
 using TrackerGridFieldDisplayPure::VotesRenderModel;
 using TrackerGridFieldDisplayPure::WatchersRenderModel;
-using TrackerGridFieldDisplayPure::WorklogRenderModel;
+using TrackerGridFieldDisplayPure::WorklogCellModel;
 
 namespace {
 
@@ -305,21 +306,34 @@ void TrackerGridFieldDisplay::RenderVotesField(AppController& app, const std::st
     }
 }
 
-void TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth,
+bool TrackerGridFieldDisplay::DrawCellActionButton(const std::string& label, float availWidth) {
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // invisible background when normal
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
+    // ID uniqueness comes from the caller's CellIdScope (ticket id + field id on the ID stack).
+    const bool clicked = ImGui::Button(label.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f));
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(3);
+    return clicked;
+}
+
+bool TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue, float availWidth,
                                                  bool tooltipsEnabled) {
     SMATCHET_UI_PERF_SCOPE("RenderWorklogField");
-    static thread_local std::unordered_map<std::string, WorklogRenderModel> cache;
-    const WorklogRenderModel& model =
-        GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWorklogRenderModel(currentValue); });
-    if (!model.parsed) {
-        RenderClippedFieldText(currentValue, availWidth, tooltipsEnabled, true);
-        return;
+    static thread_local std::unordered_map<std::string, WorklogCellModel> cache;
+    const WorklogCellModel& model =
+        GetOrBuildCachedValue(cache, currentValue, [&]() { return BuildWorklogCellModel(currentValue); });
+    if (!model.clickable) {
+        RenderClippedFieldText(model.label, availWidth, tooltipsEnabled, true);
+        return false;
     }
 
-    ImGui::TextUnformatted(model.line.c_str());
+    const bool clicked = DrawCellActionButton(model.label, availWidth);
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", model.tooltip.c_str());
     }
+    return clicked;
 }
 
 void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState& d) {
