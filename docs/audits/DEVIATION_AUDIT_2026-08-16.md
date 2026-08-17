@@ -37,6 +37,31 @@ every live marker and asking whether `revisit_overdue()` could ever return true:
 
 A, B and C are three independent defects. Each is confirmed below.
 
+Those are the figures **as found**. The S1 fix in this change returns the 8 markers in row B to the
+loop, so the post-fix count is **105 of 201 (52%)** — the remainder needs the S2 un-wrapping sweep
+(row A) and honest `revisit=` values (rows C and D), neither of which a parser fix can supply.
+
+### Nothing schedules a re-evaluation
+
+Worth stating because it is the reason all of this sat undetected. Calendar expiry is the *only*
+trigger in the system, and nothing drives it:
+
+- None of the six Python auditors parses `revisit=` at all — they implement suppression only
+  (`dup_audit.py:355`, `function_size_audit.py:552`, `appcontroller_fan_in_audit.py:158`,
+  `include_cycle_audit.py:399`, `agent_size_audit.py:257`, `comment_audit.py:416`). Expiry lives
+  solely in the bash `deviation-overdue` path.
+- No CI workflow re-evaluates deviations. All 31 files in `.github/workflows/` were checked; the
+  only automated touchpoint is the per-PR `test-lint-rules.sh --diff`, which fails only on an
+  *already*-overdue marker. The single grep hit elsewhere (`dep-cve-sbom.yml:31`) is unrelated
+  prose — "deliberate deviation from the old" gate set.
+- `followup-due-nudge.sh` is a SessionStart hook (`docs/harness/claude-code/settings.json.tmpl:24`),
+  so it is session-local and agent-initiated — and `.claude/settings.json` is gitignored
+  (`.gitignore:65`), so it depends on each machine regenerating the harness.
+
+So the audit loop fires only when a date passes, only for the markers whose dates the gate can see,
+and only for whoever happens to push that morning. That is why "the cliff" (S5) and "nothing is
+overdue today" are both true at once.
+
 ---
 
 # Systemic findings
@@ -269,6 +294,32 @@ Auditor verdicts *before* the adversarial pass were KEEP 52, RETARGET 75, FIX-GR
 RETIRE 21. The pass moved 48 of them, overwhelmingly toward KEEP — a useful calibration on how
 readily a first-pass audit talks itself into action, and the reason the retire list below is worth
 trusting.
+
+### Which verdicts survived refutation, and why
+
+Refutation rate is not evenly spread, and the split is the most transferable result in this audit:
+
+| family | non-KEEP verdicts | refuted | rate |
+|---|---|---|---|
+| Tracker backend-parity | 51 | 6 | **11%** |
+| grammar + tooling | 7 | 1 | **14%** |
+| security sweep | 37 | 14 | 37% |
+| UI / Markdown / misc | 14 | 7 | 50% |
+| AppController fan-in | 15 | 10 | 66% |
+| god-file-split prologues | 23 | 16 | 69% |
+| Standalone CLI | 10 | 7 | **70%** |
+
+The two families that reached their verdicts by **running the scanner** — importing `dup_audit` and
+driving `find_clones()` / `_suppressed()` per marker, or executing `DEV_RE` against a fixture — held
+up almost completely. The families that reasoned from **reading reasons, headers and ADRs** were
+refuted about two times in three.
+
+The failure mode was consistent: a plausible-sounding trigger read as fired. `CliCommandRunner_Internal.h`
+exists, so "when a shared CliCommandRunner TU prologue header is introduced" looks satisfied — until
+you open it and find it declaration-only. Fan-in dropped 115 → 72, so "when AppController.h is
+narrowed" looks satisfied — until you `wc -l` the header and find it grew 48%. **An artifact that
+exists is not an artifact that does what the trigger requires.** When re-evaluating a deviation,
+prefer a check you can execute over a document you can read.
 
 ### Coverage — and a self-inflicted demonstration of S2
 
