@@ -93,7 +93,7 @@ void DrainPanesSaveIfDue(UiDrawSession& d) {
     }
 }
 
-bool ApplyPaneAddAndCloseRequests(UiDrawSession& d,
+bool ApplyPaneAddAndCloseRequests(AppController& app, UiDrawSession& d,
                                   const std::unordered_map<std::string, ViewWorkspaceState>& viewBuckets) {
     // Pure core (SmatchetGridPaneWindows_detail.cpp — bucket-A covered); the wrapper
     // only forwards the focus-reassignment report into the session latch the host
@@ -102,6 +102,13 @@ bool ApplyPaneAddAndCloseRequests(UiDrawSession& d,
         detail::ApplyPaneAddAndCloseRequestsCore(d.gridPanes, d.focusedPaneId, d.paneAddRequest, viewBuckets);
     if (outcome.FocusReassigned) {
         d.gridPaneFocusReassigned = true;
+    }
+    if (!outcome.CreatedPaneId.empty()) {
+        // Pane ids are recycled, so a brand-new pane can land on a closed pane's id and inherit
+        // its retirement tombstone — which would answer "recorded, empty" to the seed lookup and
+        // leave the new pane permanently blank offline (only a completed non-empty full sync
+        // clears a tombstone). Erase, don't tombstone: a new pane has no history.
+        app.ErasePaneOwnedTicketIds(outcome.CreatedPaneId);
     }
     return outcome.Changed;
 }
@@ -226,7 +233,7 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
     }
 
-    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(d, ViewState.GetDiskBackends())) {
+    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
     SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);

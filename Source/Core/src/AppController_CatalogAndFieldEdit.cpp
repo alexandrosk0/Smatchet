@@ -147,7 +147,25 @@ void AppController::UpdateTicket(const CachedTicket& ticket) {
                      capturedKey.c_str(), ticket.id.c_str(), static_cast<unsigned long long>(capturedGeneration));
             return;
         }
-        Cache->SaveTicket(capturedKey, ticket);
+        // A SQLite write can throw here — most plausibly BUSY, once RunWriteTxnWithBusyRetry's
+        // total-deadline budget is exhausted and it rethrows. NOTHING between this call and
+        // `main`'s entry-point catch handles it: MainThreadDispatcher::Drain runs posted tasks
+        // bare, so an escape unwinds the frame loop and `ShutdownApplication` + exit code 1 is
+        // the user-visible result. Trading a UI stall for an app exit is not the deal the
+        // deadline was meant to make. Report it and keep the frame loop alive instead; the cache
+        // row simply stays stale until the next write, which is what the offline queue and the
+        // next sync already expect.
+        try {
+            Cache->SaveTicket(capturedKey, ticket);
+        } catch (const std::exception& ex) {
+            LOG_ERROR("AppController::UpdateTicket local cache write failed key='%s' ticket='%s' err=%s",
+                      capturedKey.c_str(), ticket.id.c_str(), ex.what());
+            // Log-only by necessity: `gridEditError` is UiDrawSession state and this is a domain
+            // TU, which the "no Ui/ include in domain subsystems" lint rule keeps out of Ui/.
+            // Surfacing it in the grid needs a domain->UI latch (the shape ConnectivityMonitor
+            // uses for its warning); flagged as follow-up rather than smuggled in here.
+            return;
+        }
         // Push changes back to ActiveTickets — checked against the SAME latched ctx (MEDIUM-1).
         // `ticket.id` is admitted explicitly: the pane-scoping filter inside the refresh works off
         // the last SYNCED id set, which cannot yet contain a row created/edited this instant.
