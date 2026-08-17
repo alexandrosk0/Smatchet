@@ -5656,6 +5656,16 @@ needs its risky work step-scoped.
     `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
     gate never received the same treatment, despite its own header describing
     itself as lifting the client-side verdict server-side.
+    Merge-history evidence added 2026-08-16 (PR #2038, after the fix landed): a
+    sweep of all 1,416 merged PRs above #500 — each merged head SHA's status
+    contexts plus CR's reviews/comments on that same SHA — shows this class had
+    already merged **4 PRs with CR never having looked at all**: #2014, #2024,
+    #2027, #2031 (2026-08-15 → 08-16), none carrying an override label, and
+    #2024 is not docs (`fix(sync): stop multi-pane full syncs from deleting each
+    other's cached tickets`, 19 code files). #2030 carries the same green status
+    but did get a CR walkthrough on its head, so it is an instance of the status
+    and not of the never-reviewed outcome. The #2028 near-miss in the original
+    framing was the case that got caught; these four are the ones that did not.
   Last-reviewed: 2026-08-16
 
 - 2026-08-16 · orchestrator · [infra] · P2 — a `send_later` check-in that fires while the remote container is suspended is silently lost, so an autonomous ship-loop can park a finished PR indefinitely with no alarm and no retry
