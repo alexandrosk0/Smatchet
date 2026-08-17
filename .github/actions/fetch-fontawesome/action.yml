@@ -28,10 +28,13 @@ runs:
         # Host: raw.githubusercontent.com, NOT github.com/<org>/<repo>/raw/…
         # The github.com `/raw/` path is a redirect shim, and it began serving
         # a hard 404 for this still-present blob on 2026-08-17, redding every
-        # job that fetches the font. 404 is outside curl's retry class, so the
-        # 10 retries above burned 5 minutes and changed nothing. The blob is
-        # unchanged at the same pinned tag on the canonical asset host, and the
-        # sha256 check below — not the hostname — is what guards content.
+        # job that fetches the font. `-f` turns that 404 into a transfer error
+        # and `--retry-all-errors` retries transfer errors, so each job spent
+        # the whole retry budget (~5 min) re-asking a permanently-missing URL
+        # before failing — the retries cost time and changed nothing, since a
+        # 404 here is permanent, not transient. The blob is unchanged at the
+        # same pinned tag on the canonical asset host, and the sha256 check
+        # below — not the hostname — is what guards content.
         curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
              "https://raw.githubusercontent.com/FortAwesome/Font-Awesome/${FA_TAG}/webfonts/fa-solid-900.ttf" \
              -o assets/fonts/fa-solid-900.ttf
