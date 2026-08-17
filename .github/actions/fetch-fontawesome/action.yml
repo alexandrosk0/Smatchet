@@ -24,8 +24,16 @@ runs:
         # `--retry*` rides out transient 429/5xx on the raw fetch — a parallel
         # PR burst rate-limited this exact URL for ~2h on 2026-07-09, redding
         # otherwise-green jobs post-build. curl honors Retry-After on 429.
+        #
+        # Host: raw.githubusercontent.com, NOT github.com/<org>/<repo>/raw/…
+        # The github.com `/raw/` path is a redirect shim, and it began serving
+        # a hard 404 for this still-present blob on 2026-08-17, redding every
+        # job that fetches the font. 404 is outside curl's retry class, so the
+        # 10 retries above burned 5 minutes and changed nothing. The blob is
+        # unchanged at the same pinned tag on the canonical asset host, and the
+        # sha256 check below — not the hostname — is what guards content.
         curl -fsSL --retry 10 --retry-delay 30 --retry-max-time 600 --retry-all-errors \
-             "https://github.com/FortAwesome/Font-Awesome/raw/${FA_TAG}/webfonts/fa-solid-900.ttf" \
+             "https://raw.githubusercontent.com/FortAwesome/Font-Awesome/${FA_TAG}/webfonts/fa-solid-900.ttf" \
              -o assets/fonts/fa-solid-900.ttf
         echo "${FA_SHA256}  assets/fonts/fa-solid-900.ttf" | sha256sum -c -
         ls -l assets/fonts/fa-solid-900.ttf
