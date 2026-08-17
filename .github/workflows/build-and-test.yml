@@ -65,6 +65,15 @@ on:
   # WoA whisper fix hit first). `github.event_name != 'pull_request'` in the WoA
   # job `if:` admits dispatch runs.
   workflow_dispatch:
+    inputs:
+      bootstrap_goldens:
+        description: >-
+          Re-capture the bucket-C goldens ON CI (llvmpipe, pinned Mesa, 1920x1080
+          desktop) and upload them for human review. Does NOT commit anything —
+          the golden-image-approval contract requires a human to look at the PNGs
+          first. See #2099.
+        type: boolean
+        default: false
 
 # Cancel in-flight runs for the same branch on a new push.
 concurrency:
@@ -103,6 +112,19 @@ jobs:
           # correct and the safety the queue exists for — force the full build.
           if [ "${{ github.event_name }}" = "merge_group" ]; then
             echo "merge_group event — forcing full build (code=true, asan=true)."
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "source_core_cpp=true" >> "$GITHUB_OUTPUT"
+            echo "android_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Golden bootstrap needs the exe, and the exe comes from windows-msvc,
+          # which keys off `code`. On workflow_dispatch the range below is just
+          # HEAD~1...HEAD, so dispatching from a branch whose tip commit happens to
+          # be docs-only would compute code=false, skip windows-msvc, and silently
+          # skip the bootstrap job the operator explicitly asked for. Force the
+          # build, same shape as the merge_group forcing above (#2099).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.bootstrap_goldens }}" = "true" ]; then
+            echo "golden bootstrap requested — forcing full build (code=true)."
             echo "code=true" >> "$GITHUB_OUTPUT"
             echo "source_core_cpp=true" >> "$GITHUB_OUTPUT"
             echo "android_only=false" >> "$GITHUB_OUTPUT"
@@ -1243,6 +1265,139 @@ jobs:
           name: bucket-c-childlog-${{ github.run_id }}
           path: build/tmp/bucket-c-childlog/spawn-child.log
           if-no-files-found: ignore
+
+      # Is each committed golden CI-native? Bucket-C diffs llvmpipe captures, so a
+      # golden bootstrapped on a developer GPU cannot be compared meaningfully —
+      # that mismatch (not the geometry bug #2096 fixed) is why this lane is still
+      # advisory (#2099). Report-only: the answer today is 0/7, so a blocking gate
+      # here would block every PR. Flip the call to --strict once the count reaches
+      # N/N, same WARN-first graduation the `duplication` gate went through.
+      - name: Report golden provenance (advisory)
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          out="$(bash scripts/dev/check-golden-provenance.sh 2>&1 || true)"
+          echo "$out"
+          {
+            echo "### Golden provenance"
+            echo ""
+            echo '```'
+            echo "$out"
+            echo '```'
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+
+  # Re-capture the bucket-C goldens ON CI, in the exact configuration the diff
+  # lane uses (pinned Mesa llvmpipe, 1920x1080 desktop, same exe artefact), and
+  # upload them for review. Manual-dispatch only — this never runs on a PR.
+  #
+  # It deliberately does NOT commit. `golden-image-approval.md` requires a human
+  # to look at each PNG and say "looks right" before it becomes the reference,
+  # because of the 2026-05-19 incident where a golden was bootstrapped while the
+  # bug it depicted was still live, nearly certifying that bug as correct forever.
+  # Producing goldens on CI removes the RENDERER mismatch; it does not remove the
+  # reason a human looks at them. So: this job hands you an artefact, you review
+  # it, you commit it. See #2099.
+  bucket-c-golden-bootstrap:
+    name: Bucket-C golden bootstrap (CI-native, manual)
+    needs: windows-msvc
+    if: github.event_name == 'workflow_dispatch' && inputs.bootstrap_goldens
+    runs-on: windows-2022
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Read-only clone: this job captures PNGs and uploads them, it never
+          # pushes. No credentials left around for the branch-controlled driver
+          # it runs (zizmor `artipacked`).
+          persist-credentials: false
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+
+      - name: Download Smatchet.exe artefact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: smatchet-exe-${{ github.run_id }}
+          path: build/ninja-iter-msvc/
+
+      - name: Install Mesa software GL
+        uses: ./.github/actions/install-mesa-gl
+        with:
+          target-dir: build/ninja-iter-msvc
+
+      # Must match the diff lane's widening exactly, or the goldens are captured
+      # at a geometry the diff lane can never reproduce — reintroducing #2092 from
+      # the other direction. NOT continue-on-error here (unlike the diff lane):
+      # capturing reference images at the wrong size is worse than not capturing.
+      - name: Widen virtual desktop to fit golden-sized captures
+        shell: pwsh
+        run: |
+          Set-DisplayResolution -Width 1920 -Height 1080 -Force
+          $after = (Get-CimInstance -ClassName Win32_VideoController |
+                    Select-Object -First 1 CurrentHorizontalResolution, CurrentVerticalResolution)
+          $w = $after.CurrentHorizontalResolution
+          $h = $after.CurrentVerticalResolution
+          Write-Host "desktop: ${w}x${h}"
+          if ($w -lt 1920 -or $h -lt 1080) {
+            Write-Error "desktop is ${w}x${h}; goldens captured here would not match the diff lane"
+            exit 1
+          }
+
+      - name: Bootstrap goldens under llvmpipe
+        shell: bash
+        env:
+          SMATCHET_EXE: build/ninja-iter-msvc/Smatchet.exe
+          TMPDIR: ${{ github.workspace }}/build/tmp
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "${TMPDIR}"
+          bash scripts/dev/test-screenshot-diff.sh --bootstrap
+
+      # Stamp the fresh goldens with their hashes + the environment that made
+      # them, so the reviewer can see which run and which Mesa blessed these bytes
+      # and so check-golden-provenance.sh can verify them once committed.
+      #
+      # Load-bearing: the `set -euo pipefail` on the bootstrap step above is what
+      # keeps this honest. --bootstrap overwrites a golden only for a scenario
+      # that actually captured; a scenario that failed leaves its OLD (developer-
+      # GPU) PNG on disk, and stamping that would launder it into "CI-native".
+      # The driver exits non-zero when any scenario fails — even in bootstrap mode
+      # — so a partial capture aborts the job before it can reach this step.
+      - name: Write provenance manifest
+        shell: bash
+        env:
+          GOLDEN_RUN_ID: ${{ github.run_id }}
+          GOLDEN_MESA: "24.2.5"
+          GOLDEN_GEOMETRY: "1920x1009"
+        run: |
+          set -euo pipefail
+          bash scripts/dev/check-golden-provenance.sh --emit
+          bash scripts/dev/check-golden-provenance.sh --strict
+          {
+            echo "### CI-native goldens captured"
+            echo ""
+            echo "Download the \`ci-native-goldens-${{ github.run_id }}\` artefact, review every"
+            echo "PNG against what the scenario is supposed to show, then commit the PNGs"
+            echo "together with \`tests/golden/PROVENANCE.tsv\`."
+            echo ""
+            echo "Do not skip the review. A golden captured while a bug is live certifies"
+            echo "that bug as correct behaviour — see docs/agent-rules/golden-image-approval.md."
+          } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
+
+      - name: Upload CI-native goldens for review
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ci-native-goldens-${{ github.run_id }}
+          path: |
+            tests/golden/*.png
+            tests/golden/PROVENANCE.tsv
+          if-no-files-found: error
 
   bucket-e-ui-tests:
     name: Bucket-E UI tests (Mesa headless GL)

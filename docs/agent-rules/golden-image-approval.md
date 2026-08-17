@@ -28,6 +28,22 @@ anyway).
 3. **Wait for an explicit "looks right" / "approve golden" verdict** before any `git add tests/golden/<file>` + commit.
 4. **On rejection**: `git checkout -- tests/golden/<file>` and iterate the underlying fix BEFORE re-bootstrapping. **Never amend the golden to match a buggy state** — that's the exact failure mode this rule exists to prevent.
 
+## Where bucket-C goldens come from — CI, not your GPU
+
+Bucket-C diffs **llvmpipe** (software-GL) captures. A golden bootstrapped on a developer GPU is therefore being compared against a different rasterizer, which produced whole-region deltas (L_inf 214–245 against a tolerance of 4) even with nothing wrong — the reason that lane is advisory and cannot block (#2099).
+
+So bucket-C goldens are captured **on CI**, in the pinned configuration the diff lane uses (Mesa 24.2.5 llvmpipe, 1920×1080 desktop → 1920×1009 / 480×1009 captures):
+
+1. **Dispatch** `build-and-test.yml` (Actions → Run workflow) with **`bootstrap_goldens: true`**. The `Bucket-C golden bootstrap (CI-native, manual)` job re-captures every golden and uploads `ci-native-goldens-<run-id>`.
+2. **Download and review every PNG** — steps 2–4 of the Recipe above apply unchanged. Producing goldens on CI removes the *renderer* mismatch; it does not remove the reason a human looks at them. A golden captured while a bug is live still certifies that bug forever.
+3. **Commit the PNGs together with `tests/golden/PROVENANCE.tsv`**, which the job emits. That manifest records each golden's SHA-256 plus the run id, Mesa version and capture geometry that produced it.
+
+`scripts/dev/check-golden-provenance.sh` verifies committed goldens against that manifest, and bucket-C reports the count in its job summary. A golden regenerated locally changes its bytes without gaining a manifest row, so it reports as non-CI-native rather than silently reintroducing the drift.
+
+**Do not regenerate a bucket-C golden locally.** `--bootstrap` on a dev machine is still the right tool for a *new* scenario's first capture and for local iteration, but the bytes that land in `tests/golden/` must come from the bootstrap job.
+
+The check is WARN-only while the count is below N/N — a blocking gate at 0/N would block every PR. Flip its CI call site to `--strict` once `--list-missing` is empty, and only then consider tightening `SCREENSHOT_TOLERANCE` or graduating the lane out of its mask. Landing a blocking gate while red red-walls `develop` — see `postmortems.md` (PR #1180).
+
 ## Motivating incident
 
 2026-05-19 — `tests/golden/theme-switch-roundtrip.png` was bootstrapped while the theme-switch-residual-color bug was active. The PNG captured the broken post-round-trip state; the diff gate would have certified the bug as "expected behaviour" forever. Same trap waited on `dock-gap-sentinel` and `command-palette-fuzzy` goldens. Caught only because the user opened the PNG by hand and said "this is the result of the bug".
