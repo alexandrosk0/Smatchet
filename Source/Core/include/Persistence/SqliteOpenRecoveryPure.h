@@ -93,4 +93,23 @@ inline int BusyRetryBackoffMs(int attempt) {
     return ms > 400 ? 400 : ms;
 }
 
+/// The same retry decision for a WRITE transaction's loop, with one extra bound: a TOTAL
+/// wall-clock budget (issue #2045). An attempt-count cap alone is not a latency cap — each attempt
+/// can sit for the whole armed busy_timeout (5 s) before SQLite returns BUSY, so five attempts
+/// plus their backoffs stall the caller for ~25 s. That write path is reachable from the UI thread
+/// (the comments modal's main-thread post-back → UpdateCachedCommentCount → UpdateTicket →
+/// SaveTicket), where the stall is a frozen frame pump with no progress cue (Pillar 2).
+/// `elapsedMs` is the time already spent in the loop, `budgetMs` the total allowance; the NEXT
+/// backoff is charged against the budget too, so the loop never sleeps its way past the deadline.
+/// An exhausted budget falls through to exactly the same propagate-the-BUSY path as an exhausted
+/// attempt count — the caller's existing error handling, just reached sooner. Declared after
+/// BusyRetryBackoffMs because it charges that backoff against the deadline.
+inline bool ShouldRetryBusyWrite(int sqliteErrorCode, int attempt, int maxAttempts, long long elapsedMs,
+                                 long long budgetMs) {
+    if (!ShouldRetryBusyInit(sqliteErrorCode, attempt, maxAttempts)) {
+        return false;
+    }
+    return elapsedMs + static_cast<long long>(BusyRetryBackoffMs(attempt)) <= budgetMs;
+}
+
 } // namespace smatchet

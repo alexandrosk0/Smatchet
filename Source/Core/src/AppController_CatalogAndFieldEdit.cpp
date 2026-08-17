@@ -58,11 +58,15 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
         auto latestTickets = Cache->GetAllTickets(cacheKey);
         // GetAllTickets returns the WHOLE backend-keyed namespace, which every pane shares
         // (ADR-0018 decision 4) — so a bare replace repopulates this pane with its siblings'
-        // rows. Filter down to the ids this pane's own sync recorded. An empty recorded set means
-        // a true cold start (nothing has synced yet), where the whole namespace IS the best
-        // available seed — that is what AppController_Init's bootstrap refresh relies on.
-        const std::vector<std::string> owned = GetPaneOwnedTicketIds(cacheKey, ctx.PaneId);
-        if (!owned.empty()) {
+        // rows. Filter down to the ids this pane's own sync recorded. Only the ABSENCE of a
+        // recorded set means a true cold start (nothing has synced yet), where the whole
+        // namespace IS the best available seed — that is what AppController_Init's bootstrap
+        // refresh relies on. A recorded-but-EMPTY set is the retirement tombstone of a pane the
+        // user came back to (issue #2063): it must render empty until its own sync lands, not
+        // re-leak every sibling pane's rows into its grid.
+        std::vector<std::string> owned;
+        const bool hasOwned = TryGetPaneOwnedTicketIds(cacheKey, ctx.PaneId, owned);
+        if (hasOwned) {
             std::unordered_set<std::string> keep(owned.begin(), owned.end());
             if (!admitId.empty()) {
                 keep.insert(admitId); // the row the caller just saved — never filtered out
@@ -94,10 +98,13 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
         }
         // The admitted row now belongs to this pane for good — record it, or the NEXT refresh
         // (which re-reads the recorded set) would filter the freshly-saved ticket back out.
-        if (!admitId.empty() && !owned.empty() && std::find(owned.begin(), owned.end(), admitId) == owned.end()) {
-            std::vector<std::string> next = owned;
-            next.push_back(admitId);
-            SetPaneOwnedTicketIds(cacheKey, ctx.PaneId, next);
+        // Appended ATOMICALLY (issue #2050): this method is worker-invoked, so writing back the
+        // `owned` copy snapshotted before the GetAllTickets read above would silently revert a
+        // PublishOwnedTicketIds that landed in that window — dropping the freshly-synced rows
+        // from the grid AND unpinning them from a sibling's stale deletion. AddPaneOwnedTicketId
+        // re-reads the entry under the store's lock and appends, so both writes survive.
+        if (!admitId.empty() && hasOwned) {
+            AddPaneOwnedTicketId(cacheKey, ctx.PaneId, admitId);
         }
         PruneEditMetaCacheToActiveTickets();
         ctx.ActiveTicketsRevision.fetch_add(1);
@@ -781,7 +788,9 @@ Result<std::vector<TrackerUser>> AppController::SearchUsersByQuery(const std::st
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
-        return UsersResult::Err("Jira backend is not initialized.");
+        // Backend-agnostic wording (issue #2065): this delegator is reached on Linear / GitHub /
+        // Plane too, and its siblings (FetchIssueWatchers / FetchIssueVotes) already say "Tracker".
+        return UsersResult::Err("Tracker backend is not initialized.");
     }
     if (!backend->Collaboration()) {
         return UsersResult::Err("Tracker backend does not support collaboration features.");
