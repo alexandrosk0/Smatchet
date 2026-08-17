@@ -1037,6 +1037,38 @@ jobs:
       # for its screenshot-diff purpose. The lane-integrity step below still
       # fail-closes this job's broken-lane teeth (Passed==0 && Failed>0).
 
+      # The goldens are 1920x1009 captures, but a top-level Win32 window cannot exceed the
+      # virtual desktop (MaxTrackSize clamps it to roughly the desktop size). On the runner's
+      # default desktop the scenario's 1920x1009 resize request came back as a 1028x749
+      # framebuffer, so EVERY golden diff degraded to `dimension mismatch` (L_inf -1) and the
+      # step-level mask below swallowed it — bucket-C reported green while comparing nothing
+      # (#2092). Widen the desktop first so the requested geometry is actually reachable.
+      #
+      # Non-fatal by design: if the cmdlet is unavailable or the mode is refused, the lane is
+      # no worse off than before, and the capture-size contract added alongside this now logs
+      # a loud ERROR instead of silently emitting an uncomparable PNG. The achieved resolution
+      # is echoed either way so the next run attributes a still-clamped capture immediately.
+      - name: Widen virtual desktop to fit golden-sized captures
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $before = (Get-CimInstance -ClassName Win32_VideoController |
+                     Select-Object -First 1 CurrentHorizontalResolution, CurrentVerticalResolution)
+          Write-Host "desktop before: $($before.CurrentHorizontalResolution)x$($before.CurrentVerticalResolution)"
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) {
+            try {
+              Set-DisplayResolution -Width 1920 -Height 1080 -Force
+              Write-Host "Set-DisplayResolution 1920x1080 applied"
+            } catch {
+              Write-Host "Set-DisplayResolution refused: $($_.Exception.Message)"
+            }
+          } else {
+            Write-Host "Set-DisplayResolution cmdlet unavailable on this image"
+          }
+          $after = (Get-CimInstance -ClassName Win32_VideoController |
+                    Select-Object -First 1 CurrentHorizontalResolution, CurrentVerticalResolution)
+          Write-Host "desktop after: $($after.CurrentHorizontalResolution)x$($after.CurrentVerticalResolution)"
+
       - name: Run bucket-C screenshot diff
         continue-on-error: true
         shell: bash
@@ -1118,12 +1150,19 @@ jobs:
               [ -n "${scen:-}" ] || continue
               mark="$verdict"
               [ "$verdict" = "fail" ] && mark="**fail**"
+              [ "$verdict" = "fail-dimension" ] && mark="**fail-dimension**"
               printf '| %s | %s | %s | %s | %s | %s |\n' \
                 "$scen" "$mark" "${linf:--}" "${tol:--}" "${mtime:--}" "${age:--}"
             done < "$REPORT"
             echo ""
             echo "A \`fail\` row is EITHER a real pixel regression OR a stale golden — regenerate"
             echo "per docs/agent-rules/golden-image-approval.md, or fix the regression."
+            echo ""
+            echo "A \`fail-dimension\` row (L_inf \`-1\`) is NEITHER: the capture never reached the"
+            echo "golden's geometry, so no pixels were compared. Regenerating goldens would only"
+            echo "pin them to whatever size the runner happened to produce — fix the capture"
+            echo "geometry instead (the scenario's requested size must be reachable on the"
+            echo "runner desktop; the app logs the mismatch at ERROR). See #2092."
           } >> "${GITHUB_STEP_SUMMARY:-/dev/null}" || true
           echo "===== bucket-C golden verdicts ====="
           cat "$REPORT" || true

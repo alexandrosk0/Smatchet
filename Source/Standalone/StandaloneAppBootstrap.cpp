@@ -12,6 +12,13 @@
 
 #include "StandaloneBoot_detail.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=plain include boilerplate — this TU's core-header
+// list overlaps AppController_Init.cpp / AppController_McpActivity.cpp because they compose the
+// same subsystems, and the clone only became contiguous enough to trip the token threshold when
+// the stb_image_write impl block that used to split this run moved to StandaloneBoot_detail.cpp
+// (#2092 de-dup of the screenshot-write tail); there is nothing behavioural to factor out and a
+// shared mega-include header would be strictly worse coupling, which the DRY gate doc endorses
+// exempting; owner=orchestrator; revisit=if a shared standalone-boot prologue header lands)
 #include "AppController.h"
 #include "Dx12Bootstrap.h"
 #include "GridContextDepsAdapter.h"
@@ -37,26 +44,6 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
-#define STB_IMAGE_WRITE_STATIC
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wunused-function"
-#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
-#endif
-#if defined(_MSC_VER)
-// Third-party stb header — silence ALL MSVC warnings for the impl block (4996
-// sprintf, 4505 unused-static under reduced-feature/Debug configs, …) so
-// first-party /WX stays strict without whack-a-mole per warning code.
-#pragma warning(push, 0)
-#endif
-#include <stb/stb_image_write.h>
-#if defined(_MSC_VER)
-#pragma warning(pop)
-#endif
-#if defined(__GNUC__) || defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
 
 #include <GLFW/glfw3.h>
 #if defined(_WIN32)
@@ -249,13 +236,7 @@ static void SmatchetWritePendingScreenshot(BootstrapContext& ctx) {
         return;
     }
 
-    stbi_write_png_compression_level = 8;
-    const int rc = stbi_write_png(screenshotPath.c_str(), fw, fh, 3, rgb.data(), fw * 3);
-    if (rc == 0) {
-        LOG_ERROR("debug.window.screenshot: stbi_write_png failed for %s", screenshotPath.c_str());
-    } else {
-        LOG_INFO("debug.window.screenshot: saved %s (%dx%d, PNG)", screenshotPath.c_str(), fw, fh);
-    }
+    boot_detail::WriteCapturePng(screenshotPath, rgb, fw, fh);
 }
 
 static void SmatchetApplyPendingWindowResize(GLFWwindow* window) {

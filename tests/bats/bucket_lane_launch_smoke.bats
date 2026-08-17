@@ -292,3 +292,56 @@ PY
     [ "$n" -gt 0 ]
     grep -q "^status=broken passed=0 failed=${n}\$" "$SMATCHET_LANE_STATUS_FILE"
 }
+
+# --- dimension-mismatch verdict (#2092) -------------------------------------
+# A capture that never reached the golden's geometry compares NO pixels — the diff
+# helper reports its `linf=-1` dimension-mismatch sentinel. Rolling that into the
+# generic `fail` verdict reads as a stale golden and sends the next reader off to
+# regenerate goldens, which would pin them to whatever size the runner produced.
+# The row must name the distinct defect instead.
+
+@test "golden report: a dimension mismatch reports fail-dimension, not fail" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    # Bootstrap the goldens with the always-clean stub, then swap in a helper that
+    # emits the real dimension-mismatch shape: linf=-1 on stdout, non-zero exit.
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+
+    printf '#!/usr/bin/env bash\necho "linf=-1 w=1028 h=749"\nexit 1\n' > "$WORK/dimbin"
+    chmod +x "$WORK/dimbin"
+    export SCREENSHOT_DIFF_BIN="$WORK/dimbin"
+
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    [ "$status" -ne 0 ]
+    [ -s "$SMATCHET_GOLDEN_REPORT_FILE" ]
+    grep -q "$(printf '\tfail-dimension\t')" "$SMATCHET_GOLDEN_REPORT_FILE"
+    # No row may claim the generic pixel-regression verdict on this run.
+    ! grep -q "$(printf '\tfail\t')" "$SMATCHET_GOLDEN_REPORT_FILE"
+    # The sentinel L_inf rides along so the summary can show why nothing compared.
+    while IFS=$'\t' read -r scen verdict linf tol mtime age; do
+        [ "$verdict" = "fail-dimension" ] || continue
+        [ "$linf" = "-1" ]
+    done < "$SMATCHET_GOLDEN_REPORT_FILE"
+}
+
+@test "golden report: a real pixel regression still reports plain fail" {
+    write_stub_exe live
+    export SMATCHET_GOLDEN_REPORT_FILE="$WORK/golden-report.tsv"
+    run bash "$DRIVER" --bootstrap
+    [ "$status" -eq 0 ]
+
+    # Over-tolerance pixel delta: a real L_inf, non-zero exit. Must NOT be
+    # reclassified as a dimension mismatch — the two verdicts route to opposite
+    # remedies (regenerate the golden vs fix the capture geometry).
+    printf '#!/usr/bin/env bash\necho "linf=81 w=1920 h=1009"\nexit 1\n' > "$WORK/pixbin"
+    chmod +x "$WORK/pixbin"
+    export SCREENSHOT_DIFF_BIN="$WORK/pixbin"
+
+    : > "$SMATCHET_GOLDEN_REPORT_FILE"
+    run bash "$DRIVER"
+    [ "$status" -ne 0 ]
+    grep -q "$(printf '\tfail\t')" "$SMATCHET_GOLDEN_REPORT_FILE"
+    ! grep -q "fail-dimension" "$SMATCHET_GOLDEN_REPORT_FILE"
+}

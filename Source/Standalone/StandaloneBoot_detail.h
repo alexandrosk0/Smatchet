@@ -43,6 +43,18 @@ void KeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int ac
 /// origin; DX12 readback is already top-left, so it passes false).
 void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical, std::vector<unsigned char>& rgb);
 
+/// Enforce the scenario capture-size contract on a just-written capture, then disarm it. A
+/// scenario only *requests* its capture size and cannot check the outcome itself (its OnFinish
+/// merely asks for the screenshot, which lands frames later), so this capture path — the first
+/// place both the request and the achieved framebuffer are known — is where a window-system
+/// clamp is caught. Logged at ERROR (#2092). No-op when no contract is armed.
+void ReportCaptureSizeContract(int capturedWidth, int capturedHeight);
+
+/// Encode `rgb` to `path` as a PNG at compression level 8, then record + verify the capture
+/// size. Shared tail of both boot paths' screenshot handlers, which otherwise carried
+/// byte-identical copies of the write/log/verify block.
+void WriteCapturePng(const std::string& path, const std::vector<unsigned char>& rgb, int w, int h);
+
 } // namespace boot_detail
 } // namespace standalone
 } // namespace smatchet
