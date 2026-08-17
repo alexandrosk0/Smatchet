@@ -80,7 +80,14 @@ TEST_CASE("CompareFieldValuesForSort — number column with NaN is a strict weak
     const TrackerField num = Field("story_points", "number");
     // The grid's stable_sort predicate: SmatchetActiveProjectGridTable feeds the comparator
     // through `(cmp * dir) < 0`. Exercise that exact shape over a NaN/inf-laden value set.
-    const std::vector<std::string> values = {"", "-inf", "1", "2", "3", "inf", "nan", "NaN", "zz"};
+    // The set must include values whose LEXICAL order disagrees with their NUMERIC order,
+    // or the sweep cannot see a fallback-vs-numeric cycle at all. "-1"/"-0"/"+5"/" 7" are
+    // load-bearing: an earlier revision of this fix rejected all non-finite values, which
+    // pushed "-inf" onto the string path where it sorted between "+5"/" 7" (byte '+'/' '
+    // below '-') and "0"/"1" (byte '0' above '-') while those still compared numerically —
+    // 24 cyclic triples per direction. Dropping these values hides that entirely.
+    const std::vector<std::string> values = {"",  "-inf", "-1", "-0",  "0",   "+5",  " 7", "1",
+                                             "2", "3",    "10", "inf", "nan", "NaN", "zz"};
     const int dirs[2] = {1, -1};
     for (int d = 0; d < 2; ++d) {
         const int dir = dirs[d];

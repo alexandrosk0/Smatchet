@@ -45,10 +45,18 @@ static bool ParseWholeDouble(const std::string& s, double& out) {
     if (end != c + s.size()) {
         return false;
     }
-    // strtod whole-string-matches "nan" / "inf"; a NaN cell would make the comparator
-    // return +1 for both Compare(a,b) and Compare(b,a) — not a strict weak ordering,
-    // which is UB in stable_sort. Reject non-finite so the caller falls back to strings.
-    if (!std::isfinite(out)) {
+    // strtod whole-string-matches "nan" / "inf". A NaN cell makes the comparator return
+    // +1 for both Compare(a,b) and Compare(b,a) — not a strict weak ordering, which is UB
+    // in stable_sort — so NaN must not reach the numeric path.
+    //
+    // Reject NaN ONLY, never ±inf. Infinities compare consistently as doubles, but pushing
+    // them to the string fallback creates a NEW cycle: "-inf" then sorts by the byte '-',
+    // which lands between sign-prefixed cells ("+5", " 7") and digit-leading ones ("0"),
+    // while those two groups still compare numerically with each other —
+    // "+5" < "-inf" < "0" < "+5". Measured over
+    // {"0","1","-1","2","-2","10","3.5","+5"," 7","inf","-inf"} on a number-typed column:
+    // 24 cyclic triples per direction with an isfinite reject, 0 with this NaN-only reject.
+    if (std::isnan(out)) {
         return false;
     }
     return errno != ERANGE;
