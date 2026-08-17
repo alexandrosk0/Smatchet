@@ -20,11 +20,15 @@
 
 #include <doctest/doctest.h>
 
+#include <future>
+#include <stdexcept>
 #include <string>
 
+using smatchet::async_load::LaunchIntoSlot;
 using smatchet::async_load::ResultIsCurrent;
 using smatchet::async_load::ShouldKickLoad;
 using smatchet::async_load::ShouldKickOnce;
+using smatchet::async_load::TakeFromSlot;
 
 TEST_CASE("ShouldKickLoad kicks only when the selection has moved off the cached payload") {
     // Fresh selection, nothing cached — the load must start.
@@ -117,4 +121,100 @@ TEST_CASE("kick and apply gates agree on the same key") {
     const std::string next = "plan-beta.md";
     CHECK_FALSE(ResultIsCurrent(target, next));
     CHECK(ShouldKickLoad(false, next, ""));
+}
+
+// --- Slot ordering around the future (Issues #2056 / #2057) -----------------------------
+//
+// Both defects were "the in-flight latch outlives the future that was supposed to clear it",
+// which permanently wedges the plan-doc viewer: PollLoadResult early-outs on `!valid()` (or on
+// an already-consumed future) while the kick gate above refuses to start anything new because
+// `inFlight` is still true. The property each case below pins is therefore the same one:
+// after ANY outcome, `inFlight` is false unless a live future really sits in the slot.
+
+namespace {
+
+struct Payload {
+    std::string key;
+    int value = 0;
+};
+
+} // namespace
+
+TEST_CASE("LaunchIntoSlot publishes the latch only after the launch succeeds") {
+    std::future<Payload> slot;
+    bool inFlight = false;
+    std::string err;
+
+    Payload made;
+    made.key = "plan-alpha.md";
+    made.value = 7;
+    const bool ok = LaunchIntoSlot(
+        slot, inFlight,
+        [made]() {
+            std::promise<Payload> p;
+            p.set_value(made);
+            return p.get_future();
+        },
+        err);
+    CHECK(ok);
+    CHECK(inFlight);
+    CHECK(slot.valid());
+    CHECK(err.empty());
+}
+
+TEST_CASE("LaunchIntoSlot leaves the latch down when the launch throws") {
+    // std::async throws system_error when threads are exhausted (and bad_alloc under memory
+    // pressure). Latching before the launch left an invalid future behind a true flag — the
+    // viewer then never loaded another document for the rest of the session.
+    std::future<Payload> slot;
+    bool inFlight = false;
+    std::string err;
+
+    const bool ok =
+        LaunchIntoSlot(slot, inFlight, []() -> std::future<Payload> { throw std::runtime_error("no threads"); }, err);
+    CHECK_FALSE(ok);
+    CHECK_FALSE(inFlight);
+    CHECK_FALSE(slot.valid());
+    CHECK(err == "no threads");
+
+    // And the pane is still usable: with the latch down the kick gate will start a fresh read.
+    CHECK(ShouldKickLoad(inFlight, "plan-beta.md", ""));
+}
+
+TEST_CASE("TakeFromSlot hands back the worker payload and clears the latch") {
+    std::promise<Payload> p;
+    Payload made;
+    made.key = "plan-alpha.md";
+    made.value = 42;
+    p.set_value(made);
+    std::future<Payload> slot = p.get_future();
+    bool inFlight = true;
+
+    Payload out;
+    std::string err;
+    CHECK(TakeFromSlot(slot, inFlight, out, err));
+    CHECK_FALSE(inFlight);
+    CHECK(out.key == "plan-alpha.md");
+    CHECK(out.value == 42);
+    CHECK(err.empty());
+}
+
+TEST_CASE("TakeFromSlot clears the latch even when the worker threw") {
+    // The future is consumed by get() either way, so clearing AFTER get() never runs on this
+    // path: the flag stayed latched against a spent future and every later poll early-outed.
+    std::promise<Payload> p;
+    p.set_exception(std::make_exception_ptr(std::runtime_error("read failed")));
+    std::future<Payload> slot = p.get_future();
+    bool inFlight = true;
+
+    Payload out;
+    out.key = "untouched";
+    std::string err;
+    CHECK_FALSE(TakeFromSlot(slot, inFlight, out, err));
+    CHECK_FALSE(inFlight);
+    CHECK(err == "read failed");
+    CHECK(out.key == "untouched");
+
+    // The viewer recovers: the latch is down, so selecting another document kicks a new read.
+    CHECK(ShouldKickLoad(inFlight, "plan-beta.md", "plan-alpha.md"));
 }

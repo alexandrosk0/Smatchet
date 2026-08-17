@@ -268,7 +268,9 @@ void OpenTrackerUserProfileForP4User(const AppController& app, const std::string
             if (r.has_value()) {
                 groups = std::move(r.value());
             } else {
-                gerr = r.error();
+                // An empty Detail must not render as "no groups, no error" — the post-back only
+                // shows `gerr` when it is non-empty (Issue #2064).
+                gerr = AnnotateUiPure::GroupLookupErrorMessage(r.error());
             }
         }
         const bool found = searchOk && !users.empty();

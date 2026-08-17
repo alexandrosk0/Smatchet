@@ -235,13 +235,27 @@ void StartLoadSelected(ViewerState& s) {
     if (!async_load::ShouldKickLoad(s.loadInFlight, path, s.loadedPath)) {
         return;
     }
-    s.loadInFlight = true;
-    s.loadFuture = std::async(std::launch::async, [path]() {
-        LoadResult result;
-        result.path = path;
-        result.body = ReadCapped(path, kMaxDocBytes, result.oversize);
-        return result;
-    });
+    // Latch and future are published only after the launch succeeded — see LaunchIntoSlot.
+    std::string launchErr;
+    const bool launched = async_load::LaunchIntoSlot(
+        s.loadFuture, s.loadInFlight,
+        [path]() {
+            return std::async(std::launch::async, [path]() {
+                LoadResult result;
+                result.path = path;
+                result.body = ReadCapped(path, kMaxDocBytes, result.oversize);
+                return result;
+            });
+        },
+        launchErr);
+    if (!launched) {
+        // Nothing was latched, so the viewer is still usable — but park `loadedPath` on this
+        // selection so the per-frame kick does not retry (and re-throw) every single frame.
+        // Picking another document, or re-picking this one after a rescan, kicks a fresh read.
+        LOG_ERROR("plan-doc viewer: could not start reading %s: %s", path.c_str(), launchErr.c_str());
+        s.body = "[Couldn't start reading this file (the system refused a worker thread): " + path + "]";
+        s.loadedPath = path;
+    }
 }
 
 void PollLoadResult(ViewerState& s) {
@@ -251,8 +265,18 @@ void PollLoadResult(ViewerState& s) {
     if (s.loadFuture.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
         return;
     }
-    LoadResult result = s.loadFuture.get();
-    s.loadInFlight = false;
+    // TakeFromSlot clears the latch BEFORE get(), so a worker throw cannot wedge the viewer.
+    LoadResult result;
+    std::string readErr;
+    if (!async_load::TakeFromSlot(s.loadFuture, s.loadInFlight, result, readErr)) {
+        // Not an empty catch: the read is abandoned and reported. `loadedPath` is parked on the
+        // live selection so the per-frame kick does not immediately re-run the failing read.
+        const std::string selected = SelectedPath(s);
+        LOG_ERROR("plan-doc viewer: read failed for %s: %s", selected.c_str(), readErr.c_str());
+        s.body = "[Couldn't read this file: " + selected + "]";
+        s.loadedPath = selected;
+        return;
+    }
     if (!async_load::ResultIsCurrent(result.path, SelectedPath(s))) {
         // Selection moved (or the index was rescanned) mid-read — drop this body and let
         // the caller's re-kick load whatever is selected now.

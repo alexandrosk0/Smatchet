@@ -134,3 +134,17 @@ TEST_CASE("PickJiraAccountForP4User — email local-part beats first-result fall
         CHECK(accountId == "acc-bare");
     }
 }
+
+TEST_CASE("GroupLookupErrorMessage — a failure is never silent, even with no detail (#2064)") {
+    // The user-profile modal only renders an error when the string is non-empty, so passing a
+    // backend Result's raw error through meant an empty-Detail failure drew an empty group list
+    // and nothing else — indistinguishable from "this user is in no groups". An empty Detail is
+    // a real backend outcome, pinned by CollaborationPreconditionPure.test.cpp.
+    CHECK(GroupLookupErrorMessage("") == "Group lookup failed.");
+    CHECK_FALSE(GroupLookupErrorMessage("").empty());
+
+    // A real detail is passed through verbatim — the fallback must not mask a better message.
+    CHECK(GroupLookupErrorMessage("403 Forbidden") == "403 Forbidden");
+    // Whitespace is not emptiness: no guessing about what a backend considers blank.
+    CHECK(GroupLookupErrorMessage(" ") == " ");
+}
