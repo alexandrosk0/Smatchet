@@ -277,8 +277,9 @@ if [ "$SCOPE" = "selftest" ]; then
 '
 
     # (16) `revisit=` typed but EMPTY must fail closed — a malformed attempt,
-    #      not the sanctioned absent-field case (deliberate divergence from
-    #      the C++ rule, which folds empty into unset).
+    #      not the sanctioned absent-field case. The C++ rule used to fold empty
+    #      into unset and mint a permanent exemption; it now fails closed too,
+    #      so the two enforcers agree here.
     _case escape-empty-revisit 1 '# P
 
 ## Implementation log
@@ -303,6 +304,23 @@ if [ "$SCOPE" = "selftest" ]; then
     case "$_out" in
         *UNANCHORED_CLAIM*) ;;
         *) echo "FAIL[escape-empty-final-dup]: exited 1 but printed no UNANCHORED_CLAIM"
+           printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
+    esac
+
+    # (17b) an UNPADDED past date (2020-1-1) is a calendar attempt, not a slug.
+    #       CALENDARISH_RE required a full \d{4}-\d{2}-\d{2} prefix, so this
+    #       genuinely-past value classified as a never-expiring slug — the exact
+    #       permanent-exemption class this function closes. `\d{4}-\d` catches it,
+    #       matching 00-common.sh revisit_datelike_but_invalid().
+    _case escape-unpadded-past 1 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=github api state; owner=x; revisit=2020-1-1) -->
+- branch protection already had reviews disabled.
+'
+    case "$_out" in
+        *UNANCHORED_CLAIM*) ;;
+        *) echo "FAIL[escape-unpadded-past]: exited 1 but printed no UNANCHORED_CLAIM"
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
@@ -472,12 +490,16 @@ QUARTER_RE = re.compile(r'^(\d{4})-Q([1-4])$')
 # Exact dashed form only, gating fromisoformat(): python >= 3.11 accepts ISO
 # BASIC dates (20270811) there, and the grammar permits only YYYY-MM-DD.
 DATE_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
-# A calendar ATTEMPT that parses as neither legal form: a dashed-date, quarter,
-# or ISO-basic PREFIX with anything after it (2027-08-11typo, 2026-Q1typo,
-# 20270811typo) — all unanchored, so trailing junk still classifies as an
-# attempt and fails closed. A merely digit-LEADING value that matches none of
-# them (2026-roadmap) is a slug — legal, no calendar expiry.
-CALENDARISH_RE = re.compile(r'\d{4}-\d{2}-\d{2}|\d{4}-Q\d+|\d{8}')
+# A calendar ATTEMPT that parses as neither legal form: YYYY- followed by a
+# DIGIT, YYYY-Q…, or ISO-basic — all prefix matches, so trailing junk still
+# classifies as an attempt and fails closed (2027-08-11typo, 2026-Q1typo,
+# 20270811typo, 2026-Q5). A merely digit-LEADING value that matches none of them
+# (2026-roadmap, 2026-H2) is a slug — legal, no calendar expiry.
+# `\d{4}-\d` rather than the full `\d{4}-\d{2}-\d{2}`: the narrower form read the
+# UNPADDED, genuinely-past `2020-1-1` as a never-expiring slug, which is the
+# permanent-exemption class this function exists to close. Kept in sync with
+# 00-common.sh revisit_datelike_but_invalid(), which classifies identically.
+CALENDARISH_RE = re.compile(r'\d{4}-\d|\d{4}-Q|\d{8}')
 TODAY = os.environ.get("TODAY", "")
 
 

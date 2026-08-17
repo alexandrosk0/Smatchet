@@ -5,34 +5,36 @@ scan_file_rules() {
     # $1 = file. Emits triples for all line/grep rules + deviation-overdue.
     local f="$1"
     [ -f "$f" ] || return 0
-    local lineno=0 prev_dev_rule="" prev_dev_revisit=""
+    local lineno=0 prev_dev_rule="" prev_dev_revisit="" prev_dev_revisit_seen=""
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno+1))
 
         # Capture a SMATCHET_DEVIATION comment to suppress the NEXT non-blank line.
         if [[ "$line" =~ $DEV_RE ]]; then
             local body="${BASH_REMATCH[1]}"
-            prev_dev_rule=""; prev_dev_revisit=""
+            prev_dev_rule=""; prev_dev_revisit=""; prev_dev_revisit_seen=""
             local kv
             IFS=';' read -ra kvs <<< "$body"
             for kv in "${kvs[@]}"; do
-                kv="${kv# }"
+                # Trim the whole field, not just one leading space: `  revisit=x` missed the
+                # `revisit=*` glob entirely and folded into the absent-field case below.
+                dev_trim "$kv"; kv="$DEV_TRIMMED"
                 case "$kv" in
                     rule=*)    prev_dev_rule="${kv#rule=}" ;;
-                    revisit=*) prev_dev_revisit="${kv#revisit=}" ;;
+                    # Trim the VALUE too. `revisit=2099-12-31 ` kept its trailing space, missed the
+                    # 10-char date glob and was reported overdue on a 2099 date; `revisit= 2020-01-01`
+                    # kept its leading space, missed the date shape entirely and bought a permanent
+                    # silent exemption on a past date. Presence is tracked apart from the value so an
+                    # EMPTY `revisit=` fails closed below instead of folding into absent-field.
+                    revisit=*) dev_trim "${kv#revisit=}"; prev_dev_revisit="$DEV_TRIMMED"
+                               prev_dev_revisit_seen=1 ;;
                 esac
             done
-            # DEV_RE's body capture is `[^)]*`, so it stops at the FIRST ')' — a reason= carrying a
-            # parenthetical hides everything after it, revisit= included. That loses the EXPIRY while
-            # keeping the SUPPRESSION (rule= precedes any paren): the fail-open direction, and it hid
-            # a real date on 8 live markers. Recover revisit= from the whole marker line, but only
-            # when the body split found none — never override a value the documented parse produced.
-            if [ -z "$prev_dev_revisit" ] && [[ "$line" =~ $DEV_REVISIT_RE ]]; then
-                prev_dev_revisit="${BASH_REMATCH[1]}"
-                prev_dev_revisit="${prev_dev_revisit%"${prev_dev_revisit##*[![:space:]]}"}"
-            fi
-            # deviation-overdue fires on the comment line itself.
-            if [ -n "$prev_dev_revisit" ] && revisit_overdue "$prev_dev_revisit"; then
+            # deviation-overdue fires on the comment line itself. `revisit=` typed but left EMPTY is
+            # a malformed attempt, not the sanctioned absent-field case: fail closed, matching the
+            # reference implementation, rather than mint a permanent exemption from a typo.
+            if [ -n "$prev_dev_revisit_seen" ] && \
+               { [ -z "$prev_dev_revisit" ] || revisit_overdue "$prev_dev_revisit"; }; then
                 printf 'deviation-overdue\t%s:%s\t%s\n' "$f" "$lineno" "$line"
             fi
             continue
@@ -49,7 +51,7 @@ scan_file_rules() {
 
         # Determine if the active SMATCHET_DEVIATION suppresses a rule on THIS line.
         local suppress="$prev_dev_rule"
-        prev_dev_rule=""; prev_dev_revisit=""   # deviation only covers the next non-blank line
+        prev_dev_rule=""; prev_dev_revisit=""; prev_dev_revisit_seen=""   # covers next non-blank line only
 
         # Skip pure-comment lines (leading //, leading * doc-continuation, leading /*)
         # for the printf/new heuristics — these are prose, not code.

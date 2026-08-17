@@ -70,37 +70,64 @@ has_inline_exempt() {
 # Parse SMATCHET_DEVIATION(rule=X; ...; revisit=Y) on the line ABOVE a target.
 # Returns the suppressed rule-id via stdout if the comment suppresses `want`.
 # Also emits deviation-overdue when revisit is a passed calendar marker.
-DEV_RE='SMATCHET_DEVIATION\(([^)]*)\)'
+#
+# The body capture is greedy to the LAST ')' on the line. With `[^)]*` it stopped at the FIRST ')',
+# so a reason= carrying a parenthetical ("... include set (ConfigManager / backends); owner=...;
+# revisit=2026-12-31)") hid every field after it. That dropped the EXPIRY on 8 live markers while
+# suppression kept working — the fail-open direction — and, when reason= preceded rule=, dropped the
+# SUPPRESSION too, silently and inconsistently: dup_audit.py:355, include_cycle_audit.py:398 and
+# appcontroller_fan_in_audit all match rule= over the WHOLE line, so the identical marker suppressed
+# there and not here. Greedy agrees with those three and with the reviewed reference implementation
+# (test-plan-claim-anchors.sh DEV_BODY_RE, hardened for this same defect on PR #2002). All four bash
+# consumers — 10-line-rules, 50-bare-json, 65-file-slurp, 75-pr-comments — split this capture the
+# same way, so they are fixed together.
+DEV_RE='SMATCHET_DEVIATION\((.*)\)'
 
-# Companion to DEV_RE for the `revisit=` field only. DEV_RE's body capture is `[^)]*`, so it stops
-# at the FIRST ')': a reason= carrying a parenthetical ("... include set (ConfigManager / backends);
-# owner=...; revisit=2026-12-31)") hides owner= and revisit= from the split above. Suppression
-# survives that (rule= precedes any paren) but the EXPIRY does not — the marker becomes permanently
-# un-auditable, which is the fail-open direction. Read revisit= off the whole marker line instead,
-# bounded by the next ';' or ')'.
-DEV_REVISIT_RE='revisit=([^;)]+)'
+# Strip leading+trailing whitespace from $1 into DEV_TRIMMED. Returns via a global rather than
+# $(...) on purpose: this runs once per field per marker, and compute_wide_violations sweeps every
+# first-party translation unit, so a fork per field would be pure waste.
+dev_trim() {
+    local s="$1"
+    s="${s#"${s%%[![:space:]]*}"}"
+    DEV_TRIMMED="${s%"${s##*[![:space:]]}"}"
+}
 
 today_ymd() { date +%Y-%m-%d; }
 
-# True if $1 LOOKS like someone meant a calendar revisit (starts YYYY-) but is not a value
-# revisit_overdue can compare. Every such value used to fall through to the slug branch and
-# silently become a PERMANENT exemption — the fail-open direction, and the failure is invisible
-# because the marker still suppresses. Three shapes were reaching that branch:
+# True if $1 is a CALENDAR ATTEMPT that revisit_overdue cannot compare. Every such value used to
+# fall through to the slug branch and silently become a PERMANENT exemption — the fail-open
+# direction, and invisible because the marker still suppresses. Three shapes reached that branch:
 #   2026-19-30  month 19 passes the [0-1][0-9] glob and string-sorts after today -> never overdue
 #   2020-1-1    not zero-padded, misses the glob entirely -> read as a slug -> never overdue
 #   2026-02-30  a day that does not exist in that month; the comparison is lexicographic, not a
 #               date parse, so nothing ever rejects it
+#
+# What counts as an attempt: YYYY- followed by a DIGIT, YYYY-Q…, or 8 bare digits. What does NOT: a
+# digit-leading SLUG (2026-roadmap, 2026-H2, 2026-or-later), which docs/agent-rules/cpp-rules.md
+# permits and states does not expire. Treating any `YYYY-*` as an attempt — an earlier draft of this
+# function — turned every such slug into an unsuppressable hard FAIL, because deviation-overdue is
+# absolute and cannot itself be deviated (a rule=deviation-overdue marker is discarded by the DEV_RE
+# branch in scan_file_rules), so one digit-leading slug anywhere would block every merge in the repo
+# with no escape hatch.
+#
+# One shape STRICTER than the reference CALENDARISH_RE in test-plan-claim-anchors.sh, which requires
+# a full \d{4}-\d{2}-\d{2} prefix and so reads the unpadded, genuinely-PAST `2020-1-1` as a
+# never-expiring slug. That regex was widened to match this, keeping the two enforcers of one
+# grammar in agreement; both carry a selftest for the case.
+#
 # Pure bash (no `date -d`) so the git-bash toolchain behaves the same as the ubuntu runner.
 revisit_datelike_but_invalid() {
     local r="$1" y m d dmax
     case "$r" in
         [0-9][0-9][0-9][0-9]-Q[1-4]) return 1 ;;                       # valid quarter
-        [0-9][0-9][0-9][0-9]-*) ;;                                     # date-shaped, keep checking
-        *) return 1 ;;                                                 # slug / never — not a date attempt
+        [0-9][0-9][0-9][0-9]-[0-9]*) ;;                                # date attempt, keep checking
+        [0-9][0-9][0-9][0-9]-Q*) return 0 ;;                           # quarter attempt, e.g. 2026-Q5
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;          # ISO basic 20270811 — not the grammar
+        *) return 1 ;;                                                 # slug (incl. 2026-roadmap) / never
     esac
     case "$r" in
         [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]) ;;
-        *) return 0 ;;                                                 # e.g. 2020-1-1, 2026-Q5
+        *) return 0 ;;                                                 # e.g. 2020-1-1, 2026-1-15
     esac
     y="${r%%-*}"; m="${r:5:2}"; d="${r:8:2}"
     case "$m" in 0[1-9]|1[0-2]) ;; *) return 0 ;; esac                 # e.g. 2026-19-30
@@ -121,16 +148,21 @@ revisit_overdue() {
     # $1 = revisit value. Overdue iff YYYY-MM-DD < today, or YYYY-Qn end < today. A value that was
     # clearly MEANT as a date but is not one is reported overdue too — failing closed, so a typo'd
     # revisit gets re-written instead of quietly buying a permanent exemption.
-    local r="$1" today; today="$(today_ymd)"
+    local r="$1" today
+    # Classify BEFORE forking `date`: the invalid check answers without today's date, and the slug
+    # arm never needs it. compute_wide_violations runs this once per marker over every first-party
+    # translation unit, and compute_strict_triples plus the base-worktree scan repeat the sweep.
     if revisit_datelike_but_invalid "$r"; then return 0; fi
     case "$r" in
         [0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9])
+            today="$(today_ymd)"
             [ "$r" \< "$today" ] && return 0 || return 1 ;;
         [0-9][0-9][0-9][0-9]-Q[1-4])
             local y q endm end
             y="${r%-Q*}"; q="${r#*-Q}"
             case "$q" in 1) endm=03-31;; 2) endm=06-30;; 3) endm=09-30;; 4) endm=12-31;; esac
             end="$y-$endm"
+            today="$(today_ymd)"
             [ "$end" \< "$today" ] && return 0 || return 1 ;;
         *) return 1 ;;  # slug / never -> never overdue
     esac

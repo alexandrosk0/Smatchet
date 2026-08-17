@@ -90,10 +90,17 @@ The Python auditors are immune for *suppression* — they only
 `re.search(r"rule=([A-Za-z0-9_,-]+)")` — but none of them implements expiry. Expiry lives **only**
 in the broken bash path.
 
-**Fixed in this change**: `DEV_REVISIT_RE` reads `revisit=` off the whole marker line, bounded by
-the next `;` or `)`. Regression fixtures `deviation-{overdue,current}-paren-reason.cpp` + two bats
-cases. Whole-tree overdue count today is **0 before and after** — no new CI failure — while the
-2027-01-01 projection correctly rises 87 → 94 as the 8 hidden dates rejoin the loop.
+**Fixed in this change**: `DEV_RE`'s body capture is now greedy to the **last** `)` on the line,
+matching the three Python auditors and the reviewed reference implementation
+(`test-plan-claim-anchors.sh` `DEV_BODY_RE`, hardened for this identical defect on PR #2002).
+Regression fixtures `deviation-{overdue,current}-paren-reason.cpp` + `deviation-paren-before-rule.cpp`
+and three bats cases. Whole-tree overdue count today is **0 before and after** — no new CI failure —
+while the 2027-01-01 projection correctly rises 87 → 94 as the 8 hidden dates rejoin the loop.
+
+A first attempt recovered only `revisit=` via a companion `DEV_REVISIT_RE` and left `rule=`
+truncated, so a marker whose `reason=` parenthetical *preceded* `rule=` silently granted no
+suppression at all — and inconsistently, since the Python auditors honoured the same marker. An
+independent review pass caught that; see § Review below.
 
 ## S2 · 47 markers are already wrapped across lines; the gate cannot see them at all
 
@@ -258,10 +265,23 @@ The second is the dangerous one: a real deadline turns permanent because of a fo
 **Fixed in this change**: `revisit_datelike_but_invalid()` rejects a value that clearly *meant* to
 be a calendar date but is not one, and `revisit_overdue()` now **fails closed** on it — a typo'd
 revisit gets re-written instead of quietly buying an exemption. Pure bash (no `date -d`) so
-git-bash and the ubuntu runner agree. Regression fixtures `deviation-revisit-malformed.cpp` (all
-three must fire) and `deviation-revisit-valid-shapes.cpp` (a real leap day, the `YYYY-Qn` form,
-`never`, and free-prose triggers must stay silent — the over-reach guard), plus two bats cases.
+git-bash and the ubuntu runner agree. Four more shapes joined the table after review: a past date
+behind **leading** whitespace, a `revisit=` typed but left **empty**, `2026-Q5`, and ISO-basic
+`20270811` — all previously permanent, all now overdue. Regression fixtures
+`deviation-revisit-malformed.cpp` (all seven must fire) and `deviation-revisit-valid-shapes.cpp`
+(a far-future leap day, `YYYY-Qn`, `never`, free-prose triggers, a **digit-leading slug**, and a
+future date with trailing whitespace must stay silent — the over-reach guard), plus bats cases.
 No live marker is affected: whole-tree overdue is still 0.
+
+**The over-reach direction is the dangerous one here, and a first attempt got it wrong.** Treating
+any `YYYY-*` value as a calendar attempt made `revisit=2026-roadmap` — a digit-leading slug the
+grammar explicitly permits and states does not expire — fire `deviation-overdue`. That rule is
+absolute, whole-tree, and **cannot itself be deviated** (a `rule=deviation-overdue` marker is
+discarded by the `DEV_RE` branch), so a single such slug would have blocked every merge in the repo
+with no escape hatch. The classifier now requires `YYYY-` + a **digit**, `YYYY-Q…`, or bare
+`YYYYMMDD`. This is one shape stricter than the reference `CALENDARISH_RE`, which demanded a full
+`\d{4}-\d{2}-\d{2}` prefix and so read the unpadded, genuinely-past `2020-1-1` as a slug; that regex
+was widened to match, with a selftest case, so the two enforcers of one grammar now agree.
 
 Not covered, because it is a wrong *key* rather than a wrong value: `revist=2020-01-01` (typo)
 still reads as "no revisit at all" and is indistinguishable from a marker that omits it. That
@@ -505,3 +525,44 @@ documented `BASELINE_FAN_IN` = **115**, a figure also copied into the AGENTS.md 
 Enforcement is unaffected — the ratchet is the `--diff` merge-base set-difference, not the constant
 — but a 43-includer gap between the published cap and reality misleads every reader of the
 contract-card. Not fixed here (out of scope of a deviation audit); noted for a follow-up.
+
+## Review · what an independent pass found after the fixes were already pushed
+
+The three fixes above were self-reviewed during authoring — four defects found and corrected before
+push — and the `CR finding gate` went green on the strength of the `adversarial-code-review:` verdict
+line that self-review produced. Nothing independent had actually run: CodeRabbit took its
+OSS-threshold skip (`Review skipped: manual review required for this OSS repository`) and Cursor
+Bugbot returned `neutral`. **The gate verifies that a verdict line exists, not that a review
+happened** — structurally the same fail-open shape this audit documents in the deviation gate, and
+worth its own entry.
+
+A later independent pass over the finished diff found eleven items, six of them defects in the fixes
+themselves. Two were regressions relative to base:
+
+| | shape | behaviour introduced |
+|---|---|---|
+| 1 | `revisit=2026-roadmap`, `2026-H2` | unsuppressable `deviation-overdue` hard FAIL on a legal slug |
+| 2 | `revisit=2099-12-31 ` (trailing space, no parenthetical) | falsely overdue; fell through cleanly at base |
+
+Three were holes left open in the very class the change set out to close: `rule=` was still truncated
+by `[^)]*` (only `revisit=` had been recovered, so a `reason=` parenthetical *preceding* `rule=`
+silently granted no suppression — while the Python auditors honoured the same marker); a **leading**
+space before a past date still bought a permanent exemption; and an **empty** `revisit=` still did.
+One was a time bomb: the new over-reach guard fixture used `revisit=2028-02-29`, which would have
+red-walled its own assertion on 2028-03-01.
+
+The root cause of all six is one thing. `agents/scripts/core/test-plan-claim-anchors.sh` already
+contained a reviewed, selftested implementation of this entire contract — greedy paren-safe body
+capture, value trimming, calendar-attempt classification, fail-closed on malformed and on empty —
+and its header states it mirrors `00-common.sh revisit_overdue()`. It was hardened for the identical
+`[^)]*` truncation on PR #2002. It was never consulted, and a narrower, divergent version was written
+from scratch instead. **The transferable lesson is the same one the ledger records for the audit
+verdicts: an artifact that exists is not an artifact you have read.**
+
+Deferred, deliberately, as scope creep rather than as a fix: the `CommentPragmas` change in S3
+generalises what **58 hand-written `clang-format off`/`on` guard pairs** were doing per-site, and
+those pairs are now dead. They are not harmless — each also freezes formatting on whatever else
+falls inside its region, leaving real code in 46 files permanently unformatted and invisible to
+`pre-ship.sh`'s `clang-format -i`, and they keep modelling the per-site bandaid this change retires.
+Removal is mechanical and verifiable (clang-format 18 across all 107 marker-holding TUs: deleting
+them introduces zero newly-dirty files), but it touches 46 files and belongs in its own change.

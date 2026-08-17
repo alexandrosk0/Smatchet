@@ -47,6 +47,12 @@ Note the run took 34.4 s for a suite that is normally much faster, and the job h
 hit rate — i.e. this runner was doing a full cold compile of 776 TUs concurrently with the test run.
 A 100 ms budget is not robust under that load.
 
+**Confirmed 2026-08-17 02:24Z.** The next push to the same branch re-ran `Windows + MSVC` on head
+`624a579`, whose C++ content is token-identical to `ea80edb`, and `Run ctest (MSVC)` passed cleanly
+in 33 s. One failure and one pass on the same code is direct evidence rather than the circumstantial
+argument above, and it rules out a deterministic regression. No re-run was requested to get it — the
+push re-triggered the job on its own.
+
 ## Why it matters
 
 `Windows + MSVC` is a branch-protection **required** check, so this flake blocks merges at random
@@ -73,4 +79,4 @@ Enumerator for the sweep: `grep -rn "Budget\|_ms\b\|std::chrono" tests/Core/*.te
 unit test carrying a wall-clock assertion; `StubAiClientCancel.test.cpp:98` is the row that
 motivated this entry, and any sibling with the same shape has the same exposure.
 
-Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=20; action=re-check whether StubAiClientCancel or another wall-clock unit assertion has failed a required check again; baseline=1 observed flake on 2026-08-17 (PR #2090); fired=never
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-17;n=20; action=re-check whether StubAiClientCancel or another wall-clock unit assertion has failed a required check again; baseline=1 observed flake and 1 observed pass on token-identical code, 2026-08-17 (PR #2090); fired=never

@@ -711,15 +711,29 @@ _resolve_py() {
     # revisit_overdue compares strings, not dates. An impossible month (2026-19-30), a past date
     # that is not zero-padded (2020-1-1), and a day outside its month (2026-02-30) all used to
     # fall through to the slug branch and never expire — invisibly, since the marker still
-    # suppresses. All three must now report overdue.
+    # suppresses. Joined by three more malformed attempts that also failed open: a past date behind
+    # LEADING whitespace, an EMPTY `revisit=`, a fifth quarter, and an ISO-basic date.
     run bash "$LINT" --scan-file "$FIX/deviation-revisit-malformed.cpp"
     [ "$status" -eq 0 ]
-    [ "$(grep -c 'deviation-overdue' <<< "$output")" -eq 3 ]
+    [ "$(grep -c 'deviation-overdue' <<< "$output")" -eq 7 ]
+}
+
+@test "a marker whose reason= parenthetical precedes rule= still suppresses" {
+    # The `[^)]*` body capture stopped at the first ')', so with this field ordering rule= was never
+    # parsed and the marker granted no escape at all — while dup_audit / include_cycle_audit /
+    # appcontroller_fan_in matched rule= over the whole line and DID honour it. The greedy capture
+    # makes the four bash gates agree with the three python ones. Line 7 must be suppressed; the
+    # past-dated twin on line 11 must still be caught as overdue.
+    run bash "$LINT" --scan-file "$FIX/deviation-paren-before-rule.cpp"
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"no-raw-new"* ]]
+    [ "$(grep -c 'deviation-overdue' <<< "$output")" -eq 1 ]
 }
 
 @test "valid revisit= shapes do not trip the malformed-revisit check" {
-    # Guards the over-reach direction: a real leap day, the quarter form, `never`, and free-prose
-    # trigger text are all legitimate and must stay silent.
+    # Guards the over-reach direction: a far-future leap day, the quarter form, `never`, free-prose
+    # trigger text, a digit-leading slug (2026-roadmap — legal per the grammar, and an earlier draft
+    # turned it into an unsuppressable hard FAIL), and a future date with trailing whitespace.
     run bash "$LINT" --scan-file "$FIX/deviation-revisit-valid-shapes.cpp"
     [ "$status" -eq 0 ]
     [[ "$output" != *"deviation-overdue"* ]]
