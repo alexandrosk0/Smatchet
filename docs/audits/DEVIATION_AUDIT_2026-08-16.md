@@ -242,6 +242,57 @@ Not covered, because it is a wrong *key* rather than a wrong value: `revist=2020
 still reads as "no revisit at all" and is indistinguishable from a marker that omits it. That
 belongs to the well-formedness gate deferred in S3/S4.
 
+---
+
+# The ledger — per-marker re-evaluation
+
+Method: seven parallel auditors, one per marker family, each required to ground a verdict in a
+path/symbol it actually read; then an adversarial pass over **every** non-KEEP verdict, instructed
+to refute and to default to refuted when it could not independently reproduce the evidence. Where
+family scopes overlapped, 45 markers were judged twice — useful signal in itself, recorded below.
+
+## Retire — markers that suppress nothing
+
+The decisive test is not "is the reason still true" but "does this marker suppress any live clone".
+I ran it three ways and they agree: each auditor drove `dup_audit._suppressed()` per marker; the
+skeptic re-derived it independently from `find_clones(streams_head())`; and I checked it a third
+way, geometrically, against the 695-clone head corpus (`inert.json`). **The skeptic upheld 23 of 24
+retire verdicts.**
+
+| marker | why it is inert |
+|---|---|
+| `Source/Core/src/AttachmentAppUpdateService.cpp:8, :10, :24` | earliest clone in the TU starts at 53; targets are `#include <atomic>` / `<cctype>` / `"AttachmentMimeUtils.h"` |
+| `Source/Core/src/Commands/CommandRegistry.cpp:424` | **zero** clone occurrences anywhere in the file; the marker also sits ~400 lines below the include block its reason describes |
+| `Source/Core/src/Tracker/GitHubProjectsV2Pure.cpp:291` | **zero** clone occurrences in the file |
+| `Source/Core/src/Ui/SmatchetUI.cpp:1, :5, :7` | five occurrences in the TU, earliest starts at 13; none reaches lines 1-8 |
+| `Source/Core/src/Tracker/GitHubClient.cpp:310, :735, :1156` | no occurrence within ±40 lines of any of the three |
+| `Source/Core/src/Tracker/JiraIssueSearch.cpp:479, :637` | `:479` is spliced *into* a string-concatenation initializer; both coverage sets empty, neighbours already covered by `:486` / `:591` / `:662` |
+| `Source/Core/src/Tracker/PlaneIssueMutation.cpp:151` | 8 occurrences in the TU, none within ±40 lines |
+| `Source/Core/src/Tracker/PlaneIssueSearch.cpp:654` | coverage set empty; the nearest clone is suppressed from the Jira side |
+| `Source/Core/src/Tracker/TrackerGridFieldDisplay.cpp:16` | span 18-40 is covered twice over — by `:30` (in-span) and from the `TrackerDateTimeFieldEditor.cpp` side |
+| `Source/Core/include/Tracker/JiraClient.h:48` | wrapped 48-49, so `DEV_RE` never matches it *and* its coverage set is empty |
+| `Source/Core/src/Tracker/LinearFixtureBackend.cpp:49` | wrapped 49-51; coverage empty; prose is near-verbatim redundant with the plain comment at 52-54 |
+| `Source/Core/src/Tracker/GitHubIssueSearch.cpp:492` | its "next non-blank line" is *another marker* at 494, and `10-line-rules.sh` resets `prev_dev_rule` on re-match — it can never suppress via the nearest-above path; 494 covers the same span |
+| `Source/Core/src/Tracker/JiraIssueMutation.cpp:558` | only span 552-566 contains it, and `:551` already covers that span as nearest-above |
+
+**Deleting these cannot change the gate's verdict**, and not by luck: `dup_audit.new_clones_vs()`
+computes `changed_files` by comparing *normalized token streams*, and comments are stripped before
+normalization. Removing a comment line leaves the token stream identical, so the file stays
+"unchanged" and its clones stay grandfathered.
+
+### The one retire the skeptic refuted
+
+`Source/Core/src/Tracker/JiraUserAndMeta.cpp:506` — **relocate, do not delete.** Its own target
+(`ParseBounded` at 507) is genuinely clone-free, so it looked inert. But five real, *unsuppressed*
+occurrences sit just above it in the same `FetchGroupMembers` loop — 465-473, 471-480, 491-501 and
+493-501 (×2), cloned against `GitHubActivityFeed.cpp`, `JiraActivityFeed.cpp` and
+`PlaneActivityFeed.cpp`. The marker is misplaced by ~15 lines, not obsolete; deleting it would be
+gate-safe today and would silently discard the exemption's intent. Move it to line 490, the nearest
+non-blank line above span 491.
+
+This is the case for running the adversarial pass at all: "suppresses nothing" and "is not needed"
+are different claims, and only the second justifies deletion.
+
 ## S9 · `BASELINE_FAN_IN` is stale by 43
 
 `appcontroller_fan_in_audit.py --selftest` reports live `AppController.h` fan-in = **72** vs
