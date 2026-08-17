@@ -27,6 +27,20 @@ already disagrees with the reason in two places: the same `ArgsJson` bytes go th
 `Source/Core/src/Ui/SmatchetImGuiHost.cpp:1060`. One field, three parse sites, and only this one
 exempts itself.
 
+That is not a coincidence, and it is the sharpest part of this entry. **`docs/audits/CPP_CODE_AUDIT.md`
+finding #12 is this exact class** — *"[Low][Security/DoS] Bare `json::parse` on toolbar/keybinding
+`ArgsJson` (2 sites) … Config-sourced `ArgsJson` (from `smatchet_config.json`) bare-parsed; deep DOM
+→ uncatchable teardown crash. Fix: `ParseBounded` with empty-object fallback."* It is marked
+**✅ Fixed** in that audit's summary table (line 16). The two sites it named
+(`SmatchetToolbarUi.cpp`, `SmatchetUI.cpp`) *were* fixed, with precisely that fix. The class then
+recurred in `KeybindingsConfig.cpp`, which the curated two-site list did not watch — and instead of
+the prescribed one-line fix, that site received a deviation asserting it was safe.
+
+This is the documented failure mode of a curated allow-list, quoted in `cpp-rules.md` as the reason
+`bare-json-parse-untrusted` went repo-wide default-deny in the first place: *"the list lagged the
+code every time the class recurred (#1573 / #1592 / #1598)."* Default-deny did its job and caught
+the recurrence; the deviation then waived it on a premise the audit had already rejected.
+
 **2 · `Source/Core/src/Tracker/PlaneProjectScope.cpp:13`** (and the same reason at
 `PlaneIssueMappingPure.cpp:223`, `PlaneIssueSearch.cpp:98`) —
 `reason=the Plane structured-query blob is app-serialised program-internal bytes, not

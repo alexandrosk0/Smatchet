@@ -251,6 +251,39 @@ path/symbol it actually read; then an adversarial pass over **every** non-KEEP v
 to refute and to default to refuted when it could not independently reproduce the evidence. Where
 family scopes overlapped, 45 markers were judged twice — useful signal in itself, recorded below.
 
+## Verdict at a glance
+
+| | count |
+|---|---|
+| live first-party markers | 201 |
+| **re-evaluated** | **173** |
+| ├─ **keep** — reason still true, exemption still needed | 93 |
+| ├─ **retarget** — needed, but revisit / owner / reason is wrong | 35 |
+| ├─ **fix-grammar** — malformed in a way that weakens the gate | 25 |
+| └─ **retire** — suppresses nothing | 20 |
+| non-KEEP verdicts put to the adversarial pass | 127 |
+| of those, **refuted** | 48 |
+| not re-evaluated (see below) | 28 |
+
+Auditor verdicts *before* the adversarial pass were KEEP 52, RETARGET 75, FIX-GRAMMAR 25,
+RETIRE 21. The pass moved 48 of them, overwhelmingly toward KEEP — a useful calibration on how
+readily a first-pass audit talks itself into action, and the reason the retire list below is worth
+trusting.
+
+### Coverage — and a self-inflicted demonstration of S2
+
+28 of the 201 markers were **not** re-evaluated, and they are *exactly* the wrapped ones: 16 in
+`Source/Core/include/Tracker/{GitHub,Linear,Plane}Client.h`, the rest scattered across the AI
+clients, `PlaneActivityFeed.cpp`, `WhisperPlugin.cpp` and four UI TUs.
+
+The reason is worth recording rather than hiding. The per-family work-lists were built from a first
+inventory pass that matched `SMATCHET_DEVIATION(...)` on a **single line** — the same assumption
+`DEV_RE` makes. So the 47 wrapped markers were invisible to the work-list, and 28 of them never
+reached an auditor. **The defect this audit exists to document silently shaped the audit itself**,
+which is about as direct a demonstration of its blast radius as one could ask for. They are covered
+wholesale by the S2 finding and its un-wrapping sweep; each still needs an individual verdict once
+un-wrapped.
+
 ## Retire — markers that suppress nothing
 
 The decisive test is not "is the reason still true" but "does this marker suppress any live clone".
@@ -292,6 +325,97 @@ non-blank line above span 491.
 
 This is the case for running the adversarial pass at all: "suppresses nothing" and "is not needed"
 are different claims, and only the second justifies deletion.
+
+### A disagreement worth keeping
+
+`SmatchetUI.cpp:1/5/7` were judged twice and came back RETIRE from one family and RETARGET from
+another. Not a contradiction — they answered different questions. The metadata reading is correct
+and damning on its own terms: the reason cites `CPP_CODE_AUDIT.md` **finding #12, which is
+"toolbar/keybind ArgsJson" (marked fixed), not an include-block clone**, and `owner=cpp-audit` has
+**zero non-marker references anywhere in the repo**. But the effect test dominates: there is no
+point repairing the owner of a marker that suppresses nothing. Retire wins; the dead-citation and
+dead-owner observations survive as evidence for S7.
+
+## Retarget — keep the exemption, correct its metadata
+
+35 markers. Three themes account for nearly all of them.
+
+**1 · A calendar date on a permanently standing exemption (the large majority).** AGENTS.md already
+declares per-backend `*Client` boilerplate, interface-mandated override symmetry, fixture shells and
+dual-target forward-decls to be *standing* exemptions. Two dozen of those carry `revisit=2026-12-31`
+anyway, so on 2027-01-01 they fire `deviation-overdue` with no possible remediation — the clone is
+structural. These want a slug or `never`: `Tracker/GitHubClient.cpp:106, :437, :974`,
+`Tracker/GitHubIssueSearch.h:28, :34`, `Tracker/GitHubProjectsV2.cpp:77`,
+`Tracker/JiraIssueSearch.cpp:355, :662, :678`, `Tracker/JqlSuggestEnginePure.cpp:16`,
+`Tracker/PlaneIssueMutation.cpp:198`, `Tracker/PlaneQuerySuggestEnginePure.cpp:14`,
+`Tracker/LinearFixtureBackend.cpp:55`, `Tracker/LinearIssueSearch.h:49`,
+`include/Tracker/{JiraClient.h:17, LinearFixtureBackend.h:22, GitHubFixtureBackend.h:52,
+TrackerFixtureBackendBase.h:65}`, `Tracker/JiraUserAndMeta.cpp:371, :433`,
+`Tracker/GitHubActivityFeed.cpp:67, :78`, and `include/Sha256.h:31` (whose `2099-01-01` is a
+permanent exemption in a calendar costume — `never` says it honestly).
+
+**2 · A reason or trigger that no longer matches the code.**
+`Standalone/CliCommandRunner.cpp:313` names a twin in `SmatchetPreferencesUi_Local.cpp`; it now
+lives in `SmatchetPreferencesUi_General.cpp:55`. `AppController_HostIntegration.cpp:46` waits on "a
+shared process-spawn utility header" — `SubprocessCapture.h` exists but is synchronous-capture-only
+and does not qualify, so the trigger needs sharpening rather than firing.
+`AppController_Init.cpp:42` and `_McpActivity.cpp:38` should drop the ADR-0020 citation for what
+actually blocks them (the pImpl forcing complete owned-service types in every companion TU).
+
+**3 · An owner handle nobody can route to.** `cpp-audit` has zero non-marker references repo-wide;
+`quick-create-issue-unreal-context`, `perf-tooling` and `build-doctor` appear once each. Reassign to
+handles that exist (`tracker-backend`, `command-system`, `ui`).
+
+Three rows are not metadata fixes at all but code changes, and they are the security cluster's:
+`Config/KeybindingsConfig.cpp:153` and `:175`, and `Tracker/PlaneProjectScope.cpp:13` /
+`PlaneIssueSearch.cpp:98` / `PlaneIssueMappingPure.cpp:223` should route through
+`json_safe::ParseBoundedOrDiscarded` — a drop-in for their existing `is_discarded()` handling — and
+drop the marker entirely. Detail in the security finding.
+
+## Fix grammar — markers the gate cannot fully read
+
+25 markers, and 21 of them are the wrapped set from S2. The fix is mechanical now that
+`CommentPragmas` stops `clang-format` re-wrapping them: collapse onto one ≤120-column line placed
+as the nearest non-blank line above the target, with the justification prose moved *above* the
+marker. `include/Tracker/JiraClient.h:30, :60, :118, :141` share one reason string and can be fixed
+as a batch; `OllamaClient.cpp:27`, `OpenAiClient.cpp:130` and `AnthropicClient.cpp:155` likewise.
+
+Four are placement rather than wrapping, and are worth reading individually:
+
+- `include/AppController.h:989` and `Tracker/LinearIssueMutation.cpp:85` — the `(rule=duplication):`
+  shape with no `owner=` and no `revisit=` (S4). Give them both, `never` being legitimate here since
+  both are god-object-decomposition signature mirrors.
+- `Tracker/GitHubIssueSearch.h:64` and `:81` — two markers where one suffices; keep exactly one,
+  directly above line 85.
+- `Commands/Scenarios/InteractiveGridStressScenario.cpp:42` — anchored where no clone is; the two
+  real clones are near the pane-build loop and `OnFinish`.
+- `Tracker/GitHubFixtureBackend.cpp:26` — the wrapped marker that is **failing open today**. Better
+  than collapsing it: delete the file's private `ReadFileToString` and route through the shared
+  `TrackerFixtureBackendBase::LoadFixtureJson`, removing the need for the exemption.
+
+## Keep — 93 markers
+
+Four families, all verified still-justified against the current tree:
+
+**AppController companion TUs (11).** A partial-class TU defining `AppController::` methods must see
+the complete class however thin the header gets — the fan-in plan's own audit table classifies these
+as terminal with a Δ ceiling of 0. The `ADR-0020 / debt.md` trigger is live and pending, as above.
+
+**Backend parity (the largest group).** Per-backend `*Client` boilerplate that AGENTS.md explicitly
+prefers exempting over abstraction — "a DRY-motivated refactor that couples two otherwise-independent
+subsystems is a code-review CRITICAL, not an improvement". These are correct as exemptions; only
+their calendar dates are wrong (see retarget theme 1).
+
+**God-file-split include prologues.** Every named "when a shared `<X>` TU prologue header is
+introduced" trigger was checked against the tree and **none has fired**:
+`CliCommandRunner_Internal.h` and `AppController_LuaBindings_detail.h` exist but are
+declaration/helper headers carrying none of the cloned include block. These stay until either the
+prologue header lands or `dup_audit.py` stops flagging include runs (S6) — the latter would retire
+about 73 of them at a stroke.
+
+**Scenario and UI twins.** `WhisperDictationScenario.cpp:101/:119` still have no shared dispatch
+helper; `ActiveProjectDrawCtx` is still a plain struct with public members, not the interface its
+two `app-controller-fan-in` markers wait on.
 
 ## S9 · `BASELINE_FAN_IN` is stale by 43
 
