@@ -309,6 +309,11 @@ void DrawAboutBuild(const AboutDrawCtx& ctx) {
     FactRow("cmake", b.CMakeVersion);
     FactRow("imgui", b.ImGuiVersion);
     FactRow("architecture", b.TargetArch);
+    if (b.AgentDebug) {
+        // Row only on an instrumented build — same contract as BuildAboutReportText.
+        // A permanent "agent-debug: off" row would tell a normal user nothing.
+        FactRow("agent-debug", "on");
+    }
     ::ImGui::EndTable();
 }
 

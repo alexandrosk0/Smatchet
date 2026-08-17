@@ -5656,6 +5656,16 @@ needs its risky work step-scoped.
     `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
     gate never received the same treatment, despite its own header describing
     itself as lifting the client-side verdict server-side.
+    Merge-history evidence added 2026-08-16 (PR #2038, after the fix landed): a
+    sweep of all 1,416 merged PRs above #500 — each merged head SHA's status
+    contexts plus CR's reviews/comments on that same SHA — shows this class had
+    already merged **4 PRs with CR never having looked at all**: #2014, #2024,
+    #2027, #2031 (2026-08-15 → 08-16), none carrying an override label, and
+    #2024 is not docs (`fix(sync): stop multi-pane full syncs from deleting each
+    other's cached tickets`, 19 code files). #2030 carries the same green status
+    but did get a CR walkthrough on its head, so it is an instance of the status
+    and not of the never-reviewed outcome. The #2028 near-miss in the original
+    framing was the case that got caught; these four are the ones that did not.
   Last-reviewed: 2026-08-16
 
 - 2026-08-16 · orchestrator · [infra] · P2 — a `send_later` check-in that fires while the remote container is suspended is silently lost, so an autonomous ship-loop can park a finished PR indefinitely with no alarm and no retry
@@ -5700,4 +5710,31 @@ needs its risky work step-scoped.
     network, and skips drafts (parked on purpose) so it does not train readers
     to ignore it. 14 bats cases + a fixture-driven --selftest, all
     negative-tested.
+  Last-reviewed: 2026-08-16
+
+- 2026-06-12 · git-janitor · [tooling] · P3 — `lua-off-build-clang-winmain`: git-cleanup-procedures'
+    Lua-off regression-gate recipe invoked bare `cmake` and could select clang++, failing the link
+  Details: The § Regression gate recipe ran `cmake -B build/lua-off-check
+    -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja` with no preset and no MSVC environment, so CMake
+    picked whatever compiler was first on PATH — plain `clang++` on the reporting machine.
+    `Source/Standalone/CMakeLists.txt` sets `WIN32_EXECUTABLE TRUE` (→ `/SUBSYSTEM:WINDOWS`, whose
+    default entry is `WinMain`) but applies the `/ENTRY:mainCRTStartup` correction only inside an
+    `if(MSVC)` block, so a plain-clang++ configure links with the wrong entry point and dies on
+    `lld-link: error: undefined symbol: WinMain`. Pre-existing gap, never CI-visible: every CI
+    Lua-off job goes through a preset (`ninja-msvc-asan` / `ninja-clang-asan`, plus
+    `sanitizer-nightly.yml`) and both preset bases pin an MSVC-ABI driver (`cl.exe` / `clang-cl`),
+    for which CMake's `MSVC` variable is TRUE — only the bare-`cmake` skill recipe was exposed.
+  Concrete next action: route the recipe through the preset instead of bare `cmake`.
+  Status: applied — the recipe is now
+    `cmake --preset ninja-iter-msvc -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF`
+    (`-G Ninja` dropped; the preset supplies the generator). Command-line `-B` and `-D` override a
+    preset's `binaryDir` and `cacheVariables`, so the Lua-off probe still gets its own build dir and
+    does not disturb `build/iter-msvc` — verified empirically against CMake with a throwaway
+    preset before shipping. Fixed at the recipe, NOT by making `/ENTRY:mainCRTStartup` unconditional
+    in `Source/Standalone/CMakeLists.txt` (the entry's stated alternative): every supported Windows
+    configuration is MSVC-ABI, so the `if(MSVC)` guard is correct and loosening it would add an
+    untested link path to the product build for no supported caller. The entry's other proposed
+    remedy — wrapping the invocation in `scripts/dev/with-msvc.ps1` — was stale: no such script
+    exists on develop. Recovered from a stashed 2026-06-12 `tooling.md` edit that was never
+    committed; it is filed straight to `applied.md` per § Workflow 4 since the fix ships with it.
   Last-reviewed: 2026-08-16

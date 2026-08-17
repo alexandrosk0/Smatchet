@@ -9,6 +9,7 @@ using TrackerGridFieldDisplayPure::BuildIssueRestrictionRenderModel;
 using TrackerGridFieldDisplayPure::BuildProgressRenderModel;
 using TrackerGridFieldDisplayPure::BuildVotesRenderModel;
 using TrackerGridFieldDisplayPure::BuildWatchersRenderModel;
+using TrackerGridFieldDisplayPure::BuildWorklogCellModel;
 using TrackerGridFieldDisplayPure::BuildWorklogRenderModel;
 
 // Every input below is a CachedTicket field value string as a tracker backend produced it —
@@ -188,6 +189,54 @@ TEST_CASE("BuildWorklogRenderModel — totals, partial-page marker, tooltip entr
         CHECK(model.line.back() != '*');
     }
     SUBCASE("missing worklogs array is unparsed") { CHECK_FALSE(BuildWorklogRenderModel(R"({"total":3})").parsed); }
+}
+
+// The "Log Work" cell is the affordance users reach for when they want to log hours (#2083), so
+// it must offer the action on every shape a backend can leave in the cell EXCEPT one we could not
+// parse — an unrecognised payload stays inert read-only text rather than a button whose label is
+// backend-chosen bytes.
+TEST_CASE("BuildWorklogCellModel — clickability across empty / logged / hostile payloads") {
+    SUBCASE("blank cell offers the action") {
+        for (const char* v : {"", "   ", "\t\n"}) {
+            const auto cell = BuildWorklogCellModel(v);
+            CHECK(cell.clickable);
+            CHECK(cell.label == "Log work");
+            CHECK(cell.tooltip == "No work logged yet. Click to log work.");
+        }
+    }
+    SUBCASE("parsed-but-empty worklog page offers the action, not the '-' read-out") {
+        const auto cell = BuildWorklogCellModel(R"({"total":0,"worklogs":[]})");
+        CHECK(cell.clickable);
+        CHECK(cell.label == "Log work");
+        CHECK(cell.label != "-");
+    }
+    SUBCASE("logged work keeps the summary line and gains the click hint") {
+        const std::string value = R"({
+            "total": 2, "startAt": 0, "maxResults": 50,
+            "worklogs": [
+                {"author":{"displayName":"Ann"},"timeSpent":"1h","timeSpentSeconds":3600},
+                {"author":{"displayName":"Bo"},"timeSpentSeconds":1800}
+            ]
+        })";
+        const auto cell = BuildWorklogCellModel(value);
+        const auto model = BuildWorklogRenderModel(value);
+        CHECK(cell.clickable);
+        CHECK(cell.label == model.line);
+        CHECK(cell.tooltip.find("Ann") != std::string::npos);
+        // Exactly one blank line before the hint — the summary's trailing newlines are trimmed
+        // first, so the tooltip never grows a ragged gap as entries are added.
+        CHECK(cell.tooltip.find("\n\n\nClick to log work") == std::string::npos);
+        CHECK(cell.tooltip.find("\n\nClick to log work / edit estimates.") != std::string::npos);
+        CHECK(cell.tooltip.back() == '.');
+    }
+    SUBCASE("unparseable non-empty payloads stay read-only text") {
+        for (const std::string& v : {std::string("not json"), std::string(R"({"total":3})"), DeepNestingBomb()}) {
+            const auto cell = BuildWorklogCellModel(v);
+            CHECK_FALSE(cell.clickable);
+            CHECK(cell.label == v);
+            CHECK(cell.tooltip.empty());
+        }
+    }
 }
 
 TEST_CASE("BuildIssueRestrictionRenderModel — shouldDisplay coercions + restriction counts") {

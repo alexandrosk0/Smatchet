@@ -375,6 +375,11 @@ add_executable(SmatchetTests
     # pane-stale-delete-collision — pure keep-set roster filter shared by TicketSyncService's
     # session convergence and AppController's namespace-wide refresh. Header-only.
     Core/TicketRosterFilterPure.test.cpp
+    # issues #2049 / #2050 / #2063 — the per-pane owned-ticket-id store extracted out of
+    # AppController (absent vs tombstoned recorded set, retirement keyed by pane id across every
+    # backend key, atomic single-id admit). Header-only
+    # (Source/Core/include/Sync/PaneOwnedTicketIdStore.h); no production .cpp to link.
+    Core/PaneOwnedTicketIdStore.test.cpp
     # issue #1457 — gridContexts_ map-structure race (worker snapshot-find vs UI
     # retire-erase / emplace). Seam-level fixture; header-only, also in SmatchetTsanTests.
     Core/GridContextsMapRace1457.test.cpp

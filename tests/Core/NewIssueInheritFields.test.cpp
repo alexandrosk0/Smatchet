@@ -69,17 +69,21 @@ TEST_CASE("NewIssueInheritFieldIdsFor — unknown and empty types fall back to t
     CHECK(NewIssueInheritFieldIdsFor(cfg) == cfg.NewIssueInheritFieldIds);
 }
 
-TEST_CASE("NewIssueInheritFieldIdsFor — GitHub falls through to the default list (known gap)") {
-    // NOT aspirational: TrackerConfig::NewIssueInheritFieldIdsGitHub exists and the
-    // Preferences UI both loads and saves it ("New issue: inherit fields from last
-    // row (GitHub)"), but no draft path has ever read it. This asserts the CURRENT
-    // behaviour so the gap is visible and a future fix has to update a test rather
-    // than change behaviour silently. Flip the expectation when the kBackendGitHub
-    // branch is added to NewIssueInheritFieldIdsFor.
+TEST_CASE("NewIssueInheritFieldIdsFor — GitHub reads the GitHub list") {
+    // Regression: GitHub used to fall through to the Jira list, so the Preferences row
+    // "New issue: inherit fields from last row (GitHub)" was loaded and saved but never
+    // consumed by any of the three draft paths.
     TrackerConfig cfg = MakeConfig();
     cfg.TrackerType = "GitHub";
-    CHECK(NewIssueInheritFieldIdsFor(cfg) == cfg.NewIssueInheritFieldIds);
-    CHECK(NewIssueInheritFieldIdsFor(cfg) != cfg.NewIssueInheritFieldIdsGitHub);
+    CHECK(NewIssueInheritFieldIdsFor(cfg) == cfg.NewIssueInheritFieldIdsGitHub);
+    CHECK(NewIssueInheritFieldIdsFor(cfg) != cfg.NewIssueInheritFieldIds);
+    CHECK(&NewIssueInheritFieldIdsFor(cfg) == &cfg.NewIssueInheritFieldIdsGitHub);
+
+    // The hand-editable TrackerType resolves case-insensitively here too.
+    cfg.TrackerType = "github";
+    CHECK(NewIssueInheritFieldIdsFor(cfg) == cfg.NewIssueInheritFieldIdsGitHub);
+    cfg.TrackerType = "GITHUB";
+    CHECK(NewIssueInheritFieldIdsFor(cfg) == cfg.NewIssueInheritFieldIdsGitHub);
 }
 
 TEST_CASE("NewIssueInheritFieldIdsFor — returns a reference into the config, not a copy") {

@@ -342,6 +342,7 @@ WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
     }
 
     model.parsed = true;
+    model.total = s.Total;
     if (s.Total <= 0) {
         model.line = "-";
     } else {
@@ -396,6 +397,39 @@ WorklogRenderModel BuildWorklogRenderModel(const std::string& currentValue) {
         model.tooltip += "\n\nMore entries exist in Tracker than are included in this cell.";
     }
     return model;
+}
+
+WorklogCellModel BuildWorklogCellModel(const std::string& currentValue) {
+    WorklogCellModel cell;
+    const WorklogRenderModel model = BuildWorklogRenderModel(currentValue);
+    if (!model.parsed) {
+        // A blank cell is the common "this issue has no work logged" case (and the shape Plane /
+        // GitHub leave behind), so it still offers the action. A NON-blank payload we could not
+        // parse stays inert read-only text — an unrecognised (possibly hostile) shape must not be
+        // dressed up as a button whose label is attacker-chosen bytes.
+        if (!TrimCopyAsciiWhitespace(currentValue).empty()) {
+            cell.label = currentValue;
+            return cell;
+        }
+        cell.clickable = true;
+        cell.label = "Log work";
+        cell.tooltip = "No work logged yet. Click to log work.";
+        return cell;
+    }
+
+    cell.clickable = true;
+    if (model.total <= 0) {
+        cell.label = "Log work";
+        cell.tooltip = "No work logged yet. Click to log work.";
+        return cell;
+    }
+    cell.label = model.line;
+    cell.tooltip = model.tooltip;
+    while (!cell.tooltip.empty() && cell.tooltip.back() == '\n') {
+        cell.tooltip.pop_back();
+    }
+    cell.tooltip += "\n\nClick to log work / edit estimates.";
+    return cell;
 }
 
 IssueRestrictionRenderModel BuildIssueRestrictionRenderModel(const std::string& currentValue) {

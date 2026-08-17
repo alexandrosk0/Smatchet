@@ -19,6 +19,7 @@ using smatchet::IsRebuildableCorruptCode;
 using smatchet::IsTransientBusyCode;
 using smatchet::MakeCorruptQuarantineSuffix;
 using smatchet::ShouldRetryBusyInit;
+using smatchet::ShouldRetryBusyWrite;
 
 TEST_CASE("IsRebuildableCorruptCode: genuine on-disk corruption is rebuildable") {
     CHECK(IsRebuildableCorruptCode(SQLITE_NOTADB));
@@ -147,4 +148,47 @@ TEST_CASE("BusyRetryBackoffMs: capped exponential with a sub-half-second total b
     // The 4 backoffs across a 5-attempt budget stay well under the multi-second busy_timeout
     // wall — a human-imperceptible startup hiccup, not a hang.
     CHECK(BusyRetryBackoffMs(0) + BusyRetryBackoffMs(1) + BusyRetryBackoffMs(2) + BusyRetryBackoffMs(3) == 375);
+}
+
+// --- issue #2045: the write-transaction retry loop's TOTAL wall-clock deadline ---
+
+TEST_CASE("ShouldRetryBusyWrite: inside the budget it behaves exactly like the attempt-count policy") {
+    // With time to spare, the write policy must not be stricter than the init policy — the
+    // deadline is an ADDITIONAL bound, not a replacement.
+    CHECK(ShouldRetryBusyWrite(SQLITE_BUSY, 0, 5, /*elapsedMs=*/0, /*budgetMs=*/500));
+    CHECK(ShouldRetryBusyWrite(SQLITE_BUSY, 3, 5, /*elapsedMs=*/100, /*budgetMs=*/500));
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_BUSY, 4, 5, /*elapsedMs=*/0, /*budgetMs=*/500)); // attempts exhausted
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_CANTOPEN, 0, 5, /*elapsedMs=*/0, /*budgetMs=*/500)); // not transient
+}
+
+TEST_CASE("ShouldRetryBusyWrite: a spent budget stops the loop even with attempts left") {
+    // The regression this closes: five attempts each sitting on the 5 s busy_timeout blocked the
+    // caller ~25 s because only the attempt count was checked. One slow attempt now ends it.
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_BUSY, 0, 5, /*elapsedMs=*/5000, /*budgetMs=*/500));
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_BUSY, 1, 5, /*elapsedMs=*/501, /*budgetMs=*/500));
+}
+
+TEST_CASE("ShouldRetryBusyWrite: the next backoff is charged against the deadline, not slept past it") {
+    // attempt 0 backs off 25 ms: allowed at 475 ms elapsed (475 + 25 == 500), refused at 476.
+    CHECK(ShouldRetryBusyWrite(SQLITE_BUSY, 0, 5, /*elapsedMs=*/475, /*budgetMs=*/500));
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_BUSY, 0, 5, /*elapsedMs=*/476, /*budgetMs=*/500));
+    // attempt 3 backs off 200 ms, so it needs 200 ms of headroom rather than 25.
+    CHECK(ShouldRetryBusyWrite(SQLITE_BUSY, 3, 5, /*elapsedMs=*/300, /*budgetMs=*/500));
+    CHECK_FALSE(ShouldRetryBusyWrite(SQLITE_BUSY, 3, 5, /*elapsedMs=*/301, /*budgetMs=*/500));
+}
+
+TEST_CASE("ShouldRetryBusyWrite: the whole 5-attempt ladder fits a 500 ms budget when attempts fail fast") {
+    // The common contention shape — SQLITE_BUSY_SNAPSHOT returns immediately — must still get its
+    // full retry ladder: the 375 ms of backoffs alone never exhaust the budget.
+    long long elapsedMs = 0;
+    int retries = 0;
+    for (int attempt = 0; attempt < 5; ++attempt) {
+        if (!ShouldRetryBusyWrite(SQLITE_BUSY_SNAPSHOT, attempt, 5, elapsedMs, /*budgetMs=*/500)) {
+            break;
+        }
+        elapsedMs += BusyRetryBackoffMs(attempt);
+        ++retries;
+    }
+    CHECK(retries == 4); // 4 retries after the first failure = the full 5-attempt budget
+    CHECK(elapsedMs == 375);
 }

@@ -8,7 +8,7 @@
 // fan-in Phase 5: depend on the narrow IAppMeta facet, not the full AppController.h.
 #include "Interfaces/IAppMeta.h"
 #include "Types/AppUpdateTypes.h" // AppUpdateInfo, named directly by the app.check_updates handler
-#include <nlohmann/json.hpp> // this TU constructs nlohmann::json directly.
+#include <nlohmann/json.hpp>      // this TU constructs nlohmann::json directly.
 #include "ConfigManager.h"
 #include "Diagnostics/AboutInfo.h"
 
@@ -46,6 +46,11 @@ void AddAboutFields(nlohmann::json& out, IAppMeta& app) {
     build["imguiVersion"] = info.Build.ImGuiVersion;
     build["targetArch"] = info.Build.TargetArch;
     build["buildTag"] = info.Build.BuildTag;
+    // Unconditional (unlike the dialog + report text, which only show it when ON):
+    // this is the machine surface a validator reads to tell "no instrumented call
+    // site fired" apart from "SMATCHET_AGENT_DEBUG never reached the compiler", and
+    // an absent key would leave that ambiguous all over again.
+    build["agentDebug"] = info.Build.AgentDebug;
     out["build"] = std::move(build);
 
     nlohmann::json git;

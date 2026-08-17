@@ -11,8 +11,10 @@ debugger (cdb/WinDbg/kd) or any pip package:
 
 This is the hand-rolled scan a debug-detective previously re-derived per incident
 (tooling backlog no-cdb-windbg-dump-triage-script). For a SYMBOLIZED stack use
-cdb instead:  cdb -z <dump> -c "!analyze -v; q"  (see
-docs/agent-rules/debug-techniques.md). This script is the no-debugger fallback.
+cdb instead — canonical invocation and the (non-trivial) install recipe both in
+docs/agent-rules/debug-techniques.md § Installing cdb. Not the bare
+`-c "!analyze -v; q"` form: it walks only the faulting thread, which is the wrong
+one on a hang dump. This script is the no-debugger fallback.
 
 Minidump layout (see MINIDUMP_HEADER / MINIDUMP_DIRECTORY in DbgHelp.h):
   header @0: 'MDMP' magic, version, stream count, stream-directory RVA.

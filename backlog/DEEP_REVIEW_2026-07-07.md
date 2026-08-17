@@ -23,13 +23,17 @@
 
 ---
 
-## Status snapshot
+## Status snapshot (re-verified 2026-08-16 against develop tip `7da969b`)
 
 | Severity | Count | State |
 |----------|-------|-------|
 | **P0** — data-loss / security / crash | 17 | 17 ✅ |
-| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29) |
+| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29 — narrowed, see below) |
 | **P2** — polish / consistency | 3 | 3 ✅ |
+
+**DR29 is the only item not closed**, and its scope shrank: the ODR violation and three of the
+vacuous guards are fixed; three self-referential tests remain, all blocked on the same cause — the
+production helper lives in a translation unit the focused test rig cannot link.
 
 Findings landed across three PRs: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32/DR33) via
 PR #1676; batch 2 (the remaining 24) from parallel fix agents; batch 3 closed the **DR6** residual
@@ -341,6 +345,13 @@ class definitions (`tests/support/OfflineQueueTestEnv.h:32` vs `tests/support/Te
 into one binary — link-order-dependent destructor (one skips audit cleanup).
 - **Fix:** point these tests at the production symbol; rename one `TestEnvGuard` (or merge the two).
 - **Related:** `TEST_COVERAGE_GAP_MAP.md` hygiene notes track adjacent gaps; add these there too.
+- **Triage 2026-08-16 (verified against develop tip `7da969b`).** Closed since batch 3:
+  - **ODR — fixed.** Only one `TestEnvGuard` class definition remains (`tests/support/TestEnvGuard.h:46`); the offline-queue one is renamed `OfflineQueueTestEnvGuard` (`tests/support/OfflineQueueTestEnv.h:32`). No link-order-dependent destructor.
+  - **`ai_prefs_autosave_flow.test.cpp` — fixed** (comment at `:324` records the swap to a production-observable assertion).
+  - **`MarkdownLanguageDefinition.test.cpp` — fixed**; the cases now drive the production `LD::Markdown()` token regexes.
+  - **`AgentsMdLoader.test.cpp` — fixed**; the tautology is replaced with a determinism pin against the production `AgentsMdLoader::LoadLayered` symbol.
+  - **Still self-referential (the documented residual class):** `BulkImportAbandonNonBlocking.test.cpp:48-68` (`FakeBulkSession` + `FakeBulkImportAbandonFutures`, explicitly "byte-for-byte the production shape"), `UserInfoActivityCancelUaf.test.cpp` (`FakeController`/`FakeUserInfoOwner`), and `LuaTimeout.test.cpp` via `tests/support/LuaHostFixture.h:82` (mirrors `LuaHookGuard`, which lives in the src-private `AppController_LuaBindings_detail.h:74`).
+  - **Verdict:** DR29 stays 🟡 PARTIAL, but the remainder is now a single, well-defined refactor rather than a test-hygiene sweep — **each residual needs its production helper hoisted to a test-linkable header** (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity cancel path). Sequence it as one "hoist production helpers for test linkage" change; do not attempt per-test patches, which is what left the residual last time.
 
 ### DR30. Credentials leaked into logs via unredacted error bodies — ✅ DONE (fix pushed on branch)
 Raw HTTP error bodies are spliced into user-facing/log strings, bypassing `RedactHttpBodyForLog`:
@@ -380,7 +391,18 @@ invalidation → stale wrapping after a font-size change. `Ui/CodeColorView.cpp:
 
 ---
 
-## Suggested sequencing
+## Sequencing (current — 2026-08-16)
+
+**32 of 33 findings are shipped.** The sequencing plan below is fully executed and kept for provenance.
+
+The single remaining item is **DR29**, and it is one change, not a list: hoist the three production
+helpers its residual tests re-implement (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity
+cancel path) into test-linkable headers, then point `LuaTimeout.test.cpp`,
+`BulkImportAbandonNonBlocking.test.cpp`, and `UserInfoActivityCancelUaf.test.cpp` at the real symbols.
+Do it as one change — the per-test approach is what left this residual behind last time.
+
+<details>
+<summary>Original suggested sequencing (2026-07-07 — all but DR29 shipped)</summary>
 
 **Now (safety, small, high-leverage):** DR1 (merge drop), DR2 (endpoint bypass), DR3 (credential wipe),
 DR14 (CI gates — they gate everything else), DR19 (DeepSeek drift, ~2-line each).
@@ -390,6 +412,8 @@ DR14 (CI gates — they gate everything else), DR19 (DeepSeek drift, ~2-line eac
 **Then (correctness):** DR18, DR20, DR21, DR22, DR23, DR24, DR25, DR26, DR29.
 
 **Standing / fold-in when adjacent:** DR9–DR12, DR27, DR28, DR30, DR31, DR32, DR33.
+
+</details>
 
 ---
 

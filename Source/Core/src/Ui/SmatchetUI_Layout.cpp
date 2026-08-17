@@ -311,6 +311,18 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
         d.pendingReDockWindows.insert(SmatchetDockNodeIds::DefaultDockLayoutKeyAt(i));
     }
 
+    //  3a. Extra grid panes ride NEITHER trigger: their "###GridPane:<id>" windows are absent
+    //      from both the default ini and the layout-key table, so the reset used to leave them
+    //      floating and centred (#2082). PrepareExtraPaneWindow re-docks them into the central
+    //      node for the whole layoutForceDefaultsFrames window; all that is owed from here is
+    //      the tab selection, since docking a window into a node does not select its tab
+    //      (imgui #2304) and the reset would otherwise surface whichever pane docked last.
+    //      Re-armed for the settle window because the node's tab bar does not exist yet on the
+    //      frame the panes dock.
+    if (GridPane* focusedPane = FindGridPaneById(d.gridPanes, d.focusedPaneId)) {
+        focusedPane->selectTabFrames = 8;
+    }
+
     //  3b. The AI Assistant panel docks through its own ApplyAssistantDocking() path, NOT the
     //      pendingReDockWindows list above. The default tree has no secondary side bar node
     //      (0x10 is created only when the user swaps the panel right), so a reset returns the

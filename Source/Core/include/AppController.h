@@ -96,6 +96,9 @@ class AiAssistantController;
 // Leaf pure header (STL-only): supplies smatchet::MembershipRemovalVerdict, named
 // by-value in the membership-reconcile private method decls below (S1c-3, item 10).
 #include "Sync/MembershipDiffPure.h"
+// Leaf pure header (STL-only): supplies smatchet::PaneOwnedTicketIdStore, held BY VALUE as the
+// per-pane owned-ticket-id member below, so it cannot be forward-declared.
+#include "Sync/PaneOwnedTicketIdStore.h"
 // Fan-in Phase 3 (docs/plans/appcontroller-fan-in.md): AppUpdateAsset/AppUpdateInfo (global),
 // FieldEditResult, and TrackerConnectivityState (formerly nested) relocated to rank-0 leaf headers
 // under Types/ so editing them no longer recompiles the ~115 AppController.h includers. The two
@@ -1192,21 +1195,30 @@ class AppController : public IAppThreading,
     /// which ids each pane's own sync actually kept, so a namespace-wide read can be filtered
     /// back down to the pane that asked. Keyed `backendKey + '\n' + paneId`; survives LRU
     /// eviction of a hidden pane's context (the context is gone but its rows are still in the
-    /// shared cache and must not be stale-deleted by a sibling), and is dropped explicitly on
-    /// 30 s retirement via ForgetPaneOwnedTicketIds.
+    /// shared cache and must not be stale-deleted by a sibling), and tombstoned on 30 s
+    /// retirement via ForgetPaneOwnedTicketIds. Thin forwarders onto the header-only store, which
+    /// owns the (innermost) lock and is where the state machine is unit-tested.
     void SetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
                                const std::vector<std::string>& ids);
-    std::vector<std::string> GetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId) const;
+    /// False = this pane has NEVER recorded a set (true cold start → the caller may fall back to
+    /// the whole namespace). True with an empty `outIds` = a retired-and-revived pane, which must
+    /// render empty until its own sync lands (issue #2063).
+    bool TryGetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
+                                  std::vector<std::string>& outIds) const;
+    /// Atomic single-id append (issue #2050) — re-reads the entry under the store's lock, so a
+    /// concurrent PublishOwnedTicketIds is extended rather than clobbered by a stale copy.
+    /// No-op (false) when the pane has no recorded set yet.
+    bool AddPaneOwnedTicketId(const std::string& backendKey, const std::string& paneId, const std::string& id);
     /// Subtract specific ids from one pane's recorded set without disturbing the rest — used when
     /// a 404 reconcile purges cache rows, so the set stops whitelisting (and pinning) dead ids.
     void DropPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId,
                                 const std::vector<std::string>& ids);
-    void ForgetPaneOwnedTicketIds(const std::string& backendKey, const std::string& paneId);
-    /// Guards paneOwnedTicketIds_ only. Written on the UI thread (sync finalize / retirement),
-    /// read from the UI thread and from RefreshLocalDataCheckedImpl_'s worker-invoked path.
-    /// INNERMOST — never take gridContextsMutex_ or a per-context mutex while holding it.
-    mutable std::mutex paneOwnedIdsMutex_;
-    std::map<std::string, std::vector<std::string>> paneOwnedTicketIds_;
+    /// Keyed by pane id ACROSS every backend key: a pane that switched tracker kind filed its set
+    /// under the key live at publish time, not the one live at retirement (issue #2049).
+    void ForgetPaneOwnedTicketIds(const std::string& paneId);
+    /// Owns the innermost lock in the hierarchy — never take gridContextsMutex_ or a per-context
+    /// mutex while inside one of its methods.
+    smatchet::PaneOwnedTicketIdStore paneOwnedTicketIds_;
     /// Shared body of the RefreshLocalData paths (issue #1081): null = unchecked UI-thread
     /// refresh; non-null = drop the replace (under ctx.activeTicketsMutex_) when ctx's
     /// backendGeneration_ no longer matches the captured value. `ctx` MUST be the context the

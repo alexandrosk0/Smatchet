@@ -137,6 +137,11 @@ std::string GetCurrentJiraDateTimeString() {
 
 struct ActiveWorklogDialogState {
     std::string IssueId;
+    /// Field id of the cell that opened the dialog ("timespent" or "worklog"). The modal's ImGui
+    /// id lives under that cell's CellIdScope, and BOTH columns can be visible on the same row —
+    /// so only the owning cell may drive the popup. Without this, the non-owning cell's
+    /// BeginPopupModal (a different id, never opened) would fail and tear the state down.
+    std::string OwnerFieldId;
     char TimeSpent[64] = "";
     char TimeRemaining[64] = "";
     std::string DateStarted;
@@ -1014,49 +1019,50 @@ void RenderCascadingSelectEditor(const AppController& app, const CachedTicket& t
     DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);
 }
 
+// Primes the time-tracking dialog for `ticket`, owned by the cell whose column is `ownerFieldId`
+// (the only cell allowed to draw the modal — see ActiveWorklogDialogState::OwnerFieldId). Shared
+// by the `timespent` and `worklog` cells so both entry points open an identically-seeded dialog.
+void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerFieldId) {
+    s_ActiveWorklogState.IssueId = ticket.id;
+    s_ActiveWorklogState.OwnerFieldId = ownerFieldId;
+    s_ActiveWorklogState.TimeSpent[0] = '\0';
+    s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
+    s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
+    s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
+    std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
+                 sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
+    s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
+
+    s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
+
+    s_ActiveWorklogState.WorkDescription[0] = '\0';
+    s_ActiveWorklogState.ErrorMsg.clear();
+    s_ActiveWorklogState.Initialized = true;
+    s_ActiveWorklogState.JustOpened = true;
+    s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
+    // NOT an unconditional false: if this ticket's previous submit is still running (the user hit
+    // Save then Cancel, then re-opened), the dialog must re-open in the in-flight state so Save
+    // stays disabled and the "Saving worklog..." cue shows. Otherwise the second Save creates a
+    // duplicate worklog for one intent (#2085 review). Seeding it HERE rather than at the button
+    // means the `worklog` cell entry point added by #2088 gets the same guard for free.
+    s_ActiveWorklogState.SubmitInFlight =
+        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, ticket.id);
+    s_ActiveWorklogState.CloseRequested = false;
+    // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
+    // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
+    // re-opened the SAME ticket and would close the freshly-opened dialog under them.
+    s_ActiveWorklogState.Gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
+}
+
 // Draws the "Log work" / time-spent button for the SpecialTimeSpent column and, on click, primes
-// the worklog dialog state. Extracted from RenderFieldCell's switch case; behaviour byte-identical.
-void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& currentValue, float availWidth,
-                           bool tooltipsEnabled) {
-    std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
-    // ID uniqueness comes from RenderFieldCell's CellIdScope (ticket.id + field.Id on stack).
-
-    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0)); // invisible background when normal
-    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImGui::GetStyleColorVec4(ImGuiCol_HeaderHovered));
-    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImGui::GetStyleColorVec4(ImGuiCol_HeaderActive));
-    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, ImVec2(0.0f, 0.5f));
-
-    if (ImGui::Button(buttonText.c_str(), ImVec2(availWidth > 0.0f ? availWidth : -FLT_MIN, 0.0f))) {
-        s_ActiveWorklogState.IssueId = ticket.id;
-        s_ActiveWorklogState.TimeSpent[0] = '\0';
-        s_ActiveWorklogState.OriginalEstimate = ticket.GetFieldValue("timeoriginalestimate");
-        s_ActiveWorklogState.TotalTimeSpent = ticket.GetFieldValue("timespent");
-        s_ActiveWorklogState.TotalTimeRemaining = ticket.GetFieldValue("timeestimate");
-        std::strncpy(s_ActiveWorklogState.TimeRemaining, s_ActiveWorklogState.TotalTimeRemaining.c_str(),
-                     sizeof(s_ActiveWorklogState.TimeRemaining) - 1);
-        s_ActiveWorklogState.TimeRemaining[sizeof(s_ActiveWorklogState.TimeRemaining) - 1] = '\0';
-
-        s_ActiveWorklogState.DateStarted = GetCurrentJiraDateTimeString();
-
-        s_ActiveWorklogState.WorkDescription[0] = '\0';
-        s_ActiveWorklogState.ErrorMsg.clear();
-        s_ActiveWorklogState.Initialized = true;
-        s_ActiveWorklogState.JustOpened = true;
-        s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
-        // NOT an unconditional false: if this ticket's previous submit is still running (the user
-        // hit Save then Cancel, then re-opened), the dialog must re-open in the in-flight state so
-        // Save stays disabled and the "Saving worklog..." cue shows. Otherwise the second Save
-        // creates a duplicate worklog for one intent.
-        s_ActiveWorklogState.SubmitInFlight =
-            smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, ticket.id);
-        s_ActiveWorklogState.CloseRequested = false;
-        // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from
-        // a submit whose dialog was cancelled mid-flight would still match `Gen` after the user
-        // re-opened the SAME ticket and would close the freshly-opened dialog under them.
-        s_ActiveWorklogState.Gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
+// the worklog dialog state. Shares its flat-button affordance and its dialog seeding with the
+// `worklog` cell, so the two entry points cannot drift apart.
+void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& fieldId, const std::string& currentValue,
+                           float availWidth, bool tooltipsEnabled) {
+    const std::string buttonText = currentValue.empty() ? "Log work" : currentValue;
+    if (TrackerGridFieldDisplay::DrawCellActionButton(buttonText, availWidth)) {
+        OpenWorklogDialog(ticket, fieldId);
     }
-    ImGui::PopStyleVar();
-    ImGui::PopStyleColor(3);
 
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
         ImGui::BeginTooltip();
@@ -1275,8 +1281,11 @@ void DrawWorklogDescription() {
                               ImVec2(-FLT_MIN, ImGui::GetTextLineHeight() * 4));
 }
 
-void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
-    if (!(s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id)) {
+// `columnFieldId` is the cell currently being drawn; the modal is submitted only by the cell that
+// opened it, so a row showing BOTH `timespent` and `worklog` draws it exactly once per frame.
+void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket, const std::string& columnFieldId) {
+    if (!(s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == ticket.id &&
+          s_ActiveWorklogState.OwnerFieldId == columnFieldId)) {
         return;
     }
     ImGui::SetNextWindowSize(ImVec2(450.0f, 0.0f), ImGuiCond_Always);
@@ -1415,8 +1424,9 @@ struct CellIdScope {
 // Dispatches the "special" column render plans (attachments, watchers, votes, worklog, progress,
 // issue-restriction) to their grid-field-display renderers. Returns true when the cell was drawn.
 // A false result means the plan's guard did not match, so the caller falls through to its original
-// break path — the worklog modal tail — byte-identical to the inlined switch cases. The time-spent
-// plan is intentionally NOT routed here, since it always draws and then falls through to the modal.
+// break path — the worklog modal tail. The time-spent plan is intentionally NOT routed here, since
+// it always draws and then falls through to the modal; the worklog plan owns its modal inline
+// because it consumes the cell.
 bool TryRenderSpecialColumnPlan(AppController& app, const CachedTicket& ticket, const TicketGridColumn& column,
                                 const TrackerField* field, const std::string& currentValue, float availWidth,
                                 bool tooltipsEnabled, TrackerGridFieldAsyncState& trackerGridAsync) {
@@ -1443,7 +1453,14 @@ bool TryRenderSpecialColumnPlan(AppController& app, const CachedTicket& ticket, 
         return false;
     case TicketGridColumn::RenderPlan::SpecialWorklog:
         if (field == nullptr || TrackerGridFieldDisplay::IsWorklogColumnId(field->Id)) {
-            TrackerGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled);
+            // Jira's "Log Work" column is the name users look for when they want to log hours, so
+            // the cell is an action, not a read-out: clicking it opens the same time-tracking
+            // dialog the `timespent` cell does (#2083). The modal is drawn here rather than via
+            // RenderFieldCell's tail because this branch consumes the cell (returns true).
+            if (TrackerGridFieldDisplay::RenderWorklogField(currentValue, availWidth, tooltipsEnabled)) {
+                OpenWorklogDialog(ticket, column.FieldId);
+            }
+            RenderTimeTrackingModal(app, ticket, column.FieldId);
             return true;
         }
         return false;
@@ -1555,7 +1572,7 @@ void TicketFieldEditor::RenderFieldCell(AppController& app, const CachedTicket& 
         return;
     }
 
-    RenderTimeTrackingModal(app, ticket);
+    RenderTimeTrackingModal(app, ticket, column.FieldId);
 }
 
 bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTicket& ticket,
@@ -1585,7 +1602,7 @@ bool TicketFieldEditor::DispatchEditorByPlan(AppController& app, const CachedTic
 
     switch (column.Plan) {
     case TicketGridColumn::RenderPlan::SpecialTimeSpent:
-        RenderTimeSpentButton(ticket, currentValue, availWidth, tooltipsEnabled);
+        RenderTimeSpentButton(ticket, column.FieldId, currentValue, availWidth, tooltipsEnabled);
         return false;
     case TicketGridColumn::RenderPlan::PlainText:
         renderPlainText(column.CatalogReadOnly);

@@ -68,7 +68,11 @@ std::string CredentialFingerprint(const TrackerConfig& cfg) {
 }
 
 bool ApplyVerifiedSaveUnlock(TrackerConfig& cfg, std::string& verifiedFingerprint) {
-    if (!cfg.ReadOnlyMode || verifiedFingerprint.empty() || CredentialFingerprint(cfg) != verifiedFingerprint) {
+    // First-run only: an install that has already latched reachability has a user who chose
+    // read-only deliberately, so a green probe + Save must never clear it. Without this the
+    // unlock fires on any enable-then-probe-then-save ordering and silently drops the setting.
+    if (!cfg.ReadOnlyMode || cfg.BackendHasBeenReachable || verifiedFingerprint.empty() ||
+        CredentialFingerprint(cfg) != verifiedFingerprint) {
         return false;
     }
     // One-shot: consume the pin on the firing edge so a read-only mode the user re-enables later

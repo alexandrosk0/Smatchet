@@ -168,9 +168,22 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 // sleep, so a contending writer's retry never holds the mutex while sleeping and starves other
 // statement executions on this instance. Templated on the write body (no std::function
 // type-erasure; the closure inlines).
+//
+// The loop is bounded by a TOTAL wall-clock deadline as well as the attempt count (issue #2045).
+// The attempt count alone bounds nothing a user can feel: each attempt may sit for the whole
+// armed busy_timeout (5 s, ApplyWalPragmas) before SQLite hands back BUSY, so the pre-deadline
+// worst case was ~25 s of blocked caller — and this path is reachable from the UI thread via the
+// comments modal's post-back (UpdateCachedCommentCount → UpdateTicket → SaveTicket), i.e. a frozen
+// frame pump. The per-attempt busy_timeout is deliberately NOT lowered here: it is connection-wide
+// and the reader/deleter paths on this same handle do not run under stmtMutex_, so shrinking it
+// would make THEM throw BUSY sooner — a Pillar-3 regression traded for a Pillar-2 win. The
+// residual worst case is therefore one busy_timeout wall, not five plus sleeps.
+constexpr long long kWriteRetryBudgetMs = 500;
+
 template <typename WriteFn>
 void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const char* opName, WriteFn&& writeRows) {
     constexpr int kMaxWriteAttempts = 5;
+    const std::chrono::steady_clock::time_point started = std::chrono::steady_clock::now();
     for (int attempt = 0;; ++attempt) {
         try {
             std::lock_guard<std::mutex> lock(stmtMutex); // released on unwind BEFORE the sleep below
@@ -179,14 +192,20 @@ void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const
             transaction.commit();
             return;
         } catch (const SQLite::Exception& ex) {
-            if (smatchet::IsTransientBusyCode(ex.getErrorCode()) && (attempt + 1) < kMaxWriteAttempts) {
+            const long long elapsedMs = static_cast<long long>(
+                std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started)
+                    .count());
+            if (smatchet::ShouldRetryBusyWrite(ex.getErrorCode(), attempt, kMaxWriteAttempts, elapsedMs,
+                                               kWriteRetryBudgetMs)) {
                 const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
-                LOG_WARN("LocalCacheManager::%s contended (%s); retry %d/%d after %d ms", opName, ex.what(),
-                         attempt + 2, kMaxWriteAttempts, backoffMs);
+                LOG_WARN("LocalCacheManager::%s contended (%s); retry %d/%d after %d ms (%lld/%lld ms of budget "
+                         "spent)",
+                         opName, ex.what(), attempt + 2, kMaxWriteAttempts, backoffMs, elapsedMs,
+                         kWriteRetryBudgetMs);
                 std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
                 continue;
             }
-            LOG_ERROR("LocalCacheManager::%s failed err=%s", opName, ex.what());
+            LOG_ERROR("LocalCacheManager::%s failed after %lld ms err=%s", opName, elapsedMs, ex.what());
             throw;
         }
     }
