@@ -26,7 +26,6 @@
 #include <iterator>
 #include <chrono>
 #include <cmath>
-#include <filesystem>
 #include <fstream>
 #include <future>
 #include <string>
@@ -139,13 +138,12 @@ LuaScriptReadStatus ReadFileAll(const std::string& path, std::string& out) {
                               // LuaConsolePlugin::scriptLoadFuture_; no frame budget applies.
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        // Open failure is ambiguous: no file (a new script the user is about to write) or a real
-        // file we cannot open right now (share violation / AV / ACL / network blip). Only the
-        // former may be stubbed — see LuaScriptReadStatus. std::error_code overload: a probe that
-        // itself fails must not throw on this worker, and must not be read as "absent".
-        std::error_code ec;
-        const bool present = std::filesystem::exists(path, ec);
-        return (!ec && !present) ? LuaScriptReadStatus::NotFound : LuaScriptReadStatus::ReadFailed;
+        // Ambiguous here: no file (a new script the user is about to write) or a real file we
+        // cannot open right now (share violation / AV / ACL / network blip). The worker cannot
+        // tell them apart without a filesystem probe, and this TU is C++14 with no <filesystem>
+        // and no ghc:: on its include path. PollScriptLoad resolves it on the UI thread against
+        // the enumerated script list, which is a better signal than a probe anyway.
+        return LuaScriptReadStatus::OpenFailed;
     }
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
@@ -423,6 +421,15 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         g_ui.gridEditError = "Script too large to open in the editor (8 MiB cap): " + result.name;
         reloadNoticeName_.clear();
         return;
+    }
+    if (result.status == LuaScriptReadStatus::OpenFailed) {
+        // Resolve the ambiguity the worker left: a name the enumerator listed IS a real file on
+        // disk, so a failed open means we could not read it — never stub over it. A name that was
+        // never enumerated is a genuinely new script, and the stub is its intended content.
+        // Conservative by construction: a file deleted after enumeration is still refused, and
+        // only an unknown name can reach the stub.
+        const bool knownOnDisk = std::find(scriptList_.begin(), scriptList_.end(), result.name) != scriptList_.end();
+        result.status = knownOnDisk ? LuaScriptReadStatus::ReadFailed : LuaScriptReadStatus::NotFound;
     }
     if (result.status == LuaScriptReadStatus::ReadFailed) {
         // Same argument as TooLarge above, and the other half of #2042: a real file is on disk and

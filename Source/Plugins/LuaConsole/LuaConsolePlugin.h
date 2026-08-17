@@ -7,18 +7,17 @@
 #include <string>
 #include <vector>
 
-/// Outcome of one script read. Only `NotFound` — the ordinary "picked a name with no file behind
-/// it" path — gets the "-- New file" stub. `TooLarge` and `ReadFailed` must NOT share it: stubbing
-/// a file that exists re-baselines `diskSnapshot_` onto a two-line placeholder and the next Save
-/// truncates the real script on disk (#2042).
-/// File-scope rather than nested in LuaConsolePlugin so the anonymous-namespace reader in the .cpp
-/// can name it; a private nested enum would be unreachable from a free function.
-/// Outcome of an off-thread script read. `NotFound` and `ReadFailed` MUST stay distinct: only
-/// `NotFound` (nothing on disk at that path) may seed the "-- New file" stub and arm Save. A
+/// Outcome of an off-thread script read. File-scope rather than nested in LuaConsolePlugin so the
+/// anonymous-namespace reader in the .cpp can name it; a private nested enum would be unreachable
+/// from a free function.
+///
+/// Only `NotFound` (no file at that path) may seed the "-- New file" stub and arm Save.
 /// `ReadFailed` means a real file is there and we could not read it — a share violation, an AV
 /// or indexer holding the handle, an ACL denial, a network-share hiccup, or a truncated read —
 /// and stubbing over that is exactly the #2042 data loss (Save then truncates the real script).
-enum class LuaScriptReadStatus { Ok, NotFound, ReadFailed, TooLarge };
+/// `OpenFailed` is the worker's "could not open, cause unknown" — PollScriptLoad narrows it to
+/// NotFound or ReadFailed on the UI thread, where the enumerated script list is available.
+enum class LuaScriptReadStatus { Ok, NotFound, OpenFailed, ReadFailed, TooLarge };
 
 class LuaConsolePlugin : public IPlugin {
   public:
