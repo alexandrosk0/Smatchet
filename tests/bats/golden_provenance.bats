@@ -44,7 +44,7 @@ teardown() {
 }
 
 @test "emit then verify: freshly stamped goldens are CI-native" {
-    run bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    run env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     [ "$status" -eq 0 ]
     run bash "$GUARD" --strict
     [ "$status" -eq 0 ]
@@ -52,7 +52,7 @@ teardown() {
 }
 
 @test "the manifest records run id, mesa version and geometry per golden" {
-    bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     run cat "$SMATCHET_GOLDEN_DIR/PROVENANCE.tsv"
     [ "$status" -eq 0 ]
     [[ "$output" == *"4242"* ]]
@@ -67,7 +67,7 @@ teardown() {
 # bytes but gains no manifest row, so it must NOT keep the old blessing. This is
 # the exact drift that made bucket-C non-authoritative in the first place.
 @test "a locally-regenerated golden loses its CI-native status" {
-    bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     printf 'locally-rerendered' > "$SMATCHET_GOLDEN_DIR/one.png"
     run bash "$GUARD" --strict
     [ "$status" -eq 1 ]
@@ -80,7 +80,7 @@ teardown() {
 # so a golden copied over another scenario's name is not blessed by the row it
 # happens to hash-match.
 @test "a golden renamed onto another scenario is not CI-native" {
-    bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     cp "$SMATCHET_GOLDEN_DIR/one.png" "$SMATCHET_GOLDEN_DIR/three.png"
     run bash "$GUARD" --strict
     [ "$status" -eq 1 ]
@@ -88,7 +88,7 @@ teardown() {
 }
 
 @test "a hand-edited manifest row does not bless mismatched bytes" {
-    bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     # Forge a row claiming an all-zeros hash for one.png, and drop the real row.
     grep -v $'\tone.png\t' "$SMATCHET_GOLDEN_DIR/PROVENANCE.tsv" > "$WORK/m.tsv"
     printf '%s\tone.png\t4242\t24.2.5\t1920x1009\n' "$(printf '0%.0s' $(seq 64))" >> "$WORK/m.tsv"
@@ -103,7 +103,7 @@ teardown() {
     [ "$status" -eq 0 ]
     [[ "$output" == *"one.png"* ]]
     [[ "$output" != *"CI-native"* ]]   # no prose, just names
-    bash "$GUARD" --emit 4242 24.2.5 1920x1009
+    env GOLDEN_RUN_ID=4242 GOLDEN_MESA=24.2.5 GOLDEN_GEOMETRY=1920x1009 bash "$GUARD" --emit
     run bash "$GUARD" --list-missing
     [ "$status" -eq 0 ]
     [ -z "$output" ]                   # all native -> empty, so `-z` gates the --strict flip

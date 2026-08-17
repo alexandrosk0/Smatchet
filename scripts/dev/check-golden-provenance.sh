@@ -26,13 +26,19 @@
 #   bash scripts/dev/check-golden-provenance.sh              # report, always exit 0
 #   bash scripts/dev/check-golden-provenance.sh --strict     # exit 1 if any golden is not CI-native
 #   bash scripts/dev/check-golden-provenance.sh --list-missing  # print only the non-CI-native basenames
-#   bash scripts/dev/check-golden-provenance.sh --emit <run-id> <mesa> <geometry>  # write the manifest
+#   bash scripts/dev/check-golden-provenance.sh --emit          # write the manifest
 #
 # --emit is what the CI bootstrap job runs after `--bootstrap` has written fresh
 # goldens: it stamps each one with its hash and the environment that produced it,
 # so the manifest travels with the PNGs and a reviewer can see WHICH run and
 # WHICH renderer version blessed them. Lives here rather than in a second script
 # so the hashing rule can never drift between writer and checker.
+#
+# The three stamped values come from the environment rather than positional
+# arguments (GOLDEN_RUN_ID / GOLDEN_MESA / GOLDEN_GEOMETRY). They describe the
+# CI environment, which is what an Actions `env:` block already carries — and it
+# keeps every flag here value-free, which is the shape the repo's flag-parity
+# rule expects (a value-taking `--flag` owes a `--flag=*` twin).
 #
 # Env overrides:
 #   SMATCHET_GOLDEN_DIR   golden PNG dir (default tests/golden)
@@ -51,18 +57,13 @@ MANIFEST="${SMATCHET_GOLDEN_PROVENANCE:-$GOLDEN_DIR/PROVENANCE.tsv}"
 STRICT=0
 LIST_ONLY=0
 EMIT=0
-EMIT_RUN=""
-EMIT_MESA=""
-EMIT_GEOM=""
+EMIT_RUN="${GOLDEN_RUN_ID:-unknown}"
+EMIT_MESA="${GOLDEN_MESA:-unknown}"
+EMIT_GEOM="${GOLDEN_GEOMETRY:-unknown}"
 case "${1:-}" in
     --strict) STRICT=1 ;;
     --list-missing) LIST_ONLY=1 ;;
-    --emit)
-        EMIT=1
-        EMIT_RUN="${2:-unknown}"
-        EMIT_MESA="${3:-unknown}"
-        EMIT_GEOM="${4:-unknown}"
-        ;;
+    --emit) EMIT=1 ;;
     "") ;;
     *)
         echo "check-golden-provenance: unknown argument '$1'" >&2

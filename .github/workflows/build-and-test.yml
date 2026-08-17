@@ -1371,10 +1371,13 @@ jobs:
       # — so a partial capture aborts the job before it can reach this step.
       - name: Write provenance manifest
         shell: bash
+        env:
+          GOLDEN_RUN_ID: ${{ github.run_id }}
+          GOLDEN_MESA: "24.2.5"
+          GOLDEN_GEOMETRY: "1920x1009"
         run: |
           set -euo pipefail
-          bash scripts/dev/check-golden-provenance.sh --emit \
-            "${{ github.run_id }}" "24.2.5" "1920x1009"
+          bash scripts/dev/check-golden-provenance.sh --emit
           bash scripts/dev/check-golden-provenance.sh --strict
           {
             echo "### CI-native goldens captured"
