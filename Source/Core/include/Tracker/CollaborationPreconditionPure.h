@@ -48,12 +48,22 @@ ClassifyCollaborationPrecondition(bool readOnlyMode, bool requireWritable, bool 
     return VoidOk();
 }
 
+/// Fallback message for a failing TrackerError whose Detail is empty. Callers encode success as an
+/// empty string (e.g. the watch-self path in TrackerGridFieldDisplay.cpp does
+/// `r.has_value() ? std::string() : r.error()` and only reports a failure when that string is
+/// non-empty), so an `Err("")` would render exactly like success and swallow the failure.
+inline const char* CollaborationErrorFallbackMessage() { return "Tracker collaboration request failed."; }
+
 /// Map an ITrackerCollaboration call's TrackerError to a VoidResult: Ok → VoidOk(); any error →
 /// its Detail as the message. The historical bool+outError contract surfaced exactly `err.Detail`
-/// to the caller, so this preserves the user-visible text one-for-one.
+/// to the caller, so this preserves the user-visible text one-for-one — except for an empty
+/// Detail, which is replaced by the fallback so a failure can never surface as success.
 inline VoidResult CollaborationErrorToVoidResult(const TrackerError& err) {
     if (err.IsOk()) {
         return VoidOk();
+    }
+    if (err.Detail.empty()) {
+        return VoidResult::Err(std::string(CollaborationErrorFallbackMessage()));
     }
     return VoidResult::Err(err.Detail);
 }
@@ -63,12 +73,17 @@ inline VoidResult CollaborationErrorToVoidResult(const TrackerError& err) {
 /// through by move; an error surfaces `err.Detail`, exactly as the old `bool + outError` read
 /// contract set `outError = err.Detail`. The read delegators (FetchIssueComments / FetchUserGroupNames /
 /// FetchPaneGroupMembers / …) keep their divergent backend/capability guards inline (Collaboration()
-/// vs Activity(), no read-only gate), so only this error mapper is shared.
+/// vs Activity(), no read-only gate), so only this error mapper is shared. An empty Detail gets the
+/// same non-empty fallback as the write side, for the same reason.
 template <typename T> inline Result<T> CollaborationResultToResult(Result<T, TrackerError>&& backendResult) {
     if (backendResult.has_value()) {
         return Result<T>::Ok(std::move(backendResult.value()));
     }
-    return Result<T>::Err(backendResult.error().Detail);
+    const std::string& detail = backendResult.error().Detail;
+    if (detail.empty()) {
+        return Result<T>::Err(std::string(CollaborationErrorFallbackMessage()));
+    }
+    return Result<T>::Err(detail);
 }
 
 } // namespace collab
