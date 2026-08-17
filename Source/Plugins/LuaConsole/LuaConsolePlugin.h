@@ -10,7 +10,6 @@
 /// Outcome of an off-thread script read. File-scope rather than nested in LuaConsolePlugin so the
 /// anonymous-namespace reader in the .cpp can name it; a private nested enum would be unreachable
 /// from a free function.
-///
 /// Only `NotFound` (no file at that path) may seed the "-- New file" stub and arm Save.
 /// `ReadFailed` means a real file is there and we could not read it — a share violation, an AV
 /// or indexer holding the handle, an ACL denial, a network-share hiccup, or a truncated read —
