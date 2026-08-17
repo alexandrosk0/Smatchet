@@ -15,6 +15,13 @@ void RequestScenarioCaptureWindowResize(const ScenarioCaptureSize& size) {
     g_ui.requestWindowWidth = size.Width;
     g_ui.requestWindowHeight = size.Height;
     g_ui.requestWindowResize = true;
+    // Arm the capture-size contract for the screenshot this scenario will request. The
+    // resize above is only a request — the window system may clamp it — and the scenario
+    // cannot check the result itself (its OnFinish merely *asks* for the screenshot; the
+    // capture lands frames later). Publishing the expectation here lets the capture path,
+    // the one place that sees both numbers, reject a wrong-sized frame (#2092).
+    g_ui.expectedCaptureWidth = size.Width;
+    g_ui.expectedCaptureHeight = size.Height;
 }
 
 } // namespace cmd

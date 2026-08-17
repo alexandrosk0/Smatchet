@@ -42,5 +42,26 @@ ScenarioCaptureSize ParseScenarioCaptureSize(const nlohmann::json& args) {
     return size;
 }
 
+ScenarioCaptureSizeVerdict VerifyScenarioCaptureSize(const ScenarioCaptureSize& requested, int actualWidth,
+                                                     int actualHeight) {
+    ScenarioCaptureSizeVerdict verdict;
+    if (actualWidth <= 0 || actualHeight <= 0) {
+        verdict.Ok = false;
+        verdict.Message = "no capture was recorded (requested " + std::to_string(requested.Width) + "x" +
+                          std::to_string(requested.Height) + ")";
+        return verdict;
+    }
+    if (actualWidth == requested.Width && actualHeight == requested.Height) {
+        return verdict;
+    }
+    verdict.Ok = false;
+    verdict.Message = "capture size " + std::to_string(actualWidth) + "x" + std::to_string(actualHeight) +
+                      " does not match the requested " + std::to_string(requested.Width) + "x" +
+                      std::to_string(requested.Height) +
+                      " — the window-system clamped the resize (desktop smaller than the request?); "
+                      "this capture cannot be golden-diffed";
+    return verdict;
+}
+
 } // namespace cmd
 } // namespace smatchet

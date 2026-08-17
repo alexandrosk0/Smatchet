@@ -74,6 +74,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Scenario capture-size parse + the request-vs-achieved verdict (#2092). Pure,
+        # ImGui-free, no threads — belongs in the portable subset so the contract that
+        # keeps bucket-C from comparing wrong-sized captures is covered on Linux too,
+        # not only in the Windows-only full rig.
+        Core/ScenarioCaptureSizing.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).

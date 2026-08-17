@@ -393,7 +393,18 @@ run_scenario() {
         fi
         assert "$scen L_inf <= $TOL" "ok"
     else
-        report_row "$scen" "fail" "$linf" "$golden"
+        # Separate "could not compare" from "pixels drifted". linf=-1 is the helper's
+        # dimension-mismatch sentinel (GoldenImage.h DiffMaxLInf), which means the capture
+        # never reached the golden's geometry — the window system clamped the scenario's
+        # resize request — so NO pixel comparison happened at all. Reporting that as a plain
+        # `fail` reads as a stale golden and sends the reader to regenerate goldens, which
+        # would pin them to whatever transient size the runner produced. It is a distinct,
+        # deterministic lane defect and the summary must say so (#2092).
+        if [ "$linf" = "-1" ]; then
+            report_row "$scen" "fail-dimension" "$linf" "$golden"
+        else
+            report_row "$scen" "fail" "$linf" "$golden"
+        fi
         assert "$scen L_inf <= $TOL" "$diff_out"
     fi
 }
