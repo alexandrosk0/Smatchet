@@ -7,13 +7,18 @@
 #include <string>
 #include <vector>
 
-/// Outcome of one script read. NotOpenable and TooLarge are deliberately distinct: the first is
-/// the ordinary "picked a name with no file behind it" path and gets the "-- New file" stub, but
-/// stubbing an oversize file would re-baseline `diskSnapshot_` onto a two-line placeholder and
-/// the next Save would truncate the real script on disk.
+/// Outcome of one script read. Only `NotFound` — the ordinary "picked a name with no file behind
+/// it" path — gets the "-- New file" stub. `TooLarge` and `ReadFailed` must NOT share it: stubbing
+/// a file that exists re-baselines `diskSnapshot_` onto a two-line placeholder and the next Save
+/// truncates the real script on disk (#2042).
 /// File-scope rather than nested in LuaConsolePlugin so the anonymous-namespace reader in the .cpp
 /// can name it; a private nested enum would be unreachable from a free function.
-enum class LuaScriptReadStatus { Ok, NotOpenable, TooLarge };
+/// Outcome of an off-thread script read. `NotFound` and `ReadFailed` MUST stay distinct: only
+/// `NotFound` (nothing on disk at that path) may seed the "-- New file" stub and arm Save. A
+/// `ReadFailed` means a real file is there and we could not read it — a share violation, an AV
+/// or indexer holding the handle, an ACL denial, a network-share hiccup, or a truncated read —
+/// and stubbing over that is exactly the #2042 data loss (Save then truncates the real script).
+enum class LuaScriptReadStatus { Ok, NotFound, ReadFailed, TooLarge };
 
 class LuaConsolePlugin : public IPlugin {
   public:
@@ -59,9 +64,10 @@ class LuaConsolePlugin : public IPlugin {
     struct ScriptLoadResult {
         std::string name;
         std::string content;
-        /// NotOpenable reproduces the old synchronous ReadFileAll failure path (editor gets the
-        /// "-- New file" stub); see LuaScriptReadStatus for why TooLarge must not share it.
-        LuaScriptReadStatus status = LuaScriptReadStatus::NotOpenable;
+        /// Defaults to the SAFE status, not the stub one: a result that never came back from the
+        /// worker must never look like "no file here, seed the placeholder". See
+        /// LuaScriptReadStatus for why only NotFound may stub.
+        LuaScriptReadStatus status = LuaScriptReadStatus::ReadFailed;
     };
     std::future<ScriptLoadResult> scriptLoadFuture_;
     /// A script read is running on the std::async worker. Also gates SaveCurrentScript: the editor

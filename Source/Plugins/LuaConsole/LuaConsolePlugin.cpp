@@ -26,6 +26,7 @@
 #include <iterator>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <future>
 #include <string>
@@ -138,12 +139,18 @@ LuaScriptReadStatus ReadFileAll(const std::string& path, std::string& out) {
                               // LuaConsolePlugin::scriptLoadFuture_; no frame budget applies.
     std::ifstream f(path, std::ios::binary);
     if (!f) {
-        return LuaScriptReadStatus::NotOpenable;
+        // Open failure is ambiguous: no file (a new script the user is about to write) or a real
+        // file we cannot open right now (share violation / AV / ACL / network blip). Only the
+        // former may be stubbed — see LuaScriptReadStatus. std::error_code overload: a probe that
+        // itself fails must not throw on this worker, and must not be read as "absent".
+        std::error_code ec;
+        const bool present = std::filesystem::exists(path, ec);
+        return (!ec && !present) ? LuaScriptReadStatus::NotFound : LuaScriptReadStatus::ReadFailed;
     }
     f.seekg(0, std::ios::end);
     const std::streamoff size = f.tellg();
     if (size < 0) {
-        return LuaScriptReadStatus::NotOpenable;
+        return LuaScriptReadStatus::ReadFailed;
     }
     if (size > kMaxLuaScriptBytes) {
         return LuaScriptReadStatus::TooLarge;
@@ -151,7 +158,8 @@ LuaScriptReadStatus ReadFileAll(const std::string& path, std::string& out) {
     f.seekg(0, std::ios::beg);
     out.assign(static_cast<std::size_t>(size), '\0');
     if (size > 0 && !f.read(&out[0], size)) {
-        return LuaScriptReadStatus::NotOpenable;
+        // A real, sized, non-empty file that read short. Never a stub candidate.
+        return LuaScriptReadStatus::ReadFailed;
     }
     return LuaScriptReadStatus::Ok;
 }
@@ -416,6 +424,18 @@ void LuaConsolePlugin::PollScriptLoad(const AppController& app) {
         reloadNoticeName_.clear();
         return;
     }
+    if (result.status == LuaScriptReadStatus::ReadFailed) {
+        // Same argument as TooLarge above, and the other half of #2042: a real file is on disk and
+        // we could not read it. Stubbing "-- New file" here would arm Save over a placeholder and
+        // truncate the user's script — the precise failure the provenance check exists to stop.
+        // The provenance check cannot save us, because provenance is armed below, before it runs.
+        scriptLoadRefusedReason_ = "Couldn't read the script (it may be open elsewhere) — reload before saving.";
+        g_ui.gridEditError = "Couldn't read the script from disk: " + result.name;
+        reloadNoticeName_.clear();
+        return;
+    }
+    // Only Ok (real content) and NotFound (nothing on disk — the stub IS the intended content)
+    // reach here, so this is the one place a read genuinely lands.
     luaEditor_.SetText(result.status == LuaScriptReadStatus::Ok ? result.content : std::string("-- New file\n"));
     // Buffer provenance: this is the one place a read actually lands (Ok content, or the intended
     // "-- New file" stub for a name with no file behind it), so it is the one place Save is armed.
