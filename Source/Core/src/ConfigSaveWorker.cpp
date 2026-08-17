@@ -2,6 +2,9 @@
 
 #include "Config/TrackerConfigSaveRepair.h" // persisted-field repair hooks (#2047)
 #include "Logger.h"
+// Pure `MergePersistentViewsToolbarAppend` (no ImGui, no UI state) — the views read-modify-write
+// this worker took over from `Views::Save` must keep folding in out-of-band ToolbarAppend writes.
+#include "Ui/Views.h"
 
 #include <atomic>
 #include <chrono>
@@ -33,6 +36,8 @@ struct WorkerState {
     TrackerConfig trackerPending;
     bool annotateDirty = false;
     AnnotateAnalysisConfig annotatePending;
+    bool viewsDirty = false;
+    PersistentViewsFile viewsPending;
 };
 
 WorkerState& State() {
@@ -40,15 +45,27 @@ WorkerState& State() {
     return s;
 }
 
-bool HasPendingLocked(const WorkerState& s) { return s.trackerDirty || s.annotateDirty; }
+bool HasPendingLocked(const WorkerState& s) { return s.trackerDirty || s.annotateDirty || s.viewsDirty; }
+
+/// The read-modify-write `Views::Save` used to run inline on the UI thread (#2026). Kept in one
+/// place so the worker path and the worker-not-running fallback below cannot drift.
+void WritePersistentViews(PersistentViewsFile disk) {
+    // DR13a: re-read and fold in any out-of-band ToolbarAppend writes before rewriting the whole
+    // file from the caller's snapshot, or the toolbar editor's tracker-scope buttons are reverted.
+    const PersistentViewsFile fresh = ConfigManager::LoadPersistentViewsFromDisk();
+    smatchet::views_merge::MergePersistentViewsToolbarAppend(disk, fresh);
+    ConfigManager::SavePersistentViewsToDisk(disk);
+}
 
 // Snapshot whatever is dirty (under lock, clearing the dirty flags), then write outside the lock so
 // file I/O never blocks an Enqueue. Both writes go through the atomic-RMW ConfigManager seam.
 void DrainOnce(WorkerState& s) {
     bool doTracker = false;
     bool doAnnotate = false;
+    bool doViews = false;
     TrackerConfig tcfg;
     AnnotateAnalysisConfig acfg;
+    PersistentViewsFile vfile;
     {
         std::lock_guard<std::mutex> lk(s.mtx);
         if (s.trackerDirty) {
@@ -61,6 +78,11 @@ void DrainOnce(WorkerState& s) {
             acfg = s.annotatePending;
             s.annotateDirty = false;
         }
+        if (s.viewsDirty) {
+            doViews = true;
+            vfile = s.viewsPending;
+            s.viewsDirty = false;
+        }
     }
     if (doTracker) {
         try {
@@ -72,6 +94,12 @@ void DrainOnce(WorkerState& s) {
     if (doAnnotate) {
         try {
             ConfigManager::SaveAnnotateAnalysis(acfg);
+        } catch (...) { // catch-all-ok: see above.
+        }
+    }
+    if (doViews) {
+        try {
+            WritePersistentViews(vfile);
         } catch (...) { // catch-all-ok: see above.
         }
     }
@@ -138,6 +166,7 @@ void Stop() {
             LOG_WARN("config_save: drain budget exhausted; dropping pending config write(s)");
             s.trackerDirty = false;
             s.annotateDirty = false;
+            s.viewsDirty = false;
         }
         workerToJoin = std::move(s.thread);
         s.running = false;
@@ -194,6 +223,29 @@ void EnqueueAnnotateConfig(const AnnotateAnalysisConfig& cfg) {
     }
     try {
         ConfigManager::SaveAnnotateAnalysis(cfg);
+    } catch (...) { // catch-all-ok: see above.
+    }
+}
+
+void EnqueuePersistentViews(const PersistentViewsFile& disk) {
+    auto& s = State();
+    bool queued = false;
+    {
+        std::lock_guard<std::mutex> lk(s.mtx);
+        if (s.running) {
+            s.viewsPending = disk;
+            s.viewsDirty = true;
+            queued = true;
+        }
+    }
+    if (queued) {
+        s.cv.notify_one();
+        return;
+    }
+    // Worker not running (tests / CLI / pre-init / post-shutdown) — do the read-modify-write on
+    // the caller so the views write is never lost.
+    try {
+        WritePersistentViews(disk);
     } catch (...) { // catch-all-ok: see above.
     }
 }

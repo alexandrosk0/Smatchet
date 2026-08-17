@@ -1162,6 +1162,13 @@ add_executable(SmatchetTests
     # Comments-modal generation-token stale-guard (monotonic Gen across opens +
     # post-refetch supersession). Header-only pure helper, no production .cpp to link.
     Core/SmatchetCommentsModalGenPure.test.cpp
+    # Issue #2044 — Preferences → General → Storage snapshot invalidation predicate (replaces the
+    # per-frame marker-file stat + parse). Header-only pure helper, no production .cpp to link.
+    Core/SmatchetStorageSnapshotPure.test.cpp
+    # Issue #2043 — worklog Save validation + in-flight duplicate-submit gate (the pure half of
+    # the now-async HandleWorklogSave). Links the already-listed TrackerFieldValueParser.cpp +
+    # CompactDateFormat.cpp that ParseWorkDurationToSeconds / TryParseJiraDateTime live in.
+    Core/SmatchetWorklogSubmitPure.test.cpp
     # Issue #1925 — kick / latch / staleness gates for the single-slot async loads that
     # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
     # Header-only pure helper, no production .cpp to link.

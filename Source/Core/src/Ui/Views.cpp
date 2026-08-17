@@ -1,10 +1,22 @@
 #include "Views.h"
 
+#include "ConfigSaveWorker.h"
+
 #include <algorithm>
 #include <cctype>
 
 void Views::EnsureLoaded(const TrackerConfig& cfg) {
     if (!Loaded) {
+        // PILLAR2_INLINE // est-latency: ~0.5ms (estimated by analogy — NOT measured here; the
+        // sibling smatchet_config.json hydrate in AnnotateAnalysisUi_Config.cpp measured 0.54 ms
+        // for the same shape of read). One-shot per process (the `Loaded` latch): a single
+        // small-JSON read+parse of smatchet_views.json on first use. Per the documented
+        // inline-vs-async hydration policy (docs/plans/shipped/annotate-async-config-hydrate.md
+        // § Approach), a sub-millisecond one-shot read stays synchronous: every caller consumes
+        // the store in the same frame, and an async hydrate would force a not-yet-loaded state
+        // through the whole views/pane surface for no frame-time win. The REPEATING I/O this file
+        // used to do — the read-modify-write in `Save()` below, which fired on every view
+        // activation, i.e. every pane show/hide (#2026) — is what moved off-thread.
         Disk = ConfigManager::LoadPersistentViewsFromDisk();
         Loaded = true;
     }
@@ -113,13 +125,14 @@ void Views::Save() {
         return;
     }
     ConfigManager::ViewsStoreToViewWorkspace(Slice_, Disk.Backends[ActiveBackendKey]);
-    // DR13a: re-read the file and fold in any out-of-band ToolbarAppend writes (the toolbar
-    // editor's tracker-scope save worker writes ToolbarAppend straight to disk, bypassing this
-    // wrapper). Without this merge, rewriting from our boot-time snapshot reverts those toolbar
-    // buttons — they vanish on the next restart / backend swap.
-    PersistentViewsFile fresh = ConfigManager::LoadPersistentViewsFromDisk();
-    smatchet::views_merge::MergePersistentViewsToolbarAppend(Disk, fresh);
-    ConfigManager::SavePersistentViewsToDisk(Disk);
+    // Pillar 2 (#2026): this used to re-read smatchet_views.json (DR13a out-of-band ToolbarAppend
+    // merge) and atomically rewrite it INLINE — on the frame thread, on every Activate / Create /
+    // UpdateActive / Delete, i.e. on every pane show/hide, which is what produced the logged
+    // `LoadPersistentViewsFromDisk` + write violation pair per toggle. The whole read-merge-write
+    // now runs on the coalescing `smatchet::config_save` worker (started in AppController::
+    // Initialize, flushed + joined in ~AppController before the ConfigManager statics tear down —
+    // no capture of `this` or any UI state, only this by-value whole-file snapshot).
+    smatchet::config_save::EnqueuePersistentViews(Disk);
 }
 
 void Views::ApplyTrackerFromConfig(const TrackerConfig& cfg) {
@@ -131,7 +144,8 @@ void Views::ApplyTrackerFromConfig(const TrackerConfig& cfg) {
             if (dirty) {
                 Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
                 Revision_.fetch_add(1);
-                ConfigManager::SavePersistentViewsToDisk(Disk);
+                // Pillar 2 (#2026): bootstrap write off the frame thread — see Save() above.
+                smatchet::config_save::EnqueuePersistentViews(Disk);
             }
         }
         return;
@@ -144,7 +158,8 @@ void Views::ApplyTrackerFromConfig(const TrackerConfig& cfg) {
     bool dirty = false;
     ConfigManager::EnsureViewBucketBootstrapped(Disk, ActiveBackendKey, cfg, dirty);
     if (dirty) {
-        ConfigManager::SavePersistentViewsToDisk(Disk);
+        // Pillar 2 (#2026): backend-swap bootstrap write off the frame thread — see Save() above.
+        smatchet::config_save::EnqueuePersistentViews(Disk);
     }
     Slice_ = ConfigManager::ViewWorkspaceToViewsStore(Disk.Backends[ActiveBackendKey]);
     Revision_.fetch_add(1);

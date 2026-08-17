@@ -826,6 +826,7 @@ const TranslationEntry kEntries[] = {
     {"worklog.templates", "Templates ▼", u8"Modèles ▼"},
     {"worklog.no_templates", "No templates configured in Preferences.",
      u8"Aucun modèle configuré dans les Préférences."},
+    {"worklog.saving", "Saving worklog...", u8"Enregistrement du travail..."},
 
     {"date.edit_raw", "Edit raw ISO string:", u8"Modifier la chaîne ISO brute :"},
     {"date.apply_parsed", "Apply parsed value", u8"Appliquer la valeur analysée"},

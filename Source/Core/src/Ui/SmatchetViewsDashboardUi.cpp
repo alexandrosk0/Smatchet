@@ -5,6 +5,7 @@
 #include "AppController.h"
 #include "Views.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
@@ -1095,7 +1096,11 @@ void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const s
                 // Pane focus switch onto an already-sync-live context (Slice 3): persist the
                 // adopted identity + keep nav history, but skip the SyncWithBackend network
                 // re-fetch — the pane's own GridLiveContext data is already fresh.
-                ConfigManager::Save(d.cfg);
+                // Pillar 2 (#2026): this is the `WriteConfigJson` half of the violation pair the
+                // log shows on every pane show/hide (the `LoadPersistentViewsFromDisk` half is
+                // ViewState.Activate's save, now also off-thread). Coalescing worker, not an
+                // inline atomic whole-file rewrite on the frame thread.
+                smatchet::config_save::EnqueueTrackerConfig(d.cfg);
                 d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
             }
         }

@@ -123,6 +123,73 @@ TEST_CASE("config_save worker persists both config kinds and flushes on Stop") {
     CHECK(ConfigManager::LoadAnnotateAnalysis().ChangelistCacheMaxEntries == 1024);
 }
 
+// #2026 — the persistent-views slot. Views::Save used to do this whole read-merge-write inline on
+// the UI thread on every view activation (i.e. every pane show/hide); it now enqueues here. Two
+// properties matter and both are asserted through the production symbol:
+//   1. the snapshot reaches disk (worker path, flushed by Stop);
+//   2. the DR13a out-of-band ToolbarAppend merge still happens — it moved onto the worker with
+//      the write, so a toolbar button written straight to disk must survive the rewrite.
+TEST_CASE("config_save worker persists the views file and keeps the out-of-band ToolbarAppend") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Out-of-band writer (the toolbar editor's tracker-scope save): ToolbarAppend only.
+    {
+        PersistentViewsFile onDisk;
+        onDisk.Version = 2;
+        ToolbarButton btn;
+        btn.CommandId = "view.refresh";
+        onDisk.Backends["Jira"].ToolbarAppend.push_back(btn);
+        ConfigManager::SavePersistentViewsToDisk(onDisk);
+    }
+
+    smatchet::config_save::Start();
+
+    // The Views wrapper's snapshot: owns Views / ActiveViewId, and knows nothing about the
+    // toolbar write above (its in-memory Disk predates it).
+    PersistentViewsFile snapshot;
+    snapshot.Version = 2;
+    ViewDefinition v;
+    v.Id = "worker-view";
+    v.Name = "Worker View";
+    v.Jql = "project = W";
+    snapshot.Backends["Jira"].ActiveViewId = "worker-view";
+    snapshot.Backends["Jira"].Views.push_back(v);
+    smatchet::config_save::EnqueuePersistentViews(snapshot);
+
+    smatchet::config_save::Stop(); // flush pending within budget, then join
+
+    const PersistentViewsFile reloaded = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(reloaded.Backends.count("Jira") == 1);
+    const ViewWorkspaceState& jira = reloaded.Backends.at("Jira");
+    CHECK(jira.ActiveViewId == "worker-view");
+    REQUIRE(jira.Views.size() == 1);
+    CHECK(jira.Views[0].Id == "worker-view");
+    // DR13a: the out-of-band toolbar button was folded back in by the worker's re-read.
+    REQUIRE(jira.ToolbarAppend.size() == 1);
+    CHECK(jira.ToolbarAppend[0].CommandId == "view.refresh");
+}
+
+TEST_CASE("EnqueuePersistentViews falls back to a synchronous write when the worker is stopped") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Worker never started (tests / CLI / pre-init / post-shutdown): the write must still land,
+    // otherwise a views change made during teardown would be silently dropped.
+    PersistentViewsFile snapshot;
+    snapshot.Version = 2;
+    ViewDefinition v;
+    v.Id = "sync-view";
+    v.Name = "Sync View";
+    snapshot.Backends["Jira"].ActiveViewId = "sync-view";
+    snapshot.Backends["Jira"].Views.push_back(v);
+    smatchet::config_save::EnqueuePersistentViews(snapshot);
+
+    const PersistentViewsFile reloaded = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(reloaded.Backends.count("Jira") == 1);
+    CHECK(reloaded.Backends.at("Jira").ActiveViewId == "sync-view");
+    REQUIRE(reloaded.Backends.at("Jira").Views.size() == 1);
+    CHECK(reloaded.Backends.at("Jira").Views[0].Id == "sync-view");
+}
+
 // --- Persisted-field repair hooks (Issue #2047) -------------------------------------------------
 //
 // A screenshot-capture scenario clears persisted TrackerConfig fields (GitHubPat above all) for the
