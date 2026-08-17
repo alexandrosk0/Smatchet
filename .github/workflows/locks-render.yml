@@ -124,9 +124,59 @@ jobs:
 
           if [ -z "${{ secrets.LOCK_RENDER_PAT }}" ]; then
             echo "::warning::LOCK_RENDER_PAT secret is not set. Falling back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If this step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/plans/shipped/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
+          else
+            # A *missing* PAT and an *expired* one fail nothing alike. The
+            # branch push above uses GITHUB_TOKEN and keeps succeeding, so the
+            # only symptom of a lapsed PAT is gh emitting a bare "HTTP 401: Bad
+            # credentials / Try authenticating with: gh auth login -h
+            # github.com" — advice that is meaningless inside Actions and names
+            # neither the secret nor the rotation procedure. Probe the token
+            # once up front and translate the 401 into a sentence an operator
+            # can act on. (Observed 2026-08-16: 23 consecutive red cron fires
+            # starting at the PAT's 90-day mark, every one logging only the
+            # bare 401.)
+            # Probe with a repo-scoped PR read — the exact permission this
+            # step needs and the only one the least-privilege PAT is granted.
+            # Probing /user instead would exercise a permission the token
+            # deliberately does not hold, so a perfectly healthy PAT could
+            # fail the preflight. `-i` also returns the token's own expiry as
+            # a response header, so one call covers both checks.
+            if ! probe=$(gh api -i "repos/${GITHUB_REPOSITORY}/pulls?per_page=1" 2>&1); then
+              case "$probe" in
+                *401*|*"Bad credentials"*)
+                  echo "::error::LOCK_RENDER_PAT is set but no longer authenticates (HTTP 401 Bad credentials) — the token has expired or was revoked. This PAT is minted with a 90-day expiry; rotate it per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation, then re-run this workflow. The regenerated file is already pushed to '$BRANCH'; only the PR-open step is blocked."
+                  ;;
+                *)
+                  echo "::error::LOCK_RENDER_PAT preflight failed before any PR call: ${probe}"
+                  ;;
+              esac
+              exit 1
+            fi
+
+            # Early warning, so a 90-day cliff is announced two weeks ahead
+            # instead of discovered by a red tip. Best-effort: a header rename
+            # must never fail the job.
+            expiry=$(printf '%s' "$probe" | tr -d '\r' \
+              | grep -i '^github-authentication-token-expiration:' \
+              | head -n1 | cut -d' ' -f2-) || true
+            if [ -n "${expiry:-}" ] && exp_epoch=$(date -u -d "$expiry" +%s 2>/dev/null); then
+              days_left=$(( (exp_epoch - $(date -u +%s)) / 86400 ))
+              if [ "$days_left" -le 14 ]; then
+                echo "::warning::LOCK_RENDER_PAT expires in ${days_left} day(s) (${expiry}). Rotate it before then per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation — once it lapses, every 30-minute cron fire reds the develop tip until a human acts."
+              else
+                echo "::notice::LOCK_RENDER_PAT valid for ${days_left} more day(s) (${expiry})."
+              fi
+            fi
           fi
 
-          existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[].number' || true)
+          # Tell "no PR is open" apart from "the query failed". A trailing
+          # `|| true` here conflated the two, so an auth or API blip read as an
+          # empty result and sent the script on to create a duplicate PR.
+          if ! existing=$(gh pr list --head "$BRANCH" --base develop --state open --json number --jq '.[].number'); then
+            echo "::error::'gh pr list' failed for head '$BRANCH' — cannot tell whether a sync PR is already open, so refusing to create one blindly (that would duplicate an existing PR). Re-run after resolving the API error above."
+            exit 1
+          fi
+
           if [ -z "$existing" ]; then
             gh pr create \
               --base develop \
