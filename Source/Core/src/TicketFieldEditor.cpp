@@ -29,6 +29,7 @@
 #include "JiraClient.h"
 #include "CompactDateFormat.h"
 #include "SmatchetLocalization.h"
+#include "Ui/SmatchetToast.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
@@ -165,6 +166,15 @@ static ActiveWorklogDialogState s_ActiveWorklogState;
 /// Monotonic submit-generation counter, deliberately OUTSIDE the dialog state so it survives
 /// the per-open reset (the #1713 lesson: a counter reset with the state makes the guard inert).
 static int s_WorklogGenCounter = 0;
+
+/// Issue id whose worklog POST is still outstanding; empty when none is. Also outside the dialog
+/// state, and for the same reason: `SubmitInFlight` is reset on every open, so tracking the POST
+/// there let Save → Cancel → re-open the SAME ticket enable Save again while the first request
+/// was still running — two worklogs for one intent. The POST cannot be cancelled (`AddWorklog`
+/// takes no cancel token), so Cancel closes the dialog while the request keeps running; this id
+/// is what keeps that fact visible. Cleared by the post-back UNCONDITIONALLY, before the
+/// stale-guard, so a cancelled dialog cannot strand it and lock the ticket out of Save forever.
+static std::string s_WorklogSubmitInFlightIssueId;
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -1033,7 +1043,12 @@ void RenderTimeSpentButton(const CachedTicket& ticket, const std::string& curren
         s_ActiveWorklogState.Initialized = true;
         s_ActiveWorklogState.JustOpened = true;
         s_ActiveWorklogState.TimeRemainingManuallyEdited = false;
-        s_ActiveWorklogState.SubmitInFlight = false;
+        // NOT an unconditional false: if this ticket's previous submit is still running (the user
+        // hit Save then Cancel, then re-opened), the dialog must re-open in the in-flight state so
+        // Save stays disabled and the "Saving worklog..." cue shows. Otherwise the second Save
+        // creates a duplicate worklog for one intent.
+        s_ActiveWorklogState.SubmitInFlight =
+            smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, ticket.id);
         s_ActiveWorklogState.CloseRequested = false;
         // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from
         // a submit whose dialog was cancelled mid-flight would still match `Gen` after the user
@@ -1087,7 +1102,10 @@ void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& out
 // a post-back dropped at exit is harmless. Every other capture is a by-value copy; the lambda
 // touches only the file-static dialog state, which outlives the controller.
 void HandleWorklogSave(AppController& app) {
-    if (!smatchet::worklog::CanSubmitWorklog(s_ActiveWorklogState.SubmitInFlight)) {
+    // Two gates, not one: the dialog's own flag AND the cross-instance in-flight id. The second
+    // is what stops Save → Cancel → re-open → Save creating two worklogs for one intent.
+    if (!smatchet::worklog::CanSubmitWorklog(s_ActiveWorklogState.SubmitInFlight) ||
+        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, s_ActiveWorklogState.IssueId)) {
         return; // a submit is already in flight — never queue a duplicate worklog
     }
     s_ActiveWorklogState.ErrorMsg.clear();
@@ -1109,6 +1127,7 @@ void HandleWorklogSave(AppController& app) {
     const int gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
     s_ActiveWorklogState.Gen = gen;
     s_ActiveWorklogState.SubmitInFlight = true;
+    s_WorklogSubmitInFlightIssueId = issueId;
 
     app.LaunchBackgroundTask([appPtr, gen, issueId, timeSpent, timeRemaining, adjEst, description, startedDate]() {
         const VoidResult worklogResult =
@@ -1116,10 +1135,30 @@ void HandleWorklogSave(AppController& app) {
         const bool ok = worklogResult.has_value();
         const std::string err = ok ? std::string() : worklogResult.error();
         appPtr->PostToMainThread([gen, issueId, ok, err]() {
-            // Reuse of the comments-modal stale-guard (#1713): drop the post-back if the dialog
-            // closed, moved to another ticket, or a newer submit superseded this one.
+            // Release the cross-instance latch FIRST, before any early-out. If the stale-guard
+            // below returned with this still set, the ticket could never be Saved again for the
+            // rest of the session. Guarded on id equality so a newer submit's latch is not
+            // cleared by an older post-back landing late.
+            if (s_WorklogSubmitInFlightIssueId == issueId) {
+                s_WorklogSubmitInFlightIssueId.clear();
+            }
+            // Reuse of the comments-modal stale-guard (#1713): the dialog closed, moved to another
+            // ticket, or a newer submit superseded this one — so nothing may be written into the
+            // dialog state. The OUTCOME still has to reach the user: the request was sent and it
+            // either created a worklog or failed, and Cancel does not (cannot) undo it. Reporting
+            // it as a toast is the difference between "cancelled, nothing happened" and a silent
+            // success/failure the user never learns about.
             if (SmatchetCommentsModalGen::CallbackIsStale(s_ActiveWorklogState.Initialized, s_ActiveWorklogState.Gen,
                                                           gen, s_ActiveWorklogState.IssueId, issueId)) {
+                if (ok) {
+                    SmatchetToastManager::Instance().Push(
+                        SmatchetLocalization::T("worklog.toast.saved_title", "Worklog saved"), issueId,
+                        ToastType::Success);
+                } else {
+                    SmatchetToastManager::Instance().Push(
+                        SmatchetLocalization::T("worklog.toast.failed_title", "Worklog failed"), issueId + ": " + err,
+                        ToastType::Error);
+                }
                 return;
             }
             s_ActiveWorklogState.SubmitInFlight = false;
@@ -1128,6 +1167,8 @@ void HandleWorklogSave(AppController& app) {
                 // close and let RenderTimeTrackingModal honour it on this frame's draw.
                 s_ActiveWorklogState.CloseRequested = true;
             } else {
+                // In-dialog message is the primary cue (the dialog is open and showing it); the
+                // toast is deliberately NOT duplicated here.
                 s_ActiveWorklogState.ErrorMsg = "Failed: " + err;
             }
         });
@@ -1311,6 +1352,14 @@ void RenderTimeTrackingModal(AppController& app, const CachedTicket& ticket) {
     if (ImGui::Button("Cancel", ImVec2(80, 0))) {
         ImGui::CloseCurrentPopup();
         s_ActiveWorklogState.Initialized = false;
+    }
+    if (wasInFlight && ImGui::IsItemHovered()) {
+        // Be honest about what Cancel does mid-submit: AddWorklog takes no cancel token, so the
+        // request is already gone. Closing the dialog does not un-send it; the outcome arrives
+        // as a toast instead.
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("worklog.cancel_inflight_tooltip",
+                                                        "The worklog request was already sent — closing this dialog "
+                                                        "won't cancel it. The result will appear as a notification."));
     }
     if (s_ActiveWorklogState.SubmitInFlight) {
         ImGui::SameLine();

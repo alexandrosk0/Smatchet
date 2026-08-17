@@ -13,6 +13,7 @@
 
 using smatchet::worklog::CanSubmitWorklog;
 using smatchet::worklog::ValidateWorklogSubmission;
+using smatchet::worklog::WorklogSubmitOutstandingFor;
 
 namespace {
 // A date string the dialog itself produces (GetCurrentJiraDateTimeString shape).
@@ -47,4 +48,28 @@ TEST_CASE("ValidateWorklogSubmission reports the time-spent failure first") {
 TEST_CASE("CanSubmitWorklog gates a second Save while the POST is in flight") {
     CHECK(CanSubmitWorklog(/*submitInFlight=*/false));
     CHECK_FALSE(CanSubmitWorklog(/*submitInFlight=*/true));
+}
+
+TEST_CASE("WorklogSubmitOutstandingFor survives the dialog's per-open reset (#2085 duplicate)") {
+    // The bug this pins: `SubmitInFlight` is dialog-instance state and is reset on every open,
+    // so Save -> Cancel -> re-open the SAME ticket re-enabled Save while the first POST was
+    // still running, creating a second worklog for one intent. The cross-instance id is what
+    // the re-open now consults instead of assuming "not in flight".
+    CHECK(WorklogSubmitOutstandingFor("PROJ-1", "PROJ-1"));
+    // A different ticket is unaffected — one outstanding submit must not lock the whole grid.
+    CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-1", "PROJ-2"));
+    // Nothing outstanding.
+    CHECK_FALSE(WorklogSubmitOutstandingFor("", "PROJ-1"));
+    // Defensive: an empty issue id must never match an outstanding submit, or a dialog opened
+    // before its id is populated would come up spuriously disabled.
+    CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-1", ""));
+    CHECK_FALSE(WorklogSubmitOutstandingFor("", ""));
+}
+
+TEST_CASE("WorklogSubmitOutstandingFor is exact, not prefix or case-folded") {
+    // Issue keys share prefixes (PROJ-1 vs PROJ-10); a loose match would wrongly disable Save on
+    // a neighbouring ticket for the whole round-trip.
+    CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-1", "PROJ-10"));
+    CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-10", "PROJ-1"));
+    CHECK_FALSE(WorklogSubmitOutstandingFor("proj-1", "PROJ-1"));
 }

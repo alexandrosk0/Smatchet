@@ -35,5 +35,16 @@ inline std::string ValidateWorklogSubmission(const std::string& timeSpent, const
 /// also drawn disabled with a "Saving..." cue — this is the belt-and-braces guard).
 inline bool CanSubmitWorklog(bool submitInFlight) { return !submitInFlight; }
 
+/// Whether a worklog POST for `issueId` is still outstanding, given the id the in-flight submit
+/// was dispatched for (empty when none is). This is deliberately NOT the dialog's own
+/// `SubmitInFlight` flag: that flag is per-dialog-instance and is reset on every open, so
+/// Save → Cancel → re-open the SAME ticket used to re-enable Save while the first POST was
+/// still running and let the user create a SECOND worklog for one intent. The POST itself
+/// cannot be cancelled (`AddWorklog` takes no cancel token), so the honest behaviour is to keep
+/// the submit visible across dialog instances rather than pretend Cancel undid it.
+inline bool WorklogSubmitOutstandingFor(const std::string& inFlightIssueId, const std::string& issueId) {
+    return !inFlightIssueId.empty() && !issueId.empty() && inFlightIssueId == issueId;
+}
+
 } // namespace worklog
 } // namespace smatchet
