@@ -365,6 +365,19 @@ if [ "$SCOPE" = "selftest" ]; then
            printf '%s\n' "$_out" | sed 's/^/    /'; fail=1 ;;
     esac
 
+    # (20b) a parenthetical in reason= placed BEFORE rule= must still SUPPRESS.
+    #       Case (20) covers the body/value half; this covers the MATCHING half.
+    #       DEV_RE gates whether escape_active() is consulted at all, so while it
+    #       used `[^)]*` the `)` inside `(branch protection)` put rule= beyond its
+    #       reach: no match, no escape, claim reported despite a valid future
+    #       marker sitting directly above it. Expect exit 0 (suppressed).
+    _case escape-paren-before-rule 0 '# P
+
+## Implementation log
+<!-- SMATCHET_DEVIATION(reason=github api state (branch protection); rule=plan-claim-anchor; owner=x; revisit='"$_future"') -->
+- branch protection already had reviews disabled.
+'
+
     # (21) a marker MISSING its closing paren never engages suppression at all
     #      (DEV_RE requires the paren) — the claim reports.
     _case escape-unclosed-marker 1 '# P
@@ -476,7 +489,15 @@ CLAIM_RE = re.compile(
 # gate fail on another's evidence.
 ANCHOR_RE = re.compile(r':\d+\b|#\d{2,}|\b[0-9a-f]{7,40}\b')
 
-DEV_RE = re.compile(r'SMATCHET_DEVIATION\([^)]*rule=plan-claim-anchor[^)]*\)')
+# Paren-safe for the SAME reason DEV_BODY_RE below is. This is the GATE: scan()
+# requires DEV_RE to match before escape_active() is consulted, so `[^)]*` here
+# defeated the whole escape — not just its expiry — whenever reason= carried a
+# parenthetical BEFORE rule=, e.g. `reason=github api state (branch protection);
+# rule=plan-claim-anchor`. `[^)]*` cannot cross the `)` inside the prose, so
+# rule= sat beyond its reach, DEV_RE did not match, and the claim reported with a
+# valid escape sitting above it. Fixing DEV_BODY_RE's value parse (#2002) left
+# this matching half untouched; CodeRabbit caught it on PR #2090. Selftest (21).
+DEV_RE = re.compile(r'SMATCHET_DEVIATION\(.*rule=plan-claim-anchor.*\)')
 # The deviation BODY parses as ;-delimited fields and the FINAL revisit= field
 # wins, mirroring 10-line-rules.sh's `IFS=';' read -ra kvs` loop — a substring
 # match would let `reason=see revisit=never note; revisit=<past>` ride on the
