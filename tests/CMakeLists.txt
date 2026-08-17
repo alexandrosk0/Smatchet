@@ -74,6 +74,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerLabelsPure.cpp"
         Core/TrackerDateTimePure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerDateTimePure.cpp"
+        # Scenario capture-size parse + the request-vs-achieved verdict (#2092). Pure,
+        # ImGui-free, no threads — belongs in the portable subset so the contract that
+        # keeps bucket-C from comparing wrong-sized captures is covered on Linux too,
+        # not only in the Windows-only full rig.
+        Core/ScenarioCaptureSizing.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
@@ -375,6 +381,11 @@ add_executable(SmatchetTests
     # pane-stale-delete-collision — pure keep-set roster filter shared by TicketSyncService's
     # session convergence and AppController's namespace-wide refresh. Header-only.
     Core/TicketRosterFilterPure.test.cpp
+    # issues #2049 / #2050 / #2063 — the per-pane owned-ticket-id store extracted out of
+    # AppController (absent vs tombstoned recorded set, retirement keyed by pane id across every
+    # backend key, atomic single-id admit). Header-only
+    # (Source/Core/include/Sync/PaneOwnedTicketIdStore.h); no production .cpp to link.
+    Core/PaneOwnedTicketIdStore.test.cpp
     # issue #1457 — gridContexts_ map-structure race (worker snapshot-find vs UI
     # retire-erase / emplace). Seam-level fixture; header-only, also in SmatchetTsanTests.
     Core/GridContextsMapRace1457.test.cpp
@@ -1155,6 +1166,10 @@ add_executable(SmatchetTests
     # replaced the UI-thread reads in SmatchetPlanDocViewerUi + SmatchetAttachmentPreviewUi.
     # Header-only pure helper, no production .cpp to link.
     Core/AsyncLoadGatePure.test.cpp
+    # One-line grid-cell preview picker — first line with VISIBLE content, so a
+    # value opening with a blank line (GitHub issue bodies routinely do) no longer
+    # draws an empty cell. Header-only pure helper, no production .cpp to link.
+    Core/FieldPreviewLinePure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapturePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SubprocessCapture.cpp"
     Plugins/Mcp/McpRequestParser.test.cpp

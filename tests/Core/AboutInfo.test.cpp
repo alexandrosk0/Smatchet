@@ -164,6 +164,29 @@ TEST_CASE("BuildAboutReportText — third-party section lists every dep") {
     CHECK(text.find('|') == std::string::npos);
 }
 
+TEST_CASE("BuildAboutReportText — agent-debug line appears only on an instrumented build") {
+    // The OFF build is the normal one, so it carries no row at all — a permanent
+    // "agent-dbg: off" would be noise on every bug report. app.version's JSON
+    // carries the field unconditionally instead (machine readers need the false).
+    AboutInfo off = MakeSyntheticInfo();
+    off.Build.AgentDebug = false;
+    CHECK(BuildAboutReportText(off).find("agent-dbg") == std::string::npos);
+
+    AboutInfo on = MakeSyntheticInfo();
+    on.Build.AgentDebug = true;
+    // One pad space: AppendField pads "agent-dbg:" (10) out to kLabelWidth (11).
+    CHECK(BuildAboutReportText(on).find("agent-dbg: on\n") != std::string::npos);
+}
+
+TEST_CASE("GatherAboutInfo — AgentDebug mirrors the compile-time define, never a runtime probe") {
+    const AboutInfo info = GatherAboutInfo("1.2.3", "example/repo");
+    // The doctest rig never gets SMATCHET_AGENT_DEBUG on AboutInfo.cpp: the option
+    // is wired PRIVATE to SmatchetStandalone, and tests/CMakeLists.txt force-sets
+    // it on SmatchetAgentDebug.test.cpp's own TU only. So false is the expected
+    // value here — and a true would mean the define leaked target-wide.
+    CHECK(info.Build.AgentDebug == false);
+}
+
 // --------------------------------------------------------------------------
 // GatherAboutInfo — the real build-generated manifest
 // --------------------------------------------------------------------------

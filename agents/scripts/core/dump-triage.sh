@@ -7,9 +7,13 @@
 # attributed to a module — the hand-rolled scan a debug-detective previously
 # re-derived per incident (tooling backlog no-cdb-windbg-dump-triage-script).
 #
-# For a SYMBOLIZED stack, install a debugger and use cdb instead:
-#     cdb -z <dump.dmp> -c "!analyze -v; q"
-# (canonical invocation documented in docs/agent-rules/debug-techniques.md).
+# For a SYMBOLIZED stack, install a debugger and use cdb instead. Do NOT reach
+# for the bare `cdb -z <dump> -c "!analyze -v; q"` one-liner: !analyze -v walks
+# only the FAULTING thread, so on a hang dump (debug.dump_self) it reports on the
+# wrong one. The canonical invocation adds `~*kb` for every thread plus the
+# symbol/exe search paths, and lives — with the verified install recipe, because
+# cdb is NOT on a stock dev box and `winget install Microsoft.WinDbg` does not
+# provide it — in docs/agent-rules/debug-techniques.md § Installing cdb.
 # This wrapper is the no-debugger fallback — fast, lossy (no symbol resolution).
 #
 # Usage:

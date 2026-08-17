@@ -182,6 +182,21 @@ TEST_CASE("ApplyVerifiedSaveUnlock: refuses every unverified path and mutates no
         CHECK(cfg.ReadOnlyMode);
         CHECK_FALSE(cfg.BackendHasBeenReachable);
     }
+    // Regression: the unlock is documented as FIRST-RUN only but had no first-run condition, so a
+    // veteran install (reachability already latched) that ticks "Read-only mode", presses "Test
+    // connection" (green → pin set) and then "Save & Sync" had that deliberate write-protection
+    // silently cleared. Reachability is the first-run latch, so it also gates the unlock.
+    SUBCASE("a veteran install keeps a deliberately enabled read-only mode") {
+        TrackerConfig cfg = JiraCfg();
+        cfg.BackendHasBeenReachable = true;
+        cfg.ReadOnlyMode = true;
+        std::string pin = TrackerSetupPure::CredentialFingerprint(cfg);
+        CHECK_FALSE(TrackerSetupPure::ApplyVerifiedSaveUnlock(cfg, pin));
+        CHECK(cfg.ReadOnlyMode);
+        CHECK(cfg.BackendHasBeenReachable);
+        // Refused, so the pin is untouched: only the firing edge consumes it.
+        CHECK_FALSE(pin.empty());
+    }
     SUBCASE("read-only already off: a deliberate read-only session is not silently latched") {
         TrackerConfig cfg = JiraCfg();
         cfg.ReadOnlyMode = false;

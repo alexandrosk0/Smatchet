@@ -1014,6 +1014,18 @@ struct UiDrawSession {
     /// Used by the visual-test pipeline to snapshot dock layouts deterministically.
     bool requestScreenshot = false;
     std::string requestScreenshotPath;
+    /// Size a screenshot SCENARIO asked its capture to be (-1 = the pending capture is not
+    /// a scenario golden capture — e.g. a bug-report shot — so no size contract applies).
+    /// Set by RequestScenarioCaptureWindowResize beside the resize request, and still live
+    /// when the capture is serviced several frames later: a scenario's OnFinish only
+    /// REQUESTS the screenshot, so the size cannot be checked there. The capture path is the
+    /// first place both the request and the achieved framebuffer are known, so that is where
+    /// the contract is enforced — see VerifyScenarioCaptureSize (#2092).
+    int expectedCaptureWidth = -1;
+    int expectedCaptureHeight = -1;
+    /// Framebuffer dimensions of the most recent capture actually written (-1 = none yet).
+    int lastCaptureWidth = -1;
+    int lastCaptureHeight = -1;
     /// log-a-bug-github — set by the bug-report modal when its capture request is for the
     /// report (not a debug/test shot). The standalone capture path echoes completion back
     /// via bugReportShotReady so the modal never polls the filesystem on the UI thread.

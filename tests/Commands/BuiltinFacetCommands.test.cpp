@@ -533,6 +533,18 @@ TEST_CASE("app.* — version, gated quit, update check, read-only persist round-
         REQUIRE(r.Ok);
         CHECK((*r.Data)["version"] == "9.9.9-test");
         CHECK((*r.Data)["releaseRepo"] == "owner/smatchet");
+        // build.agentDebug must be emitted UNCONDITIONALLY. It is the machine
+        // surface that separates "no instrumented call site fired" from
+        // "SMATCHET_AGENT_DEBUG never reached the compiler", so an absent key
+        // restores exactly the ambiguity it exists to remove — and absence is
+        // indistinguishable from false to a reader doing `.get<bool>()` on a
+        // missing key. Presence + type is the property under test; whether the
+        // value is true or false for a given target is pinned separately by
+        // tests/Core/AboutInfo.test.cpp against GatherAboutInfo.
+        REQUIRE(r.Data->contains("build"));
+        const auto& build = (*r.Data)["build"];
+        CHECK(build.contains("agentDebug"));
+        CHECK(build["agentDebug"].is_boolean());
     }
     {
         const CommandResult r = reg.Dispatch("app.quit", {}, AutomationCtx());

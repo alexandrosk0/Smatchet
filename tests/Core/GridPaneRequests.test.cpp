@@ -271,3 +271,53 @@ TEST_CASE("Pane add: a floating source hands off no dock node (nothing to tab in
     REQUIRE(panes.size() == 2);
     CHECK(panes[1].pendingDockId == 0u); // ImGui cannot dock into a node that does not exist
 }
+
+// --- ResolveExtraPaneDockTarget (issue #2082) ------------------------------------------
+// Reset Layout used to leave every extra pane floating and centred: an extra pane's
+// "###GridPane:<id>" window is in neither the default-layout ini nor the layout-key table,
+// so both of the reset's re-dock triggers miss it. The policy core sends it back to the
+// central node for the whole settle window.
+
+TEST_CASE("Extra pane dock: a settling layout reset forces the central node every frame") {
+    unsigned int pendingDockId = 0u;
+
+    // Re-forced on EVERY settle frame (the rebuilt node is not live yet on the reset frame,
+    // so ImGui silently drops a single write) — never consumed into a one-shot.
+    for (int frame = 0; frame < 3; ++frame) {
+        CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0x00000002u,
+                                                                          /*layoutResetSettling=*/true) == 0x2u);
+    }
+    CHECK(pendingDockId == 0u);
+}
+
+TEST_CASE("Extra pane dock: a settling reset supersedes and consumes a stale '+' hand-off") {
+    unsigned int pendingDockId = 0x1234u; // source node from a "+" — gone after the tree rebuild
+
+    CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0x00000002u,
+                                                                      /*layoutResetSettling=*/true) == 0x2u);
+    CHECK(pendingDockId == 0u);
+}
+
+TEST_CASE("Extra pane dock: no forced write while the rebuilt central node is not live yet") {
+    unsigned int pendingDockId = 0x1234u;
+
+    // liveCentralNodeId == 0 = EnsureDockSlotAlive rejected the node this frame. Nothing is
+    // forced; the stale "+" node must NOT stand in for it (docking into a dead id mints an
+    // orphan root node), so it is dropped and the caller re-asks on the next settle frame.
+    CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0u,
+                                                                      /*layoutResetSettling=*/true) == 0u);
+    CHECK(pendingDockId == 0u);
+    CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0x00000002u,
+                                                                      /*layoutResetSettling=*/true) == 0x2u);
+}
+
+TEST_CASE("Extra pane dock: outside a reset the '+' hand-off applies exactly once") {
+    unsigned int pendingDockId = 0x1234u;
+
+    CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0u,
+                                                                      /*layoutResetSettling=*/false) == 0x1234u);
+    CHECK(pendingDockId == 0u);
+    // Re-forcing after the hand-off would fight a user tab drag.
+    CHECK(SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(pendingDockId, 0u,
+                                                                      /*layoutResetSettling=*/false) == 0u);
+}
