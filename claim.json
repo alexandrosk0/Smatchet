@@ -1,0 +1,1 @@
+{"branch":"fix/fa-fetch-raw-host","notes":"github.com /raw/ shim 404s; switch to raw.githubusercontent.com","originating_plan":"","owner":"orchestrator","schema":"smatchet-plan-lock/1","slug":"fa-fetch-raw-host","started":"2026-08-17T14:22:31Z","updated":"2026-08-17T14:22:31Z","write_set":[".github/actions/fetch-fontawesome/action.yml"]}
