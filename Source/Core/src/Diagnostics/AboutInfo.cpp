@@ -171,6 +171,17 @@ AboutInfo GatherAboutInfo(const std::string& appVersion, const std::string& gith
 #else
     info.Build.BuildTag = "standalone";
 #endif
+    // Compiled state, not a runtime probe — the agent-debug NDJSON facility has
+    // no always-on call site by design (a debug-detective places scopes per
+    // investigation), so an empty/absent agent-debug dir is the EXPECTED state of
+    // a working instrumented build. This field is what tells a validator whether
+    // the define actually reached the compiler; without it the two failure modes
+    // are indistinguishable without reading build.ninja by hand.
+#if defined(SMATCHET_AGENT_DEBUG)
+    info.Build.AgentDebug = true;
+#else
+    info.Build.AgentDebug = false;
+#endif
 
     info.Git.Sha = SMATCHET_GIT_SHA;
     info.Git.ShaShort = SMATCHET_GIT_SHA_SHORT;
@@ -201,6 +212,12 @@ std::string BuildAboutReportText(const AboutInfo& info) {
 
     AppendField(out, "build cfg", info.Build.Config);
     AppendField(out, "build tag", info.Build.BuildTag);
+    if (info.Build.AgentDebug) {
+        // Only when ON — an instrumented build is the abnormal one, and a "false"
+        // row on every bug report would be noise. `app.version` carries the field
+        // unconditionally because a machine reader needs the explicit false.
+        AppendField(out, "agent-dbg", "on");
+    }
     AppendField(out, "built", info.Build.DateTime);
     AppendField(out, "compiler", info.Build.CompilerId + " " + info.Build.CompilerVersion);
     AppendField(out, "cmake", info.Build.CMakeVersion);
