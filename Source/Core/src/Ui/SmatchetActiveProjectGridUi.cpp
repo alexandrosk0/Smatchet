@@ -2,6 +2,7 @@
 #include "SmatchetActiveProjectGridUi_Internal.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
+#include "SmatchetDockNodeIds.h" // central-node re-dock for extra panes on a layout reset
 #include "Ui/SmatchetBackendDisplay.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
@@ -134,16 +135,35 @@ static void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
 // dock slot would also scatter every new pane into the default grid node instead of the tab
 // bar whose "+" the user actually clicked. Placement comes from the source pane's live node
 // instead (seeded at creation by ApplyPaneAddAndCloseRequestsCore).
-void PrepareExtraPaneWindow(GridPane& pane, bool wantFocus) {
-    if (pane.pendingDockId != 0) {
-        ImGui::SetNextWindowDockID(static_cast<ImGuiID>(pane.pendingDockId), ImGuiCond_Always);
-        pane.pendingDockId = 0; // consume-once — from here the user owns the placement
+void PrepareExtraPaneWindow(UiDrawSession& d, GridPane& pane, bool wantFocus) {
+    // Layout reset (#2082): an extra pane's window name carries a "###GridPane:<id>" settings
+    // id the default-layout ini has no entry for, so LoadIniSettingsFromMemory clears its
+    // DockId and NOTHING re-docks it — pendingReDockWindows is keyed by the layout-key table,
+    // which extra panes deliberately stay out of. Every extra pane was therefore left floating
+    // and then snapped by repairTopLevelWindow's forced-defaults branch to the same centred
+    // fallback rect, i.e. "all but one pane undocked in the middle of the screen". The policy
+    // (reset → central node, else the one-shot "+" hand-off) is the pure core below.
+    const bool layoutResetSettling = d.layoutForceDefaultsFrames > 0;
+    const ImGuiID liveCentral =
+        layoutResetSettling ? SmatchetDockNodeIds::EnsureDockSlotAlive(SmatchetDockNodeIds::kCentralNode) : 0;
+    const unsigned int forcedDock = SmatchetGridPaneWindows::detail::ResolveExtraPaneDockTarget(
+        pane.pendingDockId, static_cast<unsigned int>(liveCentral), layoutResetSettling);
+    if (forcedDock != 0) {
+        ImGui::SetNextWindowDockID(static_cast<ImGuiID>(forcedDock), ImGuiCond_Always);
     }
     ImGui::SetNextWindowSize(ImVec2(900.0f, 620.0f), ImGuiCond_FirstUseEver);
     if (wantFocus) {
         ImGui::SetNextWindowFocus();
     }
 }
+
+// ExtraPaneRectRepairSkippedDuringLayoutReset — why drawActiveProjectWindow skips an extra
+// pane's repairTopLevelWindow call while d.layoutForceDefaultsFrames > 0. That path FORCES the
+// fallback rect, and for an unregistered layout key ("grid-pane") the fallback IS the centred
+// one: it is what piled every extra pane in the middle of the screen (#2082). It would also
+// fire on exactly the frames a pane is legitimately still floating, waiting for the rebuilt
+// central node to come alive so the re-dock above can land. Normal off-screen / degenerate-rect
+// rescue resumes the frame the countdown expires.
 
 } // namespace
 
@@ -166,7 +186,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         if (isBootstrapPane) {
             prepareTopLevelWindow(d, "active", 900.0f, 620.0f, wantFocus);
         } else {
-            PrepareExtraPaneWindow(pane, wantFocus);
+            PrepareExtraPaneWindow(d, pane, wantFocus);
         }
         // The bootstrap pane keeps the legacy window name so existing imgui.ini dock
         // geometry and the default-layout ini keep applying; extra panes carry their
@@ -206,10 +226,9 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         SmatchetWindowExpand::DrawToggle(d);
         if (isBootstrapPane) {
             repairTopLevelWindow(d, "active", 420.0f, 300.0f);
-        } else {
-            // Unregistered key → no dock slot → repairTopLevelWindow takes the rect-repair-only
-            // path: a deliberately floating extra pane keeps its position, but is still rescued
-            // if it lands off-screen or degenerate. It never arms the shared "active" latch.
+        } else if (d.layoutForceDefaultsFrames <= 0) {
+            // Rect-repair-only (unregistered key = no dock slot), and skipped while a layout
+            // reset settles — see ExtraPaneRectRepairSkippedDuringLayoutReset above for why.
             repairTopLevelWindow(d, "grid-pane", 420.0f, 300.0f);
         }
         if (wantFocus) {
