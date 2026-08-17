@@ -169,6 +169,13 @@ for k in REVIEW_FLAGS:
 # three — a positive int pins, -1 sends the explicit any-app value, and null
 # omits the key (deliberate auto-selection, spelled as an omission rather than
 # a JSON null so the request body reads as the API documents it).
+#
+# All three wire states come from three CONFIG VALUES, never from the presence
+# or absence of the config key: the key is in REQUIRED_KEYS above, so deleting
+# it exits 2. It is deliberately NOT a fourth spelling of auto-selection —
+# reading config absence as "omit the wire key" would reinstate the silent
+# default this script exists to close, and a deleted line would then quietly
+# change who may satisfy every required check with nothing to flag it.
 APP_ID = bp["required_checks_app_id"]
 checks = []
 for ctx in bp["required_contexts"]:
