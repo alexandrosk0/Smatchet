@@ -105,7 +105,20 @@ class SmatchetUI {
     /// from cfg.Keybindings (rebuildKeybindingCache). The Keyboard Shortcuts editor +
     /// the toolbar / command-palette quick-bind call this after mutating the binding
     /// table so a rebind takes effect immediately, without a restart.
-    void MarkKeybindingsDirty() { keybindingCacheDirty_ = true; }
+    /// Also bumps the binding revision below: this is the ONE call every binding
+    /// mutation already passes through, so anything else caching a derived answer
+    /// keys off the revision rather than needing its own invalidation call site.
+    void MarkKeybindingsDirty() {
+        keybindingCacheDirty_ = true;
+        ++keybindingRevision_;
+    }
+
+    /// Monotonic counter bumped by every MarkKeybindingsDirty(). Consumers that cache
+    /// something derived from cfg.Keybindings compare their last-seen value each frame
+    /// and rescan on a change — see drawPreferencesWindow's keybinding-row match cache,
+    /// which used to be invalidated only from inside the Preferences editor and so went
+    /// stale on a toolbar / command-palette quick-bind.
+    unsigned int KeybindingRevision() const { return keybindingRevision_; }
 
     /// Ring-buffer LRU of recently toggled view command ids (capacity 5, oldest-first on read).
     class RecentViewLru {
@@ -205,6 +218,10 @@ class SmatchetUI {
     // would fire twice. Distinct actions sharing a keystroke still all fire.
     std::vector<int> actionLastFiredFrame_;
     bool keybindingCacheDirty_ = true;
+    // Bumped by MarkKeybindingsDirty(); read via KeybindingRevision(). Starts at 0 so a
+    // consumer default-initialised to 0 sees "no edge yet" and relies on its own initial
+    // dirty flag for the first scan.
+    unsigned int keybindingRevision_ = 0;
 
     void drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d);
     // Consume the toolbar / command-palette "Set shortcut..." request latch and draw the
@@ -598,7 +615,21 @@ class SmatchetUI {
     // Public because the bucket-E regression guard (tests/ui/docked_tab_focus.test.cpp)
     // drives the real implementation rather than a replica — the imgui#2304 workaround
     // reaches into imgui_internal.h and would silently rot if the test used a copy.
-    static void selectDockedTab(const char* windowName);
+    //
+    // Returns false when the window does not exist YET — ImGui only creates the
+    // ImGuiWindow inside Begin(), so on the first-ever open of a process this runs
+    // before there is anything to select. Callers must keep their focus request armed
+    // on false (bounded by kFocusRequestRetryFrames) instead of clearing it the same
+    // frame, or the first-ever open still comes up behind its docked sibling and stays
+    // there. True means the request was serviced: the tab was selected, or the window
+    // exists but is floating / has no tab bar, where SetNextWindowFocus alone suffices.
+    static bool selectDockedTab(const char* windowName);
+
+    // Frames a docked-tab focus request stays armed while selectDockedTab keeps missing.
+    // One retry is normally enough (the window exists from the frame after its first
+    // Begin); the cap exists so a name that never resolves cannot re-issue
+    // SetNextWindowFocus forever and trap focus on a window the user has moved on from.
+    static const int kFocusRequestRetryFrames = 4;
     // Same, for the window currently between Begin/End (no name lookup). Used by a freshly
     // created grid pane, whose window name carries a "###GridPane:<id>" settings id.
     static void selectCurrentDockedTab();

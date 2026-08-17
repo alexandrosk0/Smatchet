@@ -1521,6 +1521,11 @@ add_executable(SmatchetTests
     # (mirrors SmatchetGridHeaderUi_detail.cpp); SmatchetWindowExpand.cpp stays OUT.
     Core/WindowExpand.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetWindowExpand_detail.cpp"
+    # Issue #2058 — bounded retry core for a docked-tab focus request. The latch used to be
+    # cleared on the same frame selectDockedTab was called, i.e. before ImGui had created the
+    # window, so the first-ever open still came up behind its sibling. Ui/SmatchetFocusRequest.h
+    # is header-only and ImGui-free; no extra .cpp link.
+    Core/FocusRequestRetry.test.cpp
     # multi-grid-tabs.md Slice 1a — per-pane GridLiveContext bundle: default state,
     # ADR-0012 Backend slot atomic store/load contract, active-ticket publish path.
     # TicketSyncService.cpp (needed by ~GridLiveContext) is already linked above.

@@ -70,6 +70,23 @@ bool ConsumeRestore(WindowExpandState& s, unsigned int id, WindowExpandSaved& ou
     return true;
 }
 
+WindowExpandPersistedPlacement PersistedPlacementForExpanded(const WindowExpandSaved& saved) {
+    WindowExpandPersistedPlacement out;
+    out.DockId = saved.DockId;
+    // A docked home carries no rect of its own — the node owns it — so only a FLOATING
+    // home contributes Pos/Size. A degenerate size means the placement was captured
+    // before the window had ever been laid out; keeping the existing settings entry's
+    // size is strictly better than writing a zero-area window into the .ini.
+    if (saved.DockId == 0 && saved.SizeX > 0.0f && saved.SizeY > 0.0f) {
+        out.OverridePosSize = true;
+        out.PosX = saved.PosX;
+        out.PosY = saved.PosY;
+        out.SizeX = saved.SizeX;
+        out.SizeY = saved.SizeY;
+    }
+    return out;
+}
+
 void SelfHeal(WindowExpandState& s) {
     if (s.ExpandedId != 0 &&
         std::find(s.SubmittedIds.begin(), s.SubmittedIds.end(), s.ExpandedId) == s.SubmittedIds.end()) {

@@ -126,3 +126,52 @@ TEST_CASE("AiTruncatedPasteDroppedBytes: zero under cap, overflow above, degener
     CHECK(AiTruncatedPasteDroppedBytes(100, 1) == 0u);
     CHECK(AiTruncatedPasteDroppedBytes(100, 0) == 0u);
 }
+
+// --- Assistant dock-side fallback (issue #2048) ------------------------------------
+// ApplyAssistantDocking falls back to the OTHER side bar when the requested one is not
+// live. kSecondarySideBar is cut by no DockBuilder call and is absent from the embedded
+// default ini, so a stored AssistantPanelOnSecondarySide = true falls back on every stock
+// layout. Persisting that fallback destroyed the preference outright — and the swap button
+// is disabled in exactly that state, so the UI offered no way back. These two helpers keep
+// the fallback session-only while the header label still describes where the panel IS.
+
+TEST_CASE("AiAssistantSideFallbackAfterDock: no override when the requested side was reached") {
+    CHECK(AiAssistantSideFallbackAfterDock(false, false) == -1);
+    CHECK(AiAssistantSideFallbackAfterDock(true, true) == -1);
+}
+
+TEST_CASE("AiAssistantSideFallbackAfterDock: records the side actually reached when it differs") {
+    // The #2048 case: preference says secondary, no live secondary node, panel lands primary.
+    CHECK(AiAssistantSideFallbackAfterDock(true, false) == 0);
+    CHECK(AiAssistantSideFallbackAfterDock(false, true) == 1);
+}
+
+TEST_CASE("AiAssistantEffectiveOnSecondary: the stored preference rules while no fallback is set") {
+    CHECK_FALSE(AiAssistantEffectiveOnSecondary(false, -1));
+    CHECK(AiAssistantEffectiveOnSecondary(true, -1));
+}
+
+TEST_CASE("AiAssistantEffectiveOnSecondary: an active fallback wins without disturbing the preference") {
+    // The preference stays true — the panel returns to the right the moment a real
+    // secondary node exists — while the label reads "on the left" today.
+    CHECK_FALSE(AiAssistantEffectiveOnSecondary(true, 0));
+    CHECK(AiAssistantEffectiveOnSecondary(false, 1));
+}
+
+TEST_CASE("Assistant dock side: a stock-layout fallback round-trips without touching the preference") {
+    // The whole #2048 regression at the data level: the user prefers the secondary side,
+    // only the primary node is live, and the fallback fires frame after frame. The
+    // preference must be untouched throughout, and the label must track the real side.
+    const bool preference = true; // AssistantPanelOnSecondarySide as loaded from config
+    int sideFallback = -1;
+    for (int frame = 0; frame < 3; ++frame) {
+        sideFallback = AiAssistantSideFallbackAfterDock(preference, false);
+        CHECK(sideFallback == 0);
+        CHECK_FALSE(AiAssistantEffectiveOnSecondary(preference, sideFallback));
+    }
+    // A secondary node appears (layout reset / a newer default ini): the stored preference
+    // is honoured again with no user action and without ever having been rewritten.
+    sideFallback = AiAssistantSideFallbackAfterDock(preference, true);
+    CHECK(sideFallback == -1);
+    CHECK(AiAssistantEffectiveOnSecondary(preference, sideFallback));
+}

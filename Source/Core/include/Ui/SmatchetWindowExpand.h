@@ -14,15 +14,21 @@
 // DockNodeRemoveWindow only destroys an emptied leaf when the departing window
 // cleared that ref, and letting SetNextWindowDockID(0) do the undock clears it.
 //
-// Four limits this deliberately does NOT solve — none is invisible, and none
+// What it writes at exit: the PRE-EXPAND home, not the fullscreen pin. The override IS
+// the window's live state and ImGui's settings writer snapshots Pos/Size/DockId off the
+// live window, dropping the DockId line entirely while the dock id is zero, so the
+// debounced auto-save and the unconditional save in DestroyContext used to persist an
+// expanded window as floating and fullscreen — after which SmatchetUI_Layout's pendingReDockWindows
+// path force-redocked it to its DEFAULT slot on the next launch and a customised dock
+// placement was silently lost. FreezeExpandedSettings (SmatchetWindowExpand.cpp, called
+// from DrawToggle) now stamps the saved home into the window's ImGuiWindowSettings entry
+// and sets ImGuiWindowFlags_NoSavedSettings on the live window for the duration of the
+// expansion, so the settings writer leaves that entry alone. The one uncovered frame is a
+// window whose Begin returns false while expanded (collapse) — EndFrame converts that into
+// a minimize on the same frame, so it survives at most until the next save.
+//
+// Three limits this deliberately does NOT solve — none is invisible, and none
 // should be assumed away by later work:
-//  - It is NOT .ini-safe. The override IS the window's live state, and ImGui's
-//    settings writer snapshots Pos/Size/DockId off the live window (dropping the
-//    DockId line entirely while DockId == 0). So the debounced auto-save, and the
-//    unconditional save in DestroyContext, persist an expanded window as floating
-//    and fullscreen. On relaunch SmatchetUI_Layout's pendingReDockWindows path
-//    force-redocks it within ~2 frames — to its DEFAULT slot, so a customised dock
-//    placement is lost. Fixing that needs an ini-safe transition, not a comment.
 //  - The node-survival trick above covers OUR undock, not a node killed by anything
 //    else while expanded (a sibling being dragged out, an .ini reload). If the saved
 //    id resolves to nothing, the restore cuts the slot again from the recorded split
@@ -39,10 +45,11 @@
 //    silently yields its space and minimize restores the original ratio. (A CENTRAL
 //    node is the exception: it stays visible while empty, by design.) The leaf lives
 //    until the next settings load, where DockContextPruneUnusedSettingsNodes takes it.
-//  - On a FULL tab bar the button overlaps the last tab and takes its clicks.
-//    DockNodeCalcTabBarLayout reserves room for the node's own close X, not for
-//    this control, so once the tabs fill BarRect the two occupy the same pixels.
-//    A real fix has to shrink BarRect (or claim a section) rather than draw over it.
+//  - On a full tab bar the toggle's slot is claimed by ReserveTabBarSlot (an invisible
+//    trailing TabItemSpacing widens the trailing section, which is the only thing that
+//    shrinks the central tab region), so tabs no longer lay out under it. That amend
+//    re-enters an already-laid-out tab bar, so it takes effect on the NEXT frame: the
+//    very first submission of a brand-new node can still overlap for one frame.
 //
 // The state below stays ImGui-free
 // (ImGuiID is a plain `unsigned int`) so the transition core in
@@ -140,6 +147,22 @@ void ApplyToggle(WindowExpandState& s, unsigned int id, const WindowExpandSaved&
 
 /// Consume a pending restore for `id`, writing `out` and dropping the entry. False when none armed.
 bool ConsumeRestore(WindowExpandState& s, unsigned int id, WindowExpandSaved& out);
+
+/// What the .ini must keep recording for a window while it is expanded: its PRE-EXPAND
+/// home, never the fullscreen pin. `DockId` is replayed as-is; `OverridePosSize` is true
+/// only for a home that was FLOATING (a docked window's rect belongs to its node, so
+/// stamping one would fight the dock restore) and additionally requires a non-degenerate
+/// recorded size. See FreezeExpandedSettings in SmatchetWindowExpand.cpp for the ImGui
+/// half; this is the decision, kept pure so bucket-A can pin it.
+struct WindowExpandPersistedPlacement {
+    unsigned int DockId = 0;
+    bool OverridePosSize = false;
+    float PosX = 0.0f;
+    float PosY = 0.0f;
+    float SizeX = 0.0f;
+    float SizeY = 0.0f;
+};
+WindowExpandPersistedPlacement PersistedPlacementForExpanded(const WindowExpandSaved& saved);
 
 /// End-of-frame self-heal: an expanded window that did not submit is gone, so drop the
 /// expansion and arm its restore (it re-docks when next reopened). Always clears SubmittedIds.

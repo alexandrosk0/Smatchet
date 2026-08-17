@@ -223,3 +223,53 @@ TEST_CASE("WindowExpand: a first expand after its restore was consumed records t
     CHECK(out.DockId == kOtherNode);
     CHECK(out.PosX == doctest::Approx(55.0f));
 }
+
+// --- Persisted-placement decision while expanded (issue #2059) ---------------------
+// Quitting while a window is expanded used to persist the fullscreen pin (floating +
+// work-area sized) into imgui.ini, and the next launch force-redocked the window to its
+// DEFAULT slot — silently discarding a customised dock placement. The ImGui half
+// (FreezeExpandedSettings) stamps the values below into the window's settings entry and
+// then sets NoSavedSettings so the settings writer leaves the entry alone; this is the
+// pure decision behind that stamp.
+
+using SmatchetWindowExpand::detail::WindowExpandPersistedPlacement;
+
+TEST_CASE("PersistedPlacementForExpanded: a docked home persists its dock id, never a rect") {
+    // A docked window's rect belongs to its node — writing one would fight the dock
+    // restore on the next launch, so only the dock id is replayed.
+    const WindowExpandSaved saved = MakePlacement(0x0000000Au, 100.0f, 200.0f, 640.0f, 480.0f);
+    const WindowExpandPersistedPlacement out = detail::PersistedPlacementForExpanded(saved);
+    CHECK(out.DockId == 0x0000000Au);
+    CHECK_FALSE(out.OverridePosSize);
+}
+
+TEST_CASE("PersistedPlacementForExpanded: a floating home persists its rect and no dock id") {
+    const WindowExpandSaved saved = MakePlacement(0u, 100.0f, 200.0f, 640.0f, 480.0f);
+    const WindowExpandPersistedPlacement out = detail::PersistedPlacementForExpanded(saved);
+    CHECK(out.DockId == 0u);
+    CHECK(out.OverridePosSize);
+    CHECK(out.PosX == doctest::Approx(100.0f));
+    CHECK(out.PosY == doctest::Approx(200.0f));
+    CHECK(out.SizeX == doctest::Approx(640.0f));
+    CHECK(out.SizeY == doctest::Approx(480.0f));
+}
+
+TEST_CASE("PersistedPlacementForExpanded: a degenerate floating size is not written out") {
+    // Captured before the window was ever laid out. Keeping whatever size the existing
+    // settings entry holds beats writing a zero-area window into the .ini.
+    CHECK_FALSE(detail::PersistedPlacementForExpanded(MakePlacement(0u, 10.0f, 20.0f, 0.0f, 480.0f)).OverridePosSize);
+    CHECK_FALSE(detail::PersistedPlacementForExpanded(MakePlacement(0u, 10.0f, 20.0f, 640.0f, 0.0f)).OverridePosSize);
+    CHECK_FALSE(detail::PersistedPlacementForExpanded(WindowExpandSaved()).OverridePosSize);
+}
+
+TEST_CASE("PersistedPlacementForExpanded: the placement stored at expand time is what gets persisted") {
+    // End-to-end at the data level: expanding stores the home, and the persisted
+    // placement is derived from THAT — never from the fullscreen geometry the window
+    // wears while expanded.
+    WindowExpandState s;
+    const WindowExpandSaved home = MakePlacement(0x00000004u, 0.0f, 0.0f, 320.0f, 900.0f);
+    detail::ApplyToggle(s, 42u, home);
+    REQUIRE(s.ExpandedId == 42u);
+    REQUIRE(s.Saved.find(42u) != s.Saved.end());
+    CHECK(detail::PersistedPlacementForExpanded(s.Saved[42u]).DockId == 0x00000004u);
+}

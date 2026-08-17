@@ -1279,7 +1279,12 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
         // The swap button label inverts to telegraph the destination (where the panel
         // WILL move). When currently on the left primary side, the label reads "Right"
         // because clicking moves it to the right. Tooltip clarifies the action.
-        const bool onRight = d.cfg.AssistantPanelOnSecondarySide;
+        // EFFECTIVE side, not the stored preference: when ApplyAssistantDocking's fallback
+        // put the panel on the side the user did not ask for, the label has to describe
+        // where the panel IS. The preference itself is left untouched (it is what the panel
+        // returns to once its requested side bar exists), so the two can disagree here.
+        const bool onRight =
+            smatchet::ai::AiAssistantEffectiveOnSecondary(d.cfg.AssistantPanelOnSecondarySide, d.assistantSideFallback);
         const char* swapLabel = onRight ? "<- Left" : "Right ->";
         // The destination slot is not guaranteed to exist: kSecondarySideBar in particular is
         // cut by no DockBuilder call and is absent from the embedded default ini, so on a stock
@@ -1290,6 +1295,8 @@ void DrawAssistantHeaderRow(AppController& app, UiDrawSession& d) {
         ImGui::BeginDisabled(swapTarget == 0);
         if (ImGui::SmallButton(swapLabel)) {
             d.cfg.AssistantPanelOnSecondarySide = !onRight;
+            // Stale the moment the request changes; the dock write this arms re-resolves it.
+            d.assistantSideFallback = -1;
             d.assistantPendingSideSwap = true;
             // Moving to the right side bar slot requires the slot to actually be
             // visible; otherwise the dock node may be empty and the new tab has
@@ -1487,17 +1494,14 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
         targetDockId =
             SmatchetDockNodeIds::EnsureDockSlotAlive(wantDockId == secondaryDockId ? primaryDockId : secondaryDockId);
     }
-    if (targetDockId != 0 && targetDockId != wantDockId) {
-        // The fallback fired, so the panel is about to land on the side the user did NOT ask for.
-        // Record where it actually went: leaving the flag as requested would make the swap button
-        // label, its tooltip, and the persisted config all describe a move that never happened,
-        // and the wrong state would survive a restart.
-        const bool onSecondary = targetDockId == secondaryDockId;
-        if (d.cfg.AssistantPanelOnSecondarySide != onSecondary) {
-            d.cfg.AssistantPanelOnSecondarySide = onSecondary;
-            ScheduleConfigSaveDetached(d.cfg);
-        }
-    }
+    // Where the panel actually lands is recorded as a SESSION-ONLY override, and only on a
+    // frame that really issues a dock write. It must not touch the config: the fallback
+    // above fires on every stock layout for a stored `AssistantPanelOnSecondarySide = true`
+    // (no DockBuilder call cuts kSecondarySideBar), so persisting it silently overwrote the
+    // user's preference with `false` on the first frame — and the swap button is disabled in
+    // exactly that state, leaving no way back. Session-only means the stored preference is
+    // honoured again as soon as a real secondary node exists.
+    const bool wantSecondary = wantDockId == secondaryDockId;
     if (d.assistantPendingSideSwap || needsReDock) {
         // Cleared only once a live slot has actually accepted the move. targetDockId is 0
         // only when BOTH side bars are dead, and Reset Layout re-cuts them — dropping the
@@ -1508,9 +1512,13 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
             ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_Always);
             d.assistantPendingSideSwap = false;
             needsReDock = false;
+            d.assistantSideFallback =
+                smatchet::ai::AiAssistantSideFallbackAfterDock(wantSecondary, targetDockId == secondaryDockId);
         }
     } else if (targetDockId != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
+        d.assistantSideFallback =
+            smatchet::ai::AiAssistantSideFallbackAfterDock(wantSecondary, targetDockId == secondaryDockId);
     }
 }
 

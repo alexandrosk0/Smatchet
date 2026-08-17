@@ -92,6 +92,23 @@ void ResetKeybindingsCaptureState();
 bool DrawKeybindingCombosCellForTest(Keybinding& b, const std::string& rowKey, std::string& capturingKey);
 #endif
 
+/// Fold a keybindings-revision edge into the Preferences keybinding-row match cache.
+/// `seenRevision` is the revision the cached scan last ran against and `dirty` its
+/// rescan flag; both are updated in place. Returns true when this call armed a rescan.
+/// The flag alone is not enough: it is set only by the Preferences keybindings editor,
+/// while `cfg.Keybindings` is ALSO mutated by the toolbar / command-palette quick-bind.
+/// Every mutation path goes through SmatchetUI::MarkKeybindingsDirty(), which bumps the
+/// revision — so comparing it here is the single invalidation point. Pure (no ImGui, no
+/// session type) so the edge semantics are bucket-A testable.
+inline bool TakeKeybindMatchCacheRevisionEdge(unsigned int currentRevision, unsigned int& seenRevision, bool& dirty) {
+    if (seenRevision == currentRevision) {
+        return false;
+    }
+    seenRevision = currentRevision;
+    dirty = true;
+    return true;
+}
+
 /// Maps the persisted cfg.DateFormatOption string to the Combo index used by the
 /// Appearance tab's "Date Format Style" dropdown. Unknown / "compact" → 0. Pure —
 /// no ImGui / no session state — so it is bucket-A testable in isolation.
