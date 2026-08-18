@@ -109,65 +109,87 @@ jobs:
           git commit -m "chore(plan-locks): regenerate _plan-locks.generated.md from refs/locks/*"
           git push -u origin "$BRANCH" --force
 
+      # Deliberately NOT diff-gated, and deliberately placed AFTER the push.
+      #
+      # Not diff-gated: most cron fires find no diff, so gating this behind
+      # `changed == 'true'` would leave the expiry countdown — the whole point
+      # of the check — dark on the majority of runs, and a lapsed token would
+      # stay invisible until the next run that happens to carry a diff.
+      #
+      # After the push: a dead PAT must not cost lock data. The regenerated
+      # file lands on the sync branch first (that step uses GITHUB_TOKEN and is
+      # unaffected by the PAT); only PR creation is blocked. Hoisting this
+      # above the push would turn an expired token into a data-loss stop.
+      - name: LOCK_RENDER_PAT preflight
+        env:
+          GH_TOKEN: ${{ secrets.LOCK_RENDER_PAT }}
+          # Interpolate a boolean, never the secret value itself, into the
+          # script body.
+          PAT_SET: ${{ secrets.LOCK_RENDER_PAT != '' }}
+        run: |
+          set -euo pipefail
+
+          if [ "$PAT_SET" != "true" ]; then
+            echo "::warning::LOCK_RENDER_PAT secret is not set. The PR step falls back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If that step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/plans/shipped/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
+            exit 0
+          fi
+
+          # A *missing* PAT and an *expired* one fail nothing alike. The branch
+          # push above uses GITHUB_TOKEN and keeps succeeding, so the only
+          # symptom of a lapsed PAT is gh emitting a bare "HTTP 401: Bad
+          # credentials / Try authenticating with: gh auth login -h github.com"
+          # — advice that is meaningless inside Actions and names neither the
+          # secret nor the rotation procedure. Probe the token once up front
+          # and translate the 401 into a sentence an operator can act on.
+          # (Observed 2026-08-16: 23 consecutive red cron fires starting at the
+          # PAT's 90-day mark, every one logging only the bare 401.)
+          # Probe with a repo-scoped PR read — the exact permission the PR step
+          # needs and the only one the least-privilege PAT is granted. Probing
+          # /user instead would exercise a permission the token deliberately
+          # does not hold, so a perfectly healthy PAT could fail the preflight.
+          # `-i` also returns the token's own expiry as a response header, so
+          # one call covers both checks.
+          if ! probe=$(gh api -i "repos/${GITHUB_REPOSITORY}/pulls?per_page=1" 2>&1); then
+            case "$probe" in
+              *401*|*"Bad credentials"*)
+                echo "::error::LOCK_RENDER_PAT is set but no longer authenticates (HTTP 401 Bad credentials) — the token has expired or was revoked. This PAT is minted with a 90-day expiry; rotate it per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation, then re-run this workflow. Nothing is lost: refs/locks/* remain authoritative, and if this run carried a diff the regenerated file was already force-pushed to 'bot/plan-locks-sync' — only PR creation is blocked."
+                ;;
+              *)
+                echo "::error::LOCK_RENDER_PAT preflight failed before any PR call: ${probe}"
+                ;;
+            esac
+            exit 1
+          fi
+
+          # Early warning, so a 90-day cliff is announced two weeks ahead
+          # instead of discovered by a red tip. Best-effort: a header rename
+          # must never fail the job.
+          expiry=$(printf '%s' "$probe" | tr -d '\r' \
+            | grep -i '^github-authentication-token-expiration:' \
+            | head -n1 | cut -d' ' -f2-) || true
+          if [ -n "${expiry:-}" ] && exp_epoch=$(date -u -d "$expiry" +%s 2>/dev/null); then
+            days_left=$(( (exp_epoch - $(date -u +%s)) / 86400 ))
+            if [ "$days_left" -le 14 ]; then
+              echo "::warning::LOCK_RENDER_PAT expires in ${days_left} day(s) (${expiry}). Rotate it before then per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation — once it lapses, every 30-minute cron fire reds the develop tip until a human acts."
+            else
+              echo "::notice::LOCK_RENDER_PAT valid for ${days_left} more day(s) (${expiry})."
+            fi
+          fi
+
       - name: Open or update sync PR
         if: steps.diff.outputs.changed == 'true'
         env:
           # Prefer the fine-grained PAT when configured; fall back to the
           # default token (which will fail PR-creation with the GraphQL
           # "GitHub Actions is not permitted to create or approve pull
-          # requests" error — that failure is loud and actionable).
+          # requests" error — that failure is loud and actionable). The
+          # preflight step above has already vetted the PAT and named it if
+          # unset or expired.
           GH_TOKEN: ${{ secrets.LOCK_RENDER_PAT || secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
 
           BRANCH="bot/plan-locks-sync"
-
-          if [ -z "${{ secrets.LOCK_RENDER_PAT }}" ]; then
-            echo "::warning::LOCK_RENDER_PAT secret is not set. Falling back to GITHUB_TOKEN, which is forbidden from creating PRs by default. If this step errors with 'GitHub Actions is not permitted to create or approve pull requests', see docs/plans/shipped/git-ref-plan-locks.md § Operational requirements for the one-time PAT setup."
-          else
-            # A *missing* PAT and an *expired* one fail nothing alike. The
-            # branch push above uses GITHUB_TOKEN and keeps succeeding, so the
-            # only symptom of a lapsed PAT is gh emitting a bare "HTTP 401: Bad
-            # credentials / Try authenticating with: gh auth login -h
-            # github.com" — advice that is meaningless inside Actions and names
-            # neither the secret nor the rotation procedure. Probe the token
-            # once up front and translate the 401 into a sentence an operator
-            # can act on. (Observed 2026-08-16: 23 consecutive red cron fires
-            # starting at the PAT's 90-day mark, every one logging only the
-            # bare 401.)
-            # Probe with a repo-scoped PR read — the exact permission this
-            # step needs and the only one the least-privilege PAT is granted.
-            # Probing /user instead would exercise a permission the token
-            # deliberately does not hold, so a perfectly healthy PAT could
-            # fail the preflight. `-i` also returns the token's own expiry as
-            # a response header, so one call covers both checks.
-            if ! probe=$(gh api -i "repos/${GITHUB_REPOSITORY}/pulls?per_page=1" 2>&1); then
-              case "$probe" in
-                *401*|*"Bad credentials"*)
-                  echo "::error::LOCK_RENDER_PAT is set but no longer authenticates (HTTP 401 Bad credentials) — the token has expired or was revoked. This PAT is minted with a 90-day expiry; rotate it per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation, then re-run this workflow. The regenerated file is already pushed to '$BRANCH'; only the PR-open step is blocked."
-                  ;;
-                *)
-                  echo "::error::LOCK_RENDER_PAT preflight failed before any PR call: ${probe}"
-                  ;;
-              esac
-              exit 1
-            fi
-
-            # Early warning, so a 90-day cliff is announced two weeks ahead
-            # instead of discovered by a red tip. Best-effort: a header rename
-            # must never fail the job.
-            expiry=$(printf '%s' "$probe" | tr -d '\r' \
-              | grep -i '^github-authentication-token-expiration:' \
-              | head -n1 | cut -d' ' -f2-) || true
-            if [ -n "${expiry:-}" ] && exp_epoch=$(date -u -d "$expiry" +%s 2>/dev/null); then
-              days_left=$(( (exp_epoch - $(date -u +%s)) / 86400 ))
-              if [ "$days_left" -le 14 ]; then
-                echo "::warning::LOCK_RENDER_PAT expires in ${days_left} day(s) (${expiry}). Rotate it before then per docs/plans/shipped/git-ref-plan-locks.md § Operational requirements -> Rotation — once it lapses, every 30-minute cron fire reds the develop tip until a human acts."
-              else
-                echo "::notice::LOCK_RENDER_PAT valid for ${days_left} more day(s) (${expiry})."
-              fi
-            fi
-          fi
 
           # Tell "no PR is open" apart from "the query failed". A trailing
           # `|| true` here conflated the two, so an auth or API blip read as an

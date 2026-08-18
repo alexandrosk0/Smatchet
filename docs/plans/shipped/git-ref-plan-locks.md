@@ -107,16 +107,25 @@ GitHub disallows the default `GITHUB_TOKEN` from creating or approving pull requ
 9. Go to **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** → **New repository secret**.
 10. **Name**: `LOCK_RENDER_PAT`. **Value**: paste the token. Save.
 
-The workflow auto-detects the secret. Without it, the `Open or update sync PR` step logs a warning and falls back to `GITHUB_TOKEN` (which then fails loudly with the GraphQL error — same failure mode the user would have hit before this section existed, just now with an actionable warning).
+The workflow auto-detects the secret. Without it, the `LOCK_RENDER_PAT preflight` step logs a warning and the `Open or update sync PR` step falls back to `GITHUB_TOKEN` (which then fails loudly with the GraphQL error — same failure mode the user would have hit before this section existed, just now with an actionable warning).
 
-**Rotation**: at PAT expiry, generate a new token under the same name (steps 1-8 above) and overwrite the existing `LOCK_RENDER_PAT` secret value at **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** — do not create a second secret. The workflow picks up the new value on its next fire; `gh workflow run locks-render.yml` confirms it immediately rather than waiting up to 30 minutes for the cron.
+**Rotation**: at PAT expiry, generate a new token under the same name (steps 1-8 above) and overwrite the existing `LOCK_RENDER_PAT` secret value at **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** — do not create a second secret. The workflow picks up the new value on its next fire.
+
+Rotation is **not complete when the secret is saved** — it is complete when a run proves the new token authenticates. `gh workflow run locks-render.yml` only *dispatches*; it exits 0 on a successful dispatch and reports nothing about the token. Watch the run it queued and require a `success` conclusion:
+
+```bash
+gh workflow run locks-render.yml && sleep 5 && gh run watch "$(gh run list --workflow=locks-render.yml --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
+```
+
+`--exit-status` makes a failed run a non-zero exit, so a still-bad PAT surfaces here instead of on the next cron fire. On success the run log also carries the `::notice::LOCK_RENDER_PAT valid for N more day(s)` line, which is the positive confirmation that the new token was read. Without this step the only thing a dispatch confirms is that dispatch works.
 
 **What an expired PAT looks like** (first observed 2026-08-16, the exact 90-day mark from the 2026-05-18 configuration):
 
 - `Render refs/locks/* to Markdown` goes red on **every** cron fire, so the develop tip stays red until a human acts. There is no self-healing path — the token is dead, not throttled.
 - The `Commit + force-push sync branch` step **still succeeds** (it uses `GITHUB_TOKEN`, not the PAT), so the regenerated file does land on `bot/plan-locks-sync`. Only PR creation is blocked; no lock data is lost.
-- The `Open or update sync PR` step now fails with a `::error::` naming the secret and pointing back here. Before that translation landed, the entire diagnostic signal was two lines of `HTTP 401: Bad credentials` / `Try authenticating with: gh auth login -h github.com` — advice with no meaning inside Actions, naming neither the secret nor this procedure. The `[ -z ... ]` guard above only ever detected an **unset** secret, and an expired one is set.
+- The `LOCK_RENDER_PAT preflight` step now fails with a `::error::` naming the secret and pointing back here. Before that translation landed, the entire diagnostic signal was two lines of `HTTP 401: Bad credentials` / `Try authenticating with: gh auth login -h github.com` — advice with no meaning inside Actions, naming neither the secret nor this procedure. The `[ -z ... ]` guard only ever detected an **unset** secret, and an expired one is set.
 - From 14 days out, each run logs a `::warning::` counting down to expiry (read from the `github-authentication-token-expiration` response header), so the next cycle should be caught before the cliff rather than after it.
+- The preflight is deliberately **not** diff-gated, unlike the push and PR steps around it. Most cron fires find no diff, so a diff-gated countdown would stay dark on the majority of runs and a lapsed token would go unannounced until the next run that happened to carry a diff — which is the same too-late signal the countdown exists to replace. It runs **after** the push step so an expired PAT still cannot cost lock data: the regenerated file lands on the sync branch first, and only PR creation is blocked.
 
 **Stop-gap while the PAT is dead**: `bash scripts/dev/local/manual-locks-render-sync.sh` performs the same lifecycle from an operator's own credentials. The lock refs themselves are the source of truth and are unaffected — only the Markdown mirror goes stale.
 
