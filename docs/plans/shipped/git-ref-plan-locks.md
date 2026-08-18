@@ -114,10 +114,22 @@ The workflow auto-detects the secret. Without it, the `LOCK_RENDER_PAT preflight
 Rotation is **not complete when the secret is saved** — it is complete when a run proves the new token authenticates. `gh workflow run locks-render.yml` only *dispatches*; it exits 0 on a successful dispatch and reports nothing about the token. Watch the run it queued and require a `success` conclusion:
 
 ```bash
-gh workflow run locks-render.yml && sleep 5 && gh run watch "$(gh run list --workflow=locks-render.yml --limit 1 --json databaseId --jq '.[0].databaseId')" --exit-status
+before=$(gh run list --workflow=locks-render.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+gh workflow run locks-render.yml
+for _ in $(seq 30); do
+  run=$(gh run list --workflow=locks-render.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+  [ "$run" != "$before" ] && break
+  sleep 2
+done
+[ "$run" != "$before" ] || { echo "dispatch never registered a new run"; exit 1; }
+gh run watch "$run" --exit-status
 ```
 
+Why the baseline-and-poll rather than a bare `gh run list --limit 1`: this workflow also fires on a 30-minute cron, and `gh run list` orders by creation time across **all** events, so a cron fire landing between the dispatch and the query is the newest run and would be watched in place of the dispatch — a rotation verdict read off a run that predates the new secret. Pinning `--event workflow_dispatch` and requiring the id to *change* from the pre-dispatch baseline selects the run this command actually created, on any `gh` version. (Recent `gh` releases print the new run's URL from `gh workflow run`, but older ones print nothing, so capturing its stdout is not portable.)
+
 `--exit-status` makes a failed run a non-zero exit, so a still-bad PAT surfaces here instead of on the next cron fire. On success the run log also carries the `::notice::LOCK_RENDER_PAT valid for N more day(s)` line, which is the positive confirmation that the new token was read. Without this step the only thing a dispatch confirms is that dispatch works.
+
+One conclusion is **not** a verdict on the token: `cancelled`. The workflow declares `concurrency: plan-locks-render` with `cancel-in-progress: true`, so a cron fire arriving mid-watch kills the dispatched run. Re-run the block; never read a cancelled run as a failed rotation.
 
 **What an expired PAT looks like** (first observed 2026-08-16, the exact 90-day mark from the 2026-05-18 configuration):
 
