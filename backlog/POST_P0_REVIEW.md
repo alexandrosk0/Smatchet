@@ -19,13 +19,22 @@
 |----------|-------|------|---------|------|
 | **P0** | 5 | 5 ✅ | 0 | **0** |
 | **P1** | 17 | 17 ✅ | 0 | **0** |
-| **P2** | 12 | 11 ✅ | 1 🟡 | **0** |
+| **P2** | 12 | 12 ✅ | 0 | **0** |
 
-**Every numbered entry is closed on `develop`.** The one PARTIAL is item 24 (`FlushFileSink` is honest now but has no in-tree caller — not a bug as it stands; tracked for the eventual crash-handler wire-up).
+**Every numbered entry is closed on `develop`.** The last PARTIAL — item 24 (`FlushFileSink`) — was flipped to ✅ DONE on 2026-08-18 after re-verifying the in-tree caller; see the triage block below.
 
 > **Update 2026-07-05:** item 24 (the lone PARTIAL) is now **resolved on the graceful path** — `AppController::~AppController` calls `Logger::Instance().FlushFileSink()` after `JoinBackgroundTasks()`. The crash-handler half is intentionally omitted (superseded by the async-signal-safe `SmatchetCrashHandler`, which must not touch the logger mid-crash) — see **A4** in [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) for the full rationale. No other claim in this doc has gone stale.
 >
 > **Triage 2026-08-16:** re-checked — every numbered entry (1–34) is still closed; item 24's graceful half remains wired in `~AppController`. The "validation still pending" list below is **historical**: its build re-verify pins `0a79de5` and the six per-PR smokes are in the SUPERSEDED bucket of the [`MANUAL_TEST_QUEUE.md`](MANUAL_TEST_QUEUE.md) triage. No open items in this doc. Note that three of the fixes here later turned out to have residual holes, all since closed: **DR15** (a deadlock opened by #16), **DR16** (a duplicate-POST hole adjacent to B2), **DR17** (a stale-cache hole in A1) — see [`DEEP_REVIEW_2026-07-07.md`](DEEP_REVIEW_2026-07-07.md).
+>
+> **Triage 2026-08-18 — item 24 marker corrected.** Item 24 still carried 🟡 PARTIAL with the claim
+> "Still has no in-tree caller", which has been false since the 2026-07-05 wire-up. Re-verified against
+> develop tip: `Logger::Instance().FlushFileSink()` is called from `~AppController` at
+> `Source/Core/src/AppController.cpp:299`, immediately after `JoinBackgroundTasks()`. Row flipped to
+> ✅ DONE and the P2 roll-up row corrected from `11 ✅ / 1 🟡` to `12 ✅ / 0`. The crash-path exclusion is
+> **deliberate** and is now called out in the row itself so nobody "completes" the item by wiring
+> `FlushFileSink` into `SmatchetCrashHandler` (see the in-code comment at
+> `Source/Core/src/AppController.cpp:291-298`). No other row changed.
 
 ### Validation still pending on develop tip (`0a79de5`)
 
@@ -123,7 +132,9 @@ These are real defects in the new code, not just polish. Each can fault at runti
 
 23. ✅ **DONE.** Added a `Warning` channel to `TrackerIssueFetchSummary` / `TrackerIssueFetchPack` / `StreamingSyncState`, with an optional `outWarning` parameter on `ITrackerClient::FetchIssues` (both Jira and Plane overrides updated). PlaneClient's page-cap message now goes to `Warning` instead of `FetchError`. `ApplyIssueFetchPack` and `TickStreamingApply` surface non-empty `Warning` as a `LastTrackerTicketSyncWarning` banner + "Sync Warning" toast (streaming path) while still firing `requestDeferredLiveTrackerBackendSuccessNotify_()` — the partial pull is no longer misclassified as a fetch failure.
 
-24. 🟡 **PARTIAL (commit pending in `review/logger-hardening`).** `FlushFileSink` no longer lies (item 6 above) so the public surface is honest now. Still has no in-tree caller — a future wire-up into the crash handler / signal path or into `~AppController` (to ensure logs are flushed before SQLite/MCP shutdown) closes this. Not a bug as it stands.
+24. ✅ **DONE (re-verified 2026-08-18).** `FlushFileSink` no longer lies (item 6 above), and it now has a real in-tree caller: `~AppController` calls `Logger::Instance().FlushFileSink()` at `Source/Core/src/AppController.cpp:299`, after `JoinBackgroundTasks()` — every background thread that can emit a log line is joined first, so the whole shutdown-sequence trail reaches disk before member destruction and the riskier late-teardown steps. That is exactly the `~AppController` wire-up this row asked for. Declaration `Source/Core/include/Logger.h:79`; implementation `Source/Core/src/Logger.cpp:231`; synchronous-flush behaviour pinned by `tests/Core/LoggerFileSinkRedaction.test.cpp:52`.
+
+    > **Do not "finish" this by also calling it from the crash handler.** The abrupt-crash half is deliberately excluded, and the exclusion is documented in-code at `Source/Core/src/AppController.cpp:291-298`: `SmatchetCrashHandler` is async-signal-safe and must not take the file-sink lifecycle/data mutexes or wait on `m_fileSinkAckCv` mid-crash (deadlock / UB in a signal context). Crash-time diagnostics are captured by that handler's own async-safe crash sink instead. See **A4** in [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) for the full rationale.
 
 25. ✅ **DONE.** All reads/writes of `isDeletingStale_` now go through explicit `.load()` / `.store()` to match the sibling atomics on the same expressions.
 
