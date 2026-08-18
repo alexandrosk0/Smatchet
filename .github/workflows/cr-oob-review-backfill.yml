@@ -1,0 +1,56 @@
+name: CR out-of-band review backfill
+
+# Every 15 minutes: if CodeRabbit's review window is open, request a retroactive
+# review on ONE PR that merged carrying `cr-out-of-band`.
+#
+# WHY A WORKFLOW AND NOT A SESSION LOOP
+#   The first cut ran as a session-scoped 15-minute cron. The session was
+#   reclaimed and the drip made zero progress in 39 hours — the same class
+#   unwatched-pr-nudge.sh exists for. The drain is ~90 PRs at roughly one review
+#   per 45 minutes (CR allows one included review at a time), so it outlives any
+#   session by days and has to run somewhere that does not die with one.
+#
+# The logic lives in agents/scripts/core/cr-oob-review-backfill.sh; the YAML
+# stays thin deliberately (see lock-staleness.yml for the same split and the
+# block-scalar parse pitfall it avoids).
+
+on:
+  schedule:
+    - cron: '7,22,37,52 * * * *'   # every 15 min, off the :00/:30 pile-up
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the request instead of posting it'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: cr-oob-review-backfill
+  cancel-in-progress: false        # a tick must never cut off a posting tick
+
+permissions:
+  contents: read
+  pull-requests: write             # the entire write surface: one comment
+
+env:
+  # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  drip:
+    name: Request one retroactive CR review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Selftest the decision core
+        # The rate-limit arithmetic fails SILENTLY in production — firing early
+        # burns a request CR drops, firing late just stalls. Gate the run on it.
+        run: bash agents/scripts/core/cr-oob-review-backfill.sh --selftest
+
+      - name: Poll the CR quota and drip one request
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SMATCHET_CR_BACKFILL_DRY_RUN: ${{ inputs.dry_run == 'true' && '1' || '0' }}
+          VERBOSE: '1'
+        run: bash agents/scripts/core/cr-oob-review-backfill.sh --poll
