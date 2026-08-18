@@ -222,7 +222,11 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
     ImVec2 cellGroupMin(0.0f, 0.0f);
     ImVec2 cellGroupMax(0.0f, 0.0f);
 
-    const std::string currentValue = ticket.GetFieldValue(column.FieldId);
+    // Zero-copy view (Pillar 1): this runs for EVERY visible cell every frame, and the by-value
+    // GetFieldValue copy was a heap alloc per cell per frame. Safe to hold across the cell draw:
+    // `ticket` refs the pane's latched ticketsSnapshot (kept alive for the whole draw), and any
+    // mid-frame UpdateTicket publishes a NEW snapshot vector rather than mutating this one.
+    const std::string& currentValue = ticket.GetFieldValueRef(column.FieldId);
     const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
     const float cellStartY = ImGui::GetCursorScreenPos().y;
     const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidth;
