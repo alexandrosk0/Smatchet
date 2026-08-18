@@ -4,14 +4,16 @@
 // protected_function_result error rather than as a Lua panic (which would
 // abort() the process per sol2 defaults).
 //
-// Mirrors `LuaHookGuard` in AppController_LuaBindings.cpp:84-94. Production
-// uses a count of 100000 instructions per docs/plans/active/applied/
-// lua-recorded-cmd-list.md §LuaHookGuard Q7; tests use a much smaller count
-// so the abort fires in milliseconds. The MECHANISM under test is identical:
-// `lua_sethook(LUA_MASKCOUNT)` + a hook that calls `luaL_error` -> Lua
-// throws (Lua-as-C++ build per CMakeLists.txt:336-343) -> sol2 catches the
-// throw inside pcall -> returns invalid result. The literal instruction count
-// is not the contract.
+// The hook is the PRODUCTION one: LuaHostFixture::InstallInstructionCountTimeout
+// constructs `smatchet::lua::LuaHookGuard` (Source/Core/include/Lua/LuaHookGuard.h),
+// the same RAII guard AppController_LuaBindings_Draw.cpp wraps every script and
+// callback invocation in. Production's default budget is 100000 instructions per
+// docs/plans/active/applied/lua-recorded-cmd-list.md §LuaHookGuard Q7; these cases
+// pass a much smaller count (a parameter of that guard) so the abort fires in
+// milliseconds. The mechanism is therefore not mirrored but executed:
+// `lua_sethook(LUA_MASKCOUNT)` + a hook that calls `luaL_error` -> Lua throws
+// (Lua-as-C++ build per CMakeLists.txt:336-343) -> sol2 catches the throw inside
+// pcall -> returns invalid result. The literal instruction count is not the contract.
 
 #include "LuaHostFixture.h"
 
@@ -56,14 +58,14 @@ TEST_CASE("Lua timeout · script under budget completes normally") {
 }
 
 // * doctest::test_suite("[high-risk]") — timeout-abort-not-panic invariant.
-// Mutation-sanity (deferred prod mutation, taxonomy path 2): if production's
-// `LuaHookGuard` were rewritten to call `lua_error` from the hook WITHOUT the
-// Lua-as-C++ build (LUAI_THROW = longjmp instead of `throw`), the panic
-// handler would fire, our handler `throw std::runtime_error`s, and sol2's
-// pcall catches throws from C++ but NOT longjmp — the assertion below
+// Mutation-sanity: production's `LuaHookGuard` is the object under test here, so
+// mutating it lands directly on this case. If its hook body were rewritten to call
+// `lua_error` without the Lua-as-C++ build (LUAI_THROW = longjmp instead of
+// `throw`), the panic handler would fire, our handler `throw std::runtime_error`s,
+// and sol2's pcall catches throws from C++ but NOT longjmp — the assertions below
 // (CHECK_NOTHROW + CHECK_FALSE) would fail: either the doctest binary aborts
-// (longjmp through pcall is UB), or the throw escapes and CHECK_NOTHROW
-// fires. Both surface as a fail rather than silent hang.
+// (longjmp through pcall is UB), or the throw escapes and CHECK_NOTHROW fires.
+// Both surface as a fail rather than a silent hang.
 TEST_CASE("Lua timeout · hook abort does NOT escape as exception"
           * doctest::test_suite("[high-risk]")) {
     LuaHostFixture fx;

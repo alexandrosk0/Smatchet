@@ -5,6 +5,7 @@
 #include "ITrackerActivity.h"
 #include "TrackerFieldSchema.h"
 #include "CancelToken.h"
+#include "Ui/ShutdownCancelGate.h"
 #include "Vcs/VcsSubmission.h"
 
 #include <future>
@@ -119,11 +120,11 @@ class SmatchetUserInfoUi {
     /// Bumped on every retarget; stale worker payloads (older Gen) are dropped.
     int generation_ = 0;
 
-    // WS-A cooperative cancel: every worker (vcs/activity/groups/members) captures
-    // a copy and polls it at its IO boundary; the destructor / closeCleanup signals
-    // it so an abandoned worker stops before its (gen-dropped) payload would be
-    // adopted. Reset() per retarget so a relaunched worker runs against a fresh flag.
-    smatchet::ui::CancelToken cancel_;
+    /// Point cancelGate_'s IO-cancel hook at the current pane. Called whenever
+    /// appForShutdownCancel_ / paneId_ are (re)latched; the hook itself re-reads
+    /// both at signal time.
+    void LatchShutdownCancelHook();
+
     /// Latched at fetch-launch for the destructor's backend IO-cancel
     /// (ClearPaneUserActivity); AppController outlives this object so it stays valid.
     AppController* appForShutdownCancel_ = nullptr;
@@ -167,6 +168,15 @@ class SmatchetUserInfoUi {
     int activityDayFilter_ = 30;
     /// Whether the window was visible last frame (drives close-edge cleanup).
     bool wasOpen_ = false;
+
+    // WS-A cooperative cancel (#1150). Every worker (vcs/activity/groups/members)
+    // copies cancelGate_.Token() and polls it at its IO boundary; the gate's
+    // Signal() flips that flag AND calls the backend's in-scan IO cancel, so an
+    // abandoned worker stops before its (gen-dropped) payload would be adopted.
+    // DECLARED LAST ON PURPOSE: members destruct in reverse declaration order, so
+    // ~ShutdownCancelGate runs its handshake BEFORE the std::future members above
+    // join. That ordering is the whole #1150 fix — do not move this member up.
+    smatchet::ui::ShutdownCancelGate cancelGate_;
 };
 
 #endif

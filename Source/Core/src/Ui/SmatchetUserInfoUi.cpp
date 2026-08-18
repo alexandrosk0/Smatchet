@@ -91,16 +91,13 @@ void SmatchetUserInfoUi::DrawWindow(AppController& app, UiDrawSession& d, bool* 
 void SmatchetUserInfoUi::adoptPendingRequest(AppController& app, UiDrawSession& d) {
     d.userInfoRequestPending = false;
     appForShutdownCancel_ = &app;
-    if (!paneId_.empty()) {
-        // Cancel the previous target's in-flight activity scan before retargeting.
-        app.ClearPaneUserActivity(paneId_);
-    }
-    // WS-A: signal any abandoned workers from the previous target, then hand the
-    // new workers a fresh (un-cancelled) flag. Workers still holding the OLD token
-    // copy keep observing the cancelled flag and stop; the relaunched ones run
-    // against the new flag.
-    cancel_.Cancel();
-    cancel_.Reset();
+    LatchShutdownCancelHook();
+    // WS-A: signal any abandoned workers from the previous target (cooperative flag
+    // + the backend's in-scan IO cancel for the OLD pane), then hand the new workers
+    // a fresh (un-cancelled) flag. Workers still holding the OLD token copy keep
+    // observing the cancelled flag and stop; the relaunched ones run against the new
+    // flag.
+    cancelGate_.SignalAndReset();
     paneId_ = d.userInfoSourcePaneId;
     displayName_ = d.userInfoDisplayName;
     email_ = d.userInfoEmail;
@@ -151,7 +148,7 @@ void SmatchetUserInfoUi::launchVcsFetch(UiDrawSession& d) {
     const std::string gitAuthor = email_.empty() ? accountId_ : email_;
     const AnnotateAnalysisConfig annotateCfg = annotateCfg_;
     const TrackerConfig cfg = d.cfg;
-    const smatchet::ui::CancelToken cancel = cancel_;
+    const smatchet::ui::CancelToken cancel = cancelGate_.Token();
     vcsFuture_ = std::async(std::launch::async, [gen, maxN, cutoff, email, gitAuthor, annotateCfg, cfg, cancel]() {
         VcsPayload p;
         p.Gen = gen;
@@ -219,7 +216,7 @@ void SmatchetUserInfoUi::launchActivityFetch(AppController& app) {
     const std::string accountId = accountId_;
     AppController* appPtr = &app;
     TrackerActivityProgress* progress = &activityProgress_;
-    const smatchet::ui::CancelToken cancel = cancel_;
+    const smatchet::ui::CancelToken cancel = cancelGate_.Token();
     activityFuture_ =
         std::async(std::launch::async, [gen, dayFrom, dayTo, paneId, accountId, appPtr, progress, cancel]() {
             ActivityPayload p;
@@ -251,7 +248,7 @@ void SmatchetUserInfoUi::launchGroupsFetch(AppController& app) {
     const int gen = generation_;
     const std::string accountId = accountId_;
     AppController* appPtr = &app;
-    const smatchet::ui::CancelToken cancel = cancel_;
+    const smatchet::ui::CancelToken cancel = cancelGate_.Token();
     groupsFuture_ = std::async(std::launch::async, [gen, accountId, appPtr, cancel]() {
         GroupsPayload p;
         p.Gen = gen;
@@ -278,7 +275,7 @@ void SmatchetUserInfoUi::launchMembersFetch(AppController& app, const std::strin
     const int gen = generation_;
     const std::string paneId = paneId_;
     AppController* appPtr = &app;
-    const smatchet::ui::CancelToken cancel = cancel_;
+    const smatchet::ui::CancelToken cancel = cancelGate_.Token();
     membersFuture_ = std::async(std::launch::async, [gen, paneId, groupName, appPtr, cancel]() {
         MembersPayload p;
         p.Gen = gen;
@@ -415,12 +412,10 @@ void SmatchetUserInfoUi::closeCleanup(AppController& app) {
     // check; ClearPaneUserActivity additionally unblocks the in-progress p4 scan
     // from inside FetchPaneUserActivity. The futures still drain (their destructors
     // join) but near-instantly. Reset() hands the next open a fresh flag.
-    cancel_.Cancel();
-    if (!paneId_.empty()) {
-        app.ClearPaneUserActivity(paneId_);
-    }
+    appForShutdownCancel_ = &app;
+    LatchShutdownCancelHook();
+    cancelGate_.SignalAndReset();
     P4ClPreview::DetachInFlight();
-    cancel_.Reset();
 }
 
 SmatchetUserInfoUi::~SmatchetUserInfoUi() {
@@ -431,9 +426,20 @@ SmatchetUserInfoUi::~SmatchetUserInfoUi() {
     // p4 activity scan returns promptly and teardown does not stall (#1150). The join
     // itself is kept (the future destructors), preserving the no-UAF guarantee: a
     // cancelled worker returns before touching appPtr again, and appPtr outlives this.
-    cancel_.Cancel();
-    if (appForShutdownCancel_ != nullptr && !paneId_.empty()) {
-        appForShutdownCancel_->ClearPaneUserActivity(paneId_);
-    }
-    // vcsFuture_/activityFuture_/groupsFuture_/membersFuture_ destruct here, joining fast.
+    // No body needed: cancelGate_ is the LAST declared member, so
+    // ~ShutdownCancelGate::Signal() (cancel + ClearPaneUserActivity via the latched
+    // hook) runs first, and vcsFuture_/activityFuture_/groupsFuture_/membersFuture_
+    // then destruct — joining fast — as the remaining members unwind.
+}
+
+void SmatchetUserInfoUi::LatchShutdownCancelHook() {
+    // The backend's in-scan IO cancel for whichever pane is current when the gate
+    // fires. Captures `this` (the gate is a member, so it cannot outlive the owner)
+    // and re-reads paneId_/appForShutdownCancel_ at signal time rather than latching
+    // a stale pane from an earlier retarget.
+    cancelGate_.SetIoCancel([this]() {
+        if (appForShutdownCancel_ != nullptr && !paneId_.empty()) {
+            appForShutdownCancel_->ClearPaneUserActivity(paneId_);
+        }
+    });
 }
