@@ -4,53 +4,102 @@ Retroactive CodeRabbit review of every PR that merged carrying `cr-out-of-band`
 — the label that downgrades the CR merge-gate block to WARN
 ([`merge-gates.md`](../agent-rules/merge-gates.md) § Per-PR overrides). The label
 waives the *gate*, never the *review*: each such merge left a diff on `develop`
-that CR either never looked at or looked at and found something in. This ledger
-drains that debt.
+that CR either never looked at or looked at and found something in. This is the
+drain for that debt.
 
 ## Why a drip and not a sweep
 
-CodeRabbit accepts a review request on a **merged** PR — it answers
-`Full retroactive review requested for #<pr>` and reviews the merged head
-(verified on #1977, 2026-08-16T23:37Z). What it will not do is accept them in
-bulk: the account's plan carries **one included review at a time** on a rolling
-window, so a second request inside the window returns
+The account's plan carries **one included review at a time** on a rolling window.
+A request made inside that window is answered with
 
 > Review rate limited. Your included review limit is currently reached … Your
 > next included review will be available in N minutes.
 
-Firing the whole queue at once therefore buys exactly one review and 89
-rate-limit replies. The backfill instead **polls the quota every 15 minutes and
-fires a single request per free slot** — roughly one PR per 45 minutes.
+and is **dropped, not queued** — #1977's rate-limited request of 2026-08-16 had
+still produced no review 39 hours later. A bounced request must be retried; it
+must never be assumed pending. Firing the whole queue at once therefore buys at
+most one review and 89 rate-limit replies.
 
-## Quota probe
+So the backfill polls every 15 minutes and fires **at most one** request per open
+window — roughly one PR per 45 minutes, days of wall-clock for a 90-PR queue.
 
-The quota state is readable without spending a review: CR's reply to the most
-recent request either confirms the review or carries the rate-limit warning with
-the minutes remaining. `status: requested` + `outcome: rate-limited-retry` in the
-ledger means the request bounced and the PR stays at the head of the queue.
+## Why it runs in CI, not in a session
 
-## Ledger
+The first cut ran as a session-scoped 15-minute cron. The session was reclaimed
+and the drip made **zero progress in 39 hours**. That is the same class
+[`unwatched-pr-nudge.sh`](../../agents/scripts/core/unwatched-pr-nudge.sh) was
+written for: a check-in that was supposed to post a review trigger once CR's
+quota reopened, and never did. A drain measured in days cannot live in a process
+measured in hours.
 
-`cr-oob-review-backfill.jsonl` — one row per owed PR, newest merge first.
+[`cr-oob-review-backfill.yml`](../../.github/workflows/cr-oob-review-backfill.yml)
+runs the poller on a `*/15`-equivalent schedule;
+[`cr-oob-review-backfill.sh`](../../agents/scripts/core/cr-oob-review-backfill.sh)
+holds the logic.
 
-| field | meaning |
+## Stateless by design
+
+No mutable state is kept. A status column written by the process that dies cannot
+report that the process died — so every question is asked of GitHub instead:
+
+| question | answered by |
 | --- | --- |
-| `pr` | PR number that merged with `cr-out-of-band` |
-| `status` | `pending` → `requested` → `reviewed` (or `skipped`) |
-| `requestedAt` | ISO-8601 stamp of the `@coderabbitai full review` comment |
-| `outcome` | `rate-limited-retry`, `review-posted`, or a skip reason |
+| has PR N been requested? | N carries a `cr-oob-backfill:` marker comment |
+| did the request land? | CR's reply under that marker |
+| does N still owe a review? | N's merged head carries no CR review |
 
-Enumerated from GitHub's label index
-(`is:merged label:cr-out-of-band`, 90 PRs as of 2026-08-16). The label index is
-lossy by design — `issue-sweep.sh` strips override labels post-merge, and the
-lossless authority for anything it missed is `merge-snapshots.jsonl`
-(`overrideLabels`). Rows the sweep adds from that source carry the same schema.
+A run recomputes from scratch and is safe to interrupt, re-run, or overlap. It
+needs no repo write access — `pull-requests: write` for one comment is the whole
+surface.
+
+`cr-oob-review-backfill.jsonl` is therefore a **static queue**, not a ledger: one
+`{"pr":N}` row per owed PR, newest merge first. Enumerated from GitHub's label
+index (`is:merged label:cr-out-of-band`, 90 PRs as of 2026-08-16). That index is
+lossy by design — `issue-sweep.sh` strips override labels post-merge — so
+`merge-snapshots.jsonl` `overrideLabels` stays the lossless authority for
+anything it missed.
+
+## The unconfirmed-request fail-safe
+
+CR acknowledged a retroactive request on a merged PR once (`Full retroactive
+review requested for #1977`, 2026-08-16) and then, on a retry 39 hours later,
+answered nothing at all — no reply, no review. **Whether CR ever DELIVERS a
+retroactive review is therefore unconfirmed**; the acknowledgement is not proof.
+
+That uncertainty is load-bearing: if a request can silently no-op, then
+*requested* is not *reviewed*, and a drip that only counted comments posted would
+work through all 90 PRs, collect nothing, and leave the debt looking paid. So the
+poller **halts** when its most recent request has gone unanswered past the
+confirmation grace (default 30 min) and says so, rather than marching on. Any CR
+response clears it — including a rate-limit reply, because the question is
+whether CR is answering at all, not whether the review passed.
+
+## What the silence is not
+
+The obvious reading — that merged PRs are the problem — is **wrong**, and a
+control ruled it out. On 2026-08-18 the repo's own CR finding gate posted
+`@coderabbitai review` on OPEN PR #2119 sixteen minutes after the merged-PR
+request; both drew the same silence, as had its nudges on open #2087 and #2084
+(~40h earlier, still no review). CR is unresponsive across the repo, open and
+merged alike, so the blocker is CR-side capacity — plausibly the adaptive limit
+its [plans docs](https://docs.coderabbit.ai/management/plans#rate-limits)
+describe for sustained high-volume activity.
+
+So a halt is **not** a signal to re-plumb the collection route. It resolves on
+its own when CR answers again, and the poller resumes without intervention. Only
+if CR is demonstrably answering on open PRs while still ignoring merged ones does
+the merged-PR route need replacing (re-opening each diff on a fresh PR) — and
+that is a human call, not something the drip should decide.
+
+This has a sharper consequence than a stalled backfill: while CR is silent,
+CURRENT PRs merge unreviewed too, so the queue grows faster than any drip drains
+it. Fixing the source outranks draining the debt.
 
 ## Skips
 
 Not every row owes a review. A **moot override** — the label pre-applied where
-nothing was actually red (`overrideLabels` non-empty, `redChecks` empty; the
-#1110 / #1124 class) — waived no review because none was pending, and resolves
-to `status: skipped`. A PR whose merged head already carries a completed CR
-review resolves the same way: the label waived the *findings*, not the review,
-and re-reviewing it spends a slot the queue needs.
+nothing was red (`overrideLabels` non-empty, `redChecks` empty; the #1110 / #1124
+class) — waived no review because none was pending. A merged head that already
+carries a completed CR review is the same: the label waived the *findings*, not
+the review, and re-requesting spends a slot the queue needs. The poller re-checks
+this at fire time, since the queue is static but review state is not.
