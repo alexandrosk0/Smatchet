@@ -49,29 +49,6 @@ void CreateDirectories(const std::string& rawPath);
 void EnsureParentDirectoryForFile(const std::string& path);
 bool FileExists(const std::string& path);
 
-// -------- cross-process advisory lock around a `<path>.lock` sidecar ------------------
-
-// `handle_` / `fd_` typed as `void*` / `int` so consumers don't need <windows.h>.
-// On Windows, `void*` is layout-compatible with `HANDLE` (which is itself a `void*` typedef).
-class ScopedFileLock {
-  public:
-    explicit ScopedFileLock(const std::string& path);
-    ~ScopedFileLock();
-    ScopedFileLock(const ScopedFileLock&) = delete;
-    ScopedFileLock& operator=(const ScopedFileLock&) = delete;
-
-  private:
-    void Acquire();
-    void Release();
-
-    std::string lockPath_;
-#if defined(_WIN32)
-    void* handle_;
-#else
-    int fd_;
-#endif
-};
-
 // -------- secret protection (DPAPI on Windows, passthrough elsewhere) -----------------
 
 std::string ProtectSecretForConfig(const std::string& plainText);

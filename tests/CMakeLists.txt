@@ -202,6 +202,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
+        # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0
+        # FileIo module; both the Config writers and BackendAuditTrail resolve it here.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/FileIo.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
         # ConfigManager's deeper closure: Load() round-trips the keybindings block
@@ -793,6 +796,10 @@ add_executable(SmatchetTests
     # filesystem-bound write path (public static in ConfigManager_PathUtils.cpp, already linked
     # below). POSIX assertions run on the Linux ctest jobs; the round-trip runs everywhere. No extra .cpp.
     Core/ConfigAtomicWriteSecurity.test.cpp
+    # BACKLOG_CODE_REVIEW.md C5 — the layer-0 FileIo module. Drives smatchet::fileio::ScopedFileLock
+    # (Source/Core/src/FileIo.cpp, linked below) and the BackendAuditTrail append path that is its
+    # first non-Config consumer. Both production TUs are already in this target's src list.
+    Core/FileIoScopedFileLock.test.cpp
     # security backlog 2026-05-17 — pure CR/LF/NUL strip for header-bound config fields
     # (SanitizeConfigStringValue, defined in ConfigManager_PathUtils.cpp linked below). No extra .cpp.
     Core/ConfigStringSanitize.test.cpp
@@ -1232,6 +1239,9 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
+    # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0
+    # FileIo module; both the Config writers and BackendAuditTrail resolve it here.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/FileIo.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/ConfigSaveWorker.cpp"

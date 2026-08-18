@@ -8,6 +8,7 @@
 
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
+#include "FileIo.h"
 
 #include "Logger.h"
 
@@ -19,7 +20,7 @@
 #include <string>
 
 using smatchet::config_detail::GetIoMutexRef;
-using smatchet::config_detail::ScopedFileLock;
+using smatchet::fileio::ScopedFileLock;
 
 namespace {
 

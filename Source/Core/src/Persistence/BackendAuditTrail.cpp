@@ -1,6 +1,7 @@
 #include "BackendAuditTrail.h"
 
 #include "ConfigManager.h"
+#include "FileIo.h"
 #include "Json/BoundedJsonParse.h"
 #include "Logger.h"
 #include "StringUtil.h"
@@ -217,6 +218,20 @@ struct AuditWriter {
                     // line (the reader's JSON parser silently swallows partial JSON, so the
                     // race would otherwise lose audit events with zero observability).
                     std::lock_guard<std::mutex> lock(AuditMutex());
+                    // Cross-PROCESS guard (BACKLOG_CODE_REVIEW.md C5). AuditMutex() only
+                    // serialises this process; a second Smatchet instance pointed at the same
+                    // user-data directory appends to the same file, and ofstream append is not
+                    // an atomic cross-process operation. On Win32 it is seek-to-end-then-write,
+                    // so two instances can land on the same offset; on POSIX a line larger than
+                    // the stream buffer is split across several write() calls another process
+                    // can interleave between. The `<path>.lock` sidecar serialises the whole
+                    // open-write-close below against other instances. Deliberately the LOCK and
+                    // not ConfigManager::AtomicWriteTextFile: this is an append to a growing
+                    // JSONL log, and whole-file atomic replace would mean re-reading and
+                    // rewriting the entire audit trail for every single event. Best-effort by
+                    // contract — a failed acquisition logs and proceeds, as it does for the
+                    // config writers.
+                    smatchet::fileio::ScopedFileLock fileLock(path);
                     std::ofstream file(path, std::ios::app | std::ios::binary);
                     bool wroteToFallback = false;
                     if (!file.is_open()) {
@@ -231,6 +246,9 @@ struct AuditWriter {
                         // Try the fallback file. ReadRecentEvents only reads the primary, so the
                         // fallback contents will not appear in the in-app audit viewer — but they
                         // are still on disk for post-mortem analysis, which is the whole point.
+                        // Separate sidecar for the separate file. Always acquired AFTER the
+                        // primary's, so the two-lock order is fixed and cannot deadlock.
+                        smatchet::fileio::ScopedFileLock fallbackLock(fallbackPath);
                         std::ofstream fb(fallbackPath, std::ios::app | std::ios::binary);
                         if (fb.is_open()) {
                             fb << line << '\n';
