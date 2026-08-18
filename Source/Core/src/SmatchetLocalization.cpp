@@ -125,6 +125,9 @@ const TranslationEntry kEntries[] = {
     {"about.link_copy", "Copy Link", u8"Copier le lien"},
     {"about.hint", "Select any value to copy it. Right-click a link for actions.",
      u8"Sélectionnez une valeur pour la copier. Clic droit sur un lien pour les actions."},
+    // Placeholder shown in place of a missing value. Chrome, not data — the values
+    // themselves stay verbatim per the comment above.
+    {"about.unknown", "unknown", u8"inconnu"},
 
     {"window.about", "About Smatchet", u8"À propos de Smatchet"},
     {"window.preferences", "Preferences", u8"Préférences"},

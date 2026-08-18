@@ -21,6 +21,7 @@
 #include "TicketFieldEditorOptionFilterPure.h"
 #include "TicketFieldEditorCommitPolicyPure.h"
 #include "TicketFieldEditorDurationPopupPure.h"
+#include "Ui/FieldPreviewLinePure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 #include "TouchCellEditGesture.h"
@@ -669,14 +670,13 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 
     const std::string valueForDisplay = app.ResolveDisplayValue(field.Id, &field, currentValue);
-    const bool hasNewlineInValue =
-        std::any_of(valueForDisplay.begin(), valueForDisplay.end(), [](char c) { return c == '\n' || c == '\r'; });
-    std::string singleLine = valueForDisplay;
-    auto nlIt = std::find_if(singleLine.begin(), singleLine.end(), [](char c) { return c == '\n' || c == '\r'; });
-    if (nlIt != singleLine.end()) {
-        singleLine.erase(nlIt, singleLine.end());
-    }
-    const std::string& display = singleLine;
+    // First line with VISIBLE content, not literally the first line: a value opening with a
+    // blank line (GitHub issue bodies routinely do) otherwise drew an empty cell for a ticket
+    // that has full text. Same helper — and same rule — the read-only grid cells use in
+    // RenderClippedFieldText; the tooltip below still shows the untouched value.
+    const smatchet::field_preview::PreviewLine preview = smatchet::field_preview::FirstVisibleLine(valueForDisplay);
+    const std::string& display = preview.Text;
+    const bool hasNewlineInValue = preview.HasMoreLines;
     const float regionAvail = (availWidth > 0.0f) ? availWidth : ImGui::GetContentRegionAvail().x;
     const bool textCellClicked = ImGui::Selectable(display.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick);
     if (ShouldOpenCellEditorOnGesture(textCellClicked, singleClickToEdit)) {
