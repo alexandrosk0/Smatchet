@@ -1293,6 +1293,45 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "dedup WARN: silent on an advisory-named check (cannot block, cannot 405)" {
+    # Same cross-suite shape as the #2071 test, but the diverging name is advisory
+    # and non-required. An advisory check never fails the gate and never appears in
+    # a 405, so naming it would be a warning about something that cannot bite. The
+    # WARN reuses the $failing predicate (required OR name-matched-and-not-advisory).
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":true},
+          {"__typename":"CheckRun","name":"Mobile texture-guard smoke (advisory)","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-05-22T11:05:00Z","checkSuite":{"createdAt":"2026-05-22T10:00:00Z"},"isRequired":false},
+          {"__typename":"CheckRun","name":"Mobile texture-guard smoke (advisory)","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:05:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"blocking context from an older workflow run"* ]]
+    rm -f "$f"
+}
+
+@test "dedup WARN: fires for a NON-required check whose name is not advisory" {
+    # The other half of the predicate. Under block-on-any-red every non-advisory
+    # name blocks whether or not GitHub marks it required, so a discarded twin
+    # under such a name is exactly the 405 shape and must still be named. Pins that
+    # the advisory exclusion above is name-sensitive, not just isRequired==false.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":true},
+          {"__typename":"CheckRun","name":"Bucket-E UI tests","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-05-22T11:05:00Z","checkSuite":{"createdAt":"2026-05-22T10:00:00Z"},"isRequired":false},
+          {"__typename":"CheckRun","name":"Bucket-E UI tests","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:05:00Z","checkSuite":{"createdAt":"2026-05-22T11:00:00Z"},"isRequired":false}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"blocking context from an older workflow run"* ]]
+    [[ "$output" == *"Bucket-E UI tests"* ]]
+    rm -f "$f"
+}
+
 @test "dedup: a check run with no checkSuite (legacy fixture) still orders by startedAt" {
     # Every pre-existing fixture omits checkSuite entirely, so they all tie at ""
     # on the first key. Their ordering must be exactly what it was

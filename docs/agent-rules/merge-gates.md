@@ -234,7 +234,14 @@ run …` line naming them before the merge is attempted.
 
 Fix: **re-run the workflow run that owns the stale check-run.**
 
-```
+```bash
+# The poll cannot carry the run id: GraphQL types WorkflowRun.databaseId as a
+# signed 32-bit Int and live ids overflow it. REST has no such ceiling.
+gh api "repos/OWNER/REPO/commits/HEAD_SHA/check-runs?per_page=100" \
+  --jq '.check_runs[] | [.name, (.conclusion // .status), .details_url] | @tsv'
+
+# Match the name the WARN printed; the run id is the number after /runs/ in
+# details_url. Then:
 gh run rerun <run-id>          # the run whose job is CANCELLED, not the newer one
 ```
 

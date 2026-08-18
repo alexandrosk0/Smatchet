@@ -106,6 +106,10 @@ _MG_GATE_FILTER_TEMPLATE='
 # normal healthy path and must stay silent — warning on it would fire for every PR
 # ever fixed by a rerun. Winner-blocking cases are excluded too: the gate already
 # blocks on those, so a warning adds nothing.
+# The discarded twin must itself be BLOCKING, under the same predicate $failing
+# uses below (required, or name-matched and not advisory-named). An advisory
+# check cannot fail the gate and cannot produce a 405, so naming one here would
+# be a warning about something that can never bite.
 | ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
    | map(select(.__typename == "CheckRun"))
    | map(. + {_n: (.name // ""), _s: (.checkSuite.createdAt // "")})
@@ -116,6 +120,9 @@ _MG_GATE_FILTER_TEMPLATE='
          | ($g | .[0:-1]) as $rest
          | select((((($win.conclusion) // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")) | not)
                   and ($rest | any((((.conclusion) // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))
+                                   and ((.isRequired == true)
+                                        or (._n | (test("__BLOCK_ALLOWLIST_RE__"; "i")
+                                                   and (ascii_downcase | contains("advisory") | not))))
                                    and (._s != $win._s))))
          | $win._n)) as $dupMasked
 | ([$ctx[] | select(.isRequired == true)]) as $req
