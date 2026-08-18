@@ -297,8 +297,90 @@ static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* so
     }
 }
 
-} // namespace
+// ImGui rebuilds a live table's column storage whenever the column COUNT changes (the
+// "preserve widths across a spec change" path in BeginTableEx) and seeds
+// DisplayOrderToIndex[n] from Columns[n].DisplayOrder -- the inverse of the order->index
+// mapping that array actually holds. That seed is only correct while the display order is
+// still identity. The corrective rebuild (fix the orders, then scatter
+// DisplayOrderToIndex[Columns[n].DisplayOrder] = n) lives at the tail of TableLoadSettings,
+// which returns on its first line for a NoSavedSettings table -- and TicketGrid is one. So
+// adding or removing a grid field while a header drag-reorder is in effect leaves the map
+// inverted: columns render in the wrong visual slots. Worse, the next drag walks that bad
+// map to shift the neighbours it steps over, which can land two columns on one DisplayOrder
+// and leave a stale slot behind -- the visual-order writeback then persists the same key
+// twice into ColumnOrder.
+//
+// Detect the desync and reset both arrays to identity. Identity is the right answer here:
+// columns[] is already built in the view's saved order, so the table's own permutation only
+// ever carries a drag the user has not committed yet, and a consistent map (fresh table, or
+// post-drag once ImGui rescatters) always passes this check untouched.
+static void RepairDesyncedTableDisplayOrder(ImGuiTable* table) {
+    if (table == nullptr || table->ColumnsCount <= 0) {
+        return;
+    }
+    if (table->ColumnsCount > table->DisplayOrderToIndex.size() || table->ColumnsCount > table->Columns.size()) {
+        return;
+    }
+    for (int n = 0; n < table->ColumnsCount; ++n) {
+        const int order = static_cast<int>(table->Columns[n].DisplayOrder);
+        if (order >= 0 && order < table->ColumnsCount && static_cast<int>(table->DisplayOrderToIndex[order]) == n) {
+            continue;
+        }
+        for (int r = 0; r < table->ColumnsCount; ++r) {
+            table->Columns[r].DisplayOrder = static_cast<ImGuiTableColumnIdx>(r);
+            table->DisplayOrderToIndex[r] = static_cast<ImGuiTableColumnIdx>(r);
+        }
+        return;
+    }
+}
 
+// Capture a user-driven column reorder (drag the header) into the editing buffer and mark the
+// view dirty so the unsaved-layout strip appears. Deliberately not autosaved: a column-order
+// change is destructive, unlike width/sort which the user can revert with another drag.
+static void CaptureHeaderDragColumnOrder(UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
+                                         ViewDefinition& activeView) {
+    ImGuiTable* table = ImGui::GetCurrentTable();
+    if (table == nullptr || table->ColumnsCount <= 0) {
+        return;
+    }
+    std::vector<std::string> visualOrder;
+    visualOrder.reserve(columns.size());
+    for (int v = 0; v < table->ColumnsCount; ++v) {
+        // The order->index map is an ImSpan<short> sized to ColumnsCount.
+        if (v >= table->DisplayOrderToIndex.size()) {
+            break;
+        }
+        const int logical = table->DisplayOrderToIndex[v];
+        if (logical < 0 || logical >= static_cast<int>(columns.size())) {
+            continue;
+        }
+        visualOrder.push_back(columns[static_cast<size_t>(logical)].Key);
+    }
+    // Persist only a true permutation of the column set: an order that comes out short, or that
+    // repeats a key, means the display-order map was inconsistent this frame. Writing it would
+    // bake a duplicate key into ColumnOrder, and the load-side dedupe then drops a column back to
+    // the end of the grid.
+    if (visualOrder.size() != columns.size()) {
+        return;
+    }
+    std::unordered_set<std::string> seenVisualKeys;
+    for (const auto& visualKey : visualOrder) {
+        if (!seenVisualKeys.insert(visualKey).second) {
+            return;
+        }
+    }
+    // Compare against the editing buffer too: a saved ColumnOrder holding a stale key that the
+    // column set no longer carries never converges on the visual order, so a saved-only compare
+    // would re-capture and re-dirty the view every frame until the user hits Save.
+    if (visualOrder == activeView.ColumnOrder || visualOrder == d.editingColumnOrder) {
+        return;
+    }
+    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, activeView);
+    d.editingColumnOrder = visualOrder;
+    d.viewsDirty = true;
+}
+
+} // namespace
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 extern "C" void SmatchetUiTestRouteActiveProjectGridWheelForCurrentTable(UiDrawSession* d, GridPane* pane) {
@@ -514,6 +596,11 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
 
     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(ImGui::GetStyle().FramePadding.x, 1.0f));
     if (!columns.empty() && ImGui::BeginTable("TicketGrid", static_cast<int>(columns.size()), tableFlags)) {
+        // Repair an inverted display-order map before anything reads it (see
+        // RepairDesyncedTableDisplayOrder): adding or removing a grid field changes the
+        // column count, which is exactly when ImGui can leave the map inconsistent for a
+        // NoSavedSettings table.
+        RepairDesyncedTableDisplayOrder(ImGui::GetCurrentTable());
         // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
         // tests can drive the grid position without human input. Scenarios address "the
         // grid" — the focused pane.
@@ -918,32 +1005,9 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
                 d.viewsDirty = true;
             }
 
-            // Capture user-driven column reorder (drag the header) into the
-            // editing buffer; mark the view dirty so the unsaved-layout strip
-            // appears. Don't autosave: column order changes are destructive,
-            // unlike width/sort which the user can revert with another drag.
-            ImGuiTable* tableForOrder = ImGui::GetCurrentTable();
-            if (tableForOrder && tableForOrder->ColumnsCount > 0) {
-                std::vector<std::string> visualOrder;
-                visualOrder.reserve(columns.size());
-                for (int v = 0; v < tableForOrder->ColumnsCount; ++v) {
-                    // DisplayOrderToIndex is an ImSpan<short> sized to ColumnsCount.
-                    if (v >= tableForOrder->DisplayOrderToIndex.size()) {
-                        break;
-                    }
-                    const int logical = tableForOrder->DisplayOrderToIndex[v];
-                    if (logical < 0 || logical >= static_cast<int>(columns.size())) {
-                        continue;
-                    }
-                    visualOrder.push_back(columns[static_cast<size_t>(logical)].Key);
-                }
-                if (!visualOrder.empty() && visualOrder != mutableActive->ColumnOrder) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                    d.editingColumnOrder = visualOrder;
-                    d.viewsDirty = true;
-                }
-            }
+            // Capture a user-driven column reorder (drag the header) into the editing
+            // buffer; see CaptureHeaderDragColumnOrder.
+            CaptureHeaderDragColumnOrder(d, columns, *mutableActive);
         }
     }
 }
-
