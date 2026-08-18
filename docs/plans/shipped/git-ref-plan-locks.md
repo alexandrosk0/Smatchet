@@ -10,7 +10,7 @@ The plan is fully shipped to develop. Four items below require a human action (U
 | # | Action | Status | Trigger | Where the procedure lives |
 |---|---|---|---|---|
 | 1 | **Create `LOCK_RENDER_PAT` fine-grained PAT + add as repo secret.** Without this the `locks-render.yml` workflow fails at the `gh pr create` step and leaves orphan `bot/plan-locks-sync` branches on origin every cron fire. | **DONE 2026-05-18** — verified via two consecutive `conclusion: success` workflow runs after configuration. | — | § Operational requirements → `LOCK_RENDER_PAT` secret |
-| 2 | **Calendar reminder to rotate `LOCK_RENDER_PAT` at +90 days** (the recommended expiry set at creation time). | OPEN — set the reminder once and forget | At PAT expiry. Workflow will start failing again the day after expiry. | § Operational requirements → `LOCK_RENDER_PAT` secret → "Rotation" |
+| 2 | **Rotate `LOCK_RENDER_PAT`** (90-day expiry set at creation time). | **FIRED 2026-08-16 — ACTION REQUIRED.** The PAT lapsed at its 90-day mark; `locks-render.yml` has been red on every 30-minute cron fire since (last green run `2026-08-16T19:14Z`, first red `19:40Z`). Only a human can rotate it. | At PAT expiry. Workflow starts failing the day after expiry — exactly as predicted here. | § Operational requirements → `LOCK_RENDER_PAT` secret → "Rotation" |
 | 3 | **Run `bash agents/scripts/core/setup-locks-ruleset.sh`** to enable Phase 7b ref-namespace hardening. | OPEN — opportunistic | Build when: (a) a `refs/locks/*` ref is mutated by an actor who shouldn't have (audit via reflog / staleness Issue), or (b) the repo gains a second collaborator with `push` access. | § Phase 7b |
 | 4 | **Enable GitHub merge queue on develop** (Phase 7d). | **CLOSED (unavailable) 2026-07-14** — the merge queue is an org-only feature (Team/Enterprise), absent from both classic branch protection and rulesets on this user-owned repo; the underlying goal was met another way (`strict=false` on required checks — PRs merge on their own green head, post-merge CI backstop). See `docs/plans/build-quality-velocity-hardening.md` item #14 + its § Deviations. Re-open only if the repo moves under an org. | — | § Phase 7d |
 
@@ -107,9 +107,39 @@ GitHub disallows the default `GITHUB_TOKEN` from creating or approving pull requ
 9. Go to **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** → **New repository secret**.
 10. **Name**: `LOCK_RENDER_PAT`. **Value**: paste the token. Save.
 
-The workflow auto-detects the secret. Without it, the `Open or update sync PR` step logs a warning and falls back to `GITHUB_TOKEN` (which then fails loudly with the GraphQL error — same failure mode the user would have hit before this section existed, just now with an actionable warning).
+The workflow auto-detects the secret. Without it, the `LOCK_RENDER_PAT preflight` step logs a warning and the `Open or update sync PR` step falls back to `GITHUB_TOKEN` (which then fails loudly with the GraphQL error — same failure mode the user would have hit before this section existed, just now with an actionable warning).
 
-**Rotation**: at PAT expiry, generate a new token under the same name and overwrite the secret value. The workflow picks up the new value on its next fire.
+**Rotation**: at PAT expiry, generate a new token under the same name (steps 1-8 above) and overwrite the existing `LOCK_RENDER_PAT` secret value at **https://github.com/alexandrosk0/Smatchet/settings/secrets/actions** — do not create a second secret. The workflow picks up the new value on its next fire.
+
+Rotation is **not complete when the secret is saved** — it is complete when a run proves the new token authenticates. `gh workflow run locks-render.yml` only *dispatches*; it exits 0 on a successful dispatch and reports nothing about the token. Watch the run it queued and require a `success` conclusion:
+
+```bash
+before=$(gh run list --workflow=locks-render.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+gh workflow run locks-render.yml
+for _ in $(seq 30); do
+  run=$(gh run list --workflow=locks-render.yml --event workflow_dispatch --limit 1 --json databaseId --jq '.[0].databaseId // 0')
+  [ "$run" != "$before" ] && break
+  sleep 2
+done
+[ "$run" != "$before" ] || { echo "dispatch never registered a new run"; exit 1; }
+gh run watch "$run" --exit-status
+```
+
+Why the baseline-and-poll rather than a bare `gh run list --limit 1`: this workflow also fires on a 30-minute cron, and `gh run list` orders by creation time across **all** events, so a cron fire landing between the dispatch and the query is the newest run and would be watched in place of the dispatch — a rotation verdict read off a run that predates the new secret. Pinning `--event workflow_dispatch` and requiring the id to *change* from the pre-dispatch baseline selects the run this command actually created, on any `gh` version. (Recent `gh` releases print the new run's URL from `gh workflow run`, but older ones print nothing, so capturing its stdout is not portable.)
+
+`--exit-status` makes a failed run a non-zero exit, so a still-bad PAT surfaces here instead of on the next cron fire. On success the run log also carries the `::notice::LOCK_RENDER_PAT valid for N more day(s)` line, which is the positive confirmation that the new token was read. Without this step the only thing a dispatch confirms is that dispatch works.
+
+One conclusion is **not** a verdict on the token: `cancelled`. The workflow declares `concurrency: plan-locks-render` with `cancel-in-progress: true`, so a cron fire arriving mid-watch kills the dispatched run. Re-run the block; never read a cancelled run as a failed rotation.
+
+**What an expired PAT looks like** (first observed 2026-08-16, the exact 90-day mark from the 2026-05-18 configuration):
+
+- `Render refs/locks/* to Markdown` goes red on **every** cron fire, so the develop tip stays red until a human acts. There is no self-healing path — the token is dead, not throttled.
+- The `Commit + force-push sync branch` step **still succeeds** (it uses `GITHUB_TOKEN`, not the PAT), so the regenerated file does land on `bot/plan-locks-sync`. Only PR creation is blocked; no lock data is lost.
+- The `LOCK_RENDER_PAT preflight` step now fails with a `::error::` naming the secret and pointing back here. Before that translation landed, the entire diagnostic signal was two lines of `HTTP 401: Bad credentials` / `Try authenticating with: gh auth login -h github.com` — advice with no meaning inside Actions, naming neither the secret nor this procedure. The `[ -z ... ]` guard only ever detected an **unset** secret, and an expired one is set.
+- From 14 days out, each run logs a `::warning::` counting down to expiry (read from the `github-authentication-token-expiration` response header), so the next cycle should be caught before the cliff rather than after it.
+- The preflight is deliberately **not** diff-gated, unlike the push and PR steps around it. Most cron fires find no diff, so a diff-gated countdown would stay dark on the majority of runs and a lapsed token would go unannounced until the next run that happened to carry a diff — which is the same too-late signal the countdown exists to replace. It runs **after** the push step so an expired PAT still cannot cost lock data: the regenerated file lands on the sync branch first, and only PR creation is blocked.
+
+**Stop-gap while the PAT is dead**: `bash scripts/dev/local/manual-locks-render-sync.sh` performs the same lifecycle from an operator's own credentials. The lock refs themselves are the source of truth and are unaffected — only the Markdown mirror goes stale.
 
 **Why not the repo-wide "Allow GitHub Actions to create and approve pull requests" checkbox?** That checkbox flips the default for every workflow with `pull-requests: write`. Smatchet has only one such workflow today (`locks-render.yml`), but the PAT approach future-proofs against accidentally widening the trust surface when a future workflow gets the same permission.
 
