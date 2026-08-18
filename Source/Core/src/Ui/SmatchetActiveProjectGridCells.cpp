@@ -95,34 +95,55 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
 // zero-copy via GetFieldValueRef. Backends whose issue-list payload carries no bodies
 // (GitHub/Plane) get it from a one-shot background fetch on FIRST hover, below.
 
-// Issue ids whose tooltip fetch has been kicked for the CURRENT tickets snapshot — in-flight,
-// done, or failed. One lookup per hovered frame; guarantees at most ONE FetchIssueComments per
-// issue per snapshot (a failure stays in the set so a hover can never become a per-frame retry
-// storm). Keyed to the snapshot: every re-sync / backend swap publishes a NEW snapshot vector
-// (whose list payload may have wiped a lazily-fetched blob, and whose ids may collide across
-// backends), so the set clears whenever the snapshot address changes — see the reset in the
-// hover path below.
-std::unordered_set<std::string> s_commentsTooltipFetchKicked;
-const void* s_commentsTooltipFetchSnapshot = nullptr;
+// Dedup state lives on GridPane (CommentsTooltipFetchKicked / CommentsTooltipFetchRevision,
+// see GridPane.h) — per-pane because issue ids are only unique within one backend's snapshot
+// and a sibling pane's hover must not reset another pane's guard, and keyed on the pane's
+// monotonic snapshotRevision, never a snapshot address (allocator reuse would ABA-match a
+// genuinely new snapshot and wedge the guard until restart).
 
 // Pillar 2 — fetch the thread on a worker, format+store on the UI-thread post-back. Mirrors
-// the comments modal's worker pattern (capture by value; AppController& outlives the app).
-// No generation guard needed: the post-back writes into the ticket cache keyed by issue id
-// (UpdateCachedCommentsFromThread), which is order-independent and idempotent.
-void KickCommentsTooltipFetch(AppController& app, const std::string& issueId) {
+// the comments modal's worker pattern (capture by value; AppController& and the UiDrawSession
+// outlive the app). FetchIssueComments latches the FOCUSED backend and
+// UpdateCachedCommentsFromThread writes into the FOCUSED snapshot, so the kick-time pane must
+// still be the focused pane — with the SAME backend — when the post-back runs: callers only
+// kick from the focused pane (pane.focused mirrors d.focusedPaneId), and the post-back
+// re-checks BOTH the focused pane id AND that pane's live backendKey against the captured
+// values, so a mid-flight focus switch or a same-pane backend swap drops the result instead
+// of writing a same-keyed row in a DIFFERENT backend's pane (CodeRabbit 2123 finding). A
+// dropped id stays in the pane's kicked set; the pane's next (backendKey, revision) pair
+// clears it and re-arms one fetch. Accepted residual (same class the comments modal accepts):
+// a focus flip AWAY AND BACK inside the worker's flight window can still latch the other
+// backend for the fetch itself — needs a backend-pinned fetch API to close fully.
+void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::string& paneId,
+                              const std::string& backendKey, const std::string& issueId) {
     AppController* appPtr = &app;
+    UiDrawSession* dPtr = &d;
+    const std::string capturedPaneId = paneId;
+    const std::string capturedBackendKey = backendKey;
     const std::string capturedIssueId = issueId;
-    app.LaunchBackgroundTask([appPtr, capturedIssueId]() {
+    app.LaunchBackgroundTask([appPtr, dPtr, capturedPaneId, capturedBackendKey, capturedIssueId]() {
         std::vector<TrackerIssueComment> comments;
         std::string err;
         bool ok = false;
         UnpackResult(appPtr->FetchIssueComments(capturedIssueId), ok, comments, err);
         if (!ok) {
-            return; // id stays in the kicked set — no retry until restart / explicit modal fetch
+            return; // id stays in the kicked set — no retry until the pane's next snapshot
         }
-        appPtr->PostToMainThread([appPtr, capturedIssueId, comments = std::move(comments)]() {
-            appPtr->UpdateCachedCommentsFromThread(capturedIssueId, comments);
-        });
+        appPtr->PostToMainThread(
+            [appPtr, dPtr, capturedPaneId, capturedBackendKey, capturedIssueId, comments = std::move(comments)]() {
+                if (dPtr->focusedPaneId != capturedPaneId) {
+                    return; // focus moved mid-flight — don't write into a different pane's snapshot
+                }
+                for (const GridPane& p : dPtr->gridPanes) {
+                    if (p.id == capturedPaneId) {
+                        if (p.backendKey != capturedBackendKey) {
+                            return; // pane swapped backend mid-flight — result belongs to the old one
+                        }
+                        break;
+                    }
+                }
+                appPtr->UpdateCachedCommentsFromThread(capturedIssueId, comments);
+            });
     });
 }
 
@@ -215,6 +236,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                                 float cellOriginX, float cellWidth) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     const bool readOnlyMode = ctx.readOnlyMode;
     std::vector<PendingFieldEdit>& pendingEdits = ctx.pendingEdits;
@@ -314,19 +336,23 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
             // get a one-shot lazy fetch on first hover; until it lands (or when an issue simply has
             // no comments) the cheap localized static hint shows instead.
             const std::string& commentBlob = ticket.GetFieldValueRef("comment");
-            if (commentBlob.empty()) {
-                // New snapshot (re-sync / backend swap / project switch) → allow one fresh kick
-                // per issue: the rebuilt cache may have wiped a lazily-fetched blob, and ids are
-                // only unique within one backend's snapshot.
-                const void* snapshotKey = static_cast<const void*>(&ctx.tickets);
-                if (snapshotKey != s_commentsTooltipFetchSnapshot) {
-                    s_commentsTooltipFetchSnapshot = snapshotKey;
-                    s_commentsTooltipFetchKicked.clear();
+            // Kick only from the FOCUSED pane: the fetch resolves the focused backend and the
+            // post-back writes the focused snapshot, so an unfocused pane's hover keeps the
+            // static hint until the pane is focused (see KickCommentsTooltipFetch).
+            if (commentBlob.empty() && pane.focused) {
+                // New snapshot for this pane (re-sync / backend swap / project switch) → allow
+                // one fresh kick per issue: the rebuilt cache may have wiped a lazily-fetched
+                // blob. Keyed on the (backendKey, revision) PAIR: per-context revision counters
+                // each start at 0, so a backend switch alone could land on an equal revision.
+                if (pane.CommentsTooltipFetchRevision != pane.snapshotRevision ||
+                    pane.CommentsTooltipFetchBackendKey != pane.backendKey) {
+                    pane.CommentsTooltipFetchRevision = pane.snapshotRevision;
+                    pane.CommentsTooltipFetchBackendKey = pane.backendKey;
+                    pane.CommentsTooltipFetchKicked.clear();
                 }
                 // A cached count of "0" already proves the thread is empty — no fetch to run.
-                if (ticket.GetFieldValueRef("comments") != "0" &&
-                    s_commentsTooltipFetchKicked.insert(ticket.id).second) {
-                    KickCommentsTooltipFetch(app, ticket.id);
+                if (currentValue != "0" && pane.CommentsTooltipFetchKicked.insert(ticket.id).second) {
+                    KickCommentsTooltipFetch(app, d, pane.id, pane.backendKey, ticket.id);
                 }
             }
             RenderCommentsCellTooltip(commentBlob);

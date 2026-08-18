@@ -24,6 +24,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <unordered_set>
 
 /// Deferred pane-creation request (pane-backend-picker Slice 1, ADR-0018 extension).
 /// Latched by the "+" UI / pane commands and applied AFTER the pane loop by
@@ -91,6 +92,18 @@ struct GridPane {
     /// on THIS (not the live revision) so a non-focused pane's frozen snapshot doesn't
     /// re-sort on every background sync tick.
     std::uint64_t snapshotRevision = 0;
+
+    /// Comments-cell lazy-tooltip fetch dedup (UI-thread-only). Issue ids whose one-shot
+    /// FetchIssueComments was kicked for THIS pane's current snapshot — in-flight, done, or
+    /// failed. Per-pane (ids are only unique within one backend's snapshot, and a sibling
+    /// pane's hover must not reset this pane's guard) and keyed on the
+    /// (backendKey, snapshotRevision) PAIR — never a snapshot address (allocator reuse would
+    /// ABA-match a genuinely new snapshot), and never the revision alone (each context's
+    /// counter starts at 0, so a backend switch can land on an equal value). Cleared by the
+    /// comments cell whenever either component of the pair moves.
+    std::unordered_set<std::string> CommentsTooltipFetchKicked;
+    std::uint64_t CommentsTooltipFetchRevision = 0;
+    std::string CommentsTooltipFetchBackendKey;
 
     /// Per-pane column-set cache for panes whose viewId differs from the shared per-frame
     /// GridFrameContext (which is built for the focused/active view). Rebuilt only when
