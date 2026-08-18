@@ -198,3 +198,66 @@ suppresses, then decide blocking separately. Graduating a now-deterministic
 subset to unmasked is the follow-on ratchet, and is gated on the artefacts being
 current first (an unmasked gate over a stale golden is a red check, not a
 signal — see [`golden-image-approval.md`](golden-image-approval.md)).
+
+## Duplicate check-name divergence
+
+Two different workflow runs can publish a check-run under the **same name** on one
+head. It happens routinely: a push or a PR-body edit supersedes an in-flight run,
+and the new run's concurrency group cancels the elder. The head then carries, say,
+two `Perf PR-fast (windows-2022)` contexts — one `CANCELLED`, one terminal.
+
+The gate collapses those to one context per name, keyed on
+`(checkSuite.createdAt, startedAt)` — newest suite first, `startedAt` as the
+tiebreak (`merge-gates.d/10-gate-filter.sh`). Both keys are load-bearing:
+
+- **Suite age first**, because that is what GitHub's required-status-check
+  evaluation reads. Ordering by `startedAt` alone picks whichever job happened to
+  start later in wall-clock terms, which is *not* the same context. On PR #2071 the
+  poller saw the older run's later-starting `SKIPPED` job, reported green, and the
+  merge API answered `405 Required status check "Perf PR-fast (windows-2022)" is
+  cancelled` — a false green with no red check anywhere to point at.
+- **`startedAt` second**, because a rerun stays inside one check suite. Old
+  `FAILURE` + new `SUCCESS` tie on suite age and resolve on start time, which is
+  the rerun-to-green case the dedup exists for.
+
+Deliberately **not** `workflowRun.databaseId`: GitHub types it as GraphQL `Int`
+(signed 32-bit), and live run ids are roughly 15x past that ceiling, so the query
+errors and the gate returns `GH_API_DOWN` — failing closed on every merge. A
+`DateTime` sorts identically with no integer.
+
+### The `405 ... is cancelled` recovery
+
+If a merge is refused with `405 Required status check "<name>" is cancelled` while
+the board reads green, a stale cancelled context under that name is the cause. The
+gate emits a `WARN: N check name(s) carry a blocking context from an older workflow
+run …` line naming them before the merge is attempted.
+
+Fix: **re-run the workflow run that owns the stale check-run.**
+
+```bash
+# The poll cannot carry the run id: GraphQL types WorkflowRun.databaseId as a
+# signed 32-bit Int and live ids overflow it. REST has no such ceiling.
+gh api "repos/OWNER/REPO/commits/HEAD_SHA/check-runs?per_page=100" \
+  --jq '.check_runs[] | [.name, (.conclusion // .status), .details_url] | @tsv'
+
+# Match the name the WARN printed; the run id is the number after /runs/ in
+# details_url. Then:
+gh run rerun <run-id>          # the run whose job is CANCELLED, not the newer one
+```
+
+No push, no force, no PR-body re-pin — none of those touch the stale context. Watch
+the 405 text change as it clears:
+
+| Message | Meaning |
+|---|---|
+| `... is cancelled` | the stale context is still what GitHub evaluates |
+| `... is expected` | it was invalidated; GitHub is waiting for the fresh one |
+| *(merge succeeds)* | the re-run reported a terminal conclusion |
+
+Do **not** re-run the *newer* run to fix this, and do not re-run a job whose result
+depends on the PR body (`Intent section`): a re-run replays the original event
+payload, so it re-reads the body as it was, not as it is. For those, edit the body
+— that fires its own run against current state.
+
+Provenance: [`merge-gate-duplicate-check-name-drift`](../self-improvement/categories/applied.md).
+Pinned by `tests/bats/merge_gates.bats` (six dedup cases plus two for the WARN).

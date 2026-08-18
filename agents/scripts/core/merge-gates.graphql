@@ -91,7 +91,8 @@ query($owner: String!, $repo: String!, $pr: Int!) {
                     # new-SUCCESS tie here and resolve on startedAt. Even if a
                     # rerun did mint a fresh suite, the newer SUCCESS would win —
                     # rerun-to-green holds under either reading.
-                    # See docs/self-improvement/categories/infra/2026-08-17-merge-gate-duplicate-check-name-drift.md
+                    # See docs/agent-rules/merge-gates.md, section
+                    # Duplicate check-name divergence.
                     checkSuite { createdAt }
                     isRequired(pullRequestNumber: $pr)
                   }
