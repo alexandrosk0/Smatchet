@@ -459,10 +459,12 @@ Result<TrackerFieldCatalogResult, TrackerError> PlaneClient::FetchFieldCatalog(c
 
     fields.push_back(MakeCoreField("created", "Created", "datetime", TrackerFieldFamily::DateTime, true));
     fields.push_back(MakeCoreField("updated", "Updated", "datetime", TrackerFieldFamily::DateTime, true));
-    // issue-comments PR-C — read-only comments column. The cell renders a bare
-    // comment icon (no count); the value is never populated in the Plane issue
-    // mapper, so leaving fieldValues["comments"] empty keeps the row free of any
-    // per-row network fetch (Pillar 2). Read-only so the grid offers no edit.
+    // issue-comments PR-C — read-only comments column. The Plane issue mapper leaves
+    // fieldValues["comments"] empty (its list payload carries no comment data), so a fresh
+    // row renders a bare comment icon with NO per-row network during sync (Pillar 2). The
+    // count + hover-tooltip blob arrive lazily: the grid cell's one-shot first-hover fetch
+    // (KickCommentsTooltipFetch → UpdateCachedCommentsFromThread) fills both into the cached
+    // ticket. Read-only so the grid offers no edit.
     fields.push_back(MakeCoreField("comments", "Comments", "number", TrackerFieldFamily::Number, true));
 
     std::unordered_map<std::string, TrackerField> customs;

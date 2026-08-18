@@ -311,6 +311,27 @@ bool AppendCachedTicketFromJiraSearchIssue(
                 ticket.fieldValues[fieldKey] = std::string();
             }
         }
+        // The comment blob is mapped OUTSIDE the selectedFields loop, and deliberately so.
+        // BuildFetchFieldListsFromView always puts "comment" on the wire (outFieldsList), but it
+        // only lands in outSelectedFields when the ACTIVE VIEW carries it as a column — and
+        // EraseCatalogLegacyCommentField drops `comment` from the picker, so no view can. Keying
+        // the mapping off selectedFields therefore fetched the payload on every sync and threw it
+        // away, leaving both the Comments-cell hover tooltip AND its numeric count empty.
+        // MapJiraPresentField derives fieldValues["comments"] (the count) from this same branch,
+        // so this must run AFTER the loop: the loop's absent-key path blanks "comments" when it is
+        // a selected column (Jira's payload has no literal `comments` key) and this has to win.
+        // The find() guard keeps it idempotent for a legacy view that still lists `comment`, so
+        // ResolveJiraCommentField's lazy top-up cannot fire twice for one row. A NO-OP fetch is
+        // passed instead of the live callback: ResolveJiraCommentField falls back to a per-issue
+        // HTTP call when the inline array is empty but total > 0, and running that unconditionally
+        // would put a blocking network fetch per row inside the sync page loop ("NO per-row
+        // network during sync"). Rows hitting that payload shape keep their count here and get
+        // the blob from the grid cell's one-shot first-hover fetch instead.
+        if (issueFields.contains("comment") && ticket.fieldValues.find("comment") == ticket.fieldValues.end()) {
+            const std::function<bool(const std::string&, nlohmann::json&)> noFetch =
+                [](const std::string&, nlohmann::json&) { return false; };
+            MapJiraPresentField("comment", issueFields["comment"], ticket.id, noFetch, ticket);
+        }
         if (issueFields.contains("issuetype")) {
             ticket.fieldValues["issuetype"] = NormalizeTrackerFieldValue(issueFields["issuetype"]);
         }

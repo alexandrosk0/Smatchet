@@ -97,7 +97,7 @@ inline int BusyRetryBackoffMs(int attempt) {
 /// wall-clock budget (issue #2045). An attempt-count cap alone is not a latency cap — each attempt
 /// can sit for the whole armed busy_timeout (5 s) before SQLite returns BUSY, so five attempts
 /// plus their backoffs stall the caller for ~25 s. That write path is reachable from the UI thread
-/// (the comments modal's main-thread post-back → UpdateCachedCommentCount → UpdateTicket →
+/// (the comments modal's main-thread post-back → UpdateCachedCommentsFromThread → UpdateTicket →
 /// SaveTicket), where the stall is a frozen frame pump with no progress cue (Pillar 2).
 /// `elapsedMs` is the time already spent in the loop, `budgetMs` the total allowance; the NEXT
 /// backoff is charged against the budget too, so the loop never sleeps its way past the deadline.
