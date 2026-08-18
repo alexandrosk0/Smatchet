@@ -215,6 +215,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`parallel-review-gate`](shipped/parallel-review-gate.md) | 2026-08-15 | Plan — Parallel code-review gate (review runs *with* the lint gate, not after it) |
 | [`autonomous-debug-live-evidence`](shipped/autonomous-debug-live-evidence.md) | 2026-08-16 | close the live-process evidence gaps in the autonomous debug loop — agent-debug preset, log read-back, and on-demand self-minidump for hang diagnosis |
 | [`github-issue-body-empty-line`](shipped/github-issue-body-empty-line.md) | 2026-08-16 | Plan — GitHub issue Body cell looks empty when the body opens with a blank line |
+| [`fix-four-open-issues`](shipped/fix-four-open-issues.md) | 2026-08-17 | Plan — fix four open GitHub Issues (#2109 / #2093 / #2079 / #2066) |
 <!-- END auto-plan-index -->
 
 ### Notes

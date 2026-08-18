@@ -1,8 +1,9 @@
 # Plan — fix four open GitHub Issues (#2109 / #2093 / #2079 / #2066)
+<!-- plan-date: 2026-08-17 -->
 
 > **Slug**: `fix-four-open-issues` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -109,8 +110,53 @@ N/A — no extraction or split; four in-place fixes.
 
 ## Implementation log
 
-_(filled post-ship)_
+- `3a21603e` · wip(plan): fix-four-open-issues — plan doc committed before the first edit (plan-lock).
+- `3650c321` · fix: four open issues — sort SWO (#2079), About popup-open guard (#2093), About
+  `unknown` placeholder (#2066), field-editor first-visible-line preview (#2109). Shipped as
+  [PR #2111](https://github.com/alexandrosk0/Smatchet/pull/2111).
 
 ## Deviations
 
-_(filled post-ship)_
+- **#2079 landed as a three-key comparator, not a two-key one.** The plan said
+  `(parses ? 0 : 1, numeric value)`; the shipped key appends the raw-string compare as a third
+  level. Without it a numeric tie (`"1"` vs `"1.0"` vs `"01"`) collapses into one equivalence
+  class, which is a valid SWO but loses a stable, user-visible distinction for free.
+- **#2093 needed an `imgui_internal.h` include, not just a call-site change.** The `ImGuiID`
+  overload of `IsPopupOpen` is declared in `imgui_internal.h`, and the include has to precede the
+  `#define ImGui SmatchetLocalizedImGui` alias so the declaration lands in `::ImGui` where
+  qualified lookup finds it. Not anticipated in § Files to modify; same file, no new row.
+- **Plan-doc links were written repo-root-relative and had to be re-pointed to `../../../`.**
+  `test-markdown-links` resolves a bare `Source/...` link against the doc's own directory. Caught
+  by the doc suite before the PR opened.
+- **`clang-format` 22.1.6 disagrees with the committed formatting** on lines this change does not
+  own (it re-wraps a `SmatchetLocalization.cpp` dictionary row and un-wraps three pre-existing
+  `AboutLocalization.test.cpp` CHECKs). Those hunks were reverted so the diff carries only authored
+  changes. Local-toolchain drift, not a repo defect — noted here so the next author expects it.
+
+## Verification (actual)
+
+- **Bucket A (ctest)** — `ninja-test-msvc` configure + build + ctest: **7/7 passed, 0 failed**
+  (`smatchet_tests` 34.20 s, five `android_openssl_failfast_*`, `smatchet_lua_tests`). PASSED.
+- **Build gate (dual-target)** — `cmake --build --preset ninja-iter-msvc --target SmatchetStandalone
+  SmatchetCore_DX12`: exit 0, both targets link (only third-party `assert.h` C4005 warnings).
+  `SmatchetStandalone` was rebuilt after the formatter revert so the validated exe matched the tree.
+  PASSED.
+- **Lint** — `test-lint-rules.sh --diff origin/develop`: PASS on every rule; one advisory
+  `tu-line-ceiling` WARN on two pre-existing over-ceiling TUs (`SmatchetLocalization.cpp` 1642,
+  `TicketFieldEditor.cpp` 1673) — not new, not blocking. `dup_audit.py --diff origin/develop`: clean.
+  PASSED.
+- **Doc validation** — `scripts/dev/test-docs.sh`: 16 passed. `test-markdown-links` went green after
+  the link fix above. Two failures are local-environment only and unrelated to this diff:
+  `test-agent-contract` (gitignored `.claude/hooks/agent-token-log.py` harness copy drifted from
+  `agents/_shared/token-tracking/`) and `test-gate-selftests` (self-exec detector selftest; this
+  branch touches no shell scripts). PASSED for this diff.
+- **Visual (ship-loop exception 5)** — no bucket-C golden and no bucket-E test cover the About
+  modal, so the loop paused after build with the launched exe. User verified: the modal opens, stays
+  open (no ImGui assert, no self-dismiss), and the placeholder renders. PASSED.
+- **Plan stress-test — `grill-with-docs`**: NOT RUN. Four independent single-file fixes against
+  named Issues, each covered by a pure-logic test or the visual check above; no cross-subsystem
+  design surface for the grill to stress. Recorded here rather than left silently unrun.
+- **Manual residue**: the About-modal visual check is manual because no bucket-C/E coverage exists
+  for that modal. Deferred-automation action plan: a bucket-E case opening Help → About and
+  asserting the popup survives a frame would cover both #2093 and #2066 in CI. Backlog entry filed
+  under `docs/self-improvement/categories/test/`.
