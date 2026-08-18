@@ -102,13 +102,31 @@ two hours — one per scheduled tick — and would have kept going. It is the ex
 failure the fail-safe above was written to prevent, and it happened anyway.
 
 **Cause.** The request record was read with
-`gh search issues "<marker> in:comments"`. That returns **empty** here: the
-marker lives inside an HTML comment, which GitHub's issue search does not index.
-The design error was not the bad query — it was that **three independent guards
-all read from that one call**: "has this PR been requested", the quota window
-(via the newest request timestamp), and the unanswered-request fail-safe. An
-empty result did not degrade one guard; it silenced all three at once, and the
-poller re-picked the same newest PR every tick.
+`gh search issues "<marker> in:comments"` — and **three independent guards all
+read from that one call**: "has this PR been requested", the quota window (via
+the newest request timestamp), and the unanswered-request fail-safe. When it
+returns empty, it does not degrade one guard; it silences all three at once, and
+the poller re-picks the same newest PR every tick.
+
+It returns empty because **GitHub's search index is eventually consistent**. The
+first diagnosis written here was that the marker is inside an HTML comment and
+therefore never indexed. That was wrong, and the live workflow disproved it: the
+23:03Z tick printed `HOLD window closed for 1066 more second(s)`, which is only
+reachable when the search *does* return the marker. The index simply lags the
+write by a long time — and the whole storm fits inside that lag. So the storm was
+bounded (six comments, ~2h) rather than unbounded, and it stopped on its own when
+the index caught up.
+
+That correction sharpens the lesson rather than softening it: **an idempotency
+guard must never be built on an eventually-consistent index.** The window in
+which such an index reports "nothing has happened yet" is precisely the window in
+which the guard is being asked whether something already happened. A slow source
+fails exactly like a broken one.
+
+A second flaw in the same query: it matches **any** issue mentioning the marker
+string, including PRs that merely *discuss* the backfill (#2119 and #2126 both
+do). Those false positives skew `last_req`, wedging or unwedging the quota window
+for reasons unrelated to any actual request.
 
 **Why the tests missed it.** `--selftest` and the bats suite both inject the
 decision input directly through `SMATCHET_CR_BACKFILL_FIXTURE`. They proved the

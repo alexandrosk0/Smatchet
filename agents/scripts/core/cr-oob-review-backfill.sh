@@ -221,16 +221,27 @@ now_epoch() { echo "${SMATCHET_CR_BACKFILL_NOW:-$(date -u +%s)}"; }
 
 # Build the decision input from GitHub.
 #
-# WHY NOT `gh search issues "<marker> in:comments"`: it returns EMPTY here. The
-# marker lives inside an HTML comment, and GitHub's issue search does not index
-# it. That is not a cosmetic miss — the first live deployment proved it is
-# catastrophic, because THREE guards read from that one call (already-requested,
-# the quota window via last_req, and the unanswered-request fail-safe). An empty
-# result makes all three inert simultaneously, so the poller re-picked the same
-# newest PR every tick and posted six identical comments to #1995 in two hours.
+# WHY NOT `gh search issues "<marker> in:comments"`. Two reasons, and the first
+# one is subtle enough that the incident write-up got it wrong at first.
 #
-# The lesson is structural, not incidental: guards that share a single data
-# source share its failure. So the request record is now read PER PR, straight
+#   (a) The search index is EVENTUALLY CONSISTENT. It does match the marker —
+#       but not for a while after the comment is posted. During that lag the
+#       query returns empty, and THREE guards read from this one call
+#       (already-requested, the quota window via last_req, and the
+#       unanswered-request fail-safe), so all three go inert together. The first
+#       live deployment posted six identical comments to #1995 over two hours
+#       and only stopped when the index caught up and the window guard began to
+#       bite. An idempotency guard must never be built on a lagging index: the
+#       window where it reads "nothing has happened yet" is exactly the window
+#       where it is being asked whether something already happened.
+#
+#   (b) It matches ANY issue mentioning the marker string, including PRs that
+#       merely DISCUSS the backfill (#2119, #2126 do). Those false positives
+#       skew last_req and can wedge or unwedge the window for unrelated reasons.
+#
+# The lesson is structural: guards that share a single data source share its
+# failure, and a source that is merely SLOW fails exactly like one that is
+# broken. So the request record is now read PER PR, straight
 # from that PR's own comments — the same place post_request writes it — and
 # post_request re-checks immediately before posting, so no single lookup failing
 # can produce a duplicate.
