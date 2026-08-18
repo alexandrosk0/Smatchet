@@ -9,15 +9,21 @@
 #   that CR either never looked at or looked at and had findings on. This drains
 #   that debt.
 #
-#   Two measurements set the shape (both on #1977, 2026-08-16):
-#     1. CR accepts a review request on a MERGED PR — it answers `Full
-#        retroactive review requested for #N` and reviews the merged head. The
-#        debt is collectable in place; no reconstruction onto a fresh PR.
+#   Measurements on #1977 (2026-08-16 and 08-18):
+#     1. CR ACKNOWLEDGES a review request on a MERGED PR — it answers `Full
+#        retroactive review requested for #N`. Whether it then DELIVERS is
+#        unconfirmed: no review has ever appeared on #1977, 39h after the first
+#        request and 75min after a retry. Do not read the acknowledgement as
+#        proof the debt is collectable this way.
 #     2. The plan carries ONE included review at a time on a rolling window. A
-#        second request inside the window answers `Review rate limited … next
-#        included review will be available in N minutes` and is DROPPED, not
-#        queued — #1977 still had zero reviews 39h after its rate-limited
-#        request. A bounced request must be retried, never assumed pending.
+#        request inside the window answers `Review rate limited … next included
+#        review will be available in N minutes` and is DROPPED, not queued. A
+#        bounced request must be retried, never assumed pending.
+#     3. The silence is NOT specific to merged PRs. On 08-18 CR was equally
+#        silent on OPEN PRs — the repo gate's own `@coderabbitai review` nudges
+#        on #2119, #2087 and #2084 drew no reply and no review (the last two for
+#        ~40h). So the drip is blocked by CR-side capacity, not by the merged-PR
+#        route, and it will resume on its own when CR does.
 #
 #   So a bulk sweep buys one review and 89 rate-limit replies. This fires at
 #   most ONE request per invocation and holds when the window is closed.

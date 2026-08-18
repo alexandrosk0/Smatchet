@@ -63,8 +63,8 @@ anything it missed.
 
 CR acknowledged a retroactive request on a merged PR once (`Full retroactive
 review requested for #1977`, 2026-08-16) and then, on a retry 39 hours later,
-answered nothing at all — no reply, no review. **Whether a merged PR's review is
-reliably deliverable is therefore not yet established.**
+answered nothing at all — no reply, no review. **Whether CR ever DELIVERS a
+retroactive review is therefore unconfirmed**; the acknowledgement is not proof.
 
 That uncertainty is load-bearing: if a request can silently no-op, then
 *requested* is not *reviewed*, and a drip that only counted comments posted would
@@ -74,9 +74,26 @@ confirmation grace (default 30 min) and says so, rather than marching on. Any CR
 response clears it — including a rate-limit reply, because the question is
 whether CR is answering at all, not whether the review passed.
 
-Clearing a halt is a human call: confirm on the named PR whether CR delivers a
-retroactive review, and if it does not, the queue needs a different collection
-route (re-opening the diff on a fresh PR) rather than more comments.
+## What the silence is not
+
+The obvious reading — that merged PRs are the problem — is **wrong**, and a
+control ruled it out. On 2026-08-18 the repo's own CR finding gate posted
+`@coderabbitai review` on OPEN PR #2119 sixteen minutes after the merged-PR
+request; both drew the same silence, as had its nudges on open #2087 and #2084
+(~40h earlier, still no review). CR is unresponsive across the repo, open and
+merged alike, so the blocker is CR-side capacity — plausibly the adaptive limit
+its [plans docs](https://docs.coderabbit.ai/management/plans#rate-limits)
+describe for sustained high-volume activity.
+
+So a halt is **not** a signal to re-plumb the collection route. It resolves on
+its own when CR answers again, and the poller resumes without intervention. Only
+if CR is demonstrably answering on open PRs while still ignoring merged ones does
+the merged-PR route need replacing (re-opening each diff on a fresh PR) — and
+that is a human call, not something the drip should decide.
+
+This has a sharper consequence than a stalled backfill: while CR is silent,
+CURRENT PRs merge unreviewed too, so the queue grows faster than any drip drains
+it. Fixing the source outranks draining the debt.
 
 ## Skips
 
