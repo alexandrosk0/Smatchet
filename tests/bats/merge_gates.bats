@@ -1259,6 +1259,40 @@ set_fixture() {
     rm -f "$f"
 }
 
+@test "dedup WARN: names a blocking twin discarded from an older suite (PR #2071 shape)" {
+    # The collapse keeps the newest suite, which is what GitHub evaluates, so this
+    # PASSES. But the discarded CANCELLED twin is precisely what made #2071 answer
+    # `405 ... is cancelled` with nothing red on the board. The gate must name it.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"CANCELLED","status":"COMPLETED","startedAt":"2026-08-17T00:29:03Z","checkSuite":{"createdAt":"2026-08-17T00:17:48Z"},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-08-17T00:43:19Z","checkSuite":{"createdAt":"2026-08-17T00:17:53Z"},"isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"blocking context from an older workflow run"* ]]
+    [[ "$output" == *"build"* ]]
+    rm -f "$f"
+}
+
+@test "dedup WARN: silent on a same-suite rerun-to-green (must not fire every rerun)" {
+    # The normal healthy path. Warning here would fire on every PR ever fixed by a
+    # rerun, which is why the check is cross-suite only.
+    local f
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_dedup_rerun_pass.json" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"FAILURE","status":"COMPLETED","startedAt":"2026-05-22T11:00:00Z","checkSuite":{"createdAt":"2026-05-22T10:00:00Z"},"isRequired":true},
+          {"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","startedAt":"2026-05-22T12:00:00Z","checkSuite":{"createdAt":"2026-05-22T10:00:00Z"},"isRequired":true}]')"
+    set_fixture "$f"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" != *"blocking context from an older workflow run"* ]]
+    rm -f "$f"
+}
+
 @test "dedup: a check run with no checkSuite (legacy fixture) still orders by startedAt" {
     # Every pre-existing fixture omits checkSuite entirely, so they all tie at ""
     # on the first key. Their ordering must be exactly what it was
@@ -3155,10 +3189,10 @@ blocked_with_bot_threads() {
 }
 
 @test "Bugbot (9) field-count guard fires on a mis-sized tuple (fail-closed canary)" {
-    # An embedded newline in a tuple field inflates the field count past 35; the
-    # -ne 35 fail-closed assertion must catch it (the tuple-order regression guard
+    # An embedded newline in a tuple field inflates the field count past 37; the
+    # -ne 37 fail-closed assertion must catch it (the tuple-order regression guard
     # that the appended Bugbot + selfImpOnly + pureDocs/crRateLimited/crDisposition
-    # + thread-count + stale-override fields rely on).
+    # + thread-count + stale-override + dup-masked fields rely on).
     local f
     f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
         "data.repository.pullRequest.headRefOid" \
@@ -3166,7 +3200,7 @@ blocked_with_bot_threads() {
     set_fixture "$f"
     run poll_merge_gates org repo 1
     [ "$status" -ne 0 ]
-    [[ "$output" == *"expected 35"* ]]
+    [[ "$output" == *"expected 37"* ]]
     [[ "$output" != *"GATES_PASSED"* ]]
     rm -f "$f"
 }

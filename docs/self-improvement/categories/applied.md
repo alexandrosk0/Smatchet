@@ -5738,3 +5738,111 @@ needs its risky work step-scoped.
     exists on develop. Recovered from a stashed 2026-06-12 `tooling.md` edit that was never
     committed; it is filed straight to `applied.md` per § Workflow 4 since the fix ships with it.
   Last-reviewed: 2026-08-16
+
+- 2026-08-17 · orchestrator · [infra] · P2 — the merge-gate poller collapses duplicate check-runs by name; GitHub does not, so a concurrency-cancelled twin reports GATES_PASSED and then 405s the merge
+  Details: Hit on PR #2071 (head `90504efe0875`), a docs-only diff where every check
+    was green or skipped. Two workflow runs had published a check-run under the SAME
+    name `Perf PR-fast (windows-2022)`: run 31981596731 produced `skipped` at
+    00:43:19 (correct — the perf lane skips on a docs-only diff), and run
+    31981601014 had a `cancelled` one at 00:29:03, killed by its concurrency group
+    before it could resolve.
+    The poller collapses that pair. `agents/scripts/core/merge-gates.d/10-gate-filter.sh:82`
+    keys the rollup contexts by `["CheckRun", name]` then
+    `group_by(._k) | map(sort_by(.startedAt // "") | .[-1])`, so the 00:43:19
+    `skipped` wins and the 00:29:03 `cancelled` is discarded before any conclusion
+    is examined. GitHub's required-status-check evaluation applies no such collapse:
+    `PUT /repos/alexandrosk0/Smatchet/pulls/2071/merge` returned
+    **`405 Required status check "Perf PR-fast (windows-2022)" is cancelled`**.
+    Note the intent is already aligned — `:102` lists `CANCELLED` among the
+    conclusions that block. ONLY the latest-per-name dedup diverges, and it diverges
+    in the dangerous direction: the poller says green, the merge is impossible, and
+    there is no red check anywhere for an operator or an autonomous loop to point at.
+    Recovery (verified): `rerun_workflow_run` on the run that owns the stale
+    check-run — here 31981601014. No push, no force, no PR-body re-pin. The 405 text
+    transitions `is cancelled` -> `is expected` (the stale check is invalidated and
+    GitHub now awaits a fresh one), then the re-run's job 95255190961 reported
+    `skipped` at 01:03:26 and the merge succeeded as `ae6892c0`.
+    Cost this time: two rejected merge calls and ~35 min wall-clock on a docs-only
+    PR. The exposure is not rare — concurrency-cancelled twins are produced by the
+    repo's ordinary flow, every time a PR-body edit or a quick second push supersedes
+    an in-flight run. The `Intent section` body-repin dance manufactures exactly this
+    shape, so any PR that needs a verdict-line update can inherit it.
+  Concrete next action: (a) **Align the collapse with GitHub** — in `10-gate-filter.sh:82`,
+    do not let a newer same-named context mask an older one whose conclusion is in the
+    blocking set; treat the name as blocking if ANY of its contexts is
+    FAILURE/TIMED_OUT/CANCELLED/ACTION_REQUIRED/STARTUP_FAILURE. That trades a false
+    "green" for a false "wait", which is the correct direction — a false wait is
+    visible and self-clearing, a false green wedges the loop with nothing to point at.
+    (b) Cheaper interim, and worth doing regardless: emit a WARNING naming the
+    divergence when one check NAME carries >1 context with differing conclusions, so
+    the reason for the coming 405 is on screen before the merge is attempted.
+    (c) Document the recovery in `docs/agent-rules/merge-gates.md` — the rerun-the-owning-run
+    fix is cheap but completely non-obvious from the 405 text, and nothing in the repo
+    currently describes this failure shape.
+    Add a `tests/bats/merge_gates.bats` case pinning it: two contexts, same name,
+    elder CANCELLED + newer SKIPPED, asserting the gate does NOT report passed.
+    Prefer (c)+(b) immediately (docs + one log line), (a) as the real fix.
+  Update (a) SHIPPED 2026-08-17 — but NOT as proposed above, because the proposal
+    was wrong. "Treat the name as blocking if ANY of its contexts is FAILURE/…"
+    would have regressed the case the dedup exists for: `merge-gates.graphql:59-62`
+    records that a job rerun leaves BOTH the old FAILURE and the new SUCCESS on the
+    head, so an any-blocks rule wedges every PR ever fixed by a rerun. It would also
+    have over-blocked PR #2091, where two elder runs were cancelled by concurrency,
+    the newest succeeded, and GitHub merged on the first attempt.
+    The two cases are indistinguishable in the data the poller fetched, which is the
+    real defect: `startedAt` cannot tell "same job, rerun" from "different run,
+    cancelled by concurrency". Three observations pin the actual rule — GitHub reads
+    the newest WORKFLOW RUN for a name, the poller read the newest `startedAt`, and
+    those diverge only when a newer run is cancelled before an older run finishes.
+    Fix: query `checkSuite { createdAt }` and sort by `[suite createdAt, startedAt]`.
+    A rerun stays in one check suite, so it ties on the first key and still resolves
+    by `startedAt` (rerun-to-green preserved); different runs order by suite age,
+    which tracks the newest run (matches GitHub). Contexts with no `checkSuite` tie
+    at "" and behave exactly as before.
+    The first attempt used `workflowRun.databaseId` and was WRONG — caught by
+    CodeRabbit on PR #2107 before merge. GitHub types `databaseId` as GraphQL `Int`,
+    i.e. signed 32-bit (max 2147483647), and live run ids are ~1.5e10 — about 15x
+    past that ceiling. The fixture in the very test pinning this bug carried
+    31981601014. The server cannot serialise it, so the query errors, the poll
+    retries, and the gate returns GH_API_DOWN: the fix for a false-green would have
+    become a hard block on every merge. A DateTime carries the same ordering with no
+    integer, and is strictly more robust — if a rerun ever DID mint a fresh suite,
+    the newer SUCCESS still wins, so rerun-to-green holds under either reading.
+    Four `tests/bats/merge_gates.bats` cases pin it: rerun-same-suite, the #2071
+    elder-cancelled shape, the #2091 newest-success shape, and the no-checkSuite
+    fallback. All 213 merge_gates cases plus 359 across the seven sibling suites that
+    source merge-gates pass unchanged — existing fixtures carry no `checkSuite`, so
+    they tie at "" and keep their old ordering.
+    Still NOT verified: the field path could not be executed against the live schema
+    (this session serves only pinned PR-review operations; docs.github.com is
+    egress-blocked), and no CI lane runs the real query. If it is wrong the query
+    errors, which returns GH_API_DOWN — a terminal notifying state that blocks rather
+    than merges, so it fails safe and loudly. Watch the first real poller run. Note
+    this residual risk is exactly what bit the databaseId attempt, and what an
+    external reviewer caught that local tests could not: every bats fixture is
+    synthetic, so the suite happily passed 213 cases against a query the GitHub
+    server would have rejected.
+  Update (b)+(c) SHIPPED 2026-08-18. (b) the gate now emits a WARN naming any check
+    whose duplicate collapse discarded a BLOCKING context from a DIFFERENT check
+    suite — two new projection fields (35 dupMaskedNames / 36 dupMaskedCount, the
+    names-then-numeric-count tail shape the stale-override pair already used; the
+    field-count assertion and its fail-closed canary moved 35 -> 37). Scoped
+    CROSS-SUITE deliberately: the ledger wording ("any name with >1 context and
+    differing conclusions") would have fired on every rerun-to-green, since a rerun
+    leaves old-FAILURE + new-SUCCESS in one suite — a warning on the normal healthy
+    path is noise, not signal. Winner-blocking cases are excluded too: the gate
+    already blocks there, so a warning adds nothing.
+    (c) `docs/agent-rules/merge-gates.md` § Duplicate check-name divergence documents
+    both keys and the recovery, including the 405 message progression
+    (`is cancelled` -> `is expected` -> mergeable) and the two things NOT to do:
+    re-run the newer run, or re-run a body-dependent job like `Intent section`
+    (a re-run replays the original event payload, so it re-reads the stale body).
+    Source comments in merge-gates.graphql / 10-gate-filter.sh now cite that section
+    rather than this entry, so archiving this file cannot strand them.
+    Verification: 215 merge_gates cases (2 new for the WARN: fires cross-suite,
+    silent on same-suite rerun) + 359 across the seven sibling suites, 0 failures;
+    shellcheck introduces no new codes; markdown-link / plan-ref / backlog-count
+    gates pass.
+  Status: applied (2026-08-18 — (a) suite-aware dedup key, (b) divergence WARN,
+    (c) merge-gates.md recovery section; all with test coverage)
+  Last-reviewed: 2026-08-18

@@ -95,6 +95,29 @@ _MG_GATE_FILTER_TEMPLATE='
               _r: (.checkSuite.createdAt // "")})
    | group_by(._k) | map(sort_by([._r, (.startedAt // "")]) | .[-1])
    | map(del(._k, ._r))) as $ctx
+# $dupMasked — check NAMES where the dedup above discarded a BLOCKING context
+# from a DIFFERENT check suite than the one it kept. With the suite-aware key the
+# kept context matches what GitHub evaluates, so this is not a gate failure; it is
+# the shape that made PR #2071 unmergeable while every check read green, and it is
+# invisible once the collapse has run. Naming it puts the reason for a possible
+# `405 ... is cancelled` on screen BEFORE the merge is attempted, instead of
+# leaving an operator or an autonomous loop with no red check to point at.
+# Cross-suite ONLY: a rerun stays in one suite, so old-FAILURE/new-SUCCESS is the
+# normal healthy path and must stay silent — warning on it would fire for every PR
+# ever fixed by a rerun. Winner-blocking cases are excluded too: the gate already
+# blocks on those, so a warning adds nothing.
+| ((($pr.commits.nodes[0].commit.statusCheckRollup.contexts.nodes) // [])
+   | map(select(.__typename == "CheckRun"))
+   | map(. + {_n: (.name // ""), _s: (.checkSuite.createdAt // "")})
+   | group_by(._n)
+   | map(select(length > 1))
+   | map(sort_by([._s, (.startedAt // "")]) as $g
+         | ($g | .[-1]) as $win
+         | ($g | .[0:-1]) as $rest
+         | select((((($win.conclusion) // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE")) | not)
+                  and ($rest | any((((.conclusion) // "") | IN("FAILURE","TIMED_OUT","CANCELLED","ACTION_REQUIRED","STARTUP_FAILURE"))
+                                   and (._s != $win._s))))
+         | $win._n)) as $dupMasked
 | ([$ctx[] | select(.isRequired == true)]) as $req
 # $blocking — the set the gate must wait on: REQUIRED contexts PLUS every
 # non-required, non-advisory-named check (block-on-any-red — the allow-list
@@ -337,6 +360,8 @@ _MG_GATE_FILTER_TEMPLATE='
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false
         and any(.comments.nodes[]; .author.__typename != "Bot" and ((.author.login // "") | ascii_downcase) != ("__ORCH_USER__" | ascii_downcase)))] | length),
     ([$staleOverride[].name] | join(", ")),
-    ($staleOverride | length)
+    ($staleOverride | length),
+    ($dupMasked | join(", ")),
+    ($dupMasked | length)
   )
 '
