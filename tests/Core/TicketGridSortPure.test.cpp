@@ -76,45 +76,73 @@ TEST_CASE("CompareFieldValuesForSort — non-finite number cells never claim a n
     CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "2", "10", 1)) == -1);
 }
 
-TEST_CASE("CompareFieldValuesForSort — number column with NaN is a strict weak ordering") {
+TEST_CASE("CompareFieldValuesForSort — mixed number/text column is a strict weak ordering") {
     const TrackerField num = Field("story_points", "number");
     // The grid's stable_sort predicate: SmatchetActiveProjectGridTable feeds the comparator
-    // through `(cmp * dir) < 0`. Exercise that exact shape over a NaN/inf-laden value set.
-    // The set must include values whose LEXICAL order disagrees with their NUMERIC order,
-    // or the sweep cannot see a fallback-vs-numeric cycle at all. "-1"/"-0"/"+5"/" 7" are
-    // load-bearing: an earlier revision of this fix rejected all non-finite values, which
-    // pushed "-inf" onto the string path where it sorted between "+5"/" 7" (byte '+'/' '
-    // below '-') and "0"/"1" (byte '0' above '-') while those still compared numerically —
-    // 24 cyclic triples per direction. Dropping these values hides that entirely.
-    const std::vector<std::string> values = {"",  "-inf", "-1", "-0",  "0",   "+5",  " 7", "1",
-                                             "2", "3",    "10", "inf", "nan", "NaN", "zz"};
+    // through `(cmp * dir) < 0`. Exercise that exact shape over a value set that MIXES the
+    // parseable and unparseable classes — a comparator that orders some pairs numerically
+    // and others lexically is precisely what cycles, and a set of clean numbers cannot see it.
+    // Load-bearing members: "5x"/"zz"/"nan" don't parse yet land lexically BETWEEN parseable
+    // neighbours (the #2079 cycle "5x" < "9" < "10" < "5x"); "-1"/"-0"/"+5"/" 7" put the
+    // sign/whitespace bytes on both sides of the digits, where byte order and numeric order
+    // disagree; "1"/"1.0"/"01" are numerically equal but textually distinct, so they probe
+    // the tie-break; "-inf"/"inf" stay in the numeric class.
+    const std::vector<std::string> values = {"",   "-inf", "-1", "-0", "0",  "+5",  " 7",  "1",   "1.0",
+                                             "01", "2",    "3",  "10", "5x", "inf", "nan", "NaN", "zz"};
+    // Both column shapes: number-typed (strtod path) and untyped (strtoll path).
+    const TrackerField* const metas[2] = {&num, nullptr};
     const int dirs[2] = {1, -1};
-    for (int d = 0; d < 2; ++d) {
-        const int dir = dirs[d];
-        auto less = [&num, dir](const std::string& x, const std::string& y) {
-            return (CompareFieldValuesForSort("story_points", &num, x, y, dir) * dir) < 0;
-        };
-        for (size_t i = 0; i < values.size(); ++i) {
-            CHECK_FALSE(less(values[i], values[i])); // irreflexive
-            for (size_t j = 0; j < values.size(); ++j) {
-                if (less(values[i], values[j])) {
-                    CHECK_FALSE(less(values[j], values[i])); // asymmetric
-                }
-                for (size_t k = 0; k < values.size(); ++k) {
-                    if (less(values[i], values[j]) && less(values[j], values[k])) {
-                        CHECK(less(values[i], values[k])); // transitive
+    for (int m = 0; m < 2; ++m) {
+        const TrackerField* const meta = metas[m];
+        for (int d = 0; d < 2; ++d) {
+            const int dir = dirs[d];
+            auto less = [meta, dir](const std::string& x, const std::string& y) {
+                return (CompareFieldValuesForSort("story_points", meta, x, y, dir) * dir) < 0;
+            };
+            for (size_t i = 0; i < values.size(); ++i) {
+                CHECK_FALSE(less(values[i], values[i])); // irreflexive
+                for (size_t j = 0; j < values.size(); ++j) {
+                    if (less(values[i], values[j])) {
+                        CHECK_FALSE(less(values[j], values[i])); // asymmetric
                     }
-                    // Transitivity of equivalence (the half a NaN comparator classically breaks).
-                    const bool eqIJ = !less(values[i], values[j]) && !less(values[j], values[i]);
-                    const bool eqJK = !less(values[j], values[k]) && !less(values[k], values[j]);
-                    if (eqIJ && eqJK) {
-                        CHECK(!less(values[i], values[k]));
-                        CHECK(!less(values[k], values[i]));
+                    for (size_t k = 0; k < values.size(); ++k) {
+                        if (less(values[i], values[j]) && less(values[j], values[k])) {
+                            CHECK(less(values[i], values[k])); // transitive
+                        }
+                        // Transitivity of equivalence (the half a NaN comparator classically breaks).
+                        const bool eqIJ = !less(values[i], values[j]) && !less(values[j], values[i]);
+                        const bool eqJK = !less(values[j], values[k]) && !less(values[k], values[j]);
+                        if (eqIJ && eqJK) {
+                            CHECK(!less(values[i], values[k]));
+                            CHECK(!less(values[k], values[i]));
+                        }
                     }
                 }
             }
         }
     }
+}
+
+TEST_CASE("CompareFieldValuesForSort — numbers sort as a class ahead of unparseable text") {
+    // #2079: with the numeric path taken only when BOTH cells parsed, a mixed column
+    // compared "5x" vs "9" lexically ('5' < '9'), "9" vs "10" numerically (9 < 10) and
+    // "10" vs "5x" lexically again ('1' < '5') — a < b < c < a. Parseability is now the
+    // primary key, so a cell never compares numerically with one peer and lexically
+    // with another.
+    CHECK(Sgn(CompareFieldValuesForSort("rank", nullptr, "9", "10", 1)) == -1);
+    CHECK(Sgn(CompareFieldValuesForSort("rank", nullptr, "9", "5x", 1)) == -1);
+    CHECK(Sgn(CompareFieldValuesForSort("rank", nullptr, "10", "5x", 1)) == -1);
+    // Same on the number-typed (strtod) path.
+    const TrackerField num = Field("story_points", "number");
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "3.5", "n/a", 1)) == -1);
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "n/a", "3.5", 1)) == 1);
+    // Text-only pairs keep the plain case-insensitive order.
+    CHECK(Sgn(CompareFieldValuesForSort("rank", nullptr, "5x", "zz", 1)) == -1);
+    // A numeric tie falls through to the text compare, so equal-valued spellings stay
+    // ordered against each other instead of collapsing into one equivalence class.
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "1", "1.0", 1)) == -1);
+    CHECK(Sgn(CompareFieldValuesForSort("story_points", &num, "1.0", "1", 1)) == 1);
+    CHECK(Sgn(CompareFieldValuesForSort("rank", nullptr, "01", "1", 1)) == -1);
 }
 
 TEST_CASE("IsTrackerDateOrDateTimeField — time-tracking duration ids are not dates") {

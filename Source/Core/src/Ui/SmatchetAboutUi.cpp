@@ -26,13 +26,16 @@
 #include "Ui/SmatchetAboutIcon.h"
 
 #include "imgui.h"
+// For the IsPopupOpen(ImGuiID, ImGuiPopupFlags) overload the dismissal guard in
+// DrawAboutModal needs — see there. Must precede the #define below so the declaration
+// lands in ::ImGui and is visible for qualified lookup once the alias is in force.
+#include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
 // Routes all ImGui::* calls in this TU through the localization wrapper.
 #define ImGui SmatchetLocalizedImGui
 
 #include <cfloat>
 #include <cmath>
-#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -65,9 +68,12 @@ struct AboutDrawCtx {
 /// text so a SameLine() can follow. `dim` renders in the disabled text colour,
 /// matching the TextDisabled() call this replaced.
 void SelectableValue(const char* id, const std::string& value, float width = 0.0f, bool dim = false) {
-    const char* text = value.empty() ? "unknown" : value.c_str();
-    const std::size_t len = std::strlen(text);
-    std::vector<char> buf(text, text + len + 1);
+    // The placeholder is chrome, so it goes through the dictionary — unlike the DATA
+    // values, which stay verbatim so they remain copy-pasteable. Held by value: the
+    // translation lives in a rotating temp-string slot, and both the buffer copy below
+    // and the tooltip at the end of this function need it to outlive that.
+    const std::string text = value.empty() ? SmatchetLocalization::TranslateSource("unknown") : value;
+    std::vector<char> buf(text.c_str(), text.c_str() + text.size() + 1);
 
     // Only FrameBg is cleared — FrameBgHovered/Active stay, and that hover
     // highlight is the affordance that tells the user the value is selectable.
@@ -85,8 +91,8 @@ void SelectableValue(const char* id, const std::string& value, float width = 0.0
 
     // The field clips and scrolls instead of wrapping, so anything wider than its
     // column needs the whole value on hover.
-    if (::ImGui::CalcTextSize(text).x > ::ImGui::GetItemRectSize().x) {
-        ::ImGui::SetItemTooltip("%s", text);
+    if (::ImGui::CalcTextSize(text.c_str()).x > ::ImGui::GetItemRectSize().x) {
+        ::ImGui::SetItemTooltip("%s", text.c_str());
     }
 }
 
@@ -458,7 +464,15 @@ void DrawAboutModal(AppController& app, UiDrawSession& d) {
         // via Escape or the title-bar X), or it is still open but a popup at a
         // deeper stack level owns this frame. Only the first is a dismissal —
         // clearing state on the second silently drops the user's request.
-        if (!::ImGui::IsPopupOpen(kAboutPopupId, ImGuiPopupFlags_AnyPopupLevel)) {
+        // The id is hashed here rather than passed as a string: the const char* overload
+        // asserts on ImGuiPopupFlags_AnyPopupLevel ("Cannot use IsPopupOpen() with a string
+        // id and ImGuiPopupFlags_AnyPopupLevel", imgui.cpp) and only the ImGuiID overload is
+        // legal with it. GetID() is exactly what that overload computes internally, so the
+        // seed (current window's id stack) is unchanged. The raw English literal is the right
+        // hash source in every locale: the wrapper opened the popup with
+        // WindowTitleFromSource(), which appends "###About Smatchet", and ImHashStr resets
+        // its crc at "###" and skips the three '#'.
+        if (!::ImGui::IsPopupOpen(::ImGui::GetID(kAboutPopupId), ImGuiPopupFlags_AnyPopupLevel)) {
             // Drop the flag and the snapshot so the next open re-reads config,
             // and so the menu item is not re-opening a popup ImGui already closed.
             d.showAbout = false;

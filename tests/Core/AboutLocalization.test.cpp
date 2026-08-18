@@ -56,6 +56,14 @@ TEST_CASE("About chrome strings translate through the source-string path") {
         CHECK(fr == u8"Copier le lien");
         CHECK(fr != "Copy Link");
     }
+    SUBCASE("unknown placeholder") {
+        // The stand-in the modal draws for an empty value. Unlike the DATA values it
+        // replaces (kept verbatim so they stay copy-pasteable), it is chrome, so a
+        // French user must not read "unknown" in an otherwise-French modal.
+        const std::string fr = SmatchetLocalization::TranslateSource("unknown");
+        CHECK(fr == u8"inconnu");
+        CHECK(fr != "unknown");
+    }
     SUBCASE("selection hint") {
         const char* const kHint = "Select any value to copy it. Right-click a link for actions.";
         const std::string fr = SmatchetLocalization::TranslateSource(kHint);
@@ -78,6 +86,7 @@ TEST_CASE("About chrome strings hold their English table value") {
     CHECK(std::string(SmatchetLocalization::T("about.link_copy", nullptr)) == "Copy Link");
     CHECK(std::string(SmatchetLocalization::T("about.hint", nullptr)) ==
           "Select any value to copy it. Right-click a link for actions.");
+    CHECK(std::string(SmatchetLocalization::T("about.unknown", nullptr)) == "unknown");
 }
 
 TEST_CASE("The retired about.check_updates key is gone, the surviving ones are not") {

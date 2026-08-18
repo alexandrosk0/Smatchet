@@ -47,12 +47,12 @@ Four independent, minimal fixes — no shared refactor, no new TU.
 
 ## Files to modify
 
-1. [Source/Core/src/Ui/SmatchetAboutUi.cpp](Source/Core/src/Ui/SmatchetAboutUi.cpp) — #2093 popup-open guard + #2066 placeholder.
-2. [Source/Core/src/SmatchetLocalization.cpp](Source/Core/src/SmatchetLocalization.cpp) — #2066 `about.unknown` dictionary row.
-3. [Source/Core/src/TicketGridSortPure.cpp](Source/Core/src/TicketGridSortPure.cpp) — #2079 category-primary sort key.
-4. [Source/Core/src/TicketFieldEditor.cpp](Source/Core/src/TicketFieldEditor.cpp) — #2109 first-visible-line preview.
-5. [tests/Core/AboutLocalization.test.cpp](tests/Core/AboutLocalization.test.cpp) — #2066 SUBCASE.
-6. [tests/Core/TicketGridSortPure.test.cpp](tests/Core/TicketGridSortPure.test.cpp) — #2079 SWO sweep over a mixed numeric/non-numeric set.
+1. [Source/Core/src/Ui/SmatchetAboutUi.cpp](../../../Source/Core/src/Ui/SmatchetAboutUi.cpp) — #2093 popup-open guard + #2066 placeholder.
+2. [Source/Core/src/SmatchetLocalization.cpp](../../../Source/Core/src/SmatchetLocalization.cpp) — #2066 `about.unknown` dictionary row.
+3. [Source/Core/src/TicketGridSortPure.cpp](../../../Source/Core/src/TicketGridSortPure.cpp) — #2079 category-primary sort key.
+4. [Source/Core/src/TicketFieldEditor.cpp](../../../Source/Core/src/TicketFieldEditor.cpp) — #2109 first-visible-line preview.
+5. [tests/Core/AboutLocalization.test.cpp](../../../tests/Core/AboutLocalization.test.cpp) — #2066 SUBCASE.
+6. [tests/Core/TicketGridSortPure.test.cpp](../../../tests/Core/TicketGridSortPure.test.cpp) — #2079 SWO sweep over a mixed numeric/non-numeric set.
 
 ## Existing utilities reused
 

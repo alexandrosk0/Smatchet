@@ -45,17 +45,15 @@ static bool ParseWholeDouble(const std::string& s, double& out) {
     if (end != c + s.size()) {
         return false;
     }
-    // strtod whole-string-matches "nan" / "inf". A NaN cell makes the comparator return
-    // +1 for both Compare(a,b) and Compare(b,a) — not a strict weak ordering, which is UB
-    // in stable_sort — so NaN must not reach the numeric path.
+    // strtod whole-string-matches "nan" / "inf". NaN compares false against everything,
+    // including itself, so a NaN cell makes the comparator return +1 for both Compare(a,b)
+    // and Compare(b,a) — not a strict weak ordering, which is UB in stable_sort. So NaN
+    // must not reach the numeric path; it falls to the text class instead, where it is
+    // just the three-letter string it looks like.
     //
-    // Reject NaN ONLY, never ±inf. Infinities compare consistently as doubles, but pushing
-    // them to the string fallback creates a NEW cycle: "-inf" then sorts by the byte '-',
-    // which lands between sign-prefixed cells ("+5", " 7") and digit-leading ones ("0"),
-    // while those two groups still compare numerically with each other —
-    // "+5" < "-inf" < "0" < "+5". Measured over
-    // {"0","1","-1","2","-2","10","3.5","+5"," 7","inf","-inf"} on a number-typed column:
-    // 24 cyclic triples per direction with an isfinite reject, 0 with this NaN-only reject.
+    // Reject NaN ONLY, never ±inf: infinities compare consistently as doubles, so they
+    // belong in the numeric class where a user reading a numeric column expects them
+    // (sorted at the ends, not filed alphabetically between "-1" and "0").
     if (std::isnan(out)) {
         return false;
     }
@@ -99,40 +97,48 @@ int CompareDateValues(const std::string& aVal, const std::string& bVal) {
     return 0;
 }
 
-/** Numeric compare. `useDouble` picks the double parse (number-typed fields) vs the
- *  int64 parse (everything else). On parse failure, `outNumeric` stays false and the
- *  caller falls back to case-insensitive string compare. */
-int CompareNumericValues(const std::string& aVal, const std::string& bVal, bool useDouble, bool& outNumeric) {
-    outNumeric = false;
+/** Default compare for a column with no type-specific handler: numeric-aware, but with
+ *  "does it parse as a number" as the PRIMARY key. `useDouble` picks the double parse
+ *  (number-typed fields) vs the int64 parse (everything else).
+ *
+ *  Key, in order: (parses ? 0 : 1, numeric value, raw string). Both parse → numeric
+ *  compare; only one parses → the number sorts first (ascending); neither → case-
+ *  insensitive string compare, which also breaks a numeric tie so "1", "1.0" and "01"
+ *  stay ordered against each other.
+ *
+ *  Category-first is what makes this a strict weak ordering — required, since
+ *  stable_sort with a non-SWO comparator is UB. Comparing SOME pairs of a mixed column
+ *  numerically and others lexically is intransitive: with the old "both parse or fall
+ *  through" shape, "5x" < "9" (text) and "9" < "10" (numeric) but "10" < "5x" (text). */
+int CompareValuesNumericThenText(const std::string& aVal, const std::string& bVal, bool useDouble) {
+    bool aNum = false;
+    bool bNum = false;
+    int numericCmp = 0;
     if (useDouble) {
         double da = 0;
         double db = 0;
-        const bool aNum = ParseWholeDouble(aVal, da);
-        const bool bNum = ParseWholeDouble(bVal, db);
+        aNum = ParseWholeDouble(aVal, da);
+        bNum = ParseWholeDouble(bVal, db);
         if (aNum && bNum) {
-            outNumeric = true;
-            if (da < db) {
-                return -1;
-            }
-            if (db < da) {
-                return 1;
-            }
-            return 0;
+            // Ordered via < in both directions rather than != — no float equality compare.
+            numericCmp = (da < db) ? -1 : ((db < da) ? 1 : 0);
         }
-        return 0;
-    }
-    long long na = 0;
-    long long nb = 0;
-    const bool aInt = ParseWholeInt64Dec(aVal, na);
-    const bool bInt = ParseWholeInt64Dec(bVal, nb);
-    if (aInt && bInt) {
-        outNumeric = true;
-        if (na != nb) {
-            return (na < nb) ? -1 : 1;
+    } else {
+        long long na = 0;
+        long long nb = 0;
+        aNum = ParseWholeInt64Dec(aVal, na);
+        bNum = ParseWholeInt64Dec(bVal, nb);
+        if (aNum && bNum && na != nb) {
+            numericCmp = (na < nb) ? -1 : 1;
         }
-        return 0;
     }
-    return 0;
+    if (aNum != bNum) {
+        return aNum ? -1 : 1;
+    }
+    if (numericCmp != 0) {
+        return numericCmp;
+    }
+    return CompareCaseInsensitive(aVal, bVal);
 }
 
 } // namespace
@@ -162,12 +168,7 @@ int CompareFieldValuesForSort(const std::string& fieldId, const TrackerField* fi
     }
 
     const bool useDouble = fieldMeta && fieldMeta->Type == "number";
-    bool wasNumeric = false;
-    const int numericCmp = CompareNumericValues(aVal, bVal, useDouble, wasNumeric);
-    if (wasNumeric) {
-        return numericCmp;
-    }
-    return CompareCaseInsensitive(aVal, bVal);
+    return CompareValuesNumericThenText(aVal, bVal, useDouble);
 }
 
 bool IsTrackerDateOrDateTimeField(const std::string& fieldId, const TrackerField* field) {
