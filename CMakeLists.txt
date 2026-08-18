@@ -51,7 +51,7 @@ if(CMAKE_GENERATOR MATCHES "Ninja" AND CMAKE_HOST_WIN32 AND NOT DEFINED CMAKE_NI
     message(STATUS "Smatchet: clang-cl + Ninja detected — CMAKE_NINJA_CMCLDEPS_RC=0 (see CMakeLists.txt, Issue #2029)")
 endif()
 
-project(SmatchetApp VERSION 0.6.9 LANGUAGES C CXX)
+project(SmatchetApp VERSION 0.7.0 LANGUAGES C CXX)
 set(SMATCHET_GITHUB_RELEASE_REPO "alexandrosk0/Smatchet" CACHE STRING
     "GitHub owner/repo used by the standalone updater")
 add_compile_definitions(
