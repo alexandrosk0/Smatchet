@@ -77,3 +77,14 @@ recovery is blocked by a hook that tells the operator they are almost certainly 
 something wrong. The cost is not the extra env var — it is that reaching for
 `SMATCHET_ALLOW_MERGED_PR_PUSH=1` on a routine, correct operation is exactly how an
 override stops meaning anything.
+
+## Recurrence
+
+- **2026-08-18** — same refusal releasing the `fix-four-open-issues` lock after
+  [PR #2111](https://github.com/alexandrosk0/Smatchet/pull/2111) merged; cleared the same
+  way (`SMATCHET_ALLOW_MERGED_PR_PUSH=1 bash agents/scripts/core/lock-release.sh
+  fix-four-open-issues` → `refs/locks/fix-four-open-issues deleted`). Second occurrence in
+  two days, both on the routine post-merge release path — the override is now the *normal*
+  way to run `lock-release.sh`, which is the failure mode this entry predicted. Priority
+  unchanged at P2 (loud refusal with a documented escape, not a silent failure); the
+  frequency is the argument for scheduling the § Proposed fix rather than for a bump.
