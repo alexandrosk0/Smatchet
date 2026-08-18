@@ -1,19 +1,19 @@
 {
-  "FileVersion": 3,
-  "Version": 609,
-  "VersionName": "0.6.9",
-  "FriendlyName": "Smatchet ImGui Plugin",
-  "Description": "Embeds Smatchet ImGui UI inside Unreal via platform render backends (DX12/PS5/Xbox).",
-  "Category": "UI",
-  "CreatedBy": "Smatchet",
-  "CanContainContent": false,
-  "IsBetaVersion": true,
-  "EnabledByDefault": false,
-  "Modules": [
-    {
-      "Name": "SmatchetImGuiPlugin",
-      "Type": "Runtime",
-      "LoadingPhase": "Default"
-    }
-  ]
+    "FileVersion": 3,
+    "Version": 700,
+    "VersionName": "0.7.0",
+    "FriendlyName": "Smatchet ImGui Plugin",
+    "Description": "Embeds Smatchet ImGui UI inside Unreal via platform render backends (DX12/PS5/Xbox).",
+    "Category": "UI",
+    "CreatedBy": "Smatchet",
+    "CanContainContent": false,
+    "IsBetaVersion": true,
+    "EnabledByDefault": false,
+    "Modules": [
+        {
+            "Name": "SmatchetImGuiPlugin",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ]
 }
