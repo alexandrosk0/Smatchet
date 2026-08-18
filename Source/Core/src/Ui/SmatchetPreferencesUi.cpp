@@ -861,16 +861,28 @@ void SmatchetUI::drawPreferencesUserInfoTab(UiDrawSession& d) {
 #if defined(SMATCHET_WITH_MCP)
 namespace {
 
-// MCP-server section body (immediate-save semantics — the dirty-diff block below writes
-// cfg + syncs the plugin host as soon as a widget changes). Split out of the old
-// Integrations tab so the PrefsSection lambda stays a one-liner.
+// MCP-server section body (immediate-save semantics — the dirty-diff block below writes cfg +
+// syncs the plugin host as soon as a checkbox changes; the two typed fields wait until they are
+// no longer being edited, #2110). Split out of the old Integrations tab so the PrefsSection
+// lambda stays a one-liner.
 void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
+    // A field that still holds keyboard focus is mid-edit: its buffer holds a PREFIX ("a",
+    // "as", ...), not a value. The commit block below acts on the buffers the same frame they
+    // change, and a commit drives a full MCP plugin restart — socket teardown + rebind — so an
+    // ungated prefix means one restart per character typed (#2110). Default false: a widget the
+    // settings filter hid was never submitted, so it has no item state to read.
+    bool portEditing = false;
+    bool tokenEditing = false;
+
     // No title/Separator here — PrefsSection already drew the section header.
     if (d.prefsFilter.ShowSetting("connections.mcp.enabled")) {
         ImGui::Checkbox("Enable MCP server", &d.mcpEnabled);
     }
     if (d.prefsFilter.ShowSetting("connections.mcp.port")) {
         ImGui::InputInt("MCP Port", &d.mcpPort);
+        // Safe at the call site: InputInt wraps its input + step buttons in a group, and
+        // EndGroup() copies a contained ActiveId onto the group so IsItemActive() sees it.
+        portEditing = ImGui::IsItemActive();
         if (d.mcpPort < 1) {
             d.mcpPort = 1;
         }
@@ -888,7 +900,10 @@ void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
                                    "this.");
     }
     if (d.prefsFilter.ShowSetting("connections.mcp.auth_token")) {
-        SmatchetSecretInputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf));
+        // Reported by the widget, not sampled here: it is compound, so the last submitted item
+        // at this point is its Show/Hide button or char-count label, not the input.
+        SmatchetSecretInputText("MCP auth token (optional)", d.mcpAuthTokenBuf, sizeof(d.mcpAuthTokenBuf),
+                                &tokenEditing);
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.integrations.mcp_token.help",
                                    "If set, clients must send header X-Smatchet-Token with this value. If empty "
@@ -903,17 +918,26 @@ void DrawMcpSectionBody(AppController& app, UiDrawSession& d) {
                                    "Scripts/*.lua via the built-in run_lua tool.");
     }
     {
+        // Checkboxes are one event per change and need no gate. Both the comparison AND the
+        // assignment are gated per typed field — gating only the comparison would still flush a
+        // half-typed token into the config the moment some other field tripped the diff.
         const std::string tokenBufStr(d.mcpAuthTokenBuf);
-        const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (d.mcpPort != d.cfg.McpPort) ||
+        const bool portCommittable = !portEditing;
+        const bool tokenCommittable = !tokenEditing;
+        const bool dirty = (d.mcpEnabled != d.cfg.McpEnabled) || (portCommittable && d.mcpPort != d.cfg.McpPort) ||
                            (d.mcpAllowRemote != d.cfg.McpAllowRemote) ||
                            (d.mcpAllowLuaExecution != d.cfg.McpAllowLuaExecution) ||
-                           (tokenBufStr != d.cfg.McpAuthToken);
+                           (tokenCommittable && tokenBufStr != d.cfg.McpAuthToken);
         if (dirty) {
             d.cfg.McpEnabled = d.mcpEnabled;
-            d.cfg.McpPort = d.mcpPort;
+            if (portCommittable) {
+                d.cfg.McpPort = d.mcpPort;
+            }
             d.cfg.McpAllowRemote = d.mcpAllowRemote;
             d.cfg.McpAllowLuaExecution = d.mcpAllowLuaExecution;
-            d.cfg.McpAuthToken = tokenBufStr;
+            if (tokenCommittable) {
+                d.cfg.McpAuthToken = tokenBufStr;
+            }
             MarkPrefsDirty(d);
             LOG_INFO("Preferences: MCP settings saved (McpEnabled=%d port=%d)", static_cast<int>(d.cfg.McpEnabled),
                      d.cfg.McpPort);
