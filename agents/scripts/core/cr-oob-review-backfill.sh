@@ -238,14 +238,27 @@ now_epoch() { echo "${SMATCHET_CR_BACKFILL_NOW:-$(date -u +%s)}"; }
 # Cost is bounded: the queue is scanned newest-first and the scan STOPS at the
 # first PR with no marker (that PR is the candidate). Requested PRs accumulate
 # at the front, so a tick costs (already-requested + 1) calls, not 90.
+# PAGINATE, always. The per-issue comments endpoint returns OLDEST-FIRST, and a
+# backfill marker is by construction the NEWEST comment — so reading only the
+# first page makes the marker invisible on any PR with more than 100 comments,
+# and "invisible" is read as MISSING by both the scan and already_requested at
+# once. That is the same shared-failure duplicate storm this change exists to
+# stop, reintroduced one page-size assumption later (caught in review on #2126).
+# `--paginate --jq '.[]'` emits one compact object per line across every page,
+# so neither ordering nor comment count can hide the marker.
 marker_scan() {
     local pr="$1" body
-    body="$(gh api "repos/$REPO_SLUG/issues/$pr/comments?per_page=100" 2>/dev/null)" || return 1
+    body="$(gh api --paginate "repos/$REPO_SLUG/issues/$pr/comments?per_page=100" \
+              --jq '.[] | {body: .body, login: .user.login, created_at: .created_at}' 2>/dev/null)" || return 1
     printf '%s' "$body" | ${PY_BIN:-:} -c '
 import json,sys,calendar,time
 marker=sys.argv[1]; pr=sys.argv[2]
-try: rows=json.load(sys.stdin)
-except Exception: sys.exit(3)
+rows=[]
+for line in sys.stdin:
+    line=line.strip()
+    if not line: continue
+    try: rows.append(json.loads(line))
+    except Exception: sys.exit(3)
 def ep(t):
     try: return calendar.timegm(time.strptime(t,"%Y-%m-%dT%H:%M:%SZ"))
     except Exception: return 0
@@ -258,8 +271,7 @@ print("requested\t%s\t%d" % (pr, at))
 # rate-limit reply. The question is whether CR responds at all, not whether
 # the review passed.
 for r in rows:
-    u=(r.get("user") or {}).get("login") or ""
-    if u=="coderabbitai[bot]" and ep(r.get("created_at") or "") > at:
+    if (r.get("login") or "")=="coderabbitai[bot]" and ep(r.get("created_at") or "") > at:
         print("confirmed\t%s" % pr); break
 ' "$MARKER_PREFIX:" "$pr" 2>/dev/null
 }
@@ -308,7 +320,10 @@ if line:
 # queue needs.
 owes_review() {
     local pr="$1" n
-    n="$(gh api "repos/$REPO_SLUG/pulls/$pr/reviews" --jq '[.[]|select(.user.login=="coderabbitai[bot]")]|length' 2>/dev/null)"
+    # Paginated for the same reason as marker_scan: a first-page-only read can
+    # miss a later review and re-request one that already happened.
+    n="$(gh api --paginate "repos/$REPO_SLUG/pulls/$pr/reviews?per_page=100" \
+           --jq '.[]|select(.user.login=="coderabbitai[bot]")|.id' 2>/dev/null | grep -c . )"
     [ "${n:-0}" -eq 0 ]
 }
 

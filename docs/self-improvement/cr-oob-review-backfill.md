@@ -131,6 +131,16 @@ over an empty world passed everything while being catastrophically wrong.
    decision core concluded, and the blast radius of getting it wrong is
    unbounded.
 
+**A second instance of the same class, caught in review** (Bugbot on #2126): the
+first cut of the per-PR scan read only the first page of issue comments. That
+endpoint returns oldest-first and a backfill marker is by construction the
+newest comment, so on any PR with more than 100 comments the marker would be
+invisible to *both* the scan and the pre-post check — the identical shared
+failure, reintroduced one page-size assumption later. Both lookups now paginate.
+The lesson generalises: a guard is only as good as the completeness of the read
+underneath it, and "I fixed the shared-source bug" is not the same as "no shared
+assumption remains".
+
 **The schedule is disabled** until a manual `workflow_dispatch` with
 `dry_run: true` shows the poller holding on #1995 against live GitHub. The data
 layer cannot be exercised from the authoring container (no `gh`), and that gap
