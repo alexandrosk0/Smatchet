@@ -163,7 +163,13 @@ jobs:
 
           # Early warning, so a 90-day cliff is announced two weeks ahead
           # instead of discovered by a red tip. Best-effort: a header rename
-          # must never fail the job.
+          # must never fail the job — but it must never be SILENT either. The
+          # first green run after the 2026-08-18 rotation emitted no countdown
+          # at all, and the log gave an operator no way to tell "this token has
+          # no expiry" from "GitHub renamed the header and the countdown is now
+          # dead code". Both no-op branches below therefore say which one it is;
+          # a preflight whose whole purpose is early warning must not fail open
+          # in silence.
           expiry=$(printf '%s' "$probe" | tr -d '\r' \
             | grep -i '^github-authentication-token-expiration:' \
             | head -n1 | cut -d' ' -f2-) || true
@@ -174,6 +180,10 @@ jobs:
             else
               echo "::notice::LOCK_RENDER_PAT valid for ${days_left} more day(s) (${expiry})."
             fi
+          elif [ -n "${expiry:-}" ]; then
+            echo "::warning::LOCK_RENDER_PAT authenticates, but its 'github-authentication-token-expiration' header value could not be parsed as a date: '${expiry}'. No countdown this run — the 14-day early warning is dead until the parse is fixed in .github/workflows/locks-render.yml."
+          else
+            echo "::notice::LOCK_RENDER_PAT authenticates, but the response carried no 'github-authentication-token-expiration' header — GitHub omits it for a token minted with no expiry, so no countdown is possible and the 14-day early warning will never fire for this token. If you did set an expiry, the header was renamed upstream and the countdown needs fixing."
           fi
 
       - name: Open or update sync PR
