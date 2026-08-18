@@ -1,4 +1,5 @@
 # Plan — stop the MCP plugin restarting on every keystroke in Preferences (#2110)
+<!-- plan-date: 2026-08-18 -->
 
 > **Slug**: `fix-2110-mcp-keystroke-restart`
 >
