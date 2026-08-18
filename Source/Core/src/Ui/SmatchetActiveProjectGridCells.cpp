@@ -109,9 +109,10 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
 // kick from the focused pane (pane.focused mirrors d.focusedPaneId), and the post-back
 // re-checks BOTH the focused pane id AND that pane's live backendKey against the captured
 // values, so a mid-flight focus switch or a same-pane backend swap drops the result instead
-// of writing a same-keyed row in a DIFFERENT backend's pane (CodeRabbit 2123 finding). A
-// dropped id stays in the pane's kicked set; the pane's next (backendKey, revision) pair
-// clears it and re-arms one fetch. Accepted residual (same class the comments modal accepts):
+// of writing a same-keyed row in a DIFFERENT backend's pane (issue ids are only unique
+// within one backend, so an unguarded write could cross-contaminate). A dropped id stays in
+// the pane's kicked set; the pane's next (backendKey, revision) pair clears it and re-arms
+// one fetch. Accepted residual (same class the comments modal accepts):
 // a focus flip AWAY AND BACK inside the worker's flight window can still latch the other
 // backend for the fetch itself — needs a backend-pinned fetch API to close fully.
 void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::string& paneId,
