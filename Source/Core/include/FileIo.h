@@ -22,6 +22,13 @@
 namespace smatchet {
 namespace fileio {
 
+#if defined(_WIN32)
+// UTF-8 to UTF-16 for a path handed to a wide Win32 API. Declared here so the Config layer
+// shares this one definition rather than keeping a second copy (dup gate, Pillar 5); the
+// declaration is Win32-only because no other platform has a use for it.
+std::wstring Utf8ToWide(const std::string& s);
+#endif
+
 // Cross-process advisory lock held for the lifetime of the object, taken on a
 // `<path>.lock` sidecar rather than on `path` itself. The sidecar indirection is what
 // makes the lock survive an atomic temp-then-rename replace of `path`: renaming swaps

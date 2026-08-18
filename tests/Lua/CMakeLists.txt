@@ -46,6 +46,9 @@ add_executable(SmatchetLuaTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Views.cpp"
+    # C5 — ScopedFileLock now lives in the layer-0 FileIo module; ConfigManager_PathUtils.cpp
+    # and ConfigManager_Views.cpp resolve it from there, so this rig needs the TU.
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/FileIo.cpp"
     # close-gate-gaps Slice 1a: ConfigManager_PathUtils/Views now call into UiThreadAffinity.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/UiThreadAffinity.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ToolbarConfig.cpp"

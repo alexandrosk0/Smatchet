@@ -52,16 +52,10 @@ namespace config_detail {
 // Platform-specific helpers (Win32 / POSIX) and small string utilities.
 
 #if defined(_WIN32)
-std::wstring Utf8ToWide(const std::string& s) {
-    if (s.empty())
-        return std::wstring();
-    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
-    if (n <= 1)
-        return std::wstring();
-    std::wstring w(static_cast<size_t>(n - 1), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
-    return w;
-}
+// Thin alias over the layer-0 FileIo definition. Kept as a config_detail symbol because the
+// declaration in ConfigManager_Internal.h has many callers across the ConfigManager TUs, but
+// the conversion itself has exactly one definition (Source/Core/src/FileIo.cpp).
+std::wstring Utf8ToWide(const std::string& s) { return smatchet::fileio::Utf8ToWide(s); }
 #endif
 
 std::string NormalizeDirectoryPath(const std::string& baseDir) {

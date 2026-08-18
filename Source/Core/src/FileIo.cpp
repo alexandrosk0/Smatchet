@@ -30,12 +30,8 @@ namespace smatchet {
 namespace fileio {
 
 #if defined(_WIN32)
-namespace {
-
-// Local UTF-8 -> UTF-16 conversion. Deliberately not shared with
-// `config_detail::Utf8ToWide`: that one is declared in a src-private Config header, and
-// including it here would be a layer-0 -> Config back-edge under the core-include-dag gate.
-std::wstring WidenUtf8Path(const std::string& s) {
+// The single definition in the codebase; `config_detail::Utf8ToWide` now delegates here.
+std::wstring Utf8ToWide(const std::string& s) {
     if (s.empty())
         return std::wstring();
     const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
@@ -45,8 +41,6 @@ std::wstring WidenUtf8Path(const std::string& s) {
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, &w[0], n);
     return w;
 }
-
-} // namespace
 #endif
 
 ScopedFileLock::ScopedFileLock(const std::string& path)
@@ -72,7 +66,7 @@ bool ScopedFileLock::Held() const {
 
 void ScopedFileLock::Acquire() {
 #if defined(_WIN32)
-    const std::wstring wLock = WidenUtf8Path(lockPath_);
+    const std::wstring wLock = Utf8ToWide(lockPath_);
     if (wLock.empty())
         return;
     HANDLE h = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
