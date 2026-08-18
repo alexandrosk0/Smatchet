@@ -5,9 +5,7 @@
 
 #include <algorithm>
 #include <array>
-// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <atomic>
-// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include <cctype>
 #include <chrono>
 #include <climits>
@@ -21,7 +19,6 @@
 
 #include <nlohmann/json.hpp>
 
-// SMATCHET_DEVIATION(rule=duplication; reason=include clone; owner=security-audit; revisit=2026-09-30)
 #include "AttachmentMimeUtils.h"
 #include "ConfigManager.h"
 #include "EnvUtil.h"

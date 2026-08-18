@@ -555,7 +555,6 @@ Result<std::string, TrackerError> JiraClient::CreateIssue(const nlohmann::json& 
         if (response.status_code >= 200 && response.status_code < 300) {
             return Result<std::string, TrackerError>::Err(TrackerErrorUnknown(outError, response.status_code));
         }
-        // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
         return Result<std::string, TrackerError>::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
     }
 

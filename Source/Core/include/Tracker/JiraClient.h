@@ -45,8 +45,6 @@ class JiraClient : public ITrackerBackend,
     ITrackerActivity* Activity() override;
     std::string GetTrackerType() const override { return "Jira"; }
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& cfg) override;
-    // SMATCHET_DEVIATION(rule=duplication; reason=interface-mandated override-signature symmetry across independent
-    // backend clients; owner=tracker-backend; revisit=2026-12-31)
     bool FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& outUsers, std::string& outError);
 
     void SetMutationCancelToken(std::shared_ptr<std::atomic<bool>> token) override;

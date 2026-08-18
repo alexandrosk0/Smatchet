@@ -148,7 +148,6 @@ TrackerError PlaneClient::UpdateIssueFields(const std::string& issueId, const nl
 }
 
 Result<bool, TrackerError> PlaneClient::ProbeIssueExists(const TrackerConfig& cfg, const std::string& issueKey) {
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity probe; owner=tracker-backend; revisit=2026-12-31)
     using ProbeResult = Result<bool, TrackerError>;
     // ticket-change-monitor: one work-item GET to tell a deletion (404 → Ok(false)) apart from an
     // issue that merely left the view (still 200 → Ok(true)). Mirrors UpdateIssueFields' project +

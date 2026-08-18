@@ -474,10 +474,8 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
         const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
         const std::string jql = BuildKeyInJql(keys, offset, n);
         const std::string jqlEncoded = UrlEncode(jql);
-        const std::string pageUrl =
-            base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
-            // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing clone; owner=security-audit; revisit=2026-09-30)
-            "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
+        const std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
+                                    "&maxResults=" + std::to_string(n) + "&fields=" + fields + "&expand=changelog";
 
         auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
         if (response.status_code != 200) {
@@ -634,7 +632,6 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchIssueKeysForView
     // project out. Reuse the shared page loop so pagination/classification stay identical.
     const std::vector<std::string> selectedFields; // empty: keys only
     auto noComments = [](const std::string&, nlohmann::json&) -> bool { return true; };
-    // SMATCHET_DEVIATION(rule=duplication; reason=backend-parity keys; owner=tracker-backend; revisit=2026-12-31)
     std::vector<std::string> keys;
     auto onBatch = [&](std::vector<CachedTicket>&& batch) {
         for (std::size_t i = 0; i < batch.size(); ++i) {

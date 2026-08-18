@@ -3,7 +3,7 @@
 - **Category**: tooling
 - **Priority**: P2
 - **Date**: 2026-08-05
-- **Status**: open
+- **Status**: open — option 2 applied 2026-08-16, option 3 still outstanding
 
 ## What happened
 
@@ -37,3 +37,29 @@ Pick one:
    line — turns the silent loss into a loud one without changing either tool's behaviour.
 
 Option 2 plus option 3 is the smallest combination that is both correct and self-policing.
+
+## Update — 2026-08-16 (deviation re-evaluation)
+
+Measured rather than predicted. 73 live markers exceed `ColumnLimit`; 58 survive only because
+someone hand-wrapped them in `// clang-format off` / `// clang-format on`. The remaining **15 are
+rewritten by `clang-format` today** — 8 `duplication`, 4 `bare-json-parse-untrusted`, 3
+`app-controller-fan-in`. Proof end-to-end on `Source/Core/src/Tracker/PlaneProjectScope.cpp` using
+the real `scan_bare_json_parse_file`: in-tree → clean, after `clang-format` →
+`bare-json-parse-untrusted`, gate FAILS. `scripts/dev/pre-ship.sh:429` runs `clang-format -i` on
+every changed first-party TU before the gate, and no CI job checks formatting, so the drift is
+invisible until someone touches one of those 12 files.
+
+**Option 2 applied**: `.clang-format` now carries `CommentPragmas: '^ *SMATCHET_DEVIATION'`.
+Verified across all 110 marker-holding TUs — marker lines clang-format would rewrite goes 15 → 0,
+with no other formatting change attributable to the pragma.
+
+**Option 3 deliberately deferred**, and the reason matters: 47 markers in the tree are *already*
+wrapped and already invisible to every gate (see
+[`2026-08-16-wrapped-deviation-markers-invisible-to-gate.md`](2026-08-16-wrapped-deviation-markers-invisible-to-gate.md)).
+A wrapped-marker gate added today red-walls CI on all 47 at once. Sequence is: un-wrap the 47, then
+add the gate. This entry stays open until option 3 lands.
+
+Separately, the same audit found and fixed a second parser defect the original entry did not
+anticipate: `DEV_RE`'s `[^)]*` body capture truncates at the first `)`, so a `reason=` containing a
+parenthetical hid `revisit=` from `deviation-overdue` on 40 markers while still granting the
+suppression — see [`docs/audits/DEVIATION_AUDIT_2026-08-16.md`](../../../audits/DEVIATION_AUDIT_2026-08-16.md) § S1.

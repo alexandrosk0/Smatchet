@@ -46,9 +46,6 @@ const nlohmann::json* FindNodesArray(const nlohmann::json& root) {
     return nullptr;
 }
 
-// SMATCHET_DEVIATION(rule=duplication; reason=per-backend fixture-factory boilerplate deliberately mirrors the Plane
-// sibling — the standing per-backend *Client/fixture exemption class; folding them would couple independent tracker
-// backends; owner=security-audit; revisit=2026-12-31)
 // Per-backend fixture-factory boilerplate — the standing per-backend factory / *Client exemption class
 // in ADR-0015. Differs only in the backend type and its log strings; folding it would couple two
 // otherwise-independent tracker backends, which the double-edged-DRY guardrail treats as a regression.
