@@ -68,12 +68,49 @@ Second slice — the eight audit findings (originally listed as follow-ups, now 
 | `Source/Core/include/ITicketSyncDeps.h` | defaulted `PublishOwnedTicketIds()` hook |
 | `Source/Core/include/IEditMetaDeps.h` | defaulted `GetActiveTicketsSnapshotsAllPanes()` hook |
 | `Source/Core/include/GridContextDepsAdapter.h` / `.cpp` | both overrides; the adapter resolves its OWN context (no focus-following) |
-| `Source/Core/include/AppController.h` | `paneOwnedTicketIds_` + `paneOwnedIdsMutex_`, Set/Get/Forget/Drop, `CollectActiveTicketSnapshotsAcrossContexts`, `admitId` on `RefreshLocalDataCheckedImpl_` |
+| `Source/Core/include/AppController.h` | `paneOwnedTicketIds_` + `paneOwnedIdsMutex_`, Set/Get/Forget/Drop/**Erase**, `CollectActiveTicketSnapshotsAcrossContexts`, `admitId` on `RefreshLocalDataCheckedImpl_` |
+| `Source/Core/include/Sync/PaneOwnedTicketIdStore.h` | the header-only store itself; `Forget` tombstones (records an EMPTY set), `Erase` drops the entry outright — see § Tombstone vs erase |
 | `Source/Core/src/AppController_PaneContexts.cpp` | owned-id store; the 404 purge skips ids a sibling still retains; `DropPaneOwnedTicketIds` |
 | `Source/Core/src/AppController_CatalogAndFieldEdit.cpp` | `RefreshLocalData` scopes the namespace-wide read to the pane's owned ids (+ `admitId`) |
 | `Source/Core/src/EditMetaCacheService.cpp` | editmeta prune unions every live pane's roster |
 | `Source/Core/src/SmatchetTicketChangeNotifications.cpp` | toast dedup signature keyed per pane |
 | `tests/Core/TicketRosterFilterPure.test.cpp` + `tests/CMakeLists.txt` | 4 doctest cases for the shared filter |
+
+## Tombstone vs erase
+
+Added 2026-08-18 after PR #2075 shipped and PR #2095 fixed what it left open. The store has two
+ways to stop tracking a pane and they are NOT interchangeable:
+
+| call | effect | used when |
+|---|---|---|
+| `Forget(paneId)` | records an **empty** set for that pane — a tombstone. `TryGet` answers "recorded, empty" | pane RETIREMENT: the pane is gone and must not resurrect sibling rows |
+| `Erase(paneId)` | drops the entry entirely. `TryGet` answers "absent" | pane CREATION: a recycled id must start with no history |
+
+The distinction exists because `TryGet`'s three states drive different seeding behaviour, and the
+seed path and the refresh path must agree on all three:
+
+| recorded set | seed / refresh |
+|---|---|
+| present, non-empty | exactly those ids — the pane's last-synced rows |
+| present, **empty** (tombstone) | nothing; render empty until this pane's own sync lands |
+| **absent** (never synced) | the namespace-wide read — the documented cold-start bootstrap |
+
+Two defects came out of getting this wrong, both worth keeping in mind before touching the store:
+
+- **A tombstone shadowed a recycled id.** `GenerateUniquePaneId` returns the LOWEST unused id, so
+  closing `pane-2` and pressing "+" mints `pane-2` again. The new pane inherited the dead one's
+  tombstone, the cold-start seed was denied, and nothing ever cleared it — a non-empty completed
+  full sync is the only other writer, so offline, against a down tracker, or across a backend swap
+  that discards the kick, the pane stayed blank for the process lifetime. `Erase` at the
+  pane-creation chokepoint is the fix; do not "simplify" it to `Forget`.
+- **Only the refresh path was filtered.** The original #2063 fix filtered
+  `RefreshLocalData` but not `EnsurePaneLiveSyncStarted`, which seeds from a namespace-wide
+  `GetAllTickets(seedKey)`. A revived pane therefore rendered every sibling pane's rows, and the
+  first cell edit ran the refresh, which DID filter, collapsing the grid from N rows to 1. Any new
+  path that populates a pane's roster must apply the same three-state rule.
+
+`ErasePaneOwnedTicketIds` is public on `AppController` while its `Forget` sibling is private,
+because the pane-creation chokepoint lives in the UI layer.
 
 ## Threading
 
