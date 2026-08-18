@@ -3,21 +3,21 @@
 //
 // Pillar-2 (UI never freezes) regression guard for the bulk-import futures-clear
 // path. The real flow: a `.clear()` / re-parse / re-run on the bulk-import window
-// must NOT block the UI frame for the still-running create workers' duration. The
-// production helper SmatchetBulkTicketsUi.cpp::BulkImportAbandonFutures(d) does:
-//   d.bulkImportCancel.Cancel();   // flip the shared flag
-//   move still-valid futures -> d.bulkImportFutureGraveyard;  // no inline wait
-//   d.bulkImportFutures.clear();
-//   d.bulkImportCancel.Reset();    // fresh flag for the next run
+// must NOT block the UI frame for the still-running create workers' duration.
 //
-// That is *exactly* CancellableFutureSet<T>::SignalCancelAll() + AbandonInto(g),
-// plus the same UiDrawSession member shapes
-// (std::vector<std::future<IssueCreateResult>> bulkImportFutures /
-//  bulkImportFutureGraveyard + smatchet::ui::CancelToken bulkImportCancel). This
-// test reproduces the helper against std::future workers that block for a
-// multi-second "create" so a wrong (inline-join) implementation would block the
-// caller for the full worker runtime — the assertion is that the abandon call
-// returns in << the worker's runtime, with no ImGui / AppController link needed.
+// This test calls the PRODUCTION helper: smatchet::ui::BulkImportAbandonFutures
+// (Source/Core/include/Ui/BulkImportAbandon.h), which is exactly what the three
+// futures-clear sites in SmatchetBulkTicketsUi.cpp invoke. No re-statement of the
+// signal / move / clear / reset sequence lives here any more (DR29) — mutate the
+// helper and these cases go red.
+//
+// The only stand-in left is the session object. Production's `UiDrawSession`
+// (SmatchetUiSession.h) drags ImGui + AppController into any TU that names it,
+// which this rig cannot link, so the helper is a template over the session type
+// and this test hands it a struct carrying the same three members. The workers
+// are real std::futures that block for a multi-second "create", so a wrong
+// (inline-join) helper would block the caller for the full worker runtime — the
+// assertion is that the abandon call returns in << that runtime.
 //
 // Driving the full bulk-import ImGui window through the Test Engine is the heavier
 // bucket-E form; this focused integration test exercises the identical
@@ -25,6 +25,7 @@
 // note for the full-window drive).
 
 #include "CancelToken.h"
+#include "Ui/BulkImportAbandon.h"
 
 #include "doctest/doctest.h"
 
@@ -45,32 +46,20 @@ struct FakeCreateResult {
     std::string key;
 };
 
-// Faithful re-creation of UiDrawSession's bulk-import future plumbing
+// The three UiDrawSession members the production helper touches
 // (SmatchetUiSession.h): the futures vector, the cancel token each create worker
-// captures, and the graveyard the abandon moves still-running futures into.
-struct FakeBulkSession {
+// captures, and the graveyard the abandon moves still-running futures into. This
+// is data only — the behaviour under test comes from the production template.
+struct StubBulkSession {
     std::vector<std::future<FakeCreateResult>> bulkImportFutures;
     smatchet::ui::CancelToken bulkImportCancel;
     std::vector<std::future<FakeCreateResult>> bulkImportFutureGraveyard;
 };
 
-// Byte-for-byte the production BulkImportAbandonFutures(d) shape: signal cancel,
-// move still-valid futures into the graveyard WITHOUT waiting, clear, reset.
-void FakeBulkImportAbandonFutures(FakeBulkSession& d) {
-    d.bulkImportCancel.Cancel();
-    for (auto& f : d.bulkImportFutures) {
-        if (f.valid()) {
-            d.bulkImportFutureGraveyard.push_back(std::move(f));
-        }
-    }
-    d.bulkImportFutures.clear();
-    d.bulkImportCancel.Reset();
-}
-
 } // namespace
 
 TEST_CASE("BulkImportAbandonFutures returns within a frame budget while N create workers are still running") {
-    FakeBulkSession d;
+    StubBulkSession d;
 
     constexpr int kWorkers = 4;
     // Each "create" worker blocks for kWorkerRuntimeMs unless it observes cancel.
@@ -109,7 +98,7 @@ TEST_CASE("BulkImportAbandonFutures returns within a frame budget while N create
     // KEY ASSERTION: abandoning N still-running create futures must not block the
     // caller for the worker duration — it signals + moves, never inline-joins.
     const auto t0 = std::chrono::steady_clock::now();
-    FakeBulkImportAbandonFutures(d);
+    smatchet::ui::BulkImportAbandonFutures(d);
     const auto abandonMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
 
@@ -127,7 +116,7 @@ TEST_CASE("BulkImportAbandonFutures returns within a frame budget while N create
 
     // Drain the graveyard off the hot path (what
     // DrainUiDrawSessionFuturesBeforeAppTeardown does at shutdown). Because the workers
-    // observed the cancel flag flipped by FakeBulkImportAbandonFutures, this join is fast
+    // observed the cancel flag flipped by BulkImportAbandonFutures, this join is fast
     // too — proving the abandoned workers actually wound down rather than ran to term.
     const auto tJoin0 = std::chrono::steady_clock::now();
     for (auto& f : d.bulkImportFutureGraveyard) {
@@ -146,10 +135,10 @@ TEST_CASE("BulkImportAbandonFutures returns within a frame budget while N create
 }
 
 TEST_CASE("BulkImportAbandonFutures is safe to call with no in-flight futures (idempotent re-run guard)") {
-    FakeBulkSession d;
+    StubBulkSession d;
     // The real helper is called unconditionally at the top of every re-parse / re-run
     // (SmatchetBulkTicketsUi.cpp:148/263/414) — it must be a no-op when nothing is live.
-    CHECK_NOTHROW(FakeBulkImportAbandonFutures(d));
+    CHECK_NOTHROW(smatchet::ui::BulkImportAbandonFutures(d));
     CHECK(d.bulkImportFutures.empty());
     CHECK(d.bulkImportFutureGraveyard.empty());
     CHECK_FALSE(d.bulkImportCancel.IsCancelled());

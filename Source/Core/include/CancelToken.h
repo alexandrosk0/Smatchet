@@ -61,6 +61,25 @@ class CancelToken {
 };
 
 /**
+ * Move every still-valid future out of `futures` into `graveyard` WITHOUT
+ * waiting on any of them, leaving `futures` empty. This is the non-blocking
+ * half of every abandon path in the UI: the caller has already signalled the
+ * shared `CancelToken`, so the abandoned workers are winding down, and the
+ * graveyard is drained off the UI hot path (at teardown) instead of inline.
+ * Shared leaf so owners that keep their own indexed `std::vector<std::future>`
+ * (bulk import) and `CancellableFutureSet` run the identical code.
+ */
+template <typename T>
+void AbandonFuturesInto(std::vector<std::future<T>>& futures, std::vector<std::future<T>>& graveyard) {
+    for (auto& f : futures) {
+        if (f.valid()) {
+            graveyard.push_back(std::move(f));
+        }
+    }
+    futures.clear();
+}
+
+/**
  * Owner-side helper that bundles one shared `CancelToken` with the futures of
  * the workers that observe it. The owner hands `Token()` to each worker body,
  * `Add()`s the future it returns, and on teardown / window-close / `.clear()`:
@@ -97,12 +116,7 @@ template <typename T> class CancellableFutureSet {
     /// so the abandoned workers are already winding down. The set is left empty
     /// with a fresh token so it can be reused for a new run.
     void AbandonInto(std::vector<std::future<T>>& graveyard) {
-        for (auto& f : futures_) {
-            if (f.valid()) {
-                graveyard.push_back(std::move(f));
-            }
-        }
-        futures_.clear();
+        AbandonFuturesInto(futures_, graveyard);
         token_.Reset();
     }
 

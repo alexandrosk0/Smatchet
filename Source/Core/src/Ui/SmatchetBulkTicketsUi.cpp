@@ -11,6 +11,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
+#include "Ui/BulkImportAbandon.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
@@ -124,25 +125,13 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
 }
 
 /**
- * WS-A non-blocking clear of the per-row create futures. A create launched via
- * CreateIssueAsync writes to a promise and keeps running in the background pool;
- * destroying its future here does not join, but the abandoned worker would still
- * run the full network create + post-create refresh. Signal cancel (so the worker
- * short-circuits), then move any still-valid futures into the session graveyard
- * (drained at app teardown) instead of destroying them inline — so the UI frame
- * returns within budget (#734) even while a create is in flight. Resets the token
- * for the next run and leaves `bulkImportFutures` empty.
+ * WS-A non-blocking clear of the per-row create futures. The body lives in
+ * Source/Core/include/Ui/BulkImportAbandon.h so the Pillar-2 regression guard
+ * (tests/Core/BulkImportAbandonNonBlocking.test.cpp) links the real helper
+ * instead of a copy of it; this thin forwarder keeps the call sites below
+ * reading against the concrete session type.
  */
-void BulkImportAbandonFutures(UiDrawSession& d) {
-    d.bulkImportCancel.Cancel();
-    for (auto& f : d.bulkImportFutures) {
-        if (f.valid()) {
-            d.bulkImportFutureGraveyard.push_back(std::move(f));
-        }
-    }
-    d.bulkImportFutures.clear();
-    d.bulkImportCancel.Reset();
-}
+void BulkImportAbandonFutures(UiDrawSession& d) { smatchet::ui::BulkImportAbandonFutures(d); }
 
 /** Parse the source text into preview rows + reset per-row status/future tracking. */
 void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {

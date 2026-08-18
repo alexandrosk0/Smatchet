@@ -15,6 +15,7 @@
 #include "AppControllerImpl.h"
 #include <nlohmann/json.hpp>
 #include "Json/LuaJsonConvert.h" // JsonToLua / LuaToJson — shared inline leaf
+#include "Lua/LuaHookGuard.h"
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -68,17 +69,10 @@ struct LuaImmediateModeGuard {
 };
 
 // RAII Lua instruction-count hook. Uniform count = 100000 per plan §LuaHookGuard (Q7).
-struct LuaHookGuard {
-    lua_State* L;
-    explicit LuaHookGuard(sol::state& lua, int count = 100000) : L(lua.lua_state()) {
-        lua_sethook(
-            L, [](lua_State* s, lua_Debug*) { luaL_error(s, "Script execution timeout exceeded."); }, LUA_MASKCOUNT,
-            count);
-    }
-    ~LuaHookGuard() { lua_sethook(L, nullptr, 0, 0); }
-    LuaHookGuard(const LuaHookGuard&) = delete;
-    LuaHookGuard& operator=(const LuaHookGuard&) = delete;
-};
+// The definition lives in Source/Core/include/Lua/LuaHookGuard.h so the timeout
+// regression guard (tests/Lua/LuaTimeout.test.cpp) links the real guard instead of a
+// copy; this alias keeps the unqualified name the two binding TUs already use.
+using smatchet::lua::LuaHookGuard;
 
 // ---------------------------------------------------------------------------
 // LuaDrawList class declaration

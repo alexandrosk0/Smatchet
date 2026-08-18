@@ -34,6 +34,9 @@
 
 #include <sol/sol.hpp>
 
+#include "Lua/LuaHookGuard.h"
+
+#include <memory>
 #include <stdexcept>
 #include <string>
 
@@ -73,24 +76,27 @@ class LuaHostFixture {
     sol::state& state() { return state_; }
     const sol::state& state() const { return state_; }
 
-    /// Production parity: install a count hook that errors after `count` instructions.
-    /// Mirrors `LuaHookGuard` in AppController_LuaBindings.cpp:84-94 (uniform count = 100000
-    /// per docs/plans/active/applied/lua-recorded-cmd-list.md §LuaHookGuard Q7). Tests use a much
-    /// smaller count so the abort fires in milliseconds; the *mechanism* under test is the
-    /// count-hook -> luaL_error -> protected_function_result error path, not the literal
-    /// 100000-instruction budget.
+    // Install the PRODUCTION timeout guard (smatchet::lua::LuaHookGuard,
+    // Source/Core/include/Lua/LuaHookGuard.h) — the same RAII object the binding
+    // TUs wrap every script/callback invocation in. Held by unique_ptr only because
+    // doctest cases want install/clear as statements rather than a lexical scope;
+    // the hook body, mask and teardown are production's, not a copy. Tests pass a
+    // much smaller count than the production default so the abort fires in
+    // milliseconds — the count is a parameter of the production guard, and the
+    // mechanism under test (count-hook -> luaL_error -> invalid
+    // protected_function_result) is unchanged by it.
     void InstallInstructionCountTimeout(int count) {
-        lua_sethook(state_.lua_state(), [](lua_State* L, lua_Debug*) {
-            luaL_error(L, "Script execution timeout exceeded.");
-        }, LUA_MASKCOUNT, count);
+        hook_.reset();
+        hook_.reset(new smatchet::lua::LuaHookGuard(state_, count));
     }
 
-    void ClearInstructionCountTimeout() {
-        lua_sethook(state_.lua_state(), nullptr, 0, 0);
-    }
+    // Runs ~LuaHookGuard (production's lua_sethook(nullptr, 0, 0) teardown).
+    void ClearInstructionCountTimeout() { hook_.reset(); }
 
   private:
     sol::state state_;
+    // Declared after state_ so the guard is torn down before the lua_State closes.
+    std::unique_ptr<smatchet::lua::LuaHookGuard> hook_;
 };
 
 } // namespace smatchet_test

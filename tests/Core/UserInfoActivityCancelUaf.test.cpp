@@ -17,30 +17,39 @@
 //      (or anything appPtr transitively points at) is being torn down, the worker
 //      dereferences a freed pointer -> use-after-free.
 //
-// The fix under test (SmatchetUserInfoUi.cpp:417 ~SmatchetUserInfoUi): the
-// destructor signals cancel_.Cancel() AND calls the backend IO-cancel
-// (ClearPaneUserActivity, modelled here as releasing the scan latch) BEFORE the
-// std::future members destruct. So: the worker, blocked inside the scan, is
+// The fix under test (SmatchetUserInfoUi's cancelGate_, declared last so it
+// destructs first): the gate signals the cooperative cancel AND calls the backend
+// IO-cancel (ClearPaneUserActivity, modelled here as releasing the scan latch)
+// BEFORE the std::future members destruct. So: the worker, blocked inside the scan, is
 // released by the IO-cancel, observes IsCancelled() at the next boundary, and
 // returns WITHOUT touching appPtr again; the destructor's eventual ~future join is
 // near-instant; and appPtr stays valid across that fast join.
 //
-// WHY THIS DOCTEST RIG IS FAITHFUL (no full SmatchetUI/AppController link)
+// WHAT IS PRODUCTION CODE HERE (DR29)
+// ------------------------------------------------------------------------------
+// The handshake and its ordering are no longer re-stated by this test. Both come
+// from smatchet::ui::ShutdownCancelGate (Source/Core/include/Ui/ShutdownCancelGate.h),
+// the member SmatchetUserInfoUi now declares LAST so its destructor runs the
+// cancel + backend-IO-cancel BEFORE the std::future members join. The owner below
+// declares the same gate last, so `~ShutdownCancelGate` — production code — is what
+// unblocks the worker. Mutate that destructor (drop the Cancel, drop the IO hook,
+// reorder them) and this case goes red or hangs.
+//
+// WHY THE SURROUNDING RIG IS A STAND-IN (no full SmatchetUI/AppController link)
 // ------------------------------------------------------------------------------
 // Wiring the real SmatchetUserInfoUi here would pull in ImGui/GLFW/OpenGL (the
 // SmatchetTests rig already links ImGuiLib, but driving DrawWindow needs a live
 // ImGui frame + a real AppController + a tracker backend whose FetchUserActivity
-// blocks — that is the deferred full-stack bucket-E drive, see the report). This
-// test instead reconstructs the *structurally identical* shape with the SAME
-// primitive (smatchet::ui::CancelToken from the production header) and the SAME
-// ordering contract:
+// blocks — that is the deferred full-stack bucket-E drive, see the report). So the
+// controller and the async launch are modelled, with the SAME primitives (the
+// production CancelToken + ShutdownCancelGate) and the SAME shape:
 //   * a heap-allocated "controller" the worker holds by RAW pointer (so ASan tracks
 //     its free precisely),
 //   * a worker that derefs the raw pointer ONLY when not cancelled, exactly like
 //     the production `if (cancel.IsCancelled()) return; appPtr->Fetch...` guard,
-//   * an owner whose destructor signals cancel + releases the in-scan latch BEFORE
-//     the future member destructs (member-declaration order: latch/token effects
-//     run in the dtor body; the future joins as the member destructs after the body),
+//   * an owner that holds the production gate as its LAST member, so the gate's
+//     destructor signals cancel + releases the in-scan latch before the future
+//     member destructs (reverse-declaration-order member teardown),
 //   * teardown that frees the controller AFTER the owner (== AppController outlives
 //     SmatchetUI), mirroring the real destruction order.
 // If the cancel-before-deref ordering were wrong (worker derefs appPtr after the
@@ -49,6 +58,7 @@
 // ASAN_OPTIONS=abort_on_error=1.
 
 #include "CancelToken.h"
+#include "Ui/ShutdownCancelGate.h"
 
 #include "doctest/doctest.h"
 
@@ -108,16 +118,24 @@ struct FakeController {
 };
 
 // Stand-in for SmatchetUserInfoUi. Holds the std::future member (like activityFuture_),
-// a CancelToken (cancel_), and a raw pointer latched at launch (appForShutdownCancel_).
-// The destructor reproduces the #1150 fix ordering precisely.
-class FakeUserInfoOwner {
+// a raw pointer latched at launch (appForShutdownCancel_), and — declared LAST, exactly
+// as in SmatchetUserInfoUi.h — the production ShutdownCancelGate. This class has NO
+// destructor of its own: the #1150 ordering is supplied by ~ShutdownCancelGate running
+// before the future member destructs.
+class StubUserInfoOwner {
   public:
     // Latch the controller pointer (production: appForShutdownCancel_ = &app in
-    // adoptPendingRequest) and spawn the activity worker capturing the raw pointer +
-    // a copy of the cancel token.
+    // adoptPendingRequest) + the gate's backend IO-cancel hook (production:
+    // LatchShutdownCancelHook), then spawn the activity worker capturing the raw
+    // pointer + a copy of the gate's cancel token.
     void LaunchActivityFetch(FakeController* controller, std::atomic<bool>* workerInScan) {
         controllerForShutdownCancel_ = controller;
-        const CancelToken cancel = cancel_; // the worker's own copy (shares the flag)
+        cancelGate_.SetIoCancel([this]() {
+            if (controllerForShutdownCancel_ != nullptr) {
+                controllerForShutdownCancel_->ClearUserActivity();
+            }
+        });
+        const CancelToken cancel = cancelGate_.Token(); // the worker's own copy (shares the flag)
         FakeController* appPtr = controller; // raw pointer, exactly like the production capture
         activityFuture_ = std::async(std::launch::async, [appPtr, cancel, workerInScan]() {
             // Production guard: bail before dereferencing appPtr if cancel landed
@@ -132,23 +150,15 @@ class FakeUserInfoOwner {
         });
     }
 
-    // #1150 fix: signal cooperative cancel AND the backend in-scan IO cancel BEFORE the
-    // std::future member destructs. The future member is declared after this body runs,
-    // so its ~future (the join) happens after Cancel()+ClearUserActivity() here have
-    // already unblocked the worker — the join is near-instant and the worker has
-    // returned without re-touching the (still-alive) controller.
-    ~FakeUserInfoOwner() {
-        cancel_.Cancel();
-        if (controllerForShutdownCancel_ != nullptr) {
-            controllerForShutdownCancel_->ClearUserActivity();
-        }
-        // activityFuture_ destructs here (after this body) -> joins the now-returning worker.
-    }
-
   private:
-    CancelToken cancel_;
     FakeController* controllerForShutdownCancel_ = nullptr;
-    std::future<bool> activityFuture_; // declared last: joins last, after the dtor body
+    std::future<bool> activityFuture_;
+    // #1150 fix, supplied by production: members destruct in reverse declaration order,
+    // so ~ShutdownCancelGate (Cancel() then the latched ClearUserActivity()) runs BEFORE
+    // ~future joins. The worker is therefore already unblocked and returning when the
+    // join starts — near-instant, and it never re-touches the still-alive controller.
+    // Mirrors SmatchetUserInfoUi.h, where cancelGate_ is likewise the last member.
+    smatchet::ui::ShutdownCancelGate cancelGate_;
 };
 
 } // namespace
@@ -161,7 +171,7 @@ TEST_CASE("UserInfo activity worker: teardown mid-scan is UAF-clean and fast (ca
 
     const auto t0 = std::chrono::steady_clock::now();
     {
-        FakeUserInfoOwner owner;
+        StubUserInfoOwner owner;
         owner.LaunchActivityFetch(controller.get(), &workerInScan);
 
         // Wait until the worker is genuinely blocked inside the multi-second scan,
@@ -199,7 +209,7 @@ TEST_CASE("UserInfo activity worker: cancel signalled before worker starts skips
     std::atomic<bool> workerInScan{false};
 
     {
-        FakeUserInfoOwner owner;
+        StubUserInfoOwner owner;
         // Note: we cannot pre-cancel through the public surface here without launching,
         // so instead we assert the live-teardown path already covered the not-started
         // race; this case documents the guard's intent and exercises an immediate
