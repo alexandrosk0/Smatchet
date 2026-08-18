@@ -73,7 +73,8 @@ worker/dispatcher. Treat item 3 as *contingent on the grill finding a real UI-th
    config RMW and is not in scope (its own serialization is a separate concern).
 3. **Worker shape**: a **pure serialized coalescing writer — no `MainThreadDispatcher`** (config saves
    have no post-save UI callback, unlike the chat worker's row-id backfill). Two independent
-   per-config-kind pending slots (`TrackerConfig`, `AnnotateAnalysisConfig`) each {snapshot + dirty},
+   per-config-kind pending slots (`TrackerConfig`, `AnnotateAnalysisConfig` — a third,
+   `PersistentViewsFile`, landed later; see § Post-ship amendments) each {snapshot + dirty},
    guarded by the worker mutex; C++14 → no `std::variant`. Latest-per-kind wins. **Flush-then-join on
    `Stop`** with a bounded budget (mirror `SmatchetChatPersistWorker`'s 250 ms-then-`LOG_WARN`) so a
    last-second edit persists but a hung disk can't block shutdown.
@@ -168,12 +169,32 @@ Touches `Source/Core/` → **fires**. Improvement, not regression.
   `SaveAnnotateAnalysis` — the only two `smatchet_config.json` writers. Distinct from `GetIoMutexRef`
   (held by `WriteConfigJson`), fixed lock order outer-RMW → inner-IO → no deadlock.
 - **Item 2**: new `ConfigSaveWorker.{h,cpp}` (`smatchet::config_save` — pure serialized coalescing writer,
-  two per-kind pending slots, flush-then-join bounded 250 ms on `Stop`, synchronous fallback when not
+  two per-kind pending slots (a third was added later — see § Post-ship amendments), flush-then-join
+  bounded 250 ms on `Stop`, synchronous fallback when not
   running). `AppController` `Start()`s it early in `Initialize` + `Stop()`s it in `~AppController`
   (not AI-gated). Both `ScheduleConfigSaveDetached` (AI prefs) and `ScheduleAnnotateConfigSaveDetached`
   now delegate to `Enqueue*` (kept as thin named wrappers; call sites unchanged).
 - **Test**: `tests/Core/ConfigSaveConcurrency.test.cpp` — `[high-risk]` concurrent mixed-writer case
   (no tear / no deadlock) + worker enqueue→persist→Stop-flush + post-Stop synchronous-fallback.
+
+### Post-ship amendments
+
+The shipped design above says **two** per-kind slots. That is no longer accurate — recorded here so
+the plan does not misdescribe the code it owns:
+
+- **Third slot: `PersistentViewsFile` (PR #2085, Issue #2026).** `Views::Save` used to do a disk
+  re-read, the DR13a out-of-band `ToolbarAppend` merge, and an atomic whole-file write INLINE on the
+  frame thread, on every `Activate`/`Create`/`UpdateActive`/`Delete` — i.e. every pane show/hide. The
+  whole read-merge-write moved onto this worker as `EnqueuePersistentViews`. Coalescing stays safe
+  because each snapshot is the COMPLETE intended file image, so latest-wins loses nothing. The
+  budget-exhausted drop path sets `viewsDirty = false` so the new slot participates in the same
+  flush-then-join contract. Consequence worth knowing: views writes are now **droppable at exit**
+  (250 ms drain budget) where the synchronous atomic write could not be lost.
+- **`EnqueueTrackerConfig` applies persisted-field repair hooks (Issue #2047).** Hooks live in
+  `Config/TrackerConfigSaveRepair.h` and are applied to the snapshot as it ENTERS the slot, not at
+  the `ConfigManager::Save` chokepoint — because the slot can be filled inside a capture scenario's
+  pin window and drained after the owner has unregistered, by which point `Save` would see no hooks
+  left to apply.
 
 ## Deviations from plan
 - **Item 3 dropped (N/A)**: the grill established `ConfigManager::Load()` is cache-backed — no hot
