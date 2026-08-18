@@ -8,6 +8,7 @@
 
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
+#include "FileIo.h"
 #include "UiThreadAffinity.h"
 
 #include "Json/BoundedJsonParse.h"
@@ -41,7 +42,6 @@
 #include <wincrypt.h>
 #else
 #include <fcntl.h>
-#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -203,76 +203,6 @@ bool FileExists(const std::string& path) {
 #else
     struct stat st {};
     return ::stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) != 0;
-#endif
-}
-
-// ScopedFileLock — cross-process advisory lock on a `<path>.lock` sidecar.
-// Public class lives in ConfigManager_Internal.h.
-
-ScopedFileLock::ScopedFileLock(const std::string& path)
-    : lockPath_(path + ".lock"),
-#if defined(_WIN32)
-      handle_(INVALID_HANDLE_VALUE)
-#else
-      fd_(-1)
-#endif
-{
-    Acquire();
-}
-
-ScopedFileLock::~ScopedFileLock() { Release(); }
-
-void ScopedFileLock::Acquire() {
-#if defined(_WIN32)
-    const std::wstring wLock = Utf8ToWide(lockPath_);
-    if (wLock.empty())
-        return;
-    HANDLE h = CreateFileW(wLock.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
-                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) {
-        LOG_WARN("ConfigManager: CreateFileW failed for lock '%s' err=%lu — proceeding without exclusive access",
-                 lockPath_.c_str(), GetLastError());
-        return;
-    }
-    OVERLAPPED ov{};
-    if (!LockFileEx(h, LOCKFILE_EXCLUSIVE_LOCK, 0, MAXDWORD, MAXDWORD, &ov)) {
-        LOG_WARN("ConfigManager: LockFileEx failed for '%s' err=%lu — proceeding without exclusive access",
-                 lockPath_.c_str(), GetLastError());
-        CloseHandle(h);
-        handle_ = INVALID_HANDLE_VALUE;
-        return;
-    }
-    handle_ = h;
-#else
-    fd_ = ::open(lockPath_.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-    if (fd_ < 0) {
-        LOG_WARN("ConfigManager: open() failed for lock '%s' errno=%d — proceeding without exclusive access",
-                 lockPath_.c_str(), errno);
-        return;
-    }
-    if (::flock(fd_, LOCK_EX) != 0) {
-        LOG_WARN("ConfigManager: flock(LOCK_EX) failed for '%s' errno=%d — proceeding without exclusive access",
-                 lockPath_.c_str(), errno);
-        ::close(fd_);
-        fd_ = -1;
-    }
-#endif
-}
-
-void ScopedFileLock::Release() {
-#if defined(_WIN32)
-    if (handle_ != INVALID_HANDLE_VALUE) {
-        OVERLAPPED ov{};
-        UnlockFileEx(handle_, 0, MAXDWORD, MAXDWORD, &ov);
-        CloseHandle(handle_);
-        handle_ = INVALID_HANDLE_VALUE;
-    }
-#else
-    if (fd_ >= 0) {
-        ::flock(fd_, LOCK_UN);
-        ::close(fd_);
-        fd_ = -1;
-    }
 #endif
 }
 
@@ -541,7 +471,7 @@ using smatchet::config_detail::GetPlatformSharedOverrideRef;
 using smatchet::config_detail::GetRuntimeAssetDirectoryRef;
 using smatchet::config_detail::GetUserDataDirectoryRef;
 using smatchet::config_detail::NormalizeDirectoryPath;
-using smatchet::config_detail::ScopedFileLock;
+using smatchet::fileio::ScopedFileLock;
 
 void ConfigManager::SetBaseDirectoryForFiles(const std::string& baseDir) {
     const std::string normalized = NormalizeDirectoryPath(baseDir);

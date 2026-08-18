@@ -7,6 +7,7 @@
 #include "ConfigManager.h"
 #include "UiThreadAffinity.h"
 #include "ConfigManager_Internal.h"
+#include "FileIo.h"
 
 #include "Logger.h"
 
@@ -22,7 +23,7 @@
 #include <vector>
 
 using smatchet::config_detail::GetIoMutexRef;
-using smatchet::config_detail::ScopedFileLock;
+using smatchet::fileio::ScopedFileLock;
 
 namespace {
 
