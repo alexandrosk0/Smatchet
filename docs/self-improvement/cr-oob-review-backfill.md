@@ -95,6 +95,48 @@ This has a sharper consequence than a stalled backfill: while CR is silent,
 CURRENT PRs merge unreviewed too, so the queue grows faster than any drip drains
 it. Fixing the source outranks draining the debt.
 
+## The 2026-08-18 duplicate-comment incident
+
+The first live deployment posted **six identical review requests to #1995** in
+two hours — one per scheduled tick — and would have kept going. It is the exact
+failure the fail-safe above was written to prevent, and it happened anyway.
+
+**Cause.** The request record was read with
+`gh search issues "<marker> in:comments"`. That returns **empty** here: the
+marker lives inside an HTML comment, which GitHub's issue search does not index.
+The design error was not the bad query — it was that **three independent guards
+all read from that one call**: "has this PR been requested", the quota window
+(via the newest request timestamp), and the unanswered-request fail-safe. An
+empty result did not degrade one guard; it silenced all three at once, and the
+poller re-picked the same newest PR every tick.
+
+**Why the tests missed it.** `--selftest` and the bats suite both inject the
+decision input directly through `SMATCHET_CR_BACKFILL_FIXTURE`. They proved the
+decision core was correct — and it *was* correct, on every tick. What no test
+covered was the layer that fills that input, so a core that reasons perfectly
+over an empty world passed everything while being catastrophically wrong.
+
+**Fixes, in order of how much they are trusted.**
+
+1. **Per-PR request record.** The marker is read from each PR's own comments —
+   the same place `post_request` writes it — scanned newest-first, stopping at
+   the first PR without one. No shared, silently-empty lookup.
+2. **A failed lookup HOLDS.** `scanfail` is distinct from "no marker": an errored
+   or unparseable response means the state is *unknown*, and unknown is never a
+   licence to post. Treating a failed read as "nothing requested" is the whole
+   incident in one sentence.
+3. **Last-line idempotency.** `post_request` re-reads the PR immediately before
+   writing and refuses if the marker is already there. Deliberately redundant
+   with (1) and (2), because a duplicate is never correct no matter what the
+   decision core concluded, and the blast radius of getting it wrong is
+   unbounded.
+
+**The schedule is disabled** until a manual `workflow_dispatch` with
+`dry_run: true` shows the poller holding on #1995 against live GitHub. The data
+layer cannot be exercised from the authoring container (no `gh`), and that gap
+is precisely what shipped the bug — so it is closed by observation, not by
+another green selftest.
+
 ## Skips
 
 Not every row owes a review. A **moot override** — the label pre-applied where
