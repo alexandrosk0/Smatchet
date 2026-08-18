@@ -218,3 +218,57 @@ TEST_CASE("TakeFromSlot clears the latch even when the worker threw") {
     // The viewer recovers: the latch is down, so selecting another document kicks a new read.
     CHECK(ShouldKickLoad(inFlight, "plan-beta.md", "plan-alpha.md"));
 }
+
+// --- The failed-read disposition (#2076 residual) ----------------------------------------------
+//
+// When a worker throws, get() destroys the payload, so the poll has no `result.key` and must fall
+// back to a remembered "key this read was for". Reaching for the LIVE key instead is wrong in the
+// one case that matters — the selection moved while the doomed read was running — and the two
+// cases below pin both halves of that, because the predicate call alone does not show the harm.
+
+TEST_CASE("a failed read whose key is still live parks the gate on that key") {
+    const std::string attempted = "plan-alpha.md";
+    const std::string current = "plan-alpha.md";
+
+    // Selection never moved, so the failure really is about what the user is looking at.
+    REQUIRE(ResultIsCurrent(attempted, current));
+
+    // Parking is what stops the per-frame kick re-running a read that just threw.
+    const std::string loadedKey = attempted;
+    CHECK_FALSE(ShouldKickLoad(false, current, loadedKey));
+}
+
+TEST_CASE("a failed read must NOT park the gate on a key that moved on under it") {
+    const std::string attempted = "plan-alpha.md"; // what threw
+    const std::string current = "plan-beta.md";    // what the user picked meanwhile
+
+    // Same staleness predicate the success path uses — false here, so there is nothing to show
+    // and nothing to park.
+    CHECK_FALSE(ResultIsCurrent(attempted, current));
+
+    // Correct: the gate is untouched, so beta is still read.
+    const std::string loadedKeyUnparked = "";
+    CHECK(ShouldKickLoad(false, current, loadedKeyUnparked));
+
+    // The regression this pins: parking on the LIVE key instead would make the gate believe beta
+    // is already loaded, so beta never gets read — under alpha's error text, since the body guard
+    // is this same predicate and would now pass.
+    const std::string loadedKeyWronglyParked = current;
+    CHECK_FALSE(ShouldKickLoad(false, current, loadedKeyWronglyParked));
+    CHECK(ResultIsCurrent(loadedKeyWronglyParked, current)); // body guard opens on the wrong body
+}
+
+TEST_CASE("a scan launch that throws leaves the rescan gate open") {
+    // The index slot has no key, so its whole recovery story is the latch. A throw before any
+    // future exists must leave inFlight down: the plan-doc viewer's Rescan buttons are themselves
+    // guarded on that flag, so a stranded latch removes the only manual retry the pane has.
+    std::future<Payload> slot;
+    bool inFlight = false;
+    std::string err;
+
+    CHECK_FALSE(LaunchIntoSlot<Payload>(
+        slot, inFlight, []() -> std::future<Payload> { throw std::runtime_error("no thread"); }, err));
+    CHECK_FALSE(inFlight);
+    CHECK_FALSE(slot.valid());
+    CHECK(err == "no thread");
+}
