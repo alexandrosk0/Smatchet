@@ -18,6 +18,7 @@ using tracker_query_suggest::AddSuggestionUnique;
 using tracker_query_suggest::AppendFieldCatalog;
 using tracker_query_suggest::AppendTerms;
 using tracker_query_suggest::AppendValueSuggestions;
+using tracker_query_suggest::AsciiContainsIgnoreCase;
 using tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered;
 using tracker_query_suggest::AsciiStartsWithIgnoreCase;
 using tracker_query_suggest::BeginQuerySuggestPass;
@@ -144,9 +145,11 @@ static std::string BuildJqlUserInsert(const TrackerUser& user) {
     return user.DisplayName;
 }
 
-/// Emit non-system users from the cached catalog as JQL value suggestions, prefix-filtered
-/// against display name + email. Capped at a generous limit so the popup stays responsive
-/// on tenants with thousands of users.
+/// Emit non-system users from the cached catalog as JQL value suggestions, matched
+/// case-insensitively anywhere inside display name + email — typing a surname ("smith")
+/// or a mail domain finds the account, not just typing the leading characters. Prefix
+/// matches are collected first so they win the slots when the cap binds; the popup stays
+/// responsive on tenants with thousands of users.
 static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& users, const std::string& prefix,
                                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     // Empty-prefix bail-out: on tenants with hundreds of users, dumping an alphabetic slice
@@ -160,25 +163,36 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
     const std::string pre = ToLowerAsciiCopy(prefix);
     constexpr int kMaxUsers = 50;
     int added = 0;
-    for (const auto& user : users) {
-        if (!IsNonSystemTrackerUser(user)) {
-            continue;
-        }
-        const bool nameMatch = AsciiStartsWithIgnoreCase(user.DisplayName, pre);
-        // EmailAddress prefix-match is the rare path (most users search by name). Skip the
-        // ToLowerAsciiCopy cost on every iteration when the name already matched.
-        const bool emailMatch =
-            !nameMatch && !user.EmailAddress.empty() && AsciiStartsWithIgnoreCase(user.EmailAddress, pre);
-        if (!nameMatch && !emailMatch) {
-            continue;
-        }
-        std::string label = user.DisplayName;
-        if (!user.EmailAddress.empty()) {
-            label += " (" + user.EmailAddress + ")";
-        }
-        AddSuggestionUnique(out, seen, std::move(label), BuildJqlUserInsert(user));
-        if (++added >= kMaxUsers) {
-            break;
+    // Two passes: exact prefix matches first, then the remaining substring-only matches.
+    // Without the split a `kMaxUsers` cap reached during a large mid-name sweep could crowd
+    // out the accounts the typed text actually starts.
+    for (int pass = 0; pass < 2 && added < kMaxUsers; ++pass) {
+        const bool prefixPass = pass == 0;
+        for (const auto& user : users) {
+            if (!IsNonSystemTrackerUser(user)) {
+                continue;
+            }
+            const bool nameMatch = prefixPass ? AsciiStartsWithIgnoreCase(user.DisplayName, pre)
+                                              : AsciiContainsIgnoreCase(user.DisplayName, pre);
+            // EmailAddress matching is the rare path (most users search by name). Skip the
+            // ToLowerAsciiCopy cost on every iteration when the name already matched.
+            const bool emailMatch = !nameMatch && !user.EmailAddress.empty() &&
+                                    (prefixPass ? AsciiStartsWithIgnoreCase(user.EmailAddress, pre)
+                                                : AsciiContainsIgnoreCase(user.EmailAddress, pre));
+            if (!nameMatch && !emailMatch) {
+                continue;
+            }
+            std::string label = user.DisplayName;
+            if (!user.EmailAddress.empty()) {
+                label += " (" + user.EmailAddress + ")";
+            }
+            // Pass 2 re-visits the pass-1 winners; AddSuggestionUnique drops them by insert
+            // text, so `added` only counts accounts that actually entered the list.
+            const size_t before = out.size();
+            AddSuggestionUnique(out, seen, std::move(label), BuildJqlUserInsert(user));
+            if (out.size() != before && ++added >= kMaxUsers) {
+                break;
+            }
         }
     }
 }

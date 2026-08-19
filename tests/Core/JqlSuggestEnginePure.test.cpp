@@ -176,6 +176,47 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
         CHECK(HasLabel(out, "Bob Jones (zoe@example.com)"));
     }
     {
+        // Mid-name match: a surname (or any inner run) finds the account — the reason the
+        // matcher is substring, not prefix-anchored.
+        const std::string typed = buf + "smit";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, users, &meta);
+        CHECK(HasInsert(out, "\"Alice Smith\""));
+    }
+    {
+        // Substring matching does not resurrect the filtered account types.
+        const std::string typed = buf + "utomation";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, users, &meta);
+        CHECK_FALSE(HasInsert(out, "\"Automation App\""));
+    }
+    {
+        // Mid-email match (domain / local-part tail) surfaces the account too.
+        const std::string typed = buf + "example.com";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, users, &meta);
+        CHECK(HasInsert(out, "\"Alice Smith\""));
+    }
+    {
+        // Cap contention: 50 users match only mid-name, one matches by prefix. The prefix
+        // match must survive the kMaxUsers cut — that is what the two-pass order buys.
+        std::vector<TrackerUser> capUsers;
+        for (int i = 0; i < 50; ++i) {
+            TrackerUser u;
+            u.AccountId = "mid" + std::to_string(i);
+            u.DisplayName = "Person Zeta" + std::to_string(i); // contains "zeta", starts with "Person"
+            capUsers.push_back(u);
+        }
+        TrackerUser prefixed;
+        prefixed.AccountId = "pre1";
+        prefixed.DisplayName = "Zeta Prefix"; // starts with "zeta"
+        capUsers.push_back(prefixed);         // last in catalog order, so only ordering saves it
+        const std::string typed = buf + "zeta";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, capUsers, &meta);
+        CHECK(HasInsert(out, "\"Zeta Prefix\""));
+        const auto userCount = std::count_if(out.Items.begin(), out.Items.end(), [](const QuerySuggestion& s) {
+            return s.Label.rfind("Person Zeta", 0) == 0 || s.Label.rfind("Zeta Prefix", 0) == 0;
+        });
+        CHECK(userCount == 50);
+    }
+    {
         // 51 matching users → the kMaxUsers cap binds at exactly 50 (pins the >= bound).
         std::vector<TrackerUser> capUsers;
         for (int i = 0; i < 51; ++i) {

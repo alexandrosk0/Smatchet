@@ -10,6 +10,7 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -100,6 +101,40 @@ TEST_CASE("AsciiStartsWithIgnoreCase: case-folded prefix match; empty prefix alw
     CHECK(AsciiStartsWithIgnoreCase("anything", ""));
     CHECK_FALSE(AsciiStartsWithIgnoreCase("abc", "abcd"));
     CHECK_FALSE(AsciiStartsWithIgnoreCase("status", "proj"));
+}
+
+TEST_CASE("AsciiContainsIgnoreCase: case-folded substring match; empty needle always matches") {
+    CHECK(AsciiContainsIgnoreCase("Alice Smith", "smith"));
+    CHECK(AsciiContainsIgnoreCase("Alice Smith", "ce sm"));
+    CHECK(AsciiContainsIgnoreCase("ALICE", "lic"));
+    CHECK(AsciiContainsIgnoreCase("anything", ""));
+    CHECK_FALSE(AsciiContainsIgnoreCase("abc", "abcd"));
+    CHECK_FALSE(AsciiContainsIgnoreCase("status", "proj"));
+}
+
+TEST_CASE("AppendValueSuggestions: user fields match mid-value, other families stay prefix-anchored") {
+    TrackerField assignee = MakeField("assignee", "Assignee", TrackerFieldFamily::UserSingle);
+    TrackerFieldOption alice;
+    alice.Id = "a1";
+    alice.Value = "Alice Smith";
+    assignee.AllowedValueOptions.push_back(alice);
+
+    std::vector<QuerySuggestion> out;
+    std::unordered_set<std::string> seen;
+    AppendValueSuggestions(assignee, "smith", " (display name) -> ", out, seen);
+    CHECK(out.size() == 2); // account-id entry + display-name entry
+    CHECK(std::any_of(out.begin(), out.end(), [](const QuerySuggestion& s) { return s.Insert == "a1"; }));
+    CHECK(std::any_of(out.begin(), out.end(), [](const QuerySuggestion& s) { return s.Insert == "\"Alice Smith\""; }));
+
+    // Non-user family: a mid-value run must NOT match — status/version pickers stay anchored.
+    TrackerField status = MakeField("status", "Status", TrackerFieldFamily::Status);
+    status.AllowedValues = {"In Progress"};
+    std::vector<QuerySuggestion> statusOut;
+    std::unordered_set<std::string> statusSeen;
+    AppendValueSuggestions(status, "progress", " (display name) -> ", statusOut, statusSeen);
+    CHECK(statusOut.empty());
+    AppendValueSuggestions(status, "in p", " (display name) -> ", statusOut, statusSeen);
+    CHECK(statusOut.size() == 1);
 }
 
 TEST_CASE("AsciiEqualsIgnoreCaseToLowered: equal modulo case (second arg pre-lowered)") {
