@@ -63,7 +63,14 @@ jobs:
   sweep:
     name: Sweep artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # 120, not 60: a DELETE runs at ~0.65 s against this API, so a one-time
+    # backlog purge of ~9k artifacts needs ~98 min and the 60 min ceiling
+    # killed the first one at 5500/8976. The pacing sleeps are not the cost
+    # (~90 s total across a full run) — API latency is, so a longer budget is
+    # the only lever that helps. The nightly sweep finishes in seconds now
+    # that the store is capped; this headroom is for the rare bulk pass,
+    # including a `delete_runs_older_than_days` sweep over the run backlog.
+    timeout-minutes: 120
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
