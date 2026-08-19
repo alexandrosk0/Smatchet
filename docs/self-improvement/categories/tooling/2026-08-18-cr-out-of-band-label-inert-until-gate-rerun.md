@@ -104,3 +104,32 @@ Two things this recurrence adds to the fix list:
   satisfied. Worth deciding explicitly whether the nudge should be retried on a schedule, or
   whether the CR gate should have a documented terminal disposition for repos CR will not
   auto-review — the status quo is a required-looking check that nobody can turn green.
+
+## Recurrence — 2026-08-19, [PR #2131](https://github.com/alexandrosk0/Smatchet/pull/2131)
+
+Third occurrence, second in 24 hours, same trigger as #2124 (the permanent sub-10-star
+`Review skipped: manual review required for this OSS repository` state). PR open
+05:54:16Z → merged 11:20:38Z, **5h26m**, with **0 reviews** on it the whole time;
+`CR findings (0 actionable)` never left `pending / awaiting CodeRabbit review on current head`.
+Every other gate was clean throughout — CI 30 pass / 9 skipping / 0 red, Bugbot pass with
+0 findings in 2m5s, 0 review threads, 0 non-bot comments. Gate 2 alone held the merge.
+
+What this occurrence adds is a **negative** result the first two did not isolate. A plain
+re-run of the wedged workflow, with **no label applied**, is not sufficient:
+`gh run rerun 32221202456` completed (`96049595922`, `96042985248` — both pass) and the
+status stayed `pending`. Only `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review`
+*followed by* a re-run flipped it to `cr-out-of-band label set — gate overridden`.
+
+So the manual step is not "re-run the workflow" — it is the ordered pair *(apply label,
+then re-run)*, and the ordering is silent: labelling fires no event, and a re-run without the
+label reports success while changing nothing. That is two ways to do the documented recovery
+and get no signal that you did it wrong. It also sharpens fix 1 — a `labeled` trigger removes
+the ordering hazard entirely, because the label *is* the event.
+
+Sequence across the three incidents, for whoever picks up the fix:
+
+| PR | Trigger | Wedged for | Cleared by |
+|---|---|---|---|
+| [#2070](https://github.com/alexandrosk0/Smatchet/pull/2070) | CR review quota exhausted | 116 watcher cycles | label + `gh run rerun 32035340446` |
+| [#2124](https://github.com/alexandrosk0/Smatchet/pull/2124) | sub-10-star, nudge unanswered | 2h10m, `GATES_TIMEOUT` | label + `gh run rerun 32190691612` |
+| [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) | sub-10-star, nudge unanswered | 5h26m | label + `gh run rerun 32221202456` (bare re-run first: no effect) |

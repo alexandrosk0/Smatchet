@@ -19,7 +19,7 @@
 #  13. MERGED PR + refs/heads/<branch> DELETE -> exit 0 (post-merge branch delete)
 #
 # Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3
-# Plan: docs/plans/pre-push-refspec-scope.md (cases 10-13, refspec scoping)
+# Plan: docs/plans/shipped/pre-push-refspec-scope.md (cases 10-13, refspec scoping)
 
 set -euo pipefail
 
@@ -233,7 +233,7 @@ assert_contains "8b. override warning logged" "proceeding anyway" "$out"
 out=$(run_hook MISSING_GH feature-xyz)
 assert_exit "9. missing gh CLI -> silent allow" 0 "$out"
 
-# --- Refspec scoping (docs/plans/pre-push-refspec-scope.md) -----------------
+# --- Refspec scoping (docs/plans/shipped/pre-push-refspec-scope.md) --------
 # The guard's premise is "commits the PR will never pick up". Only a NON-DELETE
 # update to refs/heads/* can do that, so what is being pushed decides, not which
 # branch happens to be checked out.
