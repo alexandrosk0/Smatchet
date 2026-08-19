@@ -34,6 +34,107 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-19 · PR #2127 (+ #2130, #2122, #2121, #2119, #2118, #2117) · Merged past a permanently-`pending` `CR findings (0 actionable)` that branch protection does not require and the escape detector cannot see
+
+### What escaped
+`fix(ui): stop restarting the MCP plugin on every keystroke in the auth-token field` (#2127)
+merged `2026-08-19T10:54:57Z` as `3eadc84d` with 38/38 checks green **and the status context
+`CR findings (0 actionable)` still `pending`**. It is *still* pending on that head now
+(`updated_at 2026-08-19T02:44:58Z`, rollup state `pending` on a commit already on `develop`) —
+nothing re-triggers it, so this is a permanent state, not a transient one.
+
+`merge-gates.sh` behaved correctly: its block-on-any-red poller refused and returned
+`GATES_TIMEOUT`. The orchestrator escalated under ship-loop exception 6 (cannot-validate) and the
+user authorised the merge explicitly. **No override label was used** — not `cr-out-of-band`, not
+`SKIP_MERGE_GATES` — because none was needed: GitHub itself reported the PR mergeable.
+
+The escape is not one PR. Every one of the six merges preceding it shows the same head state
+(`crctx=pending`, `labels=none`): #2130 (`2026-08-19T03:44Z`), #2122 + #2119 (`2026-08-18T19:4xZ`),
+#2121 + #2118 + #2117 (`2026-08-18T16:5xZ`). Seven consecutive merges past a gate that has been
+non-blocking-in-practice for at least ~18 h, none of them labelled, none of them in this ledger.
+Seven open PRs (#2132, #2131, #2129, #2126, #2125, #2101, #2080) sit in the same state right now.
+
+`postmortem-owed.sh --list`, run immediately after the merge, reported
+`no gate escapes owed a postmortem (last 20 merges clean)`. This entry exists because the
+orchestrator committed to it in-turn, not because a detector asked for it — the third recurrence
+of that class.
+
+### Root cause
+Four independent holes, each individually survivable, which compose into a gate that cannot block:
+
+1. **`cr-finding-gate` has no terminal arm for the never-reviewed-by-policy input.** CodeRabbit's
+   OSS star-gate auto-reviews only repos at/above 10 stars; below it every PR gets
+   `Review skipped: manual review required for this OSS repository`. `decide()` in
+   [`.github/actions/cr-finding-gate/action.yml`](../../.github/actions/cr-finding-gate/action.yml)
+   correctly **refuses** to read that as a verdict (`maybe_nudge_review never-reviewed; return 1`) —
+   that refusal is deliberate, and guards the #2028 fail-open. But the refusal has no terminal
+   branch: the poll exhausts `POLL_BUDGET_SECONDS=180`, falls out of the loop, and posts
+   `pending "awaiting CodeRabbit review on current head"`. Nothing will ever satisfy it, because
+   the condition it is waiting on is a repo-plan property, not a race.
+2. **The job's exit code and the context it posts disagree.** The action runs `set +e` and exits 0
+   on every terminal verdict — a deliberate design so the `if: always()` fallback poster survives a
+   step timeout, documented at
+   [`.github/workflows/cr-finding-gate.yml`](../../.github/workflows/cr-finding-gate.yml). The
+   consequence: the **job** `CR finding gate` reports green while the **context** it posted is
+   `pending`. A green job is exactly what branch protection is watching.
+3. **The two enforcement layers guard different names.** `project.config.json`
+   § `branch_protection.required_contexts` names the *job* `CR finding gate` and **not** the
+   *context* `CR findings (0 actionable)` — visible in this escape's own merge-snapshot row, whose
+   22-name auto-derived `requiredContexts` array contains the former and not the latter. GitHub
+   therefore reports `UNSTABLE`-but-mergeable while `merge-gates.sh` (which blocks on **any** check,
+   required or not) refuses. Two layers, two answers, and the weaker one is the one holding the
+   merge button.
+4. **The escape detector is structurally blind to it.** `postmortem-owed.sh` trigger 1 requires a
+   *terminal* non-SUCCESS — its own comment reads `IN_PROGRESS/QUEUED/PENDING never count`, and its
+   StatusContext arm selects only `state IN("FAILURE","ERROR")`. A `required-never-terminal` column
+   **does** select `IN("PENDING","EXPECTED")` — the exact capability needed — but it is AND-gated on
+   the same `$reqNames` set that hole 3 shows this context is missing from. Trigger 2 (override
+   label) cannot fire because no label was used. So the one escape class that leaves no red mark and
+   no label is the one class the detector cannot report.
+
+Underneath all four is a system-level asymmetry: `merge-gates.sh` deliberately **bounds** its CR
+wait (`MERGE_GATES_CR_GRACE_POLLS`, default 10, WARN-and-pass, commented "so a stuck integration
+never wedges the ship-loop indefinitely"), while the action posts an **unbounded** `pending`. The
+poller's no-wedge hatch is defeated by the producer it is hatching against.
+
+The upstream cause — CR auto-review being off for this repo — is already open as
+[`categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md`](categories/process/2026-08-17-cr-finding-gate-accepts-a-verdict-line-without-a-review.md)
+(the "three rungs, all failing open" ladder). Its rung-3 opt-in path — nudging CR to review on
+request — is itself returning nothing today.
+
+### Preventing gate
+An **ordered pair**. Shipping (b) without (a) converts a soft repo-wide wedge into a hard one, so
+the order is load-bearing:
+
+**(a) Terminal arm for the never-reviewed-by-policy input.** When `decide()` matches
+`manual review required for this OSS repository`, stop the poll and `post failure` naming the
+condition — e.g. `cr-auto-review-disabled (OSS <10 stars) — needs cr-out-of-band +
+cr-disposition:cr-auto-review-disabled` — mirroring the distinct `cr-quota-exhausted` verdict the
+#1962 entry proposed for the sibling input. A terminal `failure` is *visible* to `merge-gates.sh`,
+to branch protection, and to `postmortem-owed.sh` trigger 1; an unbounded `pending` is visible to
+none of them. Backed by a `tests/bats/cr_finding_gate.bats` case asserting the invariant this
+escape violated: **the action must never conclude its job green while the context it posted is
+`pending`**.
+
+**(b) Then close the name gap.** Add `CR findings (0 actionable)` to
+`branch_protection.required_contexts` so GitHub and the poller guard the same name, which also
+switches on the detector's existing `required-never-terminal` column for free. Generalise it with a
+parity assertion: every status context a first-party workflow posts as a *gate verdict* must appear
+in the required set — the check that would have caught hole 3 at authoring time rather than at
+merge #7.
+
+Enabling CR auto-review (a repo/account/plan action — 10 stars or a paid plan) is the real
+remediation, but it is a **human action, not a gate**, and is named here as such so (a)+(b) are not
+mistaken for a fix to the underlying blindness.
+
+### Eval case
+None — not agent-reviewable. The miss is a CI-config / gate-logic / required-context gap with no
+code smell in any reviewable diff; a review agent reading #2127's diff would have scored it clean,
+correctly. Same disposition as the #1948 and #1962 entries.
+
+### Filed as
+[`categories/process/2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md`](categories/process/2026-08-19-cr-finding-gate-posts-an-unbounded-pending-no-layer-blocks-on.md)
+
 ## 2026-08-07 · PR #1962 · Merged past a CodeRabbit review that never happened (`cr-out-of-band` + `cr-disposition:cr-rate-limited`), and the escape detector reported the window clean
 
 ### What escaped
