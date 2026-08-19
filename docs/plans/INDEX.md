@@ -217,6 +217,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`branch-protection-config-completeness`](shipped/branch-protection-config-completeness.md) | 2026-08-16 | Plan — branch-protection config completeness (stop the full-object PUT from silently clearing live gates) |
 | [`github-issue-body-empty-line`](shipped/github-issue-body-empty-line.md) | 2026-08-16 | Plan — GitHub issue Body cell looks empty when the body opens with a blank line |
 | [`fix-four-open-issues`](shipped/fix-four-open-issues.md) | 2026-08-17 | Plan — fix four open GitHub Issues (#2109 / #2093 / #2079 / #2066) |
+| [`fix-2110-mcp-keystroke-restart`](shipped/fix-2110-mcp-keystroke-restart.md) | 2026-08-18 | Plan — stop the MCP plugin restarting on every keystroke in Preferences (#2110) |
 <!-- END auto-plan-index -->
 
 ### Notes

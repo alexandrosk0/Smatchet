@@ -22,6 +22,7 @@ extern "C" void SmatchetRegisterAutomationReloadHooksRaceTests(ImGuiTestEngine* 
 #if defined(SMATCHET_WITH_MCP)
 extern "C" void SmatchetRegisterMcpLiveHttpAuthTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterMcpResourcesTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterMcpPrefsCommitGateTests(ImGuiTestEngine* engine);
 #endif
 extern "C" void SmatchetRegisterSyncStallVisibleCueTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterAnnotateBeforeClCueTests(ImGuiTestEngine* engine);
@@ -89,6 +90,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
 #if defined(SMATCHET_WITH_MCP)
     SmatchetRegisterMcpLiveHttpAuthTests(engine);
     SmatchetRegisterMcpResourcesTests(engine);
+    SmatchetRegisterMcpPrefsCommitGateTests(engine);
 #endif
     SmatchetRegisterSyncStallVisibleCueTests(engine);
     SmatchetRegisterAnnotateBeforeClCueTests(engine);

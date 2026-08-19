@@ -19,12 +19,20 @@
 
 /// Draws `label` as a masked text input + "Show" toggle + length/whitespace hints.
 /// Returns true when the text was edited this frame (same contract as InputText).
-inline bool SmatchetSecretInputText(const char* label, char* buf, std::size_t bufSize) {
+/// `outEditing` (optional) receives whether the inner InputText still holds keyboard focus, i.e.
+/// whether `buf` currently holds a half-typed PREFIX. It has to be reported from in here: the
+/// widget is compound and ends on the Show/Hide SmallButton or the char-count TextDisabled, so a
+/// caller's own ImGui::IsItemActive() would read one of those, not the input (#2110). Callers that
+/// act on the buffer immediately — rather than behind a Save button — must gate on it.
+inline bool SmatchetSecretInputText(const char* label, char* buf, std::size_t bufSize, bool* outEditing = nullptr) {
     ImGuiStorage* storage = ImGui::GetStateStorage();
     const ImGuiID shownId = ImGui::GetID(label) + 1u; // offset: distinct from the input's own id
     const bool shown = storage->GetBool(shownId, false);
     const bool edited =
         ImGui::InputText(label, buf, bufSize, shown ? ImGuiInputTextFlags_None : ImGuiInputTextFlags_Password);
+    if (outEditing != nullptr) {
+        *outEditing = ImGui::IsItemActive(); // must be sampled here, before the SameLine chain below
+    }
     ImGui::SameLine();
     ImGui::PushID(label);
     if (ImGui::SmallButton(shown ? "Hide" : "Show")) {
