@@ -126,6 +126,22 @@ TEST_CASE("AppendValueSuggestions: user fields match mid-value, other families s
     CHECK(std::any_of(out.begin(), out.end(), [](const QuerySuggestion& s) { return s.Insert == "a1"; }));
     CHECK(std::any_of(out.begin(), out.end(), [](const QuerySuggestion& s) { return s.Insert == "\"Alice Smith\""; }));
 
+    // The raw side of a user option is the opaque accountId — a mid-id run must NOT match,
+    // or a single typed letter would pull in most of a hex-accountId org chart uncapped.
+    TrackerField byId = MakeField("assignee", "Assignee", TrackerFieldFamily::UserSingle);
+    TrackerFieldOption hex;
+    hex.Id = "5b10a2844c20165700ede21g";
+    hex.Value = "Bob Jones";
+    byId.AllowedValueOptions.push_back(hex);
+    std::vector<QuerySuggestion> idOut;
+    std::unordered_set<std::string> idSeen;
+    AppendValueSuggestions(byId, "165700", " (display name) -> ", idOut, idSeen);
+    CHECK(idOut.empty());
+    AppendValueSuggestions(byId, "5b10a2", " (display name) -> ", idOut, idSeen); // id prefix still matches
+    CHECK(idOut.size() == 1);
+    AppendValueSuggestions(byId, "jones", " (display name) -> ", idOut, idSeen); // display substring matches
+    CHECK(idOut.size() == 2);
+
     // Non-user family: a mid-value run must NOT match — status/version pickers stay anchored.
     TrackerField status = MakeField("status", "Status", TrackerFieldFamily::Status);
     status.AllowedValues = {"In Progress"};

@@ -166,12 +166,15 @@ void AppendValueSuggestions(const TrackerField& field, const std::string& prefix
                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     const std::string pre = ToLowerAsciiCopy(prefix);
     const bool isUserField = IsQueryUserField(field);
-    // User fields match anywhere inside the text (a surname is as natural a search key as a
-    // first name); every other value family stays prefix-anchored, where the typed text is
-    // the start of a status / version / label the user already has in mind.
+    // A user field's DISPLAY text matches anywhere (a surname is as natural a search key as
+    // a first name), but its raw side stays prefix-anchored: for user fields the raw value
+    // is the opaque 24-hex accountId (TrackerFieldCatalog fills one option per catalog
+    // user), and a substring test there matches most of the org on a single typed letter.
+    // Every other value family stays fully prefix-anchored — there the typed text is the
+    // start of a status / version / label the user already has in mind.
     auto matchesQuery = [&](const std::string& raw, const std::string& label) {
         if (isUserField) {
-            return AsciiContainsIgnoreCase(raw, pre) || AsciiContainsIgnoreCase(label, pre);
+            return AsciiStartsWithIgnoreCase(raw, pre) || AsciiContainsIgnoreCase(label, pre);
         }
         return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
     };

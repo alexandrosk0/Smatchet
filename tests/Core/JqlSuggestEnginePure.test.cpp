@@ -217,6 +217,30 @@ TEST_CASE("value mode — user field surfaces catalog humans only, with escape-p
         CHECK(userCount == 50);
     }
     {
+        // Held-back mid-name matches that duplicate an already-emitted insert must not burn
+        // hold capacity: 50 same-named duplicates ahead of one distinct mid-name match, and
+        // the distinct one still lands.
+        std::vector<TrackerUser> dupUsers;
+        TrackerUser prefixed;
+        prefixed.AccountId = "p1";
+        prefixed.DisplayName = "Zeta Lead"; // prefix match, emitted first
+        dupUsers.push_back(prefixed);
+        for (int i = 0; i < 50; ++i) {
+            TrackerUser u;
+            u.AccountId = "dup" + std::to_string(i);
+            u.DisplayName = "Zeta Lead"; // same insert -> AddSuggestionUnique would drop each
+            dupUsers.push_back(u);
+        }
+        TrackerUser distinct;
+        distinct.AccountId = "d1";
+        distinct.DisplayName = "Team Zeta"; // distinct mid-name match, last in catalog order
+        dupUsers.push_back(distinct);
+        const std::string typed = buf + "zeta";
+        const auto out = Run(typed, static_cast<int>(typed.size()), fields, dupUsers, &meta);
+        CHECK(HasInsert(out, "\"Zeta Lead\""));
+        CHECK(HasInsert(out, "\"Team Zeta\""));
+    }
+    {
         // 51 matching users → the kMaxUsers cap binds at exactly 50 (pins the >= bound).
         std::vector<TrackerUser> capUsers;
         for (int i = 0; i < 51; ++i) {
