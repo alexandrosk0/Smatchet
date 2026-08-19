@@ -7,6 +7,7 @@
 // SMATCHET_DEVIATION(rule=app-controller-fan-in; reason=this sibling TU is a byte-identical god-file-split carve-out of SmatchetActiveProjectGridUi.cpp and needs the full AppController to drive ctx.app.* on the grid table/cell paths — same shape as the AnnotateAnalysisUi_Modals/_Window split; owner=orchestrator; revisit=when the grid draw context is narrowed to an interface)
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "GridColumnOrderPure.h"
 #include "IssueDraft.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
@@ -321,16 +322,15 @@ static void RepairDesyncedTableDisplayOrder(ImGuiTable* table) {
     if (table->ColumnsCount > table->DisplayOrderToIndex.size() || table->ColumnsCount > table->Columns.size()) {
         return;
     }
-    for (int n = 0; n < table->ColumnsCount; ++n) {
-        const int order = static_cast<int>(table->Columns[n].DisplayOrder);
-        if (order >= 0 && order < table->ColumnsCount && static_cast<int>(table->DisplayOrderToIndex[order]) == n) {
-            continue;
-        }
-        for (int r = 0; r < table->ColumnsCount; ++r) {
-            table->Columns[r].DisplayOrder = static_cast<ImGuiTableColumnIdx>(r);
-            table->DisplayOrderToIndex[r] = static_cast<ImGuiTableColumnIdx>(r);
-        }
+    const int mismatch = GridFirstDisplayOrderMismatch(
+        table->ColumnsCount, [table](int n) { return static_cast<int>(table->Columns[n].DisplayOrder); },
+        [table](int order) { return static_cast<int>(table->DisplayOrderToIndex[order]); });
+    if (mismatch < 0) {
         return;
+    }
+    for (int r = 0; r < table->ColumnsCount; ++r) {
+        table->Columns[r].DisplayOrder = static_cast<ImGuiTableColumnIdx>(r);
+        table->DisplayOrderToIndex[r] = static_cast<ImGuiTableColumnIdx>(r);
     }
 }
 
@@ -360,14 +360,8 @@ static void CaptureHeaderDragColumnOrder(UiDrawSession& d, const std::vector<Tic
     // repeats a key, means the display-order map was inconsistent this frame. Writing it would
     // bake a duplicate key into ColumnOrder, and the load-side dedupe then drops a column back to
     // the end of the grid.
-    if (visualOrder.size() != columns.size()) {
+    if (!GridVisualColumnOrderIsPermutation(visualOrder, columns.size())) {
         return;
-    }
-    std::unordered_set<std::string> seenVisualKeys;
-    for (const auto& visualKey : visualOrder) {
-        if (!seenVisualKeys.insert(visualKey).second) {
-            return;
-        }
     }
     // Compare against the editing buffer too: a saved ColumnOrder holding a stale key that the
     // column set no longer carries never converges on the visual order, so a saved-only compare
