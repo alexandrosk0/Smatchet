@@ -88,14 +88,46 @@ N/A — diff touches no `Source/Core/` file (shell hook + its bucket-A harness +
 ## Verification
 
 - **Bucket A**: `bash agents/scripts/core/test-pre-push-merged-pr-guard.sh` — 9
-  existing cases + 3 new (locks-delete from MERGED checkout → allow; branch content
-  push from MERGED checkout → refuse; empty stdin from MERGED checkout → refuse).
+  existing cases + 4 new (locks-delete from MERGED checkout → allow; branch content
+  push from MERGED checkout → refuse; empty stdin from MERGED checkout → refuse;
+  branch delete from MERGED checkout → allow).
 - **Hermeticity lint**: `bash agents/scripts/core/test-pre-push-stage-neutralisers.sh --check`.
 - **Bats**: `bats tests/bats/pre_push_guard.bats` — already drives the hook with real
   ref-update records; must stay green (its `gh` stub exits 0, so (B) is inert there).
 - **Bucket E / screenshot / sanitizer**: N/A — no UI or C++ change.
 - **Build gate**: N/A — pure shell + docs diff (`agents/scripts/core/is-pure-docs-diff.sh`
   will not classify it as docs-only, but no C++ TU is touched, so no rebuild is implied).
-- **Doc validation**: `bash scripts/dev/test-docs.sh` green.
+- **Doc validation**: `bash scripts/dev/test-docs.sh` — no NEW failure. Two failures
+  are pre-existing and unrelated (a `test-agent-contract` DRIFT against the gitignored
+  `.claude/` harness-adapter mirror, and `test-gate-selftests-bats` case 2 failing its
+  own raw-self-exec fixture); both reproduce identically on a clean `origin/develop`
+  worktree.
+- **Full agentic suite**: `bash scripts/dev/test-all.sh` — `AGGREGATE  Passed: 2247
+  Failed: 22  Scripts: 201`, no NEW failure. All 22 are pre-existing: every suite was
+  re-run against a clean `origin/develop` worktree (`git worktree add --detach`) and
+  reproduced identically —
+
+  | Suite | Failure | Clean-tree result / cause |
+  |---|---|---|
+  | `test-adapter-drift` | 26 agent prompts DRIFT | gitignored `.claude/` mirror is locally stale; none of the 26 is in this diff |
+  | `test-agent-contract` | 1 | `Passed: 27  Failed: 1` (same `.claude/` mirror) |
+  | `test-archive-backlog-entry-bats` | case 16 | `Passed: 25  Failed: 1` |
+  | `test-docs` | 2 | nested re-runs of `test-agent-contract` + `test-gate-selftests` |
+  | `test-gate-selftests-bats` | case 2 | `Passed: 6  Failed: 1` |
+  | `test-mutation-smoke` | corpus JSON validation | `Passed: 3  Failed: 1` (`Python was not found` — Windows App-Execution-Alias shim) |
+  | `test-p4-mirror-bootstrap-bats` | cases 5, 7 | `Passed: 7  Failed: 2` |
+  | `test-pre-push-format-delta-bats` | case 2 | `Passed: 1  Failed: 1` |
+  | `test-review-guard-bats` | cases 14, 15 | `Passed: 14  Failed: 2` |
+  | `test-shell-lint-bats` | case 16 | `Passed: 25  Failed: 1` |
+  | `test-unwatched-pr-nudge-bats` | case 11 | `Passed: 15  Failed: 1` |
+  | `test-verifier-endpoint-bats` | case 3 | `Passed: 5  Failed: 1` |
+  | `test-verifier-preship-wiring-bats` | cases 3, 4, 5, 6, 9 | `Passed: 4  Failed: 5` |
+  | `test-workflow-yaml` | `automated-pr-guard.yml`, `perf-pr-fast.yml` | `Passed: 30  Failed: 2` (`UnicodeDecodeError: 'charmap'` / `IndexError`) |
+
+  `test-pre-push-format-delta-bats` is the only one that even touches this hook: its
+  case 2 asserts a stage (D) refusal, and (D) runs before (B), so the (B) scoping
+  cannot reach it — confirmed by the clean-tree run.
+- **Shell lint**: `bash agents/scripts/project/test-shell-lint.sh` — `Passed: 343  Failed: 0`.
+- **Lint gates**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` — exit 0.
 - **Plan stress-test — `grill-with-docs`**: run before finalising; outcome recorded in
   § Implementation log.
