@@ -4,6 +4,19 @@
 
 Smatchet is a high-performance, engine-agnostic productivity tool and issue-tracking client. It provides a unified interface for project management, Perforce source control analysis, and AI assistance — all built using C++14 and Dear ImGui. Smatchet supports **multiple tracker backends** (Jira, Plane.so, GitHub Issues, and Linear) through a clean, backend-agnostic architecture (`ITrackerBackend`), and can run as a standalone desktop application or embedded directly into Unreal Engine.
 
+## Screenshot
+
+![Smatchet standalone on a Jira backend — ticket grid, views editor, and preferences docked side by side](docs/images/smatchet-main-window.png)
+
+The standalone app on a Jira backend. Every panel is a dockable Dear ImGui window, so this is one arrangement of many — drag any tab to re-dock, split, or float it.
+
+- **Menu bar + command box (top).** `File / Edit / Selection / View / Run / Tools / Help`, with the Command Palette box centred — *Search commands, not issues (Ctrl+Shift+P)*. It searches the [unified command registry](docs/guides/cli.md), so the same 56+ commands reachable from the CLI, MCP, and Lua are one keystroke away here. The bar directly below it — *Search issues: key, filter query, or title text* — is the separate issue omnibar, which accepts an issue key, a backend filter query (JQL on Jira), or free title text.
+- **Ticket grid (centre).** The active view (`Default View`) rendered as a virtualized grid: `ID`, `Summary`, `Assignee`, `Priority`, `Status`, `Issue Type`, `Description`, `Updated`, `Log Work`, `Progress`, `Attachments`. `Priority` renders as a coloured icon, `Progress` as an inline bar, `Log Work` as a clickable time-tracking cell. Hovering a description cell pops the full text — shown here for `BLOOP-111`. Columns reorder by drag, resize, and sort in place; `New View` and `Default View` are grid tabs, so several views stay open at once.
+- **Unsaved-layout strip (amber).** Reordering, resizing, or re-sorting columns does **not** silently autosave. The strip appears with `Save` / `Save as new...` / `Discard`, so a layout edit is only durable once you commit it explicitly.
+- **Views editor (right).** Titled `Views - Jira` because views are stored **per tracker backend** — switching backends preserves each backend's own set. The sidebar lists saved views; the right side is the tabbed editor (`Filter` / `Fields` / `Columns` / `Sort`). The `Fields` tab is open here: 87 available fields from the backend's field catalog, 12 selected, grouped into `Basic fields` / system / custom, with `ID` locked. `Apply & Sync` applies the edited view and re-runs its query against the backend (`Ctrl+Enter`); `Ctrl+N` creates a new view; `unsaved` next to the name tracks uncommitted edits.
+- **Preferences (bottom, docked beside `Scripting`).** Categories on the left — `General`, `Appearance`, `Tracker`, `Connections`, `AI & Voice`, `Editing`, `Shortcuts`. The `Tracker` page is open on **Backend & credentials**, where `Tracker Backend` selects the backend (`Jira` here; also Plane.so, GitHub Issues, Linear) and `Read-only mode` blocks every write to the tracker. Edits on this page are staged, not live — they land on **Save & Sync**, which writes the tab to disk and refreshes the tracker connection.
+- **Status bar (bottom).** The active backend and its connectivity state — `Jira | online`.
+
 ## Download & Install
 
 Prebuilt binaries are published on the [GitHub Releases page](https://github.com/alexandrosk0/Smatchet/releases). Each release carries these assets (`<tag>` is the version, e.g. `v0.6.7`):
