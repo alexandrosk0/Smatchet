@@ -50,6 +50,6 @@
   routing it through `gh` — pipe the raw response into a standalone `jq -f
   merge-gates.jq` — which removes the ceiling entirely and makes the filter
   diffable, lintable and testable as a file instead of as a quoted blob.
-  Status: partially-applied (instance fixed 2026-08-18; the Windows lane and the
+  Status: partially-applied (instance fixed 2026-08-18 in PR #2129; the Windows lane and the
     `jq -f` extraction are both open)
   Last-reviewed: 2026-08-18

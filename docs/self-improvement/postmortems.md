@@ -83,7 +83,7 @@ true of `-f/--raw-field` and false of `-F/--field`, and the comment's confident
 wrongness is why the document sat on argv for as long as it did.
 
 ### Preventing gate
-Three, all in the PR carrying this entry:
+Three, all in PR #2129 (the PR carrying this entry):
 
 1. **Take the document off argv.** `-F query=@"$QUERY_FILE"` — `-F/--field`
    reads a leading `@` as a filename, `-f/--raw-field` does not. That frees 7,795
