@@ -6,7 +6,7 @@ Smatchet is a high-performance, engine-agnostic productivity tool and issue-trac
 
 ## Screenshot
 
-![Smatchet standalone on a Jira backend — ticket grid, views editor, and preferences docked side by side](docs/images/smatchet-main-window.png)
+![Smatchet standalone on a Jira backend — ticket grid, views editor, and preferences docked side by side](assets/images/smatchet-main-window.png)
 
 The standalone app on a Jira backend. Every panel is a dockable Dear ImGui window, so this is one arrangement of many — drag any tab to re-dock, split, or float it.
 
