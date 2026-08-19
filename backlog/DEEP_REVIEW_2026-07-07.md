@@ -28,7 +28,7 @@
 | Severity | Count | State |
 |----------|-------|-------|
 | **P0** — data-loss / security / crash | 17 | 17 ✅ |
-| **P1** — significant correctness | 13 | 12 ✅ · 1 🟡 (DR29 — narrowed, see below) |
+| **P1** — significant correctness | 13 | 13 ✅ (DR29 closed 2026-08-18 by PR #2121) |
 | **P2** — polish / consistency | 3 | 3 ✅ |
 
 **DR29 is the only item not closed**, and its scope shrank: the ODR violation and three of the
@@ -39,7 +39,7 @@ Findings landed across three PRs: batch 1 (DR1/DR2/DR14/DR18/DR19/DR26/DR30/DR32
 PR #1676; batch 2 (the remaining 24) from parallel fix agents; batch 3 closed the **DR6** residual
 (the long-lived Lua/MCP worker `Cache` race — fixed by giving `Cache` the ADR-0012 `shared_ptr` +
 `atomic_load`/`atomic_store` treatment, same as `Backend`) and one more **DR29** guard (the
-`ai_prefs` self-referential flag). One finding remains 🟡 PARTIAL — **DR29**: the ODR rename plus
+`ai_prefs` self-referential flag). **DR29 is now ✅ RESOLVED** (2026-08-18, PR #2121): the ODR rename plus
 four vacuous guards are fixed; the remaining self-referential guards re-implement ImGui/AppController-
 coupled production logic not linkable in the focused test rig (fixing them means extracting production
 helpers per-symbol — a separate refactor), or would surface a distinct pre-existing latent bug. The
@@ -334,7 +334,7 @@ result and the deferred path skips `RememberNegativePriorityResolution`, so an u
 re-fetches (3 s cpr each) and re-parses JSON + fs::exists every frame for the whole session.
 - **Fix:** memoise negative results (with the `Negative` flag honoured in the lookup) and back off failed fetches.
 
-### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — 🟡 PARTIAL (batch 3)
+### DR29. Test suite has vacuous / self-referential regression guards + ODR violation — ✅ RESOLVED (2026-08-18, PR #2121)
 Several "regression" tests assert against a local re-implementation of the production logic, so the real
 code can regress green: `tests/Core/UserInfoActivityCancelUaf.test.cpp:140,197`, `tests/Lua/LuaTimeout.test.cpp:28`,
 `tests/Core/BulkImportAbandonNonBlocking.test.cpp:59`, `tests/Core/MarkdownLanguageDefinition.test.cpp:85`,
@@ -351,7 +351,29 @@ into one binary — link-order-dependent destructor (one skips audit cleanup).
   - **`MarkdownLanguageDefinition.test.cpp` — fixed**; the cases now drive the production `LD::Markdown()` token regexes.
   - **`AgentsMdLoader.test.cpp` — fixed**; the tautology is replaced with a determinism pin against the production `AgentsMdLoader::LoadLayered` symbol.
   - **Still self-referential (the documented residual class):** `BulkImportAbandonNonBlocking.test.cpp:48-68` (`FakeBulkSession` + `FakeBulkImportAbandonFutures`, explicitly "byte-for-byte the production shape"), `UserInfoActivityCancelUaf.test.cpp` (`FakeController`/`FakeUserInfoOwner`), and `LuaTimeout.test.cpp` via `tests/support/LuaHostFixture.h:82` (mirrors `LuaHookGuard`, which lives in the src-private `AppController_LuaBindings_detail.h:74`).
-  - **Verdict:** DR29 stays 🟡 PARTIAL, but the remainder is now a single, well-defined refactor rather than a test-hygiene sweep — **each residual needs its production helper hoisted to a test-linkable header** (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity cancel path). Sequence it as one "hoist production helpers for test linkage" change; do not attempt per-test patches, which is what left the residual last time.
+  - **Verdict (superseded 2026-08-18 → ✅, see the closing block below):** DR29 stays 🟡 PARTIAL, but the remainder is now a single, well-defined refactor rather than a test-hygiene sweep — **each residual needs its production helper hoisted to a test-linkable header** (`LuaHookGuard`, `BulkImportAbandonFutures`, the user-activity cancel path). Sequence it as one "hoist production helpers for test linkage" change; do not attempt per-test patches, which is what left the residual last time.
+
+- **Closed 2026-08-18 (PR #2121), verified against the merged tree.** The 2026-08-16 verdict called for one
+  "hoist production helpers for test linkage" change rather than per-test patches; that is what shipped.
+
+  | production helper | was | now test-linkable at |
+  |---|---|---|
+  | `BulkImportAbandonFutures` | anon namespace in `Ui/SmatchetBulkTicketsUi.cpp` | `Ui/BulkImportAbandon.h` (`smatchet::ui::`) |
+  | the #1150 cancel-before-join handshake | inline in `~SmatchetUserInfoUi` | `Ui/ShutdownCancelGate.h` |
+  | `LuaHookGuard` | src-private `AppController_LuaBindings_detail.h` | `Lua/LuaHookGuard.h` (detail header aliases it) |
+
+  Each of the three tests now calls the production symbol: `BulkImportAbandonNonBlocking.test.cpp:101`
+  (`FakeBulkImportAbandonFutures` deleted), `UserInfoActivityCancelUaf.test.cpp` holds a real
+  `ShutdownCancelGate` as its last member with no destructor of its own — so production's
+  `~ShutdownCancelGate` is what unblocks the worker, making the ordering guarantee structural rather
+  than a comment — and `tests/support/LuaHostFixture.h:79` constructs the real `LuaHookGuard` instead
+  of hand-rolling `lua_sethook`.
+
+  **The guards are no longer vacuous, and that was checked by mutation, not by inspection.** Deleting
+  `d.bulkImportCancel.Cancel()` from `BulkImportAbandon.h` and `ioCancel_()` from
+  `ShutdownCancelGate::Signal()` turns the suite red (`teardownMs 10000 < 2000`) where the old
+  self-referential copies would have stayed green through the same deletion. That is the property
+  DR29 existed to obtain.
 
 ### DR30. Credentials leaked into logs via unredacted error bodies — ✅ DONE (fix pushed on branch)
 Raw HTTP error bodies are spliced into user-facing/log strings, bypassing `RedactHttpBodyForLog`:
