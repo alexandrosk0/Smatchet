@@ -10,9 +10,19 @@ name: Actions storage cleanup
 # This sweeps that backlog.
 #
 # DRY-RUN BY DEFAULT on manual dispatch (issue-janitor precedent): it reports
-# what it would delete and reclaims nothing until you pass apply=true. The
-# nightly schedule applies, because by then the only artifacts it can match are
-# ones the retention caps would already have expired.
+# what it would delete and reclaims nothing until you pass apply=true.
+#
+# The nightly schedule DOES apply, so it is floored at one day past the longest
+# `retention-days:` cap anywhere in .github/workflows (derived at run time, not
+# hardcoded — a constant here goes stale the moment someone adds a longer cap).
+# Above that floor every properly-capped artifact has already self-expired, so
+# the cron can only ever match the legacy backlog uploaded under the old 90-day
+# default. Without the floor the cron would delete the 30-day SBOM / OSV / fuzz
+# evidence and 14-day review assets that this same change establishes.
+#
+# A manual dispatch may go BELOW the floor — reclaiming the backlog on demand is
+# the whole point — but it is dry-run by default and the summary names every
+# artifact it would take, including any whose declared retention has not run out.
 #
 # Deleting workflow RUNS (which is what frees LOG storage, as opposed to
 # artifact storage) is a separate opt-in input — it destroys CI history, so it
@@ -24,7 +34,7 @@ on:
   workflow_dispatch:
     inputs:
       max_age_days:
-        description: 'Delete artifacts older than this many days'
+        description: 'Delete artifacts older than this many days (a value below the longest retention-days cap will take artifacts that have retention left)'
         required: false
         default: '7'
       apply:
@@ -63,6 +73,37 @@ jobs:
       NAME_FILTER: ${{ inputs.name_filter || '' }}
       RUN_AGE_DAYS: ${{ inputs.delete_runs_older_than_days || '0' }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve the age floor from the repo's own retention caps
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The longest cap any upload-artifact step declares. Anything capped
+          # at or under this has self-expired by floor+1 days, so a sweep at or
+          # above the floor cannot preempt a declared retention.
+          # `|| true`: under pipefail a no-match grep would kill the step and make
+          # the 90-day fallback below unreachable. Falling back to the old repo
+          # default is the safe direction — it sweeps less, never more.
+          longest=$(grep -rhoE 'retention-days:[[:space:]]*[0-9]+' .github/workflows/ 2>/dev/null \
+                      | grep -oE '[0-9]+' | sort -n | tail -1) || true
+          : "${longest:=90}"
+          floor=$((longest + 1))
+          echo "longest declared retention: ${longest}d -> floor ${floor}d"
+
+          effective="${MAX_AGE_DAYS}"
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && [ "${effective}" -lt "${floor}" ]; then
+            echo "::notice::scheduled sweep raised from ${effective}d to the ${floor}d floor"
+            effective="${floor}"
+          elif [ "${effective}" -lt "${floor}" ]; then
+            echo "::warning::sweeping at ${effective}d is below the ${floor}d retention floor — this takes artifacts that still have declared retention left"
+          fi
+
+          echo "EFFECTIVE_AGE_DAYS=${effective}" >> "$GITHUB_ENV"
+          echo "AGE_FLOOR_DAYS=${floor}"         >> "$GITHUB_ENV"
+
       - name: Sweep expired-by-policy artifacts
         shell: bash
         run: |
@@ -72,8 +113,8 @@ jobs:
           # ISO-8601 UTC sorts lexicographically, so the age test is a string
           # compare inside awk — no `date` fork per artifact across a backlog
           # that can run to five figures.
-          cutoff=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
-          echo "repo=${REPO} mode=${mode} max_age_days=${MAX_AGE_DAYS} filter='${NAME_FILTER}'"
+          cutoff=$(date -u -d "${EFFECTIVE_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "repo=${REPO} mode=${mode} age_days=${EFFECTIVE_AGE_DAYS} (floor ${AGE_FLOOR_DAYS}) filter='${NAME_FILTER}'"
           echo "cutoff=${cutoff}"
 
           # Page the whole store BEFORE deleting anything: deleting while
@@ -82,8 +123,10 @@ jobs:
           page=1
           while :; do
             resp=$(gh api "repos/${REPO}/actions/artifacts?per_page=100&page=${page}")
-            n=$(jq '.artifacts | length' <<<"$resp")
-            if [ "$n" -eq 0 ]; then break; fi
+            # Default a missing/unparseable count to 0 so a success-with-empty
+            # body terminates paging instead of spinning to the page cap.
+            n=$(jq '.artifacts | length' <<<"$resp" 2>/dev/null || echo 0)
+            if [ "${n:-0}" -eq 0 ]; then break; fi
             jq -r '.artifacts[] | [.id, .name, .size_in_bytes, .created_at, .expired] | @tsv' \
               <<<"$resp" >> artifacts.tsv
             page=$((page + 1))
@@ -114,7 +157,7 @@ jobs:
             echo "|---|---:|"
             echo "| artifacts in store | ${total} |"
             echo "| live bytes held | $(numfmt --to=iec-i --suffix=B "$live_bytes") |"
-            echo "| older than ${MAX_AGE_DAYS}d | ${count} |"
+            echo "| older than ${EFFECTIVE_AGE_DAYS}d | ${count} |"
             echo "| reclaimable | **$(numfmt --to=iec-i --suffix=B "$bytes")** |"
             echo ""
             echo "### Reclaimable by artifact"
@@ -190,8 +233,10 @@ jobs:
           page=1
           while :; do
             resp=$(gh api "repos/${REPO}/actions/runs?per_page=100&page=${page}&status=completed")
-            n=$(jq '.workflow_runs | length' <<<"$resp")
-            if [ "$n" -eq 0 ]; then break; fi
+            # Default a missing/unparseable count to 0 so a success-with-empty
+            # body terminates paging instead of spinning to the page cap.
+            n=$(jq '.workflow_runs | length' <<<"$resp" 2>/dev/null || echo 0)
+            if [ "${n:-0}" -eq 0 ]; then break; fi
             jq -r '.workflow_runs[] | [.id, .created_at] | @tsv' <<<"$resp" >> runs.tsv
             page=$((page + 1))
             if [ "$page" -gt 400 ]; then
