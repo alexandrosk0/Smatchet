@@ -945,9 +945,22 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
     // these changes behind Save / Discard; the snapshot on first mutation lets Discard
     // revert. Focused pane only — these mutate the session view-edit state, and
     // resizing a non-focused pane's table first click-focuses it anyway.
-    if (activeViewForGrid && ctx.pane.focused) {
+    //
+    // ALSO strict view ownership, on both halves: `columns` was built for the RENDERED
+    // view, but every write below lands in ViewState.GetActiveViewMutable() — a
+    // different object whenever resolvePaneView hands back something that is not this
+    // pane's own view (a cross-backend pane whose self-repair is refused renders the
+    // other backend's active view, and a pane holding its OWN stored view is not
+    // necessarily the globally-active one). Without the Id equality a width drag or a
+    // header reorder in such a pane bakes one view's column keys into another view's
+    // ColumnWidths / SortSpecs / ColumnOrder. Same class as the HIGH-1 sort-mirror
+    // guard above, and the same argument makes Id equality sufficient: resolvePaneView's
+    // self-repair already ran this draw, so a pane still mismatching here is exactly a
+    // repair-refused one.
+    const bool paneOwnsRenderedView = activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId;
+    if (paneOwnsRenderedView && ctx.pane.focused) {
         ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-        if (mutableActive) {
+        if (mutableActive && mutableActive->Id == ctx.pane.viewId) {
             bool metaChanged = false;
             ImGuiTable* table = ImGui::GetCurrentTable();
             if (table) {
