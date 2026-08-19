@@ -739,6 +739,10 @@ add_executable(SmatchetTests
     # TicketGridModel.cpp (whose render-plan/column-builder code pulls the ImGui-coupled grid
     # draw headers). ImGui-free after the split, so tests link it without those deps.
     Core/TicketGridSortPure.test.cpp
+    # Ticket-grid column display-order consistency + visual-order permutation predicates,
+    # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over
+    # plain vectors; no extra production .cpp to link.
+    Core/GridColumnOrderPure.test.cpp
     # Update-check release-tag parser lifted from AttachmentAppUpdateService.cpp (CPP_CODE_AUDIT.md
     # #17) — cpr-free pure seam so it links + fuzzes without the update service's HTTP deps.
     Core/SemanticVersionPure.test.cpp
