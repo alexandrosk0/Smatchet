@@ -18,7 +18,6 @@ using tracker_query_suggest::AddSuggestionUnique;
 using tracker_query_suggest::AppendFieldCatalog;
 using tracker_query_suggest::AppendTerms;
 using tracker_query_suggest::AppendValueSuggestions;
-using tracker_query_suggest::AsciiContainsIgnoreCase;
 using tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered;
 using tracker_query_suggest::AsciiStartsWithIgnoreCase;
 using tracker_query_suggest::BeginQuerySuggestPass;
@@ -148,8 +147,9 @@ static std::string BuildJqlUserInsert(const TrackerUser& user) {
 /// Emit non-system users from the cached catalog as JQL value suggestions, matched
 /// case-insensitively anywhere inside display name + email — typing a surname ("smith")
 /// or a mail domain finds the account, not just typing the leading characters. Prefix
-/// matches are collected first so they win the slots when the cap binds; the popup stays
-/// responsive on tenants with thousands of users.
+/// matches take the slots first so the cap can't crowd them out behind mid-name hits.
+/// Capped at a generous limit so the popup stays responsive on tenants with thousands
+/// of users.
 static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& users, const std::string& prefix,
                                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     // Empty-prefix bail-out: on tenants with hundreds of users, dumping an alphabetic slice
@@ -163,36 +163,56 @@ static void AppendJqlUserCatalogSuggestions(const std::vector<TrackerUser>& user
     const std::string pre = ToLowerAsciiCopy(prefix);
     constexpr int kMaxUsers = 50;
     int added = 0;
-    // Two passes: exact prefix matches first, then the remaining substring-only matches.
-    // Without the split a `kMaxUsers` cap reached during a large mid-name sweep could crowd
-    // out the accounts the typed text actually starts.
-    for (int pass = 0; pass < 2 && added < kMaxUsers; ++pass) {
-        const bool prefixPass = pass == 0;
-        for (const auto& user : users) {
-            if (!IsNonSystemTrackerUser(user)) {
-                continue;
+    // Mid-name matches are held back rather than walked in a second pass: this runs on every
+    // omnibox keystroke over the whole catalog (Pillar 1), so each user is case-folded at
+    // most once per field and the email fold is skipped whenever the name already leads.
+    std::vector<QuerySuggestion> midMatches;
+    for (const auto& user : users) {
+        if (!IsNonSystemTrackerUser(user)) {
+            continue;
+        }
+        const std::string nameLower = ToLowerAsciiCopy(user.DisplayName);
+        const size_t namePos = nameLower.find(pre);
+        size_t emailPos = std::string::npos;
+        if (namePos != 0 && !user.EmailAddress.empty()) {
+            emailPos = ToLowerAsciiCopy(user.EmailAddress).find(pre);
+        }
+        if (namePos == std::string::npos && emailPos == std::string::npos) {
+            continue;
+        }
+        std::string label = user.DisplayName;
+        if (!user.EmailAddress.empty()) {
+            label += " (" + user.EmailAddress + ")";
+        }
+        const bool startsWith = namePos == 0 || emailPos == 0;
+        if (!startsWith) {
+            // Held-back matches beyond the cap can never be shown (prefix matches only ever
+            // take slots away from them), so a hot substring like "a" can't grow this vector
+            // past kMaxUsers entries.
+            if (static_cast<int>(midMatches.size()) < kMaxUsers) {
+                midMatches.push_back(QuerySuggestion{std::move(label), BuildJqlUserInsert(user)});
             }
-            const bool nameMatch = prefixPass ? AsciiStartsWithIgnoreCase(user.DisplayName, pre)
-                                              : AsciiContainsIgnoreCase(user.DisplayName, pre);
-            // EmailAddress matching is the rare path (most users search by name). Skip the
-            // ToLowerAsciiCopy cost on every iteration when the name already matched.
-            const bool emailMatch = !nameMatch && !user.EmailAddress.empty() &&
-                                    (prefixPass ? AsciiStartsWithIgnoreCase(user.EmailAddress, pre)
-                                                : AsciiContainsIgnoreCase(user.EmailAddress, pre));
-            if (!nameMatch && !emailMatch) {
-                continue;
-            }
-            std::string label = user.DisplayName;
-            if (!user.EmailAddress.empty()) {
-                label += " (" + user.EmailAddress + ")";
-            }
-            // Pass 2 re-visits the pass-1 winners; AddSuggestionUnique drops them by insert
-            // text, so `added` only counts accounts that actually entered the list.
-            const size_t before = out.size();
-            AddSuggestionUnique(out, seen, std::move(label), BuildJqlUserInsert(user));
-            if (out.size() != before && ++added >= kMaxUsers) {
-                break;
-            }
+            continue;
+        }
+        if (added >= kMaxUsers) {
+            continue;
+        }
+        const size_t before = out.size();
+        AddSuggestionUnique(out, seen, std::move(label), BuildJqlUserInsert(user));
+        // AddSuggestionUnique drops empty / duplicate inserts, so only entries that actually
+        // reached the list consume a slot.
+        if (out.size() != before) {
+            ++added;
+        }
+    }
+    for (auto& mid : midMatches) {
+        if (added >= kMaxUsers) {
+            break;
+        }
+        const size_t before = out.size();
+        AddSuggestionUnique(out, seen, std::move(mid.Label), std::move(mid.Insert));
+        if (out.size() != before) {
+            ++added;
         }
     }
 }
