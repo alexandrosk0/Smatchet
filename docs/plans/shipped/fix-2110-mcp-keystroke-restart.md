@@ -47,7 +47,10 @@ immediately after the inner `ImGui::InputText`, and returned to the caller.
 |---|---|
 | `Source/Core/include/Ui/SmatchetSecretInput.h` | Add a defaulted `bool* outEditing = nullptr` out-param; set it from `ImGui::IsItemActive()` immediately after the inner `InputText`, before the `SameLine`/`SmallButton`/`TextDisabled` chain. Defaulted, so the other 8 call sites are untouched. |
 | `Source/Core/src/Ui/SmatchetPreferencesUi.cpp` | `DrawMcpSectionBody`: capture `tokenEditing` (via the new out-param) and `portEditing` (`IsItemActive()` after `InputInt`); gate the token + port terms of the dirty diff and their `d.cfg` assignments on `!editing`. |
-| `docs/plans/active/fix-2110-mcp-keystroke-restart.md` | This plan. |
+| `tests/ui/mcp_prefs_commit_gate.test.cpp` | **New.** Bucket-E coverage: variant 1 drives the real `SmatchetSecretInputText` and asserts the out-param reports focus while a caller-side `IsItemActive()` does not; variant 2 locks the gate composition (both halves gated) against a replica of the commit block. |
+| `tests/ui/CMakeLists.txt` | Enrol the new TU in `_SMATCHET_UI_TEST_SOURCES`. |
+| `tests/ui/ui_tests_registry.cpp` | Declare + call `SmatchetRegisterMcpPrefsCommitGateTests` inside the existing `#if defined(SMATCHET_WITH_MCP)` block. |
+| `docs/plans/fix-2110-mcp-keystroke-restart.md` | This plan. |
 
 ## Existing utilities reused
 
@@ -215,9 +218,35 @@ Diff touches `Source/Core/` (one header, one UI TU), so the gates are declared:
    so the ship-loop's visual-validation exception fired and the built exe was handed to the user.
    Verdict returned clean on all three steps: zero stop/rebind/start cycles while typing a token
    and exactly one on focus loss; the same for "MCP Port"; and one cycle per checkbox toggle,
-   unchanged. The widget still has no automated coverage, so these three steps remain
-   un-regression-gated — a pre-existing gap in Preferences → Integrations, not one this change
-   introduces.
+   unchanged. Steps 4-5 are now regression-gated by the bucket-E coverage in step 7; step 6 (the
+   checkboxes) is covered by variant 2's ungated-checkbox assertions.
+7. **Bucket-E — PASS, both variants.** `tests/ui/mcp_prefs_commit_gate.test.cpp`, run against a
+   freshly-built `ninja-ui-test-msvc` as
+   `Smatchet.exe cmd ui_test.run --name=<variant> --spawn --yes` → `{"passed":1,"failed":0,
+   "tested":1}` for each of `McpPrefs / SecretInput_ReportsEditingState` and
+   `McpPrefs / CommitGate_OneSyncPerBurst`.
+   - Variant 1 binds the **real** production header: it asserts `outEditing` reports keyboard focus
+     *and* that a caller-side `ImGui::IsItemActive()` sampled after the compound widget returns is
+     **false** mid-typing (it reads the trailing `SmallButton` / `TextDisabled`). Deleting the
+     out-param and "simplifying" to a call-site sample reintroduces #2110 and fails here first.
+   - Variant 2 is a **replica** of the commit block (`SmatchetPreferencesUi.cpp:920-951` —
+     `DrawMcpSectionBody` is anonymous-namespace and needs a live `AppController` + `PluginHost`,
+     so it is not callable from a test TU). It carries a drift warning naming the exact production
+     lines that invalidate it. It asserts a typing burst syncs zero times and writes no prefix into
+     cfg, focus loss commits exactly once, idle frames do not re-sync, and — moving the checkbox
+     state *without* stealing focus — that gating only the comparison (the tempting simplification)
+     would flush the half-typed token, while the gated assignment does not.
+   - Residual: the "MCP Port" `InputInt` is not driven. Its gate is the same composition, but the
+     test engine cannot address the inner input of an `InputInt`-with-step-buttons by a stable item
+     path, so driving it would be a flaky assert rather than coverage. It stays on step 5's manual
+     verification.
+   - Two environment notes for whoever re-runs this: the `--spawn` child adopts the parent's
+     configured MCP token, so a profile holding one returns HTTP 401 — point `SMATCHET_USER_DATA`
+     at a scratch dir for a clean profile — and `SmatchetCore_DX12` currently fails to build with
+     `SMATCHET_BUILD_UI_TESTS=ON` for a **pre-existing** reason unrelated to this change
+     (`tests/ui/ai_chat_panel.test.cpp` guards only on `SMATCHET_BUILD_UI_TESTS` while the
+     `UiDrawSession` members it uses are under `SMATCHET_WITH_AI`, which that target omits by
+     design). This TU's own DX12 object compiles clean; the gap is filed separately.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
