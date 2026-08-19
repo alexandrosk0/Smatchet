@@ -149,6 +149,27 @@ jobs:
 
           count=$(wc -l < doomed.tsv)
           bytes=$(awk -F'\t' '{s += $3} END {print s + 0}' doomed.tsv)
+          echo "selected ${count} artifacts older than ${EFFECTIVE_AGE_DAYS}d, $(numfmt --to=iec-i --suffix=B "$bytes") reclaimable"
+
+          # Group per-run artifacts under one name, materialised to a file.
+          #
+          # NOT `sort | head`: head closes the pipe after N lines, sort takes
+          # EPIPE, and pipefail turns that into a step failure as soon as the
+          # grouped output outgrows the pipe buffer. That is every real store —
+          # the first live run died here at exit 141.
+          #
+          # Strip trailing `-<digits>` segments REPEATEDLY, not once: names like
+          # `coverage-<pr>-<run_id>` carry two, and stripping only the run id
+          # left one row per PR (4000 of them in the store) instead of a single
+          # `coverage` row. `+` is fine under mawk; only {n,m} intervals are not.
+          awk -F'\t' '{
+                    name = $2
+                    while (name ~ /-[0-9]+$/) sub(/-[0-9]+$/, "", name)
+                    c[name]++; b[name] += $3
+                  }
+                  END { for (k in b) printf "%s\t%d\t%d\n", k, c[k], b[k] }' doomed.tsv \
+            | sort -t"$(printf '\t')" -k3 -rn > grouped.tsv
+          groups=$(wc -l < grouped.tsv)
 
           {
             echo "## Actions storage cleanup (${mode})"
@@ -164,19 +185,13 @@ jobs:
             echo ""
             echo "| artifact | count | bytes |"
             echo "|---|---:|---:|"
-            # Strip a trailing -<run_id> so per-run artifacts group under one
-            # name. Explicit character class, not a {6,} interval: ubuntu-latest
-            # ships mawk, which silently ignores interval expressions.
-            awk -F'\t' '{
-                        name = $2
-                        sub(/-[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*$/, "", name)
-                        c[name]++; b[name] += $3
-                      }
-                      END { for (k in b) printf "%s\t%d\t%d\n", k, c[k], b[k] }' doomed.tsv \
-              | sort -t"$(printf '\t')" -k3 -rn | head -25 \
-              | while IFS="$(printf '\t')" read -r k c b; do
-                  printf '| `%s` | %d | %s |\n' "$k" "$c" "$(numfmt --to=iec-i --suffix=B "$b")"
-                done
+            while IFS="$(printf '\t')" read -r k c b; do
+              printf '| `%s` | %d | %s |\n' "$k" "$c" "$(numfmt --to=iec-i --suffix=B "$b")"
+            done < <(head -25 grouped.tsv)
+            if [ "${groups}" -gt 25 ]; then
+              echo ""
+              echo "_(showing the 25 largest of ${groups} distinct artifact names)_"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [ "${APPLY}" != "true" ]; then
