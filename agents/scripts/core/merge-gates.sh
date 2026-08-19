@@ -477,12 +477,19 @@ poll_merge_gates() {
         fi
     fi
 
-    # Read GraphQL document into a variable. `gh api graphql -f query=@file`
-    # does NOT read the file — it sends the literal `@filename` string, which
-    # the GraphQL parser then chokes on at the leading `@` (directive marker).
-    # The canonical pattern is to pass the document body as a string field.
-    local query_body
-    query_body=$(<"$QUERY_FILE")
+    # The GraphQL document is handed to gh as `-F query=@"$QUERY_FILE"` at the
+    # call site below — gh's TYPED field (`-F`) expands a leading `@` to the
+    # file's contents, so the document never crosses the process boundary on
+    # argv. The RAW field (`-f`) does NOT expand `@`; it would send the literal
+    # `@filename` string and the GraphQL parser would choke on the leading `@`
+    # as a directive marker. That asymmetry is why the flag letter matters here.
+    #
+    # Keeping the ~7.8 KB document off argv is not cosmetic: Windows caps a
+    # CreateProcess command line at 32,767 chars, and the spliced --jq filter
+    # alone is ~24.8 KB. Passing both put every Windows poll at ~32.7 KB, i.e.
+    # over the cap, so gh was never exec'd at all — `Argument list too long`,
+    # three times, scored as GH_API_DOWN. Linux (ARG_MAX ~2 MB) never saw it.
+    # The budget assertion in tests/bats/merge_gates.bats holds the line.
 
     # ----------------------------------------------------------------------
     # Required-context ground-truth — branch_protection.required_contexts from
@@ -642,10 +649,28 @@ poll_merge_gates() {
                        -f owner="$owner" \
                        -f repo="$repo" \
                        -F pr="$prNumber" \
-                       -f query="$query_body" \
+                       -F query=@"$QUERY_FILE" \
                        --jq "$GATE_FILTER" 2>&1); then
             gh_fails=$((gh_fails+1))
             echo "Poll $((p+1)): gh failed ($gh_fails/3): $data"
+            # E2BIG is a LOCAL exec failure, not a GitHub outage — the argv we
+            # built is larger than the OS accepts, so retrying is pointless and
+            # "GH_API_DOWN" names the wrong thing (it sent an on-call reader
+            # looking at GitHub's status page for a bug in this file). Bail on
+            # the first occurrence with a diagnosis that points at the filter.
+            # Matched with `case`, not `printf | grep -q`: this script runs
+            # under `set -o pipefail`, and grep -q exits on the first match,
+            # so the producer can take SIGPIPE (141) and hand the pipeline a
+            # non-zero status even though the pattern DID match — the arm would
+            # then silently never fire. The pattern drops the leading letter
+            # so it matches either capitalisation of the errno string the shell
+            # prints ("Argument list too long" / "argument list too long").
+            case "$data" in
+                *'rgument list too long'*)
+                    echo "GH_ARGV_TOO_LONG — the spliced --jq filter (${#GATE_FILTER} chars) exceeds this OS's exec argv limit (Windows: 32767). Shrink merge-gates.d/10-gate-filter.sh or move the filter off argv; this is NOT a GitHub outage."
+                    return 3
+                    ;;
+            esac
             if [ "$gh_fails" -ge 3 ]; then
                 echo "GH_API_DOWN"
                 return 3

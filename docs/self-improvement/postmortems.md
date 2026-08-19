@@ -34,6 +34,100 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-18 · PR #2120 · masked gate: the Windows merge-gate poll stopped exec'ing `gh` at all
+
+### What escaped
+`feat(merge-gates): warn on a discarded blocking twin, document the 405 recovery`
+(#2120, `d63a7009`) grew [`merge-gates.d/10-gate-filter.sh`](../../agents/scripts/core/merge-gates.d/10-gate-filter.sh)
+from 23,019 to 25,185 bytes. `poll_merge_gates` splices that template into `--jq`
+and, until this PR, also passed the 7,795-char GraphQL document as an argv field
+(`-f query="$query_body"`). The exec'd command line therefore reached ~32.7 KB —
+past the Windows `CreateProcess` limit of 32,767 characters — so **every**
+`gh api graphql` call the gate makes died before running, with
+`gh: Argument list too long`. The retry loop then classified three consecutive
+E2BIGs as `GH_API_DOWN` (rc 3): a GitHub outage. Measured on the tip:
+substituted filter 24,865 chars + document 7,795 chars = 32,660 before the `gh`
+path, the flags and the remaining fields; before #2120 the same sum was ~30,494,
+about 2.2 KB under the cap.
+
+The escape fails **closed** — `safe-merge.sh` refused to arm auto-merge rather
+than merging blind — but for the ~5 days between `d63a7009` and this entry, no
+Windows-hosted orchestrator, `git-janitor` or `smatchet-merge-watcher` session
+had a working merge gate, and the refusal named the wrong cause. Found by hand on
+PR #2127, when the poll refused a PR whose checks were all green. CI never saw
+it: `merge_gates.bats` runs on ubuntu-latest, where `ARG_MAX` is ~2 MB.
+
+### Root cause
+Three compounding, none of them the +2,166 bytes:
+
+1. **The argv budget was implicit.** Two independently-growing payloads — the jq
+   filter template and the GraphQL document — both crossed argv, and nothing
+   measured their sum. No test, no lint, no comment named the 32,767 cap. The
+   headroom was consumed the way headroom always is: by a change that had no
+   reason to know it was spending any.
+2. **The gate's own gate runs where the fault is invisible.** Linux `ARG_MAX` is
+   ~60× the Windows command-line cap, so the bats suite execs the identical
+   command line happily. The platform that hosts every interactive session has no
+   lane at all, which makes a Windows-only regression in shared tooling ship
+   green by construction.
+3. **The failure classifier had no exec-failure arm.** An exec that never
+   happened and an API that answered 5xx both surface here as "gh exited
+   non-zero", and the loop's only terminal verdict was `GH_API_DOWN`. A local,
+   permanent, self-inflicted fault was reported as a remote, transient,
+   third-party one — the misattribution most likely to make an operator reach for
+   `SKIP_MERGE_GATES` and merge past a gate that was never consulted.
+
+A fourth, smaller: the comment above the old `query_body=$(<"$QUERY_FILE")` read
+asserted that `gh api graphql -f query=@file` does *not* expand the `@`. That is
+true of `-f/--raw-field` and false of `-F/--field`, and the comment's confident
+wrongness is why the document sat on argv for as long as it did.
+
+### Preventing gate
+Three, all in the PR carrying this entry:
+
+1. **Take the document off argv.** `-F query=@"$QUERY_FILE"` — `-F/--field`
+   reads a leading `@` as a filename, `-f/--raw-field` does not. That frees 7,795
+   chars and makes the GraphQL document free to grow forever. `--jq` has no file
+   form in `gh`, so the filter stays on argv and stays the one thing under budget.
+2. **Assert the budget, in bats.** `argv budget: spliced gate filter stays well
+   under the Windows argv cap` substitutes every placeholder using the **live**
+   `project.config.json` required-context set — the term that grows as branch
+   protection grows, and the one a synthetic fixture would understate — and
+   asserts the result is under 30,000 chars, leaving ~2.7 KB for the flags, the
+   `gh` path and future contexts. A sibling test pins the `-F query=@"$QUERY_FILE"`
+   form so the document cannot drift back onto argv. Both are **length**
+   assertions, not exec tests, so they catch a Windows-only fault while running on
+   Linux — the shape any cross-platform limit check has to take here.
+3. **Diagnose E2BIG as E2BIG.** The retry loop now bails immediately with
+   `GH_ARGV_TOO_LONG`, naming the filter's measured length and the 32,767 cap,
+   before a third failure can be laundered into `GH_API_DOWN`. Asserted by `E2BIG
+   is diagnosed as an argv overflow, not as a GitHub outage`, which stubs `gh` on
+   `PATH` to emit the OS message and requires rc 3, the new token, and the
+   *absence* of `GH_API_DOWN`.
+
+Named and not fixed here: there is still no Windows lane for `merge_gates.bats`,
+so gate 2 is a proxy rather than a reproduction. The proxy is the better
+long-term shape — a length check is deterministic and cheap where an exec probe
+is neither — but a platform whose exec limit differs from CI's by that much, and
+which hosts every interactive session, deserves at least one smoke lane.
+
+### Eval case
+**Yes — agent-reviewable.** Input: the #2120 diff (a +2,166-byte growth of a
+shell template that is spliced into a command line) together with the call site
+in `merge-gates.sh` showing both that template and a 7.8 KB document crossing
+argv. Reference outcome: a competent reviewer observes that the invocation
+carries two independently-growing payloads on a fixed-size channel and asks what
+the platform's exec limit is and whether either payload needs to be on argv at
+all. No execution required — the lesson (*data that grows must not travel on a
+fixed-size channel*) is visible in the diff. Weaker scoring variant, same input:
+the pre-fix comment justifies keeping the document on argv with a backwards claim
+about `gh`'s `@` expansion, so a reviewer who checks the flag semantics catches
+both the false comment and the fix.
+
+### Filed as
+This entry + [`tooling/2026-08-18-merge-gate-argv-exceeds-windows-exec-cap.md`](categories/tooling/2026-08-18-merge-gate-argv-exceeds-windows-exec-cap.md)
+(the missing Windows lane for shared shell tooling).
+
 ## 2026-08-07 · PR #1962 · Merged past a CodeRabbit review that never happened (`cr-out-of-band` + `cr-disposition:cr-rate-limited`), and the escape detector reported the window clean
 
 ### What escaped

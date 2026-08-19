@@ -3566,3 +3566,68 @@ blocked_with_bot_threads() {
     rm -f "$f"
     unset MERGE_GATES_CR_INSTALLED
 }
+
+# ----------------------------------------------------------------------------
+# argv budget — the Windows CreateProcess command-line cap (32,767 chars).
+#
+# The poll hands gh two large blobs. The GraphQL document now rides `-F
+# query=@file` (read by gh, never on argv), but the spliced `--jq` filter has
+# no file form and MUST cross the process boundary as one argument. When
+# filter + document were both on argv the total reached ~32.7 KB and Windows
+# refused to exec gh at all — `Argument list too long`, three polls in a row,
+# reported as GH_API_DOWN. Linux (ARG_MAX ~2 MB) never reproduced it, so it
+# shipped green and broke every Windows merge on develop.
+#
+# These assertions are the preventing gate: they fail on the PR that grows the
+# filter past the budget, on any platform, instead of on a Windows merge weeks
+# later.
+# ----------------------------------------------------------------------------
+
+@test "argv budget: spliced gate filter stays well under the Windows argv cap" {
+    # Substitute every placeholder the way poll_merge_gates does, using the
+    # LIVE project.config.json required-context set — that set is what actually
+    # grows with branch protection, and the synthetic test set would understate
+    # it. Then assert the filter alone leaves room for the rest of the argv.
+    local filter req_ctx_json
+    # shellcheck source=/dev/null
+    . "$SCRIPTS_DIR/merge-gates.d/10-gate-filter.sh"
+    filter="$_MG_GATE_FILTER_TEMPLATE"
+    req_ctx_json=$(jq -r '.branch_protection.required_contexts[]? // empty' \
+        "$REPO_ROOT/project.config.json" | jq -R . | jq -sc 'map(select(length > 0))')
+    filter="${filter//__ORCH_USER__/some-fairly-long-github-login}"
+    filter="${filter//__REQUIRED_CONTEXTS__/$req_ctx_json}"
+    filter="${filter//__BLOCK_ALLOWLIST_RE__/advisory}"
+
+    # 30,000 leaves ~2.7 KB of headroom under the 32,767 cap for the flags, the
+    # gh path, and future required contexts. Blowing this budget means the
+    # filter has to move off argv (a jq -f file + standalone jq), not that the
+    # budget should be raised.
+    echo "spliced filter length: ${#filter}"
+    [ "${#filter}" -lt 30000 ]
+}
+
+@test "argv budget: GraphQL document is passed by file reference, not on argv" {
+    # `-F` (typed field) expands a leading @ to file contents; `-f` (raw field)
+    # does not. Regressing this flag silently puts ~7.8 KB back on argv and
+    # re-arms the Windows E2BIG failure.
+    grep -q -- '-F query=@"\$QUERY_FILE"' "$SCRIPTS_DIR/merge-gates.sh"
+    ! grep -q -- '-f query="\$query_body"' "$SCRIPTS_DIR/merge-gates.sh"
+}
+
+@test "E2BIG is diagnosed as an argv overflow, not as a GitHub outage" {
+    # A local exec failure must not be scored GH_API_DOWN — that names GitHub
+    # for a bug in this repo's own filter, and burns three poll intervals
+    # retrying something that cannot succeed.
+    local stub="$BATS_TEST_TMPDIR/bin"
+    mkdir -p "$stub"
+    cat > "$stub/gh" <<'STUB'
+#!/usr/bin/env bash
+echo "/c/Program Files/GitHub CLI/gh: Argument list too long" >&2
+exit 126
+STUB
+    chmod +x "$stub/gh"
+    PATH="$stub:$PATH" run poll_merge_gates org repo 1
+    [ "$status" -eq 3 ]
+    [[ "$output" == *"GH_ARGV_TOO_LONG"* ]]
+    [[ "$output" != *"GH_API_DOWN"* ]]
+}
