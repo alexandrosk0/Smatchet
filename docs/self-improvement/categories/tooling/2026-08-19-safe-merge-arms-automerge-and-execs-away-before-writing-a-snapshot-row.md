@@ -3,7 +3,9 @@
 - **Category**: tooling
 - **Priority**: P1
 - **Date**: 2026-08-19
-- **Observed on**: PR #2115 (permanent hole, past the janitor's 6 h repair window) and PR #2134 (hole closed by hand ~1 h later, by this entry's PR)
+- **Observed on**: PR #2115 (permanent hole, past the janitor's 6 h repair window), PR #2134 (hole closed by
+  hand ~1 h later, by this entry's PR #2137), and PR #2137 itself (the predicted regress, observed: it armed
+  through `safe-merge.sh`, merged at `e272d630`, and left no row — closed by hand in the follow-up PR)
 - **Status**: open
 
 ## What happened
@@ -54,7 +56,10 @@ the routine ones.
 There is also a **regress** the current design does not terminate: a `chore(ledger)` PR is itself a
 merge that owes a row, so landing row N opens hole N+1. The only terminators are (a) the janitor's
 6 h backfill actually running, or (b) batching the row into an unrelated develop-bound commit. This
-entry's own PR is an instance — it lands #2134's row and will itself merge un-snapshotted.
+entry's own PR #2137 is an instance, and the prediction held: it landed #2134's row, armed through
+`safe-merge.sh`, merged at `e272d630` on a 22/22 `GATES_PASSED` poll, and wrote nothing. Its row is in
+the follow-up PR carrying this edit — which is itself instance four. The chain does not converge by
+hand-appending; only action 1 below ends it.
 
 ## Concrete next action
 
