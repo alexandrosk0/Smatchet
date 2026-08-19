@@ -78,3 +78,29 @@ the admin-merge carve-out, i.e. the documented safe path pushes people onto the 
 `cr-out-of-band` is the repo's designated pressure valve for exactly the CR-quota wedge that
 cost #2070 116 watcher cycles; a pressure valve that needs an undocumented `gh run rerun` to
 open is not a pressure valve.
+
+## Recurrence — 2026-08-19, [PR #2124](https://github.com/alexandrosk0/Smatchet/pull/2124)
+
+Same defect, different trigger, one day later. Not a quota exhaustion this time: CodeRabbit
+posted `Review skipped: manual review required for this OSS repository` (the repo is under
+CR's 10-star auto-review threshold, so CR reviews **nothing** unsolicited). The gate's own
+auto-nudge posted `@coderabbitai review`; CR never answered. `CR findings (0 actionable)`
+sat `pending / awaiting CodeRabbit review on current head` for **2h10m** with 0 reviews on
+the PR, and the 90-poll gate run ended `GATES_TIMEOUT`.
+
+Applying `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review` again changed
+nothing until `gh run rerun 32190691612` was issued by hand, exactly as documented above.
+After the re-run the status flipped to `cr-out-of-band label set — gate overridden` and the
+next poll reached `GATES_PASSED`.
+
+Two things this recurrence adds to the fix list:
+
+- **Fix 1 (`labeled` / `unlabeled` trigger) is the load-bearing one.** Both incidents were
+  un-wedged by a manual re-run whose only purpose was making the action re-read labels.
+- **The sub-10-star state is permanent, not incidental.** Unlike a rate limit, it never
+  clears on its own — every PR on this repo reaches `pending` and stays there unless a human
+  asks CR for a review or waives the gate. #2117, #2119, and #2122 all merged carrying
+  `CR findings (0 actionable) = pending`, i.e. the gate is routinely bypassed rather than
+  satisfied. Worth deciding explicitly whether the nudge should be retried on a schedule, or
+  whether the CR gate should have a documented terminal disposition for repos CR will not
+  auto-review — the status quo is a required-looking check that nobody can turn green.
