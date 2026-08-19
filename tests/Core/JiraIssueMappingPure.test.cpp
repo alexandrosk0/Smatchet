@@ -119,6 +119,93 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — watchers absent yields empt
     CHECK(GetField(results[0], "watchers").empty());
 }
 
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — comment mapped even when NOT a selected field "
+          "(the production shape) [regression]") {
+    // REGRESSION PIN: production selectedFields never contains "comment" — the legacy field is
+    // erased from the picker (EraseCatalogLegacyCommentField), so no view can select it. The wire
+    // request still always asks for it (BuildFetchFieldListsFromView hard-codes it into
+    // outFieldsList). Keying the mapping off selectedFields silently discarded the payload every
+    // sync, leaving BOTH the Comments-cell hover tooltip (fieldValues["comment"]) and its numeric
+    // count (fieldValues["comments"]) empty. The mapping must be unconditional.
+    nlohmann::json commentBody;
+    commentBody["body"] = "A comment";
+    commentBody["author"]["displayName"] = "Alice";
+    commentBody["created"] = "2024-01-15T12:34:56.000Z";
+
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array({commentBody});
+    commentObj["total"] = 1;
+
+    nlohmann::json fields;
+    fields["summary"] = "Row without a comment column";
+    fields["comment"] = commentObj;
+
+    const nlohmann::json issue = MakeIssue("SMAT-40", fields);
+    const std::vector<std::string> selected = {"summary", "status"}; // realistic: no "comment"
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    const std::string blob = GetField(results[0], "comment");
+    CHECK(blob.find("Alice") != std::string::npos);
+    CHECK(blob.find("A comment") != std::string::npos);
+    CHECK(GetField(results[0], "comments") == "1");
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — unconditional comment mapping never fires the "
+          "per-row network fallback (NO per-row network during sync) [regression]") {
+    // The post-loop mapping passes a NO-OP fetch: with an empty inline array and total > 0,
+    // ResolveJiraCommentField's per-issue HTTP top-up must NOT run during sync — the grid
+    // cell's one-shot first-hover fetch covers that payload shape instead. The count still maps.
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array();
+    commentObj["total"] = 2;
+
+    nlohmann::json fields;
+    fields["comment"] = commentObj;
+
+    const nlohmann::json issue = MakeIssue("SMAT-42", fields);
+    const std::vector<std::string> selected = {"summary"}; // production shape: no "comment"
+
+    bool fetchCalled = false;
+    auto liveFetch = [&](const std::string&, nlohmann::json&) -> bool {
+        fetchCalled = true;
+        return false;
+    };
+
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, liveFetch, results);
+
+    CHECK(!fetchCalled);
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "comments") == "2");
+    CHECK(GetField(results[0], "comment").empty());
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — selecting the `comments` count column does not "
+          "clobber the derived count [regression]") {
+    // The loop's absent-key branch writes "" for `comments` (Jira's payload has no literal
+    // `comments` key); the unconditional comment mapping runs AFTER the loop and must win.
+    nlohmann::json commentBody;
+    commentBody["body"] = "A comment";
+
+    nlohmann::json commentObj;
+    commentObj["comments"] = nlohmann::json::array({commentBody});
+    commentObj["total"] = 3;
+
+    nlohmann::json fields;
+    fields["comment"] = commentObj;
+
+    const nlohmann::json issue = MakeIssue("SMAT-41", fields);
+    const std::vector<std::string> selected = {"comments"}; // the synthetic count column
+    std::vector<CachedTicket> results;
+    AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results);
+
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "comments") == "3");
+    CHECK(!GetField(results[0], "comment").empty());
+}
+
 TEST_CASE("AppendCachedTicketFromJiraSearchIssue — inline comments used when present") {
     nlohmann::json commentBody;
     commentBody["body"] = "A comment";

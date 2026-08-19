@@ -21,6 +21,7 @@
 #include "FieldEditAuditSource.h"
 #include "ConfigManager.h"
 #include "Tracker/CollaborationPreconditionPure.h" // shared, unit-tested collaboration preflight + error map
+#include "Tracker/CommentBlobFormatPure.h"         // shared Comments-cell tooltip blob formatter
 #include "FieldCatalogCache.h"
 #include "ITrackerActivity.h"
 #include "JiraClient.h"
@@ -873,32 +874,32 @@ Result<std::vector<TrackerIssueComment>> AppController::FetchIssueComments(const
     return outcome;
 }
 
-void AppController::UpdateCachedCommentCount(const std::string& issueId, int newCount) {
-    // issue-comments fix (#1291) — after the comments modal fetches / re-fetches a thread, push the live
-    // count into the cached ticket so the grid's Comments column reflects a freshly-posted comment
-    // without a full re-sync. Called on the UI thread from the modal's main-thread post-back (mirrors
-    // the optimistic-update pattern: mutate a ticket copy → UpdateTicket → SaveTicket + grid refresh).
-    // Two gates keep it well-behaved: (1) only count-backed backends — if the cell currently carries no
-    // count (Plane leaves fieldValues["comments"] empty for its icon-only cell), leave it empty so the
-    // cell stays icon-only; (2) skip when unchanged, so the routine modal-open fetch causes no churn.
-    if (newCount < 0) {
-        return;
-    }
+void AppController::UpdateCachedCommentsFromThread(const std::string& issueId,
+                                                   const std::vector<TrackerIssueComment>& comments) {
+    // issue-comments fix (#1291, extended) — after a comment-thread fetch (comments modal open,
+    // post-success re-fetch, or the grid tooltip's first-hover lazy fetch), push the observed
+    // thread into the cached ticket so the grid reflects it without a full re-sync: the numeric
+    // `comments` count AND the flattened `comment` blob the Comments-cell tooltip renders. The
+    // blob is formatted once here (FormatCommentBlob — the same pipeline the Jira search mapper
+    // uses), never per frame. Called on the UI thread from a main-thread post-back (mirrors the
+    // optimistic-update pattern: mutate a ticket copy → UpdateTicket → SaveTicket + grid refresh).
+    // Skips when both values are unchanged, so a routine modal-open fetch causes no grid churn.
     std::shared_ptr<const std::vector<CachedTicket>> snapshot = GetActiveTicketsSnapshot();
     if (!snapshot) {
         return;
     }
-    const std::string newValue = std::to_string(newCount);
+    const std::string newCount = std::to_string(comments.size());
+    const std::string newBlob = smatchet::tracker::FormatCommentBlob(comments);
     for (const CachedTicket& ticket : *snapshot) {
         if (ticket.id != issueId) {
             continue;
         }
-        const std::string& existing = ticket.GetFieldValueRef("comments");
-        if (existing.empty() || existing == newValue) {
-            return; // icon-only backend (keep empty) or no change (avoid a needless grid refresh)
+        if (ticket.GetFieldValueRef("comments") == newCount && ticket.GetFieldValueRef("comment") == newBlob) {
+            return; // no change (avoid a needless grid refresh)
         }
         CachedTicket updated = ticket;
-        updated.fieldValues["comments"] = newValue;
+        updated.fieldValues["comments"] = newCount;
+        updated.fieldValues["comment"] = newBlob;
         UpdateTicket(updated);
         return;
     }

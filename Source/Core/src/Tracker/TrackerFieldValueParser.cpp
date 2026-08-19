@@ -2,7 +2,9 @@
 #include "TrackerFieldValueUtils.h"
 
 #include "Json/BoundedJsonParse.h"
+#include "JiraCommentMappingPure.h"
 #include "Logger.h"
+#include "Tracker/CommentBlobFormatPure.h"
 #include "StringUtil.h"
 
 #include <nlohmann/json.hpp>
@@ -488,92 +490,12 @@ void AppendTrackerUsersFromJsonArray(const nlohmann::json& arr, std::vector<Trac
     }
 }
 
-std::string CleanCommentOutputAscii(const std::string& input) {
-    std::string cleaned;
-    cleaned.reserve(input.size());
-    for (size_t i = 0; i < input.size(); ++i) {
-        const unsigned char c = static_cast<unsigned char>(input[i]);
-        if (i + 2 < input.size() && c == 0xE2 && static_cast<unsigned char>(input[i + 1]) == 0x80 &&
-            static_cast<unsigned char>(input[i + 2]) == 0xA2) {
-            cleaned += "* ";
-            i += 2;
-        } else {
-            cleaned.push_back(static_cast<char>(c));
-        }
-    }
-    return cleaned;
-}
-
 std::string ParseComments(const nlohmann::json& commentsArray) {
-    const size_t kMaxComments = 20;
-    const size_t kMaxTotalLength = 12000;
-    const size_t kMaxDebugPreviewChars = 400;
-    const size_t kMaxFallbackBodyChars = 4000;
-    size_t emptyBodyDebugLogs = 0;
-
-    if (!commentsArray.is_array() || commentsArray.empty()) {
-        return std::string();
-    }
-
-    std::ostringstream result;
-    size_t totalLength = 0;
-    size_t commentCount = 0;
-
-    for (auto it = commentsArray.rbegin(); it != commentsArray.rend() && commentCount < kMaxComments; ++it) {
-        const auto& commentNode = *it;
-        if (!commentNode.is_object()) {
-            continue;
-        }
-
-        const std::string author = ParseCommentAuthor(commentNode);
-        std::string date;
-        if (commentNode.contains("created") && commentNode["created"].is_string()) {
-            date = FormatDateIfIso(commentNode["created"].get<std::string>());
-        }
-
-        std::string commentText;
-        const nlohmann::json* bodyNode = nullptr;
-        if (commentNode.contains("body")) {
-            const auto& body = commentNode["body"];
-            bodyNode = &body;
-            commentText = AdfBodyToPlainText(body);
-        }
-
-        if (commentText.empty()) {
-            if (bodyNode != nullptr) {
-                std::string bodyPreview = SafeJsonDump(*bodyNode);
-                if (bodyPreview.size() > kMaxDebugPreviewChars) {
-                    bodyPreview.resize(kMaxDebugPreviewChars);
-                }
-                if (emptyBodyDebugLogs < 3) {
-                    LOG_DEBUG("JiraClient: comment body was empty after extraction. body dump preview: %s",
-                              bodyPreview.c_str());
-                    emptyBodyDebugLogs++;
-                }
-                if (bodyPreview.size() > kMaxFallbackBodyChars) {
-                    bodyPreview.resize(kMaxFallbackBodyChars);
-                }
-            }
-            continue;
-        }
-
-        commentText = CleanCommentOutputAscii(commentText);
-
-        std::string entry = "[" + author + "] " + date + "\n" + commentText + "\n";
-
-        if (totalLength + entry.length() > kMaxTotalLength) {
-            break;
-        }
-
-        if (commentCount > 0) {
-            result << "\n";
-        }
-        result << entry;
-        totalLength += entry.length();
-        commentCount++;
-    }
-
-    return result.str();
+    // Delegates to the ONE shared tooltip-blob pipeline: the Jira node mapper
+    // (author/ADF-body/timestamp extraction) feeds the backend-agnostic
+    // FormatCommentBlob, so Jira search rows, the lazy hover fetch and the
+    // modal post-back all produce byte-identical fieldValues["comment"] text.
+    return smatchet::tracker::FormatCommentBlob(smatchet::jira::MapJiraIssueComments(commentsArray));
 }
 
 static std::string FormatChangelogTimeValue(const std::string& value) {

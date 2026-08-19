@@ -232,6 +232,17 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # ConfigManager + std only).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParser.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueUtils.cpp"
+        # ParseComments now delegates through the shared Comments-tooltip pipeline:
+        # MapJiraIssueComments (JiraCommentMappingPure, which needs ParseIso8601ToUnixSec
+        # from GitHubClientHelpers) + FormatCommentBlob (CommentBlobFormatPure). All three
+        # are pure cpr/ImGui/GL-free TUs. The formatter + Jira-mapper doctests ride along so
+        # the linux-container subset lane covers the Comments-tooltip pipeline directly.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
+        Core/CommentBlobFormatPure.test.cpp
+        Core/JiraCommentMappingPure.test.cpp
+        Core/JiraIssueMappingPure.test.cpp
         # --- Offline-queue replay + config-save concurrency (debt P2 TSan-subset-expand,
         #     #1339 follow-up). OfflineQueueService drains PendingCreate / PendingFieldEdit
         #     on the sync/reconnect thread while a live backend swap can land mid-replay
@@ -1061,6 +1072,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # Comments-cell tooltip blob — the ONE shared formatter behind fieldValues["comment"]
+    # (ParseComments delegation, the lazy first-hover fetch and the modal post-back all
+    # converge here). Pure — no I/O, no Logger.
+    Core/CommentBlobFormatPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
