@@ -15,6 +15,10 @@
 # (B) MERGED-PR-BRANCH — refuse a push when the current branch's GitHub PR is
 #     already MERGED or CLOSED (the commits would silently orphan: CI doesn't
 #     fire, the PR view stays frozen, the commits land on a ref nothing reads).
+#     Judged per update record like (A) and (E): the premise is "commits the PR
+#     will never pick up", so only a NON-DELETE update targeting refs/heads/*
+#     can trigger it. A refs/locks/* delete (lock-release.sh) carries no commits
+#     and touches no branch ref, so it is not this guard's business.
 #     Override: SMATCHET_ALLOW_MERGED_PR_PUSH=1 (rare, usually wrong; logged).
 #     Backlog: docs/self-improvement/categories/process.md 2026-05-18 · P2.
 #     Plan: docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md § Slice 3.
@@ -23,7 +27,8 @@
 # by `bash agents/scripts/core/setup-harness.sh <harness>` when safe).
 #
 # (B) skips silently when: branch is develop / main / detached HEAD; `gh` not on
-# PATH; no PR for the branch; PR state OPEN. (A) ignores ref DELETES.
+# PATH; no PR for the branch; PR state OPEN; no pushed update targets a branch
+# ref. (A) and (B) both ignore ref DELETES; (E) exempts them too.
 #
 # (E) REVIEW-VERDICT MARKER — refuse a push carrying a non-protected
 #     refs/heads/* update whose pushed sha has no `$GIT_DIR/review-verdict-<sha>`
@@ -357,6 +362,33 @@ pre-push: REFUSING push — no review-verdict marker for ${rv_missing_ref#refs/h
 EOF
         exit 1
     fi
+fi
+
+# --- (B) scope: only a NON-DELETE update to refs/heads/* can orphan commits ---
+# lock-release.sh pushes ":refs/locks/<slug>" right after a merge — a bare ref
+# delete from a MERGED-PR checkout. It carries no commits and touches no branch
+# ref, so the "commits the PR will never pick up" premise does not hold for it.
+# Empty / unparseable stdin stays on the REFUSE side (fail-closed): a real
+# `git push` always supplies records, so only a synthetic caller lands here.
+parsed_updates=0
+branch_content_push=0
+while read -r _local_ref local_sha remote_ref _remote_sha; do
+    [ -n "$remote_ref" ] || continue
+    parsed_updates=$((parsed_updates + 1))
+    [ "$local_sha" = "$zero_sha" ] && continue   # a DELETE — carries no commits
+    case "$remote_ref" in
+        refs/heads/*) branch_content_push=1 ;;
+    esac
+done <<PUSH_UPDATES
+$push_updates
+PUSH_UPDATES
+
+if [ "$parsed_updates" -eq 0 ]; then
+    branch_content_push=1
+fi
+
+if [ "$branch_content_push" -eq 0 ]; then
+    exit 0
 fi
 
 if ! command -v gh >/dev/null 2>&1; then
