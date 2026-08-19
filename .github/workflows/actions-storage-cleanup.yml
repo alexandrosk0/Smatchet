@@ -1,0 +1,232 @@
+name: Actions storage cleanup
+
+# Reclaims GitHub Actions artifact storage.
+#
+# There are two halves to the storage problem and this janitor is the second.
+# The `retention-days:` cap on every upload-artifact step bounds what NEW runs
+# add to the store — but a cap is applied at UPLOAD time only. Artifacts that
+# were already uploaded keep whatever expiry they were born with (the 90-day
+# repo default), so tightening the caps does nothing for the existing backlog.
+# This sweeps that backlog.
+#
+# DRY-RUN BY DEFAULT on manual dispatch (issue-janitor precedent): it reports
+# what it would delete and reclaims nothing until you pass apply=true. The
+# nightly schedule applies, because by then the only artifacts it can match are
+# ones the retention caps would already have expired.
+#
+# Deleting workflow RUNS (which is what frees LOG storage, as opposed to
+# artifact storage) is a separate opt-in input — it destroys CI history, so it
+# is never on by default and never runs on the schedule.
+
+on:
+  schedule:
+    - cron: '41 4 * * *'   # nightly 04:41 UTC
+  workflow_dispatch:
+    inputs:
+      max_age_days:
+        description: 'Delete artifacts older than this many days'
+        required: false
+        default: '7'
+      apply:
+        description: 'Actually delete (unchecked = dry-run report only)'
+        required: false
+        type: boolean
+        default: false
+      name_filter:
+        description: 'Optional POSIX regex; only artifacts whose name matches are considered'
+        required: false
+        default: ''
+      delete_runs_older_than_days:
+        description: 'DESTRUCTIVE opt-in: also delete workflow runs older than N days (frees log storage). 0 = off'
+        required: false
+        default: '0'
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: actions-storage-cleanup
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    name: Sweep artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      # Schedule always applies; dispatch honours the checkbox (default false).
+      APPLY: ${{ github.event_name == 'schedule' && 'true' || inputs.apply }}
+      MAX_AGE_DAYS: ${{ inputs.max_age_days || '7' }}
+      NAME_FILTER: ${{ inputs.name_filter || '' }}
+      RUN_AGE_DAYS: ${{ inputs.delete_runs_older_than_days || '0' }}
+    steps:
+      - name: Sweep expired-by-policy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${APPLY}" = "true" ]; then mode="APPLY"; else mode="DRY-RUN"; fi
+          # ISO-8601 UTC sorts lexicographically, so the age test is a string
+          # compare inside awk — no `date` fork per artifact across a backlog
+          # that can run to five figures.
+          cutoff=$(date -u -d "${MAX_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "repo=${REPO} mode=${mode} max_age_days=${MAX_AGE_DAYS} filter='${NAME_FILTER}'"
+          echo "cutoff=${cutoff}"
+
+          # Page the whole store BEFORE deleting anything: deleting while
+          # paginating shifts later pages and silently skips artifacts.
+          : > artifacts.tsv
+          page=1
+          while :; do
+            resp=$(gh api "repos/${REPO}/actions/artifacts?per_page=100&page=${page}")
+            n=$(jq '.artifacts | length' <<<"$resp")
+            if [ "$n" -eq 0 ]; then break; fi
+            jq -r '.artifacts[] | [.id, .name, .size_in_bytes, .created_at, .expired] | @tsv' \
+              <<<"$resp" >> artifacts.tsv
+            page=$((page + 1))
+            if [ "$page" -gt 400 ]; then
+              echo "::warning::stopped paging at 400 pages — re-run to sweep the remainder"
+              break
+            fi
+          done
+
+          total=$(wc -l < artifacts.tsv)
+          live_bytes=$(awk -F'\t' '$5 != "true" {s += $3} END {print s + 0}' artifacts.tsv)
+          echo "listed ${total} artifacts, $(numfmt --to=iec-i --suffix=B "$live_bytes") live"
+
+          # Select: not already expired, older than cutoff, matching the filter.
+          awk -F'\t' -v cutoff="$cutoff" -v filter="${NAME_FILTER}" '
+            $5 == "true"                  { next }   # already expired, no bytes held
+            filter != "" && $2 !~ filter  { next }
+            $4 < cutoff                   { print $1 "\t" $2 "\t" $3 }
+          ' artifacts.tsv > doomed.tsv
+
+          count=$(wc -l < doomed.tsv)
+          bytes=$(awk -F'\t' '{s += $3} END {print s + 0}' doomed.tsv)
+
+          {
+            echo "## Actions storage cleanup (${mode})"
+            echo ""
+            echo "| | |"
+            echo "|---|---:|"
+            echo "| artifacts in store | ${total} |"
+            echo "| live bytes held | $(numfmt --to=iec-i --suffix=B "$live_bytes") |"
+            echo "| older than ${MAX_AGE_DAYS}d | ${count} |"
+            echo "| reclaimable | **$(numfmt --to=iec-i --suffix=B "$bytes")** |"
+            echo ""
+            echo "### Reclaimable by artifact"
+            echo ""
+            echo "| artifact | count | bytes |"
+            echo "|---|---:|---:|"
+            # Strip a trailing -<run_id> so per-run artifacts group under one
+            # name. Explicit character class, not a {6,} interval: ubuntu-latest
+            # ships mawk, which silently ignores interval expressions.
+            awk -F'\t' '{
+                        name = $2
+                        sub(/-[0-9][0-9][0-9][0-9][0-9][0-9][0-9]*$/, "", name)
+                        c[name]++; b[name] += $3
+                      }
+                      END { for (k in b) printf "%s\t%d\t%d\n", k, c[k], b[k] }' doomed.tsv \
+              | sort -t"$(printf '\t')" -k3 -rn | head -25 \
+              | while IFS="$(printf '\t')" read -r k c b; do
+                  printf '| `%s` | %d | %s |\n' "$k" "$c" "$(numfmt --to=iec-i --suffix=B "$b")"
+                done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${APPLY}" != "true" ]; then
+            echo ""                                              >> "$GITHUB_STEP_SUMMARY"
+            echo "_Dry run — nothing deleted. Re-run this workflow with **apply** checked to reclaim._" \
+                                                                 >> "$GITHUB_STEP_SUMMARY"
+            echo "DRY-RUN: would delete ${count} artifacts ($(numfmt --to=iec-i --suffix=B "$bytes"))."
+            exit 0
+          fi
+
+          deleted=0
+          freed=0
+          failed=0
+          while IFS=$'\t' read -r id name b; do
+            if gh api -X DELETE "repos/${REPO}/actions/artifacts/${id}" --silent 2>/dev/null; then
+              deleted=$((deleted + 1))
+              freed=$((freed + b))
+              # Pace the deletes: a multi-thousand backlog trips secondary rate
+              # limits otherwise.
+              if [ $((deleted % 100)) -eq 0 ]; then
+                echo "  ... ${deleted}/${count}"
+                sleep 1
+              fi
+            else
+              # 404 = raced with expiry; anything else is likely a secondary
+              # rate limit, so ease off rather than hammering.
+              failed=$((failed + 1))
+              sleep 2
+            fi
+          done < doomed.tsv
+
+          freed_h=$(numfmt --to=iec-i --suffix=B "$freed")
+          echo "deleted ${deleted} artifacts, freed ${freed_h}, ${failed} skipped"
+          {
+            echo ""
+            echo "**Deleted ${deleted} artifacts — freed ${freed_h}** (${failed} skipped)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Sweep old workflow runs (opt-in, frees log storage)
+        # Never on the schedule and never without an explicit positive N: this
+        # destroys CI history, which is a human call, not a cron's.
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.delete_runs_older_than_days != '0' && inputs.delete_runs_older_than_days != '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "${APPLY}" = "true" ]; then mode="APPLY"; else mode="DRY-RUN"; fi
+          cutoff=$(date -u -d "${RUN_AGE_DAYS} days ago" +%Y-%m-%dT%H:%M:%SZ)
+          echo "mode=${mode} runs older than ${cutoff}"
+
+          # status=completed excludes this very run, so the sweep cannot delete
+          # the job that is performing it.
+          : > runs.tsv
+          page=1
+          while :; do
+            resp=$(gh api "repos/${REPO}/actions/runs?per_page=100&page=${page}&status=completed")
+            n=$(jq '.workflow_runs | length' <<<"$resp")
+            if [ "$n" -eq 0 ]; then break; fi
+            jq -r '.workflow_runs[] | [.id, .created_at] | @tsv' <<<"$resp" >> runs.tsv
+            page=$((page + 1))
+            if [ "$page" -gt 400 ]; then
+              echo "::warning::stopped paging at 400 pages — re-run to sweep the remainder"
+              break
+            fi
+          done
+
+          awk -F'\t' -v cutoff="$cutoff" '$2 < cutoff { print $1 }' runs.tsv > doomed-runs.txt
+          rc=$(wc -l < doomed-runs.txt)
+          echo "${rc} completed runs older than ${RUN_AGE_DAYS}d (of $(wc -l < runs.tsv) listed)"
+
+          {
+            echo ""
+            echo "### Workflow runs (${mode})"
+            echo ""
+            echo "${rc} completed runs older than ${RUN_AGE_DAYS}d."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "${APPLY}" != "true" ]; then
+            echo "DRY-RUN: would delete ${rc} runs."
+            exit 0
+          fi
+
+          n=0
+          while read -r id; do
+            if gh api -X DELETE "repos/${REPO}/actions/runs/${id}" --silent 2>/dev/null; then
+              n=$((n + 1))
+              if [ $((n % 100)) -eq 0 ]; then
+                echo "  ... ${n}/${rc}"
+                sleep 1
+              fi
+            else
+              sleep 2
+            fi
+          done < doomed-runs.txt
+          echo "deleted ${n} runs"
+          echo "Deleted ${n} runs." >> "$GITHUB_STEP_SUMMARY"

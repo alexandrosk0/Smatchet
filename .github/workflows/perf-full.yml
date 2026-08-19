@@ -336,6 +336,7 @@ jobs:
           path: |
             build/perf-runs/*.json
             docs/perf/baselines/*.ci-windows-latest.json
+          retention-days: 14
 
       # Slice 5 — Pillar 2 visible-cue invariant via bucket-E ImGui Test
       # Engine. BLOCKING final stage (all-gates-blocking flip): a visible-cue

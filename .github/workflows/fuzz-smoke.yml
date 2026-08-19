@@ -132,6 +132,7 @@ jobs:
           name: fuzz-crashes
           path: build/ninja-fuzzer-linux/crashes/
           if-no-files-found: ignore
+          retention-days: 30
 
       - name: Surface fuzz failure in job summary
         if: ${{ failure() || steps.fuzz.outcome == 'failure' }}

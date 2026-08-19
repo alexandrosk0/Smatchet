@@ -294,3 +294,4 @@ jobs:
           name: smatchet-release-${{ steps.params.outputs.tag }}
           path: out/release/assets/*
           if-no-files-found: warn
+          retention-days: 14
