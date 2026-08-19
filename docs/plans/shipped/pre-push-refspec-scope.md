@@ -2,7 +2,7 @@
 
 > **Slug**: `pre-push-refspec-scope`
 >
-> **Status**: `active`
+> **Status**: `shipped` — [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131), squash-merged `56f5be77` on 2026-08-19
 
 ## Context
 
@@ -131,3 +131,75 @@ N/A — diff touches no `Source/Core/` file (shell hook + its bucket-A harness +
 - **Lint gates**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` — exit 0.
 - **Plan stress-test — `grill-with-docs`**: run before finalising; outcome recorded in
   § Implementation log.
+
+## Implementation log
+
+Shipped in one slice as [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131)
+(`56f5be77`), two commits:
+
+- `37827ffb` — the hook change plus the four new bucket-A cases.
+- `c32ff736` — this plan's § Verification, recording the full-suite result.
+
+(B) now iterates the `push_updates` stdin snapshot with the same idiom (A) uses at
+`:69–83`, counting parsed records and setting `branch_content_push` only for a
+`refs/heads/*` target with a non-zero `local_sha`. Zero parsed records falls through
+to the refuse side. No new escape variable, so
+`test-pre-push-stage-neutralisers.sh` needed no change.
+
+**Live end-to-end proof.** Releasing this plan's own lock was the real test: a
+`git push origin :refs/locks/pre-push-refspec-scope` issued from this branch's
+checkout *after* #2131 merged — the exact scenario the guard was mis-firing on.
+Run against the pre-fix hook it printed the refusal verbatim:
+
+```
+pre-push: REFUSING push.
+
+  branch:    claude/pre-push-refspec-scope
+  PR #2131 state: MERGED
+```
+
+Run against the fixed hook, with no `SMATCHET_ALLOW_MERGED_PR_PUSH` set, the delete
+succeeded and `refs/locks/pre-push-refspec-scope` left `origin`.
+
+**`core.hooksPath` is absolute — a hook fix is not live where you think it is.**
+That A/B was only possible because the first attempt *failed*: this repo sets
+`core.hooksPath=C:\Dev\Smatchet\scripts\git-hooks`, an absolute path into the
+**main** checkout. Every worktree therefore runs whatever revision of the hook the
+main checkout's branch happens to have — here `claude/peaceful-faraday-6jm1w5`,
+which predates this fix — not the revision in the worktree's own tree, and not the
+one on `develop`. The fixed hook had to be selected explicitly via a
+`GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath …` env override to run at all.
+Filed as `tooling/2026-08-19-core-hookspath-absolute-serves-stale-hook-to-worktrees.md`.
+
+**Post-ship follow-ups** (separate docs PR, this plan's archival slice):
+
+- This plan moved `docs/plans/active/` → `docs/plans/shipped/`, and the
+  `## Status` line in
+  [`categories/applied.md`](../../self-improvement/categories/applied.md) was
+  repointed at the new path — the link it carried
+  (`../../plans/pre-push-refspec-scope.md`, tier-less) resolved to nothing even
+  before the move. `docs/plans/shipped/` sits in the link checker's
+  `EXCLUDED_PREFIXES`, so that dangling link was never going to be caught by a
+  gate; it needed a human to look.
+- The two `# Plan:` comments in
+  [`test-pre-push-merged-pr-guard.sh`](../../../agents/scripts/core/test-pre-push-merged-pr-guard.sh)
+  were tier-less for the same reason and are now pinned to `shipped/`, matching
+  the `process-backlog-tighten` comment directly above them.
+- Second backlog entry filed from the CR wedge this PR hit:
+  `tooling/2026-08-18-cr-out-of-band-label-inert-until-gate-rerun.md` gained a
+  third-occurrence section. #2131 isolated a **negative** result the earlier two
+  did not — a bare `gh run rerun` with no label applied completes green and
+  leaves the status `pending`. The recovery is the ordered pair *(label, then
+  re-run)*, and both orderings fail silently.
+
+## Deviations
+
+None from the plan as written. Two additions made while implementing:
+
+- A **fourth** bucket-A case (13: a `refs/heads/*` DELETE from a MERGED checkout →
+  allow). The plan scoped three; deleting the merged branch post-merge pushes no
+  commits either, so it belongs to the same equivalence class and was cheap to pin.
+- The stage-(A) neutraliser comment in the harness was corrected in passing: it
+  claimed (A) was "inert on the empty stdin here", which stopped being true once
+  `run_hook` began feeding real ref-update records.
+

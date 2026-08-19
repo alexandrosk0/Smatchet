@@ -5940,7 +5940,7 @@ override stops meaning anything.
 
 ## Status
 
-Applied (2026-08-18 — [`docs/plans/pre-push-refspec-scope.md`](../../plans/pre-push-refspec-scope.md)).
+Applied (2026-08-19 — [`docs/plans/shipped/pre-push-refspec-scope.md`](../../plans/shipped/pre-push-refspec-scope.md), [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) squash-merged `56f5be77`).
 Stage (B) now iterates the `push_updates` snapshot before the `gh pr view` lookup and
 `exit 0`s unless at least one update targets `refs/heads/*` with a non-zero `local_sha`,
 mirroring (A)'s delete-skip idiom and reusing its `zero_sha` constant. Empty or
