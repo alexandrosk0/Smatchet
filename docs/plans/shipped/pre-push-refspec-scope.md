@@ -1,4 +1,5 @@
 # Plan — pre-push stage (B) refspec scoping
+<!-- plan-date: 2026-08-19 -->
 
 > **Slug**: `pre-push-refspec-scope`
 >
