@@ -192,9 +192,16 @@ class TicketSyncService {
     // Steady (not system) clock so a wall-clock adjustment mid-streak cannot pass the floor early.
     std::chrono::steady_clock::time_point firstEmptyFullSyncAt_{};
 
-    // How long the empty condition must persist before a mass deletion is trusted (#2143) — long
-    // enough to outlast a burst of sync kicks, short enough to converge unnoticed.
-    static constexpr std::chrono::seconds kEmptyFullSyncMinStreakElapsed{60};
+    /// How long the empty condition must persist before a mass deletion is trusted (#2143) — long
+    /// enough to outlast a burst of sync kicks, short enough to converge unnoticed.
+    /// A function, not a `static constexpr` variable: this project builds at C++14
+    /// (`CMAKE_CXX_STANDARD 14`), where such members are NOT implicitly inline, and binding one to
+    /// the `std::chrono::duration` converting constructor's `const&` parameter ODR-uses it — which
+    /// then links only with an out-of-line definition. `kEmptyFullSyncWipeThreshold` escapes that
+    /// because an `int` passed by value is never ODR-used. Returning by value sidesteps it.
+    static constexpr std::chrono::milliseconds EmptyFullSyncMinStreakElapsed() {
+        return std::chrono::seconds(60);
+    }
 
     /// Fold one completed fetch into the empty-streak counter + its stamp. Single seam so
     /// `TickStreamingApply` and `ApplyIssueFetchPack` cannot drift on how the streak is kept.

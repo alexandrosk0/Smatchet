@@ -148,7 +148,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // Empty-fetch guard: a full-sync that returns zero tickets cannot prove the cache is
     // stale — treating it as authoritative would wipe every row silently (e.g. a 200-with-
     // empty-body network glitch). Once the empty result has repeated kEmptyFullSyncWipeThreshold
-    // times AND persisted kEmptyFullSyncMinStreakElapsed we trust it, so genuinely-empty projects
+    // times AND persisted EmptyFullSyncMinStreakElapsed() we trust it, so genuinely-empty projects
     // converge eventually without a burst of back-to-back empties qualifying (#2143).
     NoteFullSyncEmptiness(fullSyncCompleted, freshTickets.empty());
     if (fullSyncCompleted) {
@@ -164,7 +164,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
         // so the empty-full-sync data-loss guard can never drift between the two apply paths.
         if (!ShouldSkipMassDeletionOnEmptyFullSync(keepIds.size(), existing.size(), consecutiveEmptyFullSyncs_,
                                                    kEmptyFullSyncWipeThreshold, EmptyStreakElapsed(),
-                                                   kEmptyFullSyncMinStreakElapsed)) {
+                                                   EmptyFullSyncMinStreakElapsed())) {
             // Rows a sibling pane is displaying are not stale — this session's query simply does
             // not cover them (see FilterStaleIdsRetainedElsewhere). Same subtraction as the
             // streaming path, applied here as a set membership test to keep the single pass.
@@ -534,18 +534,20 @@ void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std:
     // Empty-full-sync guard (finding DR4, hardened for #2143): a completed full sync that kept
     // zero tickets marks every cached row stale, which would wipe the entire offline cache. Treat
     // a zero-keep full sync as suspect and hold off the mass deletion until the empty result has
-    // repeated kEmptyFullSyncWipeThreshold times AND held for kEmptyFullSyncMinStreakElapsed —
+    // repeated kEmptyFullSyncWipeThreshold times AND held for EmptyFullSyncMinStreakElapsed() —
     // the count alone was satisfiable by two flaps seconds apart (#2143).
     const std::chrono::milliseconds streakElapsed = EmptyStreakElapsed();
     const bool skipWipe = ShouldSkipMassDeletionOnEmptyFullSync(
         keptThisSession, activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_,
-        kEmptyFullSyncWipeThreshold, streakElapsed, kEmptyFullSyncMinStreakElapsed);
+        kEmptyFullSyncWipeThreshold, streakElapsed, EmptyFullSyncMinStreakElapsed());
     if (skipWipe) {
         LOG_WARN("TicketSyncService::TickStreamingApply skipped mass stale deletion on suspect empty full sync "
                  "(cached=%zu, consecutive_empty=%d, streak_held=%llds, required=%llds).",
                  activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_,
                  static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(streakElapsed).count()),
-                 static_cast<long long>(kEmptyFullSyncMinStreakElapsed.count()));
+                 static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
+                                            EmptyFullSyncMinStreakElapsed())
+                                            .count()));
         activeStreamingSync_.BackgroundStaleIds.clear();
         return;
     }
