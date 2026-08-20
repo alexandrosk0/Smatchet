@@ -30,10 +30,18 @@ namespace {
 /// De-duplicated by accountId and capped — this outlives a single search by design.
 static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
     constexpr size_t kMaxResolved = 200;
-    for (const auto& known : st.jqlAcpSearchResolvedUsers) {
-        if (known.AccountId == u.AccountId) {
-            return;
+    for (auto& known : st.jqlAcpSearchResolvedUsers) {
+        if (known.AccountId != u.AccountId) {
+            continue;
         }
+        // A later search can carry a corrected name for an account already retained. Take it
+        // and drop the echo memo by hand: the memo keys on the retained COUNT, which a rename
+        // leaves untouched, so without this the echo keeps spelling out the stale name.
+        if (!u.DisplayName.empty() && known.DisplayName != u.DisplayName) {
+            known = u;
+            st.jqlUserEchoValid = false;
+        }
+        return;
     }
     if (st.jqlAcpSearchResolvedUsers.size() >= kMaxResolved) {
         st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());
