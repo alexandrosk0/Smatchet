@@ -81,6 +81,8 @@ The post-ship 4-option `AskUserQuestion` is the **first** user-facing prompt aft
 
    Wait for the user's verdict before commit+push. On "looks good" → resume the loop and commit. On "no" → leave the working tree dirty; iterate in-place. The orchestrator does `git diff` between attempts to see what was tried. Clean-slate reset (`git checkout -- <files>`) only when the user explicitly asks for one. Never commit+push an unvalidated visual change.
 
+   **An outstanding visual verdict survives a bare "merge".** When this pause is still open at merge time (e.g. the PR shipped to CI with "Manual residue: yes" and the user later says just "merge"), the orchestrator restates the specific unverified behavior in one sentence and merges only on an explicit merge-anyway — a bare "merge" is not that confirmation (postmortems.md 2026-08-20: the #2148 echo merged green-everywhere yet non-functional in its headline flow; the only gate that could have caught it was this one, and it silently dissolved at the merge prompt).
+
    Out-of-scope (NOT a visual-validation pause):
    - A change with no test coverage but no visual-path touch — that's a Pillar-3 "needs test coverage" problem, route via the test backlog.
    - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per [`docs/agent-rules/process-rules.md`](process-rules.md).
