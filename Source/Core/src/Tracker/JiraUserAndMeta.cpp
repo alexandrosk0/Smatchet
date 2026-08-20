@@ -361,11 +361,13 @@ namespace {
 /// under that key. `keepInactive` differs by caller: search feeds pick-a-user flows and
 /// drops deactivated accounts; bulk id-lookup keeps them (a query naming a deactivated
 /// assignee still deserves a readable name). Appends into `outUsers`, deduped through
-/// `seen` (caller-owned so multi-page callers dedupe across calls). Returns false with
-/// `outErr` set on any failure.
+/// `seen` (caller-owned so multi-page callers dedupe across calls). `outIsLast`, when
+/// non-null, receives the page bean's `isLast` (absent -> true) so a paged caller knows
+/// whether to continue; root-array endpoints have no page bean and leave it true.
+/// Returns false with `outErr` set on any failure.
 bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr::Header& headers, const char* valuesKey,
                         bool keepInactive, std::vector<TrackerUser>& outUsers, std::unordered_set<std::string>& seen,
-                        TrackerError& outErr) {
+                        TrackerError& outErr, bool* outIsLast = nullptr) {
     // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
     auto resp = TrackerGetLogged("JiraClient", url, headers);
     std::string outError;
@@ -385,6 +387,9 @@ bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr:
             LOG_ERROR("JiraClient: %s", outError.c_str());
             outErr = TrackerErrorParse(outError);
             return false;
+        }
+        if (outIsLast != nullptr) {
+            *outIsLast = j.value("isLast", true);
         }
         const nlohmann::json arr = (valuesKey == nullptr) ? j : j.value(valuesKey, nlohmann::json::array());
         if (!arr.is_array()) {
