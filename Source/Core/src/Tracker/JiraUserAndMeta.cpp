@@ -353,11 +353,72 @@ Result<TrackerIssueVotes, TrackerError> JiraClient::FetchIssueVotes(const Tracke
     return VotesResult::Ok(std::move(votes));
 }
 
+namespace {
+
+/// Shared GET -> status -> ParseBounded -> user-array walk for the /user/search and
+/// /user/bulk endpoints. `endpoint` names the call in errors/logs ("user/search");
+/// `valuesKey` nullptr means the response body IS the array, otherwise the array sits
+/// under that key. `keepInactive` differs by caller: search feeds pick-a-user flows and
+/// drops deactivated accounts; bulk id-lookup keeps them (a query naming a deactivated
+/// assignee still deserves a readable name). Appends into `outUsers`, deduped through
+/// `seen` (caller-owned so multi-page callers dedupe across calls). Returns false with
+/// `outErr` set on any failure.
+bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr::Header& headers, const char* valuesKey,
+                        bool keepInactive, std::vector<TrackerUser>& outUsers, std::unordered_set<std::string>& seen,
+                        TrackerError& outErr) {
+    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
+    auto resp = TrackerGetLogged("JiraClient", url, headers);
+    std::string outError;
+    if (resp.status_code != 200) {
+        outError = std::string(endpoint) + " failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        outErr = (resp.status_code >= 200 && resp.status_code < 300)
+                     ? TrackerErrorUnknown(outError, resp.status_code)
+                     : TrackerErrorFromHttpStatus(resp.status_code, outError);
+        return false;
+    }
+    try {
+        std::string parseErr;
+        auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string(endpoint) + " parse error: " + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            outErr = TrackerErrorParse(outError);
+            return false;
+        }
+        const nlohmann::json arr = (valuesKey == nullptr) ? j : j.value(valuesKey, nlohmann::json::array());
+        if (!arr.is_array()) {
+            outError = std::string(endpoint) + ": expected array.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
+            outErr = TrackerErrorParse(outError);
+            return false;
+        }
+        for (const auto& node : arr) {
+            if (!node.is_object()) {
+                continue;
+            }
+            TrackerUser u;
+            ParseTrackerUserObject(node, u);
+            if (u.AccountId.empty() || (!keepInactive && !u.Active) || !seen.insert(u.AccountId).second) {
+                continue;
+            }
+            outUsers.push_back(std::move(u));
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string(endpoint) + " parse error: " + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        outErr = TrackerErrorParse(outError);
+        return false;
+    }
+    return true;
+}
+
+} // namespace
+
 Result<std::vector<TrackerUser>, TrackerError> JiraClient::SearchUsersByQuery(const TrackerConfig& cfg,
                                                                               const std::string& query) {
     using UsersResult = Result<std::vector<TrackerUser>, TrackerError>;
     std::vector<TrackerUser> outUsers;
-    std::string outError;
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         return UsersResult::Err(TrackerErrorAuth("Missing Tracker domain or API token."));
     }
@@ -367,48 +428,11 @@ Result<std::vector<TrackerUser>, TrackerError> JiraClient::SearchUsersByQuery(co
 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
-
     const std::string url = base + "/rest/api/3/user/search?query=" + UrlEncode(query) + "&maxResults=100";
-    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
-    auto resp = TrackerGetLogged("JiraClient", url, headers);
-    if (resp.status_code != 200) {
-        outError = "user/search failed: HTTP " + std::to_string(resp.status_code);
-        LOG_ERROR("JiraClient: %s query=%s", outError.c_str(), TruncateForLog(query, 120).c_str());
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return UsersResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-        }
-        return UsersResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
-    }
-
-    try {
-        std::string parseErr;
-        auto arr = smatchet::json_safe::ParseBounded(resp.text, parseErr);
-        if (!parseErr.empty()) {
-            outError = std::string("user/search parse error: ") + parseErr;
-            LOG_ERROR("JiraClient: %s", outError.c_str());
-            return UsersResult::Err(TrackerErrorParse(outError));
-        }
-        if (!arr.is_array()) {
-            outError = "user/search: expected array.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
-            return UsersResult::Err(TrackerErrorParse(outError));
-        }
-        std::unordered_set<std::string> seen;
-        for (const auto& node : arr) {
-            if (!node.is_object()) {
-                continue;
-            }
-            TrackerUser u;
-            ParseTrackerUserObject(node, u);
-            if (u.AccountId.empty() || !u.Active || !seen.insert(u.AccountId).second) {
-                continue;
-            }
-            outUsers.push_back(std::move(u));
-        }
-    } catch (const std::exception& ex) {
-        outError = std::string("user/search parse error: ") + ex.what();
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return UsersResult::Err(TrackerErrorParse(outError));
+    std::unordered_set<std::string> seen;
+    TrackerError err = TrackerError::Ok();
+    if (!FetchJiraUserArray("user/search", url, headers, nullptr, /*keepInactive=*/false, outUsers, seen, err)) {
+        return UsersResult::Err(std::move(err));
     }
     return UsersResult::Ok(std::move(outUsers));
 }
@@ -472,7 +496,6 @@ Result<std::vector<TrackerUser>, TrackerError>
 JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<std::string>& accountIds) {
     using UsersResult = Result<std::vector<TrackerUser>, TrackerError>;
     std::vector<TrackerUser> outUsers;
-    std::string outError;
     if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
         return UsersResult::Err(TrackerErrorAuth("Missing Tracker domain or API token."));
     }
@@ -484,56 +507,22 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     // GET /rest/api/3/user/bulk — repeated accountId params, endpoint cap 128 per call.
-    // One page suffices: callers pass the handful of ids one query carries, not a roster.
+    // Chunked so every id is asked for even past the cap (a query buffer holds ~a dozen
+    // ids, so one chunk is the norm — the loop is for the interface contract, not the UI).
     constexpr size_t kMaxIdsPerCall = 128;
-    std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall);
-    const size_t idCount = (std::min)(accountIds.size(), kMaxIdsPerCall);
-    for (size_t k = 0; k < idCount; ++k) {
-        url += "&accountId=" + UrlEncode(accountIds[k]);
+    std::unordered_set<std::string> seen;
+    TrackerError err = TrackerError::Ok();
+    for (size_t from = 0; from < accountIds.size(); from += kMaxIdsPerCall) {
+        const size_t to = (std::min)(accountIds.size(), from + kMaxIdsPerCall);
+        std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall);
+        for (size_t k = from; k < to; ++k) {
+            url += "&accountId=" + UrlEncode(accountIds[k]);
+        }
+        if (!FetchJiraUserArray("user/bulk", url, headers, "values", /*keepInactive=*/true, outUsers, seen, err)) {
+            return UsersResult::Err(std::move(err));
+        }
     }
-    auto resp = TrackerGetLogged("JiraClient", url, headers);
-    if (resp.status_code != 200) {
-        outError = "user/bulk failed: HTTP " + std::to_string(resp.status_code);
-        LOG_ERROR("JiraClient: %s ids=%zu", outError.c_str(), accountIds.size());
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return UsersResult::Err(TrackerErrorUnknown(outError, resp.status_code));
-        }
-        return UsersResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
-    }
-
-    try {
-        std::string parseErr;
-        auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
-        if (!parseErr.empty()) {
-            outError = std::string("user/bulk parse error: ") + parseErr;
-            LOG_ERROR("JiraClient: %s", outError.c_str());
-            return UsersResult::Err(TrackerErrorParse(outError));
-        }
-        const auto values = j.value("values", nlohmann::json::array());
-        if (!values.is_array()) {
-            outError = "user/bulk: expected values array.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
-            return UsersResult::Err(TrackerErrorParse(outError));
-        }
-        std::unordered_set<std::string> seen;
-        for (const auto& node : values) {
-            if (!node.is_object()) {
-                continue;
-            }
-            TrackerUser u;
-            ParseTrackerUserObject(node, u);
-            // Inactive accounts stay: a query naming a deactivated assignee still deserves
-            // a readable name (unlike user/search above, which feeds pick-a-user flows).
-            if (u.AccountId.empty() || !seen.insert(u.AccountId).second) {
-                continue;
-            }
-            outUsers.push_back(std::move(u));
-        }
-    } catch (const std::exception& ex) {
-        outError = std::string("user/bulk parse error: ") + ex.what();
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return UsersResult::Err(TrackerErrorParse(outError));
-    }
+    // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing cross-backend FetchGroupMembers prologue similarity vs GitHubActivityFeed.cpp re-exposed by line shifts in this TU; de-duping independent backend clients is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)
     return UsersResult::Ok(std::move(outUsers));
 }
 
