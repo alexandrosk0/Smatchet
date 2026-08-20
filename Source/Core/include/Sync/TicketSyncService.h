@@ -10,6 +10,7 @@
 // AppController internals directly.
 
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <mutex>
@@ -66,11 +67,15 @@ class TicketSyncService {
     /// and have its mass deletion skipped. A zero-keep full-sync cannot prove the cache is stale:
     /// a 200-with-empty-body glitch or a transiently-broken query is indistinguishable from a
     /// genuinely-emptied project. Returns true (skip the wipe) while there is something to lose
-    /// and the empty result has not yet repeated `emptyWipeThreshold` times, so offline-available
-    /// rows survive a transient blip while a truly-empty project still converges. Pure + static so
-    /// the streaming path and `ApplyIssueFetchPack` share one decision and it is unit-testable.
+    /// and the empty result has not yet BOTH repeated `emptyWipeThreshold` times AND persisted for
+    /// `minEmptyStreakElapsed`, so offline-available rows survive a transient blip while a truly-
+    /// empty project still converges. Pure + static so the streaming path and `ApplyIssueFetchPack`
+    /// share one decision and it is unit-testable. The elapsed floor is the #2143 fix — see the
+    /// definition for why a count alone was satisfiable by two flaps seconds apart.
     static bool ShouldSkipMassDeletionOnEmptyFullSync(std::size_t keepCount, std::size_t cachedRowCount,
-                                                      int consecutiveEmptyFullSyncs, int emptyWipeThreshold);
+                                                      int consecutiveEmptyFullSyncs, int emptyWipeThreshold,
+                                                      std::chrono::milliseconds emptyStreakElapsed,
+                                                      std::chrono::milliseconds minEmptyStreakElapsed);
 
     /// Drop from `staleIds` every id another live grid pane still holds. The stale set is
     /// computed as "cached rows this session's query did not return", which over-claims when
@@ -177,8 +182,24 @@ class TicketSyncService {
     std::size_t staleDeletedSoFar_ = 0;
 
     // Tracks consecutive full syncs that returned zero tickets. A legitimately empty project
-    // reconverges after kEmptyFullSyncWipeThreshold consecutive empty full-syncs so stale
-    // cache rows are not silently preserved forever.
+    // reconverges after kEmptyFullSyncWipeThreshold consecutive empty full-syncs AND
+    // kEmptyFullSyncMinStreakElapsed of wall-clock, so stale cache rows are not silently
+    // preserved forever but a burst of back-to-back empty ticks cannot satisfy the wipe either.
     int consecutiveEmptyFullSyncs_ = 0;
     static constexpr int kEmptyFullSyncWipeThreshold = 2;
+
+    // Stamp of the FIRST empty full sync in the current streak; reset alongside the counter.
+    // Steady (not system) clock so a wall-clock adjustment mid-streak cannot pass the floor early.
+    std::chrono::steady_clock::time_point firstEmptyFullSyncAt_{};
+
+    // How long the empty condition must persist before a mass deletion is trusted (#2143) — long
+    // enough to outlast a burst of sync kicks, short enough to converge unnoticed.
+    static constexpr std::chrono::seconds kEmptyFullSyncMinStreakElapsed{60};
+
+    /// Fold one completed fetch into the empty-streak counter + its stamp. Single seam so
+    /// `TickStreamingApply` and `ApplyIssueFetchPack` cannot drift on how the streak is kept.
+    void NoteFullSyncEmptiness(bool fullSyncCompleted, bool keptNothing);
+
+    /// Wall-clock the current empty streak has persisted, or zero when no streak is open.
+    std::chrono::milliseconds EmptyStreakElapsed() const;
 };
