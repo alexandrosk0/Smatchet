@@ -250,6 +250,22 @@ struct JqlEditorState {
     };
     std::future<JqlUserSearchResult> jqlAcpUserSearchFuture;
     uint64_t jqlAcpUserSearchInFlightId = 0;
+
+    /// Users named by a completed @-mention search, kept past the popup so the readable
+    /// echo under the query bar can still name an account the cached catalog never held
+    /// (the search reaches the whole site; the catalog only holds the project's users).
+    /// Bounded — oldest entries drop once the cap is hit.
+    std::vector<TrackerUser> jqlAcpSearchResolvedUsers;
+    /// Memo for the readable echo. `jqlUserEchoSource` is the exact buffer the `jqlUserEcho`
+    /// text was rendered from and `jqlUserEchoCatalog*` identify the user-catalog snapshot it
+    /// resolved names against, so the transform runs on a real change only and a steady frame
+    /// costs one string compare plus two scalar compares (Pillar 1). The search-resolved list
+    /// is not keyed here — it clears `jqlUserEchoValid` directly when it changes.
+    std::string jqlUserEcho;
+    std::string jqlUserEchoSource;
+    const void* jqlUserEchoCatalogData = nullptr;
+    size_t jqlUserEchoCatalogSize = 0;
+    bool jqlUserEchoValid = false;
 };
 
 struct UiDrawSession {

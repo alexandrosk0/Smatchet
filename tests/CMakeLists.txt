@@ -90,6 +90,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (TrackerQuerySuggestCommon + JqlEscape — cpr/ImGui-free). No threads.
         Core/JqlSuggestEnginePure.test.cpp
         Core/PlaneQuerySuggestEnginePure.test.cpp
+        # Readable echo of the account ids a user-field clause carries — pure string
+        # transform over the user catalog; links the same suggest-helper closure.
+        Core/JqlUserDisplayPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlUserDisplayPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
@@ -754,6 +758,8 @@ add_executable(SmatchetTests
     # AppController). TrackerQuerySuggestCommon.cpp + JqlEscape.cpp already linked below.
     Core/JqlSuggestEnginePure.test.cpp
     Core/PlaneQuerySuggestEnginePure.test.cpp
+    # Readable echo of the account ids a user-field clause carries.
+    Core/JqlUserDisplayPure.test.cpp
     # Gap map Tier 1 #6 — merge-watch notify endpoint request-validation core.
     Core/MergeWatchNotifyPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
@@ -1225,6 +1231,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SemanticVersionPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlUserDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"

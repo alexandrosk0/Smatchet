@@ -5,6 +5,8 @@
 #include "Interfaces/IAppUsers.h"
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
+// SMATCHET_DEVIATION(rule=duplication; reason=pre-existing UI-TU include-block boilerplate clone re-surfaced by adding one include here; de-duping independent UI subsystems' include lists is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)
+#include "Tracker/JqlUserDisplayPure.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -18,9 +20,60 @@
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <string>
 #include <unordered_set>
 
 namespace {
+
+/// Keep the accountId -> display-name pairing a completed user search taught us, so the
+/// readable echo under the query bar can still name the account after the popup closes.
+/// De-duplicated by accountId and capped — this outlives a single search by design.
+static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
+    constexpr size_t kMaxResolved = 200;
+    for (auto& known : st.jqlAcpSearchResolvedUsers) {
+        if (known.AccountId != u.AccountId) {
+            continue;
+        }
+        // A later search can carry a corrected name for an account already retained. Take it
+        // and drop the echo memo by hand: the memo keys on the retained COUNT, which a rename
+        // leaves untouched, so without this the echo keeps spelling out the stale name.
+        if (!u.DisplayName.empty() && known.DisplayName != u.DisplayName) {
+            known = u;
+            st.jqlUserEchoValid = false;
+        }
+        return;
+    }
+    if (st.jqlAcpSearchResolvedUsers.size() >= kMaxResolved) {
+        st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());
+    }
+    st.jqlAcpSearchResolvedUsers.push_back(u);
+    // Every insertion changes what the echo can name, and at the cap the evict-then-append
+    // pair leaves the size identical — so drop the memo here rather than infer it from a size.
+    st.jqlUserEchoValid = false;
+}
+
+/// Turn a completed user search into popup rows: one row per named account, capped, and
+/// each account's name remembered for the readable echo.
+static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vector<TrackerUser>& users) {
+    constexpr int kMaxAsyncRows = 40;
+    st.jqlAcpAsyncUserItems.clear();
+    std::unordered_set<std::string> seen;
+    for (const auto& u : users) {
+        if (u.AccountId.empty()) {
+            continue;
+        }
+        const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);
+        if (!seen.insert(ins).second) {
+            continue;
+        }
+        RememberResolvedUser(st, u);
+        std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + " -> " + ins);
+        st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});
+        if (static_cast<int>(st.jqlAcpAsyncUserItems.size()) >= kMaxAsyncRows) {
+            break;
+        }
+    }
+}
 
 static void MergeAsyncUserSuggestionsIntoBuild(const JqlEditorState& st, QuerySuggestBuild& b) {
     std::unordered_set<std::string> seen;
@@ -278,6 +331,40 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
     ImGui::PopStyleVar();
 }
 
+void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
+    // Memoised on the buffer text plus the catalog SNAPSHOT the names came from — its buffer
+    // address and size, not a name-by-name compare, so a steady frame stays O(1) (Pillar 1).
+    // The catalog is only ever replaced wholesale (`AvailableUsers = std::move(...)`, or a
+    // whole-vector copy on pane switch), so a refresh lands on a new allocation and is caught
+    // even when it renames a user without changing the count. The search-resolved side needs
+    // no key at all: RememberResolvedUser drops the memo on every insert and rename.
+    const void* catalogData = static_cast<const void*>(catalogUsers.data());
+    if (!st.jqlUserEchoValid || st.jqlUserEchoCatalogData != catalogData ||
+        st.jqlUserEchoCatalogSize != catalogUsers.size() || st.jqlUserEchoSource != st.buf) {
+        int fromCatalog = 0;
+        int fromSearch = 0;
+        std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, catalogUsers, &fromCatalog);
+        if (!st.jqlAcpSearchResolvedUsers.empty()) {
+            // Second pass over the first pass's output: an id the catalog could not name is
+            // left verbatim, so the search-resolved names compose onto the same string.
+            rendered = jql_user_display::RenderQueryWithUserNames(rendered, st.jqlAcpSearchResolvedUsers, &fromSearch);
+        }
+        st.jqlUserEcho = (fromCatalog + fromSearch) > 0 ? rendered : std::string();
+        st.jqlUserEchoSource = st.buf;
+        st.jqlUserEchoCatalogData = catalogData;
+        st.jqlUserEchoCatalogSize = catalogUsers.size();
+        st.jqlUserEchoValid = true;
+    }
+    if (st.jqlUserEcho.empty()) {
+        return;
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("reads as: %s", st.jqlUserEcho.c_str());
+    ImGui::PopStyleColor();
+    ImGui::SetItemTooltip("The query runs on account ids (the only form the tracker matches on) - this line "
+                          "spells them out as names.");
+}
+
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,
                                              const QuerySuggestMeta& meta, const QuerySuggestBuild& syncBuild) {
     (void)syncBuild;
@@ -320,22 +407,7 @@ void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDraw
                 st.jqlAcpAsyncUserItems.clear();
             } else {
                 st.jqlAcpAsyncUserError.clear();
-                st.jqlAcpAsyncUserItems.clear();
-                std::unordered_set<std::string> seen;
-                for (const auto& u : result.Users) {
-                    if (u.AccountId.empty()) {
-                        continue;
-                    }
-                    const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);
-                    if (!seen.insert(ins).second) {
-                        continue;
-                    }
-                    std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + " -> " + ins);
-                    st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});
-                    if (static_cast<int>(st.jqlAcpAsyncUserItems.size()) >= 40) {
-                        break;
-                    }
-                }
+                ReduceUserSearchResultIntoItems(st, result.Users);
             }
         }
     }
