@@ -268,6 +268,13 @@ struct JqlEditorState {
     std::vector<std::string> jqlIdResolveAttempted;
     std::string jqlIdResolveScanSource;
     bool jqlIdResolveScanValid = false;
+    /// Failure handling: a failed lookup un-attempts its ids and retries with backoff —
+    /// the FIRST tick often races backend init at startup, and giving up there would leave
+    /// a restored view's ids unnamed all session. Bounded so a genuinely broken config
+    /// stops costing an HTTP call: after `kJqlIdResolveMaxFailures` the ids stay attempted.
+    std::vector<std::string> jqlIdResolveInFlightIds;
+    double jqlIdResolveRetryAt = 0.0;
+    int jqlIdResolveFailures = 0;
 
     /// Memo for the readable echo. `jqlUserEchoSource` is the exact buffer the `jqlUserEcho`
     /// text was rendered from and `jqlUserEchoCatalog*` identify the user-catalog snapshot it

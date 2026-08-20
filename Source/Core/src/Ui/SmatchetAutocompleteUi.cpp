@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <future>
@@ -385,21 +386,43 @@ void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, 
 
 void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
                                           JqlEditorState& st) {
-    // Consume a completed lookup first. Ids the backend did not return stay in the
-    // attempted list, so an unknown id costs one call per session, not one per frame.
+    // Consume a completed lookup first. On success, ids the backend did not return stay
+    // attempted — an UNKNOWN id costs one call per session. On FAILURE the whole batch is
+    // un-attempted and retried with backoff: the first tick races backend init at startup,
+    // and a permanent skip there would leave a restored view's ids unnamed all session
+    // (Bugbot, #2149). Bounded so a broken config stops costing HTTP calls.
+    constexpr int kJqlIdResolveMaxFailures = 5;
     if (st.jqlIdResolveFuture.valid() &&
         st.jqlIdResolveFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
         JqlEditorState::JqlUserSearchResult result = st.jqlIdResolveFuture.get();
         st.jqlIdResolveInFlight = false;
         if (result.Ok) {
+            st.jqlIdResolveFailures = 0;
             for (const auto& u : result.Users) {
                 if (!u.AccountId.empty()) {
                     RememberResolvedUser(st, u);
                 }
             }
+        } else {
+            ++st.jqlIdResolveFailures;
+            if (st.jqlIdResolveFailures <= kJqlIdResolveMaxFailures) {
+                auto& attempted = st.jqlIdResolveAttempted;
+                for (const auto& id : st.jqlIdResolveInFlightIds) {
+                    attempted.erase(std::remove(attempted.begin(), attempted.end(), id), attempted.end());
+                }
+                // 2s, 4s, ... capped at 60s; invalidate the scan memo so the retry fires
+                // even when the buffer has not changed since.
+                const double delay = (std::min)(60.0, std::pow(2.0, st.jqlIdResolveFailures));
+                st.jqlIdResolveRetryAt = ImGui::GetTime() + delay;
+                st.jqlIdResolveScanValid = false;
+            }
         }
+        st.jqlIdResolveInFlightIds.clear();
     }
     if (st.jqlIdResolveInFlight) {
+        return;
+    }
+    if (st.jqlIdResolveRetryAt > 0.0 && ImGui::GetTime() < st.jqlIdResolveRetryAt) {
         return;
     }
     // Per-frame gate: rescan only when the buffer changed (one string compare otherwise),
@@ -432,6 +455,7 @@ void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std
         return;
     }
     st.jqlIdResolveAttempted.insert(st.jqlIdResolveAttempted.end(), pending.begin(), pending.end());
+    st.jqlIdResolveInFlightIds = pending;
     st.jqlIdResolveInFlight = true;
     st.jqlIdResolveFuture = std::async(std::launch::async, [&userSearch, pending]() {
         JqlEditorState::JqlUserSearchResult r;
