@@ -44,6 +44,51 @@ TEST_CASE("jql_user_display::LooksLikeAccountId recognises the opaque id shapes"
     CHECK_FALSE(LooksLikeAccountId(":00aa4ab4-9acf-4b2e-bc03-efbb1215ef93"));
 }
 
+TEST_CASE("jql_user_display::LooksLikeAccountId accepts the alphanumeric legacy 24-char id") {
+    using jql_user_display::LooksLikeAccountId;
+
+    // Atlassian's own documented example — not pure hex (ends in 'g').
+    CHECK(LooksLikeAccountId("5b10a2844c20165700ede21g"));
+    // 24 letters with no digit is a word, not an id.
+    CHECK_FALSE(LooksLikeAccountId("abcdefghijklmnopqrstuvwx"));
+    CHECK_FALSE(LooksLikeAccountId("5b10a2844c20165700ede21"));   // 23 chars
+    CHECK_FALSE(LooksLikeAccountId("5b10a2844c20165700ede21g7")); // 25 chars
+}
+
+TEST_CASE("jql_user_display::CollectUnresolvedAccountIds lists only unnamed ids, deduped") {
+    using jql_user_display::CollectUnresolvedAccountIds;
+
+    const std::string jql = "assignee in (\"712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93\", "
+                            "5b10a2844c20165700ede21g) AND reporter = 5b10a2844c20165700ede21g "
+                            "AND project = SMAT";
+    // The catalog names the Cloud id; the legacy id (appearing twice) is left to fetch once.
+    std::vector<std::string> pending = CollectUnresolvedAccountIds(jql, Catalog());
+    REQUIRE(pending.size() == 1);
+    CHECK(pending[0] == "5b10a2844c20165700ede21g");
+
+    // Empty catalog: both ids pending, first-appearance order.
+    pending = CollectUnresolvedAccountIds(jql, std::vector<TrackerUser>());
+    REQUIRE(pending.size() == 2);
+    CHECK(pending[0] == "712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93");
+    CHECK(pending[1] == "5b10a2844c20165700ede21g");
+
+    // No ids at all -> empty, and an empty query is fine.
+    CHECK(CollectUnresolvedAccountIds("project = SMAT AND assignee = currentUser()", Catalog()).empty());
+    CHECK(CollectUnresolvedAccountIds("", Catalog()).empty());
+}
+
+TEST_CASE("jql_user_display::UnquoteValueToken strips one quoting level") {
+    using jql_user_display::UnquoteValueToken;
+
+    CHECK(UnquoteValueToken("\"712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93\"") ==
+          "712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93");
+    CHECK(UnquoteValueToken("\"Jane \\\"JD\\\" Doe\"") == "Jane \"JD\" Doe");
+    // Unquoted text passes through, including the empty string and a lone quote.
+    CHECK(UnquoteValueToken("5b10a2844c20165700ede21g") == "5b10a2844c20165700ede21g");
+    CHECK(UnquoteValueToken("") == "");
+    CHECK(UnquoteValueToken("\"") == "\"");
+}
+
 TEST_CASE("jql_user_display::RenderQueryWithUserNames names a quoted accountId") {
     int replaced = -1;
     const std::string out = jql_user_display::RenderQueryWithUserNames(

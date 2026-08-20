@@ -34,8 +34,24 @@ bool IsUuid(const std::string& s) {
     return IsAllHex(s, 0, 8) && IsAllHex(s, 9, 13) && IsAllHex(s, 14, 18) && IsAllHex(s, 19, 23) && IsAllHex(s, 24, 36);
 }
 
-/// The 24-hex object id older / non-Cloud deployments emit as an account key.
-bool IsHex24(const std::string& s) { return s.size() == 24 && IsAllHex(s, 0, 24); }
+/// The 24-char legacy object id older / non-Cloud deployments emit as an account key.
+/// Alphanumeric rather than strict hex (Atlassian's documented example ends in `…ede21g`),
+/// with at least one digit so an ordinary 24-letter word never reads as an id.
+bool IsLegacyId24(const std::string& s) {
+    if (s.size() != 24) {
+        return false;
+    }
+    bool anyDigit = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char uc = static_cast<unsigned char>(s[i]);
+        if (std::isdigit(uc) != 0) {
+            anyDigit = true;
+        } else if (std::isalpha(uc) == 0) {
+            return false;
+        }
+    }
+    return anyDigit;
+}
 
 /// Characters that make up a BARE (unquoted) account token. ':' is in the set because a
 /// Cloud accountId carries the instance discriminator (`712020:<uuid>`) — the query
@@ -78,13 +94,41 @@ size_t ScanQuotedValue(const std::string& s, size_t start, std::string& outValue
     return s.size();
 }
 
+/// Walk `query`'s value tokens (double-quoted strings and bare identifier runs) and call
+/// `onToken(token, spanStart, spanEnd)` for each; bytes outside any token are reported
+/// through `onOther(byte)`. Single tokenizer shared by the render pass and the
+/// unresolved-id collector so their notion of a token cannot drift.
+template <typename TokenFn, typename OtherFn>
+void ForEachValueToken(const std::string& query, TokenFn onToken, OtherFn onOther) {
+    std::string token;
+    size_t i = 0;
+    while (i < query.size()) {
+        size_t next = i + 1;
+        if (query[i] == '"') {
+            next = ScanQuotedValue(query, i, token);
+        } else if (IsBareTokenChar(query[i])) {
+            next = i;
+            while (next < query.size() && IsBareTokenChar(query[next])) {
+                ++next;
+            }
+            token.assign(query, i, next - i);
+        } else {
+            onOther(query[i]);
+            i = next;
+            continue;
+        }
+        onToken(token, i, next);
+        i = next;
+    }
+}
+
 } // namespace
 
 bool LooksLikeAccountId(const std::string& token) {
     if (token.empty()) {
         return false;
     }
-    if (IsUuid(token) || IsHex24(token)) {
+    if (IsUuid(token) || IsLegacyId24(token)) {
         return true;
     }
     const size_t colon = token.rfind(':');
@@ -106,39 +150,57 @@ std::string RenderQueryWithUserNames(const std::string& query, const std::vector
     }
     std::string out;
     out.reserve(query.size());
-    std::string token;
     int replaced = 0;
-    size_t i = 0;
-    while (i < query.size()) {
-        size_t next = i + 1;
-        if (query[i] == '"') {
-            next = ScanQuotedValue(query, i, token);
-        } else if (IsBareTokenChar(query[i])) {
-            next = i;
-            while (next < query.size() && IsBareTokenChar(query[next])) {
-                ++next;
+    ForEachValueToken(
+        query,
+        [&](const std::string& token, size_t spanStart, size_t spanEnd) {
+            std::string name;
+            if (LooksLikeAccountId(token)) {
+                name = LookupDisplayName(token, users);
             }
-            token.assign(query, i, next - i);
-        } else {
-            out.push_back(query[i]);
-            i = next;
-            continue;
-        }
-        std::string name;
-        if (LooksLikeAccountId(token)) {
-            name = LookupDisplayName(token, users);
-        }
-        if (name.empty()) {
-            out.append(query, i, next - i);
-        } else {
-            out.append(tracker_query_suggest::InsertForValueToken(name));
-            ++replaced;
-        }
-        i = next;
-    }
+            if (name.empty()) {
+                out.append(query, spanStart, spanEnd - spanStart);
+            } else {
+                out.append(tracker_query_suggest::InsertForValueToken(name));
+                ++replaced;
+            }
+        },
+        [&](char c) { out.push_back(c); });
     if (outReplaced != nullptr) {
         *outReplaced = replaced;
     }
+    return out;
+}
+
+std::string UnquoteValueToken(const std::string& text) {
+    if (text.size() < 2 || text.front() != '"') {
+        return text;
+    }
+    std::string value;
+    ScanQuotedValue(text, 0, value);
+    return value;
+}
+
+std::vector<std::string> CollectUnresolvedAccountIds(const std::string& query,
+                                                     const std::vector<TrackerUser>& knownUsers) {
+    std::vector<std::string> out;
+    if (query.empty()) {
+        return out;
+    }
+    ForEachValueToken(
+        query,
+        [&](const std::string& token, size_t, size_t) {
+            if (!LooksLikeAccountId(token) || !LookupDisplayName(token, knownUsers).empty()) {
+                return;
+            }
+            for (size_t k = 0; k < out.size(); ++k) {
+                if (out[k] == token) {
+                    return;
+                }
+            }
+            out.push_back(token);
+        },
+        [](char) {});
     return out;
 }
 

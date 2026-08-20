@@ -139,6 +139,24 @@ bool TrackerQueryAcp_QueueApplyReplacement(JqlEditorState& st, const QuerySugges
     st.jqlAcpReplaceEnd = b.ReplaceEnd;
     st.jqlAcpReplaceText = b.Items[static_cast<size_t>(index)].Insert;
     st.jqlAcpReplaceCaretOffset = SmatchetAutocompleteDetail::StripCaretAnchorSentinel(st.jqlAcpReplaceText);
+    // A user row inserts the opaque accountId while its LABEL carries the display name —
+    // the only moment both are in hand. Remember the pairing here so the readable echo can
+    // name the account the instant the insert lands, with no catalog and no extra fetch.
+    const std::string insertedId = jql_user_display::UnquoteValueToken(st.jqlAcpReplaceText);
+    if (jql_user_display::LooksLikeAccountId(insertedId)) {
+        std::string name = b.Items[static_cast<size_t>(index)].Label;
+        // Async search rows label as `Name -> "id"`; keep just the name half.
+        const std::string arrow = " -> " + b.Items[static_cast<size_t>(index)].Insert;
+        if (name.size() > arrow.size() && name.compare(name.size() - arrow.size(), arrow.size(), arrow) == 0) {
+            name.erase(name.size() - arrow.size());
+        }
+        if (!name.empty() && name != insertedId) {
+            TrackerUser u;
+            u.AccountId = insertedId;
+            u.DisplayName = std::move(name);
+            RememberResolvedUser(st, u);
+        }
+    }
     st.jqlAcpApplyReplace = true;
     st.jqlAcpListDismissed = false;
     // Always re-focus: both keyboard (Enter may deactivate InputText) and mouse (popup click
@@ -363,6 +381,63 @@ void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, 
     ImGui::PopStyleColor();
     ImGui::SetItemTooltip("The query runs on account ids (the only form the tracker matches on) - this line "
                           "spells them out as names.");
+}
+
+void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
+                                          JqlEditorState& st) {
+    // Consume a completed lookup first. Ids the backend did not return stay in the
+    // attempted list, so an unknown id costs one call per session, not one per frame.
+    if (st.jqlIdResolveFuture.valid() &&
+        st.jqlIdResolveFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+        JqlEditorState::JqlUserSearchResult result = st.jqlIdResolveFuture.get();
+        st.jqlIdResolveInFlight = false;
+        if (result.Ok) {
+            for (const auto& u : result.Users) {
+                if (!u.AccountId.empty()) {
+                    RememberResolvedUser(st, u);
+                }
+            }
+        }
+    }
+    if (st.jqlIdResolveInFlight) {
+        return;
+    }
+    // Per-frame gate: rescan only when the buffer changed (one string compare otherwise),
+    // mirroring the echo memo's discipline (Pillar 1).
+    if (st.jqlIdResolveScanValid && st.jqlIdResolveScanSource == st.buf) {
+        return;
+    }
+    st.jqlIdResolveScanSource = st.buf;
+    st.jqlIdResolveScanValid = true;
+
+    std::vector<std::string> pending = jql_user_display::CollectUnresolvedAccountIds(st.buf, catalogUsers);
+    if (pending.empty()) {
+        return;
+    }
+    auto knownAlready = [&](const std::string& id) {
+        for (const auto& u : st.jqlAcpSearchResolvedUsers) {
+            if (u.AccountId == id && !u.DisplayName.empty()) {
+                return true;
+            }
+        }
+        for (const auto& tried : st.jqlIdResolveAttempted) {
+            if (tried == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    pending.erase(std::remove_if(pending.begin(), pending.end(), knownAlready), pending.end());
+    if (pending.empty()) {
+        return;
+    }
+    st.jqlIdResolveAttempted.insert(st.jqlIdResolveAttempted.end(), pending.begin(), pending.end());
+    st.jqlIdResolveInFlight = true;
+    st.jqlIdResolveFuture = std::async(std::launch::async, [&userSearch, pending]() {
+        JqlEditorState::JqlUserSearchResult r;
+        UnpackResult(userSearch.FetchUsersByAccountIds(pending), r.Ok, r.Users, r.Error);
+        return r;
+    });
 }
 
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,

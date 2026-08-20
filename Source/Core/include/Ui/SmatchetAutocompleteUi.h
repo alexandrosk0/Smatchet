@@ -54,6 +54,13 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
  *  query of record in `st.buf` (the one the backend runs) is never rewritten. */
 void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
 
+/** Resolve account ids the query carries but no catalog / prior search has named, via the
+ *  backend's by-accountId lookup (worker thread, polled per frame). Results land in the
+ *  editor's retained-user store, which the echo reads. Skips ids already attempted this
+ *  session. `catalogUsers` is the app-owned user catalog. */
+void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,
+                                          JqlEditorState& st);
+
 /** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors.
  *  userSearch is the narrow user-query facet of the app object. */
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,

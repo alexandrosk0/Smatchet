@@ -149,6 +149,10 @@ class JiraClient : public ITrackerBackend,
     Result<std::vector<TrackerUser>, TrackerError> SearchUsersByQuery(const TrackerConfig& cfg,
                                                                       const std::string& query) override;
 
+    /** GET /rest/api/3/user/bulk — resolve accountIds to users (query search cannot). */
+    Result<std::vector<TrackerUser>, TrackerError>
+    FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<std::string>& accountIds) override;
+
     /** POST /rest/api/3/issue/{key}/comment with Atlassian Document Format body. */
     TrackerError AddIssueCommentPlain(const TrackerConfig& cfg, const std::string& issueKey,
                                       const std::string& plainText) override;

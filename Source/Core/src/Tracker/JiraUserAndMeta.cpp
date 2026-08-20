@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 
+#include <algorithm>
 #include <set>
 #include <string>
 #include <unordered_set>
@@ -465,6 +466,75 @@ Result<std::vector<std::string>, TrackerError> JiraClient::FetchUserGroupNames(c
         return GroupsResult::Err(TrackerErrorParse(outError));
     }
     return GroupsResult::Ok(std::move(outGroupNames));
+}
+
+Result<std::vector<TrackerUser>, TrackerError>
+JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<std::string>& accountIds) {
+    using UsersResult = Result<std::vector<TrackerUser>, TrackerError>;
+    std::vector<TrackerUser> outUsers;
+    std::string outError;
+    if (cfg.ApiToken.empty() || cfg.Domain.empty()) {
+        return UsersResult::Err(TrackerErrorAuth("Missing Tracker domain or API token."));
+    }
+    if (accountIds.empty()) {
+        return UsersResult::Ok(std::move(outUsers));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+
+    // GET /rest/api/3/user/bulk — repeated accountId params, endpoint cap 128 per call.
+    // One page suffices: callers pass the handful of ids one query carries, not a roster.
+    constexpr size_t kMaxIdsPerCall = 128;
+    std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall);
+    const size_t idCount = (std::min)(accountIds.size(), kMaxIdsPerCall);
+    for (size_t k = 0; k < idCount; ++k) {
+        url += "&accountId=" + UrlEncode(accountIds[k]);
+    }
+    auto resp = TrackerGetLogged("JiraClient", url, headers);
+    if (resp.status_code != 200) {
+        outError = "user/bulk failed: HTTP " + std::to_string(resp.status_code);
+        LOG_ERROR("JiraClient: %s ids=%zu", outError.c_str(), accountIds.size());
+        if (resp.status_code >= 200 && resp.status_code < 300) {
+            return UsersResult::Err(TrackerErrorUnknown(outError, resp.status_code));
+        }
+        return UsersResult::Err(TrackerErrorFromHttpStatus(resp.status_code, outError));
+    }
+
+    try {
+        std::string parseErr;
+        auto j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        if (!parseErr.empty()) {
+            outError = std::string("user/bulk parse error: ") + parseErr;
+            LOG_ERROR("JiraClient: %s", outError.c_str());
+            return UsersResult::Err(TrackerErrorParse(outError));
+        }
+        const auto values = j.value("values", nlohmann::json::array());
+        if (!values.is_array()) {
+            outError = "user/bulk: expected values array.";
+            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
+            return UsersResult::Err(TrackerErrorParse(outError));
+        }
+        std::unordered_set<std::string> seen;
+        for (const auto& node : values) {
+            if (!node.is_object()) {
+                continue;
+            }
+            TrackerUser u;
+            ParseTrackerUserObject(node, u);
+            // Inactive accounts stay: a query naming a deactivated assignee still deserves
+            // a readable name (unlike user/search above, which feeds pick-a-user flows).
+            if (u.AccountId.empty() || !seen.insert(u.AccountId).second) {
+                continue;
+            }
+            outUsers.push_back(std::move(u));
+        }
+    } catch (const std::exception& ex) {
+        outError = std::string("user/bulk parse error: ") + ex.what();
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return UsersResult::Err(TrackerErrorParse(outError));
+    }
+    return UsersResult::Ok(std::move(outUsers));
 }
 
 Result<std::vector<TrackerUser>, TrackerError> JiraClient::FetchGroupMembers(const TrackerConfig& cfg,
