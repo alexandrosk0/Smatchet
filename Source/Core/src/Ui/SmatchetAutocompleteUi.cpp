@@ -47,6 +47,9 @@ static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
         st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());
     }
     st.jqlAcpSearchResolvedUsers.push_back(u);
+    // Every insertion changes what the echo can name, and at the cap the evict-then-append
+    // pair leaves the size identical — so drop the memo here rather than infer it from a size.
+    st.jqlUserEchoValid = false;
 }
 
 /// Turn a completed user search into popup rows: one row per named account, capped, and
@@ -329,10 +332,15 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
 }
 
 void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
-    // Memoised on (buffer text, catalog size): the transform is a per-keystroke cost only,
-    // and a steady frame pays one string compare (Pillar 1).
-    const size_t userCount = catalogUsers.size() + st.jqlAcpSearchResolvedUsers.size();
-    if (!st.jqlUserEchoValid || st.jqlUserEchoUserCount != userCount || st.jqlUserEchoSource != st.buf) {
+    // Memoised on the buffer text plus the catalog SNAPSHOT the names came from — its buffer
+    // address and size, not a name-by-name compare, so a steady frame stays O(1) (Pillar 1).
+    // The catalog is only ever replaced wholesale (`AvailableUsers = std::move(...)`, or a
+    // whole-vector copy on pane switch), so a refresh lands on a new allocation and is caught
+    // even when it renames a user without changing the count. The search-resolved side needs
+    // no key at all: RememberResolvedUser drops the memo on every insert and rename.
+    const void* catalogData = static_cast<const void*>(catalogUsers.data());
+    if (!st.jqlUserEchoValid || st.jqlUserEchoCatalogData != catalogData ||
+        st.jqlUserEchoCatalogSize != catalogUsers.size() || st.jqlUserEchoSource != st.buf) {
         int fromCatalog = 0;
         int fromSearch = 0;
         std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, catalogUsers, &fromCatalog);
@@ -343,7 +351,8 @@ void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, 
         }
         st.jqlUserEcho = (fromCatalog + fromSearch) > 0 ? rendered : std::string();
         st.jqlUserEchoSource = st.buf;
-        st.jqlUserEchoUserCount = userCount;
+        st.jqlUserEchoCatalogData = catalogData;
+        st.jqlUserEchoCatalogSize = catalogUsers.size();
         st.jqlUserEchoValid = true;
     }
     if (st.jqlUserEcho.empty()) {
