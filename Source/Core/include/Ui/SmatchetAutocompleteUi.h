@@ -47,6 +47,13 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                                const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
                                const std::vector<QuerySuggestion>& mergedItems);
 
+/** Draw the readable echo of the query under the query bar: the same query with every
+ *  account id it carries replaced by that user's display name. Nothing is drawn when the
+ *  query names no resolvable account. `catalogUsers` is the app-owned user catalog; the
+ *  editor's own search-resolved names are folded in on top of it. Presentation only — the
+ *  query of record in `st.buf` (the one the backend runs) is never rewritten. */
+void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
+
 /** Debounced Jira user search on main thread; mutates st.jqlAcpAsyncUserItems / errors.
  *  userSearch is the narrow user-query facet of the app object. */
 void TrackerQueryAcp_TickDebouncedUserSearch(const IAppUsers& userSearch, UiDrawSession& d, JqlEditorState& st,

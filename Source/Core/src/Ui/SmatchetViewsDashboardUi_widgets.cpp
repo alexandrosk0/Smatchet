@@ -392,6 +392,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     }
     TrackerQueryAcp_FlushPendingReplace(st);
 
+    // Readable echo of the query: user clauses carry an opaque account id (the only form
+    // Jira Cloud matches a user on), so spell those ids out as names right under the bar.
+    TrackerQueryAcp_DrawUserEcho(app.GetAvailableUsers(), st);
+
     // Project pill beneath the query bar — pick a single project scope for the active view.
     // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.
     if (drawProjectPill) {
