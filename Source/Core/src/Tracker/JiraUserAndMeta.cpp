@@ -509,17 +509,28 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
     // GET /rest/api/3/user/bulk — repeated accountId params, endpoint cap 128 per call.
     // Chunked so every id is asked for even past the cap (a query buffer holds ~a dozen
     // ids, so one chunk is the norm — the loop is for the interface contract, not the UI).
+    // Each chunk's response is a PageBeanUser: pages are followed via `startAt` until
+    // `isLast`, so a server that clamps the page size below maxResults still yields every
+    // user. kMaxPagesPerChunk bounds a misbehaving server that never reports a last page
+    // (a chunk's total is <= the ids requested, so 8 pages is already unreachable).
     constexpr size_t kMaxIdsPerCall = 128;
+    constexpr size_t kMaxPagesPerChunk = 8;
     std::unordered_set<std::string> seen;
     TrackerError err = TrackerError::Ok();
     for (size_t from = 0; from < accountIds.size(); from += kMaxIdsPerCall) {
         const size_t to = (std::min)(accountIds.size(), from + kMaxIdsPerCall);
-        std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall);
+        std::string idParams;
         for (size_t k = from; k < to; ++k) {
-            url += "&accountId=" + UrlEncode(accountIds[k]);
+            idParams += "&accountId=" + UrlEncode(accountIds[k]);
         }
-        if (!FetchJiraUserArray("user/bulk", url, headers, "values", /*keepInactive=*/true, outUsers, seen, err)) {
-            return UsersResult::Err(std::move(err));
+        bool isLast = false;
+        for (size_t page = 0; !isLast && page < kMaxPagesPerChunk; ++page) {
+            const std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall) +
+                                    "&startAt=" + std::to_string(page * kMaxIdsPerCall) + idParams;
+            if (!FetchJiraUserArray("user/bulk", url, headers, "values", /*keepInactive=*/true, outUsers, seen, err,
+                                    &isLast)) {
+                return UsersResult::Err(std::move(err));
+            }
         }
     }
     // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing cross-backend FetchGroupMembers prologue similarity vs GitHubActivityFeed.cpp re-exposed by line shifts in this TU; de-duping independent backend clients is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)

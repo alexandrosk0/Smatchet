@@ -318,3 +318,67 @@ TEST_CASE("JiraClient::FetchGroupMembers — non-200 on the first page maps the 
     REQUIRE_FALSE(res.has_value());
     CHECK(res.error().Kind == TrackerErrorKind::ServerError);
 }
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — empty id list returns empty with no HTTP") {
+    JiraCatalogHttpFixture fx;
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {});
+    REQUIRE(res.has_value());
+    CHECK(res.value().empty());
+    CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 0);
+}
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — a terminal page keeps inactive users and dedups") {
+    JiraCatalogHttpFixture fx;
+    const nlohmann::json body = {
+        {"isLast", true},
+        {"values", nlohmann::json::array({
+                       nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
+                       nlohmann::json{{"accountId", "a2"}, {"displayName", "Bob"}, {"active", false}},
+                       nlohmann::json{{"accountId", "a1"}, {"displayName", "AliceDup"}, {"active", true}},
+                   })}};
+    fx.ScriptJson("/rest/api/3/user/bulk", body, "GET");
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1", "a2"});
+    REQUIRE(res.has_value());
+    // Inactive a2 SURVIVES (a query naming a deactivated assignee still gets a name);
+    // the duplicate a1 row is dropped.
+    CHECK(res.value().size() == 2);
+    CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 1);
+}
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — a multi-page response is followed via startAt until isLast") {
+    JiraCatalogHttpFixture fx;
+    // A server that clamps the page size below maxResults: page startAt=0 carries a1 with
+    // isLast:false; the follow-up page (startAt=128) carries a2 with isLast:true.
+    fx.ScriptHandler("/rest/api/3/user/bulk", [](const httplib::Request& req) {
+        const std::string startAt = req.get_param_value("startAt");
+        if (startAt == "0") {
+            return nlohmann::json{
+                {"isLast", false},
+                {"values", nlohmann::json::array({
+                               nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
+                           })}};
+        }
+        return nlohmann::json{
+            {"isLast", true},
+            {"values", nlohmann::json::array({
+                           nlohmann::json{{"accountId", "a2"}, {"displayName", "Bob"}, {"active", true}},
+                       })}};
+    });
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1", "a2"});
+    REQUIRE(res.has_value());
+    CHECK(res.value().size() == 2);
+    // Both pages fetched, then the isLast:true page terminated the loop.
+    CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 2);
+}
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — non-200 maps the status") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/user/bulk", 500, "GET");
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1"});
+    REQUIRE_FALSE(res.has_value());
+    CHECK(res.error().Kind == TrackerErrorKind::ServerError);
+}
