@@ -81,6 +81,14 @@ bool AsciiStartsWithIgnoreCase(const std::string& value, const std::string& pref
     return v.size() >= prefixLower.size() && v.compare(0, prefixLower.size(), prefixLower) == 0;
 }
 
+bool AsciiContainsIgnoreCase(const std::string& value, const std::string& needleLower) {
+    if (needleLower.empty()) {
+        return true;
+    }
+    const std::string v = ToLowerAsciiCopy(value);
+    return v.find(needleLower) != std::string::npos;
+}
+
 const TrackerField* FindTrackerField(const std::vector<TrackerField>& fields, const std::string& token) {
     if (token.empty()) {
         return nullptr;
@@ -158,14 +166,23 @@ void AppendValueSuggestions(const TrackerField& field, const std::string& prefix
                             std::vector<QuerySuggestion>& out, std::unordered_set<std::string>& seen) {
     const std::string pre = ToLowerAsciiCopy(prefix);
     const bool isUserField = IsQueryUserField(field);
-    auto matchesPrefix = [&](const std::string& raw, const std::string& label) {
+    // A user field's DISPLAY text matches anywhere (a surname is as natural a search key as
+    // a first name), but its raw side stays prefix-anchored: for user fields the raw value
+    // is the opaque 24-hex accountId (TrackerFieldCatalog fills one option per catalog
+    // user), and a substring test there matches most of the org on a single typed letter.
+    // Every other value family stays fully prefix-anchored — there the typed text is the
+    // start of a status / version / label the user already has in mind.
+    auto matchesQuery = [&](const std::string& raw, const std::string& label) {
+        if (isUserField) {
+            return AsciiStartsWithIgnoreCase(raw, pre) || AsciiContainsIgnoreCase(label, pre);
+        }
         return AsciiStartsWithIgnoreCase(raw, pre) || AsciiStartsWithIgnoreCase(label, pre);
     };
     auto tryAdd = [&](const std::string& raw, const std::string& displayLabel) {
         if (raw.empty()) {
             return;
         }
-        if (!matchesPrefix(raw, displayLabel)) {
+        if (!matchesQuery(raw, displayLabel)) {
             return;
         }
         const std::string insert = InsertForValueToken(raw);
@@ -180,10 +197,10 @@ void AppendValueSuggestions(const TrackerField& field, const std::string& prefix
         if (isUserField) {
             const std::string display = opt.Value.empty() ? opt.SecondaryValue : opt.Value;
             const std::string accountId = opt.Id;
-            if (!accountId.empty() && matchesPrefix(accountId, display)) {
+            if (!accountId.empty() && matchesQuery(accountId, display)) {
                 AddSuggestionUnique(out, seen, display.empty() ? accountId : display, InsertForValueToken(accountId));
             }
-            if (!display.empty() && display != accountId && matchesPrefix(display, display)) {
+            if (!display.empty() && display != accountId && matchesQuery(display, display)) {
                 AddSuggestionUnique(out, seen, display + userDisplaySuffix + InsertForValueToken(display),
                                     InsertForValueToken(display));
             }

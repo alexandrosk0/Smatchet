@@ -40,6 +40,10 @@ bool AsciiEqualsIgnoreCaseToLowered(const std::string& value, const std::string&
 /// Case-insensitive prefix test; `prefixLower` is already lower-cased ASCII.
 bool AsciiStartsWithIgnoreCase(const std::string& value, const std::string& prefixLower);
 
+/// Case-insensitive substring test; `needleLower` is already lower-cased ASCII.
+/// An empty needle matches everything (same convention as AsciiStartsWithIgnoreCase).
+bool AsciiContainsIgnoreCase(const std::string& value, const std::string& needleLower);
+
 /// Resolve a field by id (then by name) against the available-field catalog,
 /// case-insensitively. Returns nullptr when no match. Takes the field vector
 /// directly (decoupled from AppController for testability).
