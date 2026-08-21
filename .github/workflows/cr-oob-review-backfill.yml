@@ -14,9 +14,17 @@ name: CR out-of-band review backfill
 # stays thin deliberately (see lock-staleness.yml for the same split and the
 # block-scalar parse pitfall it avoids).
 
+# SCHEDULE DISABLED after the 2026-08-18 duplicate-comment incident. The first
+# live deployment posted six identical requests to #1995 in two hours because
+# the request-record lookup returned empty and every guard went inert together.
+# The data layer cannot be exercised from the authoring container (no gh), so it
+# is proven the only way it can be: a manual `workflow_dispatch` with
+# dry_run: true against live GitHub, confirming the poller HOLDS on #1995
+# (already marked) instead of firing. Re-arm the cron in the PR that records
+# that run's output — not before.
 on:
-  schedule:
-    - cron: '7,22,37,52 * * * *'   # every 15 min, off the :00/:30 pile-up
+  # schedule:
+  #   - cron: '7,22,37,52 * * * *'   # every 15 min, off the :00/:30 pile-up
   workflow_dispatch:
     inputs:
       dry_run:

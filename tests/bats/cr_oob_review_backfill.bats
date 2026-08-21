@@ -74,6 +74,15 @@ row() { printf '%s\n' "$*" >> "$FIX"; }
     [[ "$output" != *"would request"* ]]
 }
 
+@test "a failed request lookup posts nothing" {
+    # The live regression: the upstream lookup returned empty, every guard went
+    # inert at once, and the poller re-posted to the same PR every tick.
+    printf 'now\t1000000\nqueue\t1995\nqueue\t1977\nscanfail\t1995\n' > "$FIX"
+    run bash "$SCRIPT" --poll
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"would request"* ]]
+}
+
 @test "a fully-requested queue posts nothing" {
     printf 'now\t1010000\nqueue\t1995\nrequested\t1995\t100\nconfirmed\t1995\n' > "$FIX"
     run bash "$SCRIPT" --poll
