@@ -44,7 +44,6 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
-
 #include <GLFW/glfw3.h>
 #if defined(_WIN32)
 #define GLFW_EXPOSE_NATIVE_WIN32
@@ -108,6 +107,7 @@ namespace {
 // aliases keep the existing call sites readable + behaviour byte-identical.
 using boot_detail::EnsureDirectoryExists;
 using boot_detail::KeypadEnterBridgeCallback;
+using boot_detail::MarkdownFileDropCallback;
 using boot_detail::NormalizeDirectory;
 using boot_detail::PackRgbDropAlpha;
 using boot_detail::ResolveStandaloneUserDataDir;
@@ -565,6 +565,10 @@ bool Initialize(BootstrapContext& ctx, int argc, char** argv, HeadlessCliMode /*
         glfwTerminate();
         return false;
     }
+
+    // Dropped .md files open in the Plan Docs viewer (renderer-independent, so
+    // registered here rather than beside the per-backend key callback).
+    glfwSetDropCallback(window, MarkdownFileDropCallback);
 
     if (!useDx12) {
         glfwMakeContextCurrent(window);

@@ -1151,6 +1151,23 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
     }
     {
         SMATCHET_UI_PERF_SCOPE("DrawPlanDocViewer");
+        // "Open..." request from the viewer, serviced here so the viewer TU stays
+        // off the AppController fan-in list. The host handler is synchronous (a
+        // system-modal dialog, same accepted stall as the attachment picker), so
+        // the &d capture never outlives this frame.
+        if (d.requestPlanDocOpenFileDialog) {
+            d.requestPlanDocOpenFileDialog = false;
+            app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](const std::vector<std::string>& paths) {
+                for (std::size_t i = 0; i < paths.size(); ++i) {
+                    smatchet::PlanDocViewerOpenExternalFile(d, paths[i]);
+                }
+                if (!paths.empty()) {
+                    // Re-select the first pick so it is the active doc (each call
+                    // above moved the selection to its own path).
+                    smatchet::PlanDocViewerOpenExternalFile(d, paths.front());
+                }
+            });
+        }
         smatchet::DrawPlanDocViewer(d);
     }
     drawSecondaryWindowsTail(app, d);

@@ -44,6 +44,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/spawn_warmup_deterministic_gate.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_prefs_persist_flow.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/data_dependent_windows_smoke.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/plan_doc_viewer_external_open.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/notification_center.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_window_render_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_preferences_tabs.test.cpp"
