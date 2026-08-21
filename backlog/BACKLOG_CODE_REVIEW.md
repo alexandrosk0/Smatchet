@@ -17,13 +17,30 @@
 
 ---
 
+> ## Triage — 2026-08-18 (post-merge, against develop tip `32feeaff`)
+>
+> One row closed, and one correction to this file's own earlier triage.
+>
+> - **C5 — 🟡 PARTIAL → ✅ RESOLVED (PR #2122).** `FileIo.{h,cpp}` now exists; `ScopedFileLock` has a
+>   single definition at `Source/Core/include/FileIo.h:51` and `BackendAuditTrail` consumes it. See the
+>   C5 section for why two of the row's three instructions were rejected rather than executed.
+> - **Correction to the 2026-08-16 entry above.** That pass recorded C5 as *"closed as won't-do-as-written
+>   (objective met in substance)"*. That judgement was wrong: the src-private header wall meant the lock
+>   genuinely could not be shared, so the objective was NOT met in substance. The extraction was real work
+>   and has now been done. The category-C count moves 6 ✅ → 7 ✅.
+> - **DR29** (in `DEEP_REVIEW_2026-07-07.md`) also closed on 2026-08-18 via PR #2121 — recorded there, not
+>   duplicated here.
+>
+> Nothing else in this file changed state. B1/B5 keep their 🚫 CLOSED BY DECISION markers from 2026-08-18;
+> the `<details>` block below is a 2026-05-10 historical snapshot and is deliberately left untouched.
+
 ## Status snapshot (current — 2026-08-16)
 
 | Category | Count | State |
 |----------|-------|-------|
 | A. P0 / safety tails | 4 | 4 ✅ (A1, A2, A3, A4) |
 | B. P1 structural | 5 | 3 ✅ (B2, B3, B4) · 2 🚫 closed by decision (B1 won't-do-as-written · B5 improved, remainder design-deferred) |
-| C. P2 polish | 7 | 6 ✅ · C5 closed as won't-do-as-written (objective met in substance) |
+| C. P2 polish | 7 | 7 ✅ (C5 resolved 2026-08-18 by PR #2122 — the 2026-08-16 entry called it won't-do; the extraction was then actually done) |
 | N. New findings (2026-05-16 pass) | 14 | 13 ✅ · N13 ⏳ dormant watch (acceptable; no trigger fired) |
 
 **Net open: zero work items.** N13 is a watch with an unfired trigger, not a task. The only actionable
@@ -203,10 +220,16 @@ Rebuilds `openWrap` / `closeWrap` vectors per text node. Reuse a scratch buffer 
 
 `PlaneClient.cpp:1459-1501` handles 6 core IDs (`summary`/`description`/`priority`/`status`/`type`/`parent`/`assignee`). Any `TrackerField.Id` that's a UUID (custom property) is silently dropped. Iterate `catalog` for custom props and emit under `properties.<uuid>` or whichever shape Plane v1 accepts.
 
-### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41) — 🟡 PARTIAL (2026-07-05)
-> No `FileIo.{h,cpp}` module. `AtomicWriteTextFile` was promoted to a public `ConfigManager` static (shared by `FieldCatalogCache`, `SmatchetUI`, `_Views`, `_Panes`); `ScopedFileLock` is still confined to `ConfigManager_Internal.h`.
+### C5. Extract `ScopedFileLock` + `AtomicWriteTextFile` (item 41) — ✅ RESOLVED (2026-08-18, PR #2122)
+> `Source/Core/{include,src}/FileIo.{h,cpp}` now exists under `smatchet::fileio` at include-DAG layer 0. `ScopedFileLock` has exactly one definition, `FileIo.h:51` (was src-private in `Config/ConfigManager_Internal.h`, whose own doc comment forbids inclusion from non-Config TUs — a hard wall that made the lock unusable outside `Config/`). `BackendAuditTrail` takes it at `:234` / `:251`.
 
-Both still defined in `Source/Core/src/ConfigManager.cpp` anonymous namespace (lines 179+, ~700+). `BackendAuditTrail` uses raw `ofstream`; export paths re-implement atomic-write. Promote to `Source/Core/{src,include}/FileIo.{h,cpp}` so all three share. Win32-only work.
+**Resolved narrower than the row proposed, deliberately — two of its three instructions were wrong:**
+
+- **`AtomicWriteTextFile` was NOT moved.** It is already a public `ConfigManager` static shared by 6 TUs; relocating it would touch 6 call sites to change nothing. The row's premise ("both still defined in `ConfigManager.cpp` anonymous namespace") was stale — the god-file had since been split into `Config/`.
+- **"`BackendAuditTrail` uses raw `ofstream` → make it use `AtomicWriteTextFile`" is the wrong fix.** It *appends* (`ios::app`). Atomic whole-file replace on an append-only JSONL log means re-reading and rewriting the entire trail per event — O(n²) plus a fresh data-loss window on every write. What it actually lacked was the **lock**: `AuditMutex()` serialises one process, nothing enforces single-instance, and append is not cross-process atomic. It now takes the sidecar lock under the existing mutex.
+- **`ReadRecentEvents` is deliberately left lock-free** — it is UI-thread reachable and already tolerates a torn tail, so a blocking `flock` there would be a Pillar-2 violation. Do not "finish" the row by adding one.
+
+Residual risk stated honestly: the blocking-order tests are POSIX-only, so Windows CI proves acquisition/release but not contention, and no test on any platform exercises the true cross-*process* case the audit-trail change targets.
 
 ### C6. `BackendAuditTrail::LooksSensitiveKey` blocklist (item 43) — ✅ RESOLVED (documented, 2026-07-10)
 > Took the "document why each entry stays" branch of the product call: a rationale comment above `LooksSensitiveKey` (`Source/Core/src/Persistence/BackendAuditTrail.cpp`) classifies the blocklist into credentials / identity-PII / free-text-that-quotes-both and records why the audit trail (plaintext, on-disk, travels in bug reports) keeps all three. Behaviour unchanged. If diff utility is ever preferred over the privacy stance, trimming is a deliberate follow-up decision, not a cleanup.
