@@ -12,6 +12,7 @@
 // Risks § R6 ("scope creep").
 
 #include <string>
+#include <vector>
 
 struct UiDrawSession;
 
@@ -27,6 +28,11 @@ void DrawPlanDocViewer(UiDrawSession& d);
 // here (Pillar 2) — the viewer's per-frame async load reads it; an
 // unreadable path surfaces the viewer's normal error body.
 void PlanDocViewerOpenExternalFile(UiDrawSession& d, const std::string& absPathUtf8);
+
+// Batch form shared by the drop callback and the "Open..." dialog: every path
+// joins the picker, the FIRST one becomes the active doc. Empty entries are
+// skipped; an all-empty batch changes nothing (window not opened).
+void PlanDocViewerOpenExternalFiles(UiDrawSession& d, const std::vector<std::string>& absPathsUtf8);
 
 } // namespace smatchet
 

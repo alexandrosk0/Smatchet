@@ -305,6 +305,14 @@ void PollIndexResult(ViewerState& s) {
     s.repoRoot = std::move(result.repoRoot);
     s.files = std::move(result.files);
     s.indexed = true;
+    // A doc dropped while the scan was in flight can reappear in the fresh scan
+    // (the drop deduped against a cleared `files`) — purge such duplicates so
+    // the picker lists each path once. keepPath re-resolves below either way.
+    s.droppedFiles.erase(std::remove_if(s.droppedFiles.begin(), s.droppedFiles.end(),
+                                        [&s](const std::string& p) {
+                                            return std::find(s.files.begin(), s.files.end(), p) != s.files.end();
+                                        }),
+                         s.droppedFiles.end());
     if (!keepPath.empty()) {
         s.selectedIdx = FindCombinedIndex(s, keepPath); // -1 when gone: fall through
     }
@@ -474,55 +482,52 @@ void DrawPlanDocViewer(UiDrawSession& d) {
 
     if (s.indexInFlight) {
         ImGui::TextDisabled("Scanning plan docs...");
-    } else if (!s.indexError.empty()) {
-        // Ahead of the empty-list branch on purpose: a failed scan also leaves `files` empty, and
-        // "No plan docs found under docs/design or docs/adr" would then state as fact something
-        // the viewer never managed to check.
-        ImGui::TextDisabled("%s", s.indexError.c_str());
-        if (ImGui::Button("Open...")) {
-            d.requestPlanDocOpenFileDialog = true; // dialog runs at the host draw site — see SmatchetUI.cpp
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Rescan")) {
-            StartRescanIndex(s);
-        }
-    } else if (CombinedCount(s) == 0) {
-        ImGui::TextDisabled("No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
-        if (ImGui::Button("Open...")) {
-            d.requestPlanDocOpenFileDialog = true;
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Rescan")) {
-            StartRescanIndex(s);
-        }
     } else {
-        const int combinedCount = CombinedCount(s);
-        const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < combinedCount) ? s.selectedIdx : 0;
-        const std::string curLabel = EntryLabel(s, curIdx);
-        ImGui::SetNextItemWidth(-180.0f);
-        if (ImGui::BeginCombo("##plan_doc_picker", curLabel.c_str())) {
-            for (int i = 0; i < combinedCount; ++i) {
-                const std::string label = EntryLabel(s, i);
-                const bool isSel = (i == curIdx);
-                // Dropped files can share a filename label — PushID keeps ids unique.
-                ImGui::PushID(i);
-                if (ImGui::Selectable(label.c_str(), isSel)) {
-                    // The read is kicked from the per-frame StartLoadSelected at the top of
-                    // Draw — never inline here (Pillar 2: no file I/O on the render thread).
-                    s.selectedIdx = i;
+        if (!s.indexError.empty()) {
+            // Ahead of the empty-list message on purpose: a failed scan also leaves `files` empty,
+            // and "No plan docs found under docs/design or docs/adr" would then state as fact
+            // something the viewer never managed to check.
+            ImGui::TextDisabled("%s", s.indexError.c_str());
+        } else if (CombinedCount(s) == 0) {
+            ImGui::TextDisabled(
+                "No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
+        }
+        // The picker renders whenever ANY doc exists — scanned or dropped — so a
+        // failed scan never strands externally opened docs unreachable.
+        if (CombinedCount(s) > 0) {
+            const int combinedCount = CombinedCount(s);
+            const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < combinedCount) ? s.selectedIdx : 0;
+            const std::string curLabel = EntryLabel(s, curIdx);
+            ImGui::SetNextItemWidth(d.openFileDialogAvailable ? -180.0f : -110.0f);
+            if (ImGui::BeginCombo("##plan_doc_picker", curLabel.c_str())) {
+                for (int i = 0; i < combinedCount; ++i) {
+                    const std::string label = EntryLabel(s, i);
+                    const bool isSel = (i == curIdx);
+                    // Dropped files can share a filename label — PushID keeps ids unique.
+                    ImGui::PushID(i);
+                    if (ImGui::Selectable(label.c_str(), isSel)) {
+                        // The read is kicked from the per-frame StartLoadSelected at the top of
+                        // Draw — never inline here (Pillar 2: no file I/O on the render thread).
+                        s.selectedIdx = i;
+                    }
+                    if (isSel) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::PopID();
                 }
-                if (isSel) {
-                    ImGui::SetItemDefaultFocus();
-                }
-                ImGui::PopID();
+                ImGui::EndCombo();
             }
-            ImGui::EndCombo();
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
-        if (ImGui::Button("Open...")) {
-            d.requestPlanDocOpenFileDialog = true;
+        // "Open..." only where a host open-file handler exists (Win32 today —
+        // see SmatchetUI.cpp); a button that could never produce a dialog would
+        // just look broken. Drag-and-drop works everywhere regardless.
+        if (d.openFileDialogAvailable) {
+            if (ImGui::Button("Open...")) {
+                d.requestPlanDocOpenFileDialog = true; // dialog runs at the host draw site — see SmatchetUI.cpp
+            }
+            ImGui::SameLine();
         }
-        ImGui::SameLine();
         if (ImGui::Button("Rescan")) {
             StartRescanIndex(s);
         }
@@ -558,25 +563,40 @@ void DrawPlanDocViewer(UiDrawSession& d) {
 }
 
 void PlanDocViewerOpenExternalFile(UiDrawSession& d, const std::string& absPathUtf8) {
-    if (absPathUtf8.empty()) {
-        return;
-    }
+    std::vector<std::string> one;
+    one.push_back(absPathUtf8);
+    PlanDocViewerOpenExternalFiles(d, one);
+}
+
+void PlanDocViewerOpenExternalFiles(UiDrawSession& d, const std::vector<std::string>& absPathsUtf8) {
     ViewerState& s = State();
-    // Generic form matches how BuildIndex stores scanned paths, so the dedup
-    // below also catches a drop of a doc the scan already lists. No existence
-    // check here (that is file I/O on the render thread — Pillar 2); an
-    // unreadable path surfaces the viewer's normal error body once the
-    // per-frame async load attempts it.
-    const std::string normalized = fs::path(absPathUtf8).generic_string();
-    int idx = FindCombinedIndex(s, normalized);
-    if (idx < 0) {
-        s.droppedFiles.push_back(normalized);
-        idx = CombinedCount(s) - 1;
+    int firstIdx = -1;
+    for (std::size_t i = 0; i < absPathsUtf8.size(); ++i) {
+        if (absPathsUtf8[i].empty()) {
+            continue;
+        }
+        // Generic form matches how BuildIndex stores scanned paths, so the dedup
+        // in FindCombinedIndex also catches a drop of a doc the scan already
+        // lists. No existence check here (that is file I/O on the render thread
+        // — Pillar 2); an unreadable path surfaces the viewer's normal error
+        // body once the per-frame async load attempts it.
+        const std::string normalized = fs::path(absPathsUtf8[i]).generic_string();
+        int idx = FindCombinedIndex(s, normalized);
+        if (idx < 0) {
+            s.droppedFiles.push_back(normalized);
+            idx = CombinedCount(s) - 1;
+        }
+        if (firstIdx < 0) {
+            firstIdx = idx;
+        }
+        LOG_INFO("plan-doc viewer: opening external markdown %s", normalized.c_str());
     }
-    s.selectedIdx = idx;
+    if (firstIdx < 0) {
+        return; // nothing usable in the batch — leave the window state alone
+    }
+    s.selectedIdx = firstIdx; // the first path is the active doc; the rest wait in the picker
     d.showPlanDocViewer = true;
     d.requestPlanDocViewerFocus = true;
-    LOG_INFO("plan-doc viewer: opening external markdown %s", normalized.c_str());
 }
 
 } // namespace smatchet

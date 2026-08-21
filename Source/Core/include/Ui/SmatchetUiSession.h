@@ -428,8 +428,13 @@ struct UiDrawSession {
     /// One-frame request from the Plan-doc viewer's "Open..." button. Consumed at
     /// the DrawPlanDocViewer call site in SmatchetUI.cpp, which routes it through
     /// AppController::RequestOpenFilePaths (the viewer TU stays off the
-    /// AppController fan-in list) and feeds picks to PlanDocViewerOpenExternalFile.
+    /// AppController fan-in list) and feeds picks to PlanDocViewerOpenExternalFiles.
     bool requestPlanDocOpenFileDialog = false;
+    /// True once a host open-file-dialog handler is installed (Win32 today — see
+    /// the SetOpenFilePathsHandler block in SmatchetUI.cpp). The viewer hides its
+    /// "Open..." button while false, so platforms without a dialog never show a
+    /// button that silently does nothing.
+    bool openFileDialogAvailable = false;
     bool requestAuditTrailFocus = false;
     /// User Info window (SmatchetUserInfoUi). Opened from the grid right-click
     /// menu on user-type cells; dock tab X / Escape clears this.

@@ -29,6 +29,7 @@
 #include <ghc/filesystem.hpp>
 
 #include <fstream>
+#include <random>
 #include <string>
 #include <system_error>
 
@@ -58,14 +59,17 @@ bool WindowIsLive(const char* title) {
 
 // Write a small markdown file under the OS temp dir. Returns the generic-form
 // absolute path, or empty on failure (the test then SKIPs rather than asserting
-// on an environment problem).
+// on an environment problem). The name carries a per-process random suffix so
+// parallel CI shards on one machine never race on the same file.
 std::string WriteTempMarkdownFile() {
     std::error_code ec;
     ghc::filesystem::path dir = ghc::filesystem::temp_directory_path(ec);
     if (ec) {
         return std::string();
     }
-    const ghc::filesystem::path p = dir / "smatchet_uitest_external_open.md";
+    std::random_device rd;
+    const std::string name = "smatchet_uitest_external_open_" + std::to_string(rd()) + ".md";
+    const ghc::filesystem::path p = dir / name;
     std::ofstream out(p.generic_string().c_str(), std::ios::binary | std::ios::trunc);
     if (!out.is_open()) {
         return std::string();
@@ -113,8 +117,10 @@ void RegisterExternalOpenPopulatesPicker(ImGuiTestEngine* engine) {
 
         g_ui.showPlanDocViewer = false;
         ctx->Yield();
-        std::error_code ec;
-        ghc::filesystem::remove(ghc::filesystem::path(mdPath), ec); // best-effort temp cleanup
+        // The temp file is deliberately LEFT in place: the viewer's process-
+        // lifetime state keeps this path selected, and deleting it would make
+        // every later test that opens "Plan Docs" render the unreadable-file
+        // error body. The OS temp dir owns the (tiny, uniquely named) residue.
     };
 }
 

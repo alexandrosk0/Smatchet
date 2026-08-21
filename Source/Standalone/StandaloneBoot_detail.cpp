@@ -38,7 +38,6 @@
 #include <ghc/filesystem.hpp>
 
 #include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <system_error>
 
@@ -107,26 +106,21 @@ bool HasMarkdownExtension(const std::string& pathUtf8) {
 } // namespace
 
 void MarkdownFileDropCallback(GLFWwindow* /*window*/, int count, const char** paths) {
+    std::vector<std::string> markdown;
     int ignored = 0;
-    const char* firstMarkdown = nullptr;
     for (int i = 0; i < count; ++i) {
         if (paths[i] == nullptr) {
             continue;
         }
-        if (!HasMarkdownExtension(paths[i])) {
+        if (HasMarkdownExtension(paths[i])) {
+            markdown.push_back(paths[i]);
+        } else {
             ++ignored;
-            continue;
         }
-        if (firstMarkdown == nullptr) {
-            firstMarkdown = paths[i];
-        }
-        smatchet::PlanDocViewerOpenExternalFile(g_ui, paths[i]);
     }
-    if (firstMarkdown != nullptr) {
-        // Each call above selected its own path; re-open the first drop so it is
-        // the active doc (dedup inside makes this a pure re-select).
-        smatchet::PlanDocViewerOpenExternalFile(g_ui, firstMarkdown);
-    }
+    // Batch call: every match joins the picker, the first drop becomes the
+    // active doc. No-op on an empty batch.
+    smatchet::PlanDocViewerOpenExternalFiles(g_ui, markdown);
     if (ignored > 0) {
         LOG_INFO("file drop: ignored %d non-markdown file(s) — only .md/.markdown open in the Plan Docs viewer",
                  ignored);

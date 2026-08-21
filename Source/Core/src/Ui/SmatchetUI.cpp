@@ -597,6 +597,10 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
             }
         });
         g_openFilePathsHandlerInstalled = true;
+        // Tells surfaces with a "pick a file" affordance (plan-doc viewer's
+        // "Open..." button) that RequestOpenFilePaths can actually produce a
+        // dialog on this platform.
+        g_ui.openFileDialogAvailable = true;
     }
 #endif
 }
@@ -1158,14 +1162,7 @@ void SmatchetUI::drawSecondaryWindows(AppController& app, UiDrawSession& d) {
         if (d.requestPlanDocOpenFileDialog) {
             d.requestPlanDocOpenFileDialog = false;
             app.RequestOpenFilePaths(true, d.cfg.LastImportDirectory, [&d](const std::vector<std::string>& paths) {
-                for (std::size_t i = 0; i < paths.size(); ++i) {
-                    smatchet::PlanDocViewerOpenExternalFile(d, paths[i]);
-                }
-                if (!paths.empty()) {
-                    // Re-select the first pick so it is the active doc (each call
-                    // above moved the selection to its own path).
-                    smatchet::PlanDocViewerOpenExternalFile(d, paths.front());
-                }
+                smatchet::PlanDocViewerOpenExternalFiles(d, paths);
             });
         }
         smatchet::DrawPlanDocViewer(d);
