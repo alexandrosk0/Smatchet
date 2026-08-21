@@ -419,11 +419,22 @@ struct UiDrawSession {
     bool requestBulkExportFocus = false;
     bool showAuditTrail = false;
     /// Plan-doc viewer window. Toggled from View → Plan docs and via
-    /// `view.toggle.plan_doc_viewer`. Read-only TextEditor backed by
-    /// SmatchetPlanDocViewerUi over docs/plans/active/*.md + docs/adr/*.md.
+    /// `view.toggle.plan_doc_viewer`. Read-only markdown viewer backed by
+    /// SmatchetPlanDocViewerUi over docs/design/*.md + docs/adr/*.md, plus
+    /// externally opened files (drag-and-drop / "Open..." dialog).
     bool showPlanDocViewer = false;
     /// One-frame focus latch for the Plan-doc viewer. See `requestPreferencesFocus`.
     bool requestPlanDocViewerFocus = false;
+    /// One-frame request from the Plan-doc viewer's "Open..." button. Consumed at
+    /// the DrawPlanDocViewer call site in SmatchetUI.cpp, which routes it through
+    /// AppController::RequestOpenFilePaths (the viewer TU stays off the
+    /// AppController fan-in list) and feeds picks to PlanDocViewerOpenExternalFiles.
+    bool requestPlanDocOpenFileDialog = false;
+    /// True once a host open-file-dialog handler is installed (Win32 today — see
+    /// the SetOpenFilePathsHandler block in SmatchetUI.cpp). The viewer hides its
+    /// "Open..." button while false, so platforms without a dialog never show a
+    /// button that silently does nothing.
+    bool openFileDialogAvailable = false;
     bool requestAuditTrailFocus = false;
     /// User Info window (SmatchetUserInfoUi). Opened from the grid right-click
     /// menu on user-type cells; dock tab X / Escape clears this.

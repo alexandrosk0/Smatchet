@@ -114,6 +114,9 @@ static void glfw_error_callback(int error, const char* description) {
 // Keypad-Enter -> Enter bridge lives in StandaloneBoot_detail (shared with the
 // hidden-window bootstrap). Aliased so the glfwSetKeyCallback site stays terse.
 using smatchet::standalone::boot_detail::KeypadEnterBridgeCallback;
+// Markdown file-drop -> Plan Docs viewer routing, also shared with the
+// hidden-window bootstrap.
+using smatchet::standalone::boot_detail::MarkdownFileDropCallback;
 
 #if defined(_WIN32)
 static void SmatchetApplyWindowIcon(GLFWwindow* window) {
@@ -596,6 +599,9 @@ static int BootApplication(int argc, char** argv, MainBootState& boot) {
     if (window == NULL) {
         return 1;
     }
+    // Dropped .md files open in the Plan Docs viewer (renderer-independent, so
+    // registered here rather than beside the per-backend key callback).
+    glfwSetDropCallback(window, MarkdownFileDropCallback);
 
     if (!BootSetupImGui(window, glsl_version, boot)) {
         return 1;

@@ -147,7 +147,14 @@ struct ViewerState {
     bool indexInFlight = false;
     fs::path repoRoot;
     std::vector<std::string> files; // absolute generic paths, sorted
-    int selectedIdx = -1;
+    // Externally supplied docs (drag-and-drop / "Open..." dialog): absolute
+    // generic paths, appended in arrival order, deduped. Session-lifetime —
+    // a rescan replaces `files` but never touches these.
+    std::vector<std::string> droppedFiles;
+    // Selection to restore once a rescan lands — the scanned-file count shift
+    // would otherwise re-point a dropped-file selection at an arbitrary doc.
+    std::string pendingReselectPath;
+    int selectedIdx = -1;   // index into the combined files + droppedFiles view
     std::string loadedPath; // path matching the cached body
     std::string body;       // cached markdown source for the active doc
     std::future<IndexResult> indexFuture;
@@ -168,6 +175,40 @@ ViewerState& State() {
     static ViewerState s;
     return s;
 }
+
+// The picker addresses one combined list: scanned files first, then the
+// session-dropped files. Indices into it are what `selectedIdx` holds.
+int CombinedCount(const ViewerState& s) { return static_cast<int>(s.files.size() + s.droppedFiles.size()); }
+
+// Path at a combined index, or empty when out of range.
+std::string PathAtIndex(const ViewerState& s, int idx) {
+    if (idx < 0 || idx >= CombinedCount(s)) {
+        return std::string();
+    }
+    const std::size_t u = static_cast<std::size_t>(idx);
+    if (u < s.files.size()) {
+        return s.files[u];
+    }
+    return s.droppedFiles[u - s.files.size()];
+}
+
+// Combined index of `path`, or -1 when absent.
+int FindCombinedIndex(const ViewerState& s, const std::string& path) {
+    for (std::size_t i = 0; i < s.files.size(); ++i) {
+        if (s.files[i] == path) {
+            return static_cast<int>(i);
+        }
+    }
+    for (std::size_t i = 0; i < s.droppedFiles.size(); ++i) {
+        if (s.droppedFiles[i] == path) {
+            return static_cast<int>(s.files.size() + i);
+        }
+    }
+    return -1;
+}
+
+// Path currently selected in the combo, or empty when the selection is out of range.
+std::string SelectedPath(const ViewerState& s) { return PathAtIndex(s, s.selectedIdx); }
 
 IndexResult BuildIndex() {
     IndexResult out;
@@ -198,6 +239,11 @@ void StartRescanIndex(ViewerState& s) {
     if (s.indexInFlight) {
         return;
     }
+    // Remember the live selection by PATH: the rescan replaces `files`, and any
+    // scanned-count change re-points a combined index at a different doc (worst
+    // for dropped files, which sit after the scanned block). PollIndexResult
+    // restores it against the fresh list.
+    s.pendingReselectPath = SelectedPath(s);
     s.indexed = false;
     s.files.clear();
     s.selectedIdx = -1;
@@ -215,8 +261,8 @@ void StartRescanIndex(ViewerState& s) {
     // manual recovery at all for the rest of the session.
     std::string launchErr;
     const bool launched = async_load::LaunchIntoSlot(
-        s.indexFuture, s.indexInFlight,
-        []() { return std::async(std::launch::async, []() { return BuildIndex(); }); }, launchErr);
+        s.indexFuture, s.indexInFlight, []() { return std::async(std::launch::async, []() { return BuildIndex(); }); },
+        launchErr);
     if (!launched) {
         LOG_ERROR("plan-doc viewer: could not start the document scan: %s", launchErr.c_str());
         s.indexError = "Couldn't scan for documents (the system refused a worker thread). Press Rescan to retry.";
@@ -245,20 +291,34 @@ void PollIndexResult(ViewerState& s) {
         s.indexed = true; // park the per-frame auto-kick; Rescan is the retry
         return;
     }
+    // Selection is re-resolved by PATH across the list swap. Two sources: the
+    // rescan latch (StartRescanIndex cleared selectedIdx, so SelectedPath is
+    // empty here) and the live selection on the FIRST scan (a doc dropped
+    // before the initial index landed sits at combined index 0 while `files`
+    // is empty; the scanned block landing in front of it would silently
+    // re-point that index at the first scanned doc).
+    std::string keepPath = SelectedPath(s);
+    if (keepPath.empty()) {
+        keepPath = s.pendingReselectPath;
+    }
+    s.pendingReselectPath.clear();
     s.repoRoot = std::move(result.repoRoot);
     s.files = std::move(result.files);
     s.indexed = true;
-    if (s.selectedIdx < 0 && !s.files.empty()) {
+    // A doc dropped while the scan was in flight can reappear in the fresh scan
+    // (the drop deduped against a cleared `files`) — purge such duplicates so
+    // the picker lists each path once. keepPath re-resolves below either way.
+    s.droppedFiles.erase(std::remove_if(s.droppedFiles.begin(), s.droppedFiles.end(),
+                                        [&s](const std::string& p) {
+                                            return std::find(s.files.begin(), s.files.end(), p) != s.files.end();
+                                        }),
+                         s.droppedFiles.end());
+    if (!keepPath.empty()) {
+        s.selectedIdx = FindCombinedIndex(s, keepPath); // -1 when gone: fall through
+    }
+    if (s.selectedIdx < 0 && CombinedCount(s) > 0) {
         s.selectedIdx = 0; // the per-frame StartLoadSelected kick picks this up
     }
-}
-
-// Path currently selected in the combo, or empty when the selection is out of range.
-std::string SelectedPath(const ViewerState& s) {
-    if (s.selectedIdx < 0 || s.selectedIdx >= static_cast<int>(s.files.size())) {
-        return std::string();
-    }
-    return s.files[static_cast<std::size_t>(s.selectedIdx)];
 }
 
 // Pillar 2: kick the document read onto a worker. Called unconditionally once per frame —
@@ -369,6 +429,16 @@ std::string DisplayLabel(const fs::path& repoRoot, const std::string& absPath) {
     return absPath;
 }
 
+// Combo label for a combined-index entry: scanned docs keep their repo-relative
+// label; dropped/opened files live anywhere on disk, so show the filename.
+std::string EntryLabel(const ViewerState& s, int idx) {
+    const std::string path = PathAtIndex(s, idx);
+    if (idx >= 0 && static_cast<std::size_t>(idx) < s.files.size()) {
+        return DisplayLabel(s.repoRoot, path);
+    }
+    return fs::path(path).filename().generic_string();
+}
+
 } // namespace
 
 void DrawPlanDocViewer(UiDrawSession& d) {
@@ -412,39 +482,52 @@ void DrawPlanDocViewer(UiDrawSession& d) {
 
     if (s.indexInFlight) {
         ImGui::TextDisabled("Scanning plan docs...");
-    } else if (!s.indexError.empty()) {
-        // Ahead of the empty-list branch on purpose: a failed scan also leaves `files` empty, and
-        // "No plan docs found under docs/design or docs/adr" would then state as fact something
-        // the viewer never managed to check.
-        ImGui::TextDisabled("%s", s.indexError.c_str());
-        if (ImGui::Button("Rescan")) {
-            StartRescanIndex(s);
-        }
-    } else if (s.files.empty()) {
-        ImGui::TextDisabled("No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
-        if (ImGui::Button("Rescan")) {
-            StartRescanIndex(s);
-        }
     } else {
-        const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < static_cast<int>(s.files.size())) ? s.selectedIdx : 0;
-        const std::string curLabel = DisplayLabel(s.repoRoot, s.files[static_cast<std::size_t>(curIdx)]);
-        ImGui::SetNextItemWidth(-110.0f);
-        if (ImGui::BeginCombo("##plan_doc_picker", curLabel.c_str())) {
-            for (std::size_t i = 0; i < s.files.size(); ++i) {
-                const std::string label = DisplayLabel(s.repoRoot, s.files[i]);
-                const bool isSel = (static_cast<int>(i) == curIdx);
-                if (ImGui::Selectable(label.c_str(), isSel)) {
-                    // The read is kicked from the per-frame StartLoadSelected at the top of
-                    // Draw — never inline here (Pillar 2: no file I/O on the render thread).
-                    s.selectedIdx = static_cast<int>(i);
-                }
-                if (isSel) {
-                    ImGui::SetItemDefaultFocus();
-                }
-            }
-            ImGui::EndCombo();
+        if (!s.indexError.empty()) {
+            // Ahead of the empty-list message on purpose: a failed scan also leaves `files` empty,
+            // and "No plan docs found under docs/design or docs/adr" would then state as fact
+            // something the viewer never managed to check.
+            ImGui::TextDisabled("%s", s.indexError.c_str());
+        } else if (CombinedCount(s) == 0) {
+            ImGui::TextDisabled(
+                "No plan docs found under docs/design or docs/adr."); // P2-L12: the dirs actually scanned
         }
-        ImGui::SameLine();
+        // The picker renders whenever ANY doc exists — scanned or dropped — so a
+        // failed scan never strands externally opened docs unreachable.
+        if (CombinedCount(s) > 0) {
+            const int combinedCount = CombinedCount(s);
+            const int curIdx = (s.selectedIdx >= 0 && s.selectedIdx < combinedCount) ? s.selectedIdx : 0;
+            const std::string curLabel = EntryLabel(s, curIdx);
+            ImGui::SetNextItemWidth(d.openFileDialogAvailable ? -180.0f : -110.0f);
+            if (ImGui::BeginCombo("##plan_doc_picker", curLabel.c_str())) {
+                for (int i = 0; i < combinedCount; ++i) {
+                    const std::string label = EntryLabel(s, i);
+                    const bool isSel = (i == curIdx);
+                    // Dropped files can share a filename label — PushID keeps ids unique.
+                    ImGui::PushID(i);
+                    if (ImGui::Selectable(label.c_str(), isSel)) {
+                        // The read is kicked from the per-frame StartLoadSelected at the top of
+                        // Draw — never inline here (Pillar 2: no file I/O on the render thread).
+                        s.selectedIdx = i;
+                    }
+                    if (isSel) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                    ImGui::PopID();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+        }
+        // "Open..." only where a host open-file handler exists (Win32 today —
+        // see SmatchetUI.cpp); a button that could never produce a dialog would
+        // just look broken. Drag-and-drop works everywhere regardless.
+        if (d.openFileDialogAvailable) {
+            if (ImGui::Button("Open...")) {
+                d.requestPlanDocOpenFileDialog = true; // dialog runs at the host draw site — see SmatchetUI.cpp
+            }
+            ImGui::SameLine();
+        }
         if (ImGui::Button("Rescan")) {
             StartRescanIndex(s);
         }
@@ -477,6 +560,43 @@ void DrawPlanDocViewer(UiDrawSession& d) {
 
     ImGui::End();
     d.showPlanDocViewer = open;
+}
+
+void PlanDocViewerOpenExternalFile(UiDrawSession& d, const std::string& absPathUtf8) {
+    std::vector<std::string> one;
+    one.push_back(absPathUtf8);
+    PlanDocViewerOpenExternalFiles(d, one);
+}
+
+void PlanDocViewerOpenExternalFiles(UiDrawSession& d, const std::vector<std::string>& absPathsUtf8) {
+    ViewerState& s = State();
+    int firstIdx = -1;
+    for (std::size_t i = 0; i < absPathsUtf8.size(); ++i) {
+        if (absPathsUtf8[i].empty()) {
+            continue;
+        }
+        // Generic form matches how BuildIndex stores scanned paths, so the dedup
+        // in FindCombinedIndex also catches a drop of a doc the scan already
+        // lists. No existence check here (that is file I/O on the render thread
+        // — Pillar 2); an unreadable path surfaces the viewer's normal error
+        // body once the per-frame async load attempts it.
+        const std::string normalized = fs::path(absPathsUtf8[i]).generic_string();
+        int idx = FindCombinedIndex(s, normalized);
+        if (idx < 0) {
+            s.droppedFiles.push_back(normalized);
+            idx = CombinedCount(s) - 1;
+        }
+        if (firstIdx < 0) {
+            firstIdx = idx;
+        }
+        LOG_INFO("plan-doc viewer: opening external markdown %s", normalized.c_str());
+    }
+    if (firstIdx < 0) {
+        return; // nothing usable in the batch — leave the window state alone
+    }
+    s.selectedIdx = firstIdx; // the first path is the active doc; the rest wait in the picker
+    d.showPlanDocViewer = true;
+    d.requestPlanDocViewerFocus = true;
 }
 
 } // namespace smatchet

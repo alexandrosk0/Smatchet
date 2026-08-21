@@ -219,6 +219,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`fix-four-open-issues`](shipped/fix-four-open-issues.md) | 2026-08-17 | Plan — fix four open GitHub Issues (#2109 / #2093 / #2079 / #2066) |
 | [`fix-2110-mcp-keystroke-restart`](shipped/fix-2110-mcp-keystroke-restart.md) | 2026-08-18 | Plan — stop the MCP plugin restarting on every keystroke in Preferences (#2110) |
 | [`pre-push-refspec-scope`](shipped/pre-push-refspec-scope.md) | 2026-08-19 | Plan — pre-push stage (B) refspec scoping |
+| [`drag-drop-md-viewer`](shipped/drag-drop-md-viewer.md) | 2026-08-21 | Plan — Open any .md file in the Plan Docs viewer (drag-and-drop + Open… dialog) |
 <!-- END auto-plan-index -->
 
 ### Notes

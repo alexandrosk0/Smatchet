@@ -3,6 +3,7 @@
 #include "Commands/Scenarios/ScenarioCaptureSizing.h"
 #include "ConfigManager.h"
 #include "Logger.h"
+#include "SmatchetPlanDocViewerUi.h"
 #include "SmatchetUiSession.h"
 
 // stb_image_write single-TU implementation. Lives here, not in the two boot TUs:
@@ -86,6 +87,44 @@ void KeypadEnterBridgeCallback(GLFWwindow* window, int key, int scancode, int ac
         ImGui_ImplGlfw_KeyCallback(window, GLFW_KEY_ENTER, scancode, action, mods);
     }
     ImGui_ImplGlfw_KeyCallback(window, key, scancode, action, mods);
+}
+
+namespace {
+
+// Case-insensitive markdown extension check on a UTF-8 path (GLFW hands drop
+// paths as UTF-8). ASCII lowering is enough — the extensions matched are ASCII.
+bool HasMarkdownExtension(const std::string& pathUtf8) {
+    std::string ext = ghc::filesystem::path(pathUtf8).extension().generic_string();
+    for (std::size_t i = 0; i < ext.size(); ++i) {
+        if (ext[i] >= 'A' && ext[i] <= 'Z') {
+            ext[i] = static_cast<char>(ext[i] - 'A' + 'a');
+        }
+    }
+    return ext == ".md" || ext == ".markdown";
+}
+
+} // namespace
+
+void MarkdownFileDropCallback(GLFWwindow* /*window*/, int count, const char** paths) {
+    std::vector<std::string> markdown;
+    int ignored = 0;
+    for (int i = 0; i < count; ++i) {
+        if (paths[i] == nullptr) {
+            continue;
+        }
+        if (HasMarkdownExtension(paths[i])) {
+            markdown.push_back(paths[i]);
+        } else {
+            ++ignored;
+        }
+    }
+    // Batch call: every match joins the picker, the first drop becomes the
+    // active doc. No-op on an empty batch.
+    smatchet::PlanDocViewerOpenExternalFiles(g_ui, markdown);
+    if (ignored > 0) {
+        LOG_INFO("file drop: ignored %d non-markdown file(s) — only .md/.markdown open in the Plan Docs viewer",
+                 ignored);
+    }
 }
 
 void PackRgbDropAlpha(const unsigned char* rgbaSrc, int w, int h, bool flipVertical, std::vector<unsigned char>& rgb) {
