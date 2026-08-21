@@ -370,6 +370,12 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     ImGui::SetItemTooltip("Clear query");
 
     TrackerQueryAcp_TickDebouncedUserSearch(app, d, st, jqlMeta, jqlSuggestBuild);
+    // Name the ids already IN the query (saved view, restored session, pasted clause) —
+    // the search above only fires while typing a value token, so it never covers these.
+    // Jira-only: it is the one backend with a by-accountId lookup.
+    if (smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType) == smatchet::tracker::kBackendJira) {
+        TrackerQueryAcp_TickAccountIdResolve(app, app.GetAvailableUsers(), st);
+    }
 
     std::vector<QuerySuggestion> merged = jqlSuggestBuild.Items;
     if (!st.jqlAcpAsyncUserItems.empty()) {
@@ -391,6 +397,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
         TrackerQueryAcp_DrawPopup(d, st, jqlFieldRectMin, jqlFieldRectSize, jqlSuggestBuild, merged);
     }
     TrackerQueryAcp_FlushPendingReplace(st);
+
+    // Readable echo of the query: user clauses carry an opaque account id (the only form
+    // Jira Cloud matches a user on), so spell those ids out as names right under the bar.
+    TrackerQueryAcp_DrawUserEcho(app.GetAvailableUsers(), st);
 
     // Project pill beneath the query bar — pick a single project scope for the active view.
     // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.

@@ -173,7 +173,7 @@ void InitTicketsV2Schema(SQLite::Database& db) {
 // The attempt count alone bounds nothing a user can feel: each attempt may sit for the whole
 // armed busy_timeout (5 s, ApplyWalPragmas) before SQLite hands back BUSY, so the pre-deadline
 // worst case was ~25 s of blocked caller — and this path is reachable from the UI thread via the
-// comments modal's post-back (UpdateCachedCommentCount → UpdateTicket → SaveTicket), i.e. a frozen
+// comments modal's post-back (UpdateCachedCommentsFromThread → UpdateTicket → SaveTicket), i.e. a frozen
 // frame pump. The per-attempt busy_timeout is deliberately NOT lowered here: it is connection-wide
 // and the reader/deleter paths on this same handle do not run under stmtMutex_, so shrinking it
 // would make THEM throw BUSY sooner — a Pillar-3 regression traded for a Pillar-2 win. The
@@ -200,8 +200,7 @@ void RunWriteTxnWithBusyRetry(SQLite::Database& db, std::mutex& stmtMutex, const
                 const int backoffMs = smatchet::BusyRetryBackoffMs(attempt);
                 LOG_WARN("LocalCacheManager::%s contended (%s); retry %d/%d after %d ms (%lld/%lld ms of budget "
                          "spent)",
-                         opName, ex.what(), attempt + 2, kMaxWriteAttempts, backoffMs, elapsedMs,
-                         kWriteRetryBudgetMs);
+                         opName, ex.what(), attempt + 2, kMaxWriteAttempts, backoffMs, elapsedMs, kWriteRetryBudgetMs);
                 std::this_thread::sleep_for(std::chrono::milliseconds(backoffMs));
                 continue;
             }

@@ -78,3 +78,58 @@ the admin-merge carve-out, i.e. the documented safe path pushes people onto the 
 `cr-out-of-band` is the repo's designated pressure valve for exactly the CR-quota wedge that
 cost #2070 116 watcher cycles; a pressure valve that needs an undocumented `gh run rerun` to
 open is not a pressure valve.
+
+## Recurrence — 2026-08-19, [PR #2124](https://github.com/alexandrosk0/Smatchet/pull/2124)
+
+Same defect, different trigger, one day later. Not a quota exhaustion this time: CodeRabbit
+posted `Review skipped: manual review required for this OSS repository` (the repo is under
+CR's 10-star auto-review threshold, so CR reviews **nothing** unsolicited). The gate's own
+auto-nudge posted `@coderabbitai review`; CR never answered. `CR findings (0 actionable)`
+sat `pending / awaiting CodeRabbit review on current head` for **2h10m** with 0 reviews on
+the PR, and the 90-poll gate run ended `GATES_TIMEOUT`.
+
+Applying `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review` again changed
+nothing until `gh run rerun 32190691612` was issued by hand, exactly as documented above.
+After the re-run the status flipped to `cr-out-of-band label set — gate overridden` and the
+next poll reached `GATES_PASSED`.
+
+Two things this recurrence adds to the fix list:
+
+- **Fix 1 (`labeled` / `unlabeled` trigger) is the load-bearing one.** Both incidents were
+  un-wedged by a manual re-run whose only purpose was making the action re-read labels.
+- **The sub-10-star state is permanent, not incidental.** Unlike a rate limit, it never
+  clears on its own — every PR on this repo reaches `pending` and stays there unless a human
+  asks CR for a review or waives the gate. #2117, #2119, and #2122 all merged carrying
+  `CR findings (0 actionable) = pending`, i.e. the gate is routinely bypassed rather than
+  satisfied. Worth deciding explicitly whether the nudge should be retried on a schedule, or
+  whether the CR gate should have a documented terminal disposition for repos CR will not
+  auto-review — the status quo is a required-looking check that nobody can turn green.
+
+## Recurrence — 2026-08-19, [PR #2131](https://github.com/alexandrosk0/Smatchet/pull/2131)
+
+Third occurrence, second in 24 hours, same trigger as #2124 (the permanent sub-10-star
+`Review skipped: manual review required for this OSS repository` state). PR open
+05:54:16Z → merged 11:20:38Z, **5h26m**, with **0 reviews** on it the whole time;
+`CR findings (0 actionable)` never left `pending / awaiting CodeRabbit review on current head`.
+Every other gate was clean throughout — CI 30 pass / 9 skipping / 0 red, Bugbot pass with
+0 findings in 2m5s, 0 review threads, 0 non-bot comments. Gate 2 alone held the merge.
+
+What this occurrence adds is a **negative** result the first two did not isolate. A plain
+re-run of the wedged workflow, with **no label applied**, is not sufficient:
+`gh run rerun 32221202456` completed (`96049595922`, `96042985248` — both pass) and the
+status stayed `pending`. Only `cr-out-of-band` + `cr-disposition:oss-threshold-no-auto-review`
+*followed by* a re-run flipped it to `cr-out-of-band label set — gate overridden`.
+
+So the manual step is not "re-run the workflow" — it is the ordered pair *(apply label,
+then re-run)*, and the ordering is silent: labelling fires no event, and a re-run without the
+label reports success while changing nothing. That is two ways to do the documented recovery
+and get no signal that you did it wrong. It also sharpens fix 1 — a `labeled` trigger removes
+the ordering hazard entirely, because the label *is* the event.
+
+Sequence across the three incidents, for whoever picks up the fix:
+
+| PR | Trigger | Wedged for | Cleared by |
+|---|---|---|---|
+| [#2070](https://github.com/alexandrosk0/Smatchet/pull/2070) | CR review quota exhausted | 116 watcher cycles | label + `gh run rerun 32035340446` |
+| [#2124](https://github.com/alexandrosk0/Smatchet/pull/2124) | sub-10-star, nudge unanswered | 2h10m, `GATES_TIMEOUT` | label + `gh run rerun 32190691612` |
+| [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) | sub-10-star, nudge unanswered | 5h26m | label + `gh run rerun 32221202456` (bare re-run first: no effect) |

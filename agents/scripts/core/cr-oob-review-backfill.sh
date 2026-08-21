@@ -87,6 +87,7 @@ DRY_RUN="${SMATCHET_CR_BACKFILL_DRY_RUN:-0}"
 #   requested <pr>  <epoch>        a request already posted, and when
 #   cooldown  <epoch>              CR named a rate-limit cooldown ending here
 #   confirmed <pr>                 a request CR visibly answered (reply or review)
+#   scanfail  <pr>                 a request lookup ERRORED — state is unknown
 #
 # The verdict is a pure function of that input — no clock, no network. Keeping
 # it pure is what makes the rate-limit arithmetic testable, which matters
@@ -103,7 +104,14 @@ cr_backfill_decide() {
         }
         $1 == "cooldown"  { if (($2 + 0) > cooldown) cooldown = $2 + 0; next }
         $1 == "confirmed" { conf[$2 + 0] = 1; next }
+        $1 == "scanfail"  { scanfail = $2 + 0; next }
         END {
+            # A lookup that FAILED is not evidence that nothing was requested.
+            # Reading it as "no marker" is what let the duplicate storm run.
+            if (scanfail > 0) {
+                printf "HOLD scan failed on #%d — cannot prove what was already requested\n", scanfail
+                exit 0
+            }
             if (cooldown > 0 && now < cooldown) {
                 printf "HOLD rate-limited for %d more second(s)\n", cooldown - now
                 exit 0
@@ -174,6 +182,12 @@ run_selftest() {
     _case "gives an unanswered request its grace period" "HOLD window closed for 1700 more second(s)" \
         "now\t1001000\nqueue\t1995\nqueue\t1977\nrequested\t1995\t1000000\n"
 
+    # ASSERTS-FAILURE: a failed lookup must HOLD, never fall through to FIRE.
+    # Reading "the lookup returned nothing" as "nothing was requested" is the
+    # exact defect that put six identical comments on #1995.
+    _case "holds when the request lookup fails" "HOLD scan failed on #1995 — cannot prove what was already requested" \
+        "now\t1000000\nqueue\t1995\nqueue\t1977\nscanfail\t1995\n"
+
     # Nothing left to do.
     _case "reports a drained queue" "HOLD queue drained" \
         "now\t1000000\nqueue\t1995\nrequested\t1995\t100\nconfirmed\t1995\n"
@@ -205,49 +219,98 @@ queue_file() {
 
 now_epoch() { echo "${SMATCHET_CR_BACKFILL_NOW:-$(date -u +%s)}"; }
 
-# Build the decision input from GitHub. One search call resolves the whole
-# "already requested" set — asking per-PR would be 90 calls a tick.
+# Build the decision input from GitHub.
+#
+# WHY NOT `gh search issues "<marker> in:comments"`. Two reasons, and the first
+# one is subtle enough that the incident write-up got it wrong at first.
+#
+#   (a) The search index is EVENTUALLY CONSISTENT. It does match the marker —
+#       but not for a while after the comment is posted. During that lag the
+#       query returns empty, and THREE guards read from this one call
+#       (already-requested, the quota window via last_req, and the
+#       unanswered-request fail-safe), so all three go inert together. The first
+#       live deployment posted six identical comments to #1995 over two hours
+#       and only stopped when the index caught up and the window guard began to
+#       bite. An idempotency guard must never be built on a lagging index: the
+#       window where it reads "nothing has happened yet" is exactly the window
+#       where it is being asked whether something already happened.
+#
+#   (b) It matches ANY issue mentioning the marker string, including PRs that
+#       merely DISCUSS the backfill (#2119, #2126 do). Those false positives
+#       skew last_req and can wedge or unwedge the window for unrelated reasons.
+#
+# The lesson is structural: guards that share a single data source share its
+# failure, and a source that is merely SLOW fails exactly like one that is
+# broken. So the request record is now read PER PR, straight
+# from that PR's own comments — the same place post_request writes it — and
+# post_request re-checks immediately before posting, so no single lookup failing
+# can produce a duplicate.
+#
+# Cost is bounded: the queue is scanned newest-first and the scan STOPS at the
+# first PR with no marker (that PR is the candidate). Requested PRs accumulate
+# at the front, so a tick costs (already-requested + 1) calls, not 90.
+# PAGINATE, always. The per-issue comments endpoint returns OLDEST-FIRST, and a
+# backfill marker is by construction the NEWEST comment — so reading only the
+# first page makes the marker invisible on any PR with more than 100 comments,
+# and "invisible" is read as MISSING by both the scan and already_requested at
+# once. That is the same shared-failure duplicate storm this change exists to
+# stop, reintroduced one page-size assumption later (caught in review on #2126).
+# `--paginate --jq '.[]'` emits one compact object per line across every page,
+# so neither ordering nor comment count can hide the marker.
+marker_scan() {
+    local pr="$1" body
+    body="$(gh api --paginate "repos/$REPO_SLUG/issues/$pr/comments?per_page=100" \
+              --jq '.[] | {body: .body, login: .user.login, created_at: .created_at}' 2>/dev/null)" || return 1
+    printf '%s' "$body" | ${PY_BIN:-:} -c '
+import json,sys,calendar,time
+marker=sys.argv[1]; pr=sys.argv[2]
+rows=[]
+for line in sys.stdin:
+    line=line.strip()
+    if not line: continue
+    try: rows.append(json.loads(line))
+    except Exception: sys.exit(3)
+def ep(t):
+    try: return calendar.timegm(time.strptime(t,"%Y-%m-%dT%H:%M:%SZ"))
+    except Exception: return 0
+mark=[r for r in rows if marker in (r.get("body") or "")]
+if not mark:
+    print("MISSING"); sys.exit(0)
+at=max(ep(r.get("created_at") or "") for r in mark)
+print("requested\t%s\t%d" % (pr, at))
+# Any CR comment after our marker means CR is answering us — including a
+# rate-limit reply. The question is whether CR responds at all, not whether
+# the review passed.
+for r in rows:
+    if (r.get("login") or "")=="coderabbitai[bot]" and ep(r.get("created_at") or "") > at:
+        print("confirmed\t%s" % pr); break
+' "$MARKER_PREFIX:" "$pr" 2>/dev/null
+}
+
 build_decision_input() {
     local qf; qf="$(queue_file)"
     printf 'now\t%s\n' "$(now_epoch)"
+
+    local pr out
     [ -f "$qf" ] && grep -oE '"pr":[0-9]+' "$qf" | cut -d: -f2 | while read -r pr; do
         printf 'queue\t%s\n' "$pr"
     done
 
-    # Marker comments are the request record. `in:comments` indexes comment
-    # bodies, so one query returns every PR this backfill has already touched.
-    gh search issues --repo "$REPO_SLUG" "$MARKER_PREFIX in:comments" \
-        --json number,updatedAt --limit 100 2>/dev/null \
-    | ${PY_BIN:-:} -c '
-import json,sys,calendar,time
-try: rows=json.load(sys.stdin)
-except Exception: rows=[]
-for r in rows:
-    t=r.get("updatedAt") or ""
-    try: e=calendar.timegm(time.strptime(t,"%Y-%m-%dT%H:%M:%SZ"))
-    except Exception: e=0
-    print("requested\t%d\t%d" % (r.get("number",0), e))
-' 2>/dev/null
-
-    # Confirm the newest request (see emit_confirmation).
-    local newest newest_at
-    newest="$(gh search issues --repo "$REPO_SLUG" "$MARKER_PREFIX in:comments" \
-        --json number,updatedAt --limit 100 2>/dev/null \
-        | ${PY_BIN:-:} -c '
-import json,sys
-try: rows=json.load(sys.stdin)
-except Exception: rows=[]
-rows=[r for r in rows if r.get("updatedAt")]
-if rows:
-    r=max(rows,key=lambda r:r["updatedAt"]); print("%s %s" % (r["number"], r["updatedAt"]))
-' 2>/dev/null)"
-    if [ -n "$newest" ]; then
-        newest_at="${newest#* }"; newest="${newest%% *}"
-        emit_confirmation "$newest" "$newest_at"
+    # Scan newest-first, stopping at the first PR with no marker.
+    if [ -f "$qf" ]; then
+        for pr in $(grep -oE '"pr":[0-9]+' "$qf" | cut -d: -f2); do
+            out="$(marker_scan "$pr")"
+            # An API/parse failure is NOT "no marker" — treating it as absent is
+            # exactly how the duplicate storm happened. Stop the scan and let the
+            # caller hold rather than guess.
+            [ -z "$out" ] && { printf 'scanfail\t%s\n' "$pr"; break; }
+            [ "$out" = "MISSING" ] && break
+            printf '%s\n' "$out"
+        done
     fi
 
-    # CR states its own cooldown in the reply to our marker. Honour it verbatim
-    # rather than re-deriving it — the server knows the rolling window, we do not.
+    # CR states its own cooldown in its reply. Honour it verbatim rather than
+    # re-deriving it — the server knows the rolling window, we do not.
     gh api "repos/$REPO_SLUG/issues/comments?per_page=100&sort=created&direction=desc" \
         --jq '.[] | select(.user.login=="coderabbitai[bot]") | select(.body|test("available in [0-9]+ minutes")) | "\(.created_at)\t\(.body)"' \
         2>/dev/null | head -1 \
@@ -263,29 +326,29 @@ if line:
 ' 2>/dev/null
 }
 
-# Confirm the NEWEST request only — it is the sole input the fail-safe reads, and
-# confirming all 90 would cost a call per PR per tick. "Confirmed" is deliberately
-# generous: any CR comment after our marker counts, including a rate-limit reply.
-# The question it answers is "is CR responding to us at all", not "did the review
-# pass" — a silent CR is the failure this guards, and a talking CR is not stuck.
-emit_confirmation() {
-    local pr="$1" marker_at="$2"
-    local answered
-    answered="$(gh api "repos/$REPO_SLUG/issues/$pr/comments?per_page=100" \
-        --jq "[.[]|select(.user.login==\"coderabbitai[bot]\")|select(.created_at > \"$marker_at\")]|length" 2>/dev/null)"
-    if [ "${answered:-0}" -gt 0 ]; then printf 'confirmed\t%s\n' "$pr"; return; fi
-    answered="$(gh api "repos/$REPO_SLUG/pulls/$pr/reviews" \
-        --jq '[.[]|select(.user.login=="coderabbitai[bot]")]|length' 2>/dev/null)"
-    [ "${answered:-0}" -gt 0 ] && printf 'confirmed\t%s\n' "$pr"
-}
-
 # A merged head that already carries a completed CR review owes nothing — the
 # label waived the FINDINGS, not the review, and re-requesting spends a slot the
 # queue needs.
 owes_review() {
     local pr="$1" n
-    n="$(gh api "repos/$REPO_SLUG/pulls/$pr/reviews" --jq '[.[]|select(.user.login=="coderabbitai[bot]")]|length' 2>/dev/null)"
+    # Paginated for the same reason as marker_scan: a first-page-only read can
+    # miss a later review and re-request one that already happened.
+    n="$(gh api --paginate "repos/$REPO_SLUG/pulls/$pr/reviews?per_page=100" \
+           --jq '.[]|select(.user.login=="coderabbitai[bot]")|.id' 2>/dev/null | grep -c . )"
     [ "${n:-0}" -eq 0 ]
+}
+
+# LAST-LINE IDEMPOTENCY. Every other guard is upstream reasoning about state;
+# this one re-reads the PR itself at the instant of writing. It is deliberately
+# redundant, because the failure it prevents is unbounded: six identical
+# comments landed on #1995 when the upstream lookup silently returned empty.
+# A duplicate is never correct, whatever the decision core concluded.
+already_requested() {
+    local pr="$1" out
+    out="$(marker_scan "$pr")" || return 0   # lookup failed -> assume requested
+    [ -z "$out" ] && return 0                # empty -> unknown -> assume requested
+    [ "$out" = "MISSING" ] && return 1
+    return 0
 }
 
 post_request() {
@@ -303,6 +366,10 @@ EOF
 )"
     if [ "$DRY_RUN" = "1" ]; then
         echo "DRY-RUN would request review on #$pr"
+        return 0
+    fi
+    if [ -z "${SMATCHET_CR_BACKFILL_FIXTURE:-}" ] && already_requested "$pr"; then
+        echo "refusing to re-request #$pr — it already carries a ${MARKER_PREFIX}: marker" >&2
         return 0
     fi
     gh pr comment "$pr" --repo "$REPO_SLUG" --body "$body" >/dev/null 2>&1 \

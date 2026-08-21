@@ -444,6 +444,7 @@ jobs:
           path: |
             build/perf-runs/*.json
             docs/perf/baselines/*.ci-windows-latest.json
+          retention-days: 7
 
       # Anti-spam comment policy (user-mandated 2026-06-07; hardened
       # 2026-06-09): the full delta table ALWAYS lands in the run's Step

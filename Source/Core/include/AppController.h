@@ -1011,6 +1011,7 @@ class AppController : public IAppThreading,
     Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
 
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
+    Result<std::vector<TrackerUser>> FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const override;
 
     VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) override;
 
@@ -1021,11 +1022,14 @@ class AppController : public IAppThreading,
     /// collaboration support / backend error.
     Result<std::vector<TrackerIssueComment>> FetchIssueComments(const std::string& issueKey);
 
-    /// issue-comments fix (#1291) — push a freshly-observed comment count into the
-    /// cached ticket so the grid Comments column updates after a post, without a
-    /// full re-sync. UI-thread only (mirrors the optimistic-update path). No-op for
-    /// icon-only backends (cell value empty) and when the count is unchanged.
-    void UpdateCachedCommentCount(const std::string& issueId, int newCount);
+    /// issue-comments fix (#1291, extended) — push a freshly-fetched comment thread into the
+    /// cached ticket: the numeric `comments` count AND the flattened `comment` tooltip blob
+    /// (FormatCommentBlob), so the grid Comments cell and its hover tooltip update after a
+    /// modal fetch / post or a first-hover lazy fetch, without a full re-sync. The blob is
+    /// built HERE, once per fetch — the grid cell only references the stored string per
+    /// frame. UI-thread only (mirrors the optimistic-update path). No-op when both values
+    /// are unchanged.
+    void UpdateCachedCommentsFromThread(const std::string& issueId, const std::vector<TrackerIssueComment>& comments);
 
     VoidResult SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
                              const std::string& adjustEstimate, const std::string& workDescription,

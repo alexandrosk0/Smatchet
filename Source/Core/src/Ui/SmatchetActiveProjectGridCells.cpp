@@ -11,6 +11,7 @@
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
+#include "ITrackerCollaboration.h" // TrackerIssueComment — comments-cell lazy tooltip fetch
 #include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
 #include "SmatchetInputModifierBridge.h"
@@ -88,6 +89,95 @@ static void PromoteActiveRowToSelection(GridPane& pane, RectSelT& sel, const std
     }
 }
 
+// --- Comments-cell hover tooltip ------------------------------------------------------------
+// The tooltip text is NEVER built during a frame: it is the precomputed fieldValues["comment"]
+// blob (Jira search mapper at load / UpdateCachedCommentsFromThread post-back), referenced
+// zero-copy via GetFieldValueRef. Backends whose issue-list payload carries no bodies
+// (GitHub/Plane) get it from a one-shot background fetch on FIRST hover, below.
+
+// Dedup state lives on GridPane (CommentsTooltipFetchKicked / CommentsTooltipFetchRevision,
+// see GridPane.h) — per-pane because issue ids are only unique within one backend's snapshot
+// and a sibling pane's hover must not reset another pane's guard, and keyed on the pane's
+// monotonic snapshotRevision, never a snapshot address (allocator reuse would ABA-match a
+// genuinely new snapshot and wedge the guard until restart).
+
+// Pillar 2 — fetch the thread on a worker, format+store on the UI-thread post-back. Mirrors
+// the comments modal's worker pattern (capture by value; AppController& and the UiDrawSession
+// outlive the app). FetchIssueComments latches the FOCUSED backend and
+// UpdateCachedCommentsFromThread writes into the FOCUSED snapshot, so the kick-time pane must
+// still be the focused pane — with the SAME backend — when the post-back runs: callers only
+// kick from the focused pane (pane.focused mirrors d.focusedPaneId), and the post-back
+// re-checks BOTH the focused pane id AND that pane's live backendKey against the captured
+// values, so a mid-flight focus switch or a same-pane backend swap drops the result instead
+// of writing a same-keyed row in a DIFFERENT backend's pane (issue ids are only unique
+// within one backend, so an unguarded write could cross-contaminate). A dropped id stays in
+// the pane's kicked set; the pane's next (backendKey, revision) pair clears it and re-arms
+// one fetch. Accepted residual (same class the comments modal accepts):
+// a focus flip AWAY AND BACK inside the worker's flight window can still latch the other
+// backend for the fetch itself — needs a backend-pinned fetch API to close fully.
+void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::string& paneId,
+                              const std::string& backendKey, const std::string& issueId) {
+    AppController* appPtr = &app;
+    UiDrawSession* dPtr = &d;
+    const std::string capturedPaneId = paneId;
+    const std::string capturedBackendKey = backendKey;
+    const std::string capturedIssueId = issueId;
+    app.LaunchBackgroundTask([appPtr, dPtr, capturedPaneId, capturedBackendKey, capturedIssueId]() {
+        std::vector<TrackerIssueComment> comments;
+        std::string err;
+        bool ok = false;
+        UnpackResult(appPtr->FetchIssueComments(capturedIssueId), ok, comments, err);
+        if (!ok) {
+            return; // id stays in the kicked set — no retry until the pane's next snapshot
+        }
+        appPtr->PostToMainThread(
+            [appPtr, dPtr, capturedPaneId, capturedBackendKey, capturedIssueId, comments = std::move(comments)]() {
+                if (dPtr->focusedPaneId != capturedPaneId) {
+                    return; // focus moved mid-flight — don't write into a different pane's snapshot
+                }
+                for (const GridPane& p : dPtr->gridPanes) {
+                    if (p.id == capturedPaneId) {
+                        if (p.backendKey != capturedBackendKey) {
+                            return; // pane swapped backend mid-flight — result belongs to the old one
+                        }
+                        break;
+                    }
+                }
+                appPtr->UpdateCachedCommentsFromThread(capturedIssueId, comments);
+            });
+    });
+}
+
+// Hover tooltip for the comments cell. `commentBlob` is the precomputed thread text
+// (empty → not yet fetched / no comments) — this function only references it. A long
+// thread renders inside a height-capped scrollable child; the wheel reaches it via the
+// pre-NewFrame router (SmatchetImGuiHost calls RouteWheelToScrollableTooltipBeforeNewFrame).
+void RenderCommentsCellTooltip(const std::string& commentBlob) {
+    if (commentBlob.empty()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+        return;
+    }
+    ImGui::BeginTooltip();
+    const float wrapWidth = ImGui::GetFontSize() * 40.0f;
+    const ImVec2 textSize = ImGui::CalcTextSize(commentBlob.c_str(), nullptr, false, wrapWidth);
+    const float maxHeight = ImGui::GetIO().DisplaySize.y * 0.5f;
+    if (textSize.y > maxHeight) {
+        // Cap the tooltip at half the screen so the newest comments (top of the blob)
+        // stay on-frame; overflow scrolls. Width includes scrollbar room.
+        ImGui::BeginChild("##comments_tooltip_scroll", ImVec2(wrapWidth + ImGui::GetStyle().ScrollbarSize, maxHeight),
+                          false);
+        ImGui::PushTextWrapPos(wrapWidth);
+        ImGui::TextUnformatted(commentBlob.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndChild();
+    } else {
+        ImGui::PushTextWrapPos(wrapWidth);
+        ImGui::TextUnformatted(commentBlob.c_str());
+        ImGui::PopTextWrapPos();
+    }
+    ImGui::EndTooltip();
+}
+
 } // namespace
 
 void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const CachedTicket& ticket,
@@ -147,6 +237,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                                                 float cellOriginX, float cellWidth) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
+    GridPane& pane = ctx.pane;
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     const bool readOnlyMode = ctx.readOnlyMode;
     std::vector<PendingFieldEdit>& pendingEdits = ctx.pendingEdits;
@@ -154,7 +245,11 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
     ImVec2 cellGroupMin(0.0f, 0.0f);
     ImVec2 cellGroupMax(0.0f, 0.0f);
 
-    const std::string currentValue = ticket.GetFieldValue(column.FieldId);
+    // Zero-copy view (Pillar 1): this runs for EVERY visible cell every frame, and the by-value
+    // GetFieldValue copy was a heap alloc per cell per frame. Safe to hold across the cell draw:
+    // `ticket` refs the pane's latched ticketsSnapshot (kept alive for the whole draw), and any
+    // mid-frame UpdateTicket publishes a NEW snapshot vector rather than mutating this one.
+    const std::string& currentValue = ticket.GetFieldValueRef(column.FieldId);
     const TrackerField* fieldMeta = catalogIndex.Find(column.FieldId);
     const float cellStartY = ImGui::GetCursorScreenPos().y;
     const float cellRightX = ImGui::GetCursorScreenPos().x + cellWidth;
@@ -206,8 +301,9 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
     } else if (column.FieldId == "comments") {
         // issue-comments PR-A — backend-agnostic comments cell. Comments are read-only (editmeta
         // marks the field non-editable), so this bypasses the field-edit path entirely. The count
-        // comes from the cached fieldValues["comments"] ("0","3",… for GitHub) — NO per-row network.
-        // Plane (PR-C) leaves the value empty, so the icon-only branch must handle empty/non-numeric.
+        // comes from the cached fieldValues["comments"] — NO per-row network during sync; a backend
+        // whose list payload has no count yet (Plane pre-first-hover) renders icon-only, so the
+        // icon-only branch must handle empty/non-numeric.
         ImGui::BeginGroup();
         bool isNumber = !currentValue.empty();
         for (size_t ci = 0; ci < currentValue.size(); ++ci) {
@@ -216,31 +312,51 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
                 break;
             }
         }
-        // 0xF0 0x9F 0x92 0xAC == U+1F4AC SPEECH BALLOON (💬). Built as a string literal so the
-        // selectable label is unique per cell (id includes the issue id) without a per-row alloc on
-        // the common path beyond the label itself.
-        const char* kBalloon = "\xf0\x9f\x92\xac";
-        std::string label = isNumber ? (std::string(kBalloon) + " " + currentValue) : std::string(kBalloon);
-        label += "##cmt_" + ticket.id;
-        if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_None, ImVec2(valueAvailWidth, 0.0f))) {
+        // 0xF0 0x9F 0x92 0xAC == U+1F4AC SPEECH BALLOON (💬). Visible label built in a stack
+        // buffer — no per-frame heap alloc (Pillar 1: this runs for every visible comments cell
+        // every frame). Per-row uniqueness comes from PushID; the "###cmt" suffix keeps the
+        // Selectable's ImGui id INDEPENDENT of the visible count, so a count update landing
+        // mid-click (the lazy-fetch post-back) cannot change the id between press and release
+        // and swallow the click.
+        char label[32];
+        if (isNumber) {
+            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac %s###cmt", currentValue.c_str());
+        } else {
+            std::snprintf(label, sizeof(label), "\xf0\x9f\x92\xac###cmt");
+        }
+        ImGui::PushID(ticket.id.c_str());
+        if (ImGui::Selectable(label, false, ImGuiSelectableFlags_None, ImVec2(valueAvailWidth, 0.0f))) {
             OpenCommentsModal(app, ticket.id);
         }
+        ImGui::PopID();
         if (ImGui::IsItemHovered()) {
-            // issue-comments fix (#1291) — match the retired Jira "Comment" field: on hover show the
-            // full comment text wrapped. The Jira mapper resolves it into fieldValues["comment"]
-            // (catalog-independent, so it survives the legacy field's removal from the picker); read it
-            // zero-copy from the cache — NO network on hover. Backends without a comment blob
-            // (GitHub/Plane) fall back to the cheap localized static hint.
+            // issue-comments fix (#1291) — on hover show the full thread, wrapped. The text is
+            // fieldValues["comment"]: precomputed by the Jira search mapper at load, or stored by
+            // UpdateCachedCommentsFromThread after a background fetch — referenced zero-copy here,
+            // NEVER built per frame. Backends whose list payload carries no bodies (GitHub/Plane)
+            // get a one-shot lazy fetch on first hover; until it lands (or when an issue simply has
+            // no comments) the cheap localized static hint shows instead.
             const std::string& commentBlob = ticket.GetFieldValueRef("comment");
-            if (!commentBlob.empty()) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 40.0f);
-                ImGui::TextUnformatted(commentBlob.c_str());
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            } else {
-                ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
+            // Kick only from the FOCUSED pane: the fetch resolves the focused backend and the
+            // post-back writes the focused snapshot, so an unfocused pane's hover keeps the
+            // static hint until the pane is focused (see KickCommentsTooltipFetch).
+            if (commentBlob.empty() && pane.focused) {
+                // New snapshot for this pane (re-sync / backend swap / project switch) → allow
+                // one fresh kick per issue: the rebuilt cache may have wiped a lazily-fetched
+                // blob. Keyed on the (backendKey, revision) PAIR: per-context revision counters
+                // each start at 0, so a backend switch alone could land on an equal revision.
+                if (pane.CommentsTooltipFetchRevision != pane.snapshotRevision ||
+                    pane.CommentsTooltipFetchBackendKey != pane.backendKey) {
+                    pane.CommentsTooltipFetchRevision = pane.snapshotRevision;
+                    pane.CommentsTooltipFetchBackendKey = pane.backendKey;
+                    pane.CommentsTooltipFetchKicked.clear();
+                }
+                // A cached count of "0" already proves the thread is empty — no fetch to run.
+                if (currentValue != "0" && pane.CommentsTooltipFetchKicked.insert(ticket.id).second) {
+                    KickCommentsTooltipFetch(app, d, pane.id, pane.backendKey, ticket.id);
+                }
             }
+            RenderCommentsCellTooltip(commentBlob);
         }
         ImGui::EndGroup();
         cellGroupMin = ImGui::GetItemRectMin();
@@ -458,4 +574,3 @@ void SmatchetUI::drawActiveProjectGridRectSelKeys(ActiveProjectDrawCtx& ctx) {
         }
     }
 }
-

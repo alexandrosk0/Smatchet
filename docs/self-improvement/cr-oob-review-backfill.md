@@ -95,6 +95,76 @@ This has a sharper consequence than a stalled backfill: while CR is silent,
 CURRENT PRs merge unreviewed too, so the queue grows faster than any drip drains
 it. Fixing the source outranks draining the debt.
 
+## The 2026-08-18 duplicate-comment incident
+
+The first live deployment posted **six identical review requests to #1995** in
+two hours — one per scheduled tick — and would have kept going. It is the exact
+failure the fail-safe above was written to prevent, and it happened anyway.
+
+**Cause.** The request record was read with
+`gh search issues "<marker> in:comments"` — and **three independent guards all
+read from that one call**: "has this PR been requested", the quota window (via
+the newest request timestamp), and the unanswered-request fail-safe. When it
+returns empty, it does not degrade one guard; it silences all three at once, and
+the poller re-picks the same newest PR every tick.
+
+It returns empty because **GitHub's search index is eventually consistent**. The
+first diagnosis written here was that the marker is inside an HTML comment and
+therefore never indexed. That was wrong, and the live workflow disproved it: the
+23:03Z tick printed `HOLD window closed for 1066 more second(s)`, which is only
+reachable when the search *does* return the marker. The index simply lags the
+write by a long time — and the whole storm fits inside that lag. So the storm was
+bounded (six comments, ~2h) rather than unbounded, and it stopped on its own when
+the index caught up.
+
+That correction sharpens the lesson rather than softening it: **an idempotency
+guard must never be built on an eventually-consistent index.** The window in
+which such an index reports "nothing has happened yet" is precisely the window in
+which the guard is being asked whether something already happened. A slow source
+fails exactly like a broken one.
+
+A second flaw in the same query: it matches **any** issue mentioning the marker
+string, including PRs that merely *discuss* the backfill (#2119 and #2126 both
+do). Those false positives skew `last_req`, wedging or unwedging the quota window
+for reasons unrelated to any actual request.
+
+**Why the tests missed it.** `--selftest` and the bats suite both inject the
+decision input directly through `SMATCHET_CR_BACKFILL_FIXTURE`. They proved the
+decision core was correct — and it *was* correct, on every tick. What no test
+covered was the layer that fills that input, so a core that reasons perfectly
+over an empty world passed everything while being catastrophically wrong.
+
+**Fixes, in order of how much they are trusted.**
+
+1. **Per-PR request record.** The marker is read from each PR's own comments —
+   the same place `post_request` writes it — scanned newest-first, stopping at
+   the first PR without one. No shared, silently-empty lookup.
+2. **A failed lookup HOLDS.** `scanfail` is distinct from "no marker": an errored
+   or unparseable response means the state is *unknown*, and unknown is never a
+   licence to post. Treating a failed read as "nothing requested" is the whole
+   incident in one sentence.
+3. **Last-line idempotency.** `post_request` re-reads the PR immediately before
+   writing and refuses if the marker is already there. Deliberately redundant
+   with (1) and (2), because a duplicate is never correct no matter what the
+   decision core concluded, and the blast radius of getting it wrong is
+   unbounded.
+
+**A second instance of the same class, caught in review** (Bugbot on #2126): the
+first cut of the per-PR scan read only the first page of issue comments. That
+endpoint returns oldest-first and a backfill marker is by construction the
+newest comment, so on any PR with more than 100 comments the marker would be
+invisible to *both* the scan and the pre-post check — the identical shared
+failure, reintroduced one page-size assumption later. Both lookups now paginate.
+The lesson generalises: a guard is only as good as the completeness of the read
+underneath it, and "I fixed the shared-source bug" is not the same as "no shared
+assumption remains".
+
+**The schedule is disabled** until a manual `workflow_dispatch` with
+`dry_run: true` shows the poller holding on #1995 against live GitHub. The data
+layer cannot be exercised from the authoring container (no `gh`), and that gap
+is precisely what shipped the bug — so it is closed by observation, not by
+another green selftest.
+
 ## Skips
 
 Not every row owes a review. A **moot override** — the label pre-applied where

@@ -90,6 +90,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # (TrackerQuerySuggestCommon + JqlEscape — cpr/ImGui-free). No threads.
         Core/JqlSuggestEnginePure.test.cpp
         Core/PlaneQuerySuggestEnginePure.test.cpp
+        # Readable echo of the account ids a user-field clause carries — pure string
+        # transform over the user catalog; links the same suggest-helper closure.
+        Core/JqlUserDisplayPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlUserDisplayPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
@@ -232,6 +236,17 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # ConfigManager + std only).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueParser.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldValueUtils.cpp"
+        # ParseComments now delegates through the shared Comments-tooltip pipeline:
+        # MapJiraIssueComments (JiraCommentMappingPure, which needs ParseIso8601ToUnixSec
+        # from GitHubClientHelpers) + FormatCommentBlob (CommentBlobFormatPure). All three
+        # are pure cpr/ImGui/GL-free TUs. The formatter + Jira-mapper doctests ride along so
+        # the linux-container subset lane covers the Comments-tooltip pipeline directly.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
+        Core/CommentBlobFormatPure.test.cpp
+        Core/JiraCommentMappingPure.test.cpp
+        Core/JiraIssueMappingPure.test.cpp
         # --- Offline-queue replay + config-save concurrency (debt P2 TSan-subset-expand,
         #     #1339 follow-up). OfflineQueueService drains PendingCreate / PendingFieldEdit
         #     on the sync/reconnect thread while a live backend swap can land mid-replay
@@ -728,6 +743,10 @@ add_executable(SmatchetTests
     # TicketGridModel.cpp (whose render-plan/column-builder code pulls the ImGui-coupled grid
     # draw headers). ImGui-free after the split, so tests link it without those deps.
     Core/TicketGridSortPure.test.cpp
+    # Ticket-grid column display-order consistency + visual-order permutation predicates,
+    # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over
+    # plain vectors; no extra production .cpp to link.
+    Core/GridColumnOrderPure.test.cpp
     # Update-check release-tag parser lifted from AttachmentAppUpdateService.cpp (CPP_CODE_AUDIT.md
     # #17) — cpr-free pure seam so it links + fuzzes without the update service's HTTP deps.
     Core/SemanticVersionPure.test.cpp
@@ -739,6 +758,8 @@ add_executable(SmatchetTests
     # AppController). TrackerQuerySuggestCommon.cpp + JqlEscape.cpp already linked below.
     Core/JqlSuggestEnginePure.test.cpp
     Core/PlaneQuerySuggestEnginePure.test.cpp
+    # Readable echo of the account ids a user-field clause carries.
+    Core/JqlUserDisplayPure.test.cpp
     # Gap map Tier 1 #6 — merge-watch notify endpoint request-validation core.
     Core/MergeWatchNotifyPure.test.cpp
     Core/IsDescriptionLikeFieldId.test.cpp
@@ -1061,6 +1082,11 @@ add_executable(SmatchetTests
     # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
+    # Comments-cell tooltip blob — the ONE shared formatter behind fieldValues["comment"]
+    # (ParseComments delegation, the lazy first-hover fetch and the modal post-back all
+    # converge here). Pure — no I/O, no Logger.
+    Core/CommentBlobFormatPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
@@ -1205,6 +1231,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SemanticVersionPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlUserDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/MergeWatchNotifyPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp"
