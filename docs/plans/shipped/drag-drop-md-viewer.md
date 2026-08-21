@@ -1,8 +1,9 @@
 # Plan — Open any .md file in the Plan Docs viewer (drag-and-drop + Open… dialog)
+<!-- plan-date: 2026-08-21 -->
 
 > **Slug**: `drag-drop-md-viewer`.
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -76,15 +77,20 @@ N/A — nothing extracted or split.
 - A command-palette "open markdown file" command — the viewer button + drop cover the request; add on demand.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `856294ab` · feat: external-open entry point, combined picker, drop callback in both boot paths, "Open..." dialog request flag, bucket-E test, this plan doc.
+- `f57780ca` · fix: code-review findings — batch `PlanDocViewerOpenExternalFiles` (de-dups the reopen-first trick in both producers), droppedFiles purge on scan landing, picker rendered under indexError when docs exist, `openFileDialogAvailable` gate hides "Open..." where no dialog handler exists, test temp-file uniqueness + no-delete, dead `<cctype>` include dropped.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- "Open..." button is hidden (not shown-but-dead) on platforms without a `RequestOpenFilePaths` host handler, via a new `UiDrawSession::openFileDialogAvailable` flag — the plan had accepted a silent no-op; review flagged it as a broken-looking button.
+- The single-path `PlanDocViewerOpenExternalFile` remains (test + convenience) but delegates to the batch form; producers call the batch form directly — the plan's "re-open the first pick" pattern was dropped as duplicated logic.
+- Picker visibility decoupled from the index-error branch (plan implied the pre-existing branch structure): dropped docs stay reachable after a failed scan.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- `agents/scripts/project/test-lint-rules.sh --diff origin/develop` — all gates green (initial run's `function-too-long` on `BootInitGlfwAndWindow` and a `duplication` clone vs `WhisperPlugin.cpp` were fixed, not exempted). Residual WARNs are pre-existing (tu-line-ceiling on `SmatchetUI.cpp`, comment-ratio on two heavily documented headers).
+- `scripts/dev/test-docs.sh` — 19/19 green (includes plan-index + ref-integrity for this doc).
+- Per-TU C++14 `clang++ -fsyntax-only` of every modified/new TU against the pinned third-party headers (imgui docking @329c5a6b, ghc 1.5.14, SQLiteCpp, nlohmann, GLFW 3.3.8, imgui_test_engine @8568767a) — clean; the drop callback's signature type-checked against `GLFWdropfun`.
+- MSVC dual-target build + ctest + bucket-E run on PR #2152's CI (this container has no Windows toolchain).
+- Manual residue: the OS drag gesture itself (not synthesizable by the test engine) — desktop drag check tracked on the PR's test plan.
