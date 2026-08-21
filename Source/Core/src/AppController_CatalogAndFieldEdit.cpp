@@ -826,6 +826,30 @@ Result<std::vector<TrackerUser>> AppController::SearchUsersByQuery(const std::st
     return outcome;
 }
 
+Result<std::vector<TrackerUser>>
+AppController::FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const {
+    using UsersResult = Result<std::vector<TrackerUser>>;
+    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
+        &focusedContext()
+             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
+    if (!backend) {
+        return UsersResult::Err("Tracker backend is not initialized.");
+    }
+    if (!backend->Collaboration()) {
+        return UsersResult::Err("Tracker backend does not support collaboration features.");
+    }
+    const TrackerConfig cfg = ConfigManager::Load();
+    UsersResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerUser>>(
+        backend->Collaboration()->FetchUsersByAccountIds(cfg, accountIds));
+    if (!outcome.has_value()) {
+        LOG_ERROR("AppController::FetchUsersByAccountIds failed ids=%zu err=%s", accountIds.size(),
+                  outcome.error().c_str());
+        return outcome;
+    }
+    requestDeferredLiveTrackerBackendSuccessNotify_();
+    return outcome;
+}
+
 VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) {
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()

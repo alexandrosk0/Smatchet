@@ -34,6 +34,23 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-08-20 · PR #2148 · `reads as` user-name echo shipped non-functional in its headline flow (resolved names only from a user catalog that is empty in a supported state)
+
+### What escaped
+`feat(jql): show user display names for the account ids a query carries` (#2148). The echo resolved names exclusively from `GetAvailableUsers()` plus same-session @-mention search results. With the catalog user list empty — a supported, silent state (`FetchUsers` failure sets only `outCatalog.Warning`; a cache-restored catalog carries no users at all) — selecting a user rendered no echo. Reported by the user post-merge ("the moment I select the user, the hash appears like nothing changed"); fixed in #2149.
+
+### Root cause
+Two holes, both process-shaped. (1) The feature's data source was assumed, not traced: no producer-path audit of `AvailableUsers` (whose empty/error paths are silent by design), and the interaction-time data — the autocomplete row the user clicks already carries both the accountId and the display name — was passed over in favor of a global cache. No automated layer could catch it: bucket-C/E goldens do not cover the query editor, and the pure-transform tests stocked the catalog by construction, so green tests proved the transform while the bug lived upstream in the empty list. (2) The repo's OWN gate for exactly this — the visual-validation exception (AGENTS.md pause 5: UI diff without bucket-C/E coverage → pause, user verifies on a launched exe) — was flagged as open in every status update but not enforced at the merge decision: a bare "merge" was executed without restating the outstanding unverified item.
+
+### Preventing gate
+(1) Ship-loops rule (§ Visual-validation exception): an outstanding visual-validation pause SURVIVES a bare "merge" — the orchestrator restates the specific unverified behavior and proceeds only on an explicit merge-anyway. One sentence of discipline, no tooling. (2) Review discipline (agent-reviewable, see eval case): a UI feature whose visible output is sourced from an app-owned runtime-populated cache must enumerate, in the PR body, each producer of that cache and the feature's behavior when the cache is empty; "renders nothing" is a finding unless explicitly intended.
+
+### Eval case
+Input: the #2148 diff (echo resolving only from `catalogUsers` + `jqlAcpSearchResolvedUsers`) plus `TrackerFieldCatalog.cpp`'s warning-only `FetchUsers` failure path as context. Reference outcome: a competent reviewer flags (a) that with `AvailableUsers` empty — supported and silent — the feature renders nothing in its headline select-a-user flow, and (b) that the selection popup already holds the id→name pairing that closes the gap with no catalog and no network.
+
+### Filed as
+[`categories/process.md` 2026-08-20 P2 entry](categories/process.md)
+
 ## 2026-08-19 · PR #2127 (+ #2130, #2122, #2121, #2119, #2118, #2117) · Merged past a permanently-`pending` `CR findings (0 actionable)` that branch protection does not require and the escape detector cannot see
 
 ### What escaped

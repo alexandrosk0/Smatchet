@@ -30,6 +30,8 @@ class IAppUsers {
     virtual Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const = 0;
     virtual Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const = 0;
     virtual Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const = 0;
+    virtual Result<std::vector<TrackerUser>>
+    FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const = 0;
 };
 
 #endif // SMATCHET_INTERFACES_IAPP_USERS_H

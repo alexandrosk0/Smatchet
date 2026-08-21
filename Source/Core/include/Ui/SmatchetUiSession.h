@@ -256,6 +256,26 @@ struct JqlEditorState {
     /// (the search reaches the whole site; the catalog only holds the project's users).
     /// Bounded — oldest entries drop once the cap is hit.
     std::vector<TrackerUser> jqlAcpSearchResolvedUsers;
+    /// By-accountId resolve for the readable echo (same worker-thread pattern as the
+    /// @-mention search above). A saved view restored at startup, or a pasted clause,
+    /// carries ids no session search has named and the project catalog may not hold —
+    /// this side-channel asks the backend for exactly those ids. `jqlIdResolveAttempted`
+    /// keeps ids we already asked about (found or not) so an id the backend does not know
+    /// is fetched once per session, not once per keystroke; `jqlIdResolveScanSource`
+    /// memoises the per-frame scan the same way the echo memo does.
+    std::future<JqlUserSearchResult> jqlIdResolveFuture;
+    bool jqlIdResolveInFlight = false;
+    std::vector<std::string> jqlIdResolveAttempted;
+    std::string jqlIdResolveScanSource;
+    bool jqlIdResolveScanValid = false;
+    /// Failure handling: a failed lookup un-attempts its ids and retries with backoff —
+    /// the FIRST tick often races backend init at startup, and giving up there would leave
+    /// a restored view's ids unnamed all session. Bounded so a genuinely broken config
+    /// stops costing an HTTP call: after `kJqlIdResolveMaxFailures` the ids stay attempted.
+    std::vector<std::string> jqlIdResolveInFlightIds;
+    double jqlIdResolveRetryAt = 0.0;
+    int jqlIdResolveFailures = 0;
+
     /// Memo for the readable echo. `jqlUserEchoSource` is the exact buffer the `jqlUserEcho`
     /// text was rendered from and `jqlUserEchoCatalog*` identify the user-catalog snapshot it
     /// resolved names against, so the transform runs on a real change only and a steady frame

@@ -95,6 +95,19 @@ struct FakeUsers : IAppUsers {
         votes.VoteCount = 3;
         return Result<TrackerIssueVotes>::Ok(std::move(votes));
     }
+    Result<std::vector<TrackerUser>> FetchUsersByAccountIds(const std::vector<std::string>& ids) const override {
+        if (Fail) {
+            return Result<std::vector<TrackerUser>>::Err("bulk boom");
+        }
+        std::vector<TrackerUser> out;
+        for (const auto& id : ids) {
+            TrackerUser u;
+            u.AccountId = id;
+            u.DisplayName = "Resolved " + id;
+            out.push_back(std::move(u));
+        }
+        return Result<std::vector<TrackerUser>>::Ok(std::move(out));
+    }
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string&) const override {
         if (Fail) {
             return Result<std::vector<TrackerUser>>::Err("search boom");

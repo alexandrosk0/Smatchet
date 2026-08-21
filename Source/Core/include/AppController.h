@@ -1011,6 +1011,7 @@ class AppController : public IAppThreading,
     Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
 
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
+    Result<std::vector<TrackerUser>> FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const override;
 
     VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) override;
 
