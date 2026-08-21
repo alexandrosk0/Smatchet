@@ -60,8 +60,21 @@ grep_fixed() { LC_ALL=C grep -qF -- "$1"; }
 # `--selftest` runs and exits. (Caught by the fixtures below on first run.)
 claude_code_hint() {  # <file> <key>
   awk -v k="    $2:" '
+    # FRONTMATTER-SCOPED. Ending the block only on a following 2-space key (the
+    # first cut) leaked: neither a 0-space top-level key (`version:`) nor the
+    # closing `---` cleared inblk, so when the sought key was ABSENT the scan ran
+    # on into the document body and picked up any 4-space-indented `model:` in an
+    # indented example — inventing a value for a partial block and defeating the
+    # very partial-block path checks 5 and 15 exist to exercise. Reproduced:
+    # a partial block + `version: 3` + a body line `    model: sonnet` returned
+    # "sonnet". (Cursor Bugbot on PR #2150; fixture (g) below pins it.)
+    NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    !fm { exit }                                  # no frontmatter -> no hints
+    fm && /^---[[:space:]]*$/ { exit }            # closing --- ends the search
     /^  claude-code:/ { inblk = 1; next }
-    inblk && /^  [^ ]/  { inblk = 0 }          # next 2-space key ends the block
+    # Any NON-BLANK line that is not one of the block s 4-space children ends the
+    # block. Covers 2-space siblings, 0-space top-level keys, and `---` alike.
+    inblk && !/^    / && /[^[:space:]]/ { inblk = 0 }
     inblk && index($0, k) == 1 { sub(/^[^:]*: */, ""); gsub(/[[:space:]]/, ""); print; exit }
   ' "$1"
 }
@@ -70,7 +83,15 @@ claude_code_hint() {  # <file> <key>
 # block at all. This is the ONLY legitimate reason to skip the model checks; a
 # block that exists but is partial is a finding, not a skip.
 has_claude_code_block() {  # <file>
-  grep -qE '^  claude-code:' "$1"
+  # Frontmatter-scoped for the same reason as claude_code_hint: a whole-file grep
+  # would count a `  claude-code:` line quoted in the agent s prose as a real
+  # hint block, turning a legitimate no-block skip into a spurious finding.
+  awk '
+    NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    !fm { exit 1 }
+    fm && /^---[[:space:]]*$/ { exit 1 }
+    /^  claude-code:/ { exit 0 }
+  ' "$1"
 }
 
 # model_verdict <file> — print the check-15 mismatch reason, or nothing when the
@@ -191,6 +212,41 @@ FIX
   #     model. Must stay silent, or the check becomes noise on valid agents.
   printf -- '---\nname: toponly\nmodel: opus\n---\n' > "$tmpd/toponly.md"
   vcase "$tmpd/toponly.md" silent "top-level only, no hint block"
+
+  # (g) selftest: asserts-failure — REGRESSION for the frontmatter leak (Cursor
+  #     Bugbot, PR #2150). A PARTIAL claude-code block, then a 0-space top-level
+  #     key and the closing `---`, then a 4-space `model:` in the document body.
+  #     The first cut of claude_code_hint ended the block only on a 2-space key,
+  #     so neither `version:` nor `---` cleared it and the scan reached the body
+  #     and returned "sonnet" — inventing a model for a block that declares none.
+  #     Fixture (c) missed this because it had no body after the frontmatter.
+  cat > "$tmpd/leak.md" <<'LEAKFIX'
+---
+name: leak
+harness-hints:
+  claude-code:
+    effort: high
+version: 3
+---
+
+Example config:
+
+    model: sonnet
+LEAKFIX
+  if [[ -n "$(claude_code_hint "$tmpd/leak.md" model)" ]]; then
+    echo "selftest: FAIL — claude_code_hint leaked past the frontmatter and read '$(claude_code_hint "$tmpd/leak.md" model)' from the body" >&2
+    rc=1
+  fi
+  vcase "$tmpd/leak.md" report "partial block with a body model: line"
+
+  # (h) prose mentioning a hint block must NOT count as declaring one, or a
+  #     legitimate no-block skip becomes a spurious finding.
+  printf -- '---\nname: prose\nmodel: opus\n---\n\nAgents declare:\n\n  claude-code:\n    model: sonnet\n' > "$tmpd/prose.md"
+  if has_claude_code_block "$tmpd/prose.md"; then
+    echo "selftest: FAIL — has_claude_code_block counted a block quoted in prose" >&2
+    rc=1
+  fi
+  vcase "$tmpd/prose.md" silent "prose mentioning claude-code, real top-level model"
   rm -rf "$tmpd"
 
   if [[ $rc -eq 0 ]]; then echo "test-agent-contract --selftest: PASS"; fi
