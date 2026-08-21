@@ -64,6 +64,48 @@ for f in "${YAMLS[@]}"; do
     fi
 done
 
+# --- action SHA-pin assertion -------------------------------------------------
+# Every THIRD-PARTY `uses:` must name a 40-hex commit, never a mutable tag: a
+# retagged `v*` ref executes attacker-controlled code inside the job. Dependabot
+# pins on bump, but nothing ENFORCED it, so a hand-written workflow could
+# reintroduce a tag silently — `plan-lock-gate.yml` did exactly that and sat as
+# the repo's only unpinned ref, inside a hard-net gate job, until a historical
+# review found it (finding #1902; nothing else keys on pinning).
+#
+# SCOPE — real `uses:` STEP keys only, anchored at line start. A naive
+# `grep -r 'uses:'` is wrong twice over, and both false-positive classes are
+# live in this repo:
+#   * `statuses: write` / `statuses: read` CONTAIN the substring `uses:`
+#     (stat + uses:) — 4 hits in .github/;
+#   * prose in comments ("...the lane uses: host clang/lld") — 4 more.
+# A first cut of this check produced 8 false hits over 1 real one. The anchor
+# (`^ spaces, optional '- ', spaces, uses:`) rejects both by construction.
+#
+# Local composite actions (`./.github/actions/...`) are exempt: they are repo
+# content, already covered by the pinned checkout that fetched them.
+PIN_BAD=0
+while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    echo "[test-workflow-yaml] FAIL unpinned action  $hit"
+    PIN_BAD=$((PIN_BAD + 1))
+done < <(
+    grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:[[:space:]]*[^[:space:]]+' \
+         .github/workflows .github/actions 2>/dev/null \
+      | grep -vE 'uses:[[:space:]]*\./' \
+      | grep -vE 'uses:[[:space:]]*[^[:space:]]+@[0-9a-f]{40}([[:space:]]|$)'
+)
+
+if [ "$PIN_BAD" -gt 0 ]; then
+    echo "[test-workflow-yaml] $PIN_BAD unpinned third-party action(s)." >&2
+    echo "  Pin to the full 40-hex commit and keep the tag as a trailing comment:" >&2
+    echo "    uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1" >&2
+    echo "  Resolve a tag with: gh api repos/<owner>/<repo>/commits/<tag> --jq .sha" >&2
+    FAILED=$((FAILED + PIN_BAD))
+else
+    echo "[test-workflow-yaml] OK   every third-party action is SHA-pinned"
+    PASSED=$((PASSED + 1))
+fi
+
 echo
 echo "Passed: $PASSED  Failed: $FAILED"
 [ "$FAILED" -eq 0 ] || exit 1
