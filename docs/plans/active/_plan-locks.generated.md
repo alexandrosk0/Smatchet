@@ -8,7 +8,28 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (2 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `fa-fetch-raw-host`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/fa-fetch-raw-host`
+- **Started**: 2026-08-17T14:22:31Z
+- **Write set** (1 paths):
+  - `.github/actions/fetch-fontawesome/action.yml`
+- **Notes**: github.com /raw/ shim 404s; switch to raw.githubusercontent.com
+
+### `pillar2-shutdown-flush`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/build-run-latest-8adc6a`
+- **Started**: 2026-08-17T23:29:37Z
+- **Updated**: 2026-08-18T00:58:55Z
+- **Write set** (6 paths):
+  - `Source/Standalone/main.cpp`
+  - `docs/harness/claude-code/hooks/lint-syntax-both.py`
+  - `.claude/hooks/lint-syntax-both.py`
+  - `docs/plans/active/pillar2-ui-thread-config-io.md`
+  - `docs/self-improvement/categories/tooling/2026-08-17-syntax-check-error-tally-residue-fp.md`
+  - `docs/self-improvement/categories/tooling/2026-08-17-ccache-pch-phony-edge-survives-toolset-bump.md`
+
