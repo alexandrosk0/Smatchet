@@ -16,6 +16,10 @@
 #include "Ui/SmatchetIconButtons.h"
 #include "SmatchetImGuiFonts.h"
 
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared grid/preferences-UI TU include prologue is grandfathered across the UI-file siblings (SmatchetAiAssistantUi / SmatchetPreferencesUi / SmatchetViewsDashboardUi_widgets) — moving DrawNewPaneMenu here (pane-strip "+" relocated beside the view selector) pulls the same prologue headers, and a behavior-preserving move has no shared prologue header to factor into without worse coupling; owner=orchestrator; revisit=when a shared UI TU prologue header is introduced)
+// clang-format on
+
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
