@@ -64,7 +64,7 @@ agents/core/coderabbit-triage.md	SMATCHET
 agents/core/coderabbit-triage.md	Smatchet
 agents/core/coderabbit-triage.md	Source/Core
 agents/core/coderabbit-triage.md	Source/UnrealPlugins
-agents/core/debug-detective.md	DX12
+agents/core/debug-detective.md	SMATCHET
 agents/core/debug-detective.md	Smatchet
 agents/core/debug-detective.md	SmatchetCore_DX12
 agents/core/debug-detective.md	SmatchetStandalone
