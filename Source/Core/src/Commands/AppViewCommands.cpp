@@ -10,6 +10,7 @@
 #include "Commands/MainThreadDispatch.h"
 #include "Config/ConfigManager.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetBottomPanelDrag.h"
 #include "Ui/SmatchetViewVisibility.h"
 
 #include <string>
@@ -43,8 +44,29 @@ bool ResolveTarget(const std::string& action, bool current) {
 // Side-bar / bottom-panel visibility — persisted cfg slots (was: handlePanelVisibilityShortcuts).
 CommandResult SetPanel(IMainThreadPoster& app, ViewSlot slot, bool TrackerConfig::*cfgFlag, const std::string& action) {
     return RunOnUiThreadAsCommandResult(app, [slot, cfgFlag, action]() {
-        const bool target = ResolveTarget(action, g_ui.cfg.*cfgFlag);
-        SetViewVisible(g_ui.cfg, slot, target);
+        bool target;
+        if (slot == ViewSlot::BottomPanel) {
+            // The bottom panel is hidden/shown by closing/restoring the windows docked
+            // in it (an empty node is what collapses), so it routes through the shared
+            // collapse/expand helpers — same path as the P4V-style drag gestures and
+            // the View menu. Current state is the LIVE node visibility, not the cfg
+            // flag: the user can also empty the panel one tab-close at a time.
+            const bool visible = SmatchetBottomPanelDrag::IsPanelVisible();
+            target = ResolveTarget(action, visible);
+            // No-op when the panel already matches: a redundant "show" must not push
+            // the Log tab over the current selection or rewrite the panel height, and
+            // a redundant "hide" must not touch the remembered tab set.
+            if (target != visible) {
+                if (target) {
+                    SmatchetBottomPanelDrag::Expand(g_ui, 0.0f);
+                } else {
+                    SmatchetBottomPanelDrag::Collapse(g_ui);
+                }
+            }
+        } else {
+            target = ResolveTarget(action, g_ui.cfg.*cfgFlag);
+            SetViewVisible(g_ui.cfg, slot, target);
+        }
         ConfigManager::Save(g_ui.cfg);
         nlohmann::json out;
         out["open"] = target;

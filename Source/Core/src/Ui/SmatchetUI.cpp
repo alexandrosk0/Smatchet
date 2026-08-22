@@ -2,6 +2,7 @@
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetViewVisibility.h"
+#include "SmatchetBottomPanelDrag.h"
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetStatusBarUi.h"
 #include "Commands/CommandPaletteUi.h"
@@ -387,6 +388,9 @@ void SmatchetUI::Draw(AppController& app) {
     drawOmnibar(app, d);
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
+    // P4V-style bottom-panel gestures: splitter drag-to-hide + the drag-up reveal grip.
+    // Runs after the docked windows so this frame's dock tree is settled.
+    SmatchetBottomPanelDrag::Tick(d);
     drawDockDebugOverlay(d);
     // Shared "Set shortcut..." quick-bind modal. Drawn late (top level, after the toolbar
     // + palette have submitted their context menus this frame) so a request latched this

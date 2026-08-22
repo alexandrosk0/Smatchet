@@ -89,8 +89,14 @@ static const char* ConnectivityTooltip(AppController& app) {
 } // namespace
 
 void DrawStatusBar(AppController& app, const UiDrawSession& d) {
-    const float barH = ::ImGui::GetFrameHeight();
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+    // One frame-line of content plus the window padding above/below it (the omnibar's
+    // sizing). A bare GetFrameHeight() under-reserves by the padding, so the single
+    // line overflowed the bar and could be wheel-scrolled half out of view
+    // (NoScrollbar only hides the bar — NoScrollWithMouse is what disables the wheel).
+    // The status bar is exactly one line, always.
+    const float barH = ::ImGui::GetFrameHeight() + ::ImGui::GetStyle().WindowPadding.y * 2.0f;
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
     if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(), ImGuiDir_Down, barH, flags)) {
         ::ImGui::End();
         return;
@@ -184,13 +190,16 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
         const char* themeName = ThemeIdName(d.cfg.Theme);
         std::snprintf(rightBuf, sizeof(rightBuf), "%dpt  %s", d.cfg.FontSizePt, themeName);
 
+        // SameLine FIRST: the previous item ended the line, so a bare SetCursorPosX
+        // kept the right-aligned text on a SECOND line below the one-line bar — the
+        // bar's content was two lines tall and wheel-scrollable. Right-align on the
+        // SAME line; when the bar is too narrow the text just clips at the right edge.
+        ImGui::SameLine();
         const float textW = ::ImGui::CalcTextSize(rightBuf).x;
         const float contentMaxX = ::ImGui::GetWindowContentRegionMax().x;
         const float xPos = contentMaxX - textW - 4.0f;
         if (xPos > ::ImGui::GetCursorPosX()) {
             ::ImGui::SetCursorPosX(xPos);
-        } else {
-            ImGui::SameLine();
         }
         ImGui::TextUnformatted(rightBuf);
         if (::ImGui::IsItemHovered()) {

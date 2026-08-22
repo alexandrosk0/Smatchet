@@ -59,6 +59,13 @@ TEST_CASE("i18n-sweep keys resolve to French under fr-FR") {
         CHECK(std::string(SmatchetLocalization::T("audit.offline", kSentinel)) == u8"Hors ligne");
     }
 
+    SUBCASE("bottom-panel drag gestures") {
+        CHECK(std::string(SmatchetLocalization::T("panel.release_to_hide", kSentinel)) ==
+              u8"Relâchez pour masquer le panneau");
+        CHECK(std::string(SmatchetLocalization::T("panel.drag_to_open", kSentinel)) ==
+              u8"Faites glisser vers le haut pour ouvrir le panneau");
+    }
+
     SUBCASE("format keys keep their conversion specifiers") {
         // Format() falls back to the English literal when the translation's specifier
         // sequence diverges — a translated string that loses "%s" would silently revert

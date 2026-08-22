@@ -8,9 +8,9 @@
 // consumers. Order matters: `imgui_internal.h` must be pulled BEFORE the
 // macro redefinition.
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=dup gate flags this TU's #include list as a clone of SmatchetUI.cpp's — sibling UI TUs sharing a common include set, both in this diff; directive overlap not copy-pasted logic; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
-// clang-format on
+// The marker below must stay the nearest non-blank line above the include block (the
+// dup auditor only honours it there); CommentPragmas in .clang-format keeps it one line.
+// SMATCHET_DEVIATION(rule=duplication; reason=dup gate flags this TU's #include list as a clone of SmatchetUI.cpp's — sibling UI TUs sharing a common include set; directive overlap not copy-pasted logic; owner=ui; revisit=when the dup auditor scopes cross-file clones to logic blocks)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include "Commands/CommandPaletteUi.h"
@@ -23,6 +23,7 @@
 #include "SmatchetImGuiFonts.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
+#include "SmatchetBottomPanelDrag.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewVisibility.h"
 #include "TicketGridModel.h"
@@ -594,8 +595,18 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
         ConfigManager::Save(d.cfg);
     }
-    if (ImGui::MenuItem("Panel", MenuShortcut(ctx, "view.panel.bottom", "Ctrl+J").c_str(), d.cfg.ShowPanel)) {
-        SetViewVisible(d.cfg, ViewSlot::BottomPanel, !d.cfg.ShowPanel);
+    // The bottom panel routes through SmatchetBottomPanelDrag rather than the bare cfg
+    // flag: hiding must remember + close the docked tabs (an empty node is what actually
+    // collapses the panel) and showing must restore them — the same mechanism as the
+    // P4V-style splitter drag-to-hide / drag-up reveal. The checkmark keys off the LIVE
+    // node visibility because the user can also empty the panel one tab-close at a time.
+    const bool panelVisible = SmatchetBottomPanelDrag::IsPanelVisible();
+    if (ImGui::MenuItem("Panel", MenuShortcut(ctx, "view.panel.bottom", "Ctrl+J").c_str(), panelVisible)) {
+        if (panelVisible) {
+            SmatchetBottomPanelDrag::Collapse(d);
+        } else {
+            SmatchetBottomPanelDrag::Expand(d, 0.0f);
+        }
         recentViews_.Touch("view.toggle.panel");
         ConfigManager::Save(d.cfg);
     }
