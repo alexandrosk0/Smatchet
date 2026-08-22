@@ -156,8 +156,8 @@ FontVariantPaths GetFontVariantPaths(const std::string& fontName) {
 }
 
 // Font Awesome 6 TTF asset resolver (Phase 4 of ai-chat-claude-desktop-parity).
-// The TTF ships separately at assets/fonts/fa-solid-900.ttf (SIL OFL 1.1) and is
-// NOT committed to git — see assets/fonts/README.md for the drop-in contract.
+// The TTF is committed at assets/fonts/fa-solid-900.ttf (SIL OFL 1.1) — see
+// assets/fonts/README.md for the sourcing and license notes.
 // Resolution order: exe-dir first (POST_BUILD-copied by CMake at install) then
 // SMATCHET_ASSETS_SOURCE_DIR/fonts (dev-tree fallback for runs out of the build
 // directory / tests / scenarios). Missing in both → caller LOG_WARN + g_FaIconsLoaded=false.

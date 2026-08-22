@@ -1,21 +1,21 @@
 # Smatchet bundled fonts
 
-## fa-solid-900.ttf — **drop-in required**
+## fa-solid-900.ttf — committed
 
-The Font Awesome 6 Free **Solid** TTF must be dropped at:
+The Font Awesome 6 Free **Solid** TTF lives at:
 
-    assets/fonts/fa-solid-900.ttf  (~430 KB)
+    assets/fonts/fa-solid-900.ttf  (~426 KB)
 
-### Where to get it
-
-Download from the official Font Awesome 6 Free release at
+It is committed to the repo (since 2026-08) so fresh clones and linked
+worktrees render icons out of the box. Sourced from the official Font Awesome
+6 Free release at
 [github.com/FortAwesome/Font-Awesome/tree/6.x/webfonts](https://github.com/FortAwesome/Font-Awesome/tree/6.x/webfonts) — file `fa-solid-900.ttf`.
 
 ### License
 
-SIL Open Font License 1.1. The TTF is **not** redistributed in this repo (CI
-fetches it on release-tag builds; dev workstations drop it manually). See
-[`THIRD_PARTY_LICENSES.md`](../../THIRD_PARTY_LICENSES.md) for the full notice.
+SIL Open Font License 1.1 — redistribution is permitted with the license
+notice. See [`THIRD_PARTY_LICENSES.md`](../../THIRD_PARTY_LICENSES.md) for the
+full notice.
 
 ### What happens at runtime when the TTF is missing
 
@@ -33,13 +33,12 @@ re-configure.
 
 ### Linked git worktrees
 
-`assets/fonts/*.ttf` is gitignored, so a worktree created with `git worktree
-add` (or `nsc <slug>`) starts with an **empty** `assets/fonts/` even when the
-main worktree has the TTF. `smatchet_resolve_font_asset`
+Now that the TTF is committed, every worktree checks it out directly.
+`smatchet_resolve_font_asset`
 ([`cmake/SmatchetFontAssets.cmake`](../../cmake/SmatchetFontAssets.cmake))
-therefore falls back to the main worktree's copy, located via `git rev-parse
---git-common-dir`, so no per-worktree drop-in (and no duplicated 430 KB binary)
-is needed. Regression coverage: `tests/bats/font_asset_resolve.bats`.
+still falls back to the main worktree's copy, located via `git rev-parse
+--git-common-dir`, for checkouts predating the committed font. Regression
+coverage: `tests/bats/font_asset_resolve.bats`.
 
 An already-configured build directory keeps its old decision — re-configure
 (`cmake --preset <name>`) once for the fallback to take effect.

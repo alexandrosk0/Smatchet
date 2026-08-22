@@ -112,9 +112,8 @@ SOFTWARE.
 ## Font Awesome 6 Free Solid — `assets/fonts/fa-solid-900.ttf`
 
 Source: <https://github.com/FortAwesome/Font-Awesome>
-Distribution: shipped next to the Smatchet executable via CMake POST_BUILD copy
-(not committed to this repo's git history; see `assets/fonts/README.md` for the
-drop-in contract).
+Distribution: committed at `assets/fonts/fa-solid-900.ttf` and shipped next to
+the Smatchet executable via CMake POST_BUILD copy (see `assets/fonts/README.md`).
 
 License: **SIL Open Font License 1.1**
 

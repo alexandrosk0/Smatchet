@@ -115,12 +115,9 @@ smatchet_backend_audit.jsonl.lock
 .progress.log
 *.pyc
 
-# Font Awesome 6 Solid TTF — Phase 4 of ai-chat-claude-desktop-parity. Binary
-# asset (~426 KB, SIL OFL 1.1) deliberately NOT tracked in git per the design
-# contract — devs drop it manually using assets/fonts/README.md, CI fetches on
-# release-tag builds. Scoped to assets/fonts/ so other vendored .ttf elsewhere
-# in the tree (if any future plugin ships one) is unaffected.
-assets/fonts/*.ttf
+# Font Awesome 6 Solid TTF (assets/fonts/fa-solid-900.ttf, ~426 KB, SIL OFL
+# 1.1) is committed since 2026-08 so fresh clones render icons out of the box —
+# see assets/fonts/README.md and THIRD_PARTY_LICENSES.md for the license notice.
 
 # Per-clone p4 client config (host-specific; never committed). .p4config
 # files override P4PORT / P4USER / P4CLIENT / P4IGNORE per folder and are
