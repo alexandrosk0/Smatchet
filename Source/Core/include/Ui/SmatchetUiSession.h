@@ -495,6 +495,10 @@ struct UiDrawSession {
     /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
     /// mouse release.
     bool bottomPanelRevealDragActive = false;
+    /// Largest height the live reveal drag reached — release-in-band only cancels the
+    /// reveal when the drag genuinely opened the panel first (see
+    /// SmatchetBottomPanelDragPure::ShouldCollapseOnRevealRelease).
+    float bottomPanelRevealPeakHeight = 0.0f;
     /// Mouse Y at reveal-grip press, for the open-threshold test.
     float bottomPanelRevealDragStartY = 0.0f;
 

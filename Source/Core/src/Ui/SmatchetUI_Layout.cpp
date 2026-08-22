@@ -298,6 +298,7 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     // (hidden) bottom panel, so a stale restore set / pending height must not re-apply
     // against the freshly rebuilt nodes. cfg.ShowPanel mirrors the hidden default.
     d.bottomPanelRestoreKeys.clear();
+    d.bottomPanelRestoreHeight = 0.0f;
     d.bottomPanelApplyHeightFrames = 0;
     d.bottomPanelRevealDragActive = false;
     d.bottomPanelSplitterDragId = 0;

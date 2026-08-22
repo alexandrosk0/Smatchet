@@ -45,6 +45,20 @@ TEST_CASE("RevealDragCrossedThreshold requires meaningful upward travel") {
     CHECK(pure::RevealDragCrossedThreshold(start, start - 200.0f));
 }
 
+TEST_CASE("ShouldCollapseOnRevealRelease needs a real open before a release-in-band cancels") {
+    const float workBottom = 1000.0f;
+    const float band = 24.0f;
+    // The open threshold (12px) sits INSIDE the band: a minimal open-drag released
+    // immediately (peak ~12-20px) must NOT re-collapse, or the panel flashes open/shut.
+    CHECK_FALSE(pure::ShouldCollapseOnRevealRelease(12.0f, 988.0f, workBottom, band));
+    CHECK_FALSE(pure::ShouldCollapseOnRevealRelease(40.0f, 985.0f, workBottom, band));
+    // A drag that genuinely opened the panel (peak well above the band) and came back
+    // down inside the band cancels the reveal.
+    CHECK(pure::ShouldCollapseOnRevealRelease(300.0f, 990.0f, workBottom, band));
+    // Same peak released ABOVE the band keeps the panel open at the released height.
+    CHECK_FALSE(pure::ShouldCollapseOnRevealRelease(300.0f, 700.0f, workBottom, band));
+}
+
 TEST_CASE("RevealHeightForMouseY tracks the mouse and clamps to the splitter's own limits") {
     const float workBottom = 1000.0f;
     const float minH = 32.0f;

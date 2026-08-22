@@ -37,6 +37,15 @@ inline bool RevealDragCrossedThreshold(float dragStartY, float mouseY) {
     return dragStartY - mouseY >= kRevealDragThresholdPx;
 }
 
+// Cancel-a-reveal: releasing the reveal drag back inside the hide band collapses the
+// panel again ONLY when the drag genuinely opened it first (peak height well above the
+// band). The open threshold (kRevealDragThresholdPx) sits INSIDE the band, so without
+// the peak requirement a minimal open-drag would flash the panel open and instantly
+// re-collapse it on release.
+inline bool ShouldCollapseOnRevealRelease(float peakHeightPx, float mouseY, float workBottomY, float bandPx) {
+    return peakHeightPx > bandPx * 2.0f && ShouldArmHide(mouseY, workBottomY, bandPx);
+}
+
 // Panel height a reveal drag at mouseY should produce (the panel's top edge tracks the
 // mouse), clamped to the same limits the splitter would enforce.
 inline float RevealHeightForMouseY(float mouseY, float workBottomY, float minHeightPx, float maxHeightPx) {

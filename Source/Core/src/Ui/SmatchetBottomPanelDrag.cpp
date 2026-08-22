@@ -203,6 +203,7 @@ void DrawRevealGrip(UiDrawSession& d) {
                                                         vp->WorkSize.y * pure::kMaxRevealWorkShare);
             SmatchetBottomPanelDrag::Expand(d, h);
             d.bottomPanelRevealDragActive = true;
+            d.bottomPanelRevealPeakHeight = h;
         }
     }
     ::ImGui::End();
@@ -225,15 +226,22 @@ void TickRevealFollow(UiDrawSession& d) {
         // tracks the raw mouse until release rather than a widget's active state.
         d.bottomPanelPendingHeight = pure::RevealHeightForMouseY(
             mouseY, workBottom, ::ImGui::GetStyle().WindowMinSize.y, vp->WorkSize.y * pure::kMaxRevealWorkShare);
+        if (d.bottomPanelPendingHeight > d.bottomPanelRevealPeakHeight) {
+            d.bottomPanelRevealPeakHeight = d.bottomPanelPendingHeight;
+        }
         if (d.bottomPanelApplyHeightFrames < 2) {
             d.bottomPanelApplyHeightFrames = 2;
         }
         return;
     }
     d.bottomPanelRevealDragActive = false;
-    // Symmetry with the splitter gesture: a reveal drag released back down inside the
-    // hide band collapses the panel again instead of leaving a minimum-height sliver.
-    if (pure::ShouldArmHide(mouseY, workBottom, pure::HideArmBandPx(::ImGui::GetStyle().WindowMinSize.y))) {
+    // Symmetry with the splitter gesture: a reveal drag that genuinely opened the panel
+    // (peak height well above the band) and then released back down inside the hide band
+    // collapses it again instead of leaving a minimum-height sliver. The peak guard
+    // matters because the open threshold sits INSIDE the band: without it a minimal
+    // open-drag would flash the panel open and instantly re-collapse on release.
+    if (pure::ShouldCollapseOnRevealRelease(d.bottomPanelRevealPeakHeight, mouseY, workBottom,
+                                            pure::HideArmBandPx(::ImGui::GetStyle().WindowMinSize.y))) {
         SmatchetBottomPanelDrag::Collapse(d);
     }
 }
