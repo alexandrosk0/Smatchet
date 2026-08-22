@@ -3,7 +3,6 @@
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetDockNodeIds.h" // central-node re-dock for extra panes on a layout reset
-#include "Ui/SmatchetBackendDisplay.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 
 #include "AppController.h"
@@ -60,73 +59,6 @@
 #include <vector>
 
 namespace {
-
-// Pane-strip "+" / "▾" split-button (pane-backend-picker Slice 2).
-// Bare "+" always duplicates the focused pane (no backend arg = same-backend path).
-// "▾" caret renders only when ≥2 backends have minimum credentials present; it opens
-// a popup that lists each credentialed backend. Selecting a backend (with no specific
-// view) opens its default/active view; an optional view submenu lists saved views.
-static void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
-                            const std::unordered_map<std::string, ViewWorkspaceState>& diskBackends) {
-    if (ImGui::SmallButton("+##PaneAdd")) {
-        d.paneAddRequest.sourceId = pane.id;
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",
-                                                        "New grid pane (duplicates this pane; dock it as a tab or "
-                                                        "drag its tab to an edge for a side-by-side split)"));
-    }
-
-    const std::vector<std::string>& knownKeys = ConfigManager::KnownBackendKeys();
-    int credCount = 0;
-    for (const auto& key : knownKeys) {
-        if (ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-            ++credCount;
-        }
-    }
-    if (credCount < 2) {
-        return;
-    }
-
-    ImGui::SameLine(0.0f, 2.0f);
-    if (ImGui::SmallButton("\xe2\x96\xbe##PaneBackendPicker")) {
-        ImGui::OpenPopup("##PaneNewOnBackend");
-    }
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.backend.picker.tooltip",
-                                                        "Open a new pane on a different tracker backend"));
-    }
-
-    if (ImGui::BeginPopup("##PaneNewOnBackend")) {
-        for (const auto& key : knownKeys) {
-            if (!ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
-                continue;
-            }
-            const auto it = diskBackends.find(key);
-            const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
-            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
-
-            if (hasViews && ImGui::BeginMenu(label.c_str())) {
-                const ViewWorkspaceState& ws = it->second;
-                for (const auto& v : ws.Views) {
-                    const bool isActive = (v.Id == ws.ActiveViewId);
-                    if (ImGui::MenuItem(v.Name.c_str(), nullptr, isActive)) {
-                        d.paneAddRequest.sourceId = pane.id;
-                        d.paneAddRequest.targetBackendKey = key;
-                        d.paneAddRequest.targetViewId = v.Id;
-                    }
-                }
-                ImGui::EndMenu();
-            } else if (!hasViews) {
-                if (ImGui::MenuItem(label.c_str())) {
-                    d.paneAddRequest.sourceId = pane.id;
-                    d.paneAddRequest.targetBackendKey = key;
-                }
-            }
-        }
-        ImGui::EndPopup();
-    }
-}
 
 // Pre-Begin placement for an EXTRA (non-bootstrap) pane. Extra panes deliberately do not
 // share the bootstrap pane's "active" layout key: d.pendingReDockWindows is keyed by that
@@ -240,10 +172,6 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows)) {
             d.paneWindowFocusedThisFrame = pane.id;
         }
-        // Pane strip: bare "+" duplicates this pane; "▾" opens a backend picker when ≥2
-        // backends are credentialed. The host applies requests after the loop (never
-        // mutates gridPanes mid-iteration). Close rides the window's tab X.
-        DrawNewPaneMenu(d, pane, ViewState.GetDiskBackends());
     }
     // Banner resolved once per frame by the pane-window host and passed in.
     if (pane.focused) {
@@ -321,6 +249,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
                              TrackerBanner,
                              activeViewForGrid,
                              readOnlyMode,
+                             embedded,
                              gridSortEnvironmentChanged,
                              pendingEdits,
                              rectCellClickedThisFrame,
@@ -597,7 +526,8 @@ void SmatchetUI::drawActiveProjectHeader(ActiveProjectDrawCtx& ctx) {
     const TrackerConnectivityBannerForUi& TrackerBanner = ctx.trackerBanner;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:header");
-    DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner);
+    DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner,
+                          ctx.embedded);
 }
 
 void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {

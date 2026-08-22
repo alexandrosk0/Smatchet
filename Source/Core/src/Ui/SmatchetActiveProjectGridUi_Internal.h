@@ -40,6 +40,10 @@ struct ActiveProjectDrawCtx {
     const TrackerConnectivityBannerForUi& trackerBanner;
     ViewDefinition* activeViewForGrid;
     bool readOnlyMode;
+    // Embedded (mobile Grid page) draw: the header toolbar suppresses the multi-pane
+    // "+" / "▾" controls — mobile is single-pane and its shell never runs
+    // ApplyPaneAddAndCloseRequests, so a latched paneAddRequest would go stale there.
+    bool embedded;
     // Bound by reference to an orchestrator local assigned after the header toolbar
     // runs, so the view-switch bookkeeping observes any active-view change the toolbar
     // made. The sort helper reads it at table time.

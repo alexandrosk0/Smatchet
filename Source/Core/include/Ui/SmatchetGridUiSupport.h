@@ -64,9 +64,13 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d);
 void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
                             const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket);
 
+/// embedded (dual-ui): the mobile Grid page draws this toolbar too, but mobile is
+/// single-pane and never applies pane-add requests — the "+" / "▾" pane controls
+/// are suppressed there.
 void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns, const std::vector<CachedTicket>& tickets,
-                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner);
+                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner,
+                           bool embedded);
 
 /// Enqueue half of the grid field-edit pipeline — called once per visible PANE per
 /// frame; folds the pane's freshly committed edits into the session queue

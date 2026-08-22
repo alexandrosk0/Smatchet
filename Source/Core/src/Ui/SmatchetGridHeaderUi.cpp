@@ -11,8 +11,14 @@
 #include "Views.h"
 #include "IssueDraft.h"
 #include "ProjectResolver.h"
+#include "SmatchetLocalization.h"
+#include "Ui/SmatchetBackendDisplay.h"
 #include "Ui/SmatchetIconButtons.h"
 #include "SmatchetImGuiFonts.h"
+
+// clang-format off
+// SMATCHET_DEVIATION(rule=duplication; reason=the shared grid/preferences-UI TU include prologue is grandfathered across the UI-file siblings (SmatchetAiAssistantUi / SmatchetPreferencesUi / SmatchetViewsDashboardUi_widgets) — moving DrawNewPaneMenu here (pane-strip "+" relocated beside the view selector) pulls the same prologue headers, and a behavior-preserving move has no shared prologue header to factor into without worse coupling; owner=orchestrator; revisit=when a shared UI TU prologue header is introduced)
+// clang-format on
 
 #include "IconsFontAwesome6.h"
 #include "imgui.h"
@@ -22,6 +28,7 @@
 #include <algorithm>
 #include <chrono>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -160,9 +167,78 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
     }
 }
 
-// Left toolbar: view selector combo, refresh button, quick filter, sort-by popup.
+// Header "+" / "▾" split-button (pane-backend-picker Slice 2; moved from the pane
+// strip to the left of the view selector). Bare "+" always duplicates this pane (no
+// backend arg = same-backend path). "▾" caret renders only when ≥2 backends have
+// minimum credentials present; it opens a popup that lists each credentialed backend.
+// Selecting a backend (with no specific view) opens its default/active view; an
+// optional view submenu lists saved views. The host applies requests after the pane
+// loop (never mutates gridPanes mid-iteration).
+void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
+                     const std::unordered_map<std::string, ViewWorkspaceState>& diskBackends) {
+    if (ImGui::Button("+##PaneAdd")) {
+        d.paneAddRequest.sourceId = pane.id;
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.add.tooltip",
+                                                        "New grid pane (duplicates this pane; dock it as a tab or "
+                                                        "drag its tab to an edge for a side-by-side split)"));
+    }
+
+    const std::vector<std::string>& knownKeys = ConfigManager::KnownBackendKeys();
+    int credCount = 0;
+    for (const auto& key : knownKeys) {
+        if (ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
+            ++credCount;
+        }
+    }
+    if (credCount < 2) {
+        return;
+    }
+
+    ImGui::SameLine(0.0f, 2.0f);
+    if (ImGui::Button("\xe2\x96\xbe##PaneBackendPicker")) {
+        ImGui::OpenPopup("##PaneNewOnBackend");
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T("pane.backend.picker.tooltip",
+                                                        "Open a new pane on a different tracker backend"));
+    }
+
+    if (ImGui::BeginPopup("##PaneNewOnBackend")) {
+        for (const auto& key : knownKeys) {
+            if (!ConfigManager::BackendCredentialsPresent(d.cfg, key)) {
+                continue;
+            }
+            const auto it = diskBackends.find(key);
+            const bool hasViews = (it != diskBackends.end() && !it->second.Views.empty());
+            const std::string label = "New " + BackendDisplayName(key) + " pane"; // P2-M18
+
+            if (hasViews && ImGui::BeginMenu(label.c_str())) {
+                const ViewWorkspaceState& ws = it->second;
+                for (const auto& v : ws.Views) {
+                    const bool isActive = (v.Id == ws.ActiveViewId);
+                    if (ImGui::MenuItem(v.Name.c_str(), nullptr, isActive)) {
+                        d.paneAddRequest.sourceId = pane.id;
+                        d.paneAddRequest.targetBackendKey = key;
+                        d.paneAddRequest.targetViewId = v.Id;
+                    }
+                }
+                ImGui::EndMenu();
+            } else if (!hasViews) {
+                if (ImGui::MenuItem(label.c_str())) {
+                    d.paneAddRequest.sourceId = pane.id;
+                    d.paneAddRequest.targetBackendKey = key;
+                }
+            }
+        }
+        ImGui::EndPopup();
+    }
+}
+
+// Left toolbar: new-pane "+", view selector combo, refresh button, quick filter, sort-by popup.
 void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
-                           const std::vector<TicketGridColumn>& columns, Views& viewState) {
+                           const std::vector<TicketGridColumn>& columns, Views& viewState, bool embedded) {
     // Live-focus gate context (review MEDIUM-2): pane.focused is LAST frame's host
     // verdict. Single-click actions ("Refresh View") fired from a not-yet-focused
     // pane must defer one frame so the host applies the focus/view switch first.
@@ -171,6 +247,15 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     // this pane's view IS the active view.
     GridPane& pane = d.pane();
     ImGui::Separator();
+    // "+" (new grid pane) sits immediately left of the view selector; its backend
+    // picker caret rides along when ≥2 backends are credentialed. Suppressed on the
+    // embedded (mobile) draw: mobile is single-pane and its shell never runs
+    // ApplyPaneAddAndCloseRequests, so a click would latch a paneAddRequest that only
+    // a later desktop frame could (stale) apply.
+    if (!embedded) {
+        DrawNewPaneMenu(d, pane, viewState.GetDiskBackends());
+        ImGui::SameLine();
+    }
     // Header view-identity text (Slice 4 fallback-leak fix): for a non-owned pane,
     // activeViewForGrid is the FOCUSED view standing in as a render fallback (cross-backend
     // unfocused pane whose own bucket isn't loaded). Showing its Name leaked the focused
@@ -563,8 +648,9 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
 
 void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns, const std::vector<CachedTicket>& tickets,
-                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner) {
-    DrawHeaderViewToolbar(app, d, activeViewForGrid, columns, viewState);
+                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner,
+                           bool embedded) {
+    DrawHeaderViewToolbar(app, d, activeViewForGrid, columns, viewState, embedded);
 
     GridHeaderRightChips chips;
     ResolveTrackerChip(app, trackerBanner, chips);
