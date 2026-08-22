@@ -475,6 +475,29 @@ struct UiDrawSession {
     /// Per-window "expand over the whole workspace" toggle state (SmatchetWindowExpand.h).
     SmatchetWindowExpand::WindowExpandState windowExpand;
 
+    // --- Bottom-panel drag-to-hide / drag-to-reveal (SmatchetBottomPanelDrag.cpp) ---
+    /// Layout keys of the bottom-panel tabs that were open when the panel was hidden,
+    /// so revealing it restores the same tab set (empty -> the Log is revealed).
+    std::vector<std::string> bottomPanelRestoreKeys;
+    /// Panel height (px) captured at hide time, re-applied on reveal.
+    float bottomPanelRestoreHeight = 0.0f;
+    /// Height (px) to write into the bottom node's SizeRef while the countdown below runs.
+    float bottomPanelPendingHeight = 0.0f;
+    /// Frames left to (re)apply bottomPanelPendingHeight after a reveal — the node is
+    /// rebuilt asynchronously over a couple of frames (same idea as layoutForceDefaultsFrames).
+    int bottomPanelApplyHeightFrames = 0;
+    /// ImGuiID of the dock splitter directly above the bottom panel while the user drags
+    /// it (0 when no such drag is live).
+    ImGuiID bottomPanelSplitterDragId = 0;
+    /// True while the live splitter drag sits inside the hide band — releasing now hides
+    /// the panel (the release-to-hide overlay hint is up).
+    bool bottomPanelHideArmed = false;
+    /// True while a reveal-grip drag is resizing the freshly reopened panel; cleared on
+    /// mouse release.
+    bool bottomPanelRevealDragActive = false;
+    /// Mouse Y at reveal-grip press, for the open-threshold test.
+    float bottomPanelRevealDragStartY = 0.0f;
+
 #if defined(SMATCHET_WITH_LUA_AUTOMATION)
     /** Scripting window; dock tab close clears this; reopen from Automation -> Scripts & Actions.... */
     bool showLuaAutomationWindow = true;

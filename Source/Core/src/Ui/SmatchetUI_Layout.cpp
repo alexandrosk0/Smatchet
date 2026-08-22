@@ -294,6 +294,16 @@ void SmatchetUI_ApplyDeferredLayoutReset(UiDrawSession& d) {
     d.requestMcpServerFocus = false;
 #endif
 
+    // Drop any in-flight bottom-panel gesture state: the default tree has an empty
+    // (hidden) bottom panel, so a stale restore set / pending height must not re-apply
+    // against the freshly rebuilt nodes. cfg.ShowPanel mirrors the hidden default.
+    d.bottomPanelRestoreKeys.clear();
+    d.bottomPanelApplyHeightFrames = 0;
+    d.bottomPanelRevealDragActive = false;
+    d.bottomPanelSplitterDragId = 0;
+    d.bottomPanelHideArmed = false;
+    d.cfg.ShowPanel = false;
+
     // Immediate-effect reset (no restart). Three coordinated steps:
     //  1. Rebuild the dock-node tree LIVE from the canonical default. ImGui parses the
     //     embedded default ini and recreates the fixed-ID nodes (0x02 central, 0x08 views,

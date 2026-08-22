@@ -80,6 +80,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # not only in the Windows-only full rig.
         Core/ScenarioCaptureSizing.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Commands/Scenarios/ScenarioCaptureSizing.cpp"
+        # Bottom-panel drag-to-hide / drag-to-reveal gesture thresholds — header-only,
+        # ImGui-free, no threads (SmatchetBottomPanelDragPure.h), so the P4V-style
+        # gesture contract is covered on the Linux subset too.
+        Core/SmatchetBottomPanelDragPure.test.cpp
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
@@ -569,6 +573,10 @@ add_executable(SmatchetTests
     # rig already links ImGuiLib + include/Ui so imgui.h resolves.
     Core/SmatchetDockNodeIds.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/SmatchetDockNodeIds.cpp"
+    # Bottom-panel drag-to-hide / drag-to-reveal gesture thresholds (P4V-style pane
+    # collapse) — SmatchetBottomPanelDragPure.h is header-only + ImGui-free; the impure
+    # driver (SmatchetBottomPanelDrag.cpp) feeds live dock geometry into these decisions.
+    Core/SmatchetBottomPanelDragPure.test.cpp
     # jql-omnibox-search Stream A — pure icon/text fallback-selection predicate
     # behind SmatchetIconButton (the icon-only Refresh + icon-leading Save&Sync
     # helpers). SmatchetIconButtonLabel.h is header-only + ImGui-free; the ImGui
