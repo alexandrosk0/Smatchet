@@ -249,6 +249,7 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
                              TrackerBanner,
                              activeViewForGrid,
                              readOnlyMode,
+                             embedded,
                              gridSortEnvironmentChanged,
                              pendingEdits,
                              rectCellClickedThisFrame,
@@ -525,7 +526,8 @@ void SmatchetUI::drawActiveProjectHeader(ActiveProjectDrawCtx& ctx) {
     const TrackerConnectivityBannerForUi& TrackerBanner = ctx.trackerBanner;
 
     SMATCHET_UI_PERF_SCOPE("activeProject:header");
-    DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner);
+    DrawGridHeaderToolbar(app, d, activeViewForGrid, columns, tickets, readOnlyMode, ViewState, TrackerBanner,
+                          ctx.embedded);
 }
 
 void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {

@@ -238,7 +238,7 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
 
 // Left toolbar: new-pane "+", view selector combo, refresh button, quick filter, sort-by popup.
 void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
-                           const std::vector<TicketGridColumn>& columns, Views& viewState) {
+                           const std::vector<TicketGridColumn>& columns, Views& viewState, bool embedded) {
     // Live-focus gate context (review MEDIUM-2): pane.focused is LAST frame's host
     // verdict. Single-click actions ("Refresh View") fired from a not-yet-focused
     // pane must defer one frame so the host applies the focus/view switch first.
@@ -248,9 +248,14 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
     GridPane& pane = d.pane();
     ImGui::Separator();
     // "+" (new grid pane) sits immediately left of the view selector; its backend
-    // picker caret rides along when ≥2 backends are credentialed.
-    DrawNewPaneMenu(d, pane, viewState.GetDiskBackends());
-    ImGui::SameLine();
+    // picker caret rides along when ≥2 backends are credentialed. Suppressed on the
+    // embedded (mobile) draw: mobile is single-pane and its shell never runs
+    // ApplyPaneAddAndCloseRequests, so a click would latch a paneAddRequest that only
+    // a later desktop frame could (stale) apply.
+    if (!embedded) {
+        DrawNewPaneMenu(d, pane, viewState.GetDiskBackends());
+        ImGui::SameLine();
+    }
     // Header view-identity text (Slice 4 fallback-leak fix): for a non-owned pane,
     // activeViewForGrid is the FOCUSED view standing in as a render fallback (cross-backend
     // unfocused pane whose own bucket isn't loaded). Showing its Name leaked the focused
@@ -643,8 +648,9 @@ void DrawHeaderRightChips(AppController& app, UiDrawSession& d, ViewDefinition* 
 
 void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns, const std::vector<CachedTicket>& tickets,
-                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner) {
-    DrawHeaderViewToolbar(app, d, activeViewForGrid, columns, viewState);
+                           bool readOnlyMode, Views& viewState, const TrackerConnectivityBannerForUi& trackerBanner,
+                           bool embedded) {
+    DrawHeaderViewToolbar(app, d, activeViewForGrid, columns, viewState, embedded);
 
     GridHeaderRightChips chips;
     ResolveTrackerChip(app, trackerBanner, chips);
