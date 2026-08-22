@@ -125,6 +125,5 @@ backlog/RICH_TEXT_EDITING_V3_PLAN.md
 screenshot_*
 *.pyc
 
-# ----- Font Awesome 6 Solid TTF — manually-dropped binary asset.
-# See assets/fonts/README.md for sourcing instructions. -----
-assets/fonts/*.ttf
+# ----- Font Awesome 6 Solid TTF (assets/fonts/fa-solid-900.ttf) is a
+# committed asset since 2026-08 — see assets/fonts/README.md. -----
