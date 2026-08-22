@@ -133,17 +133,17 @@ if(SMATCHET_WITH_LUA_AUTOMATION)
 endif()
 
 # Font Awesome 6 Solid TTF — Phase 4 of ai-chat-claude-desktop-parity.
-# The TTF is NOT committed to git (430 KB binary, SIL OFL 1.1 — see
-# assets/fonts/README.md for drop-in instructions). Configure-time gate:
-# when the file resolves, copy it next to the exe so the shipped Standalone
-# build finds it via the exe-dir resolver. When absent, log a STATUS
-# message — the runtime gracefully falls back to text labels via the
-# g_FaIconsLoaded flag in SmatchetImGuiFonts.cpp, so a missing TTF does
-# NOT fail the build, just degrades the UI to text-mode icons.
-# Resolution (cmake/SmatchetFontAssets.cmake) falls back to the MAIN
-# worktree's assets/fonts/ so linked worktrees — which never receive the
-# gitignored TTF — still get icons instead of silent text-mode.
-# PROJECT_SOURCE_DIR, not CMAKE_CURRENT_SOURCE_DIR: the drop-in lives at the
+# The TTF is committed at assets/fonts/fa-solid-900.ttf since 2026-08
+# (430 KB binary, SIL OFL 1.1 — see assets/fonts/README.md). Configure-time
+# gate: when the file resolves, copy it next to the exe so the shipped
+# Standalone build finds it via the exe-dir resolver. When absent (e.g. a
+# checkout predating the committed asset), log a STATUS message — the
+# runtime gracefully falls back to text labels via the g_FaIconsLoaded flag
+# in SmatchetImGuiFonts.cpp, so a missing TTF does NOT fail the build, just
+# degrades the UI to text-mode icons.
+# Resolution (cmake/SmatchetFontAssets.cmake) still falls back to the MAIN
+# worktree's assets/fonts/ for pre-commit-era linked worktrees.
+# PROJECT_SOURCE_DIR, not CMAKE_CURRENT_SOURCE_DIR: the asset lives at the
 # repo root. The root list-file pulls this file in with include() (not
 # add_subdirectory), so the two are equal today — PROJECT_SOURCE_DIR keeps
 # pointing at the root if that ever changes.
@@ -159,7 +159,7 @@ else()
     message(STATUS "FA Solid TTF not found in ${PROJECT_SOURCE_DIR}/assets/fonts/ "
                    "nor in the main worktree's assets/fonts/; "
                    "AI chat hover row will fall back to text labels at runtime. "
-                   "See assets/fonts/README.md for drop-in instructions.")
+                   "See assets/fonts/README.md.")
 endif()
 
 # Fix MinGW/GCC "relocation truncated to fit" when linking sol2/CachedTicket.

@@ -1,14 +1,15 @@
-# SmatchetFontAssets.cmake — resolve the gitignored font assets at configure time.
+# SmatchetFontAssets.cmake — resolve the font assets at configure time.
 #
-# assets/fonts/*.ttf is NOT committed (430 KB binary, SIL OFL 1.1 — see
-# assets/fonts/README.md for the drop-in contract; CI fetches it via
-# .github/actions/fetch-fontawesome). A linked git worktree created with
-# `git worktree add` therefore starts with an EMPTY assets/fonts/, even though
-# the main worktree has the TTF sitting right there. Builds from such a
-# worktree skipped the POST_BUILD copy, the runtime exe-dir and
-# SMATCHET_ASSETS_SOURCE_DIR resolvers in SmatchetImGuiFonts.cpp both missed,
-# and every Font Awesome glyph in the toolbar / icon picker / AI-chat hover row
-# silently degraded to its text fallback.
+# assets/fonts/fa-solid-900.ttf is committed since 2026-08 (430 KB binary,
+# SIL OFL 1.1 — see assets/fonts/README.md), so a fresh clone or linked
+# worktree checks it out directly. The fallback below predates that: when the
+# TTF was gitignored, a worktree created with `git worktree add` started with
+# an EMPTY assets/fonts/ even though the main worktree had the TTF sitting
+# right there. Builds from such a worktree skipped the POST_BUILD copy, the
+# runtime exe-dir and SMATCHET_ASSETS_SOURCE_DIR resolvers in
+# SmatchetImGuiFonts.cpp both missed, and every Font Awesome glyph in the
+# toolbar / icon picker / AI-chat hover row silently degraded to its text
+# fallback. The fallback is kept for checkouts predating the committed asset.
 #
 # smatchet_resolve_font_asset(<outVar> <sourceDir> <fileName>) resolves, in
 # order:
