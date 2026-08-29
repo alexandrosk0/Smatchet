@@ -79,6 +79,7 @@ if isinstance(sys.stdout, io.TextIOWrapper):
 GRANULARITY = 20
 _LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[:GRANULARITY]  # A(best) .. T(worst)
 _LETTER_SET = set(_LETTERS)
+_PUNCT = " \t\r\n.,:;!?'\"()[]{}*_`#-"  # stripped around an anchored letter answer
 
 # Default criteria + one-line rubrics (mirrors verifier-sidecar.md's table). Each
 # is scored on its own single-token call so the logprobs stay interpretable.
@@ -145,6 +146,15 @@ def _first_content_token_logprobs(response: Dict[str, Any]) -> List[Dict[str, An
     raise ProduceError("no A-T score token found in the response")
 
 
+def _logaddexp(a: float, b: float) -> float:
+    """log(exp(a) + exp(b)), computed without overflowing. `math` has no
+    logaddexp (that is numpy), so it is spelled out here — stdlib only."""
+    if a == b == float("-inf"):
+        return float("-inf")
+    hi, lo = (a, b) if a > b else (b, a)
+    return hi + math.log1p(math.exp(lo - hi))
+
+
 def extract_logprobs(response: Dict[str, Any]) -> Dict[str, float]:
     """Score-token distribution {letter: logprob} over valid A-T tokens only."""
     top = _first_content_token_logprobs(response)
@@ -157,8 +167,12 @@ def extract_logprobs(response: Dict[str, Any]) -> Dict[str, float]:
             except (KeyError, TypeError, ValueError) as exc:
                 raise ProduceError(f"non-numeric logprob for token {letter!r}") from exc
             if math.isfinite(lp):
-                # Keep the max logprob if a letter appears twice.
-                out[letter] = max(out[letter], lp) if letter in out else lp
+                # A letter can appear twice when the backend tokenizes it with
+                # and without a leading space ("A" and " A"). Its true mass is
+                # p1 + p2, so ACCUMULATE in probability space — keeping max()
+                # understated the letter and skewed every downstream statistic
+                # (expectation, variance, uncertainty) for such backends.
+                out[letter] = _logaddexp(out[letter], lp) if letter in out else lp
     if not out:
         raise ProduceError("no valid A-T score tokens in top_logprobs")
     return out
@@ -175,19 +189,32 @@ def extract_scalar(response: Dict[str, Any]) -> float:
     """Point score in [0,1] from the emitted text: a letter A(1.0)..T(0.0), or a
     bare number (0-1, 0-100, or 1-20) — the fallback when logprobs are absent."""
     text = _response_text(response).strip().upper()
-    for ch in text:
-        if ch in _LETTER_SET:
-            # A -> 1.0 (best), T -> 0.0 (worst).
-            return (GRANULARITY - 1 - _LETTERS.index(ch)) / (GRANULARITY - 1)
-    token = text.split()[0] if text.split() else ""
+    # ANCHORED letter parse. Scanning every character for the first A-T hit read
+    # a letter out of ordinary prose: "SCORE: B" returned the S (0.053, nearly
+    # the worst score) instead of the B (0.947), and "THE ANSWER IS A" returned
+    # the T (0.0) — a silently WRONG score, never an error. Scalar mode is
+    # precisely the path used for backends prone to a short preamble, so accept
+    # a letter ONLY when it stands alone as the whole answer (or as the first
+    # token once surrounding punctuation is stripped); anything else falls
+    # through to the numeric parse and raises if that fails too.
+    tokens = text.split()
+    candidate = text if len(text) == 1 else (tokens[0].strip(_PUNCT) if tokens else "")
+    if len(candidate) == 1 and candidate in _LETTER_SET:
+        # A -> 1.0 (best), T -> 0.0 (worst).
+        return (GRANULARITY - 1 - _LETTERS.index(candidate)) / (GRANULARITY - 1)
+    token = tokens[0].strip(_PUNCT) if tokens else ""
     try:
         num = float(token.rstrip("%").replace(",", "."))
     except ValueError as exc:
         raise ProduceError(f"could not parse a score from response text {text!r}") from exc
     if num > 20:            # looks like 0-100
         return max(0.0, min(1.0, num / 100.0))
-    if num > 1:             # looks like the 1-20 raw scale
-        return max(0.0, min(1.0, (num - 1.0) / (GRANULARITY - 1)))
+    if num > 1:             # looks like the 1-20 raw RANK scale
+        # 1 = rank 1 = BEST, matching the A(best)..T(worst) letter scale these
+        # numbers are the other spelling of. The original mapping was inverted
+        # (1 -> 0.0, 20 -> 1.0), so a model answering "2" for the second-best
+        # rank scored 0.053 instead of 0.947 — near-worst for a near-best answer.
+        return max(0.0, min(1.0, (GRANULARITY - num) / (GRANULARITY - 1)))
     return max(0.0, min(1.0, num))
 
 
@@ -198,15 +225,63 @@ class Transport:
         raise NotImplementedError
 
 
+def _is_loopback(base_url: str) -> bool:
+    """True for a localhost base URL — where a cleartext bearer token never
+    leaves the machine. Host only: userinfo/port/path must not fool it."""
+    rest = base_url.split("://", 1)[1] if "://" in base_url else base_url
+    authority = rest.split("/", 1)[0]
+    if "@" in authority:                       # strip user:pass@
+        authority = authority.rsplit("@", 1)[1]
+    if authority.startswith("["):              # [::1]:8000
+        host = authority[1:authority.index("]")] if "]" in authority else authority[1:]
+    else:
+        host = authority.rsplit(":", 1)[0] if ":" in authority else authority
+    return host.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
+
+
+class _RefuseRedirectWithAuth(urllib.request.HTTPRedirectHandler):
+    """urllib's default redirect handler re-sends every non-content header —
+    Authorization included — to whatever URL the server names, so a 3xx can
+    teleport the bearer token to a different authority or downgrade it onto
+    cleartext http. A verifier endpoint has no legitimate redirect; refuse
+    loudly rather than pick which redirects are safe."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ProduceError(
+            f"refusing to follow HTTP {code} redirect to {newurl!r}: "
+            "the Authorization header would be re-sent to the redirect target")
+
+
 class HttpTransport(Transport):
     """POST to {base_url}/chat/completions on an OpenAI-compatible endpoint."""
 
     def __init__(self, base_url: str, api_key: str, timeout: int = _TIMEOUT_S) -> None:
         if not base_url.startswith(("http://", "https://")):
             raise ProduceError(f"refusing non-HTTP verifier endpoint: {base_url!r}")
+        # An api_key is attached as `Authorization: Bearer` on every call, so a
+        # cleartext http:// base URL puts VERIFIER_API_KEY on the wire in the
+        # clear. Loopback is fine (a local vLLM/SGLang server is the normal
+        # case); anything else must be https, or opt in explicitly.
+        if api_key and base_url.startswith("http://") and not _is_loopback(base_url):
+            if os.environ.get("VERIFIER_ALLOW_INSECURE_AUTH") == "1":
+                print("WARNING: sending VERIFIER_API_KEY over cleartext http:// to "
+                      f"{base_url!r} (VERIFIER_ALLOW_INSECURE_AUTH=1)", file=sys.stderr)
+            else:
+                raise ProduceError(
+                    f"refusing to send VERIFIER_API_KEY over cleartext http:// to {base_url!r}; "
+                    "use https://, a loopback host, or set VERIFIER_ALLOW_INSECURE_AUTH=1")
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.timeout = timeout
+        handlers: List[urllib.request.BaseHandler] = []
+        if _is_loopback(base_url):
+            # A loopback call must never detour through a configured proxy —
+            # http_proxy/HTTP_PROXY would carry the cleartext bearer token to
+            # the proxy host, off-machine, defeating the loopback exemption.
+            handlers.append(urllib.request.ProxyHandler({}))
+        if api_key:
+            handlers.append(_RefuseRedirectWithAuth())
+        self._opener = urllib.request.build_opener(*handlers)
 
     def call(self, body: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
@@ -215,7 +290,7 @@ class HttpTransport(Transport):
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with self._opener.open(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
@@ -258,20 +333,68 @@ class RecordingTransport(Transport):
 
 # --- scoring ---------------------------------------------------------------
 
-_DEGENERATE_LOGPROB = -100.0  # real logprobs sit well above this; placeholders
-                              # like -9999 (seen from some backends) fall below.
+_DEGENERATE_LOGPROB = -100.0    # a real logprob CAN sit below this on a peaked
+                                # distribution, so it only supports the
+                                # repeated-identical-tail test, never a lone cut.
+_PLACEHOLDER_LOGPROB = -1000.0  # no real logprob reaches here; backends that do
+                                # not score emit sentinels like -9999.
 
 
-def is_degenerate(dist: Dict[str, float]) -> bool:
-    """A logprob distribution carries no usable signal when it has fewer than two
-    tokens, only one distinct value, or every non-top token is a placeholder far
-    below any real logprob — the pattern some backends emit instead of scoring."""
-    if len(dist) < 2:
+def is_degenerate(dist: Dict[str, float], raw_count: int = 0) -> bool:
+    """A logprob distribution carries no usable signal when the BACKEND returned
+    nothing to work with, or when the non-top values are obvious placeholders.
+
+    `dist` is NOT the raw top_logprobs — extract_logprobs() has already filtered
+    it down to A-T letter tokens. A healthy, highly confident backend whose
+    top-20 holds one letter plus whitespace/punctuation/word-piece variants
+    yields len(dist) == 1, so a bare `len(dist) < 2` test aborted a perfectly
+    good run (and --strict is in the documented copy-paste recipe, making that
+    the DEFAULT path). Pass `raw_count` — the count of USABLE raw top_logprobs
+    entries (see _usable_raw_count; a placeholder-padded list must not count as
+    breadth) — so a thin distribution is judged degenerate only when the
+    backend itself was thin."""
+    if not dist:
+        return True
+    if len(dist) < 2 and raw_count < 2:
         return True
     values = sorted(dist.values(), reverse=True)
-    if len({round(v, 6) for v in values}) < 2:
+    if len(values) > 1 and len({round(v, 6) for v in values}) < 2:
         return True
-    return all(v <= _DEGENERATE_LOGPROB for v in values[1:])
+    return _is_placeholder_tail(values)
+
+
+def _is_placeholder_tail(values: List[float]) -> bool:
+    """True when the non-top logprobs are placeholders rather than real values.
+
+    An absolute `v <= -100` cut was wrong: a near-deterministic answer can
+    legitimately put its runner-up below -100 (A=-0.0001, B=-105 is a peaked but
+    perfectly real distribution), and --strict hard-failed those runs. Placeholders
+    announce themselves two ways instead — magnitudes no real logprob reaches, or
+    an identical value repeated across the whole tail."""
+    tail = values[1:]
+    if not tail:
+        return False
+    if all(v <= _PLACEHOLDER_LOGPROB for v in tail):
+        return True
+    return len(tail) >= 2 and len({round(v, 6) for v in tail}) == 1 \
+        and tail[0] <= _DEGENERATE_LOGPROB
+
+
+def _usable_raw_count(top: List[Dict[str, Any]]) -> int:
+    """Count raw top_logprobs entries that carry a REAL score. Backends that do
+    not score alternatives pad the list with sentinel logprobs (-9999 etc.), so
+    one letter plus nineteen placeholders is exactly as thin as the letter
+    alone — a bare len() read that as 20 alternatives and --strict accepted an
+    unusable point distribution."""
+    n = 0
+    for alt in top:
+        try:
+            lp = float(alt["logprob"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(lp) and lp > _PLACEHOLDER_LOGPROB:
+            n += 1
+    return n
 
 
 def score_criterion(
@@ -291,7 +414,8 @@ def score_criterion(
     response = transport.call(body)
     if mode == "logprobs":
         dist = extract_logprobs(response)
-        if strict and is_degenerate(dist):
+        raw_count = _usable_raw_count(_first_content_token_logprobs(response))
+        if strict and is_degenerate(dist, raw_count):
             raise ProduceError(
                 f"backend returned degenerate logprobs for criterion {criterion!r} "
                 f"(no usable distribution: {dist}); rerun with --mode scalar"
@@ -426,6 +550,110 @@ def selftest() -> None:
     else:
         raise AssertionError("--strict must reject degenerate logprobs")
 
+    # (3d) regressions for the historical-review findings on this file (#1885,
+    #      #1891). Each assertion below FAILS on the pre-fix code.
+    #
+    #   anchored letter parse — an unanchored scan read a letter out of prose,
+    #   returning a silently WRONG score instead of an error.
+    assert abs(extract_scalar({"choices": [{"message": {"content": "B"}}]}) - 18 / 19) < 1e-9
+    assert abs(extract_scalar({"choices": [{"message": {"content": "B."}}]}) - 18 / 19) < 1e-9
+    for prose in ("Score: B", "The answer is A"):
+        try:
+            extract_scalar({"choices": [{"message": {"content": prose}}]})
+        except ProduceError:
+            pass
+        else:
+            raise AssertionError(f"unanchored letter scan accepted {prose!r}")
+
+    #   rank polarity — 1-20 numbers are the other spelling of A..T, so 1 is
+    #   BEST. The old mapping scored a near-best "2" as near-worst.
+    for raw, want in (("1", 1.0), ("2", 18 / 19), ("20", 0.0), ("85", 0.85)):
+        got = extract_scalar({"choices": [{"message": {"content": raw}}]})
+        assert abs(got - want) < 1e-9, f"rank {raw!r} scored {got}, want {want}"
+
+    #   duplicate-letter mass is SUMMED, not max()'d ("A" and " A" both carry it).
+    dup = {"choices": [{"logprobs": {"content": [{"token": "A", "logprob": -0.7, "top_logprobs": [
+        {"token": "A", "logprob": -0.7}, {"token": " A", "logprob": -0.7},
+        {"token": "B", "logprob": -1.5}]}]}}]}
+    assert abs(extract_logprobs(dup)["A"] - (-0.7 + math.log(2))) < 1e-9, extract_logprobs(dup)
+
+    #   a healthy PEAKED distribution is not degenerate: one letter among 20 raw
+    #   alternatives, and a real runner-up below the old absolute -100 cut.
+    assert not is_degenerate({"A": -0.0001}, 20), "confident single letter flagged"
+    assert not is_degenerate({"A": -0.0001, "B": -105.0}, 20), "peaked real dist flagged"
+    assert is_degenerate({"A": -0.0001}, 1), "genuinely thin backend not flagged"
+    assert is_degenerate({"A": -0.5, "B": -9999.0}, 20), "placeholder not flagged"
+    assert is_degenerate({"A": -0.5, "B": -200.0, "C": -200.0}, 20), "repeated tail not flagged"
+
+    #   raw breadth counts only USABLE alternatives: one letter plus nineteen
+    #   -9999 placeholders is a point distribution, not a 20-wide one, so
+    #   --strict must reject it (CR finding on the #1891 fix).
+    padded = [{"token": "A", "logprob": -0.0001}] + \
+             [{"token": "x%d" % i, "logprob": -9999.0} for i in range(19)]
+    real = [{"token": "A", "logprob": -0.0001}, {"token": " A", "logprob": -9.0},
+            {"token": "\n", "logprob": -10.0}]
+    assert _usable_raw_count(padded) == 1, _usable_raw_count(padded)
+    assert _usable_raw_count(real) == 3, _usable_raw_count(real)
+    assert is_degenerate({"A": -0.0001}, _usable_raw_count(padded)), \
+        "placeholder-padded raw list not flagged"
+    assert not is_degenerate({"A": -0.0001}, _usable_raw_count(real)), \
+        "real thin-but-broad backend flagged"
+    #   ...and end-to-end through the strict scoring path, so the call site
+    #   cannot silently fall back to a bare len() of the raw list.
+    padded_resp = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [{
+        "token": "A", "logprob": -0.0001, "top_logprobs": padded}]}}]}
+    try:
+        produce(job, ReplayTransport([padded_resp] * 2), "stub", "logprobs", strict=True)
+    except ProduceError:
+        pass
+    else:
+        raise AssertionError("--strict accepted a placeholder-padded point distribution")
+
+    #   an Authorization-carrying transport never follows redirects (urllib
+    #   would re-send the bearer to the redirect target), and a loopback
+    #   transport never routes through a configured proxy (which would carry
+    #   the cleartext bearer off-machine).
+    #   (ProxyHandler({}) registers no scheme handlers, so it never appears in
+    #   opener.handlers — its whole job is displacing the default env-reading
+    #   ProxyHandler. Force an env proxy and assert none survives.)
+    _old_proxy = os.environ.get("http_proxy")
+    os.environ["http_proxy"] = "http://proxy.example.test:3128"
+    try:
+        t_loop = HttpTransport("http://127.0.0.1:8000/v1", "k")
+        assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies
+                       for h in t_loop._opener.handlers), \
+            "loopback opener is not proxy-free"
+    finally:
+        if _old_proxy is None:
+            os.environ.pop("http_proxy", None)
+        else:
+            os.environ["http_proxy"] = _old_proxy
+    t_auth = HttpTransport("https://api.example.com/v1", "k")
+    guards = [h for h in t_auth._opener.handlers
+              if isinstance(h, _RefuseRedirectWithAuth)]
+    assert guards, "authenticated transport lacks the redirect guard"
+    try:
+        guards[0].redirect_request(None, None, 302, "Found", {}, "http://evil.example.com/")
+    except ProduceError:
+        pass
+    else:
+        raise AssertionError("redirect with Authorization was followed")
+    t_anon = HttpTransport("https://api.example.com/v1", "")
+    assert not any(isinstance(h, _RefuseRedirectWithAuth) for h in t_anon._opener.handlers), \
+        "unauthenticated transport needlessly blocks redirects"
+
+    #   a bearer token is never sent over cleartext http to a non-loopback host.
+    HttpTransport("http://localhost:8000/v1", "k")          # loopback: fine
+    HttpTransport("https://api.example.com/v1", "k")        # tls: fine
+    HttpTransport("http://api.example.com/v1", "")          # no key: fine
+    for leaky in ("http://api.example.com/v1", "http://user:pw@evil.example.com/v1"):
+        try:
+            HttpTransport(leaky, "secret")
+        except ProduceError:
+            pass
+        else:
+            raise AssertionError(f"bearer token allowed over cleartext {leaky!r}")
+
     # (4) malformed inputs / responses must FAIL (selftest: asserts-failure).
     bad_cases = [
         lambda: produce({"candidates": []}, replay, "stub", "logprobs"),          # no problem
@@ -518,8 +746,18 @@ def main(argv: List[str]) -> int:
             # Flush whatever was recorded even if --strict aborted mid-run, so the
             # offending trace is inspectable.
             if recorder is not None:
-                with open(args.record, "w", encoding="utf-8") as f:
-                    json.dump(recorder.recorded, f, indent=2)
+                # Guarded: an unwritable --record path used to raise OUT of the
+                # finally block, replacing the in-flight ProduceError ("degenerate
+                # logprobs", an HTTP error) with an OSError that main() does not
+                # catch — so the real cause was lost AND the exit code became a
+                # traceback instead of 2. Report the write failure, keep the
+                # original exception.
+                try:
+                    with open(args.record, "w", encoding="utf-8") as f:
+                        json.dump(recorder.recorded, f, indent=2)
+                except OSError as exc:
+                    print(f"WARNING: could not write --record trace to "
+                          f"{args.record!r}: {exc}", file=sys.stderr)
         print(json.dumps(out, indent=2, sort_keys=True))
         return 0
     except (AssertionError, ProduceError, FileNotFoundError) as exc:
