@@ -64,3 +64,61 @@ prune() { ( cd "$MAIN" && PATH="$STUB:$PATH" bash "$SCRIPT" "$@" ); }
     [ "$status" -eq 0 ]
     [ -d "$MAIN/.git" ]
 }
+
+# --- cmd_resync self-filter (finding #1958) ---------------------------------
+# resync used to rewrite EVERY registry entry unconditionally, so running it in
+# the shared integration tree silently re-baselined other LIVE sessions and blinded
+# guard-head-drift.sh for them. These pin the three modes; the safety property is
+# that a LIVE sibling is never clobbered without --all.
+
+# worktree.sh derives REPO_ROOT from its OWN directory ($SCRIPT_DIR/../..), not
+# from cwd — so invoking the repo copy from inside a temp tree would target the
+# REAL repo and rewrite the developer's live session registry. Install a copy
+# INSIDE the fixture so REPO_ROOT resolves to it. (Caught when the first cut of
+# these tests did exactly that.)
+resync_script() {  # <tree> — path to a worktree.sh whose REPO_ROOT is <tree>
+    mkdir -p "$1/scripts/dev" "$1/agents/scripts/core"
+    cp "$REPO_ROOT/scripts/dev/worktree.sh" "$1/scripts/dev/worktree.sh"
+    cp "$REPO_ROOT/agents/scripts/core/session-registry-lib.sh" "$1/agents/scripts/core/" 2>/dev/null || true
+    printf '%s/scripts/dev/worktree.sh' "$1"
+}
+
+resync_seed() {   # <tree>  — own entry + a live sibling + a dead-and-stale sibling
+    local d="$1/.claude/.active-sessions" now; now="$(date +%s)"
+    mkdir -p "$d"
+    printf 'branch=old\nsha=dead\nppid=%s\nts=%s\n' "$$" "$now"           > "$d/mine"
+    printf 'branch=old\nsha=dead\nppid=%s\nts=%s\n' "$$" "$now"           > "$d/live-sib"
+    printf 'branch=old\nsha=dead\nppid=999999\nts=%s\n' "$((now - 99999))" > "$d/dead-sib"
+}
+resync_branch_of() { sed -n 's/^branch=//p' "$1/.claude/.active-sessions/$2" | head -1; }
+
+@test "resync with a known session id rewrites only the caller's own entry" {
+    local sc; sc="$(resync_script "$MAIN")"; resync_seed "$MAIN"
+    ( cd "$MAIN" && CLAUDE_SESSION_ID=mine bash "$sc" resync ) >/dev/null 2>&1
+    [ "$(resync_branch_of "$MAIN" mine)" = "develop" ]
+    [ "$(resync_branch_of "$MAIN" live-sib)" = "old" ]
+    [ "$(resync_branch_of "$MAIN" dead-sib)" = "old" ]
+}
+
+# selftest: asserts-failure — a LIVE sibling must survive a no-session-id resync;
+# the pre-fix code rewrote it, blinding the drift guard for that session.
+@test "resync without a session id never clobbers a live sibling" {
+    local sc; sc="$(resync_script "$MAIN")"; resync_seed "$MAIN"
+    run env -u CLAUDE_SESSION_ID -u SMATCHET_JANITOR_SELF_SESSION \
+        bash -c "cd '$MAIN' && bash '$sc' resync"
+    [ "$status" -eq 0 ]
+    [ "$(resync_branch_of "$MAIN" live-sib)" = "old" ]
+    [ "$(resync_branch_of "$MAIN" dead-sib)" = "develop" ]   # dead+stale is safe to take
+    [[ "$output" == *"skipped (live sibling"* ]]
+    [[ "$output" == *"--all"* ]]                             # names the escape hatch
+}
+
+@test "resync --all rewrites siblings and names each one" {
+    local sc; sc="$(resync_script "$MAIN")"; resync_seed "$MAIN"
+    run bash -c "cd '$MAIN' && CLAUDE_SESSION_ID=mine bash '$sc' resync --all"
+    [ "$status" -eq 0 ]
+    [ "$(resync_branch_of "$MAIN" mine)" = "develop" ]
+    [ "$(resync_branch_of "$MAIN" live-sib)" = "develop" ]
+    [ "$(resync_branch_of "$MAIN" dead-sib)" = "develop" ]
+    [[ "$output" == *"overwriting sibling entry"* ]]
+}
