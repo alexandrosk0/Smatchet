@@ -21,6 +21,7 @@
 // `command-palette-fuzzy`).
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/UiPerfRowsJson.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "SmatchetUiSession.h"
@@ -49,6 +50,7 @@ class AnnotateOpenEntryTabScenario : public IScenario {
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Idle — let the panel-open branch accumulate timings.
+        // SMATCHET_DEVIATION(rule=duplication; reason=perf-scenario framing clone (OnFrame/IsDone/OnFinish skeleton around scenario-specific drive logic) re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; the residual framing is per-scenario configuration, not extractable logic; owner=scenarios; revisit=2027-03-01)
     }
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
@@ -57,18 +59,7 @@ class AnnotateOpenEntryTabScenario : public IScenario {
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            nlohmann::json rj;
-            rj["name"] = r.name;
-            rj["lastTotalMs"] = r.lastTotalMs;
-            rj["avgPerCallMs"] = r.avgPerCallMs;
-            rj["maxMs"] = r.maxMs;
-            rj["calls"] = r.calls;
-            rj["emaAvgMs"] = r.emaAvgMs;
-            rj["p99Ms"] = r.p99Ms;
-            rowsJson.push_back(std::move(rj));
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["frames"] = frames_;
         // 144 Hz frame budget — pillar 1 target. The scenario doesn't fail

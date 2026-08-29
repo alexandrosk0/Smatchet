@@ -1,5 +1,7 @@
 #include "FieldCatalogCache.h"
 
+#include "TimeNowPure.h"
+
 #include "ConfigManager.h"
 #include "Logger.h"
 #include "Json/BoundedJsonParse.h"
@@ -24,10 +26,6 @@ std::mutex& FieldCatalogCacheFileMutex() {
 constexpr int kFieldCatalogCacheSchemaVersion = 3;
 constexpr int kDefaultMaxCachedProjects = 16;
 
-std::int64_t NowUnixSeconds() {
-    return static_cast<std::int64_t>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-}
 } // namespace
 
 namespace {
@@ -285,7 +283,7 @@ nlohmann::json MigrateOnDiskRootToV3(const nlohmann::json& rootOnDisk) {
     nlohmann::json indexArr = nlohmann::json::array();
 
     const int oldVer = rootOnDisk.is_object() ? rootOnDisk.value("schema_version", 0) : 0;
-    const std::int64_t now = NowUnixSeconds();
+    const std::int64_t now = TimeNowPure::NowUnixSeconds();
 
     auto appendIndexEntry = [&](const std::string& cacheKey, const std::string& projectKey, const std::string& backend,
                                 const std::string& endpoint, std::int64_t lastUsed) {
@@ -458,7 +456,7 @@ bool SaveFieldCatalogSnapshot(const std::string& cacheKey, const std::string& ba
             root["entries"] = nlohmann::json::array();
         }
         nlohmann::json& indexArr = root["entries"];
-        const std::int64_t now = NowUnixSeconds();
+        const std::int64_t now = TimeNowPure::NowUnixSeconds();
         auto it = FindIndexEntry(indexArr, cacheKey);
         if (it == indexArr.end()) {
             nlohmann::json e = nlohmann::json::object();
@@ -525,7 +523,7 @@ bool TryLoadFieldCatalogSnapshot(const std::string& cacheKey, std::vector<Tracke
         if (root.contains("entries") && root["entries"].is_array()) {
             auto it = FindIndexEntry(root["entries"], resolvedKey);
             if (it != root["entries"].end()) {
-                (*it)["lastUsedUnix"] = NowUnixSeconds();
+                (*it)["lastUsedUnix"] = TimeNowPure::NowUnixSeconds();
                 std::string writeErr;
                 if (!PersistRootLocked(root, writeErr)) {
                     LOG_WARN("FieldCatalogCache::TryLoadFieldCatalogSnapshot: failed to touch LRU index: %s",

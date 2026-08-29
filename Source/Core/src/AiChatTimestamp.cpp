@@ -1,5 +1,7 @@
 #include "AiChatTimestamp.h"
 
+#include "TimeNowPure.h"
+
 #include <array>
 #include <chrono>
 #include <cstdio>
@@ -8,10 +10,7 @@
 namespace smatchet {
 namespace ai {
 
-std::int64_t NowUnixMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
+std::int64_t NowUnixMs() { return TimeNowPure::NowUnixMs(); }
 
 namespace {
 

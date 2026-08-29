@@ -39,6 +39,11 @@ class UiPerfMonitor {
     /// panel passes false and pays nothing).
     std::vector<UiPerfRow> GetLastFrameRows(bool includeP99 = false) const;
 
+    /// Largest `lastTotalMs` across the rows of the most recent BeginFrame
+    /// (0.0 when no rows). The perf scenarios' per-frame passive observer:
+    /// they fold this into a running max so a one-frame spike is captured.
+    double LastFrameTopTotalMs() const;
+
     /// Clear all accumulated measurements (last-frame rows, working accumulators, EMA history).
     /// Call before starting a benchmarking scenario so timings reflect only the run of interest.
     void Reset();

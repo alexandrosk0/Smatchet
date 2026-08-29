@@ -1,5 +1,7 @@
 #include "FieldEditPipelineService.h"
 
+#include "TrackerFieldPayloadPure.h"
+
 #include "EditMetaCacheService.h" // editMeta_ ref: Ensure/CanEdit/Refresh editmeta checks
 #include "IFieldEditDeps.h"
 #include "ITrackerBackend.h"
@@ -28,12 +30,6 @@
 
 namespace {
 
-// COPIED (internal linkage) from AppController_CatalogAndFieldEdit.cpp — also copied in
-// EditMetaCacheService.cpp. Anonymous-namespace internal linkage in each TU → no ODR clash.
-bool IsSprintField(const TrackerField& field) {
-    return field.Family == TrackerFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
-}
-
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
     return TrackerFieldValueUtils::IsEditableTimetrackingEstimateFieldId(fieldId);
 }
@@ -57,7 +53,7 @@ FieldEditPipelineService::FieldEditPipelineService(IFieldEditDeps& deps, EditMet
     : deps_(deps), editMeta_(editMeta) {}
 
 bool FieldEditPipelineService::FieldEditSupportsOfflineQueue(const TrackerField& field) {
-    if (IsSprintField(field)) {
+    if (TrackerFieldPayloadPure::IsSprintField(field)) {
         return false;
     }
     if (IsNonEditableTimetrackingFieldId(field.Id) || IsEditableTimetrackingEstimateFieldId(field.Id)) {
@@ -99,7 +95,7 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
         outError = "Tracker backend is not initialized.";
         return false;
     }
-    if (IsSprintField(field) || IsNonEditableTimetrackingFieldId(field.Id) ||
+    if (TrackerFieldPayloadPure::IsSprintField(field) || IsNonEditableTimetrackingFieldId(field.Id) ||
         IsEditableTimetrackingEstimateFieldId(field.Id)) {
         outError = "Field type not supported for this edit path.";
         return false;
@@ -111,10 +107,10 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
                  [](const std::string& value) { return !value.empty(); });
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
+    if (!TrackerFieldPayloadPure::IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
         editMeta_.EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOpt);
     }
-    if (!IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
+    if (!TrackerFieldPayloadPure::IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
         return false;
@@ -442,7 +438,7 @@ VoidResult FieldEditPipelineService::SubmitFieldEdit(const std::string& issueId,
     const SubmitFieldEditCtx ctx{
         issueId, field, rawValues, values, mutations, backend, ticketsSnap, fieldEditAuditOp, fieldEditAuditSource};
 
-    if (IsSprintField(field)) {
+    if (TrackerFieldPayloadPure::IsSprintField(field)) {
         return SubmitFieldEditSprint(ctx);
     }
 
@@ -497,7 +493,7 @@ FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
                  [](const std::string& value) { return !value.empty(); });
 
-    if (IsSprintField(field)) {
+    if (TrackerFieldPayloadPure::IsSprintField(field)) {
         bool handled = false;
         SubmitSprintFieldEditNetworkOnly(issueId, field, values, *mutations, result, handled);
         if (handled) {

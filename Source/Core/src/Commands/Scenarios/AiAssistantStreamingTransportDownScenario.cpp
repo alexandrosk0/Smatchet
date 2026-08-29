@@ -9,6 +9,7 @@
 // rationale.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/UiPerfRowsJson.h"
 
 #if defined(SMATCHET_WITH_AI)
 
@@ -171,18 +172,7 @@ class AiAssistantStreamingTransportDownScenario : public IScenario {
             std::chrono::duration_cast<std::chrono::milliseconds>(errorAt_ - startedAt_).count();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            nlohmann::json rj;
-            rj["name"] = r.name;
-            rj["lastTotalMs"] = r.lastTotalMs;
-            rj["avgPerCallMs"] = r.avgPerCallMs;
-            rj["maxMs"] = r.maxMs;
-            rj["calls"] = r.calls;
-            rj["emaAvgMs"] = r.emaAvgMs;
-            rj["p99Ms"] = r.p99Ms;
-            rowsJson.push_back(std::move(rj));
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
 
         nlohmann::json out;
         out["frames"] = frames_;

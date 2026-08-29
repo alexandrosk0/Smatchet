@@ -151,6 +151,12 @@ void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::
     }
 }
 
+bool IsJiraDurationSecondsFieldKey(const std::string& fieldKey) {
+    return fieldKey == "timeoriginalestimate" || fieldKey == "timeestimate" || fieldKey == "timespent" ||
+           fieldKey == "aggregatetimeoriginalestimate" || fieldKey == "aggregatetimeestimate" ||
+           fieldKey == "aggregatetimespent";
+}
+
 namespace {
 
 std::string StringifyJiraFieldForGrid(const nlohmann::json& v) {
@@ -166,12 +172,6 @@ bool IsJiraTimetrackingFieldKey(const std::string& fieldKey) {
 
 bool IsJiraAttachmentFieldKey(const std::string& fieldKey) {
     return fieldKey == "attachment" || fieldKey == "attachments";
-}
-
-bool IsJiraDurationSecondsFieldKey(const std::string& fieldKey) {
-    return fieldKey == "timeoriginalestimate" || fieldKey == "timeestimate" || fieldKey == "timespent" ||
-           fieldKey == "aggregatetimeoriginalestimate" || fieldKey == "aggregatetimeestimate" ||
-           fieldKey == "aggregatetimespent";
 }
 
 // Resolve the `comment` field, optionally fetching the full comment list when the

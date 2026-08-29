@@ -1,5 +1,7 @@
 #include "Vcs/GitHubCommits.h"
 
+#include "GitHubRestHeaders.h"
+
 #include "Logger.h"
 #include "StringUtil.h"
 #include "Tracker/GitHubClientHelpers.h"
@@ -11,16 +13,9 @@ namespace Vcs {
 
 namespace {
 
-// GitHub REST headers for the VCS commit feed (Bearer PAT). Mirrors GitHubClient's
-// BuildGitHubHeaders, which is declared in the Tracker-private GitHubIssueSearch.h —
-// same local-mirror convention as BugReportService's BugReportGitHubHeaders.
+// GitHub REST headers for the VCS commit feed (shared recipe, commit-feed User-Agent).
 cpr::Header GitHubCommitFeedHeaders(const std::string& pat) {
-    return cpr::Header{
-        {"Authorization", std::string("Bearer ") + pat},
-        {"Accept", "application/vnd.github+json"},
-        {"X-GitHub-Api-Version", "2022-11-28"},
-        {"User-Agent", "Smatchet-VcsCommitFeed"},
-    };
+    return smatchet::github::GitHubRestHeaders(pat, "Smatchet-VcsCommitFeed");
 }
 
 void AppendError(std::string& outError, const std::string& msg) {

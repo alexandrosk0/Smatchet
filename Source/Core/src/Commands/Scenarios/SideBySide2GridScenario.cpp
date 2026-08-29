@@ -13,6 +13,7 @@
 // attachment-preview-open / idle.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Commands/Scenarios/UiPerfRowsJson.h"
 
 #include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -89,19 +90,15 @@ class SideBySide2GridScenario : public IScenario {
         app.EnsurePaneContextLive(basePaneId, baseBackendKey);
         app.EnsurePaneContextLive(secondPaneId, secondBackendKey);
 
+        // SMATCHET_DEVIATION(rule=duplication; reason=the 2-grid and N-grid side-by-side scenarios share their pane-setup/OnFrame/OnFinish framing by design (same measurement, different pane counts); the clone re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; owner=scenarios; revisit=2027-03-01)
         UiPerfMonitor::Instance().Reset();
     }
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Passive observer: sample the dominant per-frame UI scope so a one-frame
-        // spike from the two-grid draw is captured. GetLastFrameRows returns the
-        // prior frame's totals (updated by UiPerfMonitor::BeginFrame).
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
-        double topMs = 0.0;
-        for (const UiPerfRow& r : rows) {
-            if (r.lastTotalMs > topMs)
-                topMs = r.lastTotalMs;
-        }
+        // spike from the two-grid draw is captured. LastFrameTopTotalMs reads the
+        // prior frame's totals (aggregated by UiPerfMonitor::BeginFrame).
+        const double topMs = UiPerfMonitor::Instance().LastFrameTopTotalMs();
         if (topMs > maxFrameTopMs_)
             maxFrameTopMs_ = topMs;
     }
@@ -114,18 +111,7 @@ class SideBySide2GridScenario : public IScenario {
         RemoveSyntheticPane();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["scenario"] = "side-by-side-2-grid";
         out["frames"] = frames_;

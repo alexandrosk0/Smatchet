@@ -94,6 +94,16 @@ std::vector<UiPerfRow> UiPerfMonitor::GetLastFrameRows(bool includeP99) const {
     return rows;
 }
 
+double UiPerfMonitor::LastFrameTopTotalMs() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    double topMs = 0.0;
+    for (const UiPerfRow& row : lastFrame_) {
+        if (row.lastTotalMs > topMs)
+            topMs = row.lastTotalMs;
+    }
+    return topMs;
+}
+
 void UiPerfMonitor::Reset() {
     std::lock_guard<std::mutex> lock(mutex_);
     scopes_.clear();

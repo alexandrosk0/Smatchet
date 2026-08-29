@@ -1,5 +1,7 @@
 #include "EditMetaCacheService.h"
 
+#include "TrackerFieldPayloadPure.h"
+
 #include "IEditMetaDeps.h"
 #include "GridLiveContext.h" // full GridContextFieldCatalog definition (#975 per-project component write)
 #include "ITrackerBackend.h"
@@ -24,13 +26,6 @@
 #include <vector>
 
 namespace {
-
-// COPIED (not moved) from AppController_CatalogAndFieldEdit.cpp: the original definitions stay
-// there because the SubmitFieldEdit* family (Phase 2) still uses them. Anonymous-namespace
-// internal linkage in both TUs → no ODR clash.
-bool IsSprintField(const TrackerField& field) {
-    return field.Family == TrackerFieldFamily::Sprint || field.SchemaCustom.find("gh-sprint") != std::string::npos;
-}
 
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
     return TrackerFieldValueUtils::IsEditableTimetrackingEstimateFieldId(fieldId);
@@ -189,7 +184,7 @@ bool EditMetaCacheService::CanEditFieldForIssue(const std::string& issueId, cons
         return true;
     }
     const TrackerField* meta = fieldMeta ? fieldMeta : deps_.FindFieldById(fieldId);
-    if (meta && IsSprintField(*meta)) {
+    if (meta && TrackerFieldPayloadPure::IsSprintField(*meta)) {
         return true;
     }
     const std::string fieldKey = ToLowerAsciiCopy(fieldId);

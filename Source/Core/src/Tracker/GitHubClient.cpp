@@ -1,5 +1,7 @@
 #include "GitHubClient.h"
 
+#include "GitHubRestHeaders.h"
+
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
 #include "GitHubClientHelpers.h"
@@ -72,21 +74,13 @@ void MergeProjectV2ValuesIntoTicket(
 
 } // namespace
 
-// GitHub REST API auth + content-negotiation headers. Bearer-PAT auth (fine-grained
-// or classic both work), JSON-only response, pinned API version (2022-11-28) so the
-// server can't silently flip our response shape on us. Defined here, declared in
-// GitHubIssueSearch.h so GitHubIssueSearch.cpp shares the helper.
+// GitHub REST API auth + content-negotiation headers, from the shared recipe in
+// GitHubRestHeaders.h. Defined here, declared in GitHubIssueSearch.h so
+// GitHubIssueSearch.cpp shares the helper.
 namespace smatchet {
 namespace github {
 
-cpr::Header BuildGitHubHeaders(const std::string& pat) {
-    return cpr::Header{
-        {"Authorization", std::string("Bearer ") + pat},
-        {"Accept", "application/vnd.github+json"},
-        {"X-GitHub-Api-Version", "2022-11-28"},
-        {"User-Agent", "Smatchet-GitHubClient"},
-    };
-}
+cpr::Header BuildGitHubHeaders(const std::string& pat) { return GitHubRestHeaders(pat, "Smatchet-GitHubClient"); }
 
 } // namespace github
 } // namespace smatchet
