@@ -167,9 +167,9 @@ Per `AGENTS.md` § Verification automation — zero manual steps. This plan's ow
 
 ## Implementation log
 - `0cbe593e` · archived to `shipped/` during the 2026-08-29 review-ledger retirement; the
-  verdict itself ("do not build TrackerActions; close N4") was already applied when
-  `backlog/BACKLOG_CODE_REVIEW.md`'s 2026-08-18 reconciliation closed N4 (that ledger is
-  now retired — see git history).
+  verdict itself ("do not build TrackerActions; close N4") had been applied by the ledger's
+  2026-08-18 reconciliation, per `git show 0cbe593e~1:backlog/BACKLOG_CODE_REVIEW.md`
+  § "Net open: zero work items" (the ledger was retired in that same `0cbe593e`).
 
 ## Deviations from plan
 - None. The plan's deliverable was the assessment verdict, and the verdict was "don't
