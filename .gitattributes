@@ -53,6 +53,9 @@
 # - AGENT_SELF_IMPROVEMENT.md: parallel branches MODIFY the same count line with
 #   different values. Union would garble the count.
 docs/self-improvement/categories/applied.md merge=union
+# Rotated monthly partitions of applied.md (rotate-applied-md.sh): same
+# append-only shape, same parallel-prepend hazard when two branches rotate.
+docs/self-improvement/categories/applied-*.md merge=union
 
 # Union merge for high-conflict APPEND-ONLY shared files written by parallel
 # sibling PRs in a campaign / decomposition (PR-16: campaign-sibling-prs-edit-

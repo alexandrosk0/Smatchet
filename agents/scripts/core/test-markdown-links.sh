@@ -401,9 +401,12 @@ _REPO_PATH_SPAN_RE = re.compile(
 # path is real. `applied.md` is exempt — it is the ARCHIVE of entries already
 # actioned, so a path that has since moved or been deleted is expected there and
 # nobody is going to act on it. Warning on it produced ~100 rows of pure noise
-# that would drown the live signal.
+# that would drown the live signal. The rotated monthly partitions
+# (applied-YYYY-MM.md, rotate-applied-md.sh) are the same archive, same
+# exemption.
 CODE_SPAN_SCOPE = "docs/self-improvement/categories/"
 CODE_SPAN_EXEMPT_BASENAMES = ("applied.md",)
+CODE_SPAN_EXEMPT_PREFIXES = ("applied-",)
 
 # A backlog entry's PROPOSAL block names files it exists to CREATE — "Concrete
 # next action: add a `scripts/dev/install-security-tools.sh`". Those paths are
@@ -501,7 +504,8 @@ checked = 0
 for path in TARGETS:
     rel_src_path = os.path.relpath(path, REPO_ROOT).replace(os.sep, "/")
     span_scope = (rel_src_path.startswith(CODE_SPAN_SCOPE)
-                  and os.path.basename(rel_src_path) not in CODE_SPAN_EXEMPT_BASENAMES)
+                  and os.path.basename(rel_src_path) not in CODE_SPAN_EXEMPT_BASENAMES
+                  and not os.path.basename(rel_src_path).startswith(CODE_SPAN_EXEMPT_PREFIXES))
     span_lines = _added_lines(rel_src_path) if (span_scope and SCOPE == "diff") else None
     in_proposal = False
     try:
