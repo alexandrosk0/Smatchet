@@ -15,7 +15,7 @@ can close into include cycles. The layering intent is
 `ui → orchestration (AppController, Commands) → backend-client (Tracker) → domain-service (Sync, Persistence, Offline) → infra (Config)`;
 dependencies should flow one way only. An exhaustive include-edge inventory
 (workflow run `wu35b7l1b`, recorded in
-[`architecture-analysis-2026-06-13.md`](../../reference/architecture-analysis-2026-06-13.md))
+`architecture-analysis-2026-06-13.md` (removed 2026-08-29 — superseded snapshot; see git history))
 found the headline "10 back-edges" is really **5 genuine layer violations** — the
 other 5 are legal same-layer / forward `Ui → orchestration` edges.
 

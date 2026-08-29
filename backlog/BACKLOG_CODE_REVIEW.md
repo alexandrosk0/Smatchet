@@ -11,7 +11,7 @@
 > Status markers: ✅ **RESOLVED** · 🟡 **PARTIAL** · ⏳ **OPEN** · 🚫 **CLOSED BY DECISION** — terminal. A deliberate won't-do-as-written or design-deferral: the question was answered and the answer was "not this". Not pending work, and not counted as open.
 >
 > Companions:
-> - [`POST_P0_REVIEW.md`](POST_P0_REVIEW.md) — issues introduced by the P0 sweep. All 34 entries closed; its last partial (item 24, `FlushFileSink` shutdown wiring) was flipped ✅ on 2026-08-18 — see **A4** below.
+> - `POST_P0_REVIEW.md` (removed 2026-08-29 — all entries resolved; see git history) — issues introduced by the P0 sweep. All 34 entries closed; its last partial (item 24, `FlushFileSink` shutdown wiring) was flipped ✅ on 2026-08-18 — see **A4** below.
 > - [`MANUAL_TEST_QUEUE.md`](MANUAL_TEST_QUEUE.md) — deferred smoke tests.
 > - [`RICH_TEXT_EDITING_V2_REMAINING.md`](RICH_TEXT_EDITING_V2_REMAINING.md), [`RICH_TEXT_EDITING_V3_PLAN.md`](RICH_TEXT_EDITING_V3_PLAN.md) — Markdown / ADF backlog.
 
@@ -365,6 +365,6 @@ Deferred by design, tracked elsewhere (do not sequence here):
 - Rich-text gaps → [`RICH_TEXT_EDITING_V2_REMAINING.md`](RICH_TEXT_EDITING_V2_REMAINING.md), [`RICH_TEXT_EDITING_V3_PLAN.md`](RICH_TEXT_EDITING_V3_PLAN.md).
 - Deferred runtime smokes → [`MANUAL_TEST_QUEUE.md`](MANUAL_TEST_QUEUE.md).
 - Cppcheck periodic-sweep runbook → [`CPPCHECK_PLAN.md`](CPPCHECK_PLAN.md).
-- Post-P0 review trail → [`POST_P0_REVIEW.md`](POST_P0_REVIEW.md).
+- Post-P0 review trail → `POST_P0_REVIEW.md` (removed 2026-08-29 — all entries resolved; see git history).
 
 _End of backlog._

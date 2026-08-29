@@ -1,4 +1,5 @@
 # Plan — Rename Blame → Annotate, then cleanup Annotate UI preferences
+<!-- plan-date: 2026-05-30 -->
 
 > **Status:** WIP plan, ready for a worker to execute. Phase 1 (rename) lands first as
 > its own PR; Phase 2 (prefs cleanup) rebases onto the new names as a follow-up PR.

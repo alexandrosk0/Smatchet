@@ -1,7 +1,8 @@
 # Deep code review — untracked findings (2026-07-07 whole-tree pass)
 
 > Companion to [`BACKLOG_CODE_REVIEW.md`](BACKLOG_CODE_REVIEW.md) and
-> [`POST_P0_REVIEW.md`](POST_P0_REVIEW.md). This document captures findings from a
+> `POST_P0_REVIEW.md` (removed 2026-08-29 — all entries resolved; see git
+> history). This document captures findings from a
 > full-tree review (develop tip ~PR #1673) that are **not already tracked** in the two
 > companion docs. The prior passes were scoped to `Source/Core/` + `Source/Plugins/` +
 > `Source/Standalone/` against a tree ~1500 PRs old; most items below live in code added

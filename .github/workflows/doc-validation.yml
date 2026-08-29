@@ -25,7 +25,6 @@ on:
       - 'AGENTS.md'
       - 'agents/**'
       - 'docs/agent-rules/**'
-      - 'docs/backlog/**'
       - 'docs/self-improvement/**'
       - 'docs/plans/shipped/**'
       - 'project.config.json'
