@@ -166,13 +166,24 @@ Per `AGENTS.md` § Verification automation — zero manual steps. This plan's ow
 - **`GridLiveContext` de-singletoning** (multi-grid Slice 3, ADR-0018) — the per-context state the adapter's `ctx_` half forwards to; a separate program.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `0cbe593e` · archived to `shipped/` during the 2026-08-29 review-ledger retirement; the
+  verdict itself ("do not build TrackerActions; close N4") was already applied when
+  `backlog/BACKLOG_CODE_REVIEW.md`'s 2026-08-18 reconciliation closed N4 (that ledger is
+  now retired — see git history).
 
 ## Deviations from plan
-*(populated post-ship)*
+- None. The plan's deliverable was the assessment verdict, and the verdict was "don't
+  build" — no code shipped, so there was nothing to deviate from. The residual coupling
+  surface it documents remains available for a future re-open.
 
 ## Verification (actual)
-*(populated post-ship)*
+- No production diff to verify (assessment-only plan). Archival verified against the
+  documentation gates at the archiving commit: `test-plan-index.sh` (INDEX regenerated,
+  in sync), `test-plan-ref-integrity.sh` (all refs resolve; the plan's self-reference
+  moved to the tier-less form), `test-markdown-links.sh --all` (0 dangling), `md_lint.py`
+  clean. Deferral residue-sweep run at archival: no stray "TrackerActions" /
+  "Phase 2 interface" references outside this plan in `**/CONTEXT*.md`, `docs/adr/`,
+  `agents/`, or `docs/self-improvement/categories/`.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip the § Status header to `shipped`,
