@@ -239,6 +239,19 @@ def _is_loopback(base_url: str) -> bool:
     return host.lower() in ("localhost", "127.0.0.1", "::1", "0.0.0.0")
 
 
+class _RefuseRedirectWithAuth(urllib.request.HTTPRedirectHandler):
+    """urllib's default redirect handler re-sends every non-content header —
+    Authorization included — to whatever URL the server names, so a 3xx can
+    teleport the bearer token to a different authority or downgrade it onto
+    cleartext http. A verifier endpoint has no legitimate redirect; refuse
+    loudly rather than pick which redirects are safe."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ProduceError(
+            f"refusing to follow HTTP {code} redirect to {newurl!r}: "
+            "the Authorization header would be re-sent to the redirect target")
+
+
 class HttpTransport(Transport):
     """POST to {base_url}/chat/completions on an OpenAI-compatible endpoint."""
 
@@ -260,6 +273,15 @@ class HttpTransport(Transport):
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = api_key
         self.timeout = timeout
+        handlers: List[urllib.request.BaseHandler] = []
+        if _is_loopback(base_url):
+            # A loopback call must never detour through a configured proxy —
+            # http_proxy/HTTP_PROXY would carry the cleartext bearer token to
+            # the proxy host, off-machine, defeating the loopback exemption.
+            handlers.append(urllib.request.ProxyHandler({}))
+        if api_key:
+            handlers.append(_RefuseRedirectWithAuth())
+        self._opener = urllib.request.build_opener(*handlers)
 
     def call(self, body: Dict[str, Any]) -> Dict[str, Any]:
         data = json.dumps(body).encode("utf-8")
@@ -268,7 +290,7 @@ class HttpTransport(Transport):
         if self.api_key:
             req.add_header("Authorization", f"Bearer {self.api_key}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            with self._opener.open(req, timeout=self.timeout) as resp:
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")[:400]
@@ -327,9 +349,10 @@ def is_degenerate(dist: Dict[str, float], raw_count: int = 0) -> bool:
     top-20 holds one letter plus whitespace/punctuation/word-piece variants
     yields len(dist) == 1, so a bare `len(dist) < 2` test aborted a perfectly
     good run (and --strict is in the documented copy-paste recipe, making that
-    the DEFAULT path). Pass `raw_count` — the length of the raw top_logprobs
-    list — so a thin distribution is judged degenerate only when the backend
-    itself was thin."""
+    the DEFAULT path). Pass `raw_count` — the count of USABLE raw top_logprobs
+    entries (see _usable_raw_count; a placeholder-padded list must not count as
+    breadth) — so a thin distribution is judged degenerate only when the
+    backend itself was thin."""
     if not dist:
         return True
     if len(dist) < 2 and raw_count < 2:
@@ -357,6 +380,23 @@ def _is_placeholder_tail(values: List[float]) -> bool:
         and tail[0] <= _DEGENERATE_LOGPROB
 
 
+def _usable_raw_count(top: List[Dict[str, Any]]) -> int:
+    """Count raw top_logprobs entries that carry a REAL score. Backends that do
+    not score alternatives pad the list with sentinel logprobs (-9999 etc.), so
+    one letter plus nineteen placeholders is exactly as thin as the letter
+    alone — a bare len() read that as 20 alternatives and --strict accepted an
+    unusable point distribution."""
+    n = 0
+    for alt in top:
+        try:
+            lp = float(alt["logprob"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if math.isfinite(lp) and lp > _PLACEHOLDER_LOGPROB:
+            n += 1
+    return n
+
+
 def score_criterion(
     transport: Transport, model: str, problem: str, candidate_text: str,
     criterion: str, rubric: str, mode: str, temperature: float,
@@ -374,7 +414,7 @@ def score_criterion(
     response = transport.call(body)
     if mode == "logprobs":
         dist = extract_logprobs(response)
-        raw_count = len(_first_content_token_logprobs(response))
+        raw_count = _usable_raw_count(_first_content_token_logprobs(response))
         if strict and is_degenerate(dist, raw_count):
             raise ProduceError(
                 f"backend returned degenerate logprobs for criterion {criterion!r} "
@@ -544,6 +584,63 @@ def selftest() -> None:
     assert is_degenerate({"A": -0.0001}, 1), "genuinely thin backend not flagged"
     assert is_degenerate({"A": -0.5, "B": -9999.0}, 20), "placeholder not flagged"
     assert is_degenerate({"A": -0.5, "B": -200.0, "C": -200.0}, 20), "repeated tail not flagged"
+
+    #   raw breadth counts only USABLE alternatives: one letter plus nineteen
+    #   -9999 placeholders is a point distribution, not a 20-wide one, so
+    #   --strict must reject it (CR finding on the #1891 fix).
+    padded = [{"token": "A", "logprob": -0.0001}] + \
+             [{"token": "x%d" % i, "logprob": -9999.0} for i in range(19)]
+    real = [{"token": "A", "logprob": -0.0001}, {"token": " A", "logprob": -9.0},
+            {"token": "\n", "logprob": -10.0}]
+    assert _usable_raw_count(padded) == 1, _usable_raw_count(padded)
+    assert _usable_raw_count(real) == 3, _usable_raw_count(real)
+    assert is_degenerate({"A": -0.0001}, _usable_raw_count(padded)), \
+        "placeholder-padded raw list not flagged"
+    assert not is_degenerate({"A": -0.0001}, _usable_raw_count(real)), \
+        "real thin-but-broad backend flagged"
+    #   ...and end-to-end through the strict scoring path, so the call site
+    #   cannot silently fall back to a bare len() of the raw list.
+    padded_resp = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [{
+        "token": "A", "logprob": -0.0001, "top_logprobs": padded}]}}]}
+    try:
+        produce(job, ReplayTransport([padded_resp] * 2), "stub", "logprobs", strict=True)
+    except ProduceError:
+        pass
+    else:
+        raise AssertionError("--strict accepted a placeholder-padded point distribution")
+
+    #   an Authorization-carrying transport never follows redirects (urllib
+    #   would re-send the bearer to the redirect target), and a loopback
+    #   transport never routes through a configured proxy (which would carry
+    #   the cleartext bearer off-machine).
+    #   (ProxyHandler({}) registers no scheme handlers, so it never appears in
+    #   opener.handlers — its whole job is displacing the default env-reading
+    #   ProxyHandler. Force an env proxy and assert none survives.)
+    _old_proxy = os.environ.get("http_proxy")
+    os.environ["http_proxy"] = "http://proxy.example.test:3128"
+    try:
+        t_loop = HttpTransport("http://127.0.0.1:8000/v1", "k")
+        assert not any(isinstance(h, urllib.request.ProxyHandler) and h.proxies
+                       for h in t_loop._opener.handlers), \
+            "loopback opener is not proxy-free"
+    finally:
+        if _old_proxy is None:
+            os.environ.pop("http_proxy", None)
+        else:
+            os.environ["http_proxy"] = _old_proxy
+    t_auth = HttpTransport("https://api.example.com/v1", "k")
+    guards = [h for h in t_auth._opener.handlers
+              if isinstance(h, _RefuseRedirectWithAuth)]
+    assert guards, "authenticated transport lacks the redirect guard"
+    try:
+        guards[0].redirect_request(None, None, 302, "Found", {}, "http://evil.example.com/")
+    except ProduceError:
+        pass
+    else:
+        raise AssertionError("redirect with Authorization was followed")
+    t_anon = HttpTransport("https://api.example.com/v1", "")
+    assert not any(isinstance(h, _RefuseRedirectWithAuth) for h in t_anon._opener.handlers), \
+        "unauthenticated transport needlessly blocks redirects"
 
     #   a bearer token is never sent over cleartext http to a non-loopback host.
     HttpTransport("http://localhost:8000/v1", "k")          # loopback: fine

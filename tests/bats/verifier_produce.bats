@@ -180,6 +180,23 @@ PEAKPY
     [[ "$output" != *degenerate* ]]
 }
 
+@test "--strict rejects a placeholder-padded point distribution" {
+    # One letter plus nineteen -9999 sentinel alternatives is a POINT
+    # distribution, not a 20-wide one: a bare len() of the raw list read the
+    # padding as breadth and --strict accepted an unusable distribution.
+    "$PY" - "$WORK/padded.json" <<'PADPY'
+import json, sys
+alts = [{"token": "A", "logprob": -0.0001}]
+alts += [{"token": "x%d" % i, "logprob": -9999.0} for i in range(19)]
+d = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [
+    {"token": "A", "logprob": -0.0001, "top_logprobs": alts}]}}]}
+json.dump([d, d, d, d], open(sys.argv[1], "w"))
+PADPY
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/padded.json" --strict
+    [ "$status" -eq 2 ]
+    [[ "$output" == *degenerate* ]]
+}
+
 @test "a bearer token is refused over cleartext http to a non-loopback host" {
     run env VERIFIER_BASE_URL=http://api.example.com/v1 VERIFIER_API_KEY=secret "$PY" "$PRODUCE" "$WORK/job.json" --model stub
     [ "$status" -eq 2 ]
