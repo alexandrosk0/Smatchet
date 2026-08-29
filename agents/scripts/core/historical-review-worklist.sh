@@ -49,8 +49,14 @@
 #
 # OUTPUT (stdout) — a JSON array of units, ready for the sweep workflow's args:
 #   [{"pr":1883,"sha":"e5aa8d11","note":"merge-PR constituent 1/2"}, ...]
-# A coverage triple + any disagreement report goes to STDERR, so a caller can
-# quote a COMPUTED coverage number instead of asserting one.
+# With --json, ONE OBJECT instead, carrying the computed coverage triple so the
+# sweep workflow can RETURN it and a batch header quotes the computed number
+# (the part-(3) close of the merge-commit work-list entry — transcribing the
+# stderr triple by hand was the last asserted-not-computed step):
+#   {"range":[lo,hi],"against":"...","authority":"...",
+#    "coverage":{"authoritative":N,"scraped":N,"missed":[...],"covered":N,"units":N},
+#    "units":[...]}
+# The human-readable triple + any disagreement report still goes to STDERR.
 #
 # EXIT: 0 = work-list emitted and enumerators agree. 2 = usage / no authority /
 # unresolvable PR / enumerator disagreement that could not be repaired.
@@ -64,9 +70,10 @@ cd "$(git rev-parse --show-toplevel)" || exit 2
 . "$(dirname "$0")/lib/resolve-py.sh"
 
 MODE="range"
-LO=""; HI=""; MERGED_LIST=""; AGAINST="origin/develop"
+LO=""; HI=""; MERGED_LIST=""; AGAINST="origin/develop"; JSON_OUT=0
 while [ $# -gt 0 ]; do
     case "$1" in
+        --json) JSON_OUT=1; shift ;;
         --range) LO="${2:-}"; HI="${3:-}"; shift 3 ;;
         # `--range=<lo>-<hi>` / `--range=<lo>,<hi>` — the single-token twin of the
         # two-arg form above (shell-lint FLAG_PARITY requires a `=` twin for any
@@ -240,8 +247,21 @@ for line in sys.stdin:
     u={"pr":int(parts[0]),"sha":parts[1]}
     if len(parts)>2 and parts[2].strip(): u["note"]=parts[2].strip()
     out.append(u)
-json.dump(out,sys.stdout)
-sys.stdout.write("\n")'
+if sys.argv[1] == "1":
+    lo, hi, against, src, auth_n, scrape_n, covered, resolved, missing = sys.argv[2:11]
+    json.dump({
+        "range": [int(lo), int(hi)], "against": against, "authority": src,
+        "coverage": {
+            "authoritative": int(auth_n), "scraped": int(scrape_n),
+            "missed": [int(m) for m in missing.split()],
+            "covered": int(covered), "units": int(resolved),
+        },
+        "units": out,
+    }, sys.stdout)
+else:
+    json.dump(out, sys.stdout)
+sys.stdout.write("\n")' "$JSON_OUT" "$LO" "$HI" "$AGAINST" "$AUTH_SRC" \
+        "$AUTH_N" "$SCRAPE_N" "$COVERED" "$RESOLVED" "${MISSING:-}"
     exit 0
 fi
 
@@ -289,6 +309,24 @@ repoA="$(mktemp -d)"
               --range=100-101 --merged-list=/tmp/auth2.$$ --against develop 2>/dev/null)"
     rm -f /tmp/auth2.$$
     [ "$out2" = "$out" ] || { echo "FAIL(A): --range=lo-hi differs from --range lo hi"; echo "  two-arg: $out"; echo "  =form  : $out2"; exit 1; }
+    # --json must wrap the SAME units in an object carrying the COMPUTED
+    # coverage triple (part 3: the sweep workflow returns it, so a batch header
+    # quotes a computed number, never a transcription of the stderr line).
+    printf '100\n101\n' > /tmp/auth3.$$
+    outj="$(bash agents/scripts/core/historical-review-worklist.sh \
+              --json --range 100 101 --merged-list /tmp/auth3.$$ --against develop 2>/dev/null)"
+    rm -f /tmp/auth3.$$
+    PYQ="$(resolve_py)" || { echo "FAIL(A): no python for --json assertion"; exit 1; }
+    printf '%s\n%s\n' "$outj" "$out" | "$PYQ" -c '
+import json, sys
+obj = json.loads(sys.stdin.readline())
+bare = json.loads(sys.stdin.readline())
+cov = obj["coverage"]
+assert cov == {"authoritative": 2, "scraped": 1, "missed": [101],
+               "covered": 2, "units": 3}, cov
+assert obj["units"] == bare, "units differ between --json and bare output"
+assert obj["range"] == [100, 101] and obj["against"] == "develop", obj
+' || { echo "FAIL(A): --json coverage object wrong"; exit 1; }
 ) || fail=1
 rm -rf "$repoA"
 

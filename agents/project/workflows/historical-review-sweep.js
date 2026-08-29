@@ -37,11 +37,21 @@ export const meta = {
   ],
 }
 
-// --- resolve the PR work-list from args (array | {prs:[]} | JSON-string) ---
+// --- resolve the PR work-list from args ------------------------------------
+// Accepted shapes: a bare array of PR numbers, { prs: [...] }, a JSON string of
+// either, or the historical-review-worklist.sh --json OBJECT
+// ({ coverage, units: [{pr, ...}] }) — in that last form the gate's COMPUTED
+// coverage triple is carried through to this workflow's return value, so a
+// batch header quotes the computed number instead of a hand-transcribed one.
 // Integer-filter so a stray non-number can never become a #NaN agent label.
 let parsed = args
 if (typeof parsed === 'string') { try { parsed = JSON.parse(parsed) } catch (e) { parsed = null } }
-if (parsed && !Array.isArray(parsed) && Array.isArray(parsed.prs)) parsed = parsed.prs
+let coverage = null
+if (parsed && !Array.isArray(parsed)) {
+  if (parsed.coverage && typeof parsed.coverage === 'object') coverage = parsed.coverage
+  if (Array.isArray(parsed.units)) parsed = [...new Set(parsed.units.map(u => u && u.pr))]
+  else if (Array.isArray(parsed.prs)) parsed = parsed.prs
+}
 const prs = Array.isArray(parsed)
           ? parsed.map(Number).filter(n => Number.isInteger(n) && n > 0)
           : []
@@ -152,6 +162,10 @@ return {
     medium: bySev('MEDIUM').length,
     low: bySev('LOW').length,
   },
+  // the work-list gate's COMPUTED coverage triple, passed through verbatim when
+  // args came from `historical-review-worklist.sh --json` (null otherwise) — a
+  // batch header should quote THIS, never a hand-transcribed stderr line.
+  coverage,
   findings: allFindings,
   errors: errored.map(r => ({ pr: r.pr, summary: r.summary })),
   diedPrs: prs.filter((_, i) => !results[i]),
