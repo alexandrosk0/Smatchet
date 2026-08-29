@@ -27,7 +27,10 @@ and the triggered-follow-up nudge
 the monolith *and* the per-category subdir). This is the incremental, new-entries-only
 slice of the deferred [`self-improvement-one-entry-per-file`](../plans/deferred/self-improvement-one-entry-per-file.md)
 plan — the monolith files are **not** migrated. (`bug.md` is deprecated and takes no
-new entries; the `applied.md` archive stays a single union-merged file.)
+new entries; the `applied.md` archive stays the single union-merged append target, but is
+bounded: months older than current+previous rotate into flat `applied-YYYY-MM.md`
+siblings via [`rotate-applied-md.sh`](../../agents/scripts/core/rotate-applied-md.sh),
+invoked automatically by `archive-backlog-entry.sh`.)
 
 **Optional `Triggered-follow-up:` line** — for a follow-up GATED ON A FUTURE CONDITION ("re-measure after ~10 PRs", "after a date", "once a plan ships"). Add ONE line to the entry (after `Concrete next action:`); [`followup-due-nudge.sh`](../../agents/scripts/core/followup-due-nudge.sh) surfaces it at SessionStart when the condition is met. Lifecycle: [`process-rules.md`](../agent-rules/process-rules.md) § Triggered follow-ups.
 
@@ -46,7 +49,8 @@ Author with `fired=never`; when the orchestrator acts it stamps `fired=<date>` v
 
 **An entry proposing a gate must name its enumerator and replay the motivating bug against it.** "Assert every X" is only specified once X resolves to an enumerable declaration — name the file and the declaration the gate iterates, not a prose description of the population (a prose population cannot be wrong, which is precisely why it hides this failure). Then walk the named enumerator by hand and confirm the known-bad case that motivated the gate actually appears in it: a proposed dock-slot gate once named a real symbol (`kEntries`) that was not addressable from outside its TU and did not contain the very constant the gate existed to catch — the gate as written would have stayed green through its own motivating bug. If the entry cannot point at the row the gate would have tripped on, the gate is not specified yet.
 
-Applied entries are archived immediately to [`self-improvement/categories/applied.md`](categories/applied.md).
+Applied entries are archived immediately to [`self-improvement/categories/applied.md`](categories/applied.md)
+(the bounded head — older months live in its rotated `applied-YYYY-MM.md` siblings).
 
 ## Categories
 
@@ -189,7 +193,7 @@ auto-detected.
 | test        | [self-improvement/categories/test.md](categories/test.md) |
 | security    | [self-improvement/categories/security.md](categories/security.md) |
 | external    | [self-improvement/categories/external-blockers.md](categories/external-blockers.md) |
-| applied (archive) | [self-improvement/categories/applied.md](categories/applied.md) |
+| applied (archive) | [self-improvement/categories/applied.md](categories/applied.md) (+ rotated `applied-YYYY-MM.md` siblings) |
 
 The `File` column is the **legacy monolith** (existing ~135 entries, read in union).
 **New entries go in the per-category subdir** `categories/<category>/<YYYY-MM-DD>-<slug>.md`,

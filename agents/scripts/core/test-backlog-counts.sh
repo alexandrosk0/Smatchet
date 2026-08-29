@@ -77,7 +77,18 @@ if [ "${1:-}" = "--list" ]; then
         mono="$(grep -c '^- 20' "$f" 2>/dev/null | head -1 || true)"
         case "$mono" in ''|*[!0-9]*) mono=0 ;; esac
         perfile="$(_perfile_count "${FILES[$label]}")"
-        printf '%-10s %s\n' "$label" "$((mono + perfile))"
+        # `applied` also counts its rotated monthly partitions (applied-YYYY-MM.md,
+        # rotate-applied-md.sh) so the archive total survives rotation.
+        rotated=0
+        if [ "$label" = applied ]; then
+            for part in "$DIR"/applied-*.md; do
+                [ -f "$part" ] || continue
+                pc="$(grep -c '^- 20' "$part" 2>/dev/null | head -1 || true)"
+                case "$pc" in ''|*[!0-9]*) pc=0 ;; esac
+                rotated=$((rotated + pc))
+            done
+        fi
+        printf '%-10s %s\n' "$label" "$((mono + perfile + rotated))"
     done
     exit 0
 fi
@@ -103,6 +114,15 @@ if [ -n "$offenders" ]; then
     echo "  Counts are on-demand: drop the column, use 'test-backlog-counts.sh --list'." >&2
     echo "Passed: 0  Failed: 1"
     exit 1
+fi
+
+# ADVISORY: applied.md head-boundedness. WARN-only by design — a month boundary
+# makes rotation "due" with no accompanying change, so a hard gate would
+# spontaneously red CI; archive-backlog-entry.sh rotates for real on the next
+# archival. See rotate-applied-md.sh.
+if ! bash "$(dirname "$0")/rotate-applied-md.sh" --check >/dev/null 2>&1; then
+    echo "test-backlog-counts: WARN — applied.md holds entries older than the previous month;" >&2
+    echo "  run 'bash agents/scripts/core/rotate-applied-md.sh' (advisory; not blocking)." >&2
 fi
 
 echo "test-backlog-counts: no stored count column (counts are on-demand via --list)."
