@@ -42,48 +42,6 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
     app.SyncWithBackend(&d.cfg, &store);
 }
 
-void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views& viewState,
-                                    const ViewDefinition& activeView) {
-    ViewDefinition updated = activeView;
-    updated.Name = d.viewNameBuf;
-    updated.Jql = d.viewJqlEditor.buf;
-    // Authoritative selection set, not the truncating buffer (#views-field-uncheck).
-    updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
-    updated.ColumnOrder = d.editingColumnOrder;
-    if (viewState.UpdateActive(updated)) {
-        d.cfg.JqlQuery = updated.Jql;
-        d.cfg.SelectedFields = updated.Fields;
-        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, viewState.GetStore(), true);
-    }
-}
-
-void DrawVerticalSplitter(const char* id, UiDrawSession& d, float* height, float minHeight, float maxHeight) {
-    if (!height) {
-        return;
-    }
-    ImGui::InvisibleButton(id, ImVec2(-FLT_MIN, 6.0f));
-    if (ImGui::IsItemHovered()) {
-        ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
-    }
-    if (ImGui::IsItemActive()) {
-        *height += ImGui::GetIO().MouseDelta.y;
-        if (*height < minHeight) {
-            *height = minHeight;
-        }
-        if (*height > maxHeight) {
-            *height = maxHeight;
-        }
-    }
-    if (ImGui::IsItemDeactivatedAfterEdit()) {
-        ConfigManager::Save(d.cfg);
-    }
-    ImVec2 pMin = ImGui::GetItemRectMin();
-    ImVec2 pMax = ImGui::GetItemRectMax();
-    pMin.y += 2.0f;
-    pMax.y -= 2.0f;
-    ImGui::GetWindowDrawList()->AddRectFilled(pMin, pMax, ImGui::GetColorU32(ImGuiCol_Separator));
-}
-
 void DrawHorizontalSplitter(const char* id, UiDrawSession& d, float* widthLeft, float minLeft, float maxLeft) {
     if (!widthLeft) {
         return;

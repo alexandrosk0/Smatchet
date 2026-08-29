@@ -3,13 +3,9 @@
 _Auto-generated. Do not hand-edit; run `bash agents/scripts/core/test-dead-export-audit.sh --baseline` and commit._
 _The gate (`dead_export_audit.py --check`) is ADVISORY: it WARNs on findings absent from this file and never blocks. Graduation to blocking is a separate decision (mirrors ADR-0015)._
 
-## dead-export (6 symbols)
-- `Source/Core/include/Persistence/SmatchetImageTextureCache.h:40` — `GetOrLoadFromFile`
-- `Source/Core/include/Ui/SelectableTextRun.h:97` — `TextRun`
-- `Source/Core/include/Ui/SmatchetFieldIconRender.h:43` — `DrawInlineFieldIconIfAny`
+## dead-export (2 symbols)
 - `Source/Core/include/Ui/SmatchetImGuiHostC.h:37` — `SmatchetHost_UpdateRendererColorFormat`
 - `Source/Core/include/Ui/SmatchetImGuiHostC.h:101` — `SmatchetHost_SetKeyDown`
-- `Source/Core/include/Ui/SmatchetThemedTextEditorPalette.h:41` — `GetThemedAiChatPalette`
 
 ## Totals
-- dead exports grandfathered: 6
+- dead exports grandfathered: 2

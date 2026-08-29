@@ -27,7 +27,6 @@ namespace {
 // stale → slow-path re-resolution every frame. Each entry holds an `ImTextureData*` whose
 // pixel storage is ~16-64 KB; 384 × 64 KB ≈ 24 MB worst-case GPU memory — negligible.
 constexpr size_t kMaxCacheEntries = 384;
-constexpr size_t kMaxFileReadBytes = 4u * 1024u * 1024u;
 constexpr int kMaxIconDimension = 512;
 // Aggregate-pixel guard for the pre-decode dimension check: RGBA32 byte estimate at the
 // dimension ceiling (512 x 512 x 4 = 1 MiB). With both side caps already at kMaxIconDimension
@@ -321,33 +320,6 @@ Result<SmatchetLoadedIconTexture> GetOrCreateFromRgba(const std::string& cacheKe
         return R::Ok(hit);
     }
     return InsertRgbaUnlocked(cacheKey, rgba, width, height);
-}
-
-Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath) {
-    using R = Result<SmatchetLoadedIconTexture>;
-    if (absolutePath.empty()) {
-        return R::Err("Empty path.");
-    }
-    SmatchetLoadedIconTexture cached;
-    if (TryGetCached(cacheKey, cached)) {
-        return R::Ok(cached);
-    }
-    std::ifstream ifs(absolutePath.c_str(), std::ios::binary);
-    if (!ifs) {
-        return R::Err("Failed to open file.");
-    }
-    ifs.seekg(0, std::ios::end);
-    const std::streamoff len = ifs.tellg();
-    if (len <= 0 || static_cast<size_t>(len) > kMaxFileReadBytes) {
-        return R::Err("File too large or empty.");
-    }
-    ifs.seekg(0, std::ios::beg);
-    std::vector<unsigned char> buf(static_cast<size_t>(len));
-    ifs.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(len));
-    if (!ifs) {
-        return R::Err("Failed to read file.");
-    }
-    return GetOrLoadFromMemory(cacheKey, buf.data(), buf.size());
 }
 
 std::size_t IconCacheEntryCount() {

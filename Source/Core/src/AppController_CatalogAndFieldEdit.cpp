@@ -117,16 +117,6 @@ void AppController::RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std
     }
 }
 
-void AppController::RefreshLocalDataAndWarmIssueTypeMeta() {
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
-        &focusedContext()
-             .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
-    RefreshLocalData();
-    if (backend) {
-        WarmIssueTypeEditMetaAtStartAsync(ConfigManager::Load());
-    }
-}
-
 void AppController::UpdateTicket(const CachedTicket& ticket) {
     if (Cache) {
         // Latch key + generation TOGETHER (issue #1081): reading the key here and re-reading

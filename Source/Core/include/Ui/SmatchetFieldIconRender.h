@@ -29,8 +29,8 @@ inline bool ShouldAttemptIconResolve(bool haveNegativeEntry, long long lastFailu
 /**
  * Draw icon-only for built-in Jira priority and Lua `register_field_icon_map` (read-only cells only).
  * Returns false to fall back to text / normal editors.
- * @param allowCellEdits when true: Lua icon maps are skipped (preserve editors); editable `priority` uses
- *   `DrawInlineFieldIconIfAny` in the combo row instead of full-cell draw here.
+ * @param allowCellEdits when true: Lua icon maps are skipped (preserve editors); editable `priority`
+ *   draws its icon in the combo row (via `TryGetInlineFieldIconTexture`) instead of full-cell here.
  */
 bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId, const TrackerField* field,
                            const std::string& rawValue, float availWidth, bool tooltipsEnabled, bool allowCellEdits);
@@ -39,16 +39,7 @@ bool TryDrawFieldValueIcon(const AppController& app, const std::string& fieldId,
 bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& field, const std::string& rawValue,
                                   SmatchetLoadedIconTexture& outIcon, std::string& outError);
 
-/** Small icon left of combo: Lua `register_field_icon_map` (any field), else built-in `priority` (Jira/bundled/URL). */
-bool DrawInlineFieldIconIfAny(const AppController& app, const TrackerField& field, const std::string& rawValue);
-
 /** Lua / scripting: draw image from URL or resolved local path (see `ResolveFieldIconAssetPath`). */
 bool DrawImagePathOrUrl(AppController& app, const std::string& pathOrUrl, float width, float height);
 
 } // namespace SmatchetFieldIconRender
-
-
-
-
-
-

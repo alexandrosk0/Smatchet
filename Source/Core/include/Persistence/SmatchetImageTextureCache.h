@@ -37,8 +37,6 @@ bool TryGetCached(const std::string& cacheKey, SmatchetLoadedIconTexture& out);
 Result<SmatchetLoadedIconTexture> GetOrLoadFromMemory(const std::string& cacheKey, const unsigned char* bytes,
                                                       size_t byteCount);
 
-Result<SmatchetLoadedIconTexture> GetOrLoadFromFile(const std::string& cacheKey, const std::string& absolutePath);
-
 /**
  * Upload already-decoded RGBA32 pixels (tightly packed, top-down, `width * height * 4` bytes).
  * Same cache/LRU/eviction contract as GetOrLoadFromMemory, minus the stb decode step — for images

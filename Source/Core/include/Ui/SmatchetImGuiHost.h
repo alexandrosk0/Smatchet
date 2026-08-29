@@ -89,9 +89,6 @@ class SmatchetImGuiHost {
     void SetSuppressSoftwareCursor(bool suppress);
     bool GetSuppressSoftwareCursor() const;
 
-    AppController& GetAppController();
-    PluginHost& GetPluginHost();
-
     // Cache Unreal-side init options without starting networking/loading yet.
     // The host will call Initialize(options) lazily when the UI is shown.
     void SetInitOptions(const InitOptions& options);
