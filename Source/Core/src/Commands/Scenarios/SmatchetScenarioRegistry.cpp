@@ -93,7 +93,7 @@ void RegisterAllScenarios(ScenarioRunner& runner) {
     runner.RegisterFactory("code-syntax-coloring", []() { return ::MakeCodeSyntaxColoringScenario(); });
     // theme-switch-roundtrip — bucket-C guard for the user-reported residual-
     // colour bug on SmatchetDark <-> NortonCommander <-> SmatchetDark. See
-    // Source/Core/include/Commands/Scenarios/ThemeSwitchRoundtripScenario.h.
+    // Source/Core/src/Commands/Scenarios/ThemeSwitchRoundtripScenario.cpp.
     runner.RegisterFactory("theme-switch-roundtrip", []() { return ::MakeThemeSwitchRoundtripScenario(); });
     // User Info window bucket-C goldens — the responsive layout (desktop vs the
     // narrow breakpoint) crossed with the unified/separate VcsFeedLayout. Each

@@ -350,9 +350,9 @@ bool LoadTextureForResolvedPath(AppController& app, const std::string& resolved,
     if (resolved.rfind("https://", 0) == 0 || resolved.rfind("http://", 0) == 0) {
         return LoadOrFetchUrlImage(app, resolved, out, outError, outDeferred);
     }
-    // Pillar 2 — local-file branch: GetOrLoadFromFile internally ifstreams + decodes + uploads.
-    // Fast path: cache hit is cheap (no I/O). Slow path on cache miss is deferred to a worker —
-    // worker reads the bytes, posts back to UI thread for GPU texture upload via GetOrLoadFromMemory.
+    // Pillar 2 — local-file branch. Fast path: cache hit is cheap (no I/O). Slow path on cache
+    // miss is deferred to a worker — worker reads the bytes, posts back to UI thread for GPU
+    // texture upload via GetOrLoadFromMemory.
     const std::string cacheKey = std::string("file:") + resolved;
     if (SmatchetImageTextureCache::TryGetCached(cacheKey, out)) {
         return true;
@@ -624,17 +624,6 @@ bool TryGetInlineFieldIconTexture(const AppController& app, const TrackerField& 
         return false;
     }
     RememberPriorityResolution(rawValue, resolvedKey, label);
-    return true;
-}
-
-bool DrawInlineFieldIconIfAny(const AppController& app, const TrackerField& field, const std::string& rawValue) {
-    SmatchetLoadedIconTexture icon;
-    std::string err;
-    if (!TryGetInlineFieldIconTexture(app, field, rawValue, icon, err)) {
-        return false;
-    }
-    DrawLoadedIconSized(icon, ImGui::GetFrameHeight());
-    ImGui::SameLine(0.0f, 6.0f);
     return true;
 }
 

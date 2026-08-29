@@ -1522,20 +1522,5 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
 // `docs/plans/shipped/large-files-and-phase-2.md` § A4. Only call site is
 // `SmatchetUI::Draw` above (the declaration stays in `SmatchetUI.h`).
 
-namespace {
-
-template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
-    if (!f.valid()) {
-        return;
-    }
-    try {
-        f.wait();
-        (void)f.get();
-    } catch (...) { // catch-all-ok: swallow future exception on shutdown drain
-    }
-}
-
-} // namespace
-
 // `DrainUiDrawSessionFuturesBeforeAppTeardown` and `UiDrawSession::~UiDrawSession`
 // moved to `SmatchetUI_Layout.cpp` per `docs/plans/shipped/large-files-and-phase-2.md` § A4.

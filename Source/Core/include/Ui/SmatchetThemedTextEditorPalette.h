@@ -14,17 +14,9 @@
 // and re-apply on every Draw(). The widgets only need a `std::array<ImU32,N>`
 // copy per frame which is O(slots) and a handful of cache lines — negligible
 // against the per-frame ImGui draw cost.
-// The two builders below produce palettes for the two distinct embed sites:
-//   * GetThemedLuaConsolePalette — full code-editor palette (background, line
-//     numbers, cursor, etc.) with syntax slots overridden from the active
-//     SmatchetTheme palette.
-//   * GetThemedAiChatPalette — derived from the Lua-console palette but with
-//     three chat-specific overrides preserved (transparent background so the
-//     parent BeginChild bleed-through stays correct, off-white body text for
-//     prose readability, amber for user-role markers vs. theme-accent for
-//     assistant). These overrides are deliberately theme-INDEPENDENT — the
-//     chat panel is laid out by Smatchet, not the user's preferred IDE
-//     palette, so we keep its branding consistent across themes.
+// GetThemedLuaConsolePalette builds the full code-editor palette (background,
+// line numbers, cursor, etc.) with syntax slots overridden from the active
+// SmatchetTheme palette.
 
 #include "TextEditor.h"
 
@@ -35,9 +27,5 @@ namespace SmatchetTheme {
 // theme switches propagate instantly. Cheap by construction — sizeof(Palette)
 // is `21 * sizeof(ImU32)` = 84 bytes, two cache lines.
 TextEditor::Palette GetThemedLuaConsolePalette();
-
-// Same as GetThemedLuaConsolePalette but with the AI-chat-specific overlay
-// slots preserved (transparent bg, bright body text, amber user-role overlay).
-TextEditor::Palette GetThemedAiChatPalette();
 
 } // namespace SmatchetTheme

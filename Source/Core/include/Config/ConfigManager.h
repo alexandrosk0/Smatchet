@@ -770,9 +770,6 @@ class ConfigManager {
      *  at startup. `VoidOk()` on success; `VoidResult::Err(msg)` on a write failure. */
     static VoidResult SetStoragePreference(const std::string& runtimeAssetDir, StoragePreference pref);
 
-    /** Returns true iff the user has made an explicit choice (marker file exists). */
-    static bool HasExplicitStoragePreference(const std::string& runtimeAssetDir);
-
     /** Platform-resolved shared user-data directory (trailing separator). Empty when the
      *  OS doesn't expose the expected env vars (degraded — caller should fall back to
      *  the runtime asset dir). Cross-platform: %LOCALAPPDATA% \ macOS Library \ XDG. */

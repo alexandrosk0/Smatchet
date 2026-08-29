@@ -32,25 +32,9 @@
 #include "StringUtil.h"
 #include "Views.h"
 
-namespace {
 // SanitizeOfflineQueueDetail + FormatOfflineQueueTerminalLine moved to OfflineQueueService.cpp
 // alongside their only callers (TickOfflineCreates / TickOfflineFieldEdits) in Phase 1C of
 // the item 12 extraction.
-
-#if !defined(_WIN32)
-std::string EscapeShellArg(const std::string& value) {
-    std::string escaped;
-    escaped.reserve(value.size() + 8);
-    for (char c : value) {
-        if (c == '"' || c == '\\' || c == '`' || c == '$') {
-            escaped.push_back('\\');
-        }
-        escaped.push_back(c);
-    }
-    return escaped;
-}
-#endif
-} // namespace
 
 // --- Create-issue helpers -------------------------------------------------
 

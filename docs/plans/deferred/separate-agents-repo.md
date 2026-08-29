@@ -103,9 +103,9 @@ Trade-off: loses today's junction "edit-and-it's-live" property for the upstream
 
 Files to modify:
 
-- [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh) — add a `synth_overlay()` helper that reads upstream `agents/_shared/skills/<skill>/SKILL.md` and concatenates `agents-local/_shared/skills/<skill>/SMATCHET-NOTES.md` onto `.claude/skills/<skill>/SKILL.md`. Continue using junctions for purely-generic skills (`scratchpad-recall`, `token-tracking`).
-- [`agents/scripts/core/test-setup-harness.sh`](../../agents/scripts/core/test-setup-harness.sh) — add cases covering the synth step.
-- [`docs/harness/SETUP.md`](../harness/SETUP.md) — document submodule init step (`git submodule update --init --recursive`).
+- [`agents/scripts/core/setup-harness.sh`](../../../agents/scripts/core/setup-harness.sh) — add a `synth_overlay()` helper that reads upstream `agents/_shared/skills/<skill>/SKILL.md` and concatenates `agents-local/_shared/skills/<skill>/SMATCHET-NOTES.md` onto `.claude/skills/<skill>/SKILL.md`. Continue using junctions for purely-generic skills (`scratchpad-recall`, `token-tracking`).
+- [`agents/scripts/core/test-setup-harness.sh`](../../../agents/scripts/core/test-setup-harness.sh) — add cases covering the synth step.
+- [`docs/harness/SETUP.md`](../../harness/SETUP.md) — document submodule init step (`git submodule update --init --recursive`).
 
 Reuse existing helpers in `setup-harness.sh` (`link_dir`, `link_file`, `copy_template`) — see explore findings.
 
@@ -163,15 +163,15 @@ Phase 1 touches:
   - `.gitmodules` (new entry)
   - `agents/_shared/` → submodule
   - `agents-local/_shared/skills/{grill-with-docs,perf-instrument,perf-measure,perf-gatekeeper}/SMATCHET-NOTES.md` (new)
-  - [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh) — add `synth_overlay()` helper
-  - [`agents/scripts/core/test-setup-harness.sh`](../../agents/scripts/core/test-setup-harness.sh)
-  - [`docs/harness/SETUP.md`](../harness/SETUP.md)
-  - [`.github/workflows/doc-validation.yml`](../../.github/workflows/doc-validation.yml)
-  - [`.github/workflows/build-and-test.yml`](../../.github/workflows/build-and-test.yml)
+  - [`agents/scripts/core/setup-harness.sh`](../../../agents/scripts/core/setup-harness.sh) — add `synth_overlay()` helper
+  - [`agents/scripts/core/test-setup-harness.sh`](../../../agents/scripts/core/test-setup-harness.sh)
+  - [`docs/harness/SETUP.md`](../../harness/SETUP.md)
+  - [`.github/workflows/doc-validation.yml`](../../../.github/workflows/doc-validation.yml)
+  - [`.github/workflows/build-and-test.yml`](../../../.github/workflows/build-and-test.yml)
 
 ## Existing utilities to reuse
 
-- `link_dir()` / `link_file()` / `copy_template()` in [`agents/scripts/core/setup-harness.sh`](../../agents/scripts/core/setup-harness.sh).
+- `link_dir()` / `link_file()` / `copy_template()` in [`agents/scripts/core/setup-harness.sh`](../../../agents/scripts/core/setup-harness.sh).
 - Junction-vs-symlink platform branching already in place.
 - `.gitignore` already covers `.claude/`, `.codex/`, `.cursor/` — no change needed for adapter dirs.
 - Existing `SMATCHET-NOTES.md` pattern in `agents/_shared/skills/grill-with-docs/` becomes the template for all overlay notes.
