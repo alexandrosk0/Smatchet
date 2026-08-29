@@ -84,6 +84,14 @@ resync_script() {  # <tree> — path to a worktree.sh whose REPO_ROOT is <tree>
 }
 
 resync_seed() {   # <tree>  — own entry + a live sibling + a dead-and-stale sibling
+    # Pin the POSIX liveness branch (as session_registry / plan_lock_gate /
+    # guard_plan_lock all do). `live-sib` carries ppid=$$ — an AUTHORITATIVE pid
+    # (>4), so sr_entry_is_live trusts the pid and ignores the fresh ts. On the
+    # Windows branch that pid is checked against a `claude.exe` tasklist
+    # snapshot, which a bats bash never appears in, so on git-bash the live
+    # sibling would read DEAD, get rewritten, and fail the #1958 safety
+    # assertion. `kill -0 $$` is unambiguously live everywhere.
+    export SMATCHET_REGISTRY_OS=posix
     local d="$1/.claude/.active-sessions" now; now="$(date +%s)"
     mkdir -p "$d"
     printf 'branch=old\nsha=dead\nppid=%s\nts=%s\n' "$$" "$now"           > "$d/mine"
