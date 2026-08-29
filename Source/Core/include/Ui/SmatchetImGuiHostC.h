@@ -34,7 +34,6 @@ void SmatchetHost_SetInitOptions(SmatchetImGuiHostHandle host, const char* dbPat
                                  void* rendererResource2, void* nativeCommandQueue, SmatchetOpenUrlFn openUrlFn,
                                  void* openUrlUserData, SmatchetAttachmentViewerFn attachmentViewerFn,
                                  void* attachmentViewerUserData);
-bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int colorFormat);
 /** D3D12: total SRV descriptors in RendererResource0 heap. Slot 0 is reserved for the font atlas,
  *  slots 1..N-1 are used by the dynamic-texture SRV allocator (attachment thumbnails, etc.).
  *  Call after SmatchetHost_SetInitOptions and before the first BeginFrame. Default is 1. */
@@ -98,7 +97,6 @@ void SmatchetHost_RenderDrawData(SmatchetImGuiHostHandle host, int rendererBacke
 void SmatchetHost_SetMousePosition(SmatchetImGuiHostHandle host, float x, float y);
 void SmatchetHost_SetMouseButton(SmatchetImGuiHostHandle host, int button, bool isDown);
 void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, float wheelY);
-void SmatchetHost_SetKeyDown(SmatchetImGuiHostHandle host, int imguiKey, bool isDown);
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey);
 void SmatchetHost_ApplyKeyChordDown(SmatchetImGuiHostHandle host, int imguiKey, bool ctrl, bool shift, bool alt,
                                     bool superKey);
