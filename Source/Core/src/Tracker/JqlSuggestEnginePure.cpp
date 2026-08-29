@@ -129,21 +129,6 @@ static bool IsNonSystemTrackerUser(const TrackerUser& user) {
     return user.AccountType != "app" && user.AccountType != "customer";
 }
 
-/// Build the JQL value-token for a user. Prefer the display name (more readable in the
-/// query), else the accountId. Both originate from the tracker server, so both are
-/// JQL-escaped through tracker_jql::QuoteLiteral before the surrounding quotes are added —
-/// a `"` or `\` in either field is escaped, never allowed to break out of the literal
-/// (security: H3 + E1).
-static std::string BuildJqlUserInsert(const TrackerUser& user) {
-    if (!user.DisplayName.empty()) {
-        return "\"" + tracker_jql::QuoteLiteral(user.DisplayName) + "\"";
-    }
-    if (!user.AccountId.empty()) {
-        return "\"" + tracker_jql::QuoteLiteral(user.AccountId) + "\"";
-    }
-    return user.DisplayName;
-}
-
 /// Emit non-system users from the cached catalog as JQL value suggestions, matched
 /// case-insensitively anywhere inside display name + email — typing a surname ("smith")
 /// or a mail domain finds the account, not just typing the leading characters. Prefix
@@ -467,6 +452,21 @@ void AppendJqlSuggestionsForMode(JqlSuggestMode mode, const std::vector<TrackerF
 }
 
 } // namespace
+
+/// Build the JQL value-token for a user. Prefer the display name (more readable in the
+/// query), else the accountId. Both originate from the tracker server, so both are
+/// JQL-escaped through tracker_jql::QuoteLiteral before the surrounding quotes are added —
+/// a `"` or `\` in either field is escaped, never allowed to break out of the literal
+/// (security: H3 + E1).
+std::string BuildJqlUserInsert(const TrackerUser& user) {
+    if (!user.DisplayName.empty()) {
+        return "\"" + tracker_jql::QuoteLiteral(user.DisplayName) + "\"";
+    }
+    if (!user.AccountId.empty()) {
+        return "\"" + tracker_jql::QuoteLiteral(user.AccountId) + "\"";
+    }
+    return user.DisplayName;
+}
 
 void BuildJqlSuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                              const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,

@@ -7,6 +7,7 @@
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetAutocompleteUi.h"
 #include "UiPerfMonitor.h"
 
 #include "IconsFontAwesome6.h"
@@ -170,7 +171,15 @@ void SmatchetUI::applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPan
     default:
         break;
     }
-    switch (applyQueryToPaneView(app, d, target, input)) {
+    // The editor buffer holds display names on Jira — apply the id-canonical form so the
+    // view of record and the backend both see accountIds. Gate on the PANE's backend (the
+    // omnibar is per-pane; d.cfg.TrackerType may describe a different pane's backend).
+    const std::string query =
+        backend == omni::OmnibarBackend::Jira
+            ? TrackerQueryAcp_QueryWithAccountIds(app.GetAvailableFields(), app.GetAvailableUsers(),
+                                                  d.omniJqlEditor, input)
+            : input;
+    switch (applyQueryToPaneView(app, d, target, query)) {
     case ApplyQueryResult::Ok:
         break; // happy path — the grid re-runs; no toast needed.
     case ApplyQueryResult::ViewUnavailable:

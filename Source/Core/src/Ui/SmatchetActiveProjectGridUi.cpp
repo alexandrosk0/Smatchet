@@ -4,6 +4,7 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetDockNodeIds.h" // central-node re-dock for extra panes on a layout reset
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetAutocompleteUi.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
@@ -564,7 +565,13 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             // Commit editing buffers + currently-stored widths/sort onto the active view.
             ViewDefinition updated = *activeViewForGrid;
             updated.Name = d.viewNameBuf[0] ? std::string(d.viewNameBuf) : activeViewForGrid->Name;
-            updated.Jql = d.viewJqlEditor.buf[0] ? std::string(d.viewJqlEditor.buf) : activeViewForGrid->Jql;
+            // The editor buffer holds display names on Jira — persist the id-canonical query
+            // of record (names reverse-mapped to account ids) instead of the display form.
+            updated.Jql = d.viewJqlEditor.buf[0]
+                              ? TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
+                                                                       app.GetAvailableUsers(), d.viewJqlEditor,
+                                                                       std::string(d.viewJqlEditor.buf))
+                              : activeViewForGrid->Jql;
             // Authoritative selection set, not the truncating buffer (#views-field-uncheck) — a
             // large selection persists in full instead of being clipped on disk at the 1023-byte cap.
             const std::vector<std::string> editedFields =
@@ -696,7 +703,10 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
                 created.Fields = editedFields;
             }
             if (d.viewJqlEditor.buf[0]) {
-                created.Jql = d.viewJqlEditor.buf;
+                // Reverse-map display names to account ids (see the unsaved-strip Save above).
+                created.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, ctx.app.GetAvailableFields(),
+                                                                     ctx.app.GetAvailableUsers(), d.viewJqlEditor,
+                                                                     std::string(d.viewJqlEditor.buf));
             }
             d.viewsPendingCreate = true;
             d.viewsPendingCreatePayload = std::move(created);

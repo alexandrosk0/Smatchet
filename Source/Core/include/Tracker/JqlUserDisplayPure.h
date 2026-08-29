@@ -3,13 +3,15 @@
 #include <string>
 #include <vector>
 
-struct TrackerUser; // Tracker/TrackerFieldSchema.h
+struct TrackerField; // Tracker/TrackerFieldSchema.h
+struct TrackerUser;  // Tracker/TrackerFieldSchema.h
 
-/// Presentation helpers that turn the opaque account identifiers a tracker query carries
-/// into the display names a human recognises. JQL on Jira Cloud can only match a user by
-/// accountId (`assignee = "712020:00aa4ab4-…"`), so the query text of record must keep the
-/// id — these render a readable ECHO of it, never the query sent to the backend. Pure:
-/// plain string / vector transforms, no ImGui, no backend, no I/O.
+/// Two-way translation between the opaque account identifiers a tracker query carries and
+/// the display names a human recognises. The JQL editor buffer holds the readable name form
+/// (`assignee = "Jane Doe"`); the query of record on the wire and on disk stays id-canonical
+/// (`assignee = "712020:00aa4ab4-…"`) — RenderQueryWithUserNames maps id→name for display
+/// and RenderQueryWithAccountIds maps name→id at the apply boundaries. Pure: plain
+/// string / vector transforms, no ImGui, no backend, no I/O.
 namespace jql_user_display {
 
 /// True when `token` is an opaque account identifier rather than human-readable text: a
@@ -36,5 +38,17 @@ std::string UnquoteValueToken(const std::string& text);
 /// it; unmatched tokens are left byte-for-byte. `outReplaced`, when non-null, receives the
 /// substitution count — 0 means the caller should show the raw query and skip the echo.
 std::string RenderQueryWithUserNames(const std::string& query, const std::vector<TrackerUser>& users, int* outReplaced);
+
+/// Rewrite `query` for the WIRE: inside the value position of a user-type field (resolved
+/// against `fields` via FindTrackerField + IsQueryUserField), a value token that uniquely
+/// case-insensitively matches a `TrackerUser::DisplayName` becomes that user's AccountId,
+/// re-quoted as the id needs. Everything else — other fields' values, keywords, tokens that
+/// already look like account ids, unknown or ambiguous names — is left byte-for-byte, so an
+/// unresolvable name reaches the backend as typed and fails loudly rather than silently.
+/// `users` must be ONE merged vector (catalog + search-resolved) — uniqueness is judged
+/// across all known users at once. `outReplaced`, when non-null, receives the substitution
+/// count.
+std::string RenderQueryWithAccountIds(const std::string& query, const std::vector<TrackerField>& fields,
+                                      const std::vector<TrackerUser>& users, int* outReplaced);
 
 } // namespace jql_user_display

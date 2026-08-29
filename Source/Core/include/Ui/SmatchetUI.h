@@ -473,7 +473,7 @@ class SmatchetUI {
     void applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPane& target, const std::string& raw);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
-    void viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView);
+    void viewsCreateNewView(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     /// Consumes the one-frame deferred view-create latch (UiDrawSession::viewsPendingCreate —
     /// Pillar 3 crash fix: a mid-frame Views::Create reallocates store.Views and dangles every
     /// ViewDefinition* resolved earlier in the frame). Called at the top of Draw, BEFORE any

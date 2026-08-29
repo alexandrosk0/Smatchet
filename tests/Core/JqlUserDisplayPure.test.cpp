@@ -160,3 +160,120 @@ TEST_CASE("jql_user_display::RenderQueryWithUserNames tolerates degenerate input
     // A null out-parameter is legal.
     CHECK(jql_user_display::RenderQueryWithUserNames(jql, Catalog(), nullptr) == "assignee = \"Alex Konstantonis\"");
 }
+
+namespace {
+
+TrackerField MakeUserField(const std::string& id, const std::string& name) {
+    TrackerField f;
+    f.Id = id;
+    f.Name = name;
+    f.IsUserType = true;
+    return f;
+}
+
+std::vector<TrackerField> Fields() {
+    std::vector<TrackerField> fields;
+    fields.push_back(MakeUserField("assignee", "Assignee"));
+    fields.push_back(MakeUserField("reporter", "Reporter"));
+    TrackerField status;
+    status.Id = "status";
+    status.Name = "Status";
+    fields.push_back(status); // non-user field: values never map
+    return fields;
+}
+
+} // namespace
+
+TEST_CASE("jql_user_display::RenderQueryWithAccountIds maps a display name in a user field") {
+    int replaced = -1;
+    CHECK(jql_user_display::RenderQueryWithAccountIds("assignee = \"Jane Doe\"", Fields(), Catalog(), &replaced) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5");
+    CHECK(replaced == 1);
+
+    // Case-insensitive on both the field token and the name; ids with ':' re-quote.
+    CHECK(jql_user_display::RenderQueryWithAccountIds("ASSIGNEE = \"alex konstantonis\"", Fields(), Catalog(),
+                                                      &replaced) ==
+          "ASSIGNEE = \"712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93\"");
+    CHECK(replaced == 1);
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithAccountIds leaves non-user fields and ids untouched") {
+    int replaced = -1;
+    // Same literal under a non-user field: not a name position.
+    const std::string status = "status = \"Jane Doe\"";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(status, Fields(), Catalog(), &replaced) == status);
+    CHECK(replaced == 0);
+
+    // Already an account id: passthrough, no double-mapping.
+    const std::string asId = "assignee = \"5b10ac8d82e05b22cc7d4ef5\"";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(asId, Fields(), Catalog(), &replaced) == asId);
+    CHECK(replaced == 0);
+
+    // Unknown name: reaches the backend as typed (fails loudly there, never silently guessed).
+    const std::string unknown = "assignee = \"Nobody Known\"";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(unknown, Fields(), Catalog(), &replaced) == unknown);
+    CHECK(replaced == 0);
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithAccountIds walks an IN list and stops at clause breaks") {
+    int replaced = -1;
+    CHECK(jql_user_display::RenderQueryWithAccountIds("assignee IN (\"Jane Doe\", \"Alex Konstantonis\")", Fields(),
+                                                      Catalog(), &replaced) ==
+          "assignee IN (5b10ac8d82e05b22cc7d4ef5, \"712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93\")");
+    CHECK(replaced == 2);
+
+    // AND ends the value position; the next clause's non-user value stays as typed.
+    CHECK(jql_user_display::RenderQueryWithAccountIds("assignee = \"Jane Doe\" AND status = \"Jane Doe\"", Fields(),
+                                                      Catalog(), &replaced) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5 AND status = \"Jane Doe\"");
+    CHECK(replaced == 1);
+
+    // ORDER BY ends it too — a sort key sharing a user's name is not a value.
+    CHECK(jql_user_display::RenderQueryWithAccountIds("assignee WAS \"Jane Doe\" ORDER BY created", Fields(),
+                                                      Catalog(), &replaced) ==
+          "assignee WAS 5b10ac8d82e05b22cc7d4ef5 ORDER BY created");
+    CHECK(replaced == 1);
+
+    // Back-to-back user clauses: a bare field token switches the state without an explicit AND.
+    CHECK(jql_user_display::RenderQueryWithAccountIds("assignee = \"Jane Doe\" reporter = \"Jane Doe\"", Fields(),
+                                                      Catalog(), &replaced) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5 reporter = 5b10ac8d82e05b22cc7d4ef5");
+    CHECK(replaced == 2);
+
+    // Operator keywords keep the value position open without reading as names.
+    const std::string isEmpty = "assignee IS NOT EMPTY";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(isEmpty, Fields(), Catalog(), &replaced) == isEmpty);
+    CHECK(replaced == 0);
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithAccountIds resolves names only when unique") {
+    // Two DIFFERENT accounts sharing a display name: ambiguous, left as typed.
+    std::vector<TrackerUser> twins = Catalog();
+    twins.push_back(MakeUser("999999:duplicate-name-account", "Jane Doe"));
+    int replaced = -1;
+    const std::string jql = "assignee = \"Jane Doe\"";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(jql, Fields(), twins, &replaced) == jql);
+    CHECK(replaced == 0);
+
+    // The SAME account listed twice (catalog + search-resolved merge): still one match.
+    std::vector<TrackerUser> merged = Catalog();
+    merged.push_back(MakeUser("5b10ac8d82e05b22cc7d4ef5", "Jane Doe"));
+    CHECK(jql_user_display::RenderQueryWithAccountIds(jql, Fields(), merged, &replaced) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5");
+    CHECK(replaced == 1);
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithAccountIds tolerates degenerate input") {
+    int replaced = -1;
+    CHECK(jql_user_display::RenderQueryWithAccountIds("", Fields(), Catalog(), &replaced) == "");
+    CHECK(replaced == 0);
+
+    // Empty users: nothing resolvable, query returned untouched.
+    const std::string jql = "assignee = \"Jane Doe\"";
+    CHECK(jql_user_display::RenderQueryWithAccountIds(jql, Fields(), std::vector<TrackerUser>(), &replaced) == jql);
+    CHECK(replaced == 0);
+
+    // A null out-parameter is legal.
+    CHECK(jql_user_display::RenderQueryWithAccountIds(jql, Fields(), Catalog(), nullptr) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5");
+}

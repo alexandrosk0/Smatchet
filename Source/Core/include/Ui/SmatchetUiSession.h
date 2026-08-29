@@ -262,7 +262,7 @@ struct JqlEditorState {
     /// this side-channel asks the backend for exactly those ids. `jqlIdResolveAttempted`
     /// keeps ids we already asked about (found or not) so an id the backend does not know
     /// is fetched once per session, not once per keystroke; `jqlIdResolveScanSource`
-    /// memoises the per-frame scan the same way the echo memo does.
+    /// memoises the per-frame scan the same way the name-rewrite memo does.
     std::future<JqlUserSearchResult> jqlIdResolveFuture;
     bool jqlIdResolveInFlight = false;
     std::vector<std::string> jqlIdResolveAttempted;
@@ -276,16 +276,19 @@ struct JqlEditorState {
     double jqlIdResolveRetryAt = 0.0;
     int jqlIdResolveFailures = 0;
 
-    /// Memo for the readable echo. `jqlUserEchoSource` is the exact buffer the `jqlUserEcho`
-    /// text was rendered from and `jqlUserEchoCatalog*` identify the user-catalog snapshot it
-    /// resolved names against, so the transform runs on a real change only and a steady frame
-    /// costs one string compare plus two scalar compares (Pillar 1). The search-resolved list
-    /// is not keyed here — it clears `jqlUserEchoValid` directly when it changes.
-    std::string jqlUserEcho;
-    std::string jqlUserEchoSource;
-    const void* jqlUserEchoCatalogData = nullptr;
-    size_t jqlUserEchoCatalogSize = 0;
-    bool jqlUserEchoValid = false;
+    /// Memo for the in-place id→name buffer rewrite. `jqlNameRewriteSource` is the exact
+    /// (post-rewrite) buffer content the last pass ran on and `jqlNameRewriteCatalog*`
+    /// identify the user-catalog snapshot it resolved names against, so the transform runs
+    /// on a real change only and a steady frame costs one string compare plus two scalar
+    /// compares (Pillar 1). The search-resolved list is not keyed here — it clears
+    /// `jqlNameRewriteValid` directly when it changes. `jqlBufSemanticRewrite` latches when
+    /// a rewrite actually mutated `buf`; the views dirty-compare consumes (reads + clears)
+    /// it so the cosmetic rewrite never marks the view dirty.
+    std::string jqlNameRewriteSource;
+    const void* jqlNameRewriteCatalogData = nullptr;
+    size_t jqlNameRewriteCatalogSize = 0;
+    bool jqlNameRewriteValid = false;
+    bool jqlBufSemanticRewrite = false;
 };
 
 struct UiDrawSession {

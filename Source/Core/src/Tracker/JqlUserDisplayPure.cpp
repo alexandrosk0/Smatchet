@@ -204,4 +204,105 @@ std::vector<std::string> CollectUnresolvedAccountIds(const std::string& query,
     return out;
 }
 
+namespace {
+
+/// Lower-case ASCII copy for the keyword / name comparisons below.
+std::string AsciiLowered(const std::string& s) {
+    std::string out(s);
+    for (size_t i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(out[i])));
+    }
+    return out;
+}
+
+/// True when `tokenLowered` is a clause boundary that ends any field's value position
+/// (`AND`, `OR`, `ORDER BY`).
+bool IsClauseBreakKeyword(const std::string& tokenLowered) {
+    return tokenLowered == "and" || tokenLowered == "or" || tokenLowered == "order";
+}
+
+/// Operator / literal keywords that may legally sit between a user field and its value(s)
+/// (`assignee IN (…)`, `assignee IS NOT EMPTY`, `assignee WAS …`) — they keep the value
+/// position open rather than reading as a candidate name.
+bool IsValuePositionKeyword(const std::string& tokenLowered) {
+    return tokenLowered == "in" || tokenLowered == "not" || tokenLowered == "is" || tokenLowered == "was" ||
+           tokenLowered == "changed" || tokenLowered == "empty" || tokenLowered == "null";
+}
+
+/// Resolve a display name to its account id — but only when the match is UNIQUE across
+/// `users` (the same account listed twice, e.g. catalog + search-resolved, still counts as
+/// one). Two different accounts sharing the name return "" so an ambiguous name is left as
+/// typed instead of silently picking one.
+std::string UniqueAccountIdForName(const std::string& nameLowered, const std::vector<TrackerUser>& users) {
+    std::string found;
+    for (size_t i = 0; i < users.size(); ++i) {
+        if (users[i].AccountId.empty() ||
+            !tracker_query_suggest::AsciiEqualsIgnoreCaseToLowered(users[i].DisplayName, nameLowered)) {
+            continue;
+        }
+        if (found.empty()) {
+            found = users[i].AccountId;
+        } else if (found != users[i].AccountId) {
+            return std::string();
+        }
+    }
+    return found;
+}
+
+} // namespace
+
+std::string RenderQueryWithAccountIds(const std::string& query, const std::vector<TrackerField>& fields,
+                                      const std::vector<TrackerUser>& users, int* outReplaced) {
+    if (outReplaced != nullptr) {
+        *outReplaced = 0;
+    }
+    if (query.empty() || users.empty()) {
+        return query;
+    }
+    std::string out;
+    out.reserve(query.size());
+    int replaced = 0;
+    // Value-position state machine: `inUserValue` is set while the most recent field token
+    // was a user-type field and no clause break has ended its value position. Parens and
+    // commas flow through onOther, so `assignee IN ("a", "b")` keeps the state across the
+    // whole list.
+    bool inUserValue = false;
+    ForEachValueToken(
+        query,
+        [&](const std::string& token, size_t spanStart, size_t spanEnd) {
+            const bool quoted = query[spanStart] == '"';
+            const std::string tokenLowered = AsciiLowered(token);
+            if (!quoted && IsClauseBreakKeyword(tokenLowered)) {
+                inUserValue = false;
+            } else if (inUserValue && (quoted || !IsValuePositionKeyword(tokenLowered))) {
+                if (!LooksLikeAccountId(token)) {
+                    const std::string accountId = UniqueAccountIdForName(tokenLowered, users);
+                    if (!accountId.empty()) {
+                        out.append(tracker_query_suggest::InsertForValueToken(accountId));
+                        ++replaced;
+                        return; // replaced; stay in value position (IN-list continues)
+                    }
+                    // Not a known name — a bare token here may instead START the next clause
+                    // (sloppy input can omit the explicit AND), so let a field match switch
+                    // the state; otherwise pass through as typed.
+                    if (!quoted) {
+                        const TrackerField* f = tracker_query_suggest::FindTrackerField(fields, token);
+                        if (f != nullptr) {
+                            inUserValue = tracker_query_suggest::IsQueryUserField(*f);
+                        }
+                    }
+                }
+            } else if (!quoted && !inUserValue) {
+                const TrackerField* f = tracker_query_suggest::FindTrackerField(fields, token);
+                inUserValue = f != nullptr && tracker_query_suggest::IsQueryUserField(*f);
+            }
+            out.append(query, spanStart, spanEnd - spanStart);
+        },
+        [&](char c) { out.push_back(c); });
+    if (outReplaced != nullptr) {
+        *outReplaced = replaced;
+    }
+    return out;
+}
+
 } // namespace jql_user_display

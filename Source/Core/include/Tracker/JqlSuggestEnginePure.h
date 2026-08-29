@@ -20,3 +20,9 @@
 void BuildJqlSuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                              const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,
                              QuerySuggestBuild& out, QuerySuggestMeta* metaOut = nullptr);
+
+/// Build the JQL value-token for a user: the display name (else accountId), always
+/// double-quoted, JQL-escaped through tracker_jql::QuoteLiteral (security: H3 + E1).
+/// Shared by the catalog suggestions and the async user-search rows so both insert
+/// byte-identical text and dedup-by-insert holds across the two sources.
+std::string BuildJqlUserInsert(const TrackerUser& user);

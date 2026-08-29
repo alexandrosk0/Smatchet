@@ -87,7 +87,25 @@ line under the bar translated ids to names, but the user rejected that design:
   still hits Jira correctly.
 
 ## Implementation log
-_(filled post-ship)_
+- 2026-08-29: echo (`TrackerQueryAcp_DrawUserEcho`) deleted; input buffer now holds display
+  names via `TrackerQueryAcp_ApplyUserNamesToBuffer` (idle-only: not focused, no pending
+  replace, Jira-only), memoised through `jqlNameRewrite*` + consumed-by-dirty-compare
+  `jqlBufSemanticRewrite`.
+- Reverse map name->id at every apply boundary: dashboard `BuildUpdatedView` (both save
+  paths, `app` threaded through decl/def/2 lambdas/2 direct calls), open-in-browser URL,
+  omnibar Enter (gated on the PANE's backend, not `d.cfg.TrackerType`), grid unsaved-strip
+  Save, grid Save-as-new.
+- `RenderQueryWithAccountIds` doctests: 6 TEST_CASEs (name->id, non-user/id/unknown
+  passthrough, IN-list + clause breaks + field-switch, unique-vs-ambiguous names,
+  degenerates) — 15 jql_user_display cases / 75 assertions green.
 
 ## Deviations
-_(none yet)_
+- **Scope add — `TrackerQueryAcp_CanonicalQueryForApply`** (SmatchetAutocompleteUi.{h,cpp}):
+  wrapper folding the Jira gate + reverse map so the 4 cfg-gated boundaries are one-call
+  sites (DRY, keeps `TrackerBackendKind.h` out of 3 TUs). Omnibar deliberately bypasses it:
+  its gate vocabulary is the pane's `OmnibarBackend`, not `cfg.TrackerType`.
+- **Scope add — grid Save boundaries**: plan listed only the dashboard boundaries; the grid
+  unsaved-strip Save and Save-as-new popup also persist `viewJqlEditor.buf` and needed the
+  same reverse map.
+- `omniJqlEditor.jqlBufSemanticRewrite` has no consumer (latches harmlessly — omnibar has
+  no dirty-compare). Accepted.

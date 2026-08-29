@@ -2,6 +2,7 @@
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetAutocompleteUi.h"
 #include "AppController.h"
 #include "Views.h"
 #include "ConfigManager.h"
@@ -93,10 +94,14 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewsTitleEditing = false;
 }
 
-ViewDefinition BuildUpdatedView(const ViewDefinition& base, const UiDrawSession& d) {
+ViewDefinition BuildUpdatedView(AppController& app, const ViewDefinition& base, const UiDrawSession& d) {
     ViewDefinition updated = base;
     updated.Name = d.viewNameBuf;
-    updated.Jql = d.viewJqlEditor.buf;
+    // The editor buffer holds the readable name form on Jira (TrackerQueryAcp_ApplyUserNamesToBuffer);
+    // the view of record keeps the id-canonical query, so reverse-map names back to account ids here.
+    updated.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
+                                                         app.GetAvailableUsers(), d.viewJqlEditor,
+                                                         std::string(d.viewJqlEditor.buf));
     // Read the authoritative set (#views-field-uncheck), not the truncating buffer, so a
     // >1023-byte selection persists ALL fields on save instead of being clipped on disk.
     updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
@@ -258,7 +263,7 @@ ViewsDashboardDrawCtx SmatchetUI::buildMobileViewsCtx(AppController& app, UiDraw
             d.mobileDrawerOpen = false;
         }
     };
-    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
+    auto createNewView = [this, &app, &d, activeView]() { viewsCreateNewView(app, d, activeView); };
 
     return ViewsDashboardDrawCtx{
         app,         d, store, activeView, sidebarWidth, applyAndSync, discardChanges, createNewView, requestActivate,
@@ -325,7 +330,7 @@ void SmatchetUI::drawMobileViewQuickSwitcher(AppController& app, UiDrawSession& 
             ImGui::SameLine();
         }
         if (ImGui::Button("+##MobileNewView")) {
-            viewsCreateNewView(d, activeView); // deferred-create latch; consumed next frame
+            viewsCreateNewView(app, d, activeView); // deferred-create latch; consumed next frame
         }
     }
     ImGui::EndChild();
@@ -444,7 +449,12 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         }
         if (ImGui::SmallButton(isPlane ? "Open##Query" : "Open in browser")) {
             if (!isPlane) {
-                app.OpenUrl(app.BuildJqlSearchUrl(d.cfg, currentJql));
+                // The buffer holds display names on Jira — hand the browser the id-canonical
+                // query (names reverse-mapped) so the search matches what the view runs.
+                app.OpenUrl(app.BuildJqlSearchUrl(
+                    d.cfg, TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
+                                                                  app.GetAvailableUsers(), d.viewJqlEditor,
+                                                                  currentJql)));
             }
         }
         if (disableOpenJql) {
@@ -455,7 +465,11 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         std::memcpy(beforeJql, d.viewJqlEditor.buf, sizeof(beforeJql));
         SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d, d.viewJqlEditor);
         // Compare content, not just length — a same-length edit ("abc" -> "xyz") still dirties (#6).
-        if (std::strcmp(d.viewJqlEditor.buf, beforeJql) != 0) {
+        // The cosmetic id->name rewrite consumes its flag here so it never marks the view dirty
+        // (typing needs focus, the rewrite needs no focus — the two can't co-occur in a frame).
+        const bool semanticRewrite = d.viewJqlEditor.jqlBufSemanticRewrite;
+        d.viewJqlEditor.jqlBufSemanticRewrite = false;
+        if (!semanticRewrite && std::strcmp(d.viewJqlEditor.buf, beforeJql) != 0) {
             d.viewsDirty = true;
         }
         ImGui::TextDisabled(isPlane
@@ -972,7 +986,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
     auto requestActivate = [this, &app, &d, activeView](const std::string& id) {
         viewsRequestActivate(app, d, activeView, id);
     };
-    auto createNewView = [this, &d, activeView]() { viewsCreateNewView(d, activeView); };
+    auto createNewView = [this, &app, &d, activeView]() { viewsCreateNewView(app, d, activeView); };
 
     handleViewsDashboardShortcuts(app, d, activeView);
 
@@ -1050,7 +1064,7 @@ void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const V
         return;
     }
     ReconcileEditingColumnOrder(d);
-    ViewDefinition updated = BuildUpdatedView(*activeView, d);
+    ViewDefinition updated = BuildUpdatedView(app, *activeView, d);
     if (ViewState.UpdateActive(updated)) {
         d.cfg.JqlQuery = updated.Jql;
         d.cfg.SelectedFields = updated.Fields;
@@ -1126,9 +1140,9 @@ void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, cons
 // dangles every ViewDefinition* resolved this frame (this window's ctx.activeView, the
 // captured action lambdas, each pane's activeViewForGrid). The payload is copied while
 // *activeView is still valid; applyPendingViewCreate consumes the latch next frame.
-void SmatchetUI::viewsCreateNewView(UiDrawSession& d, const ViewDefinition* activeView) {
+void SmatchetUI::viewsCreateNewView(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     ReconcileEditingColumnOrder(d);
-    ViewDefinition created = BuildUpdatedView(*activeView, d);
+    ViewDefinition created = BuildUpdatedView(app, *activeView, d);
     created.Name = "New View";
     created.Id.clear();
     d.viewsPendingCreate = true;
@@ -1214,7 +1228,7 @@ void SmatchetUI::handleViewsDashboardShortcuts(AppController& app, UiDrawSession
         if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter)) {
             viewsApplyAndSync(app, d, activeView);
         } else if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N)) {
-            viewsCreateNewView(d, activeView);
+            viewsCreateNewView(app, d, activeView);
         }
     }
 }
