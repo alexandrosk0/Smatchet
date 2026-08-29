@@ -10,10 +10,9 @@
 // selection layer.
 // Usage:
 //   auto& ctx = SelectableText::Begin("##MyPreview");
-//   for (each styled run already drawn by the caller) {
-//       SelectableText::RegisterSegment(ctx, runBegin, runEnd, screenPos, lineH,
-//                                       runFont, runWidth, hrefOpaque);
-//   }
+//   ...then, for each styled run the caller has already drawn, record it via
+//   SelectableText::RegisterSegment with the run's text bounds, screen
+//   position, line height, font, width and optional hrefOpaque — see below.
 //   SelectableText::EndBlock(ctx);  // optional — call after each markdown block
 //                                    // so Ctrl+C inserts a newline between them.
 //   SelectableText::End(ctx);       // services mouse + Ctrl+C, draws overlay.

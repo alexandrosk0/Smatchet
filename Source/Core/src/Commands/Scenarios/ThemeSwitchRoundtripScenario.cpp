@@ -9,8 +9,8 @@
 // straight into SmatchetDark" capture — any colour drift, even a single ImU32
 // in one TextEditor pane, breaks the diff. Tolerance is the standard L∞ ≤ 4
 // used by the rest of bucket-C so AA / sub-pixel rounding can't trip the gate.
-// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU;
-// the screenshot path is renderer-agnostic (GL front-buffer readback or DX12
+// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
+// The screenshot path is renderer-agnostic (GL front-buffer readback or DX12
 // swapchain back-buffer capture); CI pins the bucket-C launch to
 // `--renderer=gl` to keep the Mesa-rendered goldens byte-stable.
 // The factory (`MakeThemeSwitchRoundtripScenario`) is `extern`-declared by
