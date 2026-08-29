@@ -5,10 +5,10 @@
 // ImGuiStyle path (Colors[] reseed, ImGuiStyle{} full reset, theme-aware
 // TextEditor::Palette refresh in AiChat + LuaConsole editors); this scenario
 // pins the result so a future regression in any of those layers breaks the
-// pixel diff. The expected output is BYTE-FOR-BYTE identical to a clean "boot
-// straight into SmatchetDark" capture — any colour drift, even a single ImU32
-// in one TextEditor pane, breaks the diff. Tolerance is the standard L∞ ≤ 4
-// used by the rest of bucket-C so AA / sub-pixel rounding can't trip the gate.
+// pixel diff. The expected output matches a clean "boot straight into
+// SmatchetDark" capture within the standard bucket-C per-channel L∞ ≤ 4
+// tolerance (absorbs AA / sub-pixel rounding); any real colour drift beyond
+// that — one leaked palette slot in one TextEditor pane — breaks the diff.
 // The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
 // The screenshot path is renderer-agnostic (GL front-buffer readback or DX12
 // swapchain back-buffer capture); CI pins the bucket-C launch to

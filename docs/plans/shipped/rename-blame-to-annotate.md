@@ -1,8 +1,12 @@
 # Plan — Rename Blame → Annotate, then cleanup Annotate UI preferences
 <!-- plan-date: 2026-05-30 -->
 
-> **Status:** WIP plan, ready for a worker to execute. Phase 1 (rename) lands first as
-> its own PR; Phase 2 (prefs cleanup) rebases onto the new names as a follow-up PR.
+> **Status:** SHIPPED (banner reconciled 2026-08-29 when this doc moved from the retired
+> `docs/design/` directory to the shipped tier). Phase 1 (rename) verified: zero `Blame`
+> identifiers remain in `Source/` — `AnnotateAnalysisUi*` is the live naming. Phase 2
+> (prefs cleanup) verified by spot-check: `ShowRawCallstack` is persisted via
+> `show_raw_callstack` (item 3) and the multi-rule `PathRemaps` editor syncs from config
+> in `AnnotateAnalysisUi_Preferences.cpp` (item 4).
 >
 > **Reviewer corrections (verified against `develop` @ `77b1740`, 2026-05-30).** Every line
 > anchor and exception in this plan was checked against the live tree. Phase-2 anchors are all

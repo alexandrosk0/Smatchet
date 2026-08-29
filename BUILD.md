@@ -237,6 +237,7 @@ Smatchet exposes several CMake options to customize the build:
 | `SMATCHET_WITH_AI` | `ON` | Builds the AI assistant side panel (provider-pluggable `IAiClient`). |
 | `SMATCHET_WITH_WHISPER` | `ON` | Builds the Whisper push-to-talk dictation plugin (Windows). |
 | `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
+| `SMATCHET_WARNINGS_AS_ERRORS` | `OFF` | Treats the strict warnings as errors (the base presets force it `ON`; default `OFF` keeps external/raw-CMake/Unreal consumers building). |
 
 ## Local Overrides
 
