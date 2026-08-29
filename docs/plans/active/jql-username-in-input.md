@@ -85,6 +85,8 @@ line under the bar translated ids to names, but the user rejected that design:
   JQL/autocomplete coverage): build manual-test tree, launch, user verifies the input
   shows `assignee = "Alex Konstantonis"` after an async pick and the applied query
   still hits Jira correctly.
+  2026-08-29: user verdict on build `eb90f3d7`: "it works" (after the duplicate-row
+  fix; earlier verdict on `843536b9` reported the two-rows-per-user defect).
 
 ## Implementation log
 - 2026-08-29: echo (`TrackerQueryAcp_DrawUserEcho`) deleted; input buffer now holds display
@@ -98,6 +100,19 @@ line under the bar translated ids to names, but the user rejected that design:
 - `RenderQueryWithAccountIds` doctests: 6 TEST_CASEs (name->id, non-user/id/unknown
   passthrough, IN-list + clause breaks + field-switch, unique-vs-ambiguous names,
   degenerates) — 15 jql_user_display cases / 75 assertions green.
+- 2026-08-29 (post-manual-test fix): user reported "two entries in the menu for each user,
+  one works, one doesnt" — root cause: `TrackerFieldCatalog` mirrors the whole user catalog
+  into every user field's `AllowedValueOptions`/`AllowedValues`, so `AppendValueSuggestions`
+  emitted a second, raw-accountId-inserting row beside each catalog row (the id insert
+  deduped against nothing; picking it left the opaque hash in the focused input, which the
+  idle-only rewrite never touches). Fix: `AppendJqlValueModeSuggestions` gates the
+  allowed-value rows with `!IsQueryUserField(*valueField)` — catalog + async search are the
+  only user-row sources, both insert the same `BuildJqlUserInsert` token, dedup to one row.
+  Plane call site / shared common body untouched. Pinned options-rows TEST_CASE rewritten to
+  assert exactly one name-form row, no raw-id row. Full suite 3028 cases / 42978 assertions
+  green. Intended side effects: empty-prefix `assignee = ` no longer dumps the whole org
+  list (matches the catalog path's empty-prefix bail-out design); options-only users with no
+  catalog backing are no longer suggested (their name insert could never reverse-map).
 
 ## Deviations
 - **Scope add — `TrackerQueryAcp_CanonicalQueryForApply`** (SmatchetAutocompleteUi.{h,cpp}):
