@@ -1468,13 +1468,15 @@ jobs:
       # Launch-smoke moved OUT into the dedicated, hard-fail `Bucket launch-smoke
       # (Mesa GL)` job (graduated 2026-06-18); the dead-harness boot check is its
       # own blocking check-run. The RUN step below keeps a step-level
-      # continue-on-error BY DESIGN (a sanctioned survivor of the
-      # all-gates-blocking flip, like bucket-C's golden diff): under llvmpipe the
-      # ImGui-Test-Engine suite carries render-dependent per-test failures (a good
-      # run is ~71/74) plus a stochastic first-frame collapse the retry loop
-      # absorbs — per-test `status=fail` therefore informs, never gates, until the
-      # Mesa-dependent tests are fixed/skipped. The BROKEN class (passed-nothing /
-      # parse-miss / no sentinel) hard-fails via the unmasked lane-integrity step.
+      # continue-on-error BY DESIGN — but ONLY because the exe's exit code is
+      # unreliable (a zero-pass run can still return 0; see the parse comment
+      # inside the step). It no longer masks per-test failures: the
+      # render-dependent llvmpipe-only tests skip themselves via
+      # tests/ui/ui_test_skip.h (keyed on LIBGL_ALWAYS_SOFTWARE), so a
+      # `status=fail` sentinel is a REAL regression and the unmasked
+      # lane-integrity step below fails the job on it (testing-surface roadmap,
+      # Slice B residual a — per-test verdicts now gate). The BROKEN class
+      # (passed-nothing / parse-miss / no sentinel) hard-fails there too.
 
       - name: Run bucket-E ImGui Test Engine scenario
         id: run-bucket-e
@@ -1589,14 +1591,17 @@ jobs:
           echo "::notice::bucket-E used ${attempt}/${attempts} attempt(s); final status=${status} (passed=${passed} failed=${failed})."
           printf 'status=%s passed=%s failed=%s\n' "$status" "$passed" "$failed" > "$SMATCHET_LANE_STATUS_FILE"
           echo "bucket-E lane-status: $(cat "$SMATCHET_LANE_STATUS_FILE")"
-          # The step-level mask above absorbs this exit (per-test failures inform,
-          # never gate — see the step comment); the unmasked lane-integrity step
-          # below carries the blocking teeth for the broken class.
+          # The step-level mask above absorbs this exit only because the exe's
+          # exit code is unreliable (see the step comment); the unmasked
+          # lane-integrity step below carries the blocking teeth for both the
+          # broken class AND per-test failures (status=fail).
           exit "$rc"
 
-      # Lane-integrity (NOT continue-on-error): bucket-E broken-lane teeth. Reads
-      # the sentinel the run step wrote; hard-fails on broken (Passed:0 Failed>0)
-      # or a missing sentinel (the run never produced counts — dead harness).
+      # Lane-integrity (NOT continue-on-error): bucket-E teeth. Reads the
+      # sentinel the run step wrote; hard-fails on broken (Passed:0 Failed>0),
+      # a missing sentinel (the run never produced counts — dead harness), OR
+      # status=fail (per-test failures — blocking since the llvmpipe-only tests
+      # self-skip via ui_test_skip.h; roadmap Slice B residual a).
       - name: Lane-integrity — bucket-E did not pass-nothing
         shell: bash
         env:
@@ -1628,6 +1633,14 @@ jobs:
               printf 'BROKEN-LANE: %s\n' "Bucket-E UI tests (Mesa headless GL)" >> "$GITHUB_STEP_SUMMARY"
             fi
             echo "::error::lane-integrity — bucket-E is BROKEN (Passed:0 Failed>0). Every UI test failed: dead harness, not a regression." >&2
+            exit 1
+          fi
+          if [ "$status" = "fail" ]; then
+            # Per-test failures gate (not just inform) since the llvmpipe-only
+            # render-dependent tests self-skip via tests/ui/ui_test_skip.h — a
+            # failure here is a real regression on a test that passes this lane.
+            failed="$(sed -n 's/.*failed=\([0-9]*\).*/\1/p' "$SMATCHET_LANE_STATUS_FILE")"
+            echo "::error::lane-integrity — bucket-E has ${failed:-?} failing UI test(s). Per-test verdicts are blocking (see the spawned-child log artifact for per-test failure reasons)." >&2
             exit 1
           fi
 
