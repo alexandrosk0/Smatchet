@@ -27,9 +27,9 @@ Related: [`agents/core/test-author.md`](../../agents/core/test-author.md) (the
 | MCP dispatch/envelope/schema | 4 | [`tests/Plugins/Mcp`](../../tests/Plugins/Mcp) | ctest | **required** |
 | LuaConsole plugin | 1 | [`tests/Plugins/LuaConsole`](../../tests/Plugins/LuaConsole) | ctest | **required** |
 | Bucket-A CLI probe (`test-*.sh`) | 39 | [`scripts/dev`](../../scripts/dev) | `test-all.sh` | partial — non-UI subset in `Windows + MSVC` |
-| Bucket-E ImGui Test Engine | **26** | [`tests/ui`](../../tests/ui) | `ninja-ui-test-msvc` | ⚠ **advisory** (`continue-on-error`) |
-| Bucket-C screenshot diff | **3 goldens** | [`tests/golden`](../../tests/golden) | Mesa headless | ⚠ **advisory** (`continue-on-error`) |
-| Bucket-D sanitizer (ASan/UBSan/TSan) | — | CI presets | ASan/UBSan/TSan | ⚠ poller-soft (not branch-required) |
+| Bucket-E ImGui Test Engine | **58** (2026-08-29) | [`tests/ui`](../../tests/ui) | `ninja-ui-test-msvc` | **blocks** on broken harness; per-test verdicts advisory (step-level mask) |
+| Bucket-C screenshot diff | **goldens** | [`tests/golden`](../../tests/golden) | Mesa headless | **blocks** on broken harness; golden-diff verdict advisory (step-level mask) |
+| Bucket-D sanitizer (ASan/UBSan/TSan) | — | CI presets | ASan/UBSan/TSan | ASan+UBSan **required** (Slice C); TSan paths-scoped PR + nightly |
 | bats (agentic tooling) | 34 | [`tests/bats`](../../tests/bats) | bats | pre-push + `Shell lint` |
 | agent-eval | **3** | [`tests/agent-eval`](../../tests/agent-eval) | `agent_eval_run.bats` | thin |
 | Fake/support fixtures | 18 | [`tests/support`](../../tests/support) | — | (shared seams) |
@@ -38,9 +38,12 @@ Source under test: **255** `.cpp` in `Source/Core/src` (largest subsystems: Ui 7
 Tracker 52, Commands 51).
 
 **Reading the table:** the strength is the 156 pure-logic units — they span every
-subsystem and gate on every PR via ctest. The weakness is dynamic/visual: the two
-lanes that actually exercise rendered UI and interaction (bucket-C, bucket-E) are
-`continue-on-error` and therefore advisory. See § 3.
+subsystem and gate on every PR via ctest. The residual weakness is dynamic/visual
+*verdicts*: bucket-C and bucket-E now BLOCK on a broken harness (zero-pass /
+lane-integrity teeth, and the all-gates-blocking flip makes every check-run block
+unless its name contains `advisory`), but each carries one documented step-level
+mask that keeps the render verdict itself advisory — bucket-E's per-test run,
+bucket-C's per-scenario golden diff. See § 3.
 
 ---
 
@@ -53,9 +56,9 @@ infrastructure**, never "manual forever."
 |---|---|---|---|
 | **A** Headless CLI probe | "fn X returns Y" / Lua outputs Z | `debug.<feature>_test` JSON + bash assert | required (non-UI subset) |
 | **B** Scenario + `perf.snapshot` | "frame ≤ N ms" / "cache hit 100%" | `IScenario` drives N frames, asserts rows | perf-fast subset required |
-| **C** Screenshot diff | "cell renders red" / "icon visible" | PPM sentinel-colour scan vs golden | **advisory** |
-| **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan/UBSan; exit code = assertion | poller-soft |
-| **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | **advisory** |
+| **C** Screenshot diff | "cell renders red" / "icon visible" | PPM sentinel-colour scan vs golden | lane blocks on broken harness; golden-diff verdict advisory (step mask) |
+| **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan/UBSan; exit code = assertion | required (Slice C) |
+| **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness; per-test verdicts advisory (step mask) |
 
 ---
 
@@ -79,28 +82,40 @@ infrastructure**, never "manual forever."
 > inert until then — the exact gap that let the #1227 red-Coverage merge escape (live
 > ruleset had 6 contexts, config listed 7). Slice C re-ran the apply script as Phase 2.
 
-**Outside branch protection (advisory or poller-soft):**
+**Outside branch protection** — but NOT free-running: the all-gates-blocking flip
+(`MERGE_GATES_BLOCK_ALLOWLIST_RE="."`,
+[`merge-gates.d/00-common.sh`](../../agents/scripts/core/merge-gates.d/00-common.sh):42)
+makes the merge-poller block on EVERY check-run unless its name contains
+`advisory`. The only check exempt by name is `Mobile texture-guard smoke (…,
+advisory)`. What remains soft is *step-level*, inside otherwise-blocking checks:
 
-| Check | Trigger | Why not required | Risk |
+| Check | Trigger | What still doesn't block | Risk |
 |---|---|---|---|
-| **Bucket-C screenshot diff** | PR (`needs: windows-msvc`) | `continue-on-error: true`; flaky **Mesa software-GL** | Visual regression never blocks merge |
-| **Bucket-E UI tests** | PR | `continue-on-error: true`; same Mesa flakiness | 26 interaction tests never block merge |
-| **TSan (Linux)** | PR (paths-scoped) + nightly cron | paths-scoped → can't be `required` (path-filter deadlock) | data-race detection advisory |
+| **Bucket-C screenshot diff** | PR (`needs: windows-msvc`) | per-scenario golden-diff step mask (goldens are per-developer, 0/7 CI-native) — lane-integrity + zero-pass teeth DO block | visual regression verdict advisory until CI-native goldens |
+| **Bucket-E UI tests** | PR | per-test run step mask (~3/74 tests render-dependent under llvmpipe) — broken-lane teeth DO block | interaction-test verdicts advisory until flaky tests fixed/skipped |
+| **Mobile texture-guard smoke (advisory)** | PR | whole check (name-exempt; `--spawn` child hangs ~half of runs under llvmpipe) | no mobile texture gating until hang fix + re-graduation |
+| **TSan (Linux)** | PR (paths-scoped) + nightly cron | not branch-`required` (path-filter deadlock) — but a red run still blocks the poller | data-race gating poller-level only |
 | **Sanitizer-nightly / perf-full / tsan nightly** | cron | backstop, not PR-gating | regressions surface next day |
 
 **The load-bearing consequence.** UX Pillars 1-3 (perf / no-freeze / no-crash)
 are described as auto-fail. Slice C closed the biggest gap — `Coverage` +
 `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)` are now **branch-required**,
 so a direct `gh api …/merge` can no longer bypass them (GitHub rejects the merge
-until each reports green or `skipped`). The residual escape is the **bucket-C/E**
-dynamic lanes (screenshot diff + ImGui Test Engine): both carry a blanket
-`continue-on-error: true` for **Mesa software-GL** flakiness, so visual/interaction
-failures still never block merge. (`Bucket-` was dropped from the merge-poller
-([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) *meant-to-block allow-list*
-2026-06-15 — `infra.md` `bucket-mesa-exe-boot` P1: the Mesa-software-GL bucket-C/E lanes
-can't boot the CI exe, so they are now fully advisory and the poller no longer blocks
-on them; re-add on boot-fix graduation.) **Documented escape:** PR
-#1180 shipped red bucket-C/E under a `cr-out-of-band` override (postmortem owed).
+until each reports green or `skipped`). The residual escape is narrower than it
+used to be: the **bucket-C/E** dynamic lanes no longer carry any job-level
+`continue-on-error` — their broken-harness teeth (zero-pass, lane-integrity)
+block, and the all-gates-blocking flip means the merge-poller
+([`merge-gates.sh`](../../agents/scripts/core/merge-gates.sh)) blocks on the
+check-runs themselves (the 2026-06-15 "`Bucket-` dropped from the allow-list"
+state was superseded when the allow-list was retired; the underlying
+"exe can't boot" premise was falsified 2026-06-18 — the exe boots in ~2 s under
+llvmpipe; see `bucket-mesa-exe-boot` in
+[`applied.md`](../self-improvement/categories/applied.md)). What remains advisory
+is two documented **step-level masks**: bucket-E's per-test run (~3/74 tests
+render-dependent under llvmpipe) and bucket-C's per-scenario golden diff (goldens
+per-developer, not CI-native — every verdict + golden age still reports to the
+job summary). **Documented escape:** PR #1180 shipped red bucket-C/E under a
+`cr-out-of-band` override (postmortem owed — pre-flip state).
 
 ---
 
@@ -109,7 +124,7 @@ on them; re-add on boot-fix graduation.) **Documented escape:** PR
 | Subsystem | `.cpp` | Coverage character | Hot spot |
 |---|---|---|---|
 | **Tracker** (strict) | 52 | Heavy **pure-mapping** (Jira/Plane/GitHub mapping, field parsers, JQL) | ✅ logic / ❌ HTTP transport |
-| **Ui** | 75 | Pure-logic units + 26 bucket-E (advisory) | dynamic lane non-gating |
+| **Ui** | 75 | Pure-logic units + 58 bucket-E TUs (verdicts step-masked advisory) | render verdicts non-gating |
 | **Commands** (strict) | 51 | Scenario + CLI-probe + palette/fuzzy units | good |
 | **Sync / Offline** (strict) | 3 | Queue-replay, conflict-merge, two-backend replay units | good |
 | **Persistence** (strict) | 5 | LocalCache + migration units (happy-path) | ❌ corruption/BUSY |
@@ -128,9 +143,12 @@ narrower slice is tracked), or `[UNBACKLOGGED]`. The full entry → file → sta
 mapping is in [§ 5.1](#51-backlog-cross-reference); the tags here are the
 one-glance summary.
 
-1. **Visual/interaction lane non-gating.** Bucket-C + bucket-E are blanket
-   `continue-on-error` on flaky Mesa GL → 26 UI tests + 3 goldens never block a
-   merge. *Highest leverage to fix.* — **[tracked]** infra.md `bucket-lane-launch-smoke` P1.
+1. **Visual/interaction *verdicts* still advisory** (narrowed 2026-08-29 — the
+   lanes themselves now block on broken harness, and the all-gates-blocking flip
+   blocks on the check-runs). Residue = two step-level masks: bucket-E's per-test
+   run (~3/74 render-dependent tests) + bucket-C's golden diff (no CI-native
+   goldens). *Highest leverage to fix.* — **[tracked]** roadmap Slice B residuals
+   ([`testing-surface-roadmap.md`](../plans/active/testing-surface-roadmap.md) § Deviations).
 2. **No HTTP-transport integration tests.** All Tracker coverage is `*Pure`
    mapping. The real `TrackerHttpClient` retry/backoff/429/timeout/pagination/SSL
    paths have **no fault-injection harness** — Fake fixtures stub the *client
@@ -171,7 +189,7 @@ the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 
 | Gap | Tracked as | File | Status |
 |---|---|---|---|
-| 1 — visual/interaction non-gating | `bucket-lane-launch-smoke` P1 (+ Mesa-GL CI setup, step-level `continue-on-error` postmortem) | [`infra.md`](../self-improvement/categories/infra.md):40, [`tooling.md`](../self-improvement/categories/tooling.md):282, [`infra.md`](../self-improvement/categories/infra.md):121 | open |
+| 1 — visual/interaction verdicts advisory | Slice B residuals: fix/skip ~3/74 render-dependent bucket-E tests; CI-native goldens for bucket-C | [`testing-surface-roadmap.md`](../plans/active/testing-surface-roadmap.md) § Deviations | open — **narrowed**: lanes + poller block since the all-gates-blocking flip; only the two step-level masks remain |
 | 2 — no HTTP-transport tests | extend scripted-HTTP fixture (`JiraCatalogHttpFixture.h`) to search/mutation/user-meta paths | [`debt.md`](../self-improvement/categories/debt.md):65 | open — **partial**: catalog-path coverage only; no general `FakeHttpTransport` fault injection |
 | 3 — no fuzz / property tests | crafted-PNG-dims fuzz against `GoldenImage.h` cap | [`security.md`](../self-improvement/categories/security.md):59-60 | open — **partial**: image-dims/cpp-lex/callstack/ADF/SSE/NDJSON + tracker GitHub/Plane/Linear mappers (E2a-c) covered; MCP-dispatch/config-locale/p4/WAV unbacklogged ([`test/2026-07-05-fuzz-surfaces-next-batch.md`](../self-improvement/categories/test/2026-07-05-fuzz-surfaces-next-batch.md)) |
 | 4 — test-delta ≠ assertion quality | auto-PASS classifier for no-runtime-surface diffs | [`infra.md`](../self-improvement/categories/infra.md):60-61 | open — **inverse direction**: tracks false-RED, not the false-GREEN/mutation-signal half (unbacklogged) |
@@ -196,13 +214,13 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
 [§ 5.1](#51-backlog-cross-reference).
 
 **P0 — close the gating holes**
-- Make **bucket-E required**: split stable scenarios from Mesa-flaky ones, quarantine
-  the latter by name, drop blanket `continue-on-error` on the stable lane. Same for
-  bucket-C on the 3 goldens. **[planned]** — infra.md `bucket-lane-launch-smoke` P1.
-- Add **Coverage + Sanitizer** to `required_contexts` via the always-report pattern
-  ([`ci-required-check-pattern.md`](../agent-rules/ci-required-check-pattern.md) Pattern A)
-  so a direct-REST merge can't bypass. **[new]** — the doc-validation context was made
-  required (infra.md:87, applied); Coverage + Sanitizer were not — no entry yet.
+- Drop the two remaining **step-level masks**: fix or `IM_CHECK_SILENT`-skip the
+  ~3/74 render-dependent bucket-E tests so the per-test mask can go, and establish
+  CI-native goldens so bucket-C's golden-diff mask can go. (The lane-level work —
+  blanket `continue-on-error` removal, poller blocking — is DONE via the
+  all-gates-blocking flip.) **[planned]** — roadmap Slice B residuals.
+- ~~Add **Coverage + Sanitizer** to `required_contexts`~~ **[done, Slice C
+  2026-06]** — all three are branch-required (§ 3 contexts 7–9).
 
 **P1 — fill the dangerous voids**
 - **Fault-injection HTTP fixture** (`FakeHttpTransport` injecting 429/500/timeout/
