@@ -226,6 +226,18 @@ comment before editing):
 | `Source/Plugins/Whisper/CMakeLists.txt` | Whisper plugin (a true `add_subdirectory`, predates the split) |
 | `Source/UnrealPlugins/CMakeLists.txt` | DX12 plugin variants, `SmatchetImGuiHost_DX12`, `SmatchetPackageUnrealLibs_DX12` packaging |
 
+## Configuration Options
+
+Smatchet exposes several CMake options to customize the build:
+
+| Option | Default | Description |
+| :--- | :--- | :--- |
+| `SMATCHET_WITH_LUA_AUTOMATION` | `ON` | Builds with the Lua console plugin and `sol2` bindings for field automation. |
+| `SMATCHET_WITH_MCP` | `ON` | Builds the Model Context Protocol (MCP) server plugin. |
+| `SMATCHET_WITH_AI` | `ON` | Builds the AI assistant side panel (provider-pluggable `IAiClient`). |
+| `SMATCHET_WITH_WHISPER` | `ON` | Builds the Whisper push-to-talk dictation plugin (Windows). |
+| `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
+
 ## Local Overrides
 
 If you need local-only presets, create `CMakeUserPresets.json` in your checkout.
