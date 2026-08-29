@@ -75,7 +75,11 @@ PY
 }
 
 @test "producer output pipes into the sidecar over stdin" {
-    run bash -c '"$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/responses.json" | "$PY" "$SIDECAR" aggregate -'
+    # `set -o pipefail` is load-bearing: without it only the SIDECAR's status is
+    # asserted, so a producer that crashes mid-stream is masked as long as the
+    # sidecar happens to exit 0 — the pipe test would green-wash the very
+    # failure it exists to catch.
+    run bash -c 'set -o pipefail; "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/responses.json" | "$PY" "$SIDECAR" aggregate -'
     [ "$status" -eq 0 ]
     OUTPUT="$output" "$PY" - <<'PY'
 import json, os
@@ -131,4 +135,54 @@ PY
     run env -u VERIFIER_BASE_URL "$PY" "$PRODUCE" "$WORK/job.json" --model stub
     [ "$status" -eq 2 ]
     [[ "$output" == *"ERROR"* ]]
+}
+
+# --- historical-review regressions (#1885, #1891) ---------------------------
+# The producer's own --selftest pins these at unit level; these exercise the same
+# fixes through the real CLI, where a caller actually meets them.
+
+@test "scalar mode rejects a preamble instead of scoring the wrong letter" {
+    # "Score: B" used to return the S (0.053 - near-worst) rather than the B
+    # (0.947): a silently wrong score with no failure signal. Now it is an error.
+    printf '[{"choices":[{"message":{"content":"Score: B"}}]}]' > "$WORK/preamble.json"
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/preamble.json" --mode scalar
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"could not parse a score"* ]]
+}
+
+@test "scalar mode reads a bare rank on the same polarity as the letters" {
+    # 1-20 numbers are the other spelling of A(best)..T(worst), so 1 is BEST.
+    printf '[{"choices":[{"message":{"content":"1"}}]},{"choices":[{"message":{"content":"20"}}]},{"choices":[{"message":{"content":"1"}}]},{"choices":[{"message":{"content":"20"}}]}]' > "$WORK/ranks.json"
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/ranks.json" --mode scalar
+    [ "$status" -eq 0 ]
+    OUTPUT="$output" "$PY" - <<'RANKPY'
+import json, os
+sc = json.loads(os.environ["OUTPUT"])["candidates"][0]["samples"][0]["criteria"]
+assert sc["security"] == 1.0, sc      # rank 1  -> best
+assert sc["correctness"] == 0.0, sc   # rank 20 -> worst
+RANKPY
+}
+
+@test "--strict accepts a confident single-letter distribution" {
+    # A healthy backend whose top-20 holds ONE letter (the rest whitespace /
+    # word-piece variants) yielded len(dist)==1 and --strict aborted the run.
+    # --strict is in the documented recipe, so this was the default path.
+    "$PY" - "$WORK/peaked.json" <<'PEAKPY'
+import json, sys
+alts = [{"token": "A", "logprob": -0.0001}]
+alts += [{"token": t, "logprob": -9.0 - i} for i, t in enumerate([" ", ".", "x", "the", "-"])]
+d = {"choices": [{"message": {"content": "A"}, "logprobs": {"content": [
+    {"token": "A", "logprob": -0.0001, "top_logprobs": alts}]}}]}
+json.dump([d, d, d, d], open(sys.argv[1], "w"))
+PEAKPY
+    run "$PY" "$PRODUCE" "$WORK/job.json" --responses "$WORK/peaked.json" --strict
+    [ "$status" -eq 0 ]
+    [[ "$output" != *degenerate* ]]
+}
+
+@test "a bearer token is refused over cleartext http to a non-loopback host" {
+    run env VERIFIER_BASE_URL=http://api.example.com/v1 VERIFIER_API_KEY=secret "$PY" "$PRODUCE" "$WORK/job.json" --model stub
+    [ "$status" -eq 2 ]
+    [[ "$output" == *"cleartext http"* ]]
+    [[ "$output" != *secret* ]]   # the key itself must never reach the message
 }
