@@ -475,3 +475,69 @@ _add_devonly_rule() {
     [ -n "$pass_line" ]
     [ "$warn_line" -lt "$pass_line" ]
 }
+
+# ============================================================================
+# glob: a LOCAL-ONLY match is "ahead", not "unknown" (finding #1996)
+# ============================================================================
+# Under the old literal rule a glob-matched file present here and absent on
+# origin/develop blanked BOTH fingerprints -> `unverifiable`, which
+# warn_if_script_stale prints NOTHING for. pre-ship.sh declares
+# `agents/scripts/project/lint-rules.d/*.sh`, so ANY branch adding one lint rule
+# silently switched off the whole freshness caveat — including for the OTHER
+# declared files that had genuinely drifted. A detector whose job is to prevent a
+# false green produced one.
+
+@test "glob: adding a local-only file does NOT silence a real drift in a sibling" {
+    _mk_repo_with_origin
+    # entry.sh genuinely drifts from develop...
+    echo entry-DRIFTED > "$TMP/work/entry.sh"
+    # ...and the branch also adds a brand-new rule that develop has never seen.
+    echo local-only > "$TMP/work/rules.d/99-local.sh"
+    run bash -c '. "$LIB"
+        script_freshness_fetch() { return 0; }
+        cd "$TMP/work"
+        SCRIPT_FRESHNESS_ROOT_HINT="$TMP/work" \
+          script_freshness_verdict "" "" "entry.sh" "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    # Pre-fix this was `unverifiable` — silent, and the drift in entry.sh lost.
+    [[ "$output" == "stale" ]]
+}
+
+@test "glob: a local-only file alone (nothing drifted) still reads fresh" {
+    _mk_repo_with_origin
+    echo local-only > "$TMP/work/rules.d/99-local.sh"
+    run bash -c '. "$LIB"
+        script_freshness_fetch() { return 0; }
+        cd "$TMP/work"
+        SCRIPT_FRESHNESS_ROOT_HINT="$TMP/work" \
+          script_freshness_verdict "" "" "entry.sh" "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    # Being AHEAD is not staleness: the local-only file drops out of both sides
+    # and the remaining declared files decide. Guards the false-positive side.
+    [[ "$output" == "fresh" ]]
+}
+
+@test "glob: the develop-side rule is untouched — a file only on develop still reads stale" {
+    _mk_repo_with_origin
+    # Push a rule to develop the work checkout will not have, without merging.
+    (
+        set -e
+        git clone -q "$TMP/origin" "$TMP/other"
+        cd "$TMP/other"; git config user.email t@l; git config user.name t
+        mkdir -p rules.d; echo c > rules.d/30-new.sh
+        git add -A; git commit -qm add-rule; git push -q origin HEAD:develop
+    )
+    git -C "$TMP/work" fetch -q origin develop
+    run bash -c '. "$LIB"
+        script_freshness_fetch() { return 0; }
+        cd "$TMP/work"
+        SCRIPT_FRESHNESS_ROOT_HINT="$TMP/work" \
+          script_freshness_verdict "" "" "entry.sh" "rules.d/*.sh"
+        echo "$SCRIPT_FRESHNESS_VERDICT"'
+    [ "$status" -eq 0 ]
+    # BEHIND is real drift and must stay `stale` — the #1996 fix must not have
+    # made the mirror case permissive too.
+    [[ "$output" == "stale" ]]
+}
