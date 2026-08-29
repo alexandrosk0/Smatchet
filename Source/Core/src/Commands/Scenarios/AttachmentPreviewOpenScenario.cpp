@@ -12,7 +12,7 @@
 // ever reintroduced the synchronous cpr::Get would surface here as a one-frame spike.
 
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 // clang-format off
 // SMATCHET_DEVIATION(rule=duplication; reason=the shared scenario-TU include + namespace-open boilerplate is grandfathered across the Scenarios/*.cpp siblings; dropping the vestigial AppController.h include (fan-in Phase 6 T1a) re-hashed the boilerplate clone window vs a sibling scenario — not a real copy-paste; owner=orchestrator; revisit=when the scenario prologue is factored into a shared header)
 // clang-format on

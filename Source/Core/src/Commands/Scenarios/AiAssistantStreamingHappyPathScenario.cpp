@@ -18,7 +18,7 @@
 // `#else` branch so the registry name still resolves.
 
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #if defined(SMATCHET_WITH_AI)
 

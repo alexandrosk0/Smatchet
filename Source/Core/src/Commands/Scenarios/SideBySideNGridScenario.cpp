@@ -14,7 +14,7 @@
 // is untouched. Mirrors the passive-observer shape of side-by-side-2-grid.
 
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 
 // clang-format off
 #include "Interfaces/IAppScenarioHost.h"

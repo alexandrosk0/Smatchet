@@ -1,6 +1,6 @@
 #include <doctest/doctest.h>
 
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 #include "JiraIssueMappingPure.h"
 #include "TimeNowPure.h"
 #include "TrackerFieldPayloadPure.h"

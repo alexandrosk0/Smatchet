@@ -6,7 +6,7 @@
 // that need extra per-row fields (e.g. AiChatHistoryRenderScenario's turn
 // annotations) keep their own serializer instead of extending this one.
 
-#include "UiPerfMonitor.h"
+#include "Ui/UiPerfMonitor.h"
 
 #include <nlohmann/json.hpp>
 

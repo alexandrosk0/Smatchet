@@ -19,7 +19,7 @@
 // taken by the launch harness.
 
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 
 // clang-format off
 #include "Interfaces/IAppScenarioHost.h"

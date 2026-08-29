@@ -10,7 +10,7 @@
 // scenario terminates after exactly 1 frame — the work is done at start time.
 
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.

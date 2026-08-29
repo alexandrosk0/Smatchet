@@ -11,7 +11,7 @@
 
 // SMATCHET_DEVIATION(rule=duplication; reason=plain include-prologue clone shared with the sibling perf scenarios — re-entered the delta scan by the UiPerfRowsJson.h include added for the shared rows serializer; owner=scenarios; revisit=2027-03-01)
 #include "Commands/Scenarios/IScenario.h"
-#include "Commands/Scenarios/UiPerfRowsJson.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
