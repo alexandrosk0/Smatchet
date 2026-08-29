@@ -56,6 +56,24 @@ import datetime
 import os
 import re
 import sys
+import tempfile
+
+
+def write_atomic(path, text):
+    # Write to a temp sibling and os.replace() so a crash mid-write never
+    # truncates the target; the partition/head pair stays retry-safe together
+    # with the duplicate-drop in the partition merge below.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 applied, check_only = sys.argv[1], sys.argv[2] == "1"
 catdir = os.path.dirname(applied)
@@ -147,21 +165,26 @@ for month, blocks in sorted(by_month.items()):
     else:
         part_header = PARTITION_HEADER.format(month=month)
 
-    merged = existing + blocks
+    # Drop blocks already present in the partition: a run interrupted between
+    # writing the partition and rewriting applied.md leaves the same entries in
+    # both files, and the retry would otherwise duplicate them here.
+    seen = {"".join(b).rstrip("\n") for b in existing}
+    fresh = [b for b in blocks if "".join(b).rstrip("\n") not in seen]
+
+    merged = existing + fresh
     merged.sort(key=entry_date, reverse=True)
-    with open(part, "w", encoding="utf-8") as f:
-        f.write(part_header.rstrip("\n") + "\n")
-        for block in merged:
-            body = "".join(block).rstrip("\n")
-            f.write("\n" + body + "\n")
-    print(f"rotate-applied-md: {len(blocks)} entr(ies) -> {part}")
+    out = [part_header.rstrip("\n") + "\n"]
+    for block in merged:
+        out.append("\n" + "".join(block).rstrip("\n") + "\n")
+    write_atomic(part, "".join(out))
+    print(f"rotate-applied-md: {len(fresh)} entr(ies) -> {part}"
+          + (f" ({len(blocks) - len(fresh)} already present, skipped)" if len(fresh) != len(blocks) else ""))
 
 kept = [block for month, block in entries if month in keep]
-with open(applied, "w", encoding="utf-8") as f:
-    f.write("".join(header).rstrip("\n") + "\n")
-    for block in kept:
-        body = "".join(block).rstrip("\n")
-        f.write("\n" + body + "\n")
+out = ["".join(header).rstrip("\n") + "\n"]
+for block in kept:
+    out.append("\n" + "".join(block).rstrip("\n") + "\n")
+write_atomic(applied, "".join(out))
 print(f"rotate-applied-md: head keeps {len(kept)} entr(ies) "
       f"({', '.join(sorted(f'{y:04d}-{m:02d}' for y, m in keep))}).")
 PY
