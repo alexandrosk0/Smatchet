@@ -427,31 +427,41 @@ TEST_CASE("order-by tail — after ASC/DESC the engine goes quiet until a new pr
     }
 }
 
-TEST_CASE("value mode — user-field options carry accountId inserts with display-name labels") {
+TEST_CASE("value mode — user rows come from the user catalog only, one row per user") {
     auto fields = DefaultFields();
     TrackerField& assignee = fields[1];
-    TrackerFieldOption jane;
-    jane.Id = "acc-1";
-    jane.Value = "Jane Doe";
-    assignee.AllowedValueOptions.push_back(jane);
-    TrackerFieldOption secondary; // display name arrives in SecondaryValue when Value is empty
-    secondary.Id = "acc-2";
-    secondary.SecondaryValue = "Sec Ondary";
-    assignee.AllowedValueOptions.push_back(secondary);
+    // Production shape: TrackerFieldCatalog mirrors the whole user catalog into the user
+    // field's options. Those options must NOT surface as rows of their own — the raw
+    // accountId insert would sit next to the catalog row's name insert as a second,
+    // hash-inserting entry per user.
+    TrackerFieldOption alice;
+    alice.Id = "a1";
+    alice.Value = "Alice Smith";
+    assignee.AllowedValueOptions.push_back(alice);
+    assignee.AllowedValues.push_back("Alice Smith");
 
     {
-        const std::string buf = "assignee = jane";
-        const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
-        // Both the accountId row (labelled with the display name) and the display-name
-        // row (annotated, quoted insert) surface for the same option.
-        CHECK(HasLabel(out, "Jane Doe"));
-        CHECK(HasInsert(out, "\"Jane Doe\""));
-        CHECK(HasLabel(out, "Jane Doe (display name) -> \"Jane Doe\""));
+        const std::string buf = "assignee = ali";
+        const auto out = Run(buf, static_cast<int>(buf.size()), fields, DefaultUsers());
+        CHECK(HasInsert(out, "\"Alice Smith\"")); // the catalog row's name-form insert
+        CHECK_FALSE(HasInsert(out, "a1"));          // no raw-accountId row
+        CHECK_FALSE(HasLabel(out, "Alice Smith (display name) -> \"Alice Smith\""));
+        const int aliceRows = static_cast<int>(std::count_if(
+            out.Items.begin(), out.Items.end(),
+            [](const QuerySuggestion& sug) { return sug.Insert == "\"Alice Smith\""; }));
+        CHECK(aliceRows == 1);
     }
     {
-        const std::string buf = "assignee = sec";
+        // An options-only user (no catalog backing) no longer surfaces at all: a name-form
+        // insert for them could never reverse-map to an accountId at the apply boundary.
+        const std::string buf = "assignee = jane";
+        TrackerFieldOption jane;
+        jane.Id = "acc-1";
+        jane.Value = "Jane Doe";
+        fields[1].AllowedValueOptions.push_back(jane);
         const auto out = Run(buf, static_cast<int>(buf.size()), fields, {});
-        CHECK(HasLabel(out, "Sec Ondary"));
+        CHECK_FALSE(HasInsert(out, "\"Jane Doe\""));
+        CHECK_FALSE(HasInsert(out, "acc-1"));
     }
 }
 

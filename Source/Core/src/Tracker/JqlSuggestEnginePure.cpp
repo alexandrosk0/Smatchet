@@ -394,7 +394,13 @@ static JqlSuggestMode DetermineJqlSuggestMode(const std::vector<JqlToken>& token
 void AppendJqlValueModeSuggestions(const std::vector<TrackerUser>& users, const std::string& prefix,
                                    const TrackerField* valueField, QuerySuggestBuild& out,
                                    std::unordered_set<std::string>& seen, QuerySuggestMeta* metaOut) {
-    if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
+    // User fields skip the allowed-value rows: TrackerFieldCatalog mirrors the whole user
+    // catalog into a user field's options, so each user would surface twice — once as the
+    // catalog row below (name-form insert) and once as an options row whose raw-accountId
+    // insert leaves the opaque id in the input. Catalog + async search are the only user-row
+    // sources; both build the same BuildJqlUserInsert token, so they dedup to one row.
+    if (valueField != nullptr && !IsQueryUserField(*valueField) &&
+        (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
         AppendValueSuggestions(*valueField, prefix, kJiraUserDisplaySuffix, out.Items, seen);
     }
     if (valueField != nullptr) {
