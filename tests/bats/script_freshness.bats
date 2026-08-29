@@ -519,7 +519,7 @@ _add_devonly_rule() {
     [[ "$output" == "fresh" ]]
 }
 
-@test "glob: the develop-side rule is untouched — a file only on develop still reads stale" {
+@test "glob: the develop-side rule is untouched - a file only on develop still reads stale" {
     _mk_repo_with_origin
     # Push a rule to develop the work checkout will not have, without merging.
     (
