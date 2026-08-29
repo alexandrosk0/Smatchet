@@ -1,8 +1,9 @@
 # Plan — gate-selftest MSYS exec-bit heuristic fix
+<!-- plan-date: 2026-08-29 -->
 
 > **Slug**: `gate-selftest-msys-execbit` (matches this file's basename without `.md`).
 >
-> **Status**: `active`
+> **Status**: `shipped`
 
 ## Context
 
@@ -85,15 +86,15 @@ N/A — diff touches no `Source/Core/` (shell + bats + docs only).
 - Sweep of other gates for MSYS `[ -x ]` reliance — only this gate's selftest is known-red; no-action unless it recurs.
 
 ## Implementation log
-*(populated post-ship)*
+
+- `b18d6997` · knob in the mode-probe fallback arm + `local` pin in `run_selftest` + `=0`/`=1` flip around the executable-exemption fixture; two new bats tests pinning both knob directions against a contradicting real fs bit.
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- None — shipped as planned.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+- **Windows Git Bash**: `--selftest` PASS (was 11 FAILs), `--check` PASS (83 exposers), `bats tests/bats/gate_selftests.bats` 9/9, `scripts/dev/test-docs.sh` full green (the 18/19 false red this plan fixes is gone; one unrelated pre-existing local drift — stale gitignored `.claude/hooks/agent-token-log.py` mirror — synced per the check's own instruction).
+- **Linux (WSL)**: `--selftest` PASS, `--check` PASS, bats 9/9 — staged in a WSL-native tmp git repo because WSL git cannot resolve this worktree's Windows-path `gitdir:` pointer (infra limitation, not the diff). Tests 8/9 there exercise the real fs-bit contradiction (chmod +x flagged under `=1`, chmod -x passing under `=0`).
+- **Plan stress-test — grill-with-docs**: run as an autonomous checkpoint pass (mechanical infra fix — the skill's own "when NOT to invoke" class): storage-substrate pre-flight N/A, no new glossary terms, code cross-check confirmed every plan claim (knob consumed only in the untracked fallback arm; tracked files keep git-index mode), knob-vs-autodetect trade-off documented in § Approach, not ADR-worthy. No plan changes resulted.
