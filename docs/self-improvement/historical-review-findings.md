@@ -11,6 +11,30 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 24 — #2160–#2175 (6-PR sweep, 2026-08-29)
+
+Coverage: **6 reviewed — 4 with findings, 2 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 3 MEDIUM, 2 LOW** (5 findings, 0 `userVisible`). **The frontier is now #1–#2175 contiguous; the next sweep resumes from #2176.** Reviewer agents inherited the session model; 6/6 returned, ~0.42M tokens, ~3 min.
+
+**First batch whose header triple is COMPUTED end-to-end.** The work-list came from `historical-review-worklist.sh --json --range 2160 2175 --merged-list` and the whole object was passed as the sweep workflow's `args`; the coverage line above is the workflow's own `result.coverage` — *{authoritative: 6, scraped: 6, missed: [], covered: 6, units: 6}* — closing the part-3 loop on its first real use. #2160/#2161/#2164/#2167–#2173 in the range are Issues or unmerged PRs, which is why 6 PRs cover [2160, 2175].
+
+> **Young-slice caveat, extreme case:** every PR in this range merged within hours of the sweep, so ~0 lines were superseded and the pass is an ordinary re-review with no "survived N later PRs" evidence. Swept now by explicit maintainer request ("run another sweep batch when 2175 lands").
+
+Three of the five findings are on this session's own docket PRs — the program reviewing its own output, as intended. The sharpest is on the part-3 change itself: the tracked sweep workflow collapses `--json` units to bare PR numbers, discarding the pre-resolved `sha` that the pr+sha unit shape exists to carry (merge-commit constituents and gh-less environments regress to the resolution path the gate was built to bypass). All five are internal debt (`userVisible:false`) — no ADR-0014 elevations this batch.
+
+### Internal debt — 3 MEDIUM + 2 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `agents/project/workflows/historical-review-sweep.js` — 1 MEDIUM — #2175:52
+- `agents/scripts/core/archive-backlog-entry.sh` — 1 MEDIUM — #2165:426
+- `agents/scripts/core/test-backlog-counts.sh` — 1 LOW — #2165:123
+- `scripts/dev/verifier-produce.py` — 1 MEDIUM — #2163:205
+- `scripts/publish/release-github.sh` — 1 LOW — #2174:226
+
+**Clean (2, surviving lines read in full, no findings):** #2166, #2162.
+
+**Fully superseded (0, no review surface):**  — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Batch 23 — #2067–#2159 (76-PR sweep, 2026-08-29)
 
 Coverage: **76 reviewed — 25 with findings, 49 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 16 MEDIUM, 24 LOW** (40 findings, 7 `userVisible`). **The frontier is now #1–#2159 contiguous; the next sweep resumes from #2160.** Reviewer agents inherited the session model this batch (the per-agent model pin was dropped rather than pinned to the opus/high grade Batches 1–22 used); 76/76 returned, ~2.0M tokens. The run was paused mid-sweep on a usage limit and resumed from the workflow cache — completed units replayed, the remainder ran live; no unit was double-reviewed or lost.
@@ -657,8 +681,8 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   Batch 22 (#2033–#2041) is the first batch whose work-list was **computed** by
   `historical-review-worklist.sh` rather than asserted — its coverage line is the
   gate's own triple.
-  **2026-08-29 — frontier now #1–#2159 (Batch 23); the next sweep resumes from
-  #2160.** Build the work-list with `historical-review-worklist.sh --json`: the
+  **2026-08-29 — frontier now #1–#2175 (Batches 23 + 24); the next sweep resumes
+  from #2176.** Build the work-list with `historical-review-worklist.sh --json`: the
   object it emits carries the computed coverage triple alongside the units, and
   passing that whole object as the sweep workflow's `args` makes the workflow
   RETURN the triple (`result.coverage`) — quote that in the batch header, never
