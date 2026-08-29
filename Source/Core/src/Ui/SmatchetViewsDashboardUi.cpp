@@ -97,8 +97,9 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
 ViewDefinition BuildUpdatedView(AppController& app, const ViewDefinition& base, const UiDrawSession& d) {
     ViewDefinition updated = base;
     updated.Name = d.viewNameBuf;
-    // The editor buffer holds the readable name form on Jira (TrackerQueryAcp_ApplyUserNamesToBuffer);
-    // the view of record keeps the id-canonical query, so reverse-map names back to account ids here.
+    // On Jira the editor buffer holds the readable name form written by the idle-time
+    // TrackerQueryAcp_ApplyUserNamesToBuffer rewrite. The view of record keeps the id-canonical
+    // query, so reverse-map names back to account ids here.
     updated.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
                                                          app.GetAvailableUsers(), d.viewJqlEditor,
                                                          std::string(d.viewJqlEditor.buf));
