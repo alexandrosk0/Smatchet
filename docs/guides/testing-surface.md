@@ -27,7 +27,7 @@ Related: [`agents/core/test-author.md`](../../agents/core/test-author.md) (the
 | MCP dispatch/envelope/schema | 4 | [`tests/Plugins/Mcp`](../../tests/Plugins/Mcp) | ctest | **required** |
 | LuaConsole plugin | 1 | [`tests/Plugins/LuaConsole`](../../tests/Plugins/LuaConsole) | ctest | **required** |
 | Bucket-A CLI probe (`test-*.sh`) | 39 | [`scripts/dev`](../../scripts/dev) | `test-all.sh` | partial — non-UI subset in `Windows + MSVC` |
-| Bucket-E ImGui Test Engine | **58** (2026-08-29) | [`tests/ui`](../../tests/ui) | `ninja-ui-test-msvc` | **blocks** on broken harness; per-test verdicts advisory (step-level mask) |
+| Bucket-E ImGui Test Engine | **58** (2026-08-29) | [`tests/ui`](../../tests/ui) | `ninja-ui-test-msvc` | **blocks** on broken harness AND on per-test failures (`status=fail` fails lane-integrity since 2026-08-29, PR #2161; 4 llvmpipe-only tests self-skip via `tests/ui/ui_test_skip.h`) |
 | Bucket-C screenshot diff | **goldens** | [`tests/golden`](../../tests/golden) | Mesa headless | **blocks** on broken harness; golden-diff verdict advisory (step-level mask) |
 | Bucket-D sanitizer (ASan/UBSan/TSan) | — | CI presets | ASan/UBSan/TSan | ASan+UBSan **required** (Slice C); TSan paths-scoped PR + nightly |
 | bats (agentic tooling) | 34 | [`tests/bats`](../../tests/bats) | bats | pre-push + `Shell lint` |
@@ -41,9 +41,9 @@ Tracker 52, Commands 51).
 subsystem and gate on every PR via ctest. The residual weakness is dynamic/visual
 *verdicts*: bucket-C and bucket-E now BLOCK on a broken harness (zero-pass /
 lane-integrity teeth, and the all-gates-blocking flip makes every check-run block
-unless its name contains `advisory`), but each carries one documented step-level
-mask that keeps the render verdict itself advisory — bucket-E's per-test run,
-bucket-C's per-scenario golden diff. See § 3.
+unless its name contains `advisory`). Bucket-E's per-test verdicts BLOCK too
+(lane-integrity fails on `status=fail` since 2026-08-29, PR #2161); the one
+remaining step-level mask is bucket-C's per-scenario golden diff. See § 3.
 
 ---
 
@@ -58,7 +58,7 @@ infrastructure**, never "manual forever."
 | **B** Scenario + `perf.snapshot` | "frame ≤ N ms" / "cache hit 100%" | `IScenario` drives N frames, asserts rows | perf-fast subset required |
 | **C** Screenshot diff | "cell renders red" / "icon visible" | PPM sentinel-colour scan vs golden | lane blocks on broken harness; golden-diff verdict advisory (step mask) |
 | **D** Sanitizer build | "no UAF on shutdown" / "no leak" | run scenario under ASan/UBSan; exit code = assertion | required (Slice C) |
-| **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness; per-test verdicts advisory (step mask) |
+| **E** ImGui Test Engine | "drag column" / "type → autocomplete" | drives real ImGui widget tree | lane blocks on broken harness and on per-test failures (llvmpipe-only tests self-skip) |
 
 ---
 
@@ -92,7 +92,7 @@ advisory)`. What remains soft is *step-level*, inside otherwise-blocking checks:
 | Check | Trigger | What still doesn't block | Risk |
 |---|---|---|---|
 | **Bucket-C screenshot diff** | PR (`needs: windows-msvc`) | per-scenario golden-diff step mask (goldens are per-developer, 0/7 CI-native) — lane-integrity + zero-pass teeth DO block | visual regression verdict advisory until CI-native goldens |
-| **Bucket-E UI tests** | PR | per-test run step mask (~3/74 tests render-dependent under llvmpipe) — broken-lane teeth DO block | interaction-test verdicts advisory until flaky tests fixed/skipped |
+| **Bucket-E UI tests** | PR | nothing per-test since 2026-08-29 (PR #2161): lane-integrity fails on sentinel `status=fail`; the run step's `continue-on-error` masks only the unreliable exe exit code (4 llvmpipe-only tests self-skip) | — |
 | **Mobile texture-guard smoke (advisory)** | PR | whole check (name-exempt; `--spawn` child hangs ~half of runs under llvmpipe) | no mobile texture gating until hang fix + re-graduation |
 | **TSan (Linux)** | PR (paths-scoped) + nightly cron | not branch-`required` (path-filter deadlock) — but a red run still blocks the poller | data-race gating poller-level only |
 | **Sanitizer-nightly / perf-full / tsan nightly** | cron | backstop, not PR-gating | regressions surface next day |
@@ -110,9 +110,10 @@ check-runs themselves (the 2026-06-15 "`Bucket-` dropped from the allow-list"
 state was superseded when the allow-list was retired; the underlying
 "exe can't boot" premise was falsified 2026-06-18 — the exe boots in ~2 s under
 llvmpipe; see `bucket-mesa-exe-boot` in
-[`applied.md`](../self-improvement/categories/applied.md)). What remains advisory
-is two documented **step-level masks**: bucket-E's per-test run (~3/74 tests
-render-dependent under llvmpipe) and bucket-C's per-scenario golden diff (goldens
+[`applied.md`](../self-improvement/categories/applied.md)). Bucket-E's per-test
+verdicts now BLOCK (2026-08-29, PR #2161 — lane-integrity fails on sentinel
+`status=fail`; the 4 llvmpipe-only tests self-skip). What remains advisory is
+one documented **step-level mask**: bucket-C's per-scenario golden diff (goldens
 per-developer, not CI-native — every verdict + golden age still reports to the
 job summary). **Documented escape:** PR #1180 shipped red bucket-C/E under a
 `cr-out-of-band` override (postmortem owed — pre-flip state).
@@ -124,7 +125,7 @@ job summary). **Documented escape:** PR #1180 shipped red bucket-C/E under a
 | Subsystem | `.cpp` | Coverage character | Hot spot |
 |---|---|---|---|
 | **Tracker** (strict) | 52 | Heavy **pure-mapping** (Jira/Plane/GitHub mapping, field parsers, JQL) | ✅ logic / ❌ HTTP transport |
-| **Ui** | 75 | Pure-logic units + 58 bucket-E TUs (verdicts step-masked advisory) | render verdicts non-gating |
+| **Ui** | 75 | Pure-logic units + 58 bucket-E TUs (per-test verdicts blocking) | bucket-C golden verdicts non-gating |
 | **Commands** (strict) | 51 | Scenario + CLI-probe + palette/fuzzy units | good |
 | **Sync / Offline** (strict) | 3 | Queue-replay, conflict-merge, two-backend replay units | good |
 | **Persistence** (strict) | 5 | LocalCache + migration units (happy-path) | ❌ corruption/BUSY |
@@ -143,12 +144,11 @@ narrower slice is tracked), or `[UNBACKLOGGED]`. The full entry → file → sta
 mapping is in [§ 5.1](#51-backlog-cross-reference); the tags here are the
 one-glance summary.
 
-1. **Visual/interaction *verdicts* still advisory** (narrowed 2026-08-29 — the
-   lanes themselves now block on broken harness, and the all-gates-blocking flip
-   blocks on the check-runs). Residue = two step-level masks: bucket-E's per-test
-   run (~3/74 render-dependent tests) + bucket-C's golden diff (no CI-native
-   goldens). *Highest leverage to fix.* — **[tracked]** roadmap Slice B residuals
-   ([`testing-surface-roadmap.md`](../plans/active/testing-surface-roadmap.md) § Deviations).
+1. **Visual *verdicts* still advisory** (narrowed twice 2026-08-29 — lanes block
+   on broken harness; bucket-E per-test verdicts now BLOCK via lane-integrity,
+   PR #2161). Residue = one step-level mask: bucket-C's golden diff (no CI-native
+   goldens). *Highest leverage to fix.* — **[tracked]** roadmap Slice B residual (b)
+   ([`testing-surface-roadmap.md`](../plans/testing-surface-roadmap.md) § Deviations).
 2. **No HTTP-transport integration tests.** All Tracker coverage is `*Pure`
    mapping. The real `TrackerHttpClient` retry/backoff/429/timeout/pagination/SSL
    paths have **no fault-injection harness** — Fake fixtures stub the *client
@@ -189,7 +189,7 @@ the false-GREEN/mutation half of Gap 4 stays unbacklogged.
 
 | Gap | Tracked as | File | Status |
 |---|---|---|---|
-| 1 — visual/interaction verdicts advisory | Slice B residuals: fix/skip ~3/74 render-dependent bucket-E tests; CI-native goldens for bucket-C | [`testing-surface-roadmap.md`](../plans/active/testing-surface-roadmap.md) § Deviations | open — **narrowed**: lanes + poller block since the all-gates-blocking flip; only the two step-level masks remain |
+| 1 — visual verdicts advisory | Slice B residual (b): CI-native goldens for bucket-C (residual (a) — bucket-E per-test verdicts — DONE 2026-08-29, PR #2161) | [`testing-surface-roadmap.md`](../plans/testing-surface-roadmap.md) § Deviations | open — **narrowed**: only bucket-C's golden-diff step mask remains |
 | 2 — no HTTP-transport tests | extend scripted-HTTP fixture (`JiraCatalogHttpFixture.h`) to search/mutation/user-meta paths | [`debt.md`](../self-improvement/categories/debt.md):65 | open — **partial**: catalog-path coverage only; no general `FakeHttpTransport` fault injection |
 | 3 — no fuzz / property tests | crafted-PNG-dims fuzz against `GoldenImage.h` cap | [`security.md`](../self-improvement/categories/security.md):59-60 | open — **partial**: image-dims/cpp-lex/callstack/ADF/SSE/NDJSON + tracker GitHub/Plane/Linear mappers (E2a-c) covered; MCP-dispatch/config-locale/p4/WAV unbacklogged ([`test/2026-07-05-fuzz-surfaces-next-batch.md`](../self-improvement/categories/test/2026-07-05-fuzz-surfaces-next-batch.md)) |
 | 4 — test-delta ≠ assertion quality | auto-PASS classifier for no-runtime-surface diffs | [`infra.md`](../self-improvement/categories/infra.md):60-61 | open — **inverse direction**: tracks false-RED, not the false-GREEN/mutation-signal half (unbacklogged) |
@@ -214,11 +214,12 @@ don't re-scope) or **[new]** (no entry — file before/with the work). Cross-ref
 [§ 5.1](#51-backlog-cross-reference).
 
 **P0 — close the gating holes**
-- Drop the two remaining **step-level masks**: fix or `IM_CHECK_SILENT`-skip the
-  ~3/74 render-dependent bucket-E tests so the per-test mask can go, and establish
-  CI-native goldens so bucket-C's golden-diff mask can go. (The lane-level work —
-  blanket `continue-on-error` removal, poller blocking — is DONE via the
-  all-gates-blocking flip.) **[planned]** — roadmap Slice B residuals.
+- Drop the last **step-level mask**: establish CI-native goldens so bucket-C's
+  golden-diff mask can go. (Bucket-E's per-test mask is GONE — 2026-08-29,
+  PR #2161: 4 llvmpipe-only tests self-skip, lane-integrity fails on
+  `status=fail`. Lane-level work — blanket `continue-on-error` removal, poller
+  blocking — DONE via the all-gates-blocking flip.) **[planned]** — roadmap
+  Slice B residual (b).
 - ~~Add **Coverage + Sanitizer** to `required_contexts`~~ **[done, Slice C
   2026-06]** — all three are branch-required (§ 3 contexts 7–9).
 
