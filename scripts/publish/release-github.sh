@@ -218,6 +218,16 @@ new_clean_directory() {
     if [ "$(printf '%s' "$resolved" | tr '\\' '/')" = "$(printf '%s' "$root" | tr '\\' '/')" ]; then
         die "Refusing to clean root path: $resolved"
     fi
+    # A relative --out-dir is resolved under $REPO_ROOT, so `--out-dir .` (or
+    # `..`) resolves to the checkout itself or an ancestor — and this rm -rf
+    # would delete the working tree as a "preflight clean". Refuse any target
+    # that IS the repo root or contains it.
+    local repo_n out_n
+    repo_n="$(printf '%s' "$(abs_path "$REPO_ROOT")" | tr '\\' '/')"
+    out_n="$(printf '%s' "$resolved" | tr '\\' '/')"
+    case "$repo_n/" in
+        "$out_n"/*) die "Refusing to clean $resolved — it is the repo checkout or contains it." ;;
+    esac
     rm -rf "$path"
     mkdir -p "$path"
 }
