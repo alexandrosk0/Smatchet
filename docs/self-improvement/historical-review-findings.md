@@ -657,6 +657,13 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   Batch 22 (#2033–#2041) is the first batch whose work-list was **computed** by
   `historical-review-worklist.sh` rather than asserted — its coverage line is the
   gate's own triple.
+  **2026-08-29 — frontier now #1–#2159 (Batch 23); the next sweep resumes from
+  #2160.** Build the work-list with `historical-review-worklist.sh --json`: the
+  object it emits carries the computed coverage triple alongside the units, and
+  passing that whole object as the sweep workflow's `args` makes the workflow
+  RETURN the triple (`result.coverage`) — quote that in the batch header, never
+  a transcription of the stderr line (part 3 of the merge-commit work-list
+  entry, closed 2026-08-29).
   Batch 20 (2026-08-08) is **SUPERSEDED**: it screened rather than read, and its
   work-list missed 7 merge-commit PRs, so it never covered #1878–#1940. § Batch
   20-REDO re-swept that range in full (60 PRs / 64 units, 96 findings) and

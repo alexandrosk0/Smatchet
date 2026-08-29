@@ -68,8 +68,15 @@
     reconstructing the hand-built Batch 20-REDO work-list. `--selftest` carries 3 e2e
     fixtures, two of them asserts-failure (no-authority must exit 2; an unresolvable
     merged PR must exit 2). Wired into § Sweep status resume instructions and used to
-    build Batch 22. **Remaining: part (3)** — have the sweep workflow itself return
-    the coverage triple so a batch header quotes the computed number instead of
-    re-asserting one; today the gate prints it to stderr and the orchestrator
-    transcribes it.)
-  Last-reviewed: 2026-08-16
+    build Batch 22. Part (3) shipped 2026-08-29: `--json` emits ONE OBJECT
+    carrying the computed coverage triple alongside the units, the sweep
+    workflow accepts that object as `args` and returns the triple verbatim
+    (`result.coverage`), and the selftest asserts the object against the
+    fixture-A ground truth (2 authoritative / 1 scraped / missed [101] /
+    2 covered → 3 units) plus units-parity with the bare-array output.
+    Validated on the real Batch 23 range: `--json --range 2042 2159` returns
+    `{authoritative: 76, scraped: 76, missed: [], covered: 76, units: 76}`,
+    matching the shipped batch header. All three parts applied — archive to
+    `applied.md` deferred only because that file sits under the
+    `testing-surface-activation` plan-lock held by a concurrent session.)
+  Last-reviewed: 2026-08-29
