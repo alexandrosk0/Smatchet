@@ -540,10 +540,6 @@ std::string ConfigManager::GetStoragePreferenceFlagPath(const std::string& runti
     return normalized + "smatchet_storage_mode.txt";
 }
 
-bool ConfigManager::HasExplicitStoragePreference(const std::string& runtimeAssetDir) {
-    return FileExists(GetStoragePreferenceFlagPath(runtimeAssetDir));
-}
-
 ConfigManager::StoragePreference ConfigManager::GetStoragePreference(const std::string& runtimeAssetDir,
                                                                      StoragePreference defaultIfMissing) {
     const std::string path = GetStoragePreferenceFlagPath(runtimeAssetDir);

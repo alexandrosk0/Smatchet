@@ -81,32 +81,4 @@ TextEditor::Palette GetThemedLuaConsolePalette() {
     return p;
 }
 
-TextEditor::Palette GetThemedAiChatPalette() {
-    TextEditor::Palette p = GetThemedLuaConsolePalette();
-    using PI = TextEditor::PaletteIndex;
-    // Chat-specific overlay — keep brand-consistent across themes:
-    //   * Default (body text) bumped to bright off-white so prose stays
-    //     readable on dark themes; on light themes the GetThemedLuaConsole
-    //     baseline already provides a darker default which we keep.
-    //   * Background cleared to transparent so the parent BeginChild's
-    //     theme-coloured panel shows through (this is intentional — the
-    //     chat panel deliberately doesn't paint its own bg).
-    //   * CharLiteral / PreprocIdentifier repurposed for the user-role +
-    //     user-body amber overlays. These are deliberately theme-independent
-    //     so user vs assistant turns stay distinguishable on every theme.
-    p[(int)PI::Background] = 0x00000000;        // transparent — parent panel bg shows
-    p[(int)PI::CharLiteral] = 0xfff5c97a;       // soft amber for user role lines
-    p[(int)PI::PreprocIdentifier] = 0xffd9a76a; // deeper amber for user msg body
-
-    // Body text override only on dark themes — the light-theme baseline from
-    // GetThemedLuaConsolePalette already provides a readable dark default.
-    const ImVec4& wb = ImGui::GetStyle().Colors[ImGuiCol_WindowBg];
-    const float luma = 0.2126f * wb.x + 0.7152f * wb.y + 0.0722f * wb.z;
-    if (luma <= 0.5f) {
-        p[(int)PI::Default] = 0xffe0e0e0; // bright off-white body text
-    }
-
-    return p;
-}
-
 } // namespace SmatchetTheme

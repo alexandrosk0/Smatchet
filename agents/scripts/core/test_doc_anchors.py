@@ -50,6 +50,9 @@ EXCLUDE_GLOBS = (
     ":(exclude)docs/plans/active/_plan-locks-archive.md",
     ":(exclude)docs/plans/active/_plan-locks.generated.md",
     ":(exclude)docs/self-improvement/categories/applied.md",
+    # Rotated monthly partitions of applied.md (rotate-applied-md.sh): the same
+    # archive, so the same stale-section-reference expectation applies.
+    ":(exclude)docs/self-improvement/categories/applied-*.md",
 )
 
 # Anchor sources — AGENTS.md + every file in docs/agent-rules/.

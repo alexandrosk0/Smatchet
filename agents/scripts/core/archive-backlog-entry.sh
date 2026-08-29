@@ -414,6 +414,19 @@ if [ "${#touched[@]}" -gt 0 ]; then
     git add -- "${touched[@]}"
 fi
 
+# ── Step 2b: keep the head bounded ───────────────────────────────────────────
+# Rotate months older than current+previous out of applied.md into flat
+# applied-YYYY-MM.md siblings (see rotate-applied-md.sh header for why flat).
+# Runs after every append so the head stays bounded by construction; stages
+# whatever the rotation touched. Guarded on the sibling's existence: the bats
+# fixtures copy this script standalone, and a missing OPTIONAL rotation must
+# not abort the archival (the real tree always ships the sibling).
+ROTATE="$(dirname "${BASH_SOURCE[0]}")/rotate-applied-md.sh"
+if [ -f "$ROTATE" ]; then
+    bash "$ROTATE"
+    git add "$APPLIED" "$(dirname "$APPLIED")"/applied-*.md 2>/dev/null || true
+fi
+
 # ── Step 3: the self-check that would have caught both halves ────────────────
 if [ "${ARCHIVE_SKIP_LINK_CHECK:-0}" = "1" ]; then
     echo "archive-backlog-entry: link self-check SKIPPED (ARCHIVE_SKIP_LINK_CHECK=1)"

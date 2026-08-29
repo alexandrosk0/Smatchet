@@ -638,21 +638,6 @@ void SmatchetUI::drawMenuBarViewMenu(MainMenuDrawCtx& ctx) {
     }
     ImGui::Separator();
     drawMenuBarAppearanceMenu(ctx);
-#if defined(SMATCHET_ENABLE_EDITOR_LAYOUT)
-    if (ImGui::BeginMenu("Editor Layout")) {
-        if (ImGui::MenuItem("Single")) { /* TODO: DockBuilderSplitNode single */
-        }
-        if (ImGui::MenuItem("Two Columns")) { /* TODO */
-        }
-        if (ImGui::MenuItem("Three Columns")) { /* TODO */
-        }
-        if (ImGui::MenuItem("Two Rows")) { /* TODO */
-        }
-        if (ImGui::MenuItem("Grid (2x2)")) { /* TODO */
-        }
-        ImGui::EndMenu();
-    }
-#endif
     drawMenuBarViewWindowToggles(ctx);
     ImGui::Separator();
     // Recently Used Views submenu: lists the last 5 toggled view ids, oldest first.

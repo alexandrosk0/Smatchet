@@ -1084,6 +1084,24 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no new AppController.h includer (fan-in ratchet) vs $BASE"
     fi
 
+    # --- daemon subprocess timeout (ADVISORY, WARN-first — never changes exit code) ---
+    # An un-timed subprocess call inside a daemon poll loop wedges the whole daemon on a
+    # hung child. daemon_subprocess_timeout_audit.py --check is WARN-first (calibration;
+    # exit 0 on findings, >=2 only on infra error) — same fail-closed infra contract as
+    # the delta gates above.
+    dt_aud="$REPO_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py"
+    if [ ! -f "$dt_aud" ]; then
+        echo "test-lint-rules: ERROR: missing $dt_aud; cannot run daemon-timeout audit" >&2
+        exit 2
+    fi
+    if "$cr_py" "$dt_aud" --check; then :; else
+        dt_rc=$?
+        if [ "$dt_rc" -ge 2 ]; then
+            echo "test-lint-rules: ERROR: daemon_subprocess_timeout_audit.py --check failed (exit $dt_rc)" >&2
+            exit 2
+        fi
+    fi
+
     # --- soft comment-ratio warning (ADVISORY — never changes exit code) ---
     ratio_warn_for "$BASE" || true
 

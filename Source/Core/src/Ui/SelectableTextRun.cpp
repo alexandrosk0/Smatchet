@@ -124,35 +124,6 @@ Context& Begin(const char* strId) {
 
 void EndBlock(Context& ctx) { ++ctx.currentBlockId; }
 
-void TextRun(Context& ctx, const char* begin, const char* end, ImFont* font, ImU32 color, float /*wrapWidth*/,
-             void* hrefOpaque) {
-    if (begin == end || begin == nullptr || font == nullptr) {
-        return;
-    }
-
-    ImGui::PushFont(font);
-    const ImVec2 pos = ImGui::GetCursorScreenPos();
-    const float lineH = ImGui::GetTextLineHeight();
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
-    ImGui::TextUnformatted(begin, end);
-    ImGui::PopStyleColor();
-
-    const float width = ImGui::CalcTextSize(begin, end).x;
-    ImGui::PopFont();
-
-    Segment seg;
-    seg.docOrder = ctx.nextDocOrder++;
-    seg.blockId = ctx.currentBlockId;
-    seg.pos = pos;
-    seg.lineH = lineH;
-    seg.textOwned.assign(begin, end);
-    seg.font = font;
-    seg.fontSize = ImGui::GetFontSize();
-    seg.href = hrefOpaque;
-    seg.totalWidth = width;
-    ctx.segments.push_back(std::move(seg));
-}
-
 void RegisterSegment(Context& ctx, const char* begin, const char* end, ImVec2 screenPos, float lineH, ImFont* font,
                      float totalWidth, void* hrefOpaque) {
     if (begin == nullptr || end == nullptr || end <= begin || font == nullptr) {

@@ -674,9 +674,6 @@ class AppController : public IAppThreading,
     // GridContextDepsAdapter). A ctx-less public overload re-resolved focusedContext() at
     // apply time — per-context generation counters can be equal-by-coincidence across panes,
     // passing the gate while focus moved.
-    /** Reload ActiveTickets from cache and kick per-issue-type editmeta warmup (same tail as SyncWithBackend). */
-    void RefreshLocalDataAndWarmIssueTypeMeta();
-
     void UpdateTicket(const CachedTicket& ticket);
 
     std::vector<CachedTicket> GetActiveTickets() const;

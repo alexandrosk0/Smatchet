@@ -1,4 +1,19 @@
-// DockGapSentinelScenario — see header for rationale. The scenario itself
+// DockGapSentinelScenario — Phase 7 bucket-C verification (test-suite-expansion-
+// completion plan). Drives the standalone window to a known steady dock layout
+// for a small warm-up window, then triggers `debug.window.screenshot` against
+// the user-supplied output path. The bash driver (scripts/dev/test-screenshot-
+// diff.sh) compares the captured PPM against tests/golden/dock_gap_sentinel.ppm
+// with per-channel L∞ ≤ 4 tolerance — any new dock gap, palette shift, or
+// shell-chrome regression breaks the diff. Goldens regenerate on first run if
+// absent (bootstrap mode).
+// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
+// The standalone screenshot path is renderer-agnostic: it captures from the GL
+// front buffer (flipped) or the DX12 swapchain back buffer (already top-left),
+// so both standalone renderers satisfy the request. CI pins the bucket-C launch
+// to `--renderer=gl` to keep the Mesa-rendered goldens byte-stable.
+// The factory (`MakeDockGapSentinelScenario`) is `extern`-declared by
+// SmatchetScenarioRegistry.cpp — there is deliberately no header.
+// The scenario itself
 // does very little — it lets the dock settle for a small warm-up window
 // (default 8 frames), then sets the existing debug.window.screenshot request
 // flags on UiDrawSession so Source/Standalone/main.cpp's post-swap handler

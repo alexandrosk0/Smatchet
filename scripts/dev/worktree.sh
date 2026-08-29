@@ -45,7 +45,8 @@ Usage: bash scripts/dev/worktree.sh <command> [<slug>] [options]
 
 Commands:
   new <slug>      Create a worktree on feat/<slug> off origin/develop and wire .claude/
-  resync          Re-baseline this tree's session entries to the current HEAD
+  resync [--all]  Re-baseline this tree's session entries to the current HEAD
+                  (own entry only by default; --all includes siblings)
   list            List worktrees with branch / dirty / live-session count
   rm <slug>       Remove a worktree
   prune           Prune stale admin entries; report merged worktrees
@@ -65,6 +66,7 @@ BASE="develop"
 BRANCH=""
 FORCE=0
 DELETE_BRANCH=0
+RESYNC_ALL=0
 
 # `shift 2` fails WITHOUT shifting when the option value is missing, which
 # would spin this loop forever (no `set -e` here). Reject that up front.
@@ -80,6 +82,7 @@ while [ $# -gt 0 ]; do
         --branch=*)      BRANCH="${1#*=}"; shift ;;
         --force)         FORCE=1; shift ;;
         --delete-branch) DELETE_BRANCH=1; shift ;;
+        --all)           RESYNC_ALL=1; shift ;;
         -h|--help)       usage; exit 0 ;;
         -*)              echo "worktree: unknown option: $1" >&2; usage >&2; exit 2 ;;
         *)
@@ -200,8 +203,52 @@ cmd_new() {
     fi
 }
 
+# resync_self_sid — the caller's own registry entry name. Registry entries are
+# named for the session id (session-heartbeat.sh writes
+# .active-sessions/$SESSION_ID), so the basename IS the identity to match.
+# Same resolution order as git-janitor.sh:103 on purpose — two different answers
+# to "which session am I" is how the self-exclusion in one drifts from the other.
+resync_self_sid() { printf '%s' "${SMATCHET_JANITOR_SELF_SESSION:-${CLAUDE_SESSION_ID:-}}"; }
+
+# resync_entry_is_live <entry> <now> — prefer the shared lib so this agrees with
+# what the HEAD-drift guards see (Win32 pids that `kill -0` cannot probe); fall
+# back to the same fresh-heartbeat-or-live-pid rule live_session_count() uses.
+resync_entry_is_live() {
+    local _e="$1" _now="$2" _ts _pid
+    if command -v sr_entry_is_live >/dev/null 2>&1; then
+        sr_entry_is_live "$_e" "$_now"; return $?
+    fi
+    _ts="$(sed -n 's/^ts=\([0-9][0-9]*\).*/\1/p' "$_e" | head -1)"
+    [ -n "${_ts:-}" ] && [ "$((_now - _ts))" -lt 1800 ] && return 0
+    _pid="$(sed -n 's/^ppid=\([0-9][0-9]*\).*/\1/p' "$_e" | head -1)"
+    [ -n "${_pid:-}" ] && [ "$_pid" -gt 0 ] && kill -0 "$_pid" 2>/dev/null
+}
+
+# cmd_resync [--all]
+#
+# Re-baselines session-registry entries to the current HEAD. It used to rewrite
+# EVERY entry unconditionally, which in the shared integration tree silently
+# re-baselined other LIVE sessions: guard-head-drift.sh then stopped denying for
+# them, erasing drift that had already happened under those siblings — the guard
+# was blinded by a command run in a different session (finding #1958).
+# git-janitor.sh already self-excludes via CLAUDE_SESSION_ID; resync never did.
+#
+#   own sid known           -> re-baseline ONLY the caller's own entry
+#   --all                   -> every entry, naming each one it overwrites
+#   own sid unknown, no --all -> re-baseline only entries that are NOT live, and
+#                              name the live ones it skipped
+#
+# The last case is deliberate. A hard refusal would dead-end a human running
+# `worktree.sh resync` from an ordinary shell (no CLAUDE_SESSION_ID) on a
+# command that worked yesterday — aimed at exactly the person least likely to be
+# racing siblings. Skipping only the LIVE entries keeps the safety property (a
+# live sibling is never clobbered) without taking the capability away.
 cmd_resync() {
-    local tree cur_branch cur_sha dir now entry pid count=0
+    local tree cur_branch cur_sha dir now entry pid count=0 skipped=0 sid base
+    local all="$RESYNC_ALL"   # global flag — the dispatcher calls cmd_resync with
+                              # no args, and the script parses every option up
+                              # front (an unknown `-*` exits 2 there), so reading
+                              # $1 here would make `--all` unreachable.
     tree="$(git_out -C "$REPO_ROOT" rev-parse --show-toplevel)"
     [ -n "$tree" ] || tree="$REPO_ROOT"
     cur_branch="$(git_out -C "$tree" symbolic-ref --short HEAD)"
@@ -212,14 +259,30 @@ cmd_resync() {
     dir="$(registry_dir "$tree")"
     [ -d "$dir" ] || { echo "No session registry in this tree — nothing to resync."; return 0; }
     now="$(date +%s)"
+    sid="$(resync_self_sid)"
     for entry in "$dir"/*; do
         [ -f "$entry" ] || continue
+        base="$(basename "$entry")"
+        if [ "$all" -eq 0 ]; then
+            if [ -n "$sid" ]; then
+                [ "$base" = "$sid" ] || continue          # not mine — leave it alone
+            elif resync_entry_is_live "$entry" "$now"; then
+                echo "  skipped (live sibling, and this shell has no session id): $base"
+                skipped=$((skipped + 1))
+                continue
+            fi
+        elif [ -n "$sid" ] && [ "$base" != "$sid" ]; then
+            echo "  overwriting sibling entry (--all): $base"
+        fi
         pid="$(sed -n 's/^ppid=\([0-9][0-9]*\).*/\1/p' "$entry" | head -1)"
         printf 'branch=%s\nsha=%s\nppid=%s\nts=%s\n' \
             "$cur_branch" "$cur_sha" "${pid:-0}" "$now" > "$entry"
         count=$((count + 1))
     done
     echo "Re-baselined $count session entry(ies) in $tree to $cur_branch@${cur_sha:0:8}."
+    if [ "$skipped" -gt 0 ]; then
+        echo "Skipped $skipped live sibling entry(ies). Re-run with --all to include them."
+    fi
 }
 
 # Walk `git worktree list --porcelain`, calling back with path + branch label.

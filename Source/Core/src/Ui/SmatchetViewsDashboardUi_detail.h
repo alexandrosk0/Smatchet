@@ -221,9 +221,6 @@ void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore&
 /// snapshotted. The snapshot is cleared by Save / Discard / view switch.
 void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view);
 
-void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views& viewState,
-                                    const ViewDefinition& activeView);
-
 /// Embedded JQL editor for the Filter tab — input + clear + autocomplete
 /// popup. The surrounding tab provides its own label and "open in browser"
 /// chrome. The popup is drawn as part of this call. `drawProjectPill` appends
@@ -233,11 +230,6 @@ void ApplyViewsActiveJqlFromBuffers(AppController& app, UiDrawSession& d, Views&
 /// searches); null keeps the plain InputText used by the dashboard editor.
 void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill = true,
                                 const char* hint = nullptr);
-
-/// Vertical splitter that lets the user drag a horizontal divider; stores the new
-/// height in *height and clamps to [min, max]. Triggers ConfigManager::Save(d.cfg)
-/// when the user releases the mouse so layout survives restart.
-void DrawVerticalSplitter(const char* id, UiDrawSession& d, float* height, float minHeight, float maxHeight);
 
 /// Horizontal splitter (vertical divider line). *widthLeft is the left-pane width
 /// in pixels; *widthLeft is updated on drag and persisted on release.

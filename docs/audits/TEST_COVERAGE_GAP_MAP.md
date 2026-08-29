@@ -3,7 +3,7 @@
 **Date:** 2026-07-02 · **numbers recomputed 2026-07-13**
 **Branch:** `claude/fable-5-codebase-improvements-l90taa` · **2026-07-13 pass:** `claude/test-coverage-gap-map-review-kh77tg`
 **Scope:** All first-party `.cpp` translation units under `Source/Core/src/` — **331** TUs / **~103.2K LOC** as of 2026-07-13 (was 304 / ~100.8K on 2026-07-05; the tree grew ~25 TUs of ordinary feature/extraction work in between, plus this pass's 2 new tested `_detail` TUs). Headers, `Source/Plugins`, `Source/Standalone`, `Source/Mobile`, and vendored `ThirdParty/` are out of scope (plugins have their own suites under `tests/Plugins/`).
-**Companions:** [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) (2026-06-26), [`backlog/BACKLOG_CODE_REVIEW.md`](../../backlog/BACKLOG_CODE_REVIEW.md), [`backlog/MANUAL_TEST_QUEUE.md`](../../backlog/MANUAL_TEST_QUEUE.md).
+**Companions:** [`CPP_CODE_AUDIT.md`](CPP_CODE_AUDIT.md) (2026-07-01), [`SECURITY_AUDIT.md`](SECURITY_AUDIT.md) (2026-06-26), `backlog/BACKLOG_CODE_REVIEW.md`, `backlog/MANUAL_TEST_QUEUE.md` (ledgers retired 2026-08-29 — all items closed or migrated to `docs/self-improvement/categories/`; see git history).
 
 ## Method (and why TU membership is ground truth here)
 

@@ -531,7 +531,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/required-field-ui-glyph` (deleted)
 - **Owner agent**: `tracker-backend`
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § A3
+- **Originating plan**: `backlog/BACKLOG_CODE_REVIEW.md` (ledger removed 2026-08-29; see git history) § A3
 - **Claimed write set**:
   - `Source_Core/src/TicketFieldEditor.cpp`
   - `Source_Core/src/SmatchetNewIssueDraftUi.cpp`
@@ -546,7 +546,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/grid-pushcliprect-audit` (deleted)
 - **Owner agent**: `grid-engine`
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C7
+- **Originating plan**: `backlog/BACKLOG_CODE_REVIEW.md` (ledger removed 2026-08-29; see git history) § C7
 - **Claimed write set**:
   - `Source_Core/src/SmatchetActiveProjectGridUi.cpp` (lines 843, 905, 930 — remove `PushClipRect`/`PopClipRect` pairs if redundant)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C7)
@@ -559,7 +559,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/markdown-emitinlinetext-scratch` (deleted)
 - **Owner agent**: orchestrator (direct — small allocator-only change, no header touch)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C2
+- **Originating plan**: `backlog/BACKLOG_CODE_REVIEW.md` (ledger removed 2026-08-29; see git history) § C2
 - **Claimed write set**:
   - `Source_Core/src/MarkdownConvert.cpp` (EmitInlineText at line 723 only)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C2)
@@ -572,7 +572,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/plane-fetchissueeditmeta-broaden` (deleted)
 - **Owner agent**: orchestrator (direct — one-line list expansion)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § C3
+- **Originating plan**: `backlog/BACKLOG_CODE_REVIEW.md` (ledger removed 2026-08-29; see git history) § C3
 - **Claimed write set**:
   - `Source_Core/src/PlaneFieldCatalog.cpp` (FetchIssueEditMeta at line 492 only — broaden hardcoded set; root cause "Plane has no per-issue capability endpoint" documented inline)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip C3 → 🟡 partial; real-permissions query deferred)
@@ -585,7 +585,7 @@ _Originally the in-flight section. The lone `git-ref-plan-locks` entry that live
 
 - **Branch**: `feat/plane-fetchissuesforkeys-filter` (deleted)
 - **Owner agent**: `tracker-backend` (orchestrator-direct after isolated worktrees thrashed twice on API 500)
-- **Originating plan**: [`backlog/BACKLOG_CODE_REVIEW.md`](../../../backlog/BACKLOG_CODE_REVIEW.md) § B4
+- **Originating plan**: `backlog/BACKLOG_CODE_REVIEW.md` (ledger removed 2026-08-29; see git history) § B4
 - **Claimed write set**:
   - `Source_Core/src/PlaneIssueSearch.cpp` (FetchIssuesForKeys only — file split from `PlaneClient.cpp` since the backlog entry was written)
   - `backlog/BACKLOG_CODE_REVIEW.md` (status flip B4 → 🟡 partial; server-side `sequence_id__in` filter deferred as B4-v2)

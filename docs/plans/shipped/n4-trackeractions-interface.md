@@ -1,8 +1,11 @@
 # Plan — N4 TrackerActions interface (assessment + verdict)
+<!-- plan-date: 2026-07-13 -->
 
 > **Slug**: `n4-trackeractions-interface` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — an **assessment plan**: it evaluates whether the `TrackerActions` interface that BACKLOG_CODE_REVIEW.md N4 calls "the overdue Phase 2 step" is still worth building, given six shipped fan-in phases + the deps-adapter extraction that post-date the N4 ledger note. Verdict below is **do not build TrackerActions; close N4** — but the plan documents the exact residual coupling surface so a future author can re-open with eyes open if the friend ever regrows.
+> **Status**: `shipped` — verdict delivered and applied (N4 closed in the ledger's 2026-08-18
+> reconciliation; the ledger itself was retired 2026-08-29, and this assessment archived per its
+> own outstanding-bookkeeping note). Originally an **assessment plan**: it evaluates whether the `TrackerActions` interface that BACKLOG_CODE_REVIEW.md N4 calls "the overdue Phase 2 step" is still worth building, given six shipped fan-in phases + the deps-adapter extraction that post-date the N4 ledger note. Verdict below is **do not build TrackerActions; close N4** — but the plan documents the exact residual coupling surface so a future author can re-open with eyes open if the friend ever regrows.
 
 ## Context
 
@@ -135,7 +138,7 @@ N/A — this is an assessment/verdict plan; it extracts nothing. (The Part-A DTO
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-N/A — this plan's PR is docs-only (`docs/plans/active/n4-trackeractions-interface.md`). No `Source/Core/` diff. (Were the not-recommended implementation built, the touched paths are cold wiring — gate 1 maps to no hot scenario; gates 2-5 do not fire.)
+N/A — this plan's PR is docs-only (`docs/plans/n4-trackeractions-interface.md`). No `Source/Core/` diff. (Were the not-recommended implementation built, the touched paths are cold wiring — gate 1 maps to no hot scenario; gates 2-5 do not fire.)
 
 ## Risks / non-goals
 
@@ -163,13 +166,24 @@ Per `AGENTS.md` § Verification automation — zero manual steps. This plan's ow
 - **`GridLiveContext` de-singletoning** (multi-grid Slice 3, ADR-0018) — the per-context state the adapter's `ctx_` half forwards to; a separate program.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `0cbe593e` · archived to `shipped/` during the 2026-08-29 review-ledger retirement; the
+  verdict itself ("do not build TrackerActions; close N4") had been applied by the ledger's
+  2026-08-18 reconciliation, per `git show 0cbe593e~1:backlog/BACKLOG_CODE_REVIEW.md`
+  § "Net open: zero work items" (the ledger was retired in that same `0cbe593e`).
 
 ## Deviations from plan
-*(populated post-ship)*
+- None. The plan's deliverable was the assessment verdict, and the verdict was "don't
+  build" — no code shipped, so there was nothing to deviate from. The residual coupling
+  surface it documents remains available for a future re-open.
 
 ## Verification (actual)
-*(populated post-ship)*
+- No production diff to verify (assessment-only plan). Archival verified against the
+  documentation gates at the archiving commit: `test-plan-index.sh` (INDEX regenerated,
+  in sync), `test-plan-ref-integrity.sh` (all refs resolve; the plan's self-reference
+  moved to the tier-less form), `test-markdown-links.sh --all` (0 dangling), `md_lint.py`
+  clean. Deferral residue-sweep run at archival: no stray "TrackerActions" /
+  "Phase 2 interface" references outside this plan in `**/CONTEXT*.md`, `docs/adr/`,
+  `agents/`, or `docs/self-improvement/categories/`.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 1. flip the § Status header to `shipped`,

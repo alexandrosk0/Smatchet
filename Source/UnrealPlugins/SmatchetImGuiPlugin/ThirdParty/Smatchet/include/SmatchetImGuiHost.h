@@ -69,7 +69,6 @@ class SmatchetImGuiHost {
     void SetMousePosition(float x, float y);
     void SetMouseButton(int button, bool isDown);
     void AddMouseWheel(float wheelX, float wheelY);
-    void SetKeyDown(int imguiKey, bool isDown);
     void SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey);
     /** Atomically apply modifier keys + key-down in one ImGui mutex hold (avoids render-thread NewFrame clearing
      * modifiers). */
@@ -89,13 +88,9 @@ class SmatchetImGuiHost {
     void SetSuppressSoftwareCursor(bool suppress);
     bool GetSuppressSoftwareCursor() const;
 
-    AppController& GetAppController();
-    PluginHost& GetPluginHost();
-
     // Cache Unreal-side init options without starting networking/loading yet.
     // The host will call Initialize(options) lazily when the UI is shown.
     void SetInitOptions(const InitOptions& options);
-    bool UpdateRendererColorFormat(int colorFormat, std::string& outError);
     /** D3D12: patches the cached InitOptions with the SRV descriptor heap size so that the lazy
      *  Initialize() call picks it up when wiring up the dynamic-texture allocator. Must be set before
      *  the first BeginFrame after options are cached. */

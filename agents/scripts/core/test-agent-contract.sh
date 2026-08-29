@@ -44,6 +44,86 @@ set -euo pipefail
 # line that contains emoji, so the other `grep -qF` sites here are fine.
 grep_fixed() { LC_ALL=C grep -qF -- "$1"; }
 
+# claude_code_hint <file> <key> — read `harness-hints.claude-code.<key>`.
+#
+# Scoped to the `claude-code:` SUB-BLOCK, not to `harness-hints:` as a whole.
+# The old form (`awk '/^harness-hints:/,/^---/' | grep '^    model:'`) took the
+# FIRST 4-space-indented key under harness-hints regardless of which harness owns
+# it. `.coderabbit.yaml` documents `harness-hints.<harness>:` blocks (e.g.
+# `harness-hints.claude:`) as intentional, so the moment any agent lists a second
+# harness BEFORE `claude-code:`, checks 5 and 15 silently compare the wrong
+# harness's value — a false PASS or a false FAIL with no way to tell which.
+# The awk range also ran to EOF when the frontmatter terminator was missing.
+#
+# Defined ABOVE the --selftest dispatch on purpose: bash executes function
+# definitions in order, so a helper defined further down does not exist yet when
+# `--selftest` runs and exits. (Caught by the fixtures below on first run.)
+claude_code_hint() {  # <file> <key>
+  awk -v k="    $2:" '
+    # FRONTMATTER-SCOPED. Ending the block only on a following 2-space key (the
+    # first cut) leaked: neither a 0-space top-level key (`version:`) nor the
+    # closing `---` cleared inblk, so when the sought key was ABSENT the scan ran
+    # on into the document body and picked up any 4-space-indented `model:` in an
+    # indented example — inventing a value for a partial block and defeating the
+    # very partial-block path checks 5 and 15 exist to exercise. Reproduced:
+    # a partial block + `version: 3` + a body line `    model: sonnet` returned
+    # "sonnet". (Cursor Bugbot on PR #2150; fixture (g) below pins it.)
+    NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    !fm { exit }                                  # no frontmatter -> no hints
+    fm && /^---[[:space:]]*$/ { exit }            # closing --- ends the search
+    /^  claude-code:/ { inblk = 1; next }
+    # Any NON-BLANK line that is not one of the block s 4-space children ends the
+    # block. Covers 2-space siblings, 0-space top-level keys, and `---` alike.
+    inblk && !/^    / && /[^[:space:]]/ { inblk = 0 }
+    inblk && index($0, k) == 1 { sub(/^[^:]*: */, ""); gsub(/[[:space:]]/, ""); print; exit }
+  ' "$1"
+}
+
+# has_claude_code_block <file> — true when the agent declares a claude-code hint
+# block at all. This is the ONLY legitimate reason to skip the model checks; a
+# block that exists but is partial is a finding, not a skip.
+has_claude_code_block() {  # <file>
+  # Frontmatter-scoped for the same reason as claude_code_hint: a whole-file grep
+  # would count a `  claude-code:` line quoted in the agent s prose as a real
+  # hint block, turning a legitimate no-block skip into a spurious finding.
+  awk '
+    NR == 1 && /^---[[:space:]]*$/ { fm = 1; next }
+    !fm { exit 1 }
+    fm && /^---[[:space:]]*$/ { exit 1 }
+    /^  claude-code:/ { exit 0 }
+  ' "$1"
+}
+
+# model_verdict <file> — print the check-15 mismatch reason, or nothing when the
+# agent is compliant (or legitimately exempt). Extracted from the check-15 loop
+# so the DECISION is testable, not just the extractors it calls: the fail-open
+# this closes lived in the branching, so fixtures over `claude_code_hint` alone
+# would leave the actual defect unproven.
+model_verdict() {  # <file>
+  local f="$1" base hint top
+  base=$(basename "$f")
+  hint=$(claude_code_hint "$f" model)
+  top=$(grep -m1 -E "^model:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
+  if ! has_claude_code_block "$f"; then
+    # No hint block is the ONLY legitimate skip — and only when a top-level key
+    # still pins the model. With neither, the agent silently inherits the
+    # session model, which is the regression this check exists to prevent.
+    [[ -n "$top" ]] && return 0
+    printf '%s: no model: key and no claude-code hint block — agent will inherit the session model\n' "$base"
+    return 0
+  fi
+  if [[ -z "$hint" && -z "$top" ]]; then
+    printf '%s: claude-code block present but neither model: key set — agent will inherit the session model\n' "$base"
+  elif [[ -z "$hint" ]]; then
+    printf '%s: has top-level model '\''%s'\'' but no harness-hints.claude-code.model\n' "$base" "$top"
+  elif [[ -z "$top" ]]; then
+    printf '%s: has harness-hints model '\''%s'\'' but no top-level model: key\n' "$base" "$hint"
+  elif [[ "$top" != "$hint" ]]; then
+    printf '%s: top-level model '\''%s'\'' != harness-hints model '\''%s'\''\n' "$base" "$top" "$hint"
+  fi
+  return 0
+}
+
 # selftest: asserts-failure — the negative case below feeds a drifted banner and
 # requires grep_fixed to REJECT it, so a helper stubbed to `return 0` cannot pass.
 run_selftest() {
@@ -63,6 +143,112 @@ run_selftest() {
     echo "selftest: FAIL — a drifted banner was accepted as a match" >&2
     rc=1
   fi
+  # --- model-key extraction + fail-open fixtures (finding #1881) -------------
+  # The real tree has 0 violations (all 26 agents carry both keys), so nothing
+  # in-repo exercises these paths. Without fixtures the fix is unproven and a
+  # regression would be invisible — the same "verified nothing, reported PASS"
+  # shape the fix exists to close.
+  local tmpd; tmpd="$(mktemp -d)"
+
+  # (a) Multi-harness ordering: a NON-claude-code harness listed FIRST must not
+  #     be the value compared. This is what the old harness-hints-wide awk range
+  #     got wrong.
+  cat > "$tmpd/multi.md" <<'FIX'
+---
+name: multi
+model: opus
+harness-hints:
+  claude:
+    model: sonnet
+    effort: low
+  claude-code:
+    model: opus
+    effort: high
+---
+FIX
+  if [[ "$(claude_code_hint "$tmpd/multi.md" model)" != "opus" ]]; then
+    echo "selftest: FAIL — claude_code_hint read the wrong harness's model (got '$(claude_code_hint "$tmpd/multi.md" model)', want 'opus')" >&2
+    rc=1
+  fi
+  if [[ "$(claude_code_hint "$tmpd/multi.md" effort)" != "high" ]]; then
+    echo "selftest: FAIL — claude_code_hint read the wrong harness's effort" >&2
+    rc=1
+  fi
+
+  # The cases below drive model_verdict() — the DECISION — not just its
+  # extractors, because the fail-open lived in the branching.
+  #
+  # selftest: asserts-failure — every `want-report` case below must produce a
+  # non-empty verdict; a model_verdict stubbed to `return 0` fails all four.
+  vcase() {  # <fixture-file> <want: report|silent> <label>
+    local got; got="$(model_verdict "$1")"
+    if [[ "$2" == "report" && -z "$got" ]]; then
+      echo "selftest: FAIL — $3: expected a mismatch report, got silence (fail-open)" >&2; rc=1
+    elif [[ "$2" == "silent" && -n "$got" ]]; then
+      echo "selftest: FAIL — $3: expected no finding, got '$got'" >&2; rc=1
+    fi
+  }
+
+  # (b) finding #1881's motivating case: NO model key anywhere. The old
+  #     `[[ -z "$hint_model" ]] && continue` waved this through, so the agent
+  #     silently inherited the session model.
+  printf -- '---\nname: bare\n---\n' > "$tmpd/bare.md"
+  vcase "$tmpd/bare.md" report "no model key at all"
+
+  # (c) claude-code block present but partial — a finding, not a skip.
+  printf -- '---\nname: partial\nharness-hints:\n  claude-code:\n    effort: high\n---\n' > "$tmpd/partial.md"
+  vcase "$tmpd/partial.md" report "partial claude-code block"
+
+  # (d) genuine drift between the two keys must still be caught (the check's
+  #     original job — the fix must not trade one blind spot for another).
+  printf -- '---\nname: drift\nmodel: opus\nharness-hints:\n  claude-code:\n    model: sonnet\n---\n' > "$tmpd/drift.md"
+  vcase "$tmpd/drift.md" report "top-level vs hint drift"
+
+  # (e) multi-harness fixture from (a) is COMPLIANT — the wrong-harness read
+  #     would make it look like drift, so this pins the false-positive side.
+  vcase "$tmpd/multi.md" silent "multi-harness, keys agree"
+
+  # (f) legitimate exemption: no hint block, but a top-level key still pins the
+  #     model. Must stay silent, or the check becomes noise on valid agents.
+  printf -- '---\nname: toponly\nmodel: opus\n---\n' > "$tmpd/toponly.md"
+  vcase "$tmpd/toponly.md" silent "top-level only, no hint block"
+
+  # (g) selftest: asserts-failure — REGRESSION for the frontmatter leak (Cursor
+  #     Bugbot, PR #2150). A PARTIAL claude-code block, then a 0-space top-level
+  #     key and the closing `---`, then a 4-space `model:` in the document body.
+  #     The first cut of claude_code_hint ended the block only on a 2-space key,
+  #     so neither `version:` nor `---` cleared it and the scan reached the body
+  #     and returned "sonnet" — inventing a model for a block that declares none.
+  #     Fixture (c) missed this because it had no body after the frontmatter.
+  cat > "$tmpd/leak.md" <<'LEAKFIX'
+---
+name: leak
+harness-hints:
+  claude-code:
+    effort: high
+version: 3
+---
+
+Example config:
+
+    model: sonnet
+LEAKFIX
+  if [[ -n "$(claude_code_hint "$tmpd/leak.md" model)" ]]; then
+    echo "selftest: FAIL — claude_code_hint leaked past the frontmatter and read '$(claude_code_hint "$tmpd/leak.md" model)' from the body" >&2
+    rc=1
+  fi
+  vcase "$tmpd/leak.md" report "partial block with a body model: line"
+
+  # (h) prose mentioning a hint block must NOT count as declaring one, or a
+  #     legitimate no-block skip becomes a spurious finding.
+  printf -- '---\nname: prose\nmodel: opus\n---\n\nAgents declare:\n\n  claude-code:\n    model: sonnet\n' > "$tmpd/prose.md"
+  if has_claude_code_block "$tmpd/prose.md"; then
+    echo "selftest: FAIL — has_claude_code_block counted a block quoted in prose" >&2
+    rc=1
+  fi
+  vcase "$tmpd/prose.md" silent "prose mentioning claude-code, real top-level model"
+  rm -rf "$tmpd"
+
   if [[ $rc -eq 0 ]]; then echo "test-agent-contract --selftest: PASS"; fi
   return "$rc"
 }
@@ -181,9 +367,13 @@ banner_mismatch=()
 for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
-  fm_model=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    model:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
-  fm_effort=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    effort:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
-  [[ -z "$fm_model" || -z "$fm_effort" ]] && continue  # Agent has no claude-code hint; skip.
+  fm_model=$(claude_code_hint "$f" model)
+  fm_effort=$(claude_code_hint "$f" effort)
+  # Skip only when there is genuinely no claude-code hint block. A block that
+  # exists but is partial falls through to the banner comparison, where the
+  # empty field shows up as a visible mismatch instead of a silent skip
+  # (check 15 reports the missing key itself).
+  has_claude_code_block "$f" || continue
   fm_name=$(grep -m1 -E "^name:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
   fm_ro=$(grep -m1 -E "^read-only:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
   if [[ "$fm_ro" == "true" ]]; then ro_tok="read-only"; else ro_tok="read-edit"; fi
@@ -436,14 +626,8 @@ model_mismatch=()
 for f in $(agent_files); do
   base=$(basename "$f")
   [[ "$base" == "README.md" ]] && continue
-  hint_model=$(awk '/^harness-hints:/,/^---/' "$f" | grep -E "^    model:" | head -1 | awk -F': *' '{print $2}' | tr -d '[:space:]')
-  [[ -z "$hint_model" ]] && continue  # Agent has no claude-code hint; skip.
-  top_model=$(grep -m1 -E "^model:" "$f" | awk -F': *' '{print $2}' | tr -d '[:space:]')
-  if [[ -z "$top_model" ]]; then
-    model_mismatch+=("$base: has harness-hints model '$hint_model' but no top-level model: key")
-  elif [[ "$top_model" != "$hint_model" ]]; then
-    model_mismatch+=("$base: top-level model '$top_model' != harness-hints model '$hint_model'")
-  fi
+  verdict=$(model_verdict "$f")
+  [[ -n "$verdict" ]] && model_mismatch+=("$verdict")
 done
 if [[ ${#model_mismatch[@]} -eq 0 ]]; then
   check_pass "all top-level model: keys match harness-hints.claude-code.model"

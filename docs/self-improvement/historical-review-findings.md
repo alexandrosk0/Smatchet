@@ -11,6 +11,67 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 23 — #2067–#2159 (76-PR sweep, 2026-08-29)
+
+Coverage: **76 reviewed — 25 with findings, 49 clean, 2 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 16 MEDIUM, 24 LOW** (40 findings, 7 `userVisible`). **The frontier is now #1–#2159 contiguous; the next sweep resumes from #2160.** Reviewer agents inherited the session model this batch (the per-agent model pin was dropped rather than pinned to the opus/high grade Batches 1–22 used); 76/76 returned, ~2.0M tokens. The run was paused mid-sweep on a usage limit and resumed from the workflow cache — completed units replayed, the remainder ran live; no unit was double-reviewed or lost.
+
+Work-list computed, not asserted, via [`historical-review-worklist.sh`](../../agents/scripts/core/historical-review-worklist.sh) `--range 2042 2159` (with `--merged-list`, since this container has no `gh`): *authoritative merged PRs 76 / develop-log scrape 76 / scrape MISSED none / coverage 76/76 → 76 review units*. #2042–#2066 are Issues (the Batch 20-REDO/21 ADR-0014 elevations), not PRs, which is why the first reviewed PR is #2067; no merge-commit PRs in the range, so no constituent expansion.
+
+> **Young-slice caveat, third consecutive batch:** the range spans merges 0–13 days old, so only 2 of 76 PRs were fully superseded and most digests show every introduced line still alive. The findings are real, but the "survived N later PRs" evidence an aged slice carries is thin here — same effect Batches 21 and 22 recorded.
+
+**Zero CRITICAL/HIGH for the first time in the program.** The actionable set is 7 `userVisible` findings (5 MEDIUM, 2 LOW) — all product-code candidates for ADR-0014 elevation to GitHub Issues; the remaining 33 are internal debt (gate scripts, ledger prose, doc drift).
+
+### Actionable set — CRITICAL / HIGH / every `userVisible` finding (7)
+
+Full problem + fix. Everything below this block is one-line; the complete structured set, fixes included, is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+
+**MEDIUM (5)**
+- **#2084 (b703b68e) · `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:1520`** · **userVisible** — In ApplyAssistantDocking's steady-state branch, d.assistantSideFallback is recomputed as if SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver) landed, but that write is a no-op for a window restored from imgui.ini (ImGui strips FirstUseEver from SetWindowDockAllowFlags for ini-created windows, and after the first applied dock write). When the preferred side's dock node becomes live while the panel sits ini-docked on the other side (the exact #2048 recovery path: pref=secondary, prior-session fallback saved the panel to primary, then a layout reset / newer default ini re-cuts the secondary bar), the fallback resets to -1 while the panel never moves — AiAssistantEffectiveOnSecondary then reports the wrong side, the swap button label/tooltip describe where the panel is not, and the first swap click is a dead no-op (it re-docks the panel to where it already is). This violates the survivor comment's own contract that the override is recorded 'only on a frame that really issues a dock write'. **Fix:** In the FirstUseEver branch, derive assistantSideFallback from where the panel is ACTUALLY docked (e.g. after Begin, compare the live window's DockNode id against kSecondarySideBar) instead of from targetDockId; or only write the fallback when the dock write can actually apply (window not yet created / SetWindowDockAllowFlags still allows FirstUseEver), leaving the previous fallback in place otherwise.
+- **#2085 (1b7c9255) · `Source/Core/src/TicketFieldEditor.cpp:1136`** · **userVisible** — Single-slot in-flight latch: `s_WorklogSubmitInFlightIssueId = issueId;` unconditionally overwrites an outstanding different-ticket latch. Save on A -> Cancel -> open B -> Save (latch := B) -> re-open A: WorklogSubmitOutstandingFor(B, A) is false, SubmitInFlight seeds false, Save re-enables while A's POST is still running -> a second worklog for one intent, the exact duplicate class this PR fixed, reopened via a two-ticket interleaving. **Fix:** Track outstanding submits in a container (e.g. std::set<std::string> of in-flight issue ids) instead of one string; post-back erases its own id. Seeding and the HandleWorklogSave gate query the set.
+- **#2085 (1b7c9255) · `Source/Core/src/TicketFieldEditor.cpp:1157`** · **userVisible** — Re-open the SAME ticket mid-POST: open seeds SubmitInFlight=true (line 1048) and burns a fresh Gen (line 1054), so when the post-back lands, the latch is cleared (1148) but CallbackIsStale fires on the Gen mismatch and returns after the toast — the SubmitInFlight=false release at line 1170 never runs for the re-opened instance. Save stays disabled with a perpetual 'Saving worklog...' cue until the dialog is closed and re-opened; after a failed POST this blocks the user's retry. **Fix:** In the stale branch, when s_ActiveWorklogState.Initialized && s_ActiveWorklogState.IssueId == issueId, also set s_ActiveWorklogState.SubmitInFlight = false before returning (the POST the seed represented has completed).
+- **#2149 (aab05760) · `Source/Core/src/Tracker/JiraUserAndMeta.cpp:534`** · **userVisible** — FetchUsersByAccountIds pagination advances startAt by the requested page size (page * kMaxIdsPerCall = 128) instead of the count of results the server actually returned. The comment (lines 517-519) claims a server that clamps the page size below maxResults still yields every user, but if Jira clamps user/bulk to e.g. 50, page 0 returns users 0-49 with isLast:false, the next request jumps to startAt=128, and users 50-127 are silently never fetched — their account ids stay unnamed hashes in the readable echo. The multi-page test (tests/Core/JiraUserAndMetaHttp.test.cpp:350) masks this: its handler returns the second page for any non-zero startAt, never asserting the follow-up startAt is correct. **Fix:** Advance startAt by the number of values actually returned per page (accumulate a per-chunk fetched count from FetchJiraUserArray — e.g. return the page's array size via an out-param, or read the page bean's maxResults) instead of page * kMaxIdsPerCall; tighten the multi-page test so the second scripted page only matches the startAt a correctly-advancing client would send (the clamped-page-size value, e.g. 1 in the existing fixture).
+- **#2154 (10b0711c) · `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp:224`** · **userVisible** — The "##PaneNewOnBackend" popup lists every credentialed backend including the pane's OWN backend, and its view submenu arms paneAddRequest with targetBackendKey == src->backendKey plus a specific targetViewId. ApplyPaneAddAndCloseRequestsCore (SmatchetGridPaneWindows_detail.cpp, crossBackend = !targetBackendKey.empty() && targetBackendKey != src->backendKey) only honors targetViewId on the crossBackend branch; the same-backend branch copies src->viewId and inherits the snapshot, so picking a specific saved view of the current backend silently opens a duplicate of the CURRENT view — the user's view selection is dropped. **Fix:** Either skip the pane's current backend in the picker loop (the caret tooltip already says "different tracker backend"), or honor targetViewId in the same-backend apply branch (set dup.viewId = ResolveNewPaneView(...) and skip the snapshot inherit when targetViewId differs from src->viewId).
+
+**LOW (2)**
+- **#2085 (1b7c9255) · `Source/Core/src/TicketFieldEditor.cpp:1161`** · **userVisible** — Localization keys worklog.toast.saved_title, worklog.toast.failed_title (lines 1161/1165) and worklog.cancel_inflight_tooltip (line 1369) are used via SmatchetLocalization::T with English fallbacks but were never added to the SmatchetLocalization.cpp table (only worklog.saving was) — these strings always render in English in the French locale, unlike every sibling worklog.* string. **Fix:** Add the three key rows with French translations to the worklog block in Source/Core/src/SmatchetLocalization.cpp.
+- **#2088 (c12f395c) · `Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp:416`** · **userVisible** — Worklog-cell tooltips are baked as English literals in the pure model (lines 416/423 and the composed '\n\nClick to log work / edit estimates.' at 431) and rendered via SmatchetLocalizedImGui::SetTooltip("%s", model.tooltip) — the wrapper translates only the format string ("%s" is a lookup miss), so fr-FR users see English tooltips on the worklog cell while the adjacent timespent cell shows the same text in French (it passes the literals as translation sources via TextUnformatted/Text, hitting the existing worklog.none / worklog.total table entries). Contradicts the PR's own 'two entry points cannot drift apart' intent; the French rows are unreachable from the worklog cell. **Fix:** Localize at the render sink instead of the model: in RenderWorklogField, for the no-work case emit the literal as a translation source (e.g. BeginTooltip + ImGui::TextUnformatted("No work logged yet. Click to log work.") like RenderTimeSpentButton), or add a flag to WorklogCellModel so the renderer picks the localized literal; append the 'Click to log work / edit estimates.' hint through a translating sink as well.
+
+### Internal debt — 11 MEDIUM + 22 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `agents/scripts/core/cr-oob-review-backfill.sh` — 2 MEDIUM, 1 LOW — #2119:316, #2126:336, #2119:338
+- `agents/scripts/core/historical-review-worklist.sh` — 3 MEDIUM — #2068:70, #2068:141, #2068:164
+- `scripts/dev/check-golden-provenance.sh` — 1 MEDIUM, 2 LOW — #2105:131, #2100:145, #2100:189
+- `backlog/DEEP_REVIEW_2026-07-07.md` — 2 LOW — #2069:35, #2069:421
+- `.github/workflows/build-and-test.yml` — 1 LOW — #2100:1383
+- `Source/Core/include/Lua/LuaHookGuard.h` — 1 LOW — #2121:15
+- `Source/Core/include/Ui/FieldPreviewLinePure.h` — 1 LOW — #2097:48
+- `Source/Core/src/FileIo.cpp` — 1 LOW — #2122:70
+- `Source/Core/src/Sync/TicketSyncService.cpp` — 1 LOW — #2147:497
+- `Source/Core/src/Ui/SmatchetActiveProjectGridCells.cpp` — 1 LOW — #2123:145
+- `Source/Standalone/StandaloneBoot_detail.cpp` — 1 LOW — #2096:152
+- `agents/scripts/core/setup-branch-protection.sh` — 1 LOW — #2070:32
+- `agents/scripts/core/test-agent-contract.sh` — 1 MEDIUM — #2150:106
+- `agents/scripts/core/test-workflow-yaml.sh` — 1 LOW — #2080:67
+- `agents/scripts/core/unwatched-pr-nudge.sh` — 1 MEDIUM — #2067:82
+- `agents/scripts/project/lint-rules.d/00-common.sh` — 1 MEDIUM — #2090:125
+- `docs/agent-rules/merge-gates.md` — 1 LOW — #2120:263
+- `docs/plans/shipped/branch-protection-config-completeness.md` — 1 LOW — #2070:102
+- `docs/plans/shipped/git-ref-plan-locks.md` — 1 MEDIUM — #2102:13
+- `docs/self-improvement/categories/tooling/2026-08-16-cr-findings-pending-statuscontext-wedges-merge-gates.md` — 1 LOW — #2094:5
+- `docs/self-improvement/cr-oob-review-backfill.md` — 1 LOW — #2119:36
+- `tests/Lua/LuaTimeout.test.cpp` — 1 LOW — #2121:11
+- `tests/bats/bucket_lane_launch_smoke.bats` — 1 MEDIUM — #2096:321
+- `tests/bats/golden_provenance.bats` — 1 LOW — #2100:128
+- `tests/bats/setup_branch_protection.bats` — 1 LOW — #2070:11
+- `tests/support/LuaHostFixture.h` — 1 LOW — #2121:90
+
+**Clean (49, surviving lines read in full, no findings):** #2159, #2158, #2157, #2156, #2155, #2153, #2152, #2148, #2142, #2141, #2140, #2138, #2137, #2136, #2135, #2134, #2132, #2131, #2130, #2129, #2128, #2127, #2125, #2124, #2118, #2117, #2116, #2115, #2114, #2113, #2112, #2111, #2108, #2107, #2106, #2103, #2098, #2095, #2089, #2087, #2086, #2081, #2077, #2076, #2075, #2074, #2073, #2072, #2071.
+
+**Fully superseded (2, no review surface):** #2104, #2091 — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Batch 22 — #2041–#2033 (7-PR sweep, 2026-08-16)
 
 Coverage: **7 reviewed — 5 with findings, 2 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 1 HIGH, 7 MEDIUM, 5 LOW** (13 findings, 2 `userVisible`). **The frontier is now #1–#2041 contiguous; the next sweep resumes from #2042.** Reviewer model `code-review` (opus/high), 7/7 returned; ~0.49M tokens, ~9 min.
@@ -686,7 +747,7 @@ Coverage: **72 reviewed — 5 with findings, 65 clean, 2 fully superseded, 0 err
 
 ### MEDIUM (2)
 - **#1840 (7f8f5bad) · `Source/Core/src/AppController_LuaScriptFiles.cpp:263`** — **consent TOCTOU**: `IsLuaScriptConsented` reads the script bytes to fingerprint them then discards them, and callers re-read the file separately via sol `load_file`/`script_file` (`AppController_LuaBindings.cpp:415/568/647`) — two independent disk reads, violating the consent core's documented "hash-then-load on one read" invariant (`LuaScriptConsent.h` L33-35). A file swapped between the consent read and the loader read runs **unapproved content**. Fix: return the hashed bytes from the consent check and hand those exact bytes to the Lua loader (sol load/script from the in-memory buffer) so check and execution operate on the same bytes. _(Adversary-required hardening gap → backlog per the reviewer's userVisible:false; elevate to an Issue if local-FS-race is in the threat model.)_
-- **#1815 (b656738d) · `docs/plans/active/n4-trackeractions-interface.md:21`** — broken cross-refs: cites `docs/plans/appcontroller-fan-in-phase5-facets.md` and `…-phase6-dissolution.md`, but both live at `docs/plans/shipped/…` (recurs at :143 and :162). Bare inline code-spans, so the ref-integrity gate doesn't catch them. Fix: add the `shipped/` prefix to all three.
+- **#1815 (b656738d) · `docs/plans/n4-trackeractions-interface.md:21`** — broken cross-refs: cites `docs/plans/appcontroller-fan-in-phase5-facets.md` and `…-phase6-dissolution.md`, but both live at `docs/plans/shipped/…` (recurs at :143 and :162). Bare inline code-spans, so the ref-integrity gate doesn't catch them. Fix: add the `shipped/` prefix to all three.
 
 ### LOW (3)
 - **#1834 (c0fd3ac4) · `Source/Core/src/Diagnostics/EngineContextFormat.cpp:76`** — `AppendPieState` / `AppendSelectedActors` (:100-101) call nlohmann `value()` on nested keys without a type check; a mistyped nested field (`{"pie":{"active":"yes"}}`, actor `label:42`) throws `type_error.302`, contradicting the header's "every helper tolerates mistyped keys by skipping the field" claim. The `LaunchBackgroundTask` firewall contains the throw (no crash) but the entire prefill is dropped rather than the offending field. Fix: `is_boolean()`/`is_string()` guards matching the `StrField` pattern; add a nested-mistype test.

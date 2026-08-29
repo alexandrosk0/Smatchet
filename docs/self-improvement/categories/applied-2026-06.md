@@ -1,437 +1,21 @@
-# Agent self-improvement — applied (archive)
+# Agent self-improvement — applied (archive partition 2026-06)
 
-> Format / categories / workflow / priority / triage: see
-> [`../AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) (index + spec).
-> Sibling categories: bug · process · tooling · infra · test · security · external-blockers · applied.
-> Closed entries. Archive moves immediately on Status → applied. Sorted by original surface date, latest first.
-> **Bounded head**: this file holds the current + previous month only; older months are
-> rotated into flat `applied-YYYY-MM.md` siblings by
-> [`rotate-applied-md.sh`](../../../agents/scripts/core/rotate-applied-md.sh)
-> (run automatically by `archive-backlog-entry.sh`).
+> Rotated slice of [`applied.md`](applied.md) (see its header for format /
+> categories / workflow). Entries whose original surface date falls in
+> 2026-06, sorted latest first. Append-only via
+> `agents/scripts/core/rotate-applied-md.sh`; do not file new work here.
 >
-> **Deleted-runtime banner (2026-05-21)** — applied entries below that reference the agentic-flow C++ runtime (`AgenticHandoffController`, `AgenticTriageController`, `AgentProposalStore`, `ClaudeCodeLocalRunner`, `PrCommentWatcher`, `PrCheckRunWatcher`, `HarnessRunState`, `CoderabbitCommentClassifier`, `CiFailureClassifier`, `dispatch_source` enum, sentinel-file protocol, `agent/<proposalId>` worktrees, `coderabbit-react-loop` design, `agents/handoff-implementer.md`, `agents/pr-iterator.md`) refer to code that **no longer exists** in the tree. The runtime was removed by v1 PR1 of [`../../plans/shipped/github-tracker-backend.md`](../../plans/shipped/github-tracker-backend.md) (merge sha `b1d241bc`, 2026-05-21). The future [`../../plans/shipped/smatchet-merge-watcher.md`](../../plans/shipped/smatchet-merge-watcher.md) revives a subset of the underlying needs in a different (host-daemon) shape; concepts there are NOT identity-mapped to the deleted runtime. Entries here are preserved as historical record of what was tried.
-
-<!-- Latest first. Append on archival. -->
-
-- 2026-08-16 · orchestrator · [infra] · P2 — four docs still describe the pre-all-gates-blocking world, so a reader planning CI-gating work inherits a blocker that no longer exists
-  Details: the all-gates-blocking flip set `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` (`agents/scripts/core/merge-gates.d/00-common.sh:42`) — every check-run blocks unless its NAME contains `advisory` — and neither bucket-C nor bucket-E carries a job-level `continue-on-error` any more (only the two documented step-level masks). Four places still said otherwise: (1) `testing-surface-roadmap.md:275-282` — Slice B's stated blocker false in all three clauses (Mesa exe boots; blanket `continue-on-error` gone; the allow-list itself retired); (2) `docs/guides/testing-surface.md` + (3) `infra.md:14` — "fully advisory to the merge-gate poller"; (4) refs to `infra.md` `bucket-mesa-exe-boot` pointing at the wrong file (entry moved here; premise falsified 2026-06-18 — exe boots ~2 s under llvmpipe, the ~26 s exit was the since-fixed `--spawn` exit-code bug).
-  Resolution: applied 2026-08-29 (branch claude/testing-surface-activation-904b38) — (1) roadmap Slice-B deviation rewritten to "unblocked and mostly superseded" naming the two real residuals (fix/skip ~3/74 render-dependent bucket-E tests; CI-native goldens so the bucket-C golden-diff mask can go) + progress header refreshed; (2) `testing-surface.md` §1/§2/§3/§4/§5/§5.1/§6 corrected to lane-blocks/step-mask reality (also refreshed the bucket-E count 26→58 TUs and marked the Slice-C required-context P0 item done); (3) `infra.md` entry got an "Update (c) SUPERSEDED 2026-08-29" line (the obsolete "re-add `Bucket-|`" graduation step retired); (4) live-doc `bucket-mesa-exe-boot` refs now point at `applied.md` (postmortems left as historical record). The suggested prose-vs-shell-constant drift gate was NOT built (open idea, not re-filed — revisit if the class recurs).
-  Status: applied
-  Last-reviewed: 2026-08-29
-
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [tooling] · P2 — the mutation pilot built a small, reusable single-point-mutation harness that is a ready seed for roadmap Slice **F** (mutation-smoke / coverage-delta gate, `testing-surface-roadmap.md`)
-  Details: the harness drives a JSON spec of `{file, search, replace}` mutants against `SmatchetTsanTests` — for each: assert `git` tree clean → apply exact single-point edit → `cmake --build --preset ninja-tsan-linux` (incremental) → run the exe → classify KILLED/SURVIVED/BUILD_FAIL → `git checkout` revert → re-assert clean. Cheap + deterministic on the doctest rig; catches assertion rot the coverage-delta gate structurally cannot see.
-  Concrete next action (from the entry): promote the harness to `scripts/dev/mutation-smoke.sh` + a curated per-TU corpus, run it advisory-nightly over the dedicated-test TUs gating on a kill-rate floor, keep the equivalent-mutant exclusion list so the floor isn't gamed.
-  Resolution: applied — Slice F's mutation-smoke half shipped across four phases (plan `docs/plans/mutation-smoke-gate.md`). Phase 1/2: `mutation-smoke.sh` + seed corpus + advisory nightly step in `tsan-linux-nightly.yml` + bats + local mirrors. Phase 3 (#1818, 2026-07-13): corpus expanded to 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs; found + fixed 1 genuine weak assertion (JIRAERR-02). Phase 4 (2026-07-16): after 3 consecutive clean advisory nightlies (07-14/15/16, each 33/33 killed @ 100% adjusted kill rate), `continue-on-error` removed → the gate now blocks the nightly on a sub-floor survivor. The equivalent-exclusion list (DT2/DT5/JQL-01/MAP-05/Labels-m3) is preserved in the corpus. Coverage-delta half remains out of scope (the plan's stated non-goal).
-  Status: applied
-  Last-reviewed: 2026-07-16
-
-- 2026-07-13 · orchestrator (mutation-smoke Phase 3 corpus expansion) · [test] · P2 — the Phase-3 mutation sweep (`docs/plans/mutation-smoke-gate.md`, 23 new mutants over the 13 TUs the pilot didn't reach) found **1 new genuine weak assertion**: `JiraErrorMessagePure.test.cpp` "cap never splits a multi-byte UTF-8 sequence" never executed the truncation backoff it documents
-  Details: the test built a 200×'é' = exactly-400-byte message; `AppendCapped`'s `out.size() + candidate.size() <= kMaxJoinedErrorLen` (400) appended it whole, so the UTF-8 lead-byte backoff loop never ran and mutant JIRAERR-02 (`== 0x80u` → `!= 0x80u` in the continuation-byte test) survived. Same at-the-boundary-but-not-past-it shape as the pilot's MergeWatch-m3 finding — a test that stops exactly at a cap asserts nothing about the over-cap branch.
-  Resolution: applied — test now uses 300×'é' (600 B, past the cap) and additionally asserts the trailing ellipsis marker (proof the truncation path engaged, so the case can never silently regress to a no-op again); JIRAERR-02 re-run SURVIVED → KILLED, suite 2150/2150 green. Guard kept in `scripts/dev/mutation-smoke-corpus.json` as a permanent regression guard.
-  Status: applied
-  Last-reviewed: 2026-07-13
-
-<!-- reconcile round 2 (2026-07-11): entries below were fixed on develop but never marked applied; verified against the tree and archived. -->
-
-# `daemon_loop` bats tests don't stub `maybe_self_resync`, so they run real git/network and flake in the required selftests lane
-
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [test] · P1 — `test-merge-watcher-bats.sh` test 30 fails ~1-in-5 runs because `daemon_loop` calls `maybe_self_resync(0)` at startup and the test never stubs it, so a "unit" test exercises real `git fetch` + drift detection
-
-## Friction
-
-`tests/bats/merge_watcher.bats:679` ("daemon_loop per-PR backstop: a transient
-exception in one PR is logged + the loop continues") drives `mw.daemon_loop(0)`
-with `process_registered_pr`, `read_registry`, `write_pid_file`,
-`clear_pid_file`, and `time.sleep` all monkeypatched — but **not**
-`maybe_self_resync`. `daemon_loop` (verified `agents/scripts/core/merge-watcher.py:3171`)
-unconditionally calls `maybe_self_resync(0)` *before* the poll loop as a startup
-gate-freshness check, and that function runs a real bounded `git fetch` + drift
-detection against the live checkout (and "may re-exec on POSIX"). So the test's
-outcome depends on network latency and the working tree's drift state at run
-time — it passed 5/6 local runs and failed the 6th on exactly this test, and it
-reddened the required `Agentic self-tests (bats)` lane on an unrelated docs-only
-PR (#1718). The sibling `daemon_loop` tests at :709 and :739 have the same latent
-gap.
-
-The failure surfaces as a wrong `seen:`/missing-WARN assertion, which reads like a
-logic regression but is pure test-isolation leakage — a false red that costs a
-diagnosis round and blocks merge on a flake.
-
-## Proposal
-
-Stub `mw.maybe_self_resync = lambda *_a, **_k: {}` (a no-op returning an empty
-dict, matching its contract of `.get('resync_action')` / `.get('resync_needs_*')`)
-in the four `daemon_loop` tests (:679, :709, :739, :771) alongside the existing
-`write_pid_file`/`time.sleep` stubs, so `daemon_loop` never touches git/network in
-a unit test. Optionally add a module-level guard so `daemon_loop`'s startup resync
-is skippable via an env knob the tests already set. Est ~15 min. Deterministic
-after — the assertions are otherwise fully specified by the faked registry.
-
-**Update (2026-07-10): fixed in this PR (#1718).** Added the
-`mw.maybe_self_resync` no-op stub to all four `daemon_loop` tests; the suite went
-8/8 green locally (was ~1-in-5 red on test 30). Archive to `applied.md` on the
-next self-improvement sweep.
-
-## Format
-
-- Details: see § Friction. Verified: `merge-watcher.py:3171` `daemon_loop` calls
-  `maybe_self_resync(0)` unconditionally; the test at `merge_watcher.bats:679`
-  stubs five symbols but not `maybe_self_resync`; observed 1/6 local failure on
-  test 30 and the CI red on #1718 head `9101c9c7`.
-- Concrete next action: see § Proposal.
-- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
-- Last-reviewed: 2026-07-10
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: all four `daemon_loop` tests in tests/bats/merge_watcher.bats (:679/:710/:741/:774) now stub `mw.maybe_self_resync = lambda *_a, **_k: {}`, so the startup resync never touches real git/network.)
-
----
-
-# Perf gate is required but its mean-budget teeth are still unarmed (step-5 calibration owed)
-
-- **Category:** test
-- **Priority:** P2
-- **Date:** 2026-07-05
-- **Status:** RESOLVED 2026-07-06 — mean budget armed (`mean_abs_ceiling_ms = 6.94`); plan shipped: [`docs/plans/shipped/perf-gate-step5-calibration.md`](../../plans/shipped/perf-gate-step5-calibration.md)
-
-## What I hit
-
-Auditing "is the perf gate mandatory / healthy" after the all-gates-blocking flip, I confirmed `Perf PR-fast (windows-2022)` **is** a required branch-protection context **and** blocks via the poller's `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` — so a perf red genuinely blocks merge. Good. But two teeth are still retracted, and neither is obvious from the green checkmark:
-
-1. **Mean budget disabled.** `regression-policy.json → default.mean_abs_ceiling_ms = null`. The Pillar-1 steady-state budget (6.94 ms / 144 Hz) is **not** enforced — a scope could sit at 8 ms `avgPerCallMs` and pass. This is a *documented, deliberate* deferral ("perf-gate-revival step-5 calibration"), not a bug — but it has sat null since 2026-06-07 with no follow-up plan, so it reads as done when it isn't.
-
-2. **Relative-regression coverage is thin because baselines are shallow.** Every committed `ci-windows-latest` baseline has per-scope `calls = 1–2` (only ONE scope across all six scenarios clears `min_baseline_calls = 10`). The relative 10%-delta gate skips every below-floor row *by design* (single-frame % swings are noise) — correct, but it means the relative gate is effectively a no-op for ~99% of scopes today. The absolute p99 (≤10 ms) + max (≤50 ms) ceilings *do* fire on every row (CR-949-1), so the gate isn't toothless — but steady-state drift below those ceilings is uncaught.
-
-Secondary: the committed baselines predate the `p99Ms` emitter (`GetLastFrameRows(includeP99=true)` shipped after capture), so baseline rows carry no `p99Ms` — the p99 ceiling works off the *fresh* run's absolute value only, and every p99 baseline-delta reads "(new)".
-
-## Why it matters
-
-"Gate, don't trust": a green `Perf PR-fast` currently certifies *no p99/max blowup*, not *within the 6.94 ms steady-state budget*. That gap is invisible to anyone reading the check status, and the calibration that closes it has no owning plan.
-
-## Fix
-
-Tracked in the plan doc (arm `mean_abs_ceiling_ms` + per-scenario overrides from observed CI runs; recapture baselines so p99 + call depth are real; decide whether to deepen scenario frame counts). Tightening a live gate's numbers is a human-judgment call — the plan gates it behind observed-run evidence + user sign-off, never an autonomous flip.
-
-## Self-improvement
-
-Empty.
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: docs/perf/regression-policy.json `mean_abs_ceiling_ms` is ARMED at 6.94 (perf-gate step-5 calibration pass, 2026-07-06) with an empty perScenario map; baselines recaptured #1659.)
-
----
-
-# `test-orphan-bats` runs only in the full suite / CI, not the pre-ship fast path — an unwrapped `.bats` reddens develop a merge later
-
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [tooling] · P2 — a new bats suite shipped without its `test-*.sh` wrapper; the orphan-bats gate caught it only in CI, on the *next* PR, masking which change introduced the red
-
-## Friction
-
-The mutation-smoke gate slice (#1698) added `tests/bats/mutation_smoke.bats`
-without a `test-*.sh` wrapper naming its path. `test-orphan-bats.sh` (which
-enforces that every bats suite has a runner, so an added suite can't silently
-never-run) **is** auto-enrolled in `scripts/dev/test-all.sh` — verified:
-`test-all.sh:113` globs `agents/scripts/core/test-*.sh` and orphan-bats lives
-there — but `scripts/dev/pre-ship.sh`, the fast pre-push gate, does **not** run
-it (verified: `grep -c orphan scripts/dev/pre-ship.sh` → 0).
-
-So the orphan escaped the local pre-push loop and surfaced only as a red
-`Agentic self-tests (bats)` lane on the **next** PR's CI (#1702), one merge after
-the change that caused it — the red pointed at an innocent PR and cost a
-diagnosis round to trace back to #1698. A trap: the mirror script
-`scripts/dev/test-mutation-smoke.sh` *looks* like it covers the suite but it
-validates the harness/corpus, not the bats file, so it does not satisfy the
-wrapper requirement.
-
-## Proposal
-
-1. Add a fast `bash agents/scripts/core/test-orphan-bats.sh` call to
-   `scripts/dev/pre-ship.sh` (the check is near-instant — no build, just a glob +
-   grep over wrappers) so an unwrapped suite is caught before push, not a merge
-   later on an unrelated PR's CI.
-2. Playbook one-liner: **adding a `tests/bats/*.bats` requires its
-   `test-<name>-bats.sh` wrapper (naming the suite by `tests/bats/<name>.bats`
-   path) in the SAME PR** — a harness/corpus mirror script does not count.
-
-Est ~15 min total. This session fixed the instance by adding
-`scripts/dev/test-mutation-smoke-bats.sh` (#1702), but the pre-ship gap remains
-and will bite the next suite added without a wrapper.
-
-**Update (2026-07-10): implemented.** Added a
-`bash agents/scripts/core/test-orphan-bats.sh` stage to `scripts/dev/pre-ship.sh`
-(next to the test-list consistency check), so a wrapper-less bats suite is caught
-before push. Archive to `applied.md` on the next sweep.
-
-## Format
-
-- Details: see § Friction. Verified against the committed tree at develop head.
-- Concrete next action: see § Proposal (1)–(2) — done.
-- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
-- Last-reviewed: 2026-07-10
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: scripts/dev/pre-ship.sh:316 runs `bash agents/scripts/core/test-orphan-bats.sh` in the fast pre-push path.)
-
-
-<!-- reconcile 2026-07-11: entries below were `Status: applied` in categories/<cat>/ but never moved here; archived in one batch (PR reconcile). -->
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [test] · P2 — MCP live-HTTP `Authorize` path (DNS-rebind gate, SSE cap) is tested only via pure helpers, never over a real socket
-  Details: `IsMcpHostOriginAllowed`, `ConstantTimeStringEquals`, and the SSE-cap predicate have solid doctest coverage (tests/Plugins/Mcp/), but no test drives `McpPlugin::Authorize` over a real `httplib` connection with a hostile `Host:`/`Origin:` header, a missing/wrong token, or a race on the SSE connection cap — the layer where the route registration order and header plumbing could silently diverge from the pure helpers. The repo already owns the exact fixture shape: `tests/support/JiraCatalogHttpFixture.h` runs an in-process httplib loopback server against real cpr. AGENTIC_INFRA_AUDIT.md finding C6; corroborates TEST_COVERAGE_GAP_MAP.md (Plugins/Mcp is 5 TUs).
-  Concrete next action: add an integration TU that starts `McpPlugin` on an ephemeral loopback port and asserts over real HTTP: 403 on non-loopback Host, 403 on cross-origin Origin, 401 without token when `McpRequireTokenOnLoopback`, 200 with token, and 503 past the SSE cap. Effort M.
-  Resolution: SHIPPED (2026-07-13, agentic-infra-audit-review PR) — bucket-E TU `tests/ui/mcp_live_http_auth.test.cpp` (test `McpLiveHttp/Authorize_RealSocket`) starts a SECOND `McpPlugin` on its own port (constructing/OnStart-ing it directly, so it never restarts the rig's own plugin that the parent CLI is driving over MCP) with the secure defaults (loopback bind, token set, `require_token_on_loopback` ON) and asserts over a real `httplib::Client`: 200 with a valid token + tools/list body, 401 without / with a wrong token (+ WWW-Authenticate), 403 on a DNS-rebind `Host:` even WITH a valid token (Host gate precedes the token check; cpp-httplib v0.49 honours a caller-supplied Host), 403 on a cross-origin `Origin:`, and 503 once `kMaxConcurrentSseConnections` (4) SSE streams are held open. A RAII fixture joins the SSE-holder threads, stops the test server, and restores both the persisted config (OnStart re-reads the token) and instance.json (OnStart overwrites / OnStop deletes the rig's discovery file). Registered in `tests/ui/ui_tests_registry.cpp` under `#if defined(SMATCHET_WITH_MCP)`, enrolled in `tests/ui/CMakeLists.txt`, driver `scripts/dev/test-ui-mcp-live-http-auth.sh` (zero-match fail-closed guard; auto-discovered by `test-all.sh`).
-  Status: applied — CI-VERIFIED 2026-07-13 on the `Bucket-E UI tests (Mesa headless GL)` lane (PR #1812, commit 1547763): `McpLiveHttp/Authorize_RealSocket` builds and passes all six assertions. Environment-parity postscript (finding C3, confirmed the hard way): the authoring session ran in a Linux container that cannot build the bucket-E rig, so the TU shipped code-complete-but-unrun — and CI then caught TWO MSVC `/W4 /WX` warnings the container was blind to, each costing a fix + CI round-trip: (1) `C2446` — `res != nullptr` on an `httplib::Result` (non-explicit `operator bool` wins overload resolution → `int != nullptr`), fixed by asserting `res.error() == httplib::Error::Success`; (2) `C4456` — the ImGui-Test-Engine `IM_CHECK` macro internally declares a `bool res` that shadowed the local `httplib::Result res`, fixed by renaming the local to `httpRes`. Neither is reproducible off a bucket-E-capable toolchain; both are exactly why C3 (declared capability tiers so a Linux agent knows what it cannot self-verify) matters. The regular `Windows + MSVC` lane is NOT sufficient coverage — it does not compile `tests/ui/` (opt-in `SMATCHET_BUILD_UI_TESTS`); only the bucket-E lanes do. PC/local re-run steps remain in [`docs/plans/shipped/pc-verify-agentic-audit-followups.md`](../../plans/shipped/pc-verify-agentic-audit-followups.md) Task A.
-  Last-reviewed: 2026-07-13
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AI_POLICY.md promises an automated cost-ceiling gate that was descoped and never re-tracked
-  Details: `AI_POLICY.md` § Cost control stated the automated cost-ceiling gate is "not yet built"; the shipped charter plan (`docs/plans/ai-control-policy.md` § Out of scope) descoped it to "a follow-up (pairs with token-tracking)" and no live tracker carried it since. AGENTIC_INFRA_AUDIT.md finding A6.
-  Resolution: applied (2026-07-09, audit-followups PR #1680 — A6-only after B1 landed separately on develop via #1686) — built option (a), the gate, in the WARN-first idiom: `agents/scripts/core/cost-ceiling-check.py` (with `--selftest` incl. malformed-config/non-dict-row fail-open cases; `--blocking` reserved for graduation) sums input+output tokens from the token-tracking JSONL and prints an ESCALATE banner at/over `project.config.json` § `governance.session_token_ceiling` (default 5000000; 0 disables); SessionStart wrapper `cost-ceiling-nudge.sh` wired into `docs/harness/claude-code/settings.json.tmpl`; `test-cost-ceiling-check.sh` auto-enrolls in test-all.sh; AI_POLICY.md § Cost control now describes the shipped advisory backstop instead of promising one.
-  Status: applied
-  Last-reviewed: 2026-07-09
-
-- 2026-07-06 · claude-code (perf-gate step-5 session) · [infra] · P2 — perf-full's gh/git steps lacked `shell: bash` → scheduled full-suite perpetually RED (silent); auto-issue/auto-PR mechanisms dead
-  Details: on `windows-2022` a `run:` step with no `shell:` defaults to PowerShell; perf-full.yml's three follow-up steps (scenario-run-failure issue / regression issue / baseline-bump PR) used bash syntax and crashed whenever they fired — and they fired every run because ~8 non-baselined scenarios always fail to spawn, so the scheduled suite was RED for ≥ a week unnoticed and the auto-issue/auto-PR mechanisms never actually ran. A naive `shell: bash` fix alone would have spammed one issue per run (per-run-id title), and the improvement-bump `gh pr create` hits the repo's "Actions may not create PRs" setting. Full analysis is in the original entry file (git history: `docs/self-improvement/categories/infra/2026-07-06-perf-full-steps-missing-shell-bash-perpetual-red.md`).
-  Resolution: applied — #1681 (`51989b6`) closed the remaining in-tree gaps: `shell: bash` on all steps (interim commits), "Discover scenarios" intersects `scenario.list` with the committed baseline set (`git ls-files docs/perf/baselines/*.ci-windows-latest.json`) so `run_failure_count` only counts real in-scope breaks, both issue steps are idempotent (stable title + find-then-comment), and the improvement bump is push-only (drops the blocked `gh pr create`). The 8 spawn failures are confirmed expected non-perf-runnable (screenshot-required / test-engine / not-a-perf-scenario), not broken.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AGENTS.md is 159 lines against its own ≤150 contract budget (grandfathered, never trims)
-  Details: `AGENTS.md` declares `contract_budget_lines: 150` and the `agent-too-long` lint enforces that token — but the file is 159 lines and `agent_size_audit.py`'s delta gate grandfathers keys already over-cap at the merge base, so the violation persists indefinitely and even growth never fires. The doc that anchors the enforcement contract-card being durably over its own budget is the self-description-drift class in miniature. AGENTIC_INFRA_AUDIT.md finding A1.
-  Concrete next action: judgment trim, not mechanical — extract detail-heavy prose (inline PR-number citations, per-exception detail already duplicated in `docs/agent-rules/ship-loops.md`) into the pointed-to `docs/agent-rules/` docs until AGENTS.md is ≤150 lines; then consider a one-time baseline refresh so the cap becomes binding again for this key. Effort M.
-  Resolution: applied — AGENTS.md trimmed 159 → 149 lines (merge-throughput paragraph moved to merge-gates.md, auto-merge/red-check prose condensed onto merge-gates.md pointers, § Semantic-search exceptions + caveman sections folded to bold-prefix paragraphs; every anchor kept, test-doc-anchors green) and the agent-size baseline refreshed (`--agentsize-baseline`; AGENTS.md key no longer grandfathered, cap binding again).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · claude (AppController extraction session) · [tooling] · P2 — `include-curation-freefunction-false-negative`: when splitting a TU into a companion `.cpp` in an environment where no Core TU compiles locally (curl/cpr fetch blocked by egress policy → `posix-core-check` can't even configure), curating the new TU's includes by a symbol-usage heuristic keyed on *type/class tokens* silently drops a header whose only use is a free function — a CI-only compile failure.
-  Details: Slice 1 of the AppController cluster extraction (PR #1653) curated `AppController_Init.cpp`'s includes down from a superset (the superset tripped the blocking DRY duplication gate). The trim heuristic checked each candidate header by searching the moved body for a representative *type* name — e.g. `Ui/SmatchetFieldRender.h` was probed for `FieldRender` (0 hits) and dropped. But `RunLegacyStartupSweeps` calls the *free function* `SetCallstackFieldIdHint` declared in that header, so the drop produced `error: use of undeclared identifier 'SetCallstackFieldIdHint'`. Because AppController.cpp needs cpr/curl (blocked here), nothing compiled locally; the error surfaced only on CI — first on the fast `Mobile — Android emulator smoke` lane (~1 min), then Windows MSVC light/ARM64 and Perf. One-commit fix (`4101155`) restored the header; cost ≈ one CI round-trip (~10 min latency).
-  Concrete next action (low urgency; process fix, no code owed): when curating a companion-TU include set without a local compiler, verify inclusion against BOTH (a) type/class/enum names AND (b) *every* `CapitalizedIdentifier(` free-function call site and every `ns::Func(` namespace-qualified call in the moved body, mapping each to its declaring header — this is what Slice 2 (`AppController_PaneContexts.cpp`) then did and it landed clean with zero round-trips. Candidate durable home: a one-liner in `docs/agent-rules/cpp-rules.md` § File-split (the post-split include-replication rule) noting "curate against free-function call sites too, not just types — a type-only grep gives false negatives that only CI catches when the TU can't compile locally." Alternatively, prefer the full-superset-plus-`duplication`-deviation approach when local compile is impossible and CI latency is the binding cost (guarantees compile, trades one dup exemption for zero round-trips).
-  Resolution: applied — one-liner added to docs/agent-rules/cpp-rules.md § File size (the file-split recipe): curate companion-TU includes against BOTH type/enum names AND every CapitalizedIdentifier( / ns::Func( free-function call site when no local compiler is available, or keep the full superset + a duplication deviation.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/sourcetrail/st_query.py` is documented as the primary semantic-nav tool but needs a prebuilt DB absent from fresh checkouts
-  Details: AGENTS.md sells `st_query.py` as the first stop before grep, but Sourcetrail is discontinued upstream and the required symbol DB is neither in the repo nor buildable by any checked-in script — in a fresh clone (and in every Linux container session) the "primary" nav tool is a no-op with extra steps. A rulebook recommending a tool that cannot run erodes trust in its other recommendations. AGENTIC_INFRA_AUDIT.md finding C7 / proposal P9.
-  Concrete next action: pick one: (a) retire — remove `tools/sourcetrail/` and the AGENTS.md claim, leaving grep + compile_commands-based tooling as the documented path; or (b) re-bootstrap — replace with a `clangd`-index-backed query script (clangd is alive and `compile_commands.json` already exists per preset) and update the rulebook pointer. Either way, stop documenting the dead path. Effort S (retire) / M (replace).
-  Resolution: applied — option (a) retire: tools/sourcetrail/ deleted; the Sourcetrail rung removed from the AGENTS.md § Semantic codebase search precedence ladder, docs/harness/claude-code/CLAUDE.md.tmpl, docs/harness/capability-adapter.md, and docs/CONTEXT.md; AGENTIC_INFRA_AUDIT.md finding C7 marked remediated.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/repo-health/facts.json` rots silently between sessions; the dashboard shows stale gate states with no freshness signal
-  Details: the repo-health dashboard splits "computed" metrics (recomputed every run) from "facts" (CI lane statuses, PR gate states, campaign verdicts) that are session-maintained in `facts.json` because the generator cannot reach GitHub — its own README admits the rot risk. A dashboard rendering weeks-old gate states as current is worse than no dashboard for the human-on-the-loop visibility role AI_POLICY.md assigns it. AGENTIC_INFRA_AUDIT.md finding C8.
-  Concrete next action: (a) stamp each fact with a `last-updated` date and render age prominently (e.g. amber >7 days, red >30) in `generate.py`/`template.html`; (b) add a SessionStart nudge (pattern: `followup-due-nudge.sh`) that fires when `facts.json` is older than a threshold, prompting a refresh pass. Effort S.
-  Resolution: applied — facts.json gained a per-section `updated` stamp map; generate.py/template.html render the oldest stamp as a header freshness badge (green ≤7d / amber ≤30d / red beyond); new SessionStart nudge `agents/scripts/core/repo-health-facts-nudge.sh` (wired into both hook templates, bats-covered) nags when facts.json's git-commit age exceeds 7 days.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [debt] · P3 — `project.config.json` duplicates the 24-item required-checks list verbatim across `branch_protection.required_contexts` and `ci.required_checks`
-  Details: the two arrays are identical, and `test-required-context-parity.sh` guards them against divergence — so this is guarded duplication, not the unguarded-drift class. Still, in the value table that anchors a DRY-enforcing project (Engineering Pillar 5 is a blocking gate), deriving one list from the other would delete both the duplication and the guard that exists only to police it. AGENTIC_INFRA_AUDIT.md finding A5.
-  Concrete next action: keep `branch_protection.required_contexts` as the single source; make `ci.required_checks` consumers read the branch_protection list (via `scripts/dev/project-config.sh` / the schema), or replace the second array with a `"same-as": "branch_protection.required_contexts"` sentinel the schema validates; retire the parity gate once no second literal list exists. Check consumers of both keys before the cut. Effort S.
-  Resolution: applied — `ci.required_checks` deleted from project.config.json (branch_protection.required_contexts is the single source); project-config.sh derives `CI_REQUIRED_CHECKS` from it (its own emit was the sole consumer, with zero downstream readers); the schema now requires only `ci.path_filters` and its `additionalProperties:false` rejects a reintroduced second list. Note: the entry's parity-guard claim was stale — test-required-context-parity.sh validates required_contexts against the workflows and never compared the two arrays, so the duplication was in fact unguarded; that gate stays (it guards a different property and passes 22/22 post-cut).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [infra] · P2 — fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs, and only a manual probe warns
-  Details: the `.claude/` adapter dir (hooks, guards, settings) is gitignored and provisioned only by `agents/scripts/core/setup-harness.sh`; in a fresh clone the head-drift, plan-lock, and shared-tree guards plus every SessionStart nudge are silently absent. `check-harness-provisioned.sh` exists to surface this but must be invoked by hand. `docs/plans/session-guard-agnostic.md` names the fresh-clone gap as an explicit non-goal ("their own in-flight effort") — but no live tracker actually carries it. AGENTIC_INFRA_AUDIT.md finding C5.
-  Concrete next action: (a) fold `check-harness-provisioned.sh` into `scripts/dev/doctor.sh` so the standard preflight reports the unprovisioned state; (b) add a cheap self-check to the git `pre-push` hook path (already repo-owned, so it *does* run in fresh clones) that warns when `.claude/hooks/` is absent under a Claude-harness session. Effort S.
-  Resolution: applied — slice (a): `doctor.sh` now runs `check-harness-provisioned.sh --quiet` as a warn-only preflight check (`[WARN] harness` unprovisioned / `[PASS] harness` wired; covered by `tests/bats/harness_provisioned_doctor.bats`). Slice (b)'s premise was wrong: `scripts/git-hooks/pre-push` is itself only wired via `core.hooksPath` BY `setup-harness.sh`, so no git hook runs in a fresh clone either — replaced with a doc note in `docs/harness/SETUP.md` § Check anytime stating that fact and pointing at the doctor probe.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P1 — AI assistant auto-context bodies are injected into the system prompt unsanitized (prompt-injection surface)
-  Details: `ComposeSystemPrompt` (AiAssistantController.h) wraps each auto-context block in `<smatchet_context block="...">` tags and XML-escapes only the *attribute*; the *body* — ticket summaries, labels, audit-trail strings, visible grid rows, all attacker-influenceable via the tracker backend — is inserted verbatim. A malicious ticket summary can attempt closing-tag breakout or instruction injection into the model. The outbound-consent modal mitigates exfil *volume* (real byte counts) but shows sizes, not content, and does nothing against instruction injection. AGENTIC_INFRA_AUDIT.md finding B1.
-  Concrete next action: (a) escape/neutralize `</smatchet_context` sequences in block bodies before assembly (pure helper, unit-testable in the existing tests/Core/AiAssistantSystemPrompt TU); (b) append one fixed line to the composed system prompt stating that content inside `smatchet_context` tags is data from the tracker, never instructions. Effort S.
-  Resolution: applied — `NeutralizeContextBody` (AiXmlAttrEscape.h, pure) breaks `<smatchet_context`/`</smatchet_context` sequences in block bodies (`&lt;` on the leading `<`) at both assembly sites (`ComposeSystemPrompt` + `AiContextBuilder::AppendBlock`), and `ContextDataNotInstructionsLine()` adds the fixed data-not-instructions sentence after the context header; covered in tests/Core/AiAssistantSystemPrompt.test.cpp (breakout neutralized, benign unchanged, preamble iff blocks).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — MCP `tools/call` has no rate limit; only SSE connection count is bounded
-  Details: every MCP `tools/call` (JSON-RPC and the REST equivalent) dispatches into the command registry with bounded parsing and destructive gating, but no frequency bound — a buggy or hostile local client can hot-loop non-destructive commands (`tickets.search*`, `perf.dump`, ...) unthrottled. `CanAcceptSseConnection` bounds SSE streams (503 over-cap) but nothing bounds tool-call rate. Distinct from the archived "MCP registry dispatch un-gated after Authorize" entry (its destructive-confirm half shipped in PR #1246; its residual is capability *scoping*, not rate). AGENTIC_INFRA_AUDIT.md finding B3.
-  Concrete next action: add a token-bucket at `DispatchRegistryToolsCall` in `Source/Plugins/Mcp/McpPlugin.cpp` (one chokepoint covers JSON-RPC + REST + legacy routes); return a structured `rate-limited` error envelope; make bucket size/refill configurable via `TrackerConfig` with a sane default; extract the decision to a pure helper for doctest coverage. Effort M.
-  Resolution: applied — `ConsumeToolsCallToken` (McpRateLimitPure.h, pure token bucket, doctested in tests/Plugins/Mcp/McpRateLimit.test.cpp) gates both real entry points — REST `HandleToolsCall` and JSON-RPC `HandleJsonRpcToolsCall` (the JSON-RPC path does NOT funnel through `DispatchRegistryToolsCall`, so the gate sits one level up and covers every dispatch arm incl. run_lua/Lua tools/legacy) — sharing one bucket; deny returns the canonical HTTP-200 `rate-limited` envelope (REST) / JSON-RPC -32000 with retry-after; `TrackerConfig::McpToolsCallRateBurst`/`RateRefillPerSec` (default 20 burst / 5 per s, <=0 disables) persist as `mcp_tools_call_rate_*` and participate in `NeedsRestart`.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — debug `ai.dump-request` path re-implements AI client config/URL building and skips the production sanitizers
-  Details: PARTIALLY LANDED (2026-07-08, backlog batch security-ai-mcp): the config half is unified — `SanitizeHeaderValue` + `BuildClientConfig` (key sanitizing, base-URL fallback chains, `EndpointPolicyForProvider` sanitize-with-consent gate, streaming timeout) moved from `AiAssistantController.cpp`'s anonymous namespace to the shared seam `Source/Core/src/AiRequestBuilder.cpp` (+ header), now consumed by the controller AND all three debug call sites (`ai.dump-request` / `ai.probe` / `ai.send-once`); the `BuildClientConfigForProvider` clone in `BuiltinCommands_Ai.cpp` is deleted, so the debug path no longer skips the sanitizers (doctested in tests/Core/AiRequestBuilder.test.cpp). REMAINING: the debug body/URL builders (`BuildAnthropicBody`/`BuildOpenAiBody`/`BuildOllamaNativeBody`/`ResolveEndpointUrl`/`StripOpenAiV1Suffix` in `BuiltinCommands_Ai.cpp`) still mirror the per-client `BuildChatBody`/`ResolveBaseUrl`/`JoinUrl` (anonymous namespaces in OpenAiClient/AnthropicClient/OllamaClient.cpp) instead of calling them — the residual drift surface. The archived 2026-05-17 entry records `ai.dump-request` already misreporting the wire once (fixed post-PR #184). AGENTIC_INFRA_AUDIT.md finding B4 / proposal P4.
-  Concrete next action: expose the per-client body/URL builders (the `OllamaBuildRequestBodyJson` pattern already exists in OllamaClient.cpp) and make `ai.dump-request` call them, deleting the debug mirrors; then add doctest coverage asserting the debug dump equals the production wire for each provider.
-  Status: applied (2026-07-11 — the remaining drift surface is closed: new `AiWireIntrospect.h` exposes `smatchet::ai::{OpenAi,Anthropic,OllamaNative}BuildChatBodyJson` + `...ResolveChatUrl`, each a thin wrapper over the SAME anonymous-namespace `BuildChatBody`/`ResolveBaseUrl`/`JoinUrl` the live client dispatch uses. `ai.dump-request` builds an `AiChatRequest` and calls them; the `BuildAnthropicBody`/`BuildOpenAiBody`/`BuildOllamaNativeBody`/`ResolveEndpointUrl`/`StripOpenAiV1Suffix` mirrors in BuiltinCommands_Ai.cpp are deleted. Because the dump now shares the production builder, it can no longer drift OR drop history (the mirrors only ever emitted a single user turn). Doctest `tests/Core/AiWireIntrospect.test.cpp` locks the per-provider wire shape incl. the full system+multi-turn body. Dual-target compiled.)
-  Last-reviewed: 2026-07-11
-
-- 2026-07-05 · claude-code · [tooling] · P2 — lint: a non-"advisory"-named CI job must not carry job-level continue-on-error
-  Details: the all-gates-blocking flip had THREE lanes drift out of sync between three coupled attributes — check name de-advisoried, step/job mask retained, required-context promoted (bucket-E, mobile-texture-guard, cpp-lint). The pre-ship code-review round caught them by hand (4 HIGH findings). A cheap mechanical gate would catch the class: scan `.github/workflows/*.yml` and FAIL if any job whose `name:` does NOT contain "advisory" (case-insensitive) sets job-level `continue-on-error: true`. Job-level masks green-wash the whole workflow run and are the anti-pattern the flip removed; step-level masks (the sanctioned per-step survivors: fuzz stochastic, bucket golden diff, bucket-E per-test, cpp-lint cppcheck) are exempt — the rule is job-level only. Cross-ref: shipped/all-gates-blocking.md.
-  Resolution: applied — new gate `agents/scripts/core/test-workflow-job-mask.sh` (rule `gate-job-mask-non-advisory`): FAILs any workflow job whose name lacks "advisory" that sets job-level `continue-on-error` (literal `false` and step-level masks exempt; expression values count as masks); `--selftest` fixture + `tests/bats/workflow_job_mask.bats`; wired into doc-validation.yml beside the required-context-parity step.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code (nightly-monkey session) · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh` counts only `tests/{Core,Lua,Plugins,ui}/*.test.cpp` as a test-delta, so a PR that adds a whole NEW test directory (`tests/monkey/`) of real tests still red-walls the required `Test-delta gate`
-  Details: the gate's `TEST_CHANGES` list was a fixed per-directory glob. PR #1637 added a genuine new seeded-fuzz harness under `tests/monkey/` paired with a behaviour-preserving Core extraction — but `tests/monkey/*` was invisible to `TEST_CHANGES` AND its `.cpp/.h` lines count as "real surface" in the `_classify_diff` exemption pre-check, so the gate reported `FAIL: Source/Core/ changes without test deltas` despite hundreds of added test lines. Distinct from the SIGPIPE-crash fix (#1593) and the platform-`#else`-arm exemption gap (#1021) — both are about the exemption classifier; this one is about the test-file recognition glob.
-  Resolution: applied — option (a): `TEST_CHANGES` now recognizes any `tests/**/*.test.cpp` (with `tests/support/` + `tests/fixtures/` excluded as trivially-dismissable helper dirs), so a new harness dir earns gate credit via the `*.test.cpp` naming convention instead of a hand-synced directory allowlist; bats cases in `tests/bats/coverage_gate.bats` (new-dir `tests/monkey/*.test.cpp` delta → PASS; `tests/support/*.test.cpp` → no credit).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — doc-validation: flag a required_contexts addition that an ADR explicitly rejected
-  Details: the all-gates-blocking flip's first draft silently added `Intent section` + `Plan-lock gate` to `branch_protection.required_contexts` — a route ADR-0022 and plan-lock-enforcement Q7 had EXPLICITLY REJECTED (the label hatches can't reach GitHub branch protection; `plan-lock-gate.yml` has no `labeled` re-trigger, so a red + override label = unmergeable). The code-review round caught it; a gate would catch the class. Cross-ref: shipped/all-gates-blocking.md § Deviations; docs/adr/0022-intent-gate-promotion.md.
-  Resolution: applied — new `agents/scripts/core/test-required-context-adr-consistency.sh`: for each name ADDED to `branch_protection.required_contexts` vs `origin/develop`, greps `docs/adr/*.md` + `docs/plans/shipped/*.md` for the name inside a rejection window (±2 lines matching reject / "NOT a required" / "do not add" / "must not") and FAILs with the citation (base-ref-unreadable degrades to WARN+pass; CI uses fetch-depth 0); `--selftest` + `tests/bats/required_context_adr_consistency.bats`; wired into doc-validation.yml and `scripts/dev/test-docs.sh`; reproduces the ADR-0022 Intent-section/Plan-lock incident on a fixture.
-- 2026-07-05 · orchestrator (docs-reconciliation session) · [process] · P2 — audit docs (`CPP_CODE_AUDIT.md`, `SECURITY_AUDIT.md`) were left presenting every finding as open long after the remediation PRs shipped; nothing flags an audit doc whose findings are fixed-in-code but still unmarked
-  Details: `CPP_CODE_AUDIT.md` (2026-07-01) and `SECURITY_AUDIT.md` (2026-06-26) carried zero per-finding remediation status even though PR #1593/#1613 (code audit) and #1566 + follow-ups #1574/#1578/#1581/#1592/#1598 (security) had already fixed essentially every finding — a reader would conclude ~66 live defects were outstanding. The remediation plans (`cpp-code-audit-remediation.md`, `cpp-security-hardening.md`) tracked the fixes but the SOURCE audit docs they cite were never back-annotated, and the plans themselves sat in `docs/plans/active/` after all slices shipped. This entire session existed to reconcile that drift (added REMEDIATED banners + per-finding status tables to both audits, archived 5 shipped plans, refreshed the backlog/coverage docs). Root cause: a remediation PR updates the plan + code but not the originating audit doc, and no gate notices the divergence.
-  Concrete next action: (1) encode "a remediation PR that closes findings from an audit doc updates that doc's per-finding status in the same PR" as a rule in `docs/agent-rules/process-rules.md`; and/or (2) add a lightweight advisory gate — for each root `*_AUDIT.md` whose companion remediation plan lives in `docs/plans/shipped/`, warn if the audit doc contains no `REMEDIATED`/✅ marker. Cheap heuristic, catches exactly this drift class before it accumulates. Cross-ref: this session's audit banners + `plan-archival-owed.sh` (the sibling nag that already covers the "shipped plan still in active/" half).
-  Resolution: applied — rule encoded in docs/agent-rules/process-rules.md § Audit-doc status sync ('a remediation PR that closes findings from a root *_AUDIT.md updates that doc's per-finding status in the same PR'), plus the advisory backstop `agents/scripts/core/audit-doc-status-owed.sh` (--list/--nudge/--selftest, sibling of plan-archival-owed.sh; warns when a root *_AUDIT.md with a shipped companion remediation plan lacks a REMEDIATED/✅ marker), wired as a SessionStart nudge in the claude-code + codex harness templates.
-- 2026-07-05 · claude-code · [tooling] · P3 — perf-compare delta table shows big % on 1-sample scopes without flagging them as below-floor noise
-  Details: `scripts/dev/perf-compare.py`'s per-scenario delta table (surfaced in the `Perf PR-fast` job summary + PR comment) prints eye-catching relative deltas for scopes that have too few samples to be meaningful. On PR #1632's `ai-chat-history-render` run, `SmatchetUI::Draw` read `0.424 → 0.493 ms (+16.2 %)`, `SmatchetToolbarUi::Draw +56.9 %`, `SmatchetToastManager::Render +3575.0 %` — all with **`baseline calls = 1`**. The GATE correctly reports 0 regressions (the `min_baseline_calls = 10` floor + `mean_min_abs_delta_ms = 0.05` noise floor in `regression-policy.json` reject them), but the TABLE renders the raw percentages with no marker, so a human reading the PR sees "+3575 %" and reasonably suspects a real regression. This session had to hand-explain in the PR body why those aren't regressions — the presentation should carry that itself.
-  Impact: not a gate bug (the gate is correct), but a **legibility** gap that produces false alarm + wasted triage on every low-sample scenario. The PR author / reviewer can't tell "this % is noise below the sample floor" from "this % is a real move" without cross-referencing the policy thresholds by hand.
-  Concrete next action: in `perf-compare.py`'s table renderer, tag any row whose `baseline calls < min_baseline_calls` (or whose absolute delta < mean_min_abs_delta_ms) with an inline marker — e.g. append `· (noise: <N samples < floor)` or move such rows under a collapsed "below sample/noise floor — not gated" sub-section — so a reader distinguishes gated signal from sampling noise at a glance. Optionally sort gated-eligible rows first. Keep the raw numbers (transparency), just annotate.
-  Cross-ref: PR #1632 Validation section (the hand-written noise explanation this would have made unnecessary); `docs/perf/regression-policy.json` (the floors).
-  Resolution: applied — perf-compare.py's evaluate() now tags rows below the sample floor (`· (noise: N < M calls)`) or the absolute-delta noise floor (`· (noise: abs Δ ≤ X ms)`); emit_markdown sinks marked rows below the gated-eligible ones and appends a not-gated legend line. Raw numbers kept; gate behaviour unchanged (fixture-verified: floored rows exit 0, a real regression still exits 1).
-- 2026-07-05 · orchestrator (docs-reconciliation session) · [tooling] · P2 — `scripts/dev/test-docs.sh` bills itself as the local mirror of `doc-validation.yml` but omits the `md_lint` (MD028 etc.) step the CI lane actually runs, so a doc author gets a green local mirror and then a red "Doc anchors + agent contract" CI lane on the same content
-  Details: `test-docs.sh`'s own header reads "local mirror of the .github/workflows/doc-validation.yml gate", and it runs 14 checks (`test-doc-anchors`, `test-plan-index`, `test-plan-ref-integrity`, `test-markdown-links`, …) — but NOT `python3 agents/scripts/core/md_lint.py --all`, which the CI doc lane runs as its "md_lint — markdown style (MD028 etc.)" step. This session added a staleness blockquote to `backlog/MANUAL_TEST_QUEUE.md` that left a bare blank line between two adjacent blockquotes; `test-docs.sh` passed 14/14 locally, then CI failed `md_lint: MD028 blank line inside blockquote`, costing a diagnosis round-trip plus a fix commit. The mirror's entire value is "catch locally what CI catches"; a missing sub-check silently defeats that for the single most common markdown-authoring mistake.
-  Concrete next action: add `md_lint` to the `CHECKS` array in `scripts/dev/test-docs.sh` (e.g. `"md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all"`), mirroring how `doc-validation.yml` invokes it, so the local mirror is a true superset-or-equal of the CI doc lane. One-line addition, no new dependency (md_lint is pure Python already in-tree).
-  Resolution: applied — `md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all` added to the STEPS array in `scripts/dev/test-docs.sh`, positioned between test-plan-naming and test-portable-purity to mirror the doc-validation.yml step order; verified by running test-docs.sh locally (md_lint green).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — pre-push clang-format check is whole-file, not delta; pre-existing drift in a touched file blocks an unrelated change
-
-  Details: `scripts/git-hooks/pre-push` step 3 runs `clang-format --dry-run --Werror
-  "$ci_f"` over each **changed first-party C++ file as a whole**. The CI lint gate
-  (`Windows + MSVC` clang-format step) is **delta-based** (flags only NEW violations
-  vs origin/develop, grandfathering pre-existing drift), so the local hook is
-  STRICTER than the gate it claims to mirror. Observed this session on the
-  `perf-win-hunt` one-line change to `SmatchetAiAssistantUi.cpp`: my edit was
-  clang-format-clean, but a PRE-EXISTING drift at line 1036 (an over-long
-  `EnqueueAppendAndTrim` call from an earlier commit) tripped the whole-file
-  `--Werror` and refused the push. The remedy (`clang-format -i` the file) then
-  reformats a line I never touched, adding unrelated churn to the diff — or forces
-  the `SMATCHET_SKIP_PRESHIP_GATE=1` override for a legitimately-clean change.
-
-  Impact: low-frequency friction, but it (a) makes the hook disagree with CI (the
-  parity the hook exists to provide — `docs/agent-rules/ci-local-parity.md`), and
-  (b) nudges toward either scope-creep (reformatting untouched lines) or the
-  sanctioned-but-noisy skip override.
-
-  Concrete next action: make the pre-push clang-format check delta-aware to match
-  the CI gate — e.g. `git clang-format --diff <merge-base>` (formats/checks only the
-  changed hunks) instead of `clang-format --dry-run --Werror <whole-file>`. If a
-  whole-file check is intentional (catch latent drift early), then it should
-  *offer* to reformat only the changed hunks, and its message should say "whole-file
-  (stricter than CI delta)" so the operator isn't surprised the hook rejects a
-  CI-green change. Home: `scripts/git-hooks/pre-push` step 3.
-
-  Resolution: applied — pre-push step 3 now runs `git clang-format --diff
-  <merge-base> HEAD -- <changed first-party C++>` (delta: only changed hunks
-  flag, matching the CI gate; rc=1 = violation, any other rc = infra →
-  fail-open) and falls back to the whole-file `clang-format --dry-run --Werror`
-  loop only when git-clang-format is absent, with the failure line then
-  labelled "[whole-file — stricter than the CI delta]". Covered by
-  `tests/bats/pre_push_format_delta.bats` (clean hunk atop pre-existing drift
-  passes; bad new hunk still refuses).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · user-facing-text session (PRs #1614/#1615) · [infra] · P3 — remote-container builds: GitHub release tarballs 403 through the agent proxy; posix-core-check needs a manual curl clone + apt packages
-  Details: in the Claude Code remote container the network policy allows `git clone` but returns 403 for GitHub release-asset and codeload tarball downloads; the `posix-core-check` configure fails at cpr's internal FetchContent of `curl-7.80.0.tar.xz`. `xorg-dev`/`libgl1-mesa-dev` are also not preinstalled (glfw's configure needs them even though it never builds in that preset) and need an `apt-get update` first. Validated workaround (2026-07-05 session): `git clone --depth 1 --branch curl-7_80_0 https://github.com/curl/curl.git .fetchcontent-src/curl-manual`, then `apt-get install -y xorg-dev libgl1-mesa-dev`, then `cmake --preset posix-core-check -DFETCHCONTENT_SOURCE_DIR_CURL=$PWD/.fetchcontent-src/curl-manual`. Proposal: fold the steps into a SessionStart hook or a `scripts/dev/remote-container-bootstrap.sh` so future remote sessions get a working posix-core-check lane without rediscovering the workaround.
-  Resolution (2026-07-08): applied — `scripts/dev/remote-container-bootstrap.sh` wraps the workaround (idempotent: clone skipped when present, apt skipped when installed; `--no-configure` provisions only), referenced from `docs/agent-rules/build.md` § Remote-container posix-core-check bootstrap and `docs/harness/claude-code/setup.md` § Remote container; validated end-to-end in the target container (fresh configure green in ~80s; re-run skips both steps).
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [test] · P2 — the mutation pilot (`MUTATION_PILOT.md`) found 10 genuine weak assertions in the headless `SmatchetTsanTests` rig; 3 worst fixed in the pilot PR, **7 residual survivors** remain unasserted (each a plausible single-point bug the current suite would ship uncaught)
-  Details: 68 mutants over 12 TUs → 52 killed / 16 survived (5 equivalent, 1 out-of-oracle, 10 real weak assertions). The 7 residual (all reproduced + diffed in `MUTATION_PILOT.md` § "Every surviving mutant"):
-  - `TrackerGridFieldDisplayPure.cpp` **GR5** — `if (s.MaxResults > 0)` → `>= 0`: "Page size (maxResults):" tooltip line emitted at 0, no subcase asserts it.
-  - `TrackerGridFieldDisplayPure.cpp` **GR6** — `if (s.Total > 0 && s.WorklogsOnPage > 0)` → `||`: "This page: a–b of N" tooltip branch unexercised when exactly one operand is 0.
-  - `PlaneQuerySuggestEnginePure.cpp` **PLANE-03** — `if (raw.empty())` guard in `tryAdd` neutralised: an empty catalog option value would emit an empty suggestion; no field carries an empty option value.
-  - `JqlSuggestEnginePure.cpp` **JQL-03** — `if (++added >= kMaxUsers)` → `>`: the 50-user suggestion cap boundary (50 vs 51 emitted) is never tested.
-  - `LinearQueryFromJql.cpp` **JQL-05** — `if (s.size() >= 2 ...)` → `> 2`: 2-char quoted operand (`""`/`''`) unquote edge unasserted.
-  - `MergeWatchNotifyPure.cpp` **m3** — `if (out.size() > kMaxMessageBytes)` → `>=`: exact-at-cap truncation of the localhost-listener payload (SECURITY_AUDIT Tier-1 #6) — test uses 600 B, never exactly `kMaxMessageBytes`.
-  - `LinearClientHelpers.cpp` **m5** — `negative = (s[0] == '-')` → `false`: `ParseLongOr` negative-magnitude path (incl. `LONG_MIN` reconstruction) unasserted; `ParseLinearRateLimitHeaders` only tested with positive values.
-  Concrete next action: add the pinning assertions (each is a 1–3 line addition to the existing suite, template proven by the 3 fixed in the pilot PR): GR5/GR6 assert the tooltip strings on `maxResults==0` / `total==0,page>0` shapes; PLANE-03 feeds an empty-value option and asserts no empty suggestion; JQL-03 builds 51 matching users and asserts the cap; LinearQueryFromJql JQL-05 asserts `""` round-trips; MergeWatch m3 asserts an exactly-`kMaxMessageBytes` message is not truncated; LinearClientHelpers m5 asserts a negative `x-complexity` header parses to its signed value. NB: 5 mutants that survived are EQUIVALENT (DT2, DT5, JQL-01-notin, MAP-05-reserve, Labels-m3 — documented, do not "fix"). Cross-ref: `MUTATION_PILOT.md`, plan `docs/plans/mutation-testing-pilot.md`, roadmap Slice F (`testing-surface-roadmap.md`).
-  Resolution: applied — all 7 pinning assertions added to the existing pure doctest TUs (GR5/GR6 in TrackerGridFieldDisplayPure.test.cpp, PLANE-03 in PlaneQuerySuggestEnginePure.test.cpp, JQL-03 in JqlSuggestEnginePure.test.cpp, JQL-05 in LinearQueryFromJql.test.cpp, m3 in MergeWatchNotifyPure.test.cpp, m5 in LinearClientHelpers.test.cpp). Each mutant re-applied locally against the Linux `ninja-tsan-linux` rig: all 7 now KILLED; the 5 documented equivalent mutants were left alone.
-  Status: applied
-  Last-reviewed: 2026-07-09
-
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [infra] · P2 — the `ninja-tsan-linux` preset compiles but **fails to link** on a fresh container: the Clang TSan runtime archive (`libclang_rt.tsan-x86_64.a`) is absent from the image, so `SmatchetTsanTests` cannot be built or run without a manual `apt-get install libclang-rt-18-dev` first
-  Details: on this Linux image `clang-18` is present but `/usr/lib/llvm-18/lib/clang/18/lib/linux/` (the compiler-rt sanitizer archives) does not exist until `libclang-rt-18-dev` is installed. All 93 TUs of `SmatchetTsanTests` compiled cleanly; only the final link failed (`ld.lld: cannot open .../libclang_rt.tsan-x86_64.a`). This is the ONLY assertion-based test executable that builds+runs headless on Linux (the primary doctest/UI rigs need MSVC ABI or ImGui/GLFW/X11/GL), so any Linux/web session doing test or mutation work hits this wall first. The nightly `tsan-linux-nightly.yml` CI runner presumably has the package pre-installed, masking the gap for local/container sessions.
-  Concrete next action: add `libclang-rt-18-dev` (or the toolchain-matched `libclang-rt-$LLVM_VERSION-dev`) to the SessionStart provisioning / devcontainer setup so `ninja-tsan-linux` links out-of-the-box; alternatively document the one-liner in `docs/agent-rules/build.md` next to the tsan preset. Cheap, unblocks the entire headless-Linux test surface. Cross-ref: `MUTATION_PILOT.md` § Phase 0 footnote 1; `CMakePresets.json` `ninja-tsan-linux`.
-  Resolution: applied — docs/agent-rules/build.md gained a "TSan on Linux" section with the `libclang-rt-18-dev` one-liner next to the preset docs, verified end-to-end in the exhibiting container (install → configure → build → link → suite green). The remote-container bootstrap-script fold is deliberately left to the `remote-container-fetchcontent-403` entry, whose PR creates `scripts/dev/remote-container-bootstrap.sh`.
-  Status: applied
-  Last-reviewed: 2026-07-09
-- 2026-07-05 · claude-code · [tooling] · P2 — plan-lock records the CURRENT branch; claiming from the wrong tree self-collides with your own push
-
-  Details: `agents/scripts/core/lock-claim.sh <slug> <write-set>` stamps the lock's
-  owner branch as **whatever branch the invoking tree is on** (`git rev-parse
-  --abbrev-ref HEAD`). This session claimed `refs/locks/perf-win-hunt` from the MAIN
-  repo tree (`/c/Development/Smatchet`, on `develop`) while the actual work + the
-  push happened in a WORKTREE on `perf/win-hunt`. Result: the lock recorded
-  `branch=develop`, and the pre-push plan-lock guard then rejected the
-  `perf/win-hunt` push as a **collision with a DIFFERENT branch's write-set** — the
-  agent colliding with its own lock. Recovery was a delete-ref + re-claim from the
-  worktree (so `branch=perf/win-hunt`), plus a wasted push cycle.
-
-  The confusing part: the lock and the branch are BOTH the operator's, so "plan-lock
-  collision — overlaps the write set owned by a DIFFERENT branch" reads as if a
-  second session is contending, when really it's a self-inflicted branch mismatch.
-
-  Concrete next action (pick one):
-  1. **Warn on tree/branch mismatch:** in `lock-claim.sh`, if the current branch is
-     the repo's default/integration branch (`develop`/`main`) — an unlikely branch
-     to hold a feature plan-lock — emit a loud "claiming lock owner=<branch>; you
-     usually claim from the feature worktree, not the integration tree" note before
-     the push. Cheapest, non-breaking.
-  2. **Let the branch be explicit:** accept an optional `--branch <name>` (or
-     `LOCK_CLAIM_BRANCH` env) so the caller pins the intended owner regardless of
-     which tree runs the script — mirrors the worktree-per-session model.
-  3. **Doc the gotcha** in `docs/perforce/AGENT_FLOWS.md` / the plan-lock section:
-     "claim the lock from the SAME worktree that will push, so owner == pushing
-     branch." (Do this regardless of 1/2.)
-
-  Cross-ref: session PR #1632 (perf-win-hunt) — the lock claimed on `develop` blocked
-  the `perf/win-hunt` push until released + re-claimed from the worktree.
-  Resolution: applied — satisfied by the explicit `LOCK_BRANCH` env override (`lock-claim.sh` header + `branch=` resolution, the entry's option 2) plus the `docs/agent-rules/ship-loops.md:140-145` mandate to pass `LOCK_BRANCH` explicitly from the worktree HEAD with the detached-HEAD skip (option 3); option 1's loud integration-branch warning added to `lock-claim.sh` in this archival PR.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — required-context "teeth" check: can this required context ever red a PR?
-
-  Details: `test-required-context-parity.sh` verifies each
-  `branch_protection.required_contexts` name matches a workflow job `name:`
-  (byte-exact) — but not whether that job can EVER fail a PR. The all-gates-blocking
-  review found a required context (`C++ lint`) that structurally could not fail
-  (job-level mask + `cppcheck --error-exitcode=0`) and two (`High-integrity
-  baseline/narrowing`) that always skip on PRs (`if: github.event_name == 'push'`)
-  — required checks implying protection that doesn't exist. Add a heuristic warn:
-  a required context whose hosting job is `if:`-gated to exclude `pull_request`,
-  OR whose every failing path is masked, is a NO-OP gate. Emit WARN (not FAIL —
-  a skip-on-PR job is legitimately vacuously-satisfied for merge-queue readiness),
-  naming the vacuous contexts so a human confirms intent. Home: extend
-  `test-required-context-parity.sh`. Cross-ref: shipped/all-gates-blocking.md § Deviations.
-  Resolution: applied — the pr_triggered teeth shipped in `agents/scripts/core/test-required-context-parity.sh` (:93-102; selftest :190-191 asserts a push-only job hosting a required context FAILs — stronger than the proposed WARN); the residual every-failing-path-is-masked heuristic stays tracked by the sibling `tooling/2026-07-05-gate-lane-no-job-level-continue-on-error.md` entry (single tracker, no dual bookkeeping).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · orchestrator (recurring-findings gate campaign #1605 ship session) · [tooling] · P2 — `native-automerge-bypasses-merge-snapshot-ledger`: a PR merged via GitHub's native auto-merge appended no line to `docs/self-improvement/merge-snapshots.jsonl`, so the ADR-0017 lossless merge-time capture had a hole for exactly the merge path a session without the `gh` CLI ends up arming.
-  Details: ship-loops.md § merge-snapshot mandated the append for three actors (in-session orchestrator REST merge, `git-janitor`, `merge-watcher handle_pass()`), but a session that ARMS GitHub-native auto-merge is none of them — the merge fires server-side, possibly after the session goes idle, and nothing writes the row. Hit live on #1605/#1608 (cloud session; no `gh`, so `safe-merge.sh` could not run; full gate set hand-verified before arming). Sweeper-workflow alternatives were evaluated and rejected: a GITHUB_TOKEN workflow can neither push develop (required-status-check protection, non-bypass actor) nor open harvest PRs that trigger the required contexts (GITHUB_TOKEN-created PRs spawn no workflow runs), and a scheduled retro-composer would write confidently-wrong rows from an already-rewritten rollup — a stale line is worse than a hole, since `postmortem-owed.sh` reads the ledger BEFORE the live fallback.
-  Resolution: applied — ship-loops.md § merge-snapshot gained the **fourth writer**: the session that armed the auto-merge appends the row on receiving the merged notification (PR-activity webhook / check-in), fetching `mergeCommit`/`headSha`/labels via MCP when `gh` is absent, calling the same idempotent helper with `mergeActor=orchestrator-automerge` + `SNAPSHOT_MERGED_AT=<mergedAt>`, and landing it in its next develop-bound commit. The #1605 + #1608 rows were seeded through exactly that path in the same PR. Residual (accepted, documented in the mandate): a session that dies before the merge event, or with no further develop-bound commit, leaves the hole to ADR-0017's live fallback — best-effort, never blindness; no retro-composition.
-  Status: applied
-  Last-reviewed: 2026-07-05
-
-- 2026-07-04 · orchestrator (remote-session ship-loop) · [process] · P1 — a draft PR wedged the daemon-free autonomous merge path: `safe-merge.sh` never flipped draft→ready, so under the standing `governance.auto_merge: on` grant the loop paused on a PR the harness opened draft
-  Details: The watcher daemon's first step on a registered PR is `ensure_pr_ready_for_review` (C4 prong 1), but the daemon-free path — the orchestrator driving `safe-merge.sh` in-session, the ONLY autonomous-merge path on remote/web sessions where no daemon persists — left `MERGE_GATES_FLIP_READY` unset. Remote/web harnesses open PRs DRAFT by default, so the sequence was: CodeRabbit skips the draft (`auto_review.drafts: false`), the CR gate blocks on NONE past the grace window, `safe-merge.sh` REFUSES, and the "autonomous" loop pauses on a state that never self-resolves — and even a CR-exempt pass would then fail the arm step (`gh pr merge` refuses drafts). The authorization model already covered this (invoking safe-merge IS the merge authorization, per AGENTS.md § Merge gates), but the flip was left to the caller's memory instead of the wrapper's contract.
-  Concrete next action: applied — `safe-merge.sh` now defaults `MERGE_GATES_FLIP_READY=true` when unset (explicit caller values, including `false`, preserved for poll-only semantics) and runs `gh_pr_ready_idempotent` once more immediately before arming (mirrors the watcher's pre-merge flip). Selftest CASES 12–13 + two bats cases pin the default and the opt-out; documented in `merge-gates.md` (§ Draft never pauses an authorized merge), `ship-loops.md` (§ standing grant bullet), and the AGENTS.md § Merge gates one-liner.
-  Status: applied (2026-07-04 — fix(merge): safe-merge defaults draft→ready flip so a draft PR never pauses an authorized autonomous merge)
-  Last-reviewed: 2026-07-04
-
-- 2026-07-04 · orchestrator (PR #1603 CI triage) · [infra] · P2 — Mobile advisory lanes red on every PR since the cpp-httplib bump: cached `.fetchcontent-src` lacks the new pinned ref and `UPDATE_DISCONNECTED` forbids fetching it
-  Details: `Mobile — POSIX core compile gate (Linux clang, advisory)` and `Mobile — Android NDK arm64-v8a (.so configure+link, advisory)` both fail at configure with `Requested git ref "2132205e1a69c9fce8096f085b1b8d72efc759fa" is not present locally, and not allowed to contact remote due to UPDATE_DISCONNECTED` (FetchContent `httplib-populate`, `CMakeLists.txt:606`). Mechanism: the lanes restore a FetchContent source cache saved BEFORE #1588 bumped the cpp-httplib pin; the cached checkout doesn't contain the new ref, and `UPDATE_DISCONNECTED` turns the would-be re-fetch into a hard configure error. Observed on PR #1603 (a shell/docs/bats-only diff that cannot influence FetchContent), head 43956b1. develop's own latest push run skipped these lanes (docs-only change detection), so the red is invisible on develop and taxes every code-running PR instead.
-  Concrete next action: include the dependency-pin in the lanes' FetchContent cache key (e.g. hash of the `CMakeLists.txt` FetchContent block or the pinned SHA) so a pin bump invalidates the cache, OR drop `UPDATE_DISCONNECTED` for cache-restored sources so a missing ref re-fetches instead of hard-failing. Until then these two advisory reds on unrelated PRs are this known infra issue, not the PR's diff.
-  Resolution: applied — `CMakeLists.txt:479-487` sets `FETCHCONTENT_UPDATES_DISCONNECTED=OFF` when `ENV{CI}` is defined ('stale restored caches self-heal' — the entry's second remedy verbatim) while local/IDE configures keep the disconnected fast path; both mobile lanes are now blocking required contexts (`project.config.json` `required_contexts`), so a recurrence cannot hide as advisory noise.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-04 · orchestrator (CPP_CODE_AUDIT.md remediation, #1593) · [tooling] · P3 — writing a `SMATCHET_DEVIATION(rule=duplication; ...)` marker to suppress a copy-paste-clone finding took 2-3 iterations to fit under the 120-column line limit at least 4 separate times in one PR, because the natural wording for `reason=`/`owner=`/`revisit=` overruns the budget before the fields are even done
-  Details: the dup-audit tool's suppression check requires the marker comment to live on a single physical line (or the single line containing "rule=duplication"); `clang-format`'s `ReflowComments` will wrap any comment line over ~120 columns onto a second line, which breaks the suppression match even though the marker was written correctly. Every time this PR added a `SMATCHET_DEVIATION(rule=duplication; ...)` marker (`TrackerFieldCatalog.cpp`, `PlaneIssueMutation.cpp`, `AttachmentAppUpdateService.cpp`'s pre-existing markers re-shortened after an unrelated edit re-triggered `clang-format` on the file, `SmatchetToolbarUi.cpp`), the first-attempt wording — a natural-language `reason=` clause plus `owner=cpp-audit; revisit=<date>` — landed at 130-180 columns and had to be shortened 1-2 more times (first attempt often still too long even after an initial trim) before `test-lint-rules.sh`/`pre-ship.sh` passed. This is pure iteration waste: the fix is always the same shape (terser `reason=`), so the budget could be known up front instead of discovered by repeated gate failures.
-  Concrete next action: document the working budget directly at the point of use — either a one-line comment near `SMATCHET_DEVIATION`'s definition/grammar doc (likely `cpp-rules.md` or wherever the grammar is specified) stating "the full marker line, including the `// ` prefix and `owner=`/`revisit=` suffix, must fit in 120 columns — budget roughly 60-70 characters for `reason=` and keep it to a terse noun phrase (e.g. `reason=ParseBounded clone #8` not a full sentence explaining why)", or add a `--selftest`/lint-time hint that suggests a shortened `reason=` when a `SMATCHET_DEVIATION(rule=duplication; ...)` line is rejected purely for length (as opposed to missing/malformed fields). Either would turn a 2-3-iteration gate-fight into a single correct first attempt.
-  Resolution: applied — column-budget note added to docs/agent-rules/cpp-rules.md § SMATCHET_DEVIATION grammar: full marker line incl. // prefix and owner=/revisit= must fit 120 columns (clang-format ReflowComments otherwise wraps it and breaks the suppression match); budget ~60-70 chars for a terse noun-phrase reason=. The optional dup_audit.py length-rejection hint was not taken (docs at point of use judged sufficient).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-02 · orchestrator (PR #1593 CI failure) · [tooling] · P2 — `coverage-delta-gate.sh`'s test-light exemption pre-check crashes with exit 141 (SIGPIPE) instead of reporting a clean gate failure
-  Details: `_classify_diff` deliberately `break`s out of its `while read` loop on the first real-runtime-surface line (by design — it only needs one counterexample to know the diff isn't exemptable). When it was fed via a `|` pipe (`git diff ... | _classify_diff`) under `set -euo pipefail`, that early `break` closes the reader's end of the pipe before `git diff` finishes writing; `git diff` then gets SIGPIPE and exits 128+13=141, `pipefail` propagates that 141 through the `EXEMPTION="$(...)"` assignment, and `set -e` kills the whole script — so any real (non-exempt) `Source/Core/src/*.cpp` diff without a test delta crashed the "Test-delta gate" CI check with a bare `Process completed with exit code 141` instead of reaching the intended `FAIL: Source/Core/ changes without test deltas.` message with remediation instructions. Reproduced + confirmed the mechanism with a minimal repro (early-`break` pipe reader under `set -o pipefail` reliably yields 141; the same reader via process substitution `reader < <(producer)` yields 0, since `pipefail`/`$?` don't track a process-substitution's background writer). Same defect class as the `pipefail var=$(...|head)` SIGPIPE/truncation guard added to `test-shell-lint.sh` Rule 6 (PR #1420) — but `coverage-delta-gate.sh` postdates that sweep and wasn't covered by it.
-  Concrete next action: done — fixed in the PR that hit it (alexandrosk0/Smatchet#1593), in two passes. First pass changed `git diff ... | _classify_diff` to `_classify_diff < <(git diff ...)` (process substitution instead of a pipe) so an early `break` in the reader can no longer SIGPIPE the writer through `pipefail` — but this traded away `git diff`'s own exit-status propagation entirely: a bad `MERGE_BASE`/git error would now produce empty input, which `_classify_diff` reports as `EXEMPT`, silently PASSING a gate that should hard-fail. CodeRabbit's review of the PR caught this regression before merge. Final fix: write the diff to a `mktemp` temp file first (`git diff ... >"$GIT_DIFF_TMPFILE" 2>/dev/null`), check its exit status explicitly with `if ! ...; then FAIL; fi`, then feed the file to `_classify_diff` — no pipe (so no SIGPIPE risk) and no lost exit code, with a `trap ... EXIT` for cleanup. Follow-up: extend `test-shell-lint.sh` Rule 6 (or add a sibling rule) to also flag `<producer> | <fn-with-early-break>` shapes generically, not just the `$(...|head)` shape — this exact "early-break reader on a live pipe" pattern is the general case and will recur in future gate scripts. A second, narrower rule worth considering: flag a process-substitution `< <(producer ...)` feeding a function/loop that exits early, since that shape reliably drops the producer's own exit-status observability — the same trap this fix fell into on its first pass.
-  Status: applied (fixed inline in #1593, verified regression-free by an independent review pass after CodeRabbit's catch; the generic shell-lint rule extensions above are the deferred follow-up)
-  Last-reviewed: 2026-07-03
-
+> **Deleted-runtime banner (2026-05-21)** — entries below that reference the
+> agentic-flow C++ runtime (`AgenticHandoffController`, `AgenticTriageController`,
+> `AgentProposalStore`, `ClaudeCodeLocalRunner`, `PrCommentWatcher`,
+> `PrCheckRunWatcher`, `HarnessRunState`, `CoderabbitCommentClassifier`,
+> `CiFailureClassifier`, the `dispatch_source` enum, the sentinel-file protocol,
+> `agent/<proposalId>` worktrees, the `coderabbit-react-loop` design,
+> `agents/handoff-implementer.md`, `agents/pr-iterator.md`) refer to code
+> removed 2026-05-21 (v1 PR1 of `../../plans/shipped/github-tracker-backend.md`,
+> merge sha `b1d241bc`). Preserved as historical record of what was tried.
+
+<!-- Latest first. Appended by rotate-applied-md.sh only. -->
 
 - 2026-06-28 · orchestrator (PR-D #1566 spawn-auth) · [debt] · P3 — extract a shared OnStart-prologue helper for the screenshot scenarios to retire the duplication deviation in DockGapSentinelScenario.cpp
   Details: the four screenshot scenarios (dock-gap-sentinel, command-palette-fuzzy, code-syntax-coloring, theme-switch-roundtrip) repeat the same OnStart prologue — `warmupFrames_ = IntArg(args, "warmupFrames", N); clamp; captureSize_ = ParseScenarioCaptureSize(args); screenshotPath_ = StringArg(args, "screenshotPath", ""); empty-check → outErr + return; ConfineScenarioScreenshotPathInPlace(...)` — plus an identical anon-namespace `IntArg`/`StringArg` arg-parser pair and the `extern UiDrawSession g_ui;` shim at file top. dup_audit flags two clones over this scaffold; PR-D already collapsed the confine block into `ConfineScenarioScreenshotPathInPlace` (one chokepoint, killed the per-scenario confine clones) but the residual prologue + file-top scaffold is pre-existing duplication, suppressed in PR-D with two `SMATCHET_DEVIATION(rule=duplication; ...)` markers in DockGapSentinelScenario.cpp. Not newly authored by PR-D — the markers only exist because PR-D's include insertion + confine collapse re-hashed the maximal token run.
@@ -444,6 +28,7 @@ before push. Archive to `applied.md` on the next sweep.
   Details: `SpawnAuthToken()` = `RandomHexToken(4)` = 128 bits from `std::random_device` (`Source/Standalone/CliCommandRunner.cpp:482`). The standard permits a conforming `std::random_device` to be a *deterministic* PRNG (the historical libstdc++/MinGW failure mode) — only `entropy()==0` hints at it, which nothing here checks. On the platforms Smatchet actually ships (MSVC → `rand_s`/RtlGenRandom; glibc → getrandom; Clang/macOS → arc4random) it IS OS-CSPRNG-backed and non-deterministic, so the in-tree comment ("non-deterministic on every supported host") is accurate *for those hosts*. Exploitability is low: the token is loopback-only, ephemeral (one spawn), 128-bit, and never persisted — a predictable token would only matter to a same-host attacker who could already observe the loopback port. Hence P3, not higher. The concern is portability/assurance, not a live hole.
   Concrete next action: if a stronger guarantee is wanted, replace the `std::random_device` draw in `RandomHexToken` with an explicit OS CSPRNG — `BCryptGenRandom`(Windows) / `getrandom`(Linux) / `arc4random_buf`(macOS/BSD) behind a thin `#if` shim, or assert `std::random_device{}.entropy() > 0` at first use and fail closed. Keep the single-chokepoint shape (one helper feeds both token uses — don't reintroduce a duplicate RNG block, DRY). Low priority; only worth doing if Smatchet adds a host where `random_device` determinism is plausible. Cross-ref: `RandomHexToken`/`SpawnAuthToken`/`SpawnLogRandomToken` in `CliCommandRunner.cpp`; plan `docs/plans/spawn-mcp-auth.md` § PR D.
   Resolution: applied — `RandomHexToken` now draws through `FillOsCsprng` (CliCommandRunner.cpp): `rand_s` on Windows (`_CRT_RAND_S`, no new link dependency), `arc4random_buf` on macOS/BSD, `getrandom` on Linux (EINTR/partial-read safe); `std::random_device` remains only as the documented fallback for the theoretical platform-call-failure / unknown-platform case, so no supported host is ever weaker than before. Single-chokepoint shape kept (one helper feeds both `SpawnLogRandomToken` and `SpawnAuthToken`); the stale non-determinism doc comment replaced.
+
 - 2026-06-28 · gate-escape-postmortem · [infra] · P1 — deterministic `Bucket-E Jira fixture-backend (Mesa GL, hard)` lane is advisory-by-prefix in the merge-gate allow-list; a real `--spawn` regression rode past 3 PRs undetected
   Details: The poller's meant-to-block allow-list (`merge-gates.sh:163`,
   `MERGE_GATES_BLOCK_ALLOWLIST_RE`) blocks exactly one Mesa bucket lane —
@@ -615,6 +200,7 @@ before push. Archive to `applied.md` on the next sweep.
 - 2026-06-20 · orchestrator (backlog reconciliation) · [tooling] · P3 — no parity test asserts the *-out-of-band override-label set is wired identically across the two merge paths (merge-gates poller vs safe-admin-merge), so a future block-allowlist addition can half-wire again
   Details: Carved from the now-archived `intent-out-of-band-rollout-incomplete` entry (both its concrete gaps shipped). The recurring class: a `*-out-of-band` override label must be honored by BOTH `agents/scripts/core/merge-gates.sh` (`poll_merge_gates` `$downgraded` set) AND `agents/scripts/core/safe-admin-merge.sh` (`evaluate_rollup`). ADR-0022's `intent-out-of-band` shipped honoring only the poller, plus the GitHub label itself was never created — surfaced live on PR #1435 when `safe-admin-merge` refused a labelled PR. The single-sourced `MERGE_GATES_BLOCK_ALLOWLIST_RE` keeps the block-list in sync, but the label-DOWNGRADE set is hand-maintained in two places.
   Resolution: applied — the predicted divergence existed live: `plan-lock-out-of-band` was honored by merge-gates.sh `$downgraded` but NOT by safe-admin-merge.sh `evaluate_rollup`. Fixed `evaluate_rollup` (Plan-lock gate downgrade in both the row-blocker and absent-required filters, + selftest CASE4c), and `test-oob-label-impl.sh` now mechanically extracts both scripts' CI-downgrade label sets (label→jq-var bindings resolved against each downgrade expression) and FAILs on inequality — `--selftest` divergence fixture + bats coverage in `tests/bats/oob_label_impl.bats` (divergent FAIL, equal PASS, bound-but-unused-is-not-wiring, real-tree parity).
+
 - 2026-06-20 · orchestrator (backlog reconciliation) · [process] · P3 — ad-hoc "open backlog" recounts with `grep -rh … | grep -v applied.md` silently read applied.md as live (grep -h strips the filename, so the applied.md exclusion is a no-op) — twice misled a session into "fixing" already-fixed work
   Details: During a session I twice computed "what P1s are open" with `grep -rhE '· P1 —' categories/*.md categories/*/*.md | grep -v applied.md`. Because `-h` strips the filename from each line, the `grep -v applied.md` filter matches nothing and is a no-op — so every archived entry in `applied.md` was counted as live. This produced a phantom list of ~20 "open" P1s (sanitizer-required-context, coverage-required-context, two security P1s, …) that were ALL already fixed + archived. Acting on it, I scoped a "fix the 2 security P1s" task that turned out fully done (verified #1210 + #1211 live). A 4-agent verification fan-out then confirmed ZERO genuinely-open entries were stale-resolved — the backlog `Status` fields are accurate; only my recount lied. The repo's own `test-backlog-counts.sh --list` is fine (per-file, no `-h` bug) — this is purely an ad-hoc-survey methodology trap.
   Concrete next action: when recounting backlog status ad-hoc, never rely on `grep -h … | grep -v applied.md`. Use a per-file loop (`for f in …; case applied.md skip`) or filename-aware `grep -rHn` then exclude by `/applied.md:` path, and pair the header match with the entry's actual `Status:` line (a header line alone says nothing about open/applied). Prefer `test-backlog-counts.sh --list` for category totals. This is a doc/habit note — no gate needed (the official tooling is already correct).
@@ -672,6 +258,7 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: RESPEC or DROP. Option A (drop): keep the macro — it is a deliberate, documented localization mechanism; close this as won't-fix. Option B (respec): convert all `ImGui::Foo` call sites to UNQUALIFIED `Foo(...)` form across the 40 TUs (~168 sites in `SmatchetAiAssistantUi.cpp` alone) + add the using-directive + verify localization coverage didn't drop (a grep/test that every localized override is still reached). Option B is a large mechanical sweep with a real regression-risk surface; only worth it if the macro is causing a concrete problem. Recommend A unless a problem is named. Cross-ref: PR-13a #1515; `SmatchetLocalizedImGui.h`; `SmatchetUI_Internal.h:6-7`.
   Status: wont-fix (2026-06-21 decision — keep the macro) — the `#define ImGui SmatchetLocalizedImGui` is a deliberate, documented localization mechanism; replacing it with `using namespace` is unsound (cannot redirect qualified `ImGui::` names → would silently bypass localization across 40 TUs), and a full call-site conversion is a large risky sweep with no functional gain. Decision: keep the macro.
   Last-reviewed: 2026-06-21
+
 - 2026-06-19 · orchestrator · [process] · P2 — block-allowlisted `Intent section` gate is bypassed by every non-poller merge path (bare `gh pr merge --auto`, direct REST); promote the 2026-06-11 "use the poller" advice into an enforced non-admin merge wrapper
   Details: Three PRs (#1414, #1415, #1406) merged to develop in one 07:55–07:58Z batch with the
     `Intent section` doc-validation check non-green and no `intent-out-of-band` override label —
@@ -788,6 +375,7 @@ before push. Archive to `applied.md` on the next sweep.
   Cross-ref: #1417 (original hit, merge 51facafc); #1483 (fix, merge f611df96); `.github/workflows/doc-validation.yml` `pull_request` trigger + the `Intent section` job; `docs/adr/0022-intent-gate-promotion.md`.
   Status: applied (2026-06-20 reconcile — verified live on origin/develop: doc-validation.yml `pull_request.types` includes `edited`. This entry read `open` but its only deliverable shipped in #1483; same face-value-status class as the recount-grep-h trap.)
   Last-reviewed: 2026-06-20
+
 - 2026-06-19 · orchestrator · [tooling] · P3 — postmortem-owed.sh reads the cwd working-tree ledger instead of origin/develop, so a session whose integration tree is parked on a feature branch gets phantom "owed" nags (and, inversely, a locally-staged-but-unmerged entry can false-suppress a genuinely-owed postmortem)
   Details: The 2026-06-19 session-start postmortem-owed hook reported `PR #1409 — override:
     tests-out-of-band` owed, but that postmortem was already merged to develop — #1414, squash
@@ -1059,6 +647,7 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action (residual — why this is `applied` but not closed): the auto-fix only fires for authors who RUN `pre-ship.sh`, and the 6 incidents were agents NOT running it. Close the loop by firing the strip where it can't be skipped — either (a) a `PreToolUse`/pre-commit hook that runs `comment_audit.py --fix` on staged first-party C++, or (b) a one-line mandate in the shared coding-agent prompt + the ship-loop checklist to run `pre-ship.sh` before any C++ push (the `comment-commented-out-code` half stays manual either way — agents must avoid `::`/`()`/`;` in prose comments or wrap them). Est ~1 h for (a). Until then the mitigation helps every author who runs pre-ship; the recurrence is reduced, not eliminated.
   Status: applied (2026-06-15, `feat/comment-noise-guard` — `comment_audit.py --fix` + `pre-ship.sh` wiring + bats; residual hook/prompt follow-up above tracked as the open next-action. Archive to applied.md once the residual ships or is consciously dropped.)
   Last-reviewed: 2026-06-15
+
 - 2026-06-15 · security-review · [security] · P3 — config.set / Lua direct-write paths bypassed the persist-site header/URL sanitize (defense-in-depth; resolved)
   Details: The persist-site CR/LF/NUL strip (`SanitizeConfigStringValue`, `Source/Core/src/Config/ConfigManager_PathUtils.cpp`) was applied only inside `ConfigManager::Save` (the Preferences-UI path). The MCP `config.set` command (`RunConfigSet` -> `ConfigManager::WriteConfigJson`, `Source/Core/src/Commands/Builtin/BuiltinCommands_Config.cpp:197`) and the Lua layout writer (`Source/Plugins/LuaConsole/LuaConsolePlugin.cpp:39`) write config JSON DIRECTLY via `WriteConfigJson`, bypassing `Save` and therefore the sanitize. The `ConfigSetKeyTable` allowlist already held three URL-bound string fields written this way — `domain` -> `TrackerConfig::Domain` and `planeUrl` -> `TrackerConfig::PlaneUrl` (both spliced into outbound tracker request URLs via NormalizeBaseUrl in JiraClient / PlaneClient), and `planeWorkspaceSlug` -> `TrackerConfig::PlaneWorkspaceSlug` (concatenated RAW into every Plane workspace request path, `.../api/v1/workspaces/<slug>/projects/...`, across PlaneClient / PlaneFieldCatalog / PlaneIssueSearch / PlaneIssueMutation / PlaneActivityFeed, with NO use-site normalization — so the slug was strictly *less* guarded than the base URL, which at least passes through NormalizeBaseUrl). This is exactly the "future allowlist addition reintroduces a header/URL-smuggling bypass" case PR #1284's corrected rationale warned about — already live for these fields, pre-dating #1284 (not introduced by it). NO live vuln: the vector is blunted because the values land in a URL sink parsed by cpr/curl (which rejects/strips raw CR/LF) rather than a direct header value, and the use-site `SanitizeBaseUrlOrLog` in the tracker clients / `AiAssistantController::BuildClientConfig` remains the primary guard. Weaker than the AI-key path (where the value can reach a direct header).
   Resolution: 2026-06-15 (PR `feat/config-ingress-sanitize`) — centralized the sanitize at the write chokepoint. New pure helper `smatchet::config_detail::SanitizeHeaderBoundConfigKeys(nlohmann::json&)` (declared `ConfigManager_Internal.h`, defined `ConfigManager_PathUtils.cpp` next to `SanitizeConfigStringValue`) strips CR/LF/NUL from the header/URL-bound keys {domain, plane_url, plane_workspace_slug, ai_base_url, ai_ollama_base_url, ai_deepseek_base_url}; `ConfigManager::WriteConfigJson` now runs it on a copy before `dump(4)`. Because config.set, the Lua writer, AND Save all funnel through `WriteConfigJson`, every current + future writer of those keys is covered in one place — and any future `ConfigSetKeyTable` addition of a URL/header key in that set is sanitized automatically. The Commands strict zone is untouched (no `ConfigManager_Internal.h` leak, which that header forbids). Secret keys are excluded by design (on-disk DPAPI ciphertext has no CR/LF; POSIX plaintext is already sanitized in Save before encryption). An adversarial multi-lens verification pass over the initial commit surfaced `plane_workspace_slug` as a third config.set URL-bound key in the same sink class the initial key set had missed (and the most exposed of the three — zero use-site guard); it was added before the PR opened. Other new config.set string keys (`git_commit_repos`, `production_group_keyword`) are NOT URL-spliced and stay out; `email` is Base64-wrapped in the Basic-auth header (not an injection sink) and `github_base_url` is not config.set-reachable + has the `IsValidGitHubBaseUrl` allowlist — both correctly excluded. Doctest: `tests/Core/ConfigStringSanitize.test.cpp` gains a config.set-style round-trip stripping CR/LF/NUL from domain / plane_url / plane_workspace_slug / ai_base_url, plus an absent-key / non-string / non-object no-op case. The use-site strip stays primary; this is defense-in-depth parity hardening.
@@ -1090,7 +679,6 @@ before push. Archive to `applied.md` on the next sweep.
   Resolution (2026-06-17 · PR #1361 test(security): adversarial redaction-escape oracle for redact-intent.py): added `agents/scripts/core/redaction-escape-oracle.py` — feeds an 18-row planted-secret corpus (AWS keys, bearer tokens, `user:pass@host`, home paths, SIDs) through `redact-intent.py`'s `redact()` and asserts no planted value survives in the OUTPUT (PRIMARY, deterministic — doubles as a regression guard if a rule is later weakened), with a SECONDARY independent `gitleaks` pass over the redacted output for formats the corpus never anticipated that skips cleanly when gitleaks is absent (not yet on the dev image). A `--selftest` exercises the detection path (a no-op redactor must leak all 18) so the oracle proves it can SEE a survivor before trusting a clean run. This is the independent-scanner-over-OUTPUT oracle the entry asked for, strengthened with a deterministic corpus assertion that does not depend on gitleaks being installed. The named-but-unbuilt `test-redact-intent-gitleaks.sh` was superseded by this `redaction-escape-oracle.py` + `test-redaction-escape-oracle.sh` pair.
   Status: fixed
   Last-reviewed: 2026-06-17
-
 
 - 2026-06-15 · orchestrator · [security] · P2 — `intent-capture-pipeline-attack-surface`: the new prompt→PR `## Intent` pipeline (#1260) is an un-mapped trust boundary — `security-review`'s attack surface should enumerate it
   Details: #1260 added a data flow that crosses a trust boundary into a PUBLIC artifact: the `UserPromptSubmit` hook (`docs/harness/claude-code/hooks/capture-intent.sh`) reads the raw human prompt → `agents/scripts/core/redact-intent.py` → appends to gitignored `.session-intent/<branch>.log` (`.gitignore:81`) → the ship-loop (`docs/agent-rules/ship-loops.md` § Intent capture) fills the PR body `## Intent` → advisory gate `Intent section (advisory)` in `.github/workflows/doc-validation.yml`. The raw prompt may carry secrets / PII / home paths; the PR body is public. `security-review`'s description already claims an "AI-assistant / coding-harness-handoff" surface — this pipeline is exactly that and should be named so future trust-boundary diffs route to it. Surface to map: (a) **under-redaction** → secret/PII into a public PR body (the core risk; pattern-based redactor, residual classes documented — see the `gitleaks-over-redact-intent-output` entry above); (b) **branch-name → file path** — `.session-intent/<branch>.log` is built from the branch name; verify a crafted branch (`../`, absolute) cannot path-traverse out of the capture dir; (c) **stdout discipline** — the hook MUST print nothing to stdout (it is injected into model context; capture-intent.sh:10-11 guards this) — a regression is a context-injection vector; (d) **PR-body injection** — crafted prompt markdown / control bytes flowing into the rendered PR body. (a)+(c) are mitigated today (fail-safe redactor + `exit 0` at every hook step + stdout-silent), but none is enumerated in a security-review checklist.
@@ -1160,19 +748,20 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: give `Sanitizer (ASAN via MSVC)` AND `Sanitizer (UBSan via Clang)` the same single-workflow self-gated required-context promotion Coverage got (see `coverage-required-context` Resolution) — add both to `project.config.json` `branch_protection.required_contexts` + `ci.required_checks`; ensure each emitting workflow runs unconditionally on `pull_request` (no `paths:` filter) and self-gates with the `# ci-required-context: self-gated` marker + emits the context green on docs-only/path-filtered PRs so they don't deadlock on a never-run required check; `setup-branch-protection.sh` needs no edit (it loops `required_contexts` from config). DEPENDENCY: the ASAN lane currently false-reds on ASAN-unsafe fixtures (a required Sanitizer would have BLOCKED #1220 on a fixture bug, not a product bug) — land the fixture-hardening (`adf-deep-nest-fixture-asan-unsafe` in test.md + the #1215 CallstackParser wrap) BEFORE making Sanitizer required, else a flaky required lane deadlocks merges (the deadlock-risk #1130 flagged). MAINTAINER MUST then run `setup-branch-protection.sh` to make the binding live (see `coverage-required-context` — the config landed but the maintainer bind never ran, which is why #1227 still escaped). Est ~1-1.5 h (config + 2 self-gate workflows + parity selftest) + the maintainer bind. Cross-ref: postmortems.md 2026-06-14 #1220/#1229, 2026-06-11 #1130 (option A), 2026-06-06 #923; `coverage-required-context` (the Coverage half); `test-required-context-parity.sh` (the no-deadlock selftest). **APPLIED + BOUND LIVE 2026-06-15:** the maintainer bind ran — live develop `required_status_checks.contexts` now enforces 9 contexts incl. `Sanitizer (ASAN via MSVC)` + `Sanitizer (UBSan via Clang)` + `Coverage (windows-2022 + OpenCppCoverage)` (confirmed `gh api …/required_status_checks` 2026-06-15), so a red/pending Sanitizer now blocks EVERY merge path INCLUDING a direct `gh api … PUT …/merge` — closing the #1230/#1235/#1240 direct-merge-bypass variant (postmortems.md 2026-06-14 PR #1230/#1235/#1240). ORDERING HAZARD: the bind landed BEFORE its documented dependency (the ASAN-unsafe fixture `adf-deep-nest-fixture-asan-unsafe`, test.md, was NOT yet hardened) → a false-red Sanitizer can now deadlock-by-design every merge until that fixture lands; that prerequisite is elevated P1.
   Status: applied + bound (live — 9 required contexts confirmed 2026-06-15); residual P1 fixture-hardening dependency (`adf-deep-nest-fixture-asan-unsafe`) still open
   Last-reviewed: 2026-06-15
+
 - 2026-06-14 · orchestrator (gate-escape-postmortem) · [test] · P1 — `adf-deep-nest-fixture-asan-unsafe`: the ADF deep-nesting regression fixture stack-overflows under ASAN (its own teardown, not the walker), reddening the meant-to-block Sanitizer lane (preventing gate from postmortems.md 2026-06-14 PR #1220) — ELEVATED P2→P1 2026-06-15: the deadlock risk is now LIVE (Sanitizer promoted to a required context on develop 2026-06-15 while `kDeepAdfDepth=400` is still unhardened → a false-red ASAN lane now blocks EVERY merge path; see postmortems.md 2026-06-14 PR #1230/#1235/#1240)
   Details: PR #1220 correctly bounded the ADF parser (`kMaxAdfRecursionDepth = 256`, threaded through `CollectAdfText` + `ExtractAdfTextToStream`, graceful truncate + one-shot `WarnAdfDepthCapped()` WARN), but its regression fixture `tests/Core/TrackerFieldValueParser.extended.test.cpp` builds a deep `nlohmann::json` tree (`kDeepAdfDepth`) whose recursive ctor/dtor stack-overflows under ASAN's inflated frames on TEARDOWN — `Sanitizer (ASAN via MSVC)` red in `std::_Char_traits<char,int>::move`, not an `AddressSanitizer: heap-*` finding in the walker. The author already diagnosed the fixture-vs-walker split (capped `kDeepAdfDepth` 5000 → 400) but 400 is still too deep under instrumentation. Same ASAN-frame-fragility class as the `CallstackParser` ReDoS sentinel (#1183/#1215): a regression guard that itself trips the sanitizer. The walker fix is sound — no product bug, no GitHub Issue owed; only the fixture is fragile.
   Concrete next action: rebuild the deep-nest fixture so it cannot overflow under ASAN — either construct + tear down the deep tree iteratively (avoid nlohmann's recursive ctor/dtor: build with an explicit heap-side stack / manual node teardown), or guard `kDeepAdfDepth` to a small ASAN-safe value under `#if defined(__SANITIZE_ADDRESS__)` (mirroring #1215's sentinel wrap) while keeping the deep value on non-sanitized builds. Assert the walker's depth-cap behaviour (truncation + the one-shot WARN) at a depth above 256 but below the ASAN stack limit. Est ~1-1.5 h. Cross-ref: postmortems.md 2026-06-14 #1220; the `CallstackParser` ASAN-timing entries below (#1183/#1215); the sibling `sanitizer-required-context` tooling entry (the structural half — why the red merged). UPDATE 2026-06-15: that structural half is now BOUND LIVE (Sanitizer is a required context on develop), so this fixture-hardening is no longer a nice-to-have — it is the unblock-merges prerequisite, hence P1.
   RESOLVED 2026-06-15 (branch `feat/asan-adf-fixture`): rebuilt the teardown iteratively — added `DismantleDeepJson(nlohmann::json&&)` to `tests/Core/TrackerFieldValueParser.extended.test.cpp`, which moves every nested container onto an explicit heap work-list and clears each node before it destructs, so no single `~json()` recurses deeply. Kept `kDeepAdfDepth = 400` on ALL builds (no `__SANITIZE_ADDRESS__` depth-shrink — that would cut coverage on the very lane being protected); called after the assertions in all 3 deep-tree TEST_CASEs (`doc`/`comments`/`deep`). Verified locally under `ninja-msvc-asan` (exit 0, no stack-overflow). Authoritative verification = CI's required `Sanitizer (ASAN via MSVC)` lane on the PR (this is a `*.test.cpp` diff, so the lane actually runs).
   Status: resolved — fixed by `feat/asan-adf-fixture` (iterative `DismantleDeepJson` teardown); pending merge
   Last-reviewed: 2026-06-15
+
 - 2026-06-14 · build-doctor · [security] · P2 — Android config secrets stored PLAINTEXT at rest (audit H2 remainder; Keystore deferred)
   Details: Audit H2's POSIX half is now fixed (PR `fix/posix-secret-at-rest-perms-h2`: `chmod 0600` on the config file before the atomic rename + a loose-permission LOG_WARN on read, decision logic in the unit-tested `IsLooseConfigFileMode`). The **Android** half is NOT fixed: `ProtectSecretForConfig`'s `#else` branch still returns plaintext, so API tokens (`token`/`plane_api_key`/`github_pat`/`mcp_auth_token`/`ai_*_api_key`/`whisper_api_key`) land as cleartext in the app's filesDir JSON. Filesystem perms are not a reliable owner-isolation boundary on Android the way they are on a multi-user desktop, so the POSIX chmod mitigation does not transfer. The gap is now LOUD (a `LOG_WARN` fires on every Android secret write naming the gap) and Android is marked a known-unsupported platform for secret-at-rest in code + the H2 audit row, but the secret is still recoverable by anyone with filesystem access to the app sandbox (rooted device, ADB backup of a debuggable build, forensic image).
   Concrete next action: Implement Android Keystore-backed encryption-at-rest for the secret fields — generate/resolve an AES key in the AndroidKeyStore provider via JNI, wrap (GCM) the secret value before it reaches the config JSON, unwrap on load; gate behind the same `ProtectSecretForConfig`/`UnprotectSecretFromConfig` seam so the call sites are unchanged. Big JNI effort (host-injected JNIEnv plumbing through `Source/Core`); size L. MUST land before Android ships with real-account secrets (H2 raises P2->P1 the moment POSIX/Android ships).
   Update (2026-06-18 · PR #1357 feat(android): seal config secrets at rest with AndroidKeyStore AES-GCM): the Keystore-backed encryption this entry asked for is merging via #1357. `ProtectSecretForConfig`/`UnprotectSecretFromConfig` route through a process-wide host provider (`ApplyConfigSecretProvider` + `ConfigManager::SetAndroidSecretProvider`, copy-then-call-unlocked); the mobile host installs an AndroidKeyStore AES-256-GCM bridge (`SmatchetAndroidSecretBridge` JNI ↔ Java `SmatchetSecretStore` via `SmatchetActivity.protectSecret`/`unprotectSecret`) at boot before the first `Load`. StrongBox-preferred, 12-byte IV prepended, base64 token. Fail-CLOSED: every arm returns EMPTY on Keystore/JNI/AEAD-tag failure (drops the secret rather than persisting/surfacing cleartext); on load a present-but-undecryptable `*_enc` is dropped, never downgraded to sibling plaintext. The `#else` plaintext warning now fires only when no provider is wired. Call sites unchanged.
   Status: fixed (PR #1357)
   Last-reviewed: 2026-06-18
-
 
 - 2026-06-14 · orchestrator (gate-escape-postmortem) · [test] · P2 — `tracker-redirect-no-follow-regression-test`: the security redirect-disable fix (`MakeTrackerRedirectPolicy`, #1212) shipped under `tests-out-of-band` with zero regression coverage of the trust-boundary property (preventing gate from postmortems.md 2026-06-14 PR #1212)
   Details: PR #1212 disabled redirect-following on every tracker request so an attacker-controlled cross-host redirect can't carry the API token (`TrackerHttpUtils.h:27` `cpr::Redirect MakeTrackerRedirectPolicy()` — "redirect-following DISABLED (security H4 / E2)" — applied at `JiraIssueMutation.cpp:593`). It merged with a `tests-out-of-band` label and NO `*.test.cpp` delta; a recursive search of `tests/` confirms no redirect-policy regression test exists (every `redirect` hit is unrelated `TestEnvGuard` directory-redirect noise). So the security property is untested — a future refactor re-enabling redirect-following (or applying the policy at the wrong call site) would red no gate. The override may be legitimate (the test needs an HTTP-redirect fixture that didn't exist) but the deferred test must be tracked, not evaporate (#1124 class).
@@ -1200,148 +789,174 @@ before push. Archive to `applied.md` on the next sweep.
   Resolution (2026-06-13, build-doctor, PR `fix(gates): fail-closed the 6-HIGH fail-open gate cluster`): all 6 HIGH + 2 MEDIUM fixed fail-closed. **(A)** `cr-finding-gate/action.yml` `cr_installed` probe now ports the `merge-gates.sh:200-223` 404-vs-non-404 split (`probe_404()` helper) — only a confirmed HTTP 404 on BOTH `.coderabbit.y{a,}ml` sets `cr_installed=false`; any auth/network/5xx exit is treated as installed (fail closed). **(B)** the 5 UI-test drivers (`#513` + four `#452`) each got the `[ "$PASSED" = "0" ] && [ "$FAILED" = "0" ]` zero-match guard mirroring the known-good `test-ui-duration-inline-edit.sh:101`. **(#524)** the action's actionable-count parse now scans the FULL review body (was first-line only) and returns non-terminal (→ PENDING at window-exhaustion, never green) when `n_reviews>0` but no header — preamble can no longer hide the header. **(#518)** `pillar2-scan.yml` now `rev-parse --verify`s the base ref and captures the `git diff` rc, exiting 1 on an unresolvable base / diff error (was `2>/dev/null || true` → silent skip). **(C/#430)** `test-tooltip-wrapwidth.sh` switched `os.listdir` → `os.walk` so subdir sites (`Ui/`, `Commands/Scenarios/`) are scanned. Coverage: `tests/bats/fail_open_gate_cluster.bats` (`# selftest: asserts-failure`) drives synthetic non-results — 0-test envelope → each driver exits non-zero; passing/failing envelopes behave; subdir wrapWidth violation caught (negative-fixture verified against the old `os.listdir`). **Deferred** (NOT in this PR): next-action (d) the `--selftest`-style meta-gate that greps drivers for a `failed`-only success path / non-recursive scan with no zero-count guard — ~2–3h authoring, re-filed below as `fail-open-meta-gate-authoring-check`.
   Status: applied
   Last-reviewed: 2026-06-13
+
 - 2026-06-13 · orchestrator · [tooling] · P3 — `pr-status-watch-label-and-blocking-awareness`: `scripts/dev/pr-status-watch.sh` reports a check as RED regardless of whether it actually blocks merge, so it noise-flags PRs whose only reds are `*-out-of-band`-labelled or advisory-non-allow-listed
   Details: The watch (shipped #1175/#1177) classifies any `FAILURE` rollup row as RED. But the merge-gates DOWNGRADE two whole classes: (a) a check named by a `tests-out-of-band` / `perf-out-of-band` / `cr-out-of-band` PR label, and (b) an advisory check NOT on the block allow-list (`Bucket-*`/`Coverage`/`Sanitizer`/`Perf PR-fast`/`Android security gate`). This session the watch repeatedly re-emitted "PR #N RED: Test-delta gate, Perf PR-fast" on a PR carrying both override labels, and "RED: Mobile — Android emulator smoke (advisory)" on a PR whose merge was never blocked — pure noise that forced the orchestrator to stop+re-arm the watch.
   Concrete next action: extend `classify_pr_line`/`poll_pr` to (1) read the PR's labels (`gh pr view --json labels`) and treat a `FAILURE` whose check name matches a present `*-out-of-band` label as non-blocking, and (2) treat a `FAILURE` whose name carries `advisory` AND isn't on the block allow-list as non-blocking — emit those (if at all) as a distinct `OVERRIDDEN`/`advisory-red` note, never `RED: blocked`. Mirrors `merge-gates.sh`'s own downgrade logic (single-source the allow-list). + selftest cases (labelled-red → not-RED; advisory-non-allow-listed → not-RED) + bats. Est ~1 h. Pairs with the existing CR-staleness guard already in the tool.
   Resolution: **applied — feat/pr-status-watch-blocking-aware**. `poll_pr` now adds `labels` to the `gh pr view --json` query and filters the `failed` list to BLOCKING checks only: a `FAILURE`/`TIMED_OUT`/`STARTUP_FAILURE` row fires RED iff it is gating (REQUIRED ∈ `branch_protection.required_contexts`, OR allow-listed-non-advisory: name ~ `MERGE_GATES_BLOCK_ALLOWLIST_RE`) AND not downgraded by a `tests-out-of-band`/`perf-out-of-band` PR label — same jq gating shape as the merge-gates `$failing` sub-expr and safe-admin-merge's `evaluate_rollup`. The allow-list regex is single-sourced by `source`-ing `merge-gates.sh` (#1193 exposed it as a top-level constant); required contexts read from `project.config.json` (`PR_STATUS_WATCH_REQUIRED_CONTEXTS` test seam). 4 new bats cases (advisory-non-allow-listed → not-RED; allow-listed-non-required Bucket- → RED; perf-oob Perf-PR-fast → not-RED; tests-oob Test-delta → not-RED) — suite 13/13, selftest classifiers unchanged, shellcheck clean. Cross-ref: PR #1193 (`MERGE_GATES_BLOCK_ALLOWLIST_RE` single-source); `agents/scripts/core/safe-admin-merge.sh` `evaluate_rollup` (same gating logic).
   Status: applied
   Last-reviewed: 2026-06-13
+
 - 2026-06-13 · orchestrator · [tooling] · P1 — `fleet-preflight-misses-runtime-whole-file-read-bloat`: `fleet-preflight.sh` checks staged **input file sizes** but not the real runtime killer — lane prompts that hand an agent a **broad dir scope with no windowed-read mandate**, so the agent `Read`s files **whole**, the transcript bloats, and auto-compaction fires mid-sweep (burning minutes + paid context).
   Details: the gate's input-size check (⅓-window byte cap on *staged* files) does nothing about an agent that, given "examine `Source/Core/src/Ui/`" with no read discipline, opens 20 files end-to-end at runtime. That is what ballooned 2 of 5 survey-fleet agents to ~130k tokens (`workflow-fleets.md` § Per-agent scoping, failure 6) — a *prompt-shape* problem the static gate is blind to. The persist-sweep PR (#1182) adds a windowed-read mandate to the historical-review-sweep STEP-3 prompt as a point fix, but the gate can't tell whether a *new* fleet's prompts carry the same discipline.
   Concrete next action: (a) **Two new static checks in `fleet-preflight.sh`**: (i) WARN when an `agent()` prompt names a directory scope (`Source/`, a `**`-glob, "all files in") **without** a windowed-read directive (regex for "offset/limit", "WINDOW", "never read … whole", or `agentType: 'caveman:cavecrew-investigator'` which refuses scope creep); (ii) WARN on a bare-dir scope with no per-agent tool-call/budget line ("stay under ~40 tool calls"). (b) **Promote `workflow-fleets.md` § Per-agent scoping to a MUST** (it is currently prose guidance) and have the gate cite it. (c) tie both into the same `--strict` gate as the sibling P1 so one pre-launch run covers model-pin + concurrency + read-discipline. Est: (a) ~2–3 h, (b) ~15 min. Cross-ref: `agents/scripts/core/fleet-preflight.sh`; `docs/agent-rules/workflow-fleets.md` § Per-agent scoping (failure 6) / § Input-size pre-flight; PR #1182 (point-fix windowed-read mandate); `fleet-preflight-not-enforced-at-launch` (sibling P1).
   Resolution: **applied — feat/fleet-preflight-read-discipline**. `fleet-preflight.sh` check 7 (read-discipline): a shared agent()-call walk emits each prompt buffer, and a prompt naming a broad dir/glob scope (`Source/`/`tests/`/`docs/`/`**`/"all files"/"entire tree"…) with NO windowed-read directive (`offset`/`limit`/`window`/"never read"/`file:line`/`:N`/budget line "stay under … tool calls"/`grep`/`cavecrew-investigator`) WARNs — covers both (a)(i) windowed-read and (a)(ii) budget-line (a budget line satisfies the directive). (b) done: `workflow-fleets.md` § Per-agent scoping now states the windowed-read directive is a MUST and cites the check; § Pre-launch checklist gained the matching bullet + the validation note lists checks 7-8. (c) same `--strict` gate. 2 new bats cases (broad-no-directive → WARN; broad-with-directive → clean). Deferred: the PreToolUse-hook auto-run wiring lives in sibling `fleet-preflight-not-enforced-at-launch` (still open). Cross-ref: sibling `fleet-lane-prompts-need-full-repo-paths` (check 8, same PR); `workflow-fleets.md` § Per-agent scoping.
   Status: applied
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · orchestrator · [tooling] · P2 — `fleet-lane-prompts-need-full-repo-paths`: auditor lane prompts referenced source files by bare basename (`AiErrorRedact.cpp`, `AgentsMdLoader.cpp`) instead of full repo-relative paths, so agents issued `Read AiErrorRedact.cpp` and got `File does not exist` — 7 such errors across 6 agents in run `wf_62807bcd-dc8`.
   Details: the harness "Did you mean `AiErrorRedact.cpp`?" recovery still costs a wasted tool turn plus an error block added to the agent's context, which compounds the compaction pressure documented in the sibling entries. Root cause: the fleet author named files conversationally rather than passing resolved paths. AGENTS.md § Semantic-search exceptions already prescribes the fix pattern — "run [the literal-symbol search] once in the orchestrator, pass `<file>:<line>:<role>` matches inline to agents" — it just wasn't followed for the fleet.
   Concrete next action: (a) orchestrator pre-resolves each lane's file list with one grep/`st_query.py` pass and embeds `Source/.../File.cpp:<line>` (full repo-relative) in the lane prompt, never a bare basename. (b) add a `fleet-preflight.sh` static check: WARN a fan-out `agent()` prompt that mentions a `*.cpp`/`*.h`/`*.cc` token with no `/` directory separator (likely a bare basename). Est ~1 h incl. bats case. Cross-ref: AGENTS.md § Semantic-search exceptions; `fleet-preflight-not-enforced-at-launch` (this turn); run `wf_62807bcd-dc8` (7 `File does not exist`).
   Resolution: **applied — feat/fleet-preflight-read-discipline**. (b) done: `fleet-preflight.sh` check 8 (path-hygiene) WARNs a fan-out `agent()` prompt mentioning a `*.cpp/.hpp/.cc/.cxx/.hh/.h` token NOT preceded by `/` (a bare basename); a path-prefixed `Source/.../Foo.cpp:42` is clean. Reuses the check-7 shared agent()-call walk. 2 new bats cases (bare basename → WARN; path-prefixed → clean). (a) is orchestrator discipline (now reinforced in `workflow-fleets.md` § Per-agent scoping: pass repo-relative `file:line`, never bare basenames). Cross-ref: sibling `fleet-preflight-misses-runtime-whole-file-read-bloat` (check 7, same PR); AGENTS.md § Semantic-search exceptions.
   Status: applied
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · ui-host (WS-A) · [infra] · P1 — `asan-doctest-rig-not-instrumented`: the `ninja-msvc-asan` preset never compiles `SmatchetTests` (the doctest rig) with `/fsanitize=address`, so EVERY prior "ASan-clean" claim on a doctest-rig test was VACUOUS — a Pillar-3 sanitizer blind spot across the whole unit-test surface
   Details: Surfaced authoring WS-A's #1150 UAF repro (`tests/Core/UserInfoActivityCancelUaf.test.cpp`). `ninja-msvc-asan` instruments the app + tsan targets but NOT the `SmatchetTests` doctest TU — the test compiled uninstrumented, so a UAF it contained could not trip ASan; any green "ASan run" of the doctest rig before this was instrumentation-free and proved nothing. Mitigated in WS-A with an opt-in `SMATCHET_SANITIZE_TESTS` knob (the #1150 repro now runs genuinely sanitized — negative control trips `heap-use-after-free`), but the **default** full-rig sanitize is still blocked by a pre-existing `/RTC1`-vs-`/fsanitize=address` death-test SIGABRT (`SmatchetResult.test.cpp` `CHECK_THROWS_AS`). The Sanitizer CI gate therefore has never exercised the doctest rig.
   Concrete next action: resolve the `/RTC1`-vs-ASan death-test clash (drop `/RTC1` under the ASan preset, or guard the death-tests) so `SmatchetTests` builds + runs sanitized by default, then wire the doctest rig into the Sanitizer CI gate. Until then, any "ASan-verified" claim on a doctest test MUST build with `-DSMATCHET_SANITIZE_TESTS=ON` (most do not). Est ~2-4 h. Highest-signal find of the 2026-06-13 session — closes a Pillar-3 gate blind spot.
   Status: applied (2026-06-13, fix/asan-doctest-rig-instrumented — the doctest rig now builds + runs GENUINELY instrumented under `ninja-msvc-asan` by default and the Sanitizer CI gate exercises it. (1) Root cause of the SIGABRT was TWO independent issues, not one: (a) MSVC default `/RTC1` in `CMAKE_CXX_FLAGS_DEBUG` is mutually exclusive with `/fsanitize=address` — `smatchet_strip_msvc_rtc_for_asan()` (cmake/Sanitizers.cmake, called from the root CMakeLists BEFORE any target so it reaches every TU incl. SmatchetTests) strips `/RTC[1csu]+` tree-wide under real-cl + `SMATCHET_SANITIZER=asan`; configure confirms `CMAKE_CXX_FLAGS_DEBUG '/Zi /Ob0 /Od'` (no /RTC1). (b) The actual abort was an `assert()` in `SmatchetResult.h::value()/error()` — the header's documented Pillar-3 two-stage contract (assert in DEBUG, throw in RELEASE); `CHECK_THROWS_AS` only observes the throw, so under the Debug ASan preset (no NDEBUG) the assert's abort() fired first. Fixed surgically in `tests/Core/SmatchetResult.test.cpp` with `SMATCHET_CHECK_WRONGSTATE_THROWS` (the 4 wrong-state death-tests gated to `#ifdef NDEBUG`); the #1017 copy-assignment death-tests (real user-ctor throws, no assert) are deliberately NOT gated and run genuinely under ASan. (2) `ninja-msvc-asan` preset now sets `SMATCHET_BUILD_TESTS=ON` + `SMATCHET_SANITIZE_TESTS=ON` (reusing WS-A's knob, not duplicating it) and its build-preset targets gained `SmatchetTests`. (3) CI: `.github/workflows/build-and-test.yml` `sanitizer-asan-pr` job now builds the sanitized rig (preset default) + adds a "Run sanitized doctest rig (ASan, clean subset)" step (BLOCKING on the clean surface — a real UAF/leak/overflow in any covered TU now reds it) with `ASAN_OPTIONS=abort_on_error=0` + an ASan-report job-summary step. VERIFIED locally through scripts/dev/with-msvc.ps1: full rig builds + links + runs under ASan with ZERO memory-safety findings (1586/1586 cases, 14953 assertions pass). The #1150 repro (UserInfoActivityCancelUaf) runs sanitized by default now. Residue (NOT ASan findings, filed in test.md 2026-06-13): the `CallstackParser` adversarial-input case has two excluded subcases — an INT_MAX-clamp std::stoi Debug-CRT discrepancy (pure logic) + a ReDoS timing-budget the ~2-3x ASan slowdown blows; both excluded via `--test-case-exclude` so the gate is honest-green over the genuine surface. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-13
+
 - 2026-06-13 · build-doctor (#863 preventing-gate) · [infra] · P2 — config-skew: a free-function def unguarded while all its refs are `SMATCHET_WITH_*`-guarded is dead in the feature-OFF build → Clang `-Werror,-Wunused-function`, invisible to the MSVC PR jobs (`unused-symbol-under-config-guard`)
   Details: Issue #863 — the Clang ASan+UBSan nightly red three nights (CI `26997373785`/`27053572861`/`27083859902`, 2026-06-05→07) on a **compile** error, not a runtime finding: `LogLuaScriptFileProbe` in `Source/Core/src/AppController.cpp` had its definition unguarded while both call sites were `#if defined(SMATCHET_WITH_LUA_AUTOMATION)`. Lua-OFF (the nightly's config) → zero callers → Clang `/WX -Werror,-Wunused-function` → the sanitized binary never linked. PR-time CI compiles only Lua-ON/MSVC, and MSVC `/W4` doesn't warn the same way, so the asymmetry was invisible until the nightly — a config-skew gate escape. Product fix already landed (`61b17427` / PR #945); this is the PREVENTING gate. Gate-escape postmortem: `docs/self-improvement/postmortems.md` (2026-06-13).
   Concrete next action: DONE — `unused-symbol-under-config-guard` ships in `agents/scripts/project/test-lint-rules.sh` as a **WARN-first / advisory** gate (calibration phase, same path as the DRY `duplication` gate; never touches the exit code), scoped to the files CHANGED in the diff. A column-0 free-function definition (qualified `Type::method` member defs excluded — never `-Wunused-function`) at config-guard-depth 0 whose every in-file reference sits in the TRUE branch of a POSITIVE `#if defined(SMATCHET_WITH_*)` guard is WARNed; a `// SMATCHET_DEVIATION(rule=unused-symbol-under-config-guard; …)` above the def suppresses. Pure-bash preprocessor-depth heuristic (no compiler/AST; name extraction + ref lookup are subprocess-free / `grep -nwF` so the full-tree scan is ~16 s), modelled on `cmake-local-gate-ci-scope`/`no-glfw-in-core-headers`. Contract-card row in AGENTS.md; `--scan-unused-cfg` harness mode; `--selftest` exercises detect/symmetric-clean/asymmetric-clean/deviation-clean + AGENTS.md-presence (asserts-failure); 7 cases in `tests/bats/lint_rules.bats` (#863-shape detected / #945-fixed clean / member-def clean / asymmetric-ref clean / deviation clean / negative-guard-#else clean / real-tree rc 0). Verified: regression-replay against `61b17427~1` flags line 293; the real tree carries a small KNOWN advisory residual (`CliCommandRunner.cpp` MCP-only helpers — irreducible from text). **DOWN-SCOPED from the plan's preferred absolute-0**: a clean-tree scan surfaced benign idioms (out-of-line member, `#else`-of-`#if !defined`, MCP-gated-TU helper) the text proxy can't statically separate from the #863 shape; an absolute-0 over those would red-wall develop (the plan's § Verification CRITICAL). WARN-first surfaces the shape at PR time without that risk; nightly Lua-OFF sanitizer build is the authoritative backstop; graduates to blocking once FP rate calibrates low. Full `SMATCHET_WITH_*` permutation matrix rejected as too costly (revisit on a 2nd escape). To be archived to applied.md on next triage drain.
   Status: applied (2026-06-13, feat/unused-symbol-config-guard-863) — WARN-first/advisory (calibration), not the originally-planned absolute-0; see § Deviations rationale above + the postmortem
   Last-reviewed: 2026-06-13
+
 - 2026-06-13 · deep-audit-xref · [security] · P3 — Candidate FormatDateIfIso out-of-bounds read (playbook target 6, partial)
   Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:352` `FormatDateIfIso` indexes `value[4]` / `value[7]` to sniff an ISO date separator with no length check on `value` first; a server-supplied field shorter than 8 chars is an OOB read. Finding-bearing slice of the partial target-6 coverage (the existing ADF-recursion row tracks only `:290`/`:309`, the unbounded-nesting parse, not this fixed-index read). Candidate — confirm under UBSan/ASan with a short field value.
   Concrete next action: Length-check `value.size()` before the `[4]`/`[7]` index (or use `.at()` / a `>= 8` guard); add a UBSan-driven unit test with a 0-7 char value. Effort S.
   Resolution: 2026-06-15 (PR #1269) — investigation confirmed the OOB read was a false positive on the candidate: `FormatDateIfIso` has carried a `value.size() >= 10` guard before the `value[4]`/`value[7]` reads since its introduction (the playbook's `:352` cite referenced a drifted line + described the function abstractly). `>= 10` strictly subsumes the `>= 8` the action requested (a 10-char floor makes both index reads + the `substr(0, 10)` in-bounds), so no functional change to the guard was needed. The genuine gap was the MISSING regression test the action called for. Hardened: `FormatDateIfIso` exported in `Source/Core/include/Tracker/TrackerFieldValueParser.h` so it is directly unit-testable; a doctest (`tests/Core/TrackerFieldValueParser.extended.test.cpp`, "FormatDateIfIso length-guards the fixed-index ISO sniff") now pins 0-/4-/7-/8-char values (the 7-char case is the regression — `value[7]` would over-read by one) plus the valid 10-char ISO date + datetime-prefix cases; a defense-in-depth comment at the sink marks the guard as a Pillar-3 boundary that must not be weakened to a bare index. UBSan/ASan exercises the doctest via the sanitizer test build.
   Status: resolved
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · deep-audit-xref · [security] · P3 — JSON->Lua decode sink lacks explicit depth/size bounds (playbook target 14)
   Details: `Source/Core/src/AppController_LuaBindingsCore.cpp:64` `JsonToLuaImpl` (reached from `AppController_LuaBindings.cpp:763`) recursively converts arbitrary JSON into Lua tables with no explicit depth/size cap shown at the sink. Deeply-nested or huge JSON handed to a Lua binding is a potential stack-exhaustion / memory-amplification surface. The existing Lua rows above cover *different* sinks (ai.prompt rate-limit, count-hook). Candidate — review whether nlohmann's parse-depth limit already bounds this before it reaches the converter.
   Concrete next action: Confirm where the JSON is parsed (nlohmann default max-depth) and whether the converter can be reached with attacker-controlled nesting; if unbounded, add an explicit depth + element-count cap in `JsonToLuaImpl`. Effort S-M.
   Status: resolved
   Resolution: 2026-06-15 (PR #1271) — Confirmed unbounded: the attacker-controlled `decode_json` path (`AppController::Impl::LuaDecodeJsonBind`) called `nlohmann::json::parse`, whose recursive-descent parser builds the DOM by recursing once per nesting level with NO default depth limit — a deeply-nested payload (`[[[[...]]]]`) overflows the C++ stack BEFORE `JsonToLuaImpl` ever runs, and the existing 4 MB byte cap does not bound nesting (~2 M nested arrays fit). Fix: `LuaDecodeJsonBind` now parses through a depth/node-bounded SAX handler (`BoundedDecodeSax`, wrapping nlohmann's `json_sax_dom_parser`) that aborts past depth 256 or 200000 nodes, returning a graceful `(nil, error-string)` to Lua — no C++ throw across the sol2 boundary, no UI-thread block (Pillar 3). Both `JsonToLuaImpl` copies (`AppController_LuaBindings.cpp` + `AppController_LuaBindingsCore.cpp`) additionally gained a node-count budget for defense-in-depth on the internally-produced `commands.invoke` result path. **Follow-up in the same PR #1271 (depth-bomb at MCP/Lua ingress):** a security re-review found the SAME depth-bomb class still LIVE on three attacker-controlled ingress sites left as bare `nlohmann::json::parse(...)` — `McpPlugin::HandleToolsCall` (REST `tools/call`, raw HTTP `req.body`), the JSON-RPC POST handler (raw `req.body`), and `ExecuteLuaMcpTool`'s `paramsJson` (MCP `arguments.dump()`); the detonation happens at the FIRST parse, before `name`/`arguments` are extracted, so the `decode_json` node budget never engages and the MCP 1 MiB payload cap bounds BYTES only (~1 M nested arrays fit). The `BoundedDecodeSax` handler + parse logic were extracted into ONE shared header-only helper `smatchet::json_safe::ParseBounded` (`Source/Core/include/Json/BoundedJsonParse.h`); `decode_json`, the two MCP HTTP/JSON-RPC handlers, the Lua-MCP-params path, AND the `FakeLuaBindingHost` test fake now all route through it (DRY / Pillar 5 — no 4th copy of the SAX handler). On overflow each site degrades protocol-correctly: REST `tools/call` → its structured HTTP-400 `{isError,error}` envelope; JSON-RPC POST → `-32700` parse error; Lua-MCP-params → the path's nil+`outError` contract; each logs a constant-only `LOG_WARN` (never the raw body). The `Source/Plugins/Mcp/` strict lint zone is clean (`test-lint-rules.sh --diff origin/develop` PASS) and the Standalone GL target — which compiles `McpPlugin.cpp` (`SMATCHET_WITH_MCP=ON`) plus all three Lua-binding TUs that gained the new include — builds clean locally (MSVC 14.38). The DX12/Unreal target excludes the Mcp plugin entirely (`SMATCHET_WITH_MCP_UNREAL=OFF`) and compiles the same three Lua-binding TUs with the same `SMATCHET_WITH_LUA_AUTOMATION=ON` already proven in the Standalone build; the header adds only `<cstddef>`/`<string>`/`<nlohmann/json.hpp>` (no GLFW/OpenGL), so it cannot break the OFF/DX12 link — CI is the authoritative dual-target backstop. New pure doctest `tests/Lua/BoundedJsonParse.test.cpp` proves the shared helper rejects a depth-5000 payload + a 250k-node flat array + an oversized body without crashing, distinguishes overflow vs invalid-JSON vs too-large, and leaves valid shallow JSON byte-identical; the existing `tests/Lua/LuaBindings.test.cpp` decode_json depth/node cases still pass (the MCP handler bodies pull httplib/winsock and are not link-clean for the doctest rig, so the depth-bomb rejection is verified at the shared-helper seam they all call). Mirrors the sibling ADF depth-cap fix (`TrackerFieldValueParser.cpp`, PR #1220).
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · deep-audit-rerun · [security] · P1 — Server-supplied AccountId injected unescaped into JQL (JqlSuggestEngine)
   Details: `Source/Core/src/Tracker/JqlSuggestEngine.cpp:139-140` `BuildJqlUserInsert` builds a quoted JQL literal from a tracker-supplied AccountId; the AccountId fallback path does no `"`/`\` escaping, so a malicious/compromised tracker response breaks out of the literal in the user-autocomplete query. Distinct from the issue-key path (E1 / `BuildKeyInJql` `JiraIssueSearch.cpp:199`, partly-confirmed LOW by the re-run). Confirmed HIGH, adversarially verified, NEW.
   Concrete next action: reuse the E1 `JqlQuoteLiteral()` helper (escape `\`→`\\` then `"`→`\"`) at the AccountId insertion site, OR validate AccountId against its grammar before insertion. Unit-test both the key and AccountId paths. ~1 h.
   Status: applied (2026-06-14 — `BuildJqlUserInsert` now routes BOTH the display-name and AccountId paths through the new shared `tracker_jql::QuoteLiteral` (`Source/Core/include/Tracker/JqlEscape.h` + `.cpp`); a display name containing `"` is now escaped, not abandoned to the AccountId fallback. Doctest `tests/Core/JqlEscape.test.cpp` proves break-out payloads are escaped. Shipped with E1 in the JQL-injection PR.)
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P1 — Arbitrary config-specified file read prepended verbatim into outbound LLM system prompt (supersedes E5, raised P2→P1)
   Details: Source/Core/src/AgentsMdLoader.cpp:28-58,122-153 reads a config-specified override path (≤64 KB) guarded only by fs::exists (ConfigManager.cpp:791-792), concatenated into the system prompt at AiAssistantController.cpp:408,418. No canonicalization/allowlist/root-containment. Verified: a local config write → off-host exfil of any readable file to the remote LLM provider. Same gap as E5 below, with sharper exfil framing + exact sink lines.
   Concrete next action: Add a path-containment helper (canonicalize + reject symlinks/out-of-root absolute paths; pin the filename suffix to *agents.md) and treat override content as untrusted in prompt assembly. Effort M (~1 day + tests).
   Resolution: **applied — fix/agentsmd-path-containment**. `AgentsMdLoader.cpp` gained `ContainAgentsMdPath` (anon ns): `fs::canonical`-resolves the override path (resolving symlinks + `..`) and refuses it unless the REAL filename ends in `.md`; `LoadOneCapped` calls it before reading and reads the canonical (symlink-resolved) path (no TOCTOU re-traversal). This blocks a direct repoint to a credential file (id_rsa/cookies/known_hosts — no `.md`) AND a `evil.md`→secret symlink (canonical resolves to the non-`.md` real name → rejected). **Pin is `.md`, NOT the audit-suggested `*agents.md`** — the existing tests + defaults prove the override contract legitimately allows any markdown file (global.md / proj.md / my-instructions.md), and an attacker can't turn id_rsa into a `.md` without already holding its content, so `.md` closes the repoint vector without breaking valid configs. Covers both override entry points (global + project) + auto-discovery uniformly. 2 new doctest cases (non-`.md` file refused via direct + layered entry; `.md`-symlink→non-`.md`-secret refused, gracefully skipped where symlinks need privilege); AgentsMd suite 18/18. Supersedes E5 below (same gap — close both). Cross-ref: AiAssistantController.cpp:408 prompt-assembly sink.
   Status: applied
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P2 — MCP server performs no Host/Origin check (DNS-rebinding exposure)
   Details: Source/Plugins/Mcp/McpPlugin.cpp:137-161 Authorize validates loopback+token but not Host/Origin; a rebound browser origin can reach the loopback port with only the token as barrier.
   Concrete next action: Reject non-loopback Host and remote Origin headers; keep token as defense-in-depth. Effort S.
   Status: resolved
   Last-reviewed: 2026-06-15
   Resolution: 2026-06-14 · fix/mcp-host-origin-dns-rebind (PR #1228) — McpPlugin::Authorize now applies a fail-closed Host/Origin gate when bound to loopback: rejects any Host that is not a loopback literal (127.0.0.1 / localhost / [::1], port-stripped, case-folded, trailing-dot rejected) and any present Origin that is not empty / "null" / a loopback http(s) origin; 403 + LOG_WARN(reason=bad_host|bad_origin). Decision extracted to pure helpers IsLoopbackHostHeader / IsAllowedMcpOrigin / IsMcpHostOriginAllowed (Source/Plugins/Mcp/McpJsonRpcPure.{h,cpp}) with doctest coverage (tests/Plugins/Mcp/McpHostOrigin.test.cpp). Skipped when McpAllowRemote binds 0.0.0.0 (a non-loopback Host is the operator's explicit intent there). Token check retained as defense-in-depth.
+
 - 2026-06-13 · deep-audit · [security] · P2 — stb image decode dimension cap applied after allocation
   Details: Source/Core/src/Persistence/SmatchetImageTextureCache.cpp:141,149 checks the max-dimension cap after stb allocation; oversized images allocate before rejection (memory-pressure DoS).
   Concrete next action: Pre-validate via stbi_info before full decode. Effort S.
   Resolution: 2026-06-15 (PR #1225) — stb decode now pre-validates dimensions via stbi_info before the full decode/allocation, so an oversized image is rejected before the large allocation (memory-pressure DoS closed).
   Status: resolved
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · deep-audit · [security] · P2 — OfflineQueue serialized 'draft' string bypasses audit-trail redaction
   Details: Source/Core/src/Sync/OfflineQueueService.cpp:356,362 serializes the draft to a JSON string before BackendAuditTrail.cpp:124-148 redaction runs, so RedactJson/LooksSensitiveKey never sees nested keys.
   Concrete next action: Redact the draft object structurally pre-serialization or add a value-level pass. Effort S-M.
   Status: resolved
   Last-reviewed: 2026-06-14
   Resolution: 2026-06-14 — QueueCreateOffline builds the audit copy via MakeAuditDraft() (anon ns, OfflineQueueService.cpp): the serialized payload is parsed back into a structured nlohmann::json object and run through BackendAuditTrail::RedactJson BEFORE it reaches the audit trail, so nested `fields` sensitive-keyed values redact (idempotent with AppendEvent's own pass; unparseable payload -> placeholder, never the raw string). The enqueued/replayed payload stays the FULL unredacted draft (replay intact). Only call-sites :356/:362 serialize a draft into the trail (the replay-create audit sites carry ids/errors only). Regression guard: tests/Core/OfflineQueueDraftAuditRedaction.test.cpp.
+
 - 2026-06-13 · deep-audit · [security] · P2 — AI client redirect can forward Anthropic x-api-key cross-host
   Details: AiAssistantController AI-client redirect config can retain the x-api-key header across a redirect to a different host (distinct from the tracker-scoped E2/H4 item).
   Concrete next action: Strip auth headers on cross-origin redirect for all AI clients (cpr::Redirect header-stripping). Effort S.
   Status: applied (2026-06-14 — confirmed the AI provider clients set NO cpr::Redirect at all, so they used cpr's default (FOLLOW), forwarding the caller-set raw provider key (OpenAI/Whisper `Authorization: Bearer`, Anthropic `x-api-key`) on a cross-host 30x — same class as tracker H4 (#1212). Mirrored the H4 fix: added `constexpr bool kAiFollowRedirects = false` to the cpr-free `AiErrorRedact.h` and passed `cpr::Redirect{kAiFollowRedirects, false}` at ALL 8 AI-client cpr sites — OpenAiClient (Get probe + Post stream), AnthropicClient (Head probe + Post stream), WhisperApiClient (multipart Post), OllamaClient (Get probe + Post stream; keyless but covered for defense-in-depth since a user-set OpenAI-compat BaseUrl can differ). cpr 1.9.2 has no same-host-only knob and cont_send_cred=false alone does not strip a raw header, so disabling follow is the only complete fix; the AI REST/SSE verbs respond with 2xx/4xx and never depend on a 30x. Redirect call is cpr-bound (untestable in the cpr-free doctest rig, like H4); the policy constant is pinned by a doctest. Shipped in the ai-client-redirect-and-error-body-redaction PR.)
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P2 — Error/response bodies logged without key-name redaction
   Details: A backend client error-logging site (distinct from E8, which is the SSE/NDJSON parse-fail 200 B site) emits response/error bodies without RedactJson, leaking reflected tokens to logs.
   Concrete next action: Route all body logging through the redaction helper; cap length. Effort S.
   Status: applied (2026-06-14 — located the tracker HTTP clients as the unredacted backend-client body-logging surface: `LogTrackerHttpResult` (TrackerHttpUtils.cpp) logged the FULL response body (up to 64 KB) at Trace with zero redaction, and ~14 `LOG_ERROR/LOG_WARN("...body=%s", TruncateForLog(resp.text, N))` sites across GitHubActivityFeed / JiraIssueMutation / JiraIssueSearch / JiraUserAndMeta / TrackerFieldCatalog logged raw bodies (TruncateForLog truncate-only, NO key/token redaction) — a Jira 401/403 echoing the raw Basic `Authorization` header or a reflected GitHub PAT would land in logs verbatim. Added a single `RedactHttpBodyForLog()` helper to TrackerHttpUtils that delegates to the existing cpr-free `smatchet::ai::pure::RedactProviderErrorBody` (Bearer / api_key / Authorization / x-api-key / sk-/org-/ghp_… heuristics + length cap) — did NOT invent a new redactor per the audit. Routed `LogTrackerHttpResult` + every tracker `body=%s` LOG site through it. The AI provider clients (OpenAI/Anthropic/Ollama/Whisper) already redacted their error bodies via RedactProviderErrorBody, so #12 was tracker-side. The user-facing `outError += TruncateForLog(...)` strings are a separate surface left untouched (this finding is the logging site). Tested: doctest pins the tracker-shaped reflections (Basic-auth echo, ghp_ PAT) get stripped (RedactHttpBodyForLog itself is cpr-bound; its delegated redaction is the tested unit). Shipped in the ai-client-redirect-and-error-body-redaction PR.)
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P3 — SSRF IP denylist parses dotted-quad literals only
   Details: Source/Core/src/AiEndpointSanitize.cpp:68-96,146-152 ParseIpv4Literal matches only dotted-quad; alternate IP encodings skip the literal denylist (resolution-time block backstops; verifier MEDIUM→LOW).
   Concrete next action: Normalize via inet_pton/getaddrinfo and apply the denylist to resolved addresses. Effort S.
   Status: resolved
   Last-reviewed: 2026-06-15
   Resolution: 2026-06-14 (PR #1229) — replaced the dotted-quad-only ParseIpv4Literal with an overflow-safe CanonicalizeIpv4 that normalises decimal (2852039166), hex (0xA9FEA9FE), octal (0251.0376.0251.0376), dotted-hex, and inet_aton short-forms (169.254.43518) to 4 octets BEFORE the denylist, plus a ClassifyIpv6Literal that handles bracketed IPv6 incl. IPv4-mapped ::ffff:169.254.169.254, link-local fe80::/10, and ULA fc00::/7. Added RejectedPrivateNetwork verdict for RFC1918 (10/8, 172.16/12, 192.168/16) + IPv6 ULA. The integer-form parse is overflow-guarded (>cap rejected) so a denied IP cannot wrap into an allowed one. Doctest coverage in tests/Core/AiEndpointSanitize.test.cpp. Residual: DNS-rebind-to-internal (a hostname that resolves to a denied IP) is still NOT blocked — sanitize-time resolution has its own TOCTOU and the audit scoped this finding to the literal-encoding bypass; tracked separately if pursued.
+
 - 2026-06-13 · deep-audit · [security] · P3 — SubprocessCapture inherits full parent environment
   Details: Source/Core/src/Ui/SubprocessCapture.cpp:106-119,492 — children inherit the full env and a manipulable PATH.
   Concrete next action: Pass a minimal explicit environment; resolve binaries by absolute path. Effort S-M.
   Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — added CaptureOptions::scrubSensitiveEnv + pure SubprocessCapturePure::IsSensitiveEnvName / ScrubSensitiveEnv (drop-sensitive strategy, not a full allow-list: TOKEN/SECRET/PASSWORD/KEY/_PAT/AUTH/SESSION/COOKIE/PRIVATE/PASSPHRASE dropped; PATH/SYSTEMROOT/TEMP/locale/HOME/P4*/GIT* survive so p4+git+file-pickers keep working). Wired on in P4Annotate::P4RunCommand. argv0 already resolved to an absolute path via SearchPathW. Drop-sensitive chosen over allow-list to avoid silently breaking a tool that relies on an unlisted var. Unit tests cover the predicate + filter; end-to-end scrubbed spawn is process-bound (covered by the pure tests + compiled platform merge).
   Status: resolved
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P3 — P4 executable resolved via PATH (binary planting)
   Details: Source/Core/src/Ui/P4vLaunch.cpp resolves p4/p4v via PATH search (verifier MEDIUM→LOW). Re-run also located the SearchPathW resolution at P4Annotate.cpp:49.
   Concrete next action: Resolve the binary by absolute/verified install path before spawn. Effort S.
   Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — both resolvers (SubprocessCapture::ResolveApplicationName, P4vLaunch::ResolveP4VcExecutableWide) ALREADY resolve a bare p4/p4vc name to its absolute SearchPathW result and hand CreateProcessW lpApplicationName / ShellExecuteW the absolute path (not a bare name the loader re-searches). Residual hardening: on a SearchPathW miss the code now LOG_WARNs that it is falling back to a PATH-based launch (binary-planting surface) instead of silently returning the bare name. Proportionate per the same-user threat model (no separate trust-store built).
   Status: resolved
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P3 — CLI spawn log written to predictable /tmp path (symlink race)
   Details: Source/Core/src/Commands/CliCommandRunner.cpp:481-487,538 writes a spawn log to a predictable shared /tmp path without owner-only mode. Re-run confirmed the symlink race: no O_NOFOLLOW and a predictable pid+port name at :481.
   Concrete next action: Use a per-user temp dir with O_EXCL + O_NOFOLLOW + 0600. Effort S.
   Resolution: 2026-06-14 (PR fix/subprocess-exec-hardening-wave4) — ComputeSpawnLogPath now appends 16 hex chars of std::random_device entropy (SpawnLogRandomToken) so the path is unpredictable, and the open is hardened against a pre-planted file/symlink: POSIX open() gains O_CREAT|O_EXCL|O_NOFOLLOW with mode 0600 (was O_TRUNC 0644); Windows CreateFileA uses CREATE_NEW (was CREATE_ALWAYS). O_NOFOLLOW guarded with a #ifndef fallback for the rare host lacking the macro.
   Status: resolved
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit · [security] · P3 — MCP thread pool / SSE parking lacks connection bounds
   Details: Source/Plugins/Mcp/McpPlugin.cpp:848-850,600-620 — no clear cap on concurrent parked SSE connections / pool threads.
   Concrete next action: Bound concurrent connections and idle-park duration. Effort S.
   Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — the httplib worker pool was ALREADY bounded at 8 (#987, StartServerThread). The residual gap was unbounded *concurrent SSE streams*: each SSE stream parks ~2 workers in the heartbeat wait-loop, so ~4 SSE clients exhaust the size-8 pool and the next connection queues forever (the #987 comment itself flagged this). Fix: `McpPlugin::RegisterSseRoute` now reserves a slot via an `std::atomic<int> activeSseConnections` guarded by the pure `CanAcceptSseConnection(currentActive)` decision (cap `kMaxConcurrentSseConnections = 4`, McpJsonRpcPure.h), rejecting the over-cap connect with HTTP 503 + `Retry-After: 5` BEFORE streaming. The slot is released by a `std::shared_ptr<void>` custom-deleter (`sseGuard`) captured into the chunked-content provider, so the decrement fires exactly when httplib destroys the provider (stream close), with no leak on the early-return paths. Pure decision unit-tested (tests/Plugins/Mcp/McpHostOrigin.test.cpp).
   Last-reviewed: 2026-06-13
+
 - 2026-06-13 · deep-audit-rerun · [security] · P2 — ADF parser unbounded recursion on untrusted tracker JSON (Pillar 3 — Never Crash)
   Details: `Source/Core/src/Tracker/TrackerFieldValueParser.cpp:290` (`CollectAdfText`) and `:309` (`ExtractAdfTextToStream`) recurse over server-supplied Atlassian Document Format nodes with no depth bound; deeply-nested ADF blows the stack → crash / DoS from a malicious or buggy server response. Confirmed MEDIUM, adversarially verified, NEW.
   Concrete next action: add a recursion-depth cap (reject/clamp beyond ~64 levels) to both functions; convert to an explicit work-stack if needed. Unit-test with a deep-nest fixture. ~1 h.
   Resolution: 2026-06-14 — capped BOTH walkers at `kMaxAdfRecursionDepth = 256` (threaded a `depth` param, default 0; on exceeding the cap the walker stops recursing and degrades gracefully — no throw — with a one-shot `LOG_WARN`). Picked 256 (well above any legitimate ADF nesting; real docs are a handful deep) over the ~64 suggested, to leave more headroom for legitimate-but-deep nested lists/tables while still bounding stack growth far short of overflow. Regression guards added in `tests/Core/TrackerFieldValueParser.extended.test.cpp`: two 5000-level deep-nest fixtures (one per walker entry point — `ExtractAdfTextToStream` via `NormalizeTrackerFieldValue`, `CollectAdfText` via the `ParseComments` empty-extraction fallback) parse without stack overflow, plus a shallow-doc no-regression check. Fix PR #1220.
   Status: resolved
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Whisper model download follows redirects with no host-pin and no size cap
   Details: `Source/Plugins/Whisper/ModelDownloader.cpp:314` uses `cpr::Redirect(true,true)` with no host pin and no maximum response size on the ggml model fetch; a redirect to an attacker host serves an unverified blob (and there is no checksum gate on the model). Partly-confirmed LOW. NEW.
   Concrete next action: pin the download host, add a size cap, and sha256-verify the model artifact (mirror the Lua TOFU pin / E3). ~S.
   Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — SHA-256 verification already gates artefact identity (ModelCatalog, the audit's "no checksum gate" remark is a false positive — see Resolution). Added host-pin + size-cap: new pure helper `Source/Plugins/Whisper/ModelDownloadPolicy.{h,cpp}` (`IsAllowedModelUrl` = https + `*.huggingface.co`/`*.hf.co` exact-suffix allow-list; `ExceedsModelSizeCap`, ceiling 4 GiB > the 1.53 GB largest catalog model). `ModelDownloader::RunDownloadWorker` now (1) rejects a non-allow-listed/non-https initial URL before opening a socket, (2) caps redirect hops at 5 (`cpr::Redirect(5, true, false, POST_ALL)` — note redirects must stay ON: huggingface LFS 30x-bounces the `resolve/main` pointer to a CDN, so the H4 disable-follow approach is not applicable here), (3) aborts mid-stream via the WriteCallback when the running byte count crosses the cap, (4) re-checks the effective post-redirect host against the same allow-list. Pure decisions unit-tested (tests/Plugins/Whisper/ModelDownloadPolicy.test.cpp). cpr-bound redirect wiring itself is integration-only (untestable in the doctest rig).
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — NormalizeBaseUrl accepts cleartext http:// tracker endpoints
   Details: `Source/Core/src/Tracker/TrackerHttpUtils.cpp:85` `NormalizeBaseUrl` does not require `https://`, so a config (or first-run) `http://` tracker base sends credentials in cleartext and exposes the redirect-forwarding path (H4 / E2). Confirmed LOW. NEW.
   Concrete next action: default-reject `http://` (allow only behind the same explicit insecure-http consent gate the AI endpoint sanitizer uses), or upgrade to `https`. ~S.
   Status: applied (2026-06-14, PR network-bounds-hardening-wave4) — `NormalizeBaseUrl` (TrackerHttpUtils.cpp) now upgrades a cleartext `http://` base to `https://` (with a LOG_WARN) when the host is NON-loopback, so the tracker Basic-auth header never travels in the clear to a public host; loopback `http://` (`localhost`/`127.0.0.0/8`/`::1`, local dev) is left untouched so a loopback dev config is not broken. Upgrade (not hard-reject) keeps the existing string-building contract of all 24 call sites intact. Decision extracted to the pure `TrackerHttpPure::ShouldUpgradeCleartextBase` + `IsLoopbackHost` (the latter requires a real `127.x` dotted-quad — `127.example.com` is correctly treated as a public host, a bug my own test caught). Unit-tested in tests/Core/TrackerHttpSslPure.test.cpp.
   Last-reviewed: 2026-06-14
+
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Logger file sink writes log lines without RedactLogLine
   Details: `Source/Core/src/Logger.cpp:320` `FileSinkWorker` writes `e.message` verbatim to the on-disk log; `RedactLogLine` (applied on the crash/bug-report paths) is NOT applied at the file sink, so any `LOG_*` that ever carries a secret/PII reaches the log file unredacted. No current `LOG_*` call places a raw credential there, but body-logging at Trace would. Partly-confirmed LOW. NEW.
   Concrete next action: route file-sink writes through `RedactLogLine` (or redact at emit for the body-logging paths). ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `Logger::FileSinkWorker` now writes `smatchet::privacy::RedactLogLine(e.message)` instead of `e.message`, so the on-disk line is scrubbed on the same path the message reaches the sink. `TextRedaction.cpp` linked into the two test targets that link `Logger.cpp` (SmatchetTsanTests, SmatchetLuaTests). doctest `Logger file sink — redacts secret/long-token + strips CR/LF/ANSI on the persisted line` reads the file back and asserts the secret is gone. Status: resolved.
   Status: resolved
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — CR/LF/ANSI log injection from server-controlled data
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:80` — redaction does not strip CR/LF/ANSI escapes, so server-controlled strings reaching a log line can forge log entries or inject terminal escapes. Confirmed LOW. NEW.
   Concrete next action: strip/encode CR/LF and ANSI CSI sequences in the log-line redactor. ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — `RedactLogLine` now runs `StripControlAndAnsi` FIRST (before the secret-shape matchers), replacing CR/LF, lone ESC, ANSI CSI/OSC sequences, and all C0 controls + DEL with a single space. Running it first means a control byte hidden mid-token cannot evade the shape matchers and cannot survive to forge a log line. doctest `RedactLogLine — strips CR/LF/ANSI…` covers CRLF + CSI + bare-ESC/C0. Status: resolved.
   Status: resolved
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Redaction LongTokenRe 40-char threshold misses 36-char Plane UUID tokens
   Details: `Source/Core/src/Privacy/TextRedaction.cpp:45` `LongTokenRe` redacts only >=40-char tokens, so a 36-char Plane API UUID (and similarly-sized secrets) is not redacted if it reaches a log. Confirmed LOW. NEW.
   Concrete next action: add a UUID-shaped pattern (8-4-4-4-12) to the redactor, or lower the threshold with a git-hash guard. ~S.
   Resolution: 2026-06-14 (fix/log-redaction-gaps-wave4) — added `UuidRe` matching the 36-char 8-4-4-4-12 hex-with-dashes shape and redacting it in `RedactLogLine` (chose the shape-specific pattern over lowering the 40-char floor, so arbitrary 36-char text is NOT over-redacted). doctest `RedactLogLine — redacts a 36-char UUID token…` asserts a Plane-style UUID is scrubbed AND a benign 36-char dash-free string survives. Status: resolved.
   Status: resolved
   Last-reviewed: 2026-06-15
+
 - 2026-06-13 · orchestrator · [process] · P2 — `workflow-fleets-covers-bash-fleet-only-not-in-process-Workflow-tool`: the durability rules in `workflow-fleets.md` were all written from background-bash-fleet deaths and never addressed the in-process `Workflow` tool, which has a distinct concurrency model (`min(16, cores−2)` live slots) and a distinct stall mode (fan-out width > slot count → queued tail reads as a freeze in `/workflows`).
   Details: surfaced as live friction on the 2026-06-13 arch-analysis Workflow — a 16-wide `parallel()` map on a 12-slot machine started 12 and queued 4, which the user read as "so many stalls" though nothing had failed (structural pacing, not death). The existing doc + `fleet-preflight.sh` covered only the bash mechanism (result-files-on-disk, TPM ceiling, `~/.claude` permission walls); the in-process mechanism (schema-returning `agent()` calls, run-dir-wiped-on-kill durability, slot-count concurrency, `parallel()`-barrier vs `pipeline()`-stream) had no written rule and no preflight check, so the same width-vs-slots stall would recur unflagged.
   Resolution: **applied — feat/wf-tool-fanout**. Added `workflow-fleets.md` § Two fan-out mechanisms — a comparison table (spawns / durable-output / concurrency-ceiling / kill-cost per mechanism), a "cross-applies to both" note (§ Per-agent scoping + § Model pinning + § Input-size pre-flight all still hold — an in-process `agent()` from a 1M session starves the shared TPM exactly like a bash miner), and three in-process-only rules: (a) cap fan-out WIDTH at the slot count (merge clusters or wave the fan-out), (b) prefer `pipeline()` over `parallel()` unless a stage truly needs all prior results (barrier waits on slowest + queued tail; pipeline streams), (c) durable output is the return value + `resumeFromRunId`, not a results file — have long/expensive fan-outs also write a repo file. The § Pre-launch checklist gained the matching in-process bullet. Cross-ref: the worked stall example folds into the doc section (not filed separately); sibling tooling entry below ships the preflight check.
@@ -1351,6 +966,7 @@ before push. Archive to `applied.md` on the next sweep.
 - 2026-06-13 · orchestrator · [tooling] · P3 — `fleet-preflight.sh-has-no-in-process-fan-out-width-check`: the preflight linter validated only the five background-fleet rules; nothing mechanically flagged an in-process `Workflow` fan-out whose width tops the local slot count (the 2026-06-13 arch-analysis stall).
   Details: `fleet-preflight.sh` checks 1–5 (model-pin / input-size / out-of-workspace / checkpoint-step / concurrency) all target the bash mechanism. A `parallel()`/`pipeline()` call wider than `min(16, cores−2)` slots queues its tail and reads as a stall, but no check fired on it — the exact friction the new `workflow-fleets.md` § Two fan-out mechanisms rule describes was unenforced.
   Resolution: **applied — feat/wf-tool-fanout**. Added check 6 (fanout-width) to `fleet-preflight.sh`: fires only when the script calls `parallel(`/`pipeline(`, computes the largest top-level array-literal element count via an awk paren-depth walk (array-literal `[` = preceded by `= ( , : [ { >` or BOF; index access skipped; trailing commas + multiline object arrays handled), and WARNs when that width exceeds the local slot count (`PREFLIGHT_SLOTS` test seam, else `min(16, nproc−2)`); a note is emitted when within budget. Advisory by default; `--strict` promotes the over-width WARN to exit 1. 4 new bats cases in `tests/bats/fleet_preflight.bats` (over-width pipeline WARNs / within-budget notes / wide non-fan-out array skips check 6 / `--strict` over-width exits 1) — full suite 20/20 green. Header Checks list + test-seam doc-comment updated. Cross-ref: sibling process entry above (§ Two fan-out mechanisms); extends the 2026-06-11 `fleet-preflight.sh` ship (was 18-case, now 20).
+
 - 2026-06-13 · build-doctor · [tooling] · P1 — `safe-admin-merge-guard`: bare `gh pr merge --admin` bypasses the check rollup, so an orchestrator can admin-merge past a live RED allow-listed check (PR #1180 merged past RED Bucket-C/E — postmortems.md 2026-06-13)
   Details: The orchestrator admin-merged #1180 while Bucket-C/E (on the merge-gates `Bucket-*` block allow-list) were RED, because the pre-merge "0 failures" re-confirm was an informational `echo` and `gh pr merge --admin` ran as a separate unconditional statement — the printed "FAIL: Bucket-C, Bucket-E" could not stop the merge, and `--admin` bypassed branch protection. The legitimate carve-out (admin-merge a stale-BLOCKED PR only when everything is actually green) was asserted in prose, not enforced by an exit code.
   Resolution: **applied — feat/safe-admin-merge-guard**. (a) **New guard** `agents/scripts/core/safe-admin-merge.sh <pr>`: reads the head `statusCheckRollup` (`gh pr view --json statusCheckRollup,state,labels`), evaluates each row in one jq program — a row BLOCKS iff it is gating (REQUIRED ∈ branch_protection.required_contexts OR allow-listed-non-advisory) AND non-green (CheckRun not COMPLETED-with-{SUCCESS,NEUTRAL,SKIPPED}, or StatusContext state ≠ SUCCESS; **pending counts as non-green**). EXITS 1 without merging on any blocker; only an all-gating-green PR runs `gh pr merge --squash --admin` (exit 0). `*-out-of-band` labels downgrade the named check, mirroring the poller. Exit map: 0 merged / 1 REFUSED / 2 usage-or-dep / 3 not-OPEN. (b) **Single-sourced allow-list** — extracted the regex into a sourceable constant `MERGE_GATES_BLOCK_ALLOWLIST_RE` at the top of `merge-gates.sh` and replaced the inline `test("Coverage|Sanitizer|Bucket-|…")` literal in the `$failing` jq filter with a spliced `__BLOCK_ALLOWLIST_RE__` token; the guard `source`s merge-gates.sh and reads the constant (never duplicates the regex; a bats case asserts the literal is absent from the guard). (c) **`--selftest`** carries the `# selftest: asserts-failure` marker and runs 4 pure cases (refuses RED Bucket-C; allows stale-BLOCKED-all-green with an advisory red ignored; pending Sanitizer blocks; perf-out-of-band downgrades a RED Perf PR-fast). (d) **Tests** — `tests/bats/safe_admin_merge.bats` (13 cases, stubbed `gh` recording the merge to a sentinel) + auto-enrolled wrapper `agents/scripts/core/test-safe-admin-merge-bats.sh`. (e) **Discipline rule** — `docs/agent-rules/ship-loops.md` § Admin-merge discipline: orchestrator MUST use `safe-admin-merge.sh` instead of bare `gh pr merge --admin`, and never gate a merge on an `echo` (the green assertion is an exit code). Regression: merge_gates.bats 37/37, safe_admin_merge.bats 13/13, gate-selftests convention 32/32. Cross-ref: postmortems.md 2026-06-13 #1180; `merge-gates.sh` $failing allow-list; `safe-admin-merge.sh --selftest`.
@@ -1369,14 +985,12 @@ before push. Archive to `applied.md` on the next sweep.
   Status: applied (2026-06-18 — fixed in PR #1370 `fix(cli): stop --spawn launch-smoke from exiting 4 on a clean ok:true child`, merge `8bde9500`. `Source/Standalone/CliCommandRunner.cpp`: `RunCmdAttachDispatch` gained a `bool& outSpawnHandled` out-param set true on the `--spawn` branch; `RunCmdAttach` now returns `SpawnAndRun`'s exit code directly when spawnHandled, skipping `RunCmdAttachProcessResult`, which previously re-mapped the empty envelope of a clean `ok:true` child to kExitHandler/4. CI-CONFIRMED: the launch-smoke STEP is `success` in Bucket-C, Bucket-E AND mobile-texture-guard on run 27729408756; local `app.version --spawn --yes` exits 0 ×3 (was 4), negative case still exits 2.)
   Last-reviewed: 2026-06-18
 
-
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate MCP/UI cross-thread g_ui data race (playbook target 3)
   Details: MCP dispatch runs off the UI thread — `Source/Plugins/Mcp/McpPlugin.cpp:434` -> `Source/Core/src/Commands/CommandRegistry.cpp:317` -> command handlers that touch UI-owned globals, e.g. `BuiltinCommands_BugReport.cpp:62-64` and `BuiltinCommands_Debug.cpp:292-294` read/write `g_ui` with no synchronization vs the render thread. The existing MCP rows above cover *authorization* (un-gated dispatch, no Host/Origin), NOT this thread-safety gap. Candidate only — needs a TSan run to confirm a real race vs a benign single-writer pattern.
   Concrete next action: Build the MCP/AI TSan lane (see tooling `deeper-audit-harness-buildout`), drive an MCP command that reaches a g_ui handler concurrently with the render loop, confirm/deny the race; if real, marshal handler-side g_ui access onto the UI thread or guard it. Effort M.
   Resolution (2026-06-18): Confirmed real-but-narrowed by static data-flow trace (no TSan run required — the off-thread write vs UI-thread read is provable from the source). The handlers the audit cited are already safe: `BuiltinCommands_BugReport.cpp:62-67` and the dock diagnostics (`debug.dock.dump` / `debug.dock.reset`) already marshal every g_ui write through `RunOnUiThreadAsCommandResult` (the `MainThreadDispatch.h` seam), so those cites were stale. The one genuine residual race was `debug.window.resize` and `debug.window.screenshot` in `BuiltinCommands_Debug.cpp`: their handlers wrote the non-atomic g_ui request-flags (`requestWindowResize` / `requestWindowWidth` / `requestWindowHeight`, `requestScreenshot`, and the `std::string requestScreenshotPath` — the string is genuine UB, not a benign torn int) directly from the dispatching thread, while the standalone main loop reads them every frame (`Source/Standalone/main.cpp:711`, `StandaloneAppBootstrap.cpp:310`). Fixed by wrapping both handlers in `RunOnUiThreadAsCommandResult`, matching the sibling dock/bug.report handlers in the same TU. Severity LOW under the threat model (same-user; `debug.*` namespace; standalone-only consumer; reaching it needs loopback MCP + token, or paste-and-run Lua).
   Status: fixed
   Last-reviewed: 2026-06-18
-
 
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Candidate AiAssistant streaming cancel/submit race (playbook target 5)
   Details: `Source/Core/src/AiAssistantController.cpp` mutates streaming state across the network callback and UI threads: `currentCancel_` set/cleared at `:212`/`:271`, the on-delta closure built at `:434` (`MakeOnDelta`), and a model-change path that clears g_ui state at `:346-348`. A submit/cancel/model-switch interleaving could use-after-clear or double-invoke the cancel token. The existing AiAssistantController row above is the *x-api-key-on-redirect* leak (a different bug). Candidate only — needs TSan + a scripted submit-then-immediately-cancel/switch scenario.
@@ -1386,7 +1000,6 @@ before push. Archive to `applied.md` on the next sweep.
   Status: accepted (2026-06-18 finding); a related-but-distinct rebind-timing bug in the same mutation was separately fixed 2026-07-03 — see Update above
   Last-reviewed: 2026-07-03
 
-
 - 2026-06-13 · deep-audit-xref · [security] · P2 — Unreal console / Blueprint exec reaches full CommandRegistry without ctx.Source authz (playbook target 24, partial)
   Details: `Source/UnrealPlugins/SmatchetImGuiPlugin/Source/SmatchetImGuiPlugin/Private/SmatchetImGuiConsoleCommands.cpp` exposes Smatchet commands to the Unreal console / Blueprint exec; `IsSafeConsoleCommandName` filters the command *name* but not arguments, and the dispatch reaches the same registry the `CommandRegistry.cpp:298` row notes has no `ctx.Source` trust gate. So an Unreal-embed console caller gets the same destructive reach as UI — the finding-bearing slice of the partial target-24 coverage (the existing CommandRegistry row tracks the gate, not this embed entry-point). Candidate — needs review of the actual argument-forwarding path + whether ship Unreal builds expose the console.
   Concrete next action: Route the Unreal console/Blueprint entry-point through the per-source trust gate proposed in the `CommandRegistry.cpp:298` row (tag ctx.Source = UnrealConsole, deny destructive without out-of-band confirm). Effort M.
@@ -1395,14 +1008,12 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-17
 
-
 - 2026-06-13 · deep-audit-xref · [security] · P3 — Plane issue-mapping parsers unhardened against malformed tracker JSON (playbook target 11)
   Details: `Source/Core/include/Tracker/PlaneIssueMappingPure.h` (`:53`/`:60`/`:78`) + `Source/Core/src/Tracker/PlaneIssueMappingPure.cpp` map Plane API JSON into issue structs with no fuzz coverage; only the Jira ADF path has any hardening tracked. A malformed/hostile Plane response is an untested parse surface (type confusion, missing-key deref, deep nesting). Candidate — no confirmed defect, this is an untested-surface gap.
   Concrete next action: Add a libFuzzer/AFL harness over the Plane mappers (part of `deeper-audit-harness-buildout`); fix any crash/over-read it finds. Effort S-M.
   Resolution (2026-06-16 · PR #1344 test(security): lock tracker-mapper crash-safety vs malformed JSON): traced every hostile-input path through `MapPlaneWorkItemJsonToCachedTicket` + `MapPlaneWorkItemsArrayToCachedTickets` — no defect. Every nested access is guarded by `.contains()`/`.is_object()`/`.is_array()`, flat fields route through the tolerant `JsonFieldToString`, and the batch wrapper try/catches each row and drops empty-id rows. Locked the no-throw contract with `[high-risk]` CHECK_NOTHROW cases (non-object top-level, every flat field type-confused, wrong-typed nested array entries, batch run that skips hostile rows and keeps the one valid row) in `tests/Core/PlaneIssueMappingPure.test.cpp`. Deterministic doctest regression locks chosen over the heavier libFuzzer/AFL harness; the broader fuzz buildout stays tracked under `deeper-audit-harness-buildout`.
   Status: fixed
   Last-reviewed: 2026-06-16
-
 
 - 2026-06-13 · deep-audit-xref · [security] · P3 — GitHub GraphQL->REST issue-mapping parsers unhardened against malformed JSON (playbook target 12)
   Details: `Source/Core/include/Tracker/GitHubIssueSearchMapping.h` (`:38`/`:81`/`:96`) + `Source/Core/src/Tracker/GitHubIssueSearchMapping.cpp` map GitHub search responses with no fuzz coverage, same untested-surface class as the Plane mappers above. Candidate — untested-surface gap, no confirmed defect.
@@ -1411,14 +1022,12 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-16
 
-
 - 2026-06-13 · deep-audit · [security] · P2 — Command registry executes destructive commands with no ctx.Source authorization
   Details: Source/Core/src/Commands/CommandRegistry.cpp:298 gates only on (Destructive && !ConfirmedDestructive); no ctx.Source trust check, so MCP/Lua-sourced commands equal UI-sourced. Basis shared with MCP un-gated dispatch.
   Concrete next action: Add a per-source trust enum; gate destructive/source-restricted commands and require out-of-band confirm for non-UI sources. Effort M.
   Resolution (2026-06-14 · PR #1246 fix(commands): source-aware destructive guard + close MCP/Lua confirm hole): CommandRegistry now carries the ctx.Source trust check. `IsAutomationSource(ctx.Source)` audits a destructive automation-sourced command (CommandRegistry.cpp:302) and `RequiresExplicitConfirm(ctx.Source, snapshot.Destructive, ctx.ConfirmedDestructive, ctx.DryRun)` (CommandRegistry.cpp:307) denies it without an out-of-band confirm — so MCP/Lua-sourced destructive commands no longer equal UI reach. The audit's `CommandRegistry.cpp:298` line-cite is pre-fix; the live gate is at :302-307.
   Status: fixed
   Last-reviewed: 2026-06-16
-
 
 - 2026-06-13 · deep-audit · [security] · P2 — MCP registry dispatch un-gated after Authorize
   Details: Source/Plugins/Mcp/McpPlugin.cpp:426-445,625-642 — after loopback+token Authorize, dispatch reaches the full command registry with no per-command authorization (token possession == full reach).
@@ -1427,14 +1036,12 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-16
 
-
 - 2026-06-13 · deep-audit · [security] · P2 — P4vLaunch argument injection via QuoteWinArgWide trailing-backslash bug
   Details: Source/Core/src/Ui/P4vLaunch.cpp:72-86,149,172,189-190 and P4Annotate.cpp:52-59 compose argv from changelist/file fields; QuoteWinArgWide mishandles trailing backslashes, allowing argument-boundary injection. Re-run confirmed MEDIUM and located the custom-command {file}/{cl} template path at P4vLaunch.cpp:172 (gated by AnnotateAllowCustomCommands).
   Concrete next action: Fix backslash doubling per CommandLineToArgvW; prefer argv-array spawn. Effort S + unit test.
   Resolution (2026-06-14 · p4-annotate · branch fix/p4v-arg-quote-trailing-backslash): QuoteWinArgWide rewritten to the canonical CommandLineToArgvW algorithm (backslash-run doubling before any literal quote AND before the closing wrap quote), extracted to a pure header-only helper Source/Core/include/Ui/P4vLaunchArgQuotePure.h::QuoteWinArgWidePure so it is doctest-unit-tested (tests/Core/P4vLaunchArgQuotePure.test.cpp — trailing-backslash, embedded-quote, and a CommandLineToArgvW round-trip property proving each input parses back to exactly itself). All cited direct-p4vc call sites route through it: the timelapse {file} arg (P4vLaunch.cpp:149) and the change {cl} arg (now quoted; was previously unquoted). The custom-command {file}/{cl} template path (gated by AnnotateAllowCustomCommands) cannot per-arg-requote a user-authored template, so it now rejects {file}/{cl} VALUES containing a double-quote (the injection-enabling case) on top of the existing newline rejection. The audit's P4Annotate.cpp:52-59 cite is stale — that file composes an argv VECTOR passed to SubprocessCapture::Run, which already uses the correct SubprocessCapturePure::QuoteArgvWindows; no manual quoting there to fix.
   Status: fixed
   Last-reviewed: 2026-06-14
-
 
 - 2026-06-13 · deep-audit · [security] · P2 — POSIX secret writes plaintext with no 0600 mode (re-run: HIGH at-rest exposure; raise to P1 when POSIX ships)
   Details: Source/Core/src/Config/ConfigManager.cpp:473-496 and ConfigManager_PathUtils.cpp:719-761 write secrets as plaintext config with default umask; no chmod 0600. The re-run confirmed the underlying no-op ProtectSecretForConfig #else branch (ConfigManager_PathUtils.cpp:331-334) as HIGH plaintext-at-rest (token/plane_api_key/github_pat/mcp_auth_token/ai_*_api_key/whisper_api_key). Windows (DPAPI) unaffected; this is the non-Windows gap.
@@ -1443,7 +1050,6 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-16
 
-
 - 2026-06-13 · deep-audit · [security] · P2 — Android secret passthrough stores credentials in plaintext (re-run: HIGH at-rest exposure; raise to P1 when Android ships)
   Details: Source/Core/src/Config/ConfigManager_PathUtils.cpp:331-334 passes secrets through with no Android Keystore encryption. Same no-op #else branch as the POSIX entry above; confirmed HIGH plaintext-at-rest by the re-run.
   Concrete next action: Back Android secrets with the Keystore or mark the platform unsupported for secret storage. Effort M.
@@ -1451,13 +1057,11 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed (PR #1357)
   Last-reviewed: 2026-06-18
 
-
 - 2026-06-13 · deep-audit · [security] · P3 — Crash-handler minidump may include sensitive process memory
   Details: Source/Standalone/SmatchetCrashHandler.cpp:53-55 writes a minidump with flags that can capture broad process memory (in-memory secrets).
   Concrete next action: Use MiniDumpNormal scope; scrub/avoid secret-bearing regions. Effort S.
   Status: fixed (PR `feat/crash-minidump-normal`) — `WriteMiniDump` now passes `MiniDumpNormal` instead of `MiniDumpWithIndirectlyReferencedMemory | MiniDumpScanMemory`. The richer scopes walked the stack for pointers and pulled the referenced heap (config API tokens / GitHub PAT / MCP auth token / AI keys held in std::string) into the .dmp the bug-reporter auto-attaches to an off-host crash report; Normal keeps the faulting thread's stack (the triage essentials), and adds an exception record only on the SEH path where `WriteMiniDump` receives `exPtrs` — the `set_terminate`/signal paths pass `nullptr`, so those dumps carry no ExceptionStream. Standalone build green.
   Last-reviewed: 2026-06-17
-
 
 - 2026-06-13 · deep-audit · [security] · P3 — Standalone main does not fully harden DLL search path
   Details: Source/Standalone/main.cpp:1001 — incomplete DLL search-order hardening at startup.
@@ -1466,13 +1070,11 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-16
 
-
 - 2026-06-13 · deep-audit · [security] · P3 — Gradle wrapper jar/properties lack sha256 verification
   Details: gradle/wrapper/gradle-wrapper.jar + .properties are not sha256-verified in CI.
   Concrete next action: Enable SHA-pinned gradle wrapper-validation-action; pin the distribution checksum. Effort S.
   Status: accepted — per the 2026-06-14 campaign disposition block (ACCEPTED: "gradle-wrapper-jar sha (mobile pre-release, tracked)"). Android/mobile is compile-only/pre-release, not a shipping target; the wrapper-validation pin is tracked to land before mobile ships, not coded this campaign.
   Last-reviewed: 2026-06-18
-
 
 - 2026-06-13 · deep-audit · [security] · P3 — Legacy AiBaseUrl grandfather path narrows SSRF guard
   Details: AiEndpointSanitize legacy AiBaseUrl branch gets looser validation; cloud-metadata payloads still blocked (informational).
@@ -1481,14 +1083,12 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-17
 
-
 - 2026-06-13 · deep-audit · [security] · P3 — Attachment proxy accepts URL userinfo component
   Details: Source/Plugins/Mcp/McpPlugin.cpp:275-352 accepts user:pass@ userinfo (verifier LOW→INFO).
   Concrete next action: Reject/strip userinfo before host validation. Effort S.
   Resolution (2026-06-16 · PR #1342 fix(mcp): reject userinfo in attachment-proxy URLs (allow-list bypass)): the attachment proxy now refuses any URL whose authority carries an `@` userinfo component before host validation. `UrlHasUserinfo` (McpJsonRpcPure.h:30) gates the fetch — curl/cpr dial the host AFTER the last `@`, so a userinfo-prefixed allow-list bypass that would land the Basic-auth tracker credential on an attacker host is rejected outright. Merge commit 4d17ba2b.
   Status: fixed
   Last-reviewed: 2026-06-16
-
 
 - 2026-06-13 · deep-audit · [security] · P3 — DPAPI secret encryption uses user-scope with no entropy
   Details: Win32 CryptProtectData path uses user scope with no optional entropy; any same-user process can decrypt (same-user is in-scope for a single-user app — informational).
@@ -1498,7 +1098,6 @@ before push. Archive to `applied.md` on the next sweep.
 
 <!-- --- 5-lane re-run NEW findings (not in the deep-audit block above) --- -->
 
-
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — Lua child coroutine lua_State does not inherit the instruction-count hook
   Details: `Source/Core/src/AppController_LuaBindings.cpp:315,1257` — the LUA_MASKCOUNT hook is installed on the main lua_State; a `coroutine.create()`'d child State does not inherit it, so a tight loop inside a coroutine runs uncounted (sandbox timeout bypass). Partly-confirmed LOW (needs paste-and-run Lua; same-user boundary), NEW.
   Concrete next action: re-install the count hook on each created coroutine State (sol2 coroutine hook), or refuse coroutine creation in the sandbox. ~1 h.
@@ -1506,13 +1105,11 @@ before push. Archive to `applied.md` on the next sweep.
   Status: fixed
   Last-reviewed: 2026-06-16
 
-
 - 2026-06-13 · deep-audit-rerun · [security] · P3 — SQLite local ticket cache stored unencrypted
   Details: `Source/Core/src/Persistence/LocalCacheManager.cpp:131` opens the local ticket cache DB with no encryption; cached ticket bodies/PII sit in cleartext in the per-user data dir. Confirmed LOW (same-user is in-scope; relevant if the file is synced/backed-up off-host). NEW.
   Concrete next action: document the at-rest model; optionally gate cache-at-rest behind SQLCipher or a no-cache mode for sensitive deployments. ~S-M.
   Status: accepted — per the 2026-06-14 campaign disposition block (ACCEPTED: "SQLite local cache at-rest unencrypted"). Same-user is inside the trust boundary; the cleartext cache only matters if the per-user data dir is synced/backed-up off-host, which is the user's own choice on a single-user local-first app. SQLCipher / no-cache mode tracked for sensitive deployments, not coded this campaign.
   Last-reviewed: 2026-06-18
-
 
 - 2026-06-13 · build-doctor (asan-doctest-rig wrap-up) · [test] · P1 — `CallstackParser` adversarial-input case fails in the Debug-MSVC build that the now-instrumented ASan rig exercises (two excluded subcases: INT_MAX-clamp + ReDoS-timing) — ReDoS-timing now a CONFIRMED gate-escape trigger (PR #1183)
   Details: Surfaced flipping `asan-doctest-rig-not-instrumented` to applied — running the FULL doctest rig under `ninja-msvc-asan` (Debug MSVC) for the first time exposed `tests/Core/CallstackParser.test.cpp:276 "CallstackParser::ParseCallstackText survives adversarial inputs"` failing two of its subcases. NEITHER is an ASan / memory-safety finding (the whole rig is otherwise ASan-clean: 14953/14953 assertions pass with the case excluded). (1) "MSVC line number one past INT_MAX clamps without crashing" (`:284`): feeding `C:\overflow.cpp(2147483648)` the test expects the frame DROPPED or `LineNumber==0` (the parser wraps `std::stoi` in try/catch and returns false on `out_of_range`), but the Debug-MSVC build produced a frame with `LineNumber==2147483647` (INT_MAX) — i.e. on this toolchain/CRT config `std::stoi("2147483648")` did NOT throw `out_of_range` as the test's premise assumes, so the saturated value flowed through. Pure-logic, ASan-independent — exercises untrusted-callstack-input parsing, so borderline product-correctness. (2) "1 KiB single line completes under 2000 ms (ReDoS sentinel)" (`:304`): wall-clock budget the ~2-3x ASan instrumentation slowdown blows (measured 3002 ms vs 2000 ms) — a TIMING artifact of the sanitized build, not catastrophic backtracking. Both are EXCLUDED from the new "Run sanitized doctest rig (ASan, clean subset)" CI step via `--test-case-exclude` so the gate is green over the genuine ASan surface.
@@ -1522,7 +1119,6 @@ before push. Archive to `applied.md` on the next sweep.
   Update 2026-06-16 (p4-annotate, INT_MAX-clamp hardening): subcase (1) is APPLIED. `TryParsePathLinePair` (`Source/Core/src/CallstackParser.cpp`) now range-checks the matched `(\d+)` digit run against `INT_MAX` via a toolchain-independent `ParseLineNumberInRange` helper (`std::stoll` + explicit `> INT_MAX` reject) at all three regex call sites, instead of relying on `std::stoi` throwing `out_of_range` (which the MSVC Debug CRT was observed to SATURATE to INT_MAX). Feeding `C:\overflow.cpp(2147483648)` now DROPS the frame (`frames.size()==0`) under Debug-MSVC — verified locally on `ninja-test-msvc`. The whole `CallstackParser::ParseCallstackText survives adversarial inputs` case is now ASan-clean, so the `--test-case-exclude` was REMOVED from the "Run sanitized doctest rig (ASan)" step in `build-and-test.yml` and the case is exercised by the gate. Subcase (2) was already applied via #1215, so the entry is now fully resolved.
   Status: applied (2026-06-16 — subcase 1 INT_MAX-clamp hardened in <PR>; subcase 2 already applied via #1215, so the entry is fully resolved)
   Last-reviewed: 2026-06-16
-
 
 - 2026-06-13 · orchestrator · [tooling] · P1 — `fleet-preflight-not-enforced-at-launch`: `fleet-preflight.sh` exists and statically validates the § Pre-launch checklist, but it is **advisory and never auto-run** — so a real fan-out launched with **no `model:` pins** and the runtime's default `min(16, cores-2)` concurrency against **4 live sibling sessions**, exactly the TPM-starvation + un-pinned-model failures the gate was built to catch.
   Details: `agents/scripts/core/fleet-preflight.sh` (shipped feat/fleet-durability-tooling, applied.md 2026-06-11) flags missing `model:` pins, oversized staged inputs, out-of-workspace paths, and missing checkpoint steps — but only when a human/agent remembers to run it, and it exits 0 (WARN-only) without `--strict`. Nothing wires it into the launch path, so the historical-review-sweep fan-out this session went out un-pinned (model defaulted to the session model) and at full `min(16, cores-2)` concurrency while ≥3–4 sibling sessions shared the account TPM — the precise crawl scenario `workflow-fleets.md` § Concurrency warns about. The persist-sweep PR (#1182) pins `model:'opus'` in the script as a point fix, but that is per-workflow, not enforced for the next fleet someone authors.
@@ -1540,7 +1136,6 @@ before push. Archive to `applied.md` on the next sweep.
   **UPDATE 2026-06-20 (fleet-rescope.sh):** the *re-scope* half of the residual abort action is now mechanical. New launch-protocol tool `agents/scripts/core/fleet-rescope.sh` (sibling to `fleet-preflight.sh`/`workflow-watchdog.sh`, deliberately NOT folded into the read-only watchdog) computes the exact relaunch set the cascade nudge calls for — the launch's expected-lane manifest (`--lanes <file>` / `--lanes-csv a,b,c`) MINUS the lanes that produced a completed deliverable in `build/<slug>/results/` (a non-empty `results/<lane>.md`). This sidesteps the confirmed-infeasible per-lane transcript attribution by answering "which lanes are still churning?" from the *deliverable* side instead — exactly the 5-lanes-produced-nothing case in the incident. It REUSES the watchdog for a verdict gate (refuses with exit 3 on any non-`cascade` verdict so it can't tear down a healthy/crawling fleet; `--force` overrides, a missing/erroring watchdog is fail-open-with-WARN), auto-derives the watchdog's `--expected-agents` from the manifest width when a `--session-dir` is scoped, and `--list-unfinished` pipes the relaunch set straight into the new launch's `args`. It is **read-only like the watchdog — it computes + prints the plan, it NEVER kills**: the destructive abort itself (TaskStop on an in-process Workflow / killing a background bash fleet's processes) is the ONLY remaining residual and is **intentionally** left to orchestrator judgment — harness-specific + destructive, so the AGENTS.md autonomy boundary keeps the kill a human-on/in-the-loop call, not an auto-action. 16 bats cases (`tests/bats/fleet_rescope.bats`, auto-enrolled runner `agents/scripts/core/test-fleet-rescope-bats.sh`), shellcheck-clean, integration-smoked against the real watchdog; `workflow-fleets.md` § Stall watchdog + § Salvage runbook document it. Cross-ref: `fleet-preflight.sh` (the pre-launch sibling this pairs with — preflight gates the first launch, rescope gates the relaunch).
   Status: applied (2026-06-20 reconcile — all codeable work shipped + merged: cascade detection #1417 (victim-count + aggregate amplification guard) + fleet-rescope.sh re-scope planner #1445, both verified live on origin/develop. The only residual is the DESTRUCTIVE abort/kill, which is INTENTIONALLY not automated per the AGENTS.md autonomy boundary (the watchdog detects+quantifies+plans, a human/orchestrator makes the kill call) — a deliberate non-goal, not pending work.)
   Last-reviewed: 2026-06-20
-
 
 - 2026-06-13 · build-doctor · [test] · P3 — Mesa software-GL install block duplicated across bucket-C / bucket-E / mobile-texture-guard-smoke
   Details: The ~30-line "Cache Mesa software-GL DLLs" + "Install Mesa software OpenGL ICD" step pair is now copy-pasted verbatim in THREE jobs in `build-and-test.yml` (bucket-c-screenshot-diff, bucket-e-ui-tests, mobile-texture-guard-smoke), all keyed `mesa-dlls-24.2.5-v2` / `MESA_VERSION: 24.2.5`. A version bump must touch three places in lockstep; drift would silently break one lane. (#1133 deliberately matched the existing block verbatim rather than extract, to keep the PR minimal and avoid touching bucket-C/E.)
@@ -1609,6 +1204,33 @@ before push. Archive to `applied.md` on the next sweep.
   Status: applied (2026-06-20 roadmap campaign — shipped #1502)
   Last-reviewed: 2026-06-20
 
+- 2026-06-12 · git-janitor · [tooling] · P3 — `lua-off-build-clang-winmain`: git-cleanup-procedures'
+    Lua-off regression-gate recipe invoked bare `cmake` and could select clang++, failing the link
+  Details: The § Regression gate recipe ran `cmake -B build/lua-off-check
+    -DSMATCHET_WITH_LUA_AUTOMATION=OFF -G Ninja` with no preset and no MSVC environment, so CMake
+    picked whatever compiler was first on PATH — plain `clang++` on the reporting machine.
+    `Source/Standalone/CMakeLists.txt` sets `WIN32_EXECUTABLE TRUE` (→ `/SUBSYSTEM:WINDOWS`, whose
+    default entry is `WinMain`) but applies the `/ENTRY:mainCRTStartup` correction only inside an
+    `if(MSVC)` block, so a plain-clang++ configure links with the wrong entry point and dies on
+    `lld-link: error: undefined symbol: WinMain`. Pre-existing gap, never CI-visible: every CI
+    Lua-off job goes through a preset (`ninja-msvc-asan` / `ninja-clang-asan`, plus
+    `sanitizer-nightly.yml`) and both preset bases pin an MSVC-ABI driver (`cl.exe` / `clang-cl`),
+    for which CMake's `MSVC` variable is TRUE — only the bare-`cmake` skill recipe was exposed.
+  Concrete next action: route the recipe through the preset instead of bare `cmake`.
+  Status: applied — the recipe is now
+    `cmake --preset ninja-iter-msvc -B build/lua-off-check -DSMATCHET_WITH_LUA_AUTOMATION=OFF`
+    (`-G Ninja` dropped; the preset supplies the generator). Command-line `-B` and `-D` override a
+    preset's `binaryDir` and `cacheVariables`, so the Lua-off probe still gets its own build dir and
+    does not disturb `build/iter-msvc` — verified empirically against CMake with a throwaway
+    preset before shipping. Fixed at the recipe, NOT by making `/ENTRY:mainCRTStartup` unconditional
+    in `Source/Standalone/CMakeLists.txt` (the entry's stated alternative): every supported Windows
+    configuration is MSVC-ABI, so the `if(MSVC)` guard is correct and loosening it would add an
+    untested link path to the product build for no supported caller. The entry's other proposed
+    remedy — wrapping the invocation in `scripts/dev/with-msvc.ps1` — was stale: no such script
+    exists on develop. Recovered from a stashed 2026-06-12 `tooling.md` edit that was never
+    committed; it is filed straight to `applied.md` per § Workflow 4 since the fix ships with it.
+  Last-reviewed: 2026-08-16
+
 - 2026-06-11 · orchestrator · [process] · P2 — new first-party file pushed before running the delta-lint gate locally → comment-noise red cost a full ~16 min Windows-build round-trip
   Details: Shipping the #1122 fix (PR #1130), the new header `Source/Core/include/Ui/SmatchetImGuiTextureGuard.h` passed build + tests + CodeRabbit but FAILED the required `Windows + MSVC` check on the delta-lint comment-noise gate — three blank `//` paragraph-separator lines tripped `comment-blank-run` (plus a 55% comment-ratio WARN). The whole failure was knowable in seconds locally via `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` (or `scripts/dev/pre-ship.sh`), but it surfaced only post-push after the ~16 min Windows job went red, forcing a fix commit (a3f9add1) + a second full CI cycle before auto-merge could fire. Doc-heavy NEW headers are the high-risk case (comment-ratio + blank-run both bite a fresh file with no grandfathering).
   Concrete next action: make the delta-lint gate a reflex on ANY new first-party file before push (especially comment-dense headers) — run `test-lint-rules.sh --diff origin/develop` as part of the pre-push checklist, not just `cmake --build` + tests. Cheapest: add a one-line reminder to the ship-loop pre-push step in `docs/agent-rules/process-rules.md` § Cadence + verification (or fold a new-file detector into `scripts/dev/pre-ship.sh` so a new-file diff always triggers the comment-noise + ratio checks). Zero infra; pure discipline + a checklist line.
@@ -1621,6 +1243,7 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: (a) exempt `git -C <path>` when `<path>` resolves (via `git -C <path> rev-parse --git-common-dir`, or path-prefix match against the linked-worktree set) to a linked worktree distinct from the integration tree — those ops provably never touch the shared HEAD; OR (b) honor the override when passed through the `tool_input` command string (parse a leading `SMATCHET_ALLOW_SHARED_SWITCH=1` token off the command, not just the hook env) so a tool call can opt out without the script-wrapper dance. (a) is the cleaner fix (no human override needed for the common case). Add a bats fixture: `git -C <linked-worktree> merge` → allowed; bare `git merge`/`git -C <integration-tree> merge` in the shared tree → still blocked. Est ~1 h. Cross-ref: `.claude/hooks/guard-shared-tree.sh` (lines 35/39/69), `guard-head-drift.sh` (the hard net); friction logged during #1145 develop-merge.
   Status: applied (2026-06-12, feat/gate-tooling-round2 — chose option (a), the cleaner no-override fix. `docs/harness/claude-code/hooks/guard-shared-tree.sh` (the canonical tracked source; `.claude/` is a gitignored copy re-synced by `setup-harness.sh`) now, after the mutating-op match, extracts the `-C <path>` arg and exempts when `git -C <path> rev-parse --show-toplevel` differs from the integration tree's top-level — a different worktree's HEAD move can't rug-pull a sibling here. Fail-CLOSED: an unresolvable `-C` target does NOT exempt; a `-C` back at the integration tree or a bare op still blocks. `tests/bats/guard_shared_tree.bats` (4: exempt / bare-block / -C-integration-block / fail-closed-block) via `test-guard-shared-tree-bats.sh` (auto-enrolled in test-all.sh). Option (b) — inline-override token parse — deliberately not done; (a) removes the need. NOTE: existing sessions pick up the fix on the next `setup-harness.sh`. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-11 · orchestrator · [tooling] · P1 — `coverage-required-context`: a RED non-required `Coverage` check merges past every NON-poller merge path (preventing gate from postmortems.md 2026-06-11 PR #1130; #923 option A, the deferred half) — RECURRED #1227 (config applied, GitHub bind never ran)
   Details: PR #1130 merged (`5fc21b34`, 03:34:54) while `Coverage (windows-2022 + OpenCppCoverage)` was terminal FAILURE (completed 03:21:42), no override label. #923's fix put `Coverage` on the poller's non-required-but-blocking allow-list (`merge-gates.sh` `Coverage|Sanitizer|Bucket-|Perf PR-fast|Android security gate`), which blocks a red Coverage ONLY on poller-mediated merges (orchestrator `handle_pass` / merge-watcher). `Coverage` is still NON-required in `branch_protection.required_contexts`, so every GitHub-native merge path that gates on required contexts only — `gh pr merge --auto` (auto-merge gates required-only), admin / direct `gh api …/merge`, the merge button — sails past it. #923 took option (B) (poller allow-list) and deferred option (A) (required status); the non-poller paths stayed exposed and #1130 hit one.
   Concrete next action: promote `Coverage (windows-2022 + OpenCppCoverage)` to `project.config.json` `branch_protection.required_contexts` + `setup-branch-protection.sh`, paired with a `coverage-skip.yml` companion (Pattern B — emit a success `Coverage` context on docs-only / path-filtered PRs) so they don't deadlock on a never-run required check. A required Coverage binds ALL merge paths, not just the poller. Branch-protection change → maintainer approval. Keep the now-improved `postmortem-owed.sh` allow-list detection as the post-merge backstop. Est ~1-1.5 h (config + skip workflow + branch-protection apply). Cross-ref: postmortems.md 2026-06-11 #1130, 2026-06-06 #923 (option A); PR #927 (the `--no-breaks` coverage-crash remediation).
@@ -1628,6 +1251,7 @@ before push. Archive to `applied.md` on the next sweep.
   Status: applied (config only — GitHub branch-protection bind OWED). The maintainer MUST run `setup-branch-protection.sh` to make Coverage binding for GitHub-native merge paths; until then it is inert for `gh pr merge --auto` / admin / direct merge (the merge-gates poller honours it immediately). Recurred on #1227 precisely because the bind never ran.
   Last-reviewed: 2026-06-14
   Resolution: applied (2026-06-14, feat/coverage-required-context). Chose the SINGLE-WORKFLOW self-gate (not a separate `coverage-skip.yml` companion — mutually-exclusive path filters across two workflows are fragile and error-prone; the in-repo precedents `doc-validation.yml` + `coverage-gate.yml` both self-gate one workflow). Changes: (1) `Coverage (windows-2022 + OpenCppCoverage)` added to BOTH `project.config.json` `branch_protection.required_contexts` AND `ci.required_checks`. (2) `coverage.yml` `on.pull_request` `paths:` filter REMOVED so the workflow runs on every PR; added the `# ci-required-context: self-gated` marker + a `merge_group:` trigger; the single `windows-coverage` job gained a `Detect coverage-relevant changes` step (id `detect`) and every heavy step now carries `if: steps.detect.outputs.run == 'true'`. On a docs/shell-only PR all heavy steps skip and the job reports the required context green (exactly once); on a code PR `run=true` and the full `--threshold 65` gate runs UNCHANGED (never fake-greens a real failure). The detect predicate is a SUPERSET of the retired path allow-list minus `.md`. (3) `setup-branch-protection.sh` needed NO edit — it loops `required_contexts` from config into the PUT body (no hardcoded list). Verified: `test-required-context-parity.sh --selftest` PASS + `--check` PASS resolving Coverage to `coverage.yml` job `windows-coverage` `(unconditional pull_request) [self-gated]` (THE no-deadlock proof, 7/7); `test-lint-rules.sh --diff origin/develop` no new failures; coverage.yml YAML-parses under strict PyYAML; project.config.json valid against schema. MAINTAINER MUST run `setup-branch-protection.sh` (or apply the GitHub branch-protection setting) to make the required-context BINDING for GitHub-native merge paths — until then the config change is inert for `gh pr merge --auto` / direct `gh api …/merge` but the merge-gates poller (reads `required_contexts` from config directly) honours it IMMEDIATELY on merge. Cross-ref: postmortems.md 2026-06-11 #1130, 2026-06-06 #923 (option A). To be archived to applied.md on next triage drain.
+
 - 2026-06-11 · orchestrator · [tooling] · P2 — `workflow-watchdog.sh`: no automated stall detection for background Workflow fleets (crawl vs frozen is diagnosed by hand)
   Details: During the 2026-06-10/11 audit-fleet debacle and its salvage waves, "stalled" fleets had two opposite causes — crawl (TPM starvation: transcripts/results still advancing slowly; remedy = reduce concurrency / pin smaller model, do NOT kill) vs frozen (permission deny or agent death: newest transcript mtime static ≥ ~10 min; remedy = kill + salvage). Each diagnosis was manual transcript-mtime archaeology mid-incident.
   Resolution: **applied — feat/fleet-durability-tooling** — shipped `agents/scripts/core/workflow-watchdog.sh <fleet-slug> [--nudge]`: a read-only poller that counts `build/<slug>/results/*` + the newest agent-transcript `*.jsonl` mtime, then classifies progressing / crawl / frozen per `docs/agent-rules/workflow-fleets.md` § Stall watchdog (age ≤ FRESH → progressing; count-or-mtime advanced vs the cross-poll baseline → crawl, do NOT kill; static ≥ FROZEN → frozen, kill + salvage). Two polls separate crawl from frozen — the first establishes the baseline and leans crawl. `--nudge` is silent unless frozen, then emits a SessionStart block. No kill action; the only write is its own `.watchdog-state` baseline. Env seams (`WATCHDOG_RESULTS_DIR`/`_TRANSCRIPT_DIR`/`_STATE_FILE`/`_FRESH_SECS`/`_FROZEN_SECS`/`_NOW`) drive a 9-case bats suite (`tests/bats/workflow_watchdog.bats`) + `test-workflow-watchdog-bats.sh` wrapper (test-all auto-enrolled). The § Stall watchdog parenthetical now points at the real script.
@@ -1693,17 +1317,20 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: widen `vexp-strip-agents-md.sh` (or add a sibling) to also strip vexp-specific mentions from `agents/core/*.md` + `agents/project/*.md` back to harness-neutral wording, OR add a delta-gated lint (`test-portable-purity` family) that fails when a portable agent file gains a `mcp__vexp__` / `run_pipeline(` / `get_skeleton(` literal — so the regression is caught at gate time, not by a chance `git status`. Add a bats fixture: an `agents/core/*.md` carrying a vexp literal → gate red. Est ~45 min (strip widen) / ~1 h (lint + fixture). Cross-ref: AGENTS.md § Semantic-search exceptions; `vexp-strip-agents-md.sh`.
   Status: applied (2026-06-12, feat/portable-integrity — chose the LINT option (the `vexp-strip-agents-md.sh` hook is NOT a tracked Smatchet file — it's vexp-installer-owned — so it can't be widened from the repo; a repo-controlled gate is the durable fix). `agents/scripts/core/test-portable-agent-vexp.sh` full-scans `agents/core/*.md` + `agents/project/*.md` for `mcp__vexp__` / `run_pipeline(` / `get_skeleton(` and FAILS on any hit (the prompts are vexp-clean today, so no grandfathering). `--selftest` (clean passes / a vexp literal fails) + enrolled in `test-docs.sh` + `doc-validation.yml` (CI — the agent files are tracked) + auto-discovered by `test-all.sh`. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-10 · orchestrator · [infra] · P3 — perf-full.yml still gates on a single unconfirmed median (same flake class confirm-on-exceed fixed in perf-pr-fast)
   Details: gate-fp-hardening added confirm-on-exceed to `.github/workflows/perf-pr-fast.yml` (a scenario whose first 3x-median exceeds policy gets ONE more independent 3x-median sample; only both-exceed fails — kills the job-wide noisy-neighbor false-positive class observed on PR #1112: cell-edit-burst `SmatchetUI::Draw` p99 medians 10.9 → 15.661 ms across days with no code change, against a 15.0 ceiling). `perf-full.yml:177-181` keeps the old single-median gate, so the nightly full suite retains the flake class. Deliberately out of the gate-fp-hardening PR's scope (perf-full is non-PR-blocking; flake cost is a red nightly, not a blocked merge).
   Concrete next action: port the confirm-on-exceed block from perf-pr-fast.yml's scenario loop into perf-full.yml's (same shape: rc==1 → 3 confirm runs → perf-median → re-compare; confirm-plumbing failures via note_run_failure + run_failure_count, no table/tally double-count). ~30 min, mechanical.
   Status: applied (2026-06-12, feat/gate-tooling-round2 — ported into `perf-full.yml`'s scenario loop, adapted to its single-run-then-median shape: gate FIRST (exit code), on rc==1 take 3 confirm `perf-run.sh` samples → `perf-median.py` → re-compare; rc2==0 clears as runner noise, rc2==1 confirms (report the confirm sample), rc2==2 / confirm-plumbing increments `run_failure_count` with rc neutralised so it is not also counted as a regression; report markdown AFTER gating on the gated sample. perf-full is nightly/non-PR-blocking so this only suppresses spurious `perf-regression` ISSUES. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-10 · orchestrator · [process] · P2 — p4-mode promote step prescribed a HEAD-mutating `git checkout -b` in the shared canonical tree, colliding with `guard-shared-tree.sh` (resolved: plumbing-commit recipe is now canonical)
   Details: Two gates deadlocked the documented P4-gated ship-loop promote step. `docs/perforce/AGENT_FLOWS.md` § small-change loop step 5 (and the multi-slice `--promote-reviewed-cl` path) told the orchestrator to `git checkout -b <branch>` + commit + push in the canonical p4 client tree (`C:\Dev\Smatchet`, the shared integration tree); `ship-loops.md` § P4-gated invariants forbid `git worktree add` while `SMATCHET_AGENT_VCS=p4`. But `guard-shared-tree.sh` blocks any HEAD/working-tree-mutating git op (`checkout`/`switch`/`reset`/…) in that tree when sibling sessions are live, with the message "Do feature work in a worktree" — advice p4-mode forbids. PR #1125 (shelf CL 374) worked around it by building the commit with plumbing (temp `GIT_INDEX_FILE` + `read-tree origin/develop` + `update-index` + `write-tree` + `commit-tree` + `git branch` + push), which touches neither HEAD nor the working tree, keeps disk content consistent with the submitted p4 head, and avoids the `checkout`-back-to-`develop` side effect (which reverts the just-fixed files on disk, diverging the working tree from the p4 depot head until the PR merges). The `SMATCHET_ALLOW_SHARED_SWITCH=1` override (AskUserQuestion-recommended) unblocks the guard but keeps the working-tree flip-flop under siblings — strictly worse than plumbing.
   Resolution shipped: documented the plumbing-commit recipe as the **canonical** p4-mode promote step in `docs/perforce/AGENT_FLOWS.md` (new § Promote-to-PR in a shared tree, referenced from both small-change step 5 and the multi-slice Promote step) + updated the `ship-loops.md` § P4-gated invariant. Chose "document the recipe" over "teach `guard-shared-tree.sh` a sanctioned p4-promote path" deliberately: the plumbing recipe uses no op the guard watches for, so the correct promote path already passes the guard untouched — a guard exemption would only re-enable the `checkout` flip-flop the recipe avoids. Guard left unchanged on purpose.
   Concrete next action: **residual** — `agents/scripts/project/p4-task-stream-to-pr.sh` still does a raw `git checkout -b` in its git-publish step (multi-slice `--promote-reviewed-cl` path), so the multi-slice loop is not yet shared-tree-safe in code even though the doc now points at the recipe. Port the script's publish step to the temp-index plumbing recipe (temp `GIT_INDEX_FILE` → `read-tree` → `update-index` → `commit-tree` → `git branch` → push), add a shared-tree bats case, then drop this residual note from AGENT_FLOWS.md § Promote-to-PR. ~1-2 h.
   Status: applied-partial (2026-06-10 — docs canonicalised: AGENT_FLOWS.md plumbing recipe + ship-loops.md invariant. Residual: the `p4-task-stream-to-pr.sh` script port.)
   Last-reviewed: 2026-06-10
+
 - 2026-06-10 · orchestrator · [test] · P3 — `StubAiClientCancel.test.cpp` 100 ms cancel-ack budget is wall-clock-keyed; flake-prone under OpenCppCoverage instrumentation slowdown
   Details: `tests/Core/StubAiClientCancel.test.cpp:84` asserts `CHECK_FALSE(stub.CancelBudgetExceeded)`, where the stub measures cancel acknowledgement against a fixed **100 ms** budget. The outer wall-clock asserts (`postCancelMs < 200`, `totalMs < 400`, lines 79-80) carry generous slack, but the stub's internal 100 ms cancel-ack budget does not. Under the `Coverage (windows-2022 + OpenCppCoverage)` job, instrumentation imposes a ~5-20× slowdown, so a cancel ack that takes ~10 ms uninstrumented can exceed 100 ms under coverage → `CancelBudgetExceeded` flips true → the gate flakes red on a non-defect. Same class as the 2026-06-13 P1 `CallstackParser.test.cpp` ReDoS-cap-under-ASan entry above (a wall-clock cap that fails under instrumentation, not on a real regression). Latent: surfaced as a flake-risk during the mobile-WS6 close-out coverage run, not yet a confirmed CI red — record before it bites.
   Concrete next action: make the stub's cancel-ack budget instrumentation-aware — detect the coverage build (an env flag the coverage job already exports, or a compile-time guard) and scale the 100 ms budget (×8) or skip the `CancelBudgetExceeded` SUBCASE under coverage while keeping the cancellation-path content assertions (`CancelObserved`, `errorFired`, `WasCancelled`, partial-stream `deltas.size() < 100`). Mirror the landed CallstackParser/ASan pattern (#1215, `36521f72`: compile-time-detect the instrumented build + widen the budget rather than skip) — but note the detection mechanism differs: ASan exposes `__SANITIZE_ADDRESS__`, whereas OpenCppCoverage has NO equivalent macro, so the coverage build must be detected via an env flag the coverage job exports (or a `SMATCHET_COVERAGE` compile guard), not `__SANITIZE_ADDRESS__`. ~30 min in `StubAiClient` + the test.
@@ -1743,22 +1370,26 @@ before push. Archive to `applied.md` on the next sweep.
   Recurrence: 2026-06-15 — #1258 false-flagged as a gate-escape because the 2026-06-11 ship left part (2) of the concrete-next-action half-done: it mirrored merge-gates.sh's blocking-scope LOGIC but kept a HAND-SYNCED copy of the allow-list regex (`ALLOW_LIST_RE`, "kept byte-identical … #923 fix"). That copy then drifted — #1259 dropped `Bucket-*` from BOTH lists in lock-step, but a stale branch still carried `Bucket-|`, so a red Bucket-E (Mesa-GL, can't boot the exe) read as blocking-scope → phantom owed. The drift was the predicted failure of any two-hand-synced-copies arrangement.
   Status: applied (2026-06-15) — closes part (2) "reuse the constant from merge-gates.sh": `postmortem-owed.sh` now `source`s merge-gates.sh and reads `MERGE_GATES_BLOCK_ALLOWLIST_RE` (single source of truth; fail-closed if unset), mirroring `safe-admin-merge.sh`. Deleted the hand-synced `ALLOW_LIST_RE` literal — drift is now structurally impossible (one constant, all consumers source it). Bats `tests/bats/postmortem_owed.bats` +2: a dropped `Bucket-E` red → 0 owed (#1258 regression guard) + a structural drift-guard asserting the source line + no re-hardcoded literal. (The 2026-06-11 ship covered parts (1) dedupe + (3) terminal-failure + the `IFS=$'\t' read` field-collapse fix.) To be archived to applied.md on next triage drain.
   Last-reviewed: 2026-06-15
+
 - 2026-06-09 · orchestrator · [tooling] · P2 — `.coderabbit.yaml` `tests/**` path-instruction said "no SQLite" but ≈8 `tests/Core` TUs use `:memory:` SQLite as the established norm → false-positive CR findings
   Details: CodeRabbit flagged PR #1104's new `tests/Core/BackendSwitchRace1081.test.cpp` as a "compliance break" for driving `OfflineQueueService`/`LocalCacheManager`/`TicketSyncService` over SQLite, citing the `.coderabbit.yaml` `tests/**/*.{cpp,h,hpp}` instruction ("Pure-logic doctest rig only … No … SQLite … surfaces"). But that instruction had drifted from pervasive practice: the single `SmatchetTests` doctest target already compiles+runs ≈8 SQLite-backed service TUs (`LocalCacheManager.test.cpp`, `OfflineQueueServiceRuntime.test.cpp`, `OfflineQueueBackendSwap.test.cpp`, `TicketSyncService.test.cpp`, …) via the dedicated `tests/support/{SqliteMemFixture,OfflineQueueTestEnv}.h` infra, registered in `tests/CMakeLists.txt` with explicit "SQLite-backed ticket cache" comments. There is NO integration/bucket-E lane for service tests (bucket-E = ImGui Test Engine, UI-only; `SmatchetTsanTests` deliberately excludes the sync/cache layer), and the services take a concrete `LocalCacheManager*` with no `ILocalCache` seam — so `:memory:` SQLite is the pure-logic-equivalent cache. Fixed forward in #1104: the instruction now carves out `:memory:` SQLite via the fixtures while still forbidding on-disk/networked DB + UI/HTTP/ImGui/cpr.
   Concrete next action: (1) DONE in #1104 — the path-instruction carve-out. (2) Optional follow-up: if true pure-logic separation is ever wanted, extract an `ILocalCache` seam in `OfflineQueueService`/`TicketSyncService` (strict-zone Sync/Persistence) + an in-memory fake, OR stand up a real `SmatchetIntegrationTests` CTest target and migrate the ≈8 SQLite TUs there. Both are larger infra efforts, not warranted by current evidence (the `:memory:` tests are fast + deterministic).
   DONE 2026-06-10: the seam shipped as `docs/plans/ilocalcache-seam.md` (ADR-0020; interface renamed `ISyncCache` at grill — the local cache also holds chat + migration). PR1 (#1112): 28-method `ISyncCache` + production retype + dual-impl `SyncCacheContract.test.cpp`. PR2: `tests/support/FakeSyncCache.h` (contract-suite-verified), the 8 service TUs repointed (impl/migration cases relocated to the impl TUs), one retained `OfflineQueueServiceRealCacheSmoke.test.cpp` backstop, a configure-time construction/direct-include purity guard in `tests/CMakeLists.txt`, and the `.coderabbit.yaml` instruction re-tightened (service tests pure; `:memory:` legitimate only for impl TUs + contract real half + the smoke).
   Status: applied
   Last-reviewed: 2026-06-10
+
 - 2026-06-09 · orchestrator (close-gate-gaps wrap-up) · [infra] · P2 — a configure-time / build gate that encodes a LOCAL-dev convention must be CI-scoped, or it FATALs every CI runner (`local-dev-gate-must-be-ci-scoped`)
   Details: The new MSVC toolset-consistency guard (root `CMakeLists.txt`, close-gate-gaps Note 1 / PR #1074) `FATAL_ERROR`'d when the compiler minor != `build.msvc_toolset_pin` (`14.38`). That pin is a **local-dev** convention (it matches the cached build dirs the wrappers configure); CI runners use their own consistent — but different — toolset and configure fresh every run, so they can NEVER hit the stale-cache mismatch the guard targets. Applied unconditionally, the guard reded all 5 Windows CI required checks (Coverage / Windows+MSVC / Windows-light / Perf-fast / Packaging). The merge-gate correctly BLOCKED #1074 (no escape); fix was `if(... AND NOT DEFINED ENV{CI})`. The local-only intent had lived in the comment, not the condition.
   Concrete next action: (1) DONE — the guard is env-scoped + build.md item 4 notes it. (2) Durable rule (codify in `agents/core/build-doctor.md` + `docs/agent-rules/cpp-rules.md` § gates): any `message(FATAL_ERROR ...)` (or hard build gate) keyed on a `project.config.json` *local* knob (toolset pin, a machine path, a `$HOME`/dev-tree assumption) must carry an `ENV{CI}`/`ENV{GITHUB_ACTIONS}` scope or an equivalent fresh-configure exemption. (3) Cheap lint: flag a new `FATAL_ERROR` in `CMakeLists.txt` that references `msvc_toolset_pin` (or other local knobs) without a nearby `ENV{CI}` guard. Est (2) ~15 min doc, (3) ~30 min.
   Status: applied (2026-06-12, feat/build-infra-followups — all three actions: (1) was already done; (2) the durable rule is codified in `agents/core/build-doctor.md` (Common-causes bullet: "a configure-time FATAL_ERROR you added red-walls every CI runner") + `docs/agent-rules/cpp-rules.md` § Tiered enforcement ("Durable rule — CI-scope every local-knob build gate"); (3) the cheap lint `cmake-local-gate-ci-scope` ships in `agents/scripts/project/test-lint-rules.sh` — ABSOLUTE-0 over `CMakeLists.txt` / `cmake/*.cmake`: a `message(FATAL_ERROR` whose backward window (`SMATCHET_CMAKE_CI_WINDOW`, default 80) mentions the local knob `msvc_toolset_pin` but carries no `ENV{CI}`/`ENV{GITHUB_ACTIONS}` token fires; `# SMATCHET_DEVIATION(rule=cmake-local-gate-ci-scope; …)` in-window escapes. Contract-card row in AGENTS.md; `--scan-cmake-ci` harness mode; `--selftest` exercises fire/CI-scoped-clean/deviation-clean + AGENTS.md-presence (asserts-failure); 5 cases in `tests/bats/lint_rules.bats` (fire / CI-scoped-clean / no-knob-clean / deviation-clean / real-tree-clean). Verified: the tree's one toolset guard (`CMakeLists.txt:67/121`, correctly `NOT DEFINED ENV{CI}`-scoped) scans clean. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-09 · orchestrator (close-gate-gaps wrap-up) · [infra] · P2 — delegated subagents reconfigure shared build dirs (drop `/EHsc`, pick the wrong side-by-side toolset) → break the build state for the next consumer (`subagent-build-reconfigure-hazard`)
   Details: This session, `grid-engine` and `offline-sync` (delegated for #975/#854/#948) each ran `cmake --preset` / reconfigured `build/ninja-{test,iter}-msvc` to build their changes. On this multi-VS box that re-picked cl **14.50** against **14.38** STL headers (5000 cryptic `<chrono>` errors) and on a fresh configure dropped `/EHsc` (doctest "Exceptions are disabled") — leaving the build dirs broken so the orchestrator had to wipe + cleanly reconfigure to verify each fix. Each agent independently re-hit the same toolchain wall the orchestrator had already walked, burning ~minutes per agent and producing "this is a pre-existing build-infra fault" reports that were actually self-inflicted by their own reconfigure. The new toolset guard (entry above) now converts the 14.50 symptom into one clear FATAL, but the underlying hazard — agents mutating the shared build-dir cache — remains.
   Concrete next action: (1) DONE this session — later delegation prompts explicitly told agents "the build dirs are already correctly configured; do NOT reconfigure / wipe — only `cmake --build`; if a dir seems broken, STOP and report." (2) Codify that as a standing clause in `agents/_shared/skills` / the build-touching agent contracts (`tracker-backend`, `offline-sync`, `grid-engine`, `test-rig`, `ui-host`): a delegated build-verification step uses `cmake --build` against the orchestrator-provisioned dir and never `cmake --preset`/reconfigures. (3) Optional: a per-worktree configure-lock or a `build/<preset>/.configured-by` stamp so a stray reconfigure is at least detectable. Est (2) ~20 min.
   Status: applied (2026-06-12, feat/build-infra-followups — action (2) done, single-sourced per the DRY pillar rather than copied into 5 agent files: the canonical standing clause lives in `docs/agent-rules/build.md` § Fresh-worktree configure pitfalls #5 ("Delegated/subagent build-verification is `cmake --build` ONLY — never `cmake --preset`/reconfigure/wipe a shared build dir … if a dir looks broken, STOP and report"), and the orchestrator injects it into every build-touching delegation packet via a new bullet in `docs/agent-rules/delegation.md` § Orchestrator delegation packet ("Build-touching packets — no-reconfigure clause + FetchContent pre-seed"). This governs the 5 named agents (tracker-backend / offline-sync / grid-engine / test-rig / ui-host) + any future build-touching agent from one source. Action (3) — the per-worktree configure-lock / `.configured-by` stamp — was OPTIONAL and is DEFERRED: the standing clause + the #1166 cold-configure fix remove the acute pain; tracked as this entry's residual (cheap follow-up if a stray reconfigure recurs). To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-09 · orchestrator (close-gate-gaps) · [process] · P3 — serial multi-slice migrations should REUSE one worktree across slices, not `worktree.ps1 new` per slice (`serial-migration-worktree-reuse`)
   Resolution: **applied (close-gate-gaps Slice 7)** — added a "Serial multi-slice plan in ONE session — reuse ONE worktree across slices" note to `docs/agent-rules/process-rules.md` § Concurrent interactive sessions, clarifying that the "one worktree per session" rule targets CONCURRENT sessions (sibling rug-pull), not a fresh worktree per slice in one serial session. Reusing the worktree keeps `build/` warm (incremental rebuilds, no FetchContent re-fetch). The underlying cold-configure pain it cited (cpr submodule) is independently fixed by #1031 + gated by the Slice-4 fresh-clone CI.
   Status: applied
@@ -1774,6 +1405,7 @@ before push. Archive to `applied.md` on the next sweep.
   Details: The `p4-git-connector-github-mirror` plan ships `MIRROR.md` as a deterministic copy-paste sequence (server-side graph depot + repo spec + `gconn` service user; WSL2 `git`/`git-lfs` + Helix Git Connector install; read-only Deploy Key; one-way mirror config; cron cadence). Ongoing freshness is automated (`scripts/dev/p4-mirror-healthcheck.sh` + cron), but the one-time *standup* is hand-run host infra — re-provisioning (new box, WSL2 rebuild) means re-walking the runbook by hand. Flagged as deferred-automation residue in the plan's § Verification § Manual residue, not an oversight.
   Concrete next action: an idempotent `scripts/dev/p4-mirror-bootstrap.sh` (WSL2-side) codifying § Approach steps 1–3 — verify-then-create the `//repo` graph depot + `//repo/smatchet` repo spec + `gconn` user/protections (skip if present), apt-install `git`/`git-lfs` (skip if satisfied), assert WSL2→`p4d` reachability, and emit the Deploy-Key + connector-config steps as guided prompts (the secret/GitHub-UI half stays manual by design). Pairs with the existing health-check for a full provision→verify loop. Est ~2-3 h incl. a bats fixture stubbing `p4`/`apt`. Cross-ref: `docs/plans/shipped/p4-git-connector-github-mirror.md`, `docs/perforce/MIRROR.md`.
   Resolution: applied — scripts/dev/p4-mirror-bootstrap.sh landed: idempotent verify-then-create for the graph depot / `//repo/smatchet` spec / `gconn` user + `grant-permission` admin grant, apt-install `git`/`git-lfs` (skip if satisfied), `p4 info` reachability pre-flight, and the connector/gconn.conf/mirrorhooks/Deploy-Key manual half emitted as guided prompts; `--server-only`/`--host-only` split the two sides. tests/bats/p4_mirror_bootstrap.bats (9 cases, stubbed `p4`/packages: zero-mutation when present, partial-create, unreachable/missing-tool dies, idempotent re-run) + wrapper test-p4-mirror-bootstrap-bats.sh + MIRROR.md § 1 pointer.
+
 - 2026-06-08 · build-doctor (via tracker-result-migration) · [process] · P2 — `head-drift-guard-literal-path`: `guard-head-drift.sh` rejects `git -C "$WT" commit` when `$WT` is a shell variable (parses the UN-expanded command string)
   Details: The head-drift guard inspects the raw pre-expansion `tool_input.command` text, so `git -C "$WT" commit …` is denied — the hook sees the literal string `"$WT"`, can't stat `"$WT"/.git`, and blocks. Only a LITERAL absolute worktree path passes. Recurred ≥3×: build-doctor 2026-06-08 (3 failed attempts), the orchestrator's first Slice-4 commit, and again 2026-06-18 (the #1374 session-learnings commit + rebase — variable `$WT` blocked, literal path passed) — which crossed the apply threshold.
   Resolution (2026-06-18): sharpened the deny message in `docs/harness/claude-code/hooks/guard-head-drift.sh:134` to state "pass a LITERAL absolute path, not a shell variable like `$WT` — this guard reads the un-expanded command text, so a `$VAR` is rejected"; added the rule to `docs/agent-rules/process-rules.md` § Git/p4 discipline and `agents/core/build-doctor.md` (operational tips), covering both the commit deny and the drifted-op (`rebase`/`checkout`/`merge`) deny, plus the `git -C <abs-path> config core.editor true` vs interposed `-c core.editor=…` note.
@@ -1787,12 +1419,14 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: (1) a local selftest (extend `test-agent-contract.sh` or a new pre-ship check) that, when a `.claude/agents/` adapter exists, asserts each `.claude/agents/<name>.md` is content-identical to its canonical `agents/{core,project}/<name>.md`, failing on drift with a "re-run `setup-harness.sh <harness>`" hint. NOTE: the adapter is gitignored / absent in CI, so this belongs in `pre-ship.sh` or a local gate, NOT a GitHub job. (2) Cheaper interim: a `PostToolUse(Edit|Write)` hook that re-runs `setup-harness.sh claude-code` (or warns) when the edited path matches `agents/(core|project)/.*\.md`. Est ~1h. Cross-ref: PR 93c63d0f (the opus/high change); memory note `claude-agents-adapter-hardlink-breaks-on-edit`.
   Status: applied (2026-06-12, feat/portable-integrity — chose option (1), the local gate. `agents/scripts/core/test-adapter-drift.sh` asserts each `.claude/agents/<name>.md` is byte-identical (`cmp -s`) to its canonical `agents/{core,project}/<name>.md`, flagging DRIFT + MISSING with a "re-run setup-harness.sh" hint. SKIPS cleanly when `.claude/agents` is absent (gitignored / CI), so it's a LOCAL gate — auto-discovered by `test-all.sh` (NOT a GitHub job, per the entry's note). Mirrors test-agent-contract check [9] (the agent-token-log.py hook-copy drift check). `--selftest` (in-sync passes / stale fails / absent skips). Option (2)'s PostToolUse auto-resync hook NOT done — the gate catches the drift at pre-push, which is sufficient. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-08
+
 - 2026-06-08 · orchestrator · [tooling] · P2 — `postmortem-owed-moot-override-false-positive`: `postmortem-owed.sh` flags an `*-out-of-band` label even when the override was non-load-bearing (preventing gate from postmortems.md 2026-06-08 PR #991)
   Details: #991 merged carrying a `tests-out-of-band` label that was moot — a later commit (`644b32be`) extracted pure helpers + added `tests/Core/OllamaStreamError.test.cpp`, so the Test-delta gate passed on its own "prod + test both changed" branch (`coverage-delta-gate.sh:447`), independent of the label. The earlier commit that reached for the override (`3ef73d64`) was superseded but the label was never removed. `postmortem-owed.sh` keys on label *presence* at merge, not on whether the labeled check actually needed dismissing — so a resolved override reads identically to a load-bearing one and raises a phantom "owed" nudge. Same false-positive class as the 2026-05-23 revert-prose detector bug.
   Concrete next action: in `postmortem-owed.sh`, before emitting an `override: <name>` line, check whether the override was load-bearing — the named required check is terminal-SUCCESS on the merge head AND (for `tests-out-of-band` specifically) the PR diff carries a test delta (`tests/**/*.test.cpp` add/modify via `gh pr view N --json files` or `git diff`); if so, suppress the flag (the gate would have passed without the label). Only a load-bearing override owes a postmortem. Add a bats fixture: a merged PR with `tests-out-of-band` + a test-file add must NOT produce an `owed` line; the same PR without the test add MUST. Est ~1 h. Cross-ref: PR #991, postmortems.md 2026-06-08; sibling false-positive fix 2026-05-23 (revert subject-match).
   Recurrence: 2026-06-09 — #1062/#1049/#1046 again merged with a moot `tests-out-of-band` (Test-delta gate SUCCESS on the merge head; override non-load-bearing). The broader rollup-scoping fix `postmortem-owed-overreports-nonblocking-and-cancelled-twins` (P1, top of this file) subsumes the terminal-state half of this entry; keep this one for the test-delta-presence half.
   Status: applied (2026-06-11) — `postmortem-owed.sh` now drops moot (non-load-bearing) override parts before emitting: `filter_moot_overrides` keeps every `red-check:` part + only load-bearing `override:` parts. `tests-out-of-band` is moot iff Test-delta gate is terminal-SUCCESS AND the diff carried a `*.test.cpp` delta (the entry's two-part condition); perf-/coverage-out-of-band moot iff their gate passed. Applies to the LIVE-fallback path ONLY: the snapshot path is the lossless authority and is NOT moot-filtered (re-judging a snapshotted override against the lossy live rollup could drop a real load-bearing override that healed green post-merge — code-review HIGH). Bats: moot tests-/perf-out-of-band (live) → 0 owed; load-bearing (gate FAILURE, or SUCCESS-but-no-test-delta) → owed; snapshot override + green live rollup → still owed. CAVEAT — precise snapshot-path moot detection needs the downgraded check recorded IN the snapshot (the watcher currently writes redChecks=[] for override merges), i.e. the deferred `mandatory-merge-snapshot-on-override-merge` item; until that lands a snapshotted override always flags (errs toward a spurious nudge, never a miss). Shipped feat/postmortem-owed-cleanup. To be archived to applied.md on next triage drain.
   Last-reviewed: 2026-06-11
+
 - 2026-06-08 · orchestrator (tracker-result-migration) · [infra] · P2 — cpr (and 8 sibling) `FetchContent_Declare` missing `GIT_SUBMODULES ""` → every fresh-worktree / CI-cold-cache configure failed on the unconditional `git submodule update` (`git-sh-setup: file not found` under vcvars)
   Resolution: **applied by PR #1031** (merged 2026-06-08, build-doctor) — added `GIT_SUBMODULES ""` to all 9 git-based declares missing it (cpr/sqlitecpp/sol2/httplib/md4c/ghc_filesystem/glfw/whisper_cpp/imgui; `json` already had it → all 10 covered). Root cause was sharper than a `.gitmodules`-gated heuristic: FetchContent runs `git submodule update` UNCONDITIONALLY and crashes on `git-sh-setup` PATH resolution before any `.gitmodules` check, so the fix generalizes to every git declare on a cold cache. Verified by a forced fresh-clone into a temp `FETCHCONTENT_BASE_DIR` (zero submodule errors) + dual-target link + lint. Supersedes the workaround-only notes (configure-via-PowerShell / point `FETCHCONTENT_BASE_DIR` at the main tree) in the 2026-06-07 P2 "CMake fresh-configure" infra entry.
   Status: applied
@@ -1803,7 +1437,6 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: add a 6th rule to `test-shell-lint.sh` (or a shellcheck-driven check) flagging a top-level `var=$(... | head ...)` / `var=$(... | head ...)` assignment in a script that sets `pipefail` — recommend the pure-param-expansion or `{ producer || true; } | head` idiom. Lint itself + the existing scripts (grandfather current clean state). Est ~1-1.5 h incl. a fixture + bats case. Cross-ref: postmortems.md 2026-06-08, PR #995.
   Status: applied (2026-06-20 backlog deep-triage — verified resolved: PR #1420 — Rule 6 (SHELL_LINT_PIPEFAIL_HEAD) live in test-shell-lint.sh, invoked in run loop)
   Last-reviewed: 2026-06-08
-
 
 - 2026-06-08 · build-doctor · [debt] · P2 — Sync layer is ImGui-header-coupled, blocking it from the Linux TSan subset (layering smell)
   Details: `Source/Core/src/Sync/TicketSyncService.cpp` calls `SmatchetToastManager::Instance().Push(...)` directly (lines 380-549), and `Source/Core/include/Ui/SmatchetToast.h` `#include`s `<imgui.h>`. So a background sync/threading TU transitively requires ImGui at both compile (header) and link (Toast's `Render()` pulls `ImGui::*` symbols). Surfaced standing up hardening #10's TSan Linux subset (ninja-tsan-linux / `SmatchetTsanTests`): the `GridLiveContext` → `TicketSyncService` path — the richest real-race surface (atomic `Backend` slot swaps, latched strong handles) — cannot link into the headless ImGui-free TSan target without dragging `ImGuiLib` (→ GLFW/X11/OpenGL on the Linux runner). The MVP subset shipped only the decoupled threading TUs (LocalCacheManager SQLite cache + Pure units). Architecture smell independent of TSan: a worker thread reaching into a UI singleton inverts the UI→service dependency direction.
@@ -1852,36 +1485,43 @@ before push. Archive to `applied.md` on the next sweep.
   Resolution: **partially-applied — PR #1385 (draft, pending CI-green Perf PR-fast).** Diagnosis corrected the filed framing: live CI snapshots (run 27769908646) show the gate trips ONLY on `cell-edit-burst`, a ONE-FRAME scenario — its sample ring held only the bootstrap frames between perf.reset and the single measured frame, so its p99 was pure warmup (`SmatchetUI::Draw` ~12 ms, `drawEnsureCatalogAndInitialSync` ~9 ms, steady max 0.0002 ms). The 600-frame scenarios (idle / priority-grid-scroll / ai-chat-history-render / side-by-side-2-grid / concurrent-sync) wrap their 256-cap ring clean and already report ~0.5 ms p99 — left untouched (minimal diff). Fix is UNIFORM + runner-level: `IScenario::WarmupFrames()` (virtual, default 0 = no behaviour change, incl. the ten scenarios that `Reset()` in OnStart) + `ScenarioRunner::Tick` calls `UiPerfMonitor::Reset()` once after `WarmupFrames()` frames so the rings feeding `ComputeP99` hold only steady-state; `cell-edit-burst` opts in with warmup(64)+steady(256) frames (args, for CI recalibration). Forced-spike doctest (`tests/Core/UiPerfMonitorWarmup.test.cpp`, real Record/Reset/GetLastFrameRows path) proves a REAL steady-state population above the ceiling STILL trips p99 (anti-defang) + first-N warmup samples absent from the post-reset ring. Local run: cell-edit-burst `SmatchetUI::Draw` p99 0.297 ms / sync 0.0008 ms — spikes gone. **SHIPPED + CI-CONFIRMED (2026-06-18, #1385 merged `504414cd`):** Perf PR-fast went GREEN on the PR head with NO per-scenario override, so the CI-only `cell-edit-burst` `p99_abs_ceiling_ms=15.0` override was REMOVED from `regression-policy.json` (cell-edit-burst measures ~0.3 ms p99 on the steady-state window, clearing the global 10.0 ms floor; the override would only have masked a future real regression). RECONCILED the original misdiagnosis: the deferred verify-on-real-HW plan (`docs/plans/deferred/cell-edit-burst-p99-verify.md`) is marked `resolved` and Issue #973 closed as not-a-product-bug — no real-GPU datapoint is owed because the >10 ms steady-state edit cost never existed (it was cold-start pollution). CodeRabbit signed-overflow note fixed (warmup/steady clamped to 1e6). Removes the routine need for `perf-out-of-band` on perf-relevant PRs (the original gate-escape motivation). Cross-ref: PR #1385, Issue #973, postmortems.md 2026-06-07 PR #963.
   Status: applied (2026-06-18, #1385 merged `504414cd` — warmup-frame exclusion shipped + Perf PR-fast green WITHOUT a per-scenario override; cell-edit-burst 15 ms override removed; Issue #973 + deferred verify-on-real-HW plan resolved as a cold-start misdiagnosis)
   Last-reviewed: 2026-06-18
+
 - 2026-06-07 · orchestrator · [tooling] · P1 — `mandatory-merge-snapshot-on-override-merge`: override-label merges leave no auditable record of what they bypassed (preventing gate from postmortems.md 2026-06-07 PR #966)
   Details: PR #966 merged with `tests-out-of-band` + `perf-out-of-band` but no `merge-snapshots.jsonl` line was written, so the specific red checks it bypassed are unrecoverable (post-merge re-runs overwrote the live statusCheckRollup; the test masked by `tests-out-of-band` is now unknown). ADR-0017's lossless snapshot ledger is the intended source of truth for postmortem-owed trigger 1, but nothing ENFORCES that an override-downgraded merge writes it, so override merges silently fall back to label-only detection with zero per-check audit.
   Concrete next action: (1) the 3 merge actors (orchestrator `handle_pass`, git-janitor, merge-watcher) append the ADR-0017 snapshot line BEFORE any override-label merge, failing the merge if the append fails; (2) a postmortem-owed (or post-merge CI) check that WARNs when a develop merge commit's PR carried an override label but has no matching `merge-snapshots.jsonl` line. Est ~2h incl. a bats case. Cross-ref: PR #966, ADR-0017, postmortems.md 2026-06-07 #966; complements `p99-gate-warmup-frame-exclusion` (P1) which removes the routine need for `perf-out-of-band`.
   Status: applied (2026-06-13, feat/mandatory-merge-snapshot-override) — the override-merge path now writes a lossless ledger row recording WHAT it bypassed. No schema bump needed (the v1 `redChecks`/`overrideLabels` fields already reserved this case). `merge-gates.sh` emits a PASS-only `GATE_SNAPSHOT cr_override=<0|1> downgraded=<csv>` line naming the checks an override turned FAIL→WARN (the same `$downgraded` the GATE_FILTER computed — no forked logic) + a load-bearing-cr flag; `merge-watcher.py` parses it (`_parse_gate_snapshot`), threads it through `handle_pass(…, gate_snapshot=)` into `_append_merge_snapshot`, which records the downgraded CI names + the literal `CodeRabbit` (cr-out-of-band) in `redChecks`. A clean merge writes `redChecks=[]` so `postmortem-owed.sh`'s `snapshot_trigger` can finally self-distinguish a moot override from a load-bearing one on the snapshot path (unblocks the CAVEAT in `postmortem-owed-moot-override-false-positive`). Tests: merge-gates GATE_SNAPSHOT assertions (tests-/perf-out-of-band name the bypassed check; cr-out-of-band sets cr_override=1; clean pass emits empty downgraded + no cr_override=1) + merge-watcher bats (`_parse_gate_snapshot` unit; override `handle_pass` writes redChecks naming bypassed checks; clean merge writes empty redChecks, single row, no double-write). ADR-0017 consequences updated. DEFERRED: part (2) the post-merge CI WARN-when-override-without-snapshot check, AND the orchestrator safe-admin-merge writer — coordinated with the sibling `feat/safe-admin-merge-guard` PR which owns the admin-merge hook point (until it lands, an admin-merged override falls back to postmortem-owed's live-query path; the watcher path — the common autonomous merge actor — is fully covered). git-janitor uses the watcher's merge path. See § Deviations / backlog follow-up.
   Last-reviewed: 2026-06-13
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `perf-pr-fast.yml` reads override labels from the frozen event payload — label-then-rerun cannot downgrade (PR #966)
   Details: The Gate-decision step parses `github.event.pull_request.labels`, which is snapshotted at the triggering `pull_request` event. Applying `perf-out-of-band` AFTER a red run and re-running replays the old payload → `override=false` → still red; the only way through is an empty commit to mint a fresh event (done on #966). `coverage-gate.yml` doesn't have this trap (its label check queries live data), so the two named-downgrade gates behave inconsistently for the exact same operator flow.
   Concrete next action: in `perf-pr-fast.yml` Gate decision, replace the event-payload parse with a live API query (`gh api repos/$R/issues/$PR/labels --jq '.[].name'`), mirroring coverage-gate; one-line behavioural note in `merge-gates.md` § labels. Est ~20 min.
   Status: applied (2026-06-12, feat/gate-tooling-hardening — `perf-pr-fast.yml` Gate decision now reads the label via a LIVE `gh pr view "$PR_NUMBER" --json labels --jq '.labels[].name'` query (mirrors `coverage-gate.yml`), and the workflow gained `types: [opened, synchronize, reopened, labeled, unlabeled]` so applying `perf-out-of-band` after a red run re-triggers the gate without an empty commit. Both halves of the fix. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `test-plan-index.sh --fix` silently emits `—` for every date when python is off PATH, poisoning the committed INDEX
   Details: PR #953 hit two consecutive "Doc anchors + agent contract" / "Auto-sync plan INDEX" failures. Failure 1 = the known merge-ref race (develop gained shipped plans after the branch's regen; now self-healing via the `PLAN_INDEX_PAT` secret, added 2026-06-07). Failure 2 was self-inflicted by the remedy: the re-regen ran `bash agents/scripts/core/test-plan-index.sh --fix` WITHOUT python on PATH, and the script silently wrote `—` in the Approx.-date column for all 102 rows — locally it "passed" (`Passed: 1 Failed: 0`), CI regenerated with real dates and flagged 204-line drift. Classic prose-promise: the date extraction degrades silently instead of failing the run.
   Concrete next action: in `test-plan-index.sh`, when the date-extraction helper (python) is unavailable, either (a) hard-fail with a "python not on PATH — install or prefix PATH" message (preferred — matches gate-don't-trust), or (b) keep going but exit non-zero + print a WARN naming every row that got `—`. Plus a selftest case asserting the no-python path fails. Est ~30 min.
   Status: applied (2026-06-12 — verified ALREADY-FIXED (option a), backlog was stale. `test-plan-index.sh` probes `python3`/`python`/`py` (each EXECUTED, not just `command -v` — the Windows Store-alias stub passes `command -v` but exits 49) and `[ -z "$PY" ] && { echo "test-plan-index: python not found" >&2; exit 2; }` hard-fails BEFORE any `--fix` regen, so the no-python path can no longer silently write `—` for every row. A genuinely date-less row still legitimately renders `—` (per-row `return d or "—"`), which is correct. Residue not pursued: a dedicated `--selftest` asserting the no-python exit-2 (the probe already fail-closes). To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `postmortem-owed-direct-push-blindspot`: `postmortem-owed.sh` can't see PR-less direct pushes to develop (preventing gate from postmortems.md 2026-06-07 direct-push 93c63d0f)
   Details: The escape detector's three triggers all key on a merged PR (non-SUCCESS check on a merged head, override label, `Revert`) or the pr+mergeCommit snapshot ledger. A commit pushed straight to develop via admin bypass (e.g. `93c63d0f`, code-review `opus/high`) creates no PR + writes no `merge-snapshots.jsonl` line → structurally invisible to the nudge, even though a direct push skips review AND all 6 required CI checks (the highest-trust escape). The local guard hooks that should stop it (`guard-head-drift`, `guard-shared-tree`) are env-overridable (`SMATCHET_ACK_BRANCH_DRIFT` / `SMATCHET_ALLOW_SHARED_SWITCH`) with no audit trail.
   Concrete next action: add a 4th trigger to `postmortem-owed.sh` — in the develop window, flag any non-merge commit whose subject lacks `(#N)` AND that `gh pr list --search <sha> --state merged` does not back → "PR-less direct push, owes postmortem", deduped by SHA. The subject-suffix half works offline (`git log`) so the detector degrades gracefully when `gh` is down. Optional hook-side: `guard-head-drift`/`guard-shared-tree` append `{sha, override, branch}` to a committed audit log when an override fires, giving a second source. Est ~1h incl. a bats case in `tests/bats/`.
   Status: applied (2026-06-11) — trigger 4 added to `postmortem-owed.sh`: a no-`(#N)` non-merge develop commit confirmed PR-less via `gh api repos/.../commits/{sha}/pulls == 0` flags as a direct push (the associated-PR endpoint is strictly more precise than the entry's suggested `gh pr list --search <sha>`, which false-matches any PR merely mentioning the sha — a deliberate deviation). Window-bounded (POSTMORTEM_DIRECTPUSH_SINCE, default 7 days — this repo carries ~240 historical direct pushes; a 30-day scan would flood) + suspect-cap (POSTMORTEM_DIRECTPUSH_MAX=40, logged when hit, no silent truncation) + known-mergeCommit shortcut (skips the gh call for PR-backed shas). Deduped by SHA via the new `has_sha_entry` (matches the real ledger phrasings — `` `<sha>` `` / "direct push <sha>" — not just `commit <sha>`). Bats: direct push (pulls=0) → owed; `(#N)` / PR-backed / known-mergeCommit / ledger-deduped → 0 owed. The optional hook-side audit-log half NOT done (separate, lower value). Shipped feat/postmortem-owed-cleanup. To be archived to applied.md on next triage drain.
   Last-reviewed: 2026-06-11
+
 - 2026-06-07 · orchestrator · [tooling] · P2 — `oob-label-implementation-lint`: nothing validates that a documented `*-out-of-band` escape label has an implementation (preventing gate from postmortems.md 2026-06-07 coverage prose-promise)
   Details: `coverage.yml` documented the `coverage-out-of-band` escape since the gate graduated to blocking (#834) but no code read the label — discovered only when #939 first needed it (unblocked mid-flight by #941). The class: an escape hatch specified in prose at gate-graduation time, never wired, never tested.
   Concrete next action: a self-test-style case (in `test-lint-rules.sh` or `test-docs.sh`) that extracts every `*-out-of-band` label name documented in `.github/workflows/*.yml` comments + `AGENTS.md` § Merge gates, and asserts each is matched by a non-comment implementation line (a `labels`-reading workflow step or a `merge-gates.sh` downgrade branch). Est ~45 min incl. fixtures.
   Status: applied (2026-06-12, feat/gate-tooling-hardening — `agents/scripts/core/test-oob-label-impl.sh`: discovers every `<prefix>-out-of-band` label name across `.github/workflows/*.yml` + `AGENTS.md` + `docs/agent-rules/merge-gates.md`, asserts each has a NON-comment implementation line in a workflow or `merge-gates.sh` (a documented-only label that no code reads FAILs). Enrolled in BOTH `scripts/dev/test-docs.sh` STEPS and `.github/workflows/doc-validation.yml` (required check), carries `--selftest` (asserts-failure) so the gate-selftests meta-gate covers it, `tests/bats/oob_label_impl.bats` (5 cases). Real tree: 4 labels all implemented. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-07
+
 - 2026-06-07 · orchestrator · [infra] · P1 — `bucket-lane-launch-smoke`: advisory (continue-on-error) exe-running CI lanes cannot distinguish dead-harness from flaky-tests (preventing gate from postmortems.md 2026-06-07 bucket-C/E)
   Details: bucket-C ran `Passed: 0  Failed: 3` / exit 1 with a green check for 2 weeks (#441 → #937) because Mesa provisioning copied only the thin `opengl32.dll` loader; every exe died at process start, and `continue-on-error: true` swallowed total harness death exactly like a flaky test. The lanes' entire purpose (visual/UI regression coverage) was silently void.
   Concrete next action: (1) add a NON-continue-on-error launch-smoke step after Mesa install and before each advisory bucket step in `build-and-test.yml` — run the freshly-provisioned exe once (`Smatchet.exe cmd app.version --spawn --yes`, ≤10 s) so "exe cannot start" hard-fails the job; (2) inside `test-screenshot-diff.sh` / the bucket-E driver, hard-exit when `Passed == 0 && Failed > 0` (a lane that passes nothing is broken, not flaky). Est ~45 min (two workflow steps + one bash guard + verify on a code PR).
   Status: applied (2026-06-13, fix/ci-gate-hardening-parity-bucketlane — both mechanisms shipped. (1) A NON-`continue-on-error` "Launch-smoke — provisioned exe must boot (Mesa GL)" step now runs `timeout 10 … cmd app.version --spawn --yes` after the Mesa-install step in BOTH `bucket-c-screenshot-diff` and `bucket-e-ui-tests` (`build-and-test.yml`); a boot failure reds the job loudly. (2) Driver-side broken-lane guard: `scripts/dev/test-screenshot-diff.sh` now exits a DISTINCT code 3 (vs 1 for ordinary diff-fail) + emits `::error::` + writes a `status=broken passed=0 failed=N` sentinel to `SMATCHET_LANE_STATUS_FILE` when `Passed==0 && Failed>0`; bucket-E parses its scenario JSON envelope's `data.{passed,failed}` and writes the same sentinel. A SEPARATE non-advisory "Lane-integrity — … did not pass-nothing" step in each lane reads the sentinel and hard-fails OUTSIDE the `continue-on-error` mask (missing sentinel = fail-closed). Tests: `tests/bats/bucket_lane_launch_smoke.bats` (4 cases: broken→exit3+sentinel, negative-test, healthy-bootstrap-ok, exact counts). To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-13
+
 - 2026-06-07 · grid-engine (via orchestrator) · [debt] · P2 — `OfflineQueueService` replay workers capture raw `deps_.Reader()`/`Mutations()` pointers across async (same use-after-free class fixed twice on PR #945)
   Details: The #945 ADR-0012 audit fixed two raw-backend-pointer-across-async instances in AppController and found this third, PRE-EXISTING one in `Source/Core/src/Sync/OfflineQueueService.cpp`: replay workers capture raw `ITrackerIssueReader*`/`ITrackerIssueMutations*` (subobjects of the swappable backend) into background tasks. A backend swap mid-replay dangles them — Pillar-3 class. Out of #945's and 1c's scope because the sound fix changes `IOfflineQueueDeps` (latched `shared_ptr` accessors instead of raw subobject getters). Multi-grid Slice 3 (N live contexts, per-context swap) RAISES the likelihood — fix before or with S3.
   Concrete next action: widen `IOfflineQueueDeps` to expose latched reader/mutations handles, derive subobjects inside the worker from the strong handle; mirror in `FakeOfflineQueueDeps.h`; bucket-A test: swap-during-replay does not crash + replay either completes against the latched backend or no-matches.
@@ -1918,7 +1558,6 @@ before push. Archive to `applied.md` on the next sweep.
   Update (2026-06-19, Cluster-C reconcile): SUPERSEDED. The specific #938 instance + sibling were fixed inline by PR #995. The general class is now caught by `test-shell-lint.sh` Rule 6 (`pipefail var=$(...|head)` SIGPIPE/truncation guard) added in PR #1420 (this session), which also swept + fixed 3 remaining latent in-tree instances. This P3 audit-remaining entry folds into that rule. Cross-ref: PR #995, #1420.
   Status: applied (2026-06-20 backlog deep-triage — verified resolved: PR #1420 — superseded by Rule 6 (entry's own Update self-declared SUPERSEDED))
   Last-reviewed: 2026-06-19
-
 
 - 2026-06-07 · test-author (Slice-2 agent) · [tooling] · P2 — bucket-E failures are blind: spawned-child stdout is reliably 0 bytes on Windows, so a failing UI test reports nothing
   Details: When a bucket-E run fails under the spawned-child runner on Windows, the child's stdout reliably comes back 0 bytes — the test engine's per-test log (which names the failing step/assertion) never reaches the caller, so every failure triage starts blind. The per-test output already exists in memory in the engine (`ctx->Test->Output.Log`); it just has no file egress. The `ui_test.run` command (`Source/Core/src/Commands/Builtin/BuiltinCommands_UiTest.cpp:27`) currently exposes no output-log parameter.
@@ -2007,21 +1646,25 @@ before push. Archive to `applied.md` on the next sweep.
   Recurrence (escalates P2→P1): 2026-06-09 — the close-gate-gaps burst (#1046, #1049, #1052, #1053, #1056–#1062, #1064, #1072 — ~13 PRs opened back-to-back) again exhausted CodeRabbit's quota, forcing `cr-out-of-band` on all 13 (CR rate-limit auto-comment on #1046 and #1052). Second confirmed occurrence of the exact class → escalated to P1; the prose-only PR-batching rule has now failed twice and is the dominant source of the 2026-06-09 postmortem-owed batch.
   Status: applied (2026-06-12, feat/gate-tooling-hardening — `scripts/dev/pr-burst-guard.sh` ships the cheapest-form check: counts the author's open PRs (`gh pr list --author @me --state open --json number --jq length`) vs `SMATCHET_PR_BURST_THRESHOLD` (default 4), WARNs with the batch-onto-one-branch hint, advisory by default / `--strict` for a hard stop, SKIPs cleanly when gh/offline. Wired into `pre-ship.sh` as a non-blocking advisory on the pre-push path; `tests/bats/pr_burst_guard.bats` (6 cases) + `--selftest`. The ship-loop PR-open auto-pause is the deferred richer form. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-06 · orchestrator · [infra] · P1 — `test-delta-test-light-exemption`: the Test-delta gate fires on legitimately untestable correctness diffs → recurring `tests-out-of-band` (preventing gate from postmortems.md 2026-06-06; **escalated P2→P1 2026-06-09** — recurrence now ≥10 PRs across ≥4 unrelated work-streams and the carve-out is still unapplied, so every instance keeps paying the override + postmortem tax)
   Details: `Test-delta gate` (`scripts/dev/coverage-delta-gate.sh`) keys purely on coverage / test-file delta, so a correctness change with **no new runtime surface** can never satisfy it and always trips RED → waved through with `tests-out-of-band`. Recurrence across unrelated work-streams shows the gate's shape is wrong, not the PRs: #907 (a compile-time `static_assert` — the assertion *is* the test, enforced by the build), #906 (a `LOG_*`-only swallow→log fix with no unit-testable seam), #892/#894/#896/#897/#898 (funcsize decompositions — pure relocations), #1016 (behaviour-preserving pImpl/header-lift refactor), #1021 (cross-compile-only `static_cast` + Bionic-only `#else` arm), and **#1083 (a dual-target `#ifndef SMATCHET_EMBEDDED_IN_UNREAL` compile-guard added around an existing function def — the guarded fn is byte-identical on the desktop test target; the guard only stops it compiling on DX12 to silence `-Wunused-function`)**, and **#1096 (off-thread the toolbar per-tracker append disk read — behaviour-preserving perf refactor, logic moved to a worker, existing suite green; postmortems.md 2026-06-10)**. Each override also owes a postmortem, compounding the noise.
   Concrete next action: extend `coverage-delta-gate.sh` to auto-PASS (no override, no postmortem) a diff whose product-code change is provably compile-time-tested / no-new-runtime-surface — classifier for: `static_assert`-only, logging-only (`LOG_*` additions / comment-marker on a catch), comment/marker-only, CMake-only, **and preprocessor-guard-only (a diff that only adds/moves `#if`/`#ifdef`/`#ifndef`/`#else`/`#endif` lines around otherwise-unchanged code — e.g. wrapping an existing def in `#ifndef SMATCHET_EMBEDDED_IN_UNREAL` — changes which target compiles a TU, adds no new runtime surface the desktop test binary can assert)**. Gate stays RED for real new uncovered runtime logic. Pairs with the `pr-burst-guard` entry above. Estimated ~1-2h (classifier + bats fixtures for fires-on-real / passes-on-light, incl. a preprocessor-guard-only fixture).
   Status: applied (2026-06-12 — verified ALREADY-SHIPPED, backlog was stale. `scripts/dev/coverage-delta-gate.sh` `_classify_diff` implements every named exemption: comment/marker-only, logging-only (`LOG_*`), `static_assert`-only, include/using-only, preprocessor-guard (`#if`/`#elif`/`#else`/`#endif`), catch-scaffold (swallow→log), build-only — with both-direction `--selftest` fixtures (incl. the `#1082` preprocessor-guard-around-existing-code EXEMPT case and the `#918` real-surface FALLTHROUGH cases), all green. The remaining residue — the BEHAVIOUR-PRESERVING-REFACTOR / pure-relocation class (#1016/#1083/#1096) + the identity-cast-on-desktop-side (#1021) — is harder-to-classify-mechanically and is tracked under the separate `coverage-gate-platform-else-arm-exemption` entry in tooling.md (residue (a), bumped P3→P2). To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-06 · test-rig · [infra] · P2 — Worktree agent builds miss the FetchContent cache → configure fails until redirected
   Details: An `isolation: worktree` subagent (this session, #31/#32 test-rig) found `cmake --preset ninja-test-msvc` fails in `.claude/worktrees/<id>/` because the worktree's `.fetchcontent-src` is empty (doctest/imgui/curl/etc. absent) — the deps live only in the main repo's cache. The agent had to pass `-DFETCHCONTENT_BASE_DIR=C:/Development/Smatchet/.fetchcontent-src` (the main-repo cache) to configure at all. Every worktree-isolated build agent hits this; it's pure friction (a failed configure + a retry) and unobvious.
   Concrete next action: document the worktree-build recipe — "pass `-DFETCHCONTENT_BASE_DIR=<main-repo>/.fetchcontent-src` on the first configure in a worktree" — in the worktree-init / delegation procedure (AGENTS.md § delegation or process-rules.md § worktree-absolute-path discipline), and pre-seed it in the orchestrator's worktree-agent prompt boilerplate so agents don't rediscover it. Estimated 15 min. (Already mitigated ad-hoc by including the flag in this session's later worktree-agent prompts.)
   Status: applied (2026-06-12, feat/build-infra-followups — documented the recipe in `docs/agent-rules/build.md` § Fresh-worktree configure pitfalls #6 ("Worktree-isolated build agents: redirect FetchContent at the shared cache to skip the re-fetch"), and pre-seeded it in the orchestrator's worktree-build delegation boilerplate via the new `docs/agent-rules/delegation.md` packet bullet (pairs with the #5 no-reconfigure clause). Framing updated for #1166: now that `with-msvc-env.sh` restores `GIT_EXEC_PATH`, a fresh worktree cold-configures on its own (submodule deps clone cleanly), so the `-DFETCHCONTENT_BASE_DIR=<main-repo>/.fetchcontent-src` redirect is the skip-the-refetch OPTIMIZATION, no longer required for correctness — superseding this entry's original "configure fails until redirected" premise. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-06 · orchestrator · [infra] · P1 — merge-gates "never merge past ANY red" (prose) ⇄ "non-required → pass" (tested impl) contradiction
   Details: AGENTS.md § Merge gates says "Never merge past ANY red check — required or not," but `merge-gates.sh` GATE_FILTER (line 345, `$failing` over `$req` only) + its bats contract (`tests/fixtures/merge_gates_pass.json` carries a `non-required-fail` check and "all gates pass → return 0" asserts PASS) DELIBERATELY ignore non-required checks. GitHub `--auto` does the same. So the watcher auto-merged PR #923 past a RED non-required `Coverage (windows-2022 + OpenCppCoverage)` check (whose step is named "blocking; --threshold 65" — intended to block but configured non-required). Full RCA: postmortems.md 2026-06-06 "PR #923 auto-merged past a RED non-required Coverage check".
   Concrete next action: DONE — maintainer chose **option B**. `merge-gates.sh` `$failing` now computes over all `$ctx` (was `$req`-only) and blocks a FAILING check when it is required OR (non-required AND name matches the curated allow-list `Coverage|Sanitizer|Bucket-` AND not "advisory"). A non-allow-listed non-required red (the `non-required-fail` fixture, `Duplication scanner (advisory)`) still passes — the prior "non-required → pass" contract is preserved (the "all gates pass → return 0" test stays green; verified via a direct jq predicate test + the new bats case "non-required allow-listed Coverage FAILURE blocks"). The allow-list regex is the single extension point to gate more checks (Pillar-2 / High-integrity) later. This hardens the watcher's auto-merge path; the orchestrator's strict finisher already blocked on all non-Test-delta reds.
   Status: applied
   Last-reviewed: 2026-06-06
+
 - 2026-06-06 · orchestrator · [tooling] · P2 — `guard-head-drift.sh` blocks an integration-tree-rooted session from committing into a worktree it created (no clean mid-session override); PowerShell tool bypassed the guard entirely
   Resolution: **applied 2026-06-07** (option (a) + the PowerShell gap, branch `feat/guard-head-drift-fix`) — `docs/harness/claude-code/hooks/guard-head-drift.sh` gained `all_git_ops_target_safe_worktree()`: a `git -C <path> commit` (and, when drifted, any -C-targeted HEAD-moving op) is ALLOWED when every matched invocation's `-C` target is a linked worktree (`.git` is a file) on a non-protected branch; -C-less / integration-target / protected-branch / mixed compounds stay denied. The hook's case now matches `Bash|PowerShell`, and `settings.json.tmpl` adds `PowerShell` matcher groups (separate groups, not a `Bash|PowerShell` rename — the additive `sync-settings-hooks.sh` keys on the matcher string and a rename would double-fire deployed files) for guard-head-drift + guard-shared-tree + clear-tree-dirty (PreToolUse) and autoregister-pr + resync-head-baseline (PostToolUse). Regression suite: `tests/bats/guard_head_drift.bats` (14 cases) + `agents/scripts/core/test-guard-head-drift-bats.sh` wrapper (test-all auto-enrolled). Option (c) note: relaunching via `nsc <slug>` remains the preferred flow; this fix removes the false-block when the orchestrator legitimately ships from a worktree it created mid-session. Cross-ref: PR #916, PR #936.
   Status: applied
@@ -2032,7 +1675,6 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: pick a commit path for an append-only ledger that respects branch protection — (a) the `git-janitor` end-of-session step batches accumulated working-tree snapshot lines into one small PR (cheap, periodic, keeps the file committed); (b) a dedicated low-friction push to a relaxed-protection ledger ref, merged on a schedule; or (c) if neither is worth it, downgrade ADR-0017 to "live-fallback-only" and delete the empty file + the `merge-snapshot-append.sh` write-site so the design matches reality. Decide (a)/(b)/(c) before re-asserting the ledger is authoritative anywhere. Est ~1-2 h for (a). Non-blocking — the fallback covers it.
   Status: applied (2026-06-20 backlog deep-triage — verified resolved: ledger now 115 rows on develop; git-janitor flush mechanism operating (PR #1435 et al.))
   Last-reviewed: 2026-06-06
-
 
 - 2026-06-06 · test-author · [tooling] · P3 — bucket-E inline-panel smoke recipe missing for New Issue Draft row and Offline Queue panel (plan #12 batch 2)
   Details: Two of the 8 data-dependent windows targeted by plan #12 (`SmatchetNewIssueDraftUi` inline row and Offline Queue panel) are not top-level `ImGui::Begin` windows — embedded inside `drawActiveProjectWindow` / `drawSecondaryWindowsTail`. The current bucket-E smoke pattern (`YieldUntil(WindowIsLive(...))`) cannot drive them without: (a) activating the fixture backend so tickets load, (b) setting `g_ui.newIssueDraftActive = true` + seeding `newIssueDraft`, (c) waiting until a draft-row item renders via `ctx->ItemExists`. The Attachment Preview (window 6) needs a helper to push a synthetic `AttachmentCollectionRequest` into `g_ui.attachmentCollectionQueue` before the window guard passes.
@@ -2063,40 +1705,47 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: SHIPPED — `docs/adr/0017-merge-time-snapshot-ledger.md` + `merge-snapshot-append.sh` + the `handle_pass()` / `postmortem-owed.sh` / `ship-loops.md` wiring landed per the plan (now under `docs/plans/shipped/`).
   Status: applied (2026-06-05) — to be archived to `applied.md` on next triage drain.
   Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [tooling] · P1 — no local hard-stop on direct `develop` push; branch-state drift in long multi-PR sessions bypasses the PR/CI/CR gate
   Details: A one-line docs link fix direct-pushed to `develop` (commit `a678741f`) with no PR/CI/CodeRabbit, because the orchestrator was on the `develop` branch (left there by a `git checkout develop` used to start merge-gate pollers) and `git commit`ed without re-checking `git branch --show-current`; `git pull --no-edit` + `git push` then sent `develop -> develop`. Branch protection (strict + required checks) did NOT block it — the push used the owner's admin credentials, which bypass protection. Content was benign + locally-verified (no breakage), but the gate was bypassed. Gate-escape postmortem filed (`docs/self-improvement/postmortems.md`, 2026-06-05). The recurring trigger is the pollers' `git checkout develop` leaving the working tree on `develop` mid-session.
   Concrete next action: add a git `pre-push` hook (installed by `setup-harness.sh`) that rejects a `develop`/`main` -> same-name push unless `SMATCHET_ALLOW_DEVELOP_PUSH=1` is set — a local hard stop that admin credentials can't silently bypass. Pair with an orchestrator-discipline line in `delegation.md` / `process-rules.md`: verify `git branch --show-current` immediately before every `git commit` in a multi-branch session. ~1 h (hook + bats + doc).
   Recurrence: 2026-06-11 — `postmortem-owed.sh` trigger 4 (new direct-push detector) surfaced two MORE PR-less direct pushes to develop: `578d21ea` (2026-06-04) + `90cfd5d6` (2026-06-05), both `docs(backlog)` commits, both `commits/{sha}/pulls==0`. Same class as `a678741f` → ≥3 instances now; the filed-but-unimplemented hook is the dominant repeat-offender of the direct-push escape class. **P2 → P1.** (postmortems.md 2026-06-11.)
   Status: applied (2026-06-12, feat/direct-push-guard — `scripts/git-hooks/pre-push` (already wired via `setup-harness.sh` `core.hooksPath`) gained hard-stop (A): it parses the pre-push stdin ref updates and REFUSES any non-delete update whose destination ref is `refs/heads/develop` or `refs/heads/main` (catches `git push`, `HEAD:develop`, `local:develop` — destination-keyed, more robust than the current-branch check that the prior hook merely SKIPPED on). Override `SMATCHET_ALLOW_DEVELOP_PUSH=1` (admin creds can't silently bypass — the hook runs before the network push). Branch DELETEs (local_sha all-zeros) are ignored. The pre-existing merged-PR refusal (B) is unchanged. `tests/bats/pre_push_guard.bats` (6: develop/main refuse, HEAD:develop refuse, override, feature allow, delete ignore) via `test-pre-push-guard-bats.sh` (auto-enrolled). Residual: the orchestrator-discipline `git branch --show-current`-before-commit doc line (delegation.md/process-rules.md) — the hook is the structural stop; the doc note is cheap belt-and-suspenders, deferred. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-05 · orchestrator · [tooling] · P2 — `lint-cpp-drain.sh` Stop-hook re-flags PRE-EXISTING cppcheck findings on session-touched files (not delta-aware like the merge gate)
   Details: The end-of-turn deferred-lint drain runs cppcheck WHOLE-FILE (`lint_run_cppcheck`, `docs/harness/claude-code/hooks/lint-cpp-common.sh:100-113` — no `--diff`/base comparison), so it surfaces PRE-EXISTING findings (`catch(...) without LOG_`, `variableScope`, `useStlAlgorithm`, `funcArgNamesDifferent`) on any file touched THIS SESSION even when the finding is in a function the edit never changed. The merge-gate delta-lint (`test-lint-rules.sh --diff origin/develop`) GRANDFATHERS pre-existing; the drain doesn't, so it nags "fix before responding" on code the author shouldn't churn (recurred ~5× this session on `AppController_CatalogAndFieldEdit.cpp` + the Whisper/AI sweep files). Net: forces either unrelated-code churn or repeated nudge-noise that can't be cleared without churning.
   Concrete next action: make the drain delta-aware — only emit a finding whose `{line}` falls inside the session's actual diff hunks for that file (vs `origin/develop` or the file's pre-touch blob), mirroring the delta-gate's grandfathering. Cheapest impl: intersect cppcheck `{line}` against `git diff` hunk ranges in `lint-cpp-common.sh` before echoing.
   Resolution: **applied — feat/lint-drain-delta-aware** (same PR as the sibling :257 branch-unaware entry). Exactly the prescribed impl: `lint_filter_delta` intersects each cppcheck/clang-tidy finding's `:<line>:` against `lint_changed_lines` (the `git diff -U0 origin/develop` hunk ranges) before echoing; pre-existing findings in untouched functions are dropped, fail-open when no baseline. See :257 for the full mechanism + test.
   Status: applied
   Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [infra] · P2 — CI `autosync-plan-index` bot-commit never re-triggers required checks → silent stale-failure blocks plan PRs
   Details: `.github/workflows/doc-validation.yml`'s `autosync-plan-index` job regenerated `docs/plans/INDEX.md` via `test-plan-index.sh --fix` and pushed the fix back to the PR branch as `github-actions[bot]` using the default `GITHUB_TOKEN`. GitHub deliberately does NOT fire workflows for `GITHUB_TOKEN`-authored pushes (infinite-loop safeguard), so the bot commit became the new PR head with NO required check re-run on it — the rollup froze showing the PRE-sync `test-plan-index` FAILURE, blocking merge until a human re-pushed. The job's own header comment ("idempotent re-trigger → no loop") was written on the false premise that the bot push re-triggers CI. Likely never worked as designed — every firing stranded the PR. Hit concretely on #873 (the agent hand-authored an INDEX row that drifted from `--fix` output → autosync fired → stale-failure → manual re-push to clear).
   Concrete next action: FIXED this PR (build-doctor) — the job now uses `token: ${{ secrets.PLAN_INDEX_PAT || github.token }}` on checkout + a `PAT_CONFIGURED` env gate: with the PAT the auto-commit is PAT-authored and DOES re-trigger CI (convenience preserved); without it (default today) the job no longer pushes a silent bot commit — it prints the INDEX drift + remedy and `exit 1`, surfacing a CORRECT failure on the current head so the author re-pushes `--fix` as themselves (re-triggers cleanly). No path leaves a silent stale-failure; fork guard untouched; YAML verified. Residual (optional): add a repo secret `PLAN_INDEX_PAT` (fine-grained PAT, `Contents: Read and write`) to re-enable the auto-fix convenience.
   Status: applied
   Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [infra] · P1 — required-context ⇄ unconditional-workflow parity selftest (path-filtered required check = deadlock)
   Details: `Doc anchors + agent contract` was a *required* branch-protection context (`project.config.json` § `branch_protection.required_contexts`) whose workflow `doc-validation.yml` was `paths:`-filtered — so a PR touching none of the filtered paths never produced the context and GitHub held it `BLOCKED` forever. Deadlocked #880/#881/#882 (pure product/test diffs). Immediate fix shipped in PR #884 (workflow runs on every PR + self-gates). But nothing *prevents* re-introducing a path-filtered required context: the next required check added with a `paths:` filter recreates the deadlock. Full RCA: `docs/self-improvement/postmortems.md` 2026-06-05 "required-but-path-filtered check".
   Concrete next action: add a selftest (extend `test-agent-contract.sh` or a new `agents/scripts/core/test-required-context-parity.sh`, auto-enrolled by the doc-validation job) that, for each `branch_protection.required_contexts` entry, resolves the workflow + job emitting that check name and asserts its `on.pull_request` has NO `paths:`/`paths-ignore:` filter (or the job carries a documented internal self-gate marker). Fail closed on an unresolvable context name. Estimated ~1.5 h (yaml parse + name→job map + the marker convention).
   Status: applied (2026-06-13, fix/ci-gate-hardening-parity-bucketlane — new gate `agents/scripts/core/test-required-context-parity.sh` ships, built on the shared name→workflow resolution map `agents/scripts/core/lib/ci-check-resolve.sh` (Python-only `yaml.safe_load`, no `yq` CI dep — the map is built ONCE and consumed by both this gate and the future allow-list-present item). For each `branch_protection.required_contexts` entry it resolves the emitting workflow+job and FAILS CLOSED if unresolvable; otherwise asserts the workflow's `on.pull_request` has NO `paths:`/`paths-ignore:` filter UNLESS the workflow carries the documented self-gate marker `# ci-required-context: self-gated` (the #884 shape). `--selftest` exercises clean-passes / path-filtered-fails / unresolvable-fails / self-gate-marked-passes (carries the `# selftest: asserts-failure` marker → auto-discovered by `test-gate-selftests`). Auto-enrolled: a run step in `doc-validation.yml` (with `pip install pyyaml`) + the `paths:` watch-list, and the `scripts/dev/test-all.sh` `test-*.sh` glob picks up the no-arg `--check` mode. Live tree PASSES — all 6 required contexts (incl. the em-dash `Windows + MSVC (Smatchet light — …)`) resolve to unconditional workflows. Tests: `tests/bats/required_context_parity.bats` (9 cases) + fixtures `tests/fixtures/ci_parity_*`. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-13
+
 - 2026-06-05 · orchestrator · [process] · P2 — `agent-size-reduction` is unblocked (its #868 gate merged) but tracked only as an `active/` plan stub — the exact "trigger dies in a plan" loss the triggered-follow-up field fixes
   Details: `docs/plans/shipped/agent-size-reduction.md` shrinks `debug-detective` (418→316, stays grandfathered) / `test-author` (268→130) / `coderabbit-triage` (214→183) via skill extraction (new `test-authoring` + `coderabbit-handoff` skills). Its trigger fired the SessionStart nudge, which surfaced the unblocked work — this entry is now stamped `fired=` (dogfooding `triggered-followup-tracking` Decision 4 end-to-end: trigger authored → fired → acted → stamped).
   Concrete next action: DONE — test-author + coderabbit-triage under cap; debug-detective at its irreducible judgment floor (316, grandfathered; a deeper `debug-reporting` split is the only path lower, deliberately not taken). `agent-size-baseline.md` regenerated (test-author dropped off; debug-detective 733→316).
   Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=1; action=start docs/plans/shipped/agent-size-reduction.md (gate #868 merged — unblocked); baseline=3 agents over the 250 cap (419/268/215 lines), zero headroom; fired=2026-06-05
   Status: applied (shrink shipped; debug-detective grandfathered at 316 is the accepted end-state)
   Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [process] · P3 — effectiveness measurement for `reduce-coderabbit-review-spend` is documented in the plan but NOT actionably tracked (will be forgotten once the plan archives to `shipped/`)
   Details: Both slices of `docs/plans/reduce-coderabbit-review-spend.md` shipped (#858 pre-first-push gate, #859 NONE-nudge-off-by-default). The plan's § Verification says "re-measure after ~10 PRs" against the baseline **3.2 heads/PR + 1.3 nudges/PR** (success = heads/PR trending < 2, nudges/PR → 0), but a `re-measure later` note buried in a soon-to-be-archived plan has no trigger and no owner — the measurement is the only thing that proves the two levers actually reduced CR spend, and nothing surfaces it. This entry is the trigger.
   Concrete next action: DONE 2026-06-05 — re-ran the audit over the last 10 merged PRs (#864–873); full table + conclusion in `docs/plans/reduce-coderabbit-review-spend.md` § Verification (actual). Result: **levers worked.** nudges/PR 1.3 → **0.80** (→ 0, Slice 2 working); distinct CR review passes **0.30/PR** (CR no longer re-reviews every push — 7/10 PRs drew zero passes). The head-SHA commit-count proxy stayed flat (3.2 → **3.00**, not < 2), but that proxy silently assumed "1 push = 1 CR auto-review" — the exact coupling Slices 1+2 broke — so post-levers it measures agentic *re-push count*, not CR spend (residual pushes = CR-fix + markdownlint + the CI auto-sync re-trigger bug fixed alongside in `infra.md`). Future audits should track *distinct CR review passes*, not commit count. Watch-item: 0.30 passes/PR is thin coverage — acceptable for an agentic repo (orchestrator self-review + delta-gates + CR-as-backstop), monitor that review-worthy PRs still draw a pass.
   Triggered-follow-up: when=pr-count:base=develop;since=2026-06-05;n=10; action=re-run the last-10-PRs CodeRabbit audit (heads/PR + nudges/PR) vs the reduce-CR baseline; baseline=3.2 heads/PR + 1.3 nudges/PR (success: heads/PR < 2, nudges/PR to 0); fired=2026-06-05
   Status: applied
   Last-reviewed: 2026-06-05
+
 - 2026-06-05 · orchestrator · [tooling] · P2 — `test-plan-index.sh --fix` (dev machine) emits a `—` shipped-date placeholder that CI's auto-sync then "corrects" → a guaranteed local-fix-vs-CI drift cycle
   Details: archiving the `reduce-agent-prompt-bloat` plan to `shipped/`, I ran `test-plan-index.sh --fix` locally and committed the regenerated `docs/plans/INDEX.md`. It passed `--check` locally but the `doc-validation.yml` "Doc anchors + agent contract" job FAILED with `test-plan-index: DRIFT`. Cause: local `--fix` wrote `| — |` for the new row's shipped-date column, while CI's "Auto-sync plan INDEX" job derives the real date (`2026-06-04`) and rewrote the row — so any commit of local `--fix` output is drift-by-construction, and the date column is environment-dependent. This is also the upstream trigger for the merge-gates poller false-pass filed above (the auto-sync bot's GITHUB_TOKEN correction commit didn't re-trigger CI).
   Concrete next action: make `test-plan-index.sh --fix` derive the shipped-date deterministically the SAME way the CI auto-sync job does (git log of the plan file's add-to-shipped commit, or the file's first commit date), so local `--fix` output is byte-identical to CI's regen and `--check` can't disagree across environments. If the date genuinely can't be derived offline (no network/tags), have `--fix` refuse + print "run CI auto-sync" rather than emit a placeholder that guarantees drift.
@@ -2134,6 +1783,7 @@ before push. Archive to `applied.md` on the next sweep.
   DONE 2026-06-05: both sub-fixes shipped. (a) a `required_contexts`-vs-head cross-check (config-sourced via jq, UTF-8-safe; active in production, inert in legacy bats via `MERGE_GATES_REQUIRED_CONTEXTS=""`; fail-closed) blocks `GATES_PASSED` when a required context has no head run; (b) `mergeStateStatus ∈ {BLOCKED,BEHIND}` refuses `GATES_PASSED` (UNSTABLE/CLEAN still pass), overridable via `MERGE_GATES_IGNORE_MERGESTATE=true` for the admin-merge STALE-BLOCKED escape. +13 bats P1 cases (all 4 constraint cases) + fixed a stale pre-existing test (74, NONE-nudge opt-in); full suite 111/0. `merge-gates.graphql` needed no change (already fetched `mergeStateStatus` + `isRequired`).
   Status: applied
   Last-reviewed: 2026-06-05
+
 - 2026-06-04 · orchestrator · [debt] · P3 — Empty `catch(...){}` + catch-all-without-`LOG_` in `Source/Standalone/` CLI paths lack `// catch-all-ok:` markers (code-health)
   Details: Surfaced by the Stop-hook whole-file lint drain (`lint-cpp-drain.sh`) when PR #847 (warnings-as-errors) trivially touched the two files; **all pre-existing** — verified zero catch lines in #847's diff (its only edits were a dead-overload removal at `CliCommandRunner.cpp:549` + a `(void)forceMcp;` at `StandaloneAppBootstrap.cpp:340`). `Source/Standalone/CliCommandRunner.cpp` has ~22 `catch (...)` without a `LOG_*` call plus 3 **empty** `catch (...) {}` (lines 967, 1012, 1508); `Source/Standalone/StandaloneAppBootstrap.cpp` has 1 empty (302) + 1 without-LOG (374). Two shapes: (a) silent `std::stoi` parse-failure ignores — a malformed `--mcp-port` / `frames` arg falls back to its default with no diagnostic (`CliCommandRunner.cpp:967`, `StandaloneAppBootstrap.cpp:302`); (b) genuinely best-effort `try { EmitErrorToStderr(env); } catch (...) {}` emit fallbacks (`CliCommandRunner.cpp:1012`, `1508`). Light zone (`Source/Standalone/` is not strict-zone gated) so the delta gate grandfathers them, and CR reviews only the diff so it won't flag them either — hence they linger. Per AGENTS.md, empty `catch (...) {}` = review CRITICAL and a catch-all needs a `// catch-all-ok: <reason>` marker or a `LOG_` call.
   Concrete next action: dedicated `Source/Standalone/` CLI-hardening PR — (a) for the `std::stoi`-ignore sites, `LOG_WARN` (or emit a structured error) on the malformed arg instead of silently defaulting; (b) for the best-effort emit-fallbacks, add `// catch-all-ok: <reason>` markers. ~1 h, mechanical, no behaviour change for valid input.
@@ -2174,12 +1824,12 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: pick (likely all three) — (a) **make the doc-validation contexts required** (add "Doc anchors + agent contract" to the branch-protection required set + `project.config.json` `ci.required_checks` + the new `branch_protection.required_contexts`), so a portable-purity leak / INDEX drift / dangling ref / markdown-lint / broken-anchor can never merge — now P1/overdue after the third recurrence; (b) move INDEX regeneration to **merge time** (a develop-push hook or a CI auto-commit) instead of branch-time `--fix`, killing the concurrent-archive drift at the source — pairs with the existing `tooling.md` archive-staleness P2; (c) add an archive helper (or extend `git-janitor`'s stale-plan sweep) that repoints **all** refs — `git grep` across ALL tracked files, not just `*.md` (the dangling ref this session was in `.cpp` comments) — when it `git mv`s a plan active→shipped. ~1-2 h for (a); (b)/(c) larger.
   Status: applied-partial (2026-06-03 — action (a) APPLIED: "Doc anchors + agent contract" added to `project.config.json` `branch_protection.required_contexts` + `ci.required_checks` and pushed live via `setup-branch-protection.sh` (develop required set now 5 contexts). GitHub now blocks any merge with that job RED — the recurrence is structurally closed. 2026-06-04 — action (b) APPLIED (variant): after the concurrent-archive drift recurred 3× in one session (#831/#835 each needed manual re-sync), shipped a **PR-branch autosync** CI job (`doc-validation.yml` `autosync-plan-index`, PR #836) that regenerates `docs/plans/INDEX.md` from the branch's own `shipped/` set + commits it back to the PR branch — authors no longer hand-run `test-plan-index.sh --fix`; develop never receives a stale INDEX. The *textbook* merge-time-on-develop self-heal was **blocked by develop's branch protection** (strict + non-admin bot can't direct-push), hence the PR-branch variant. Does NOT remove the strict-mode rebase of behind PRs (intended concurrent-PR gate). Residual: (c) all-refs archive repointer (`git mv` active→shipped repoints `*.md` AND `.cpp`-comment refs) remains open.)
   Last-reviewed: 2026-06-04
+
 - 2026-06-03 · orchestrator · [infra] · P2 — Require-branches-up-to-date-before-merge (concurrent-PR gate gap)
   Details: A lint gate added in PR-A does not retroactively check files added in a concurrently-open PR-B; after both merge, `develop` violates the gate but neither PR was ever red. Concrete instance: the md_lint gate landed in #789; an MD028 violation landed in #791 (branched before #789, so its doc-validation PR run used a pre-gate workflow and passed green); the merged tree was dirty and ambushed the next docs-touching PR (#796). Branch-protection's "Require branches to be up to date before merging" is OFF, so GitHub never re-ran #791 against #789's gate. Making doc-validation *required* (the 2026-06-03 infra-P2 above) does NOT close this — #791's run was genuinely green. Full RCA: docs/self-improvement/postmortems.md 2026-06-03 "concurrent-PR lint gap".
   Concrete next action: DONE — maintainer approved + enabled 2026-06-03. `project.config.json` `branch_protection.strict: true`, applied via `setup-branch-protection.sh`; GitHub confirms `required_status_checks.strict == true`. Shipped with the postmortem in this PR. Residual watch: confirm the merge-watcher auto-updates an out-of-date registered PR before merge (else the 2nd of two concurrent PRs needs a manual branch update). Alternative not taken: GitHub merge queue (heavier).
   Status: superseded (2026-06-07) — the mitigation was REVERTED by the #920 merge-throughput decision + #950 config alignment (`strict: false`; merge on own-head green, queue unavailable). The concurrent-PR class is reopened as an ACCEPTED RISK with a revisit trigger (second occurrence, or org-move making a merge queue available) — see the SUPERSEDED note on the 2026-06-03 postmortem and the 2026-06-07 "strict-off residual" entry below.
   Last-reviewed: 2026-06-07
-
 
 - 2026-06-02 · code-review · [bug] · P2 — Whisper preferences: 4 pre-existing logic/copy bugs surfaced by the E2 decomposition CR review
   Details: CodeRabbit flagged four issues in `SmatchetPreferencesUi_Whisper.cpp` on the E2 (#729) decomposition — all verified pre-existing (byte-identical to develop; E2 relocated them verbatim, positional-ImGui balance identical). (1) **Auto-mode E2E route prefers cloud-when-key (Major)**: `ResolveE2ERoute`/develop:583-593 uploads the E2E sample to cloud whenever an API key exists even if a local model is installed — contradicts the "Auto (local if present, cloud fallback)" mode description (privacy-relevant). (2) **Fallback model not seeded (Major)**: the model picker shows index 1 (Recommended) when `cfg.WhisperModel` is empty, but `modelPresent`/`dl.Start()` still read the empty/stale id. (3) **Hotkey validation fallback text wrong (Minor)**: rejects no-modifier combos but the message says a non-modifier key is missing (`capturedVk` guarantees the opposite). (4) **E2E hint overstates cloud upload (Minor)**: always says the test uploads audio, but a local transcription path exists — misleading privacy copy in local mode.
@@ -2192,37 +1842,44 @@ before push. Archive to `applied.md` on the next sweep.
   Details: CodeRabbit flagged three issues in `SmatchetPreferencesUi_Assistant.cpp` on the E3 (#730) decomposition — all verified pre-existing (E3's diff only hoists static buffers into a struct; no logic change, positional-ImGui balance identical to develop). (1) **Anthropic custom base URL hidden**: Anthropic resolves through `AiBaseUrl` but its section exposes only key/model/consent, so a custom Anthropic endpoint can't be viewed/edited. (2) **Stale probe completions**: the test-connection probe commits its Verified/Failed result even if provider/credentials changed mid-flight (no generation guard) — same class as the AiAssistantController stale-client bug already backlogged from #677. (3) **Implied catalog default not persisted**: the combo shows `catalog[0]` when `modelBuf` is empty but leaves `cfgField` unchanged, so Test-connection can fail with an empty/stale model while the combo looks selected (same class as the E2 Whisper fallback-model finding above).
   Concrete next action: (1) add a base-URL field to the Anthropic section (or document it's shared); (2) gate the probe result-commit on a probe-generation counter captured at launch; (3) persist `cfgField` to `catalog[0]` when empty. ~1.5h, dedicated prefs-tab PR.
   Resolution: applied — 2026-07-08 backlog campaign (prefs-ui-bugs batch): `SmatchetPreferencesUi_Assistant.cpp` Anthropic section gained the shared Base URL field (documented as shared with the OpenAI branch), the probe result-commit is gated on a new `assistantPrefsTestGeneration` counter in `SmatchetUiSession.h` (bumped at launch + on every field edit, stale verdicts dropped), and `RenderModelPicker` persists `catalog[0]` into `cfgField` when the model buffer is empty.
+
 - 2026-06-02 · debug-detective · [tooling] · P2 — fresh agent worktrees cannot cold-configure `ninja-ui-test-msvc` — FetchContent's cpr submodule clone fails (`git-sh-setup: file not found`)
   Details: In a fresh `.claude/worktrees/<id>/`, the first `cmake --preset ninja-ui-test-msvc` aborts during FetchContent: cpr's `git submodule` populate fails because the cmake-spawned `cmd.exe → git submodule` doesn't get a valid `GIT_EXEC_PATH`/libexec on PATH under `with-msvc-env.sh`. (Sibling of the `GIT_SUBMODULES ""` implot fix already shipped in `cmake/ImGuiTestEngine.cmake`.) Workaround that worked: point FetchContent at the main checkout's already-populated sources via `-DFETCHCONTENT_SOURCE_DIR_<PKG>=C:/Development/Smatchet/.fetchcontent-src/<pkg>-src` for all used packages. Blocks any worktree-isolated agent that needs the UI-test build.
   Concrete next action: either (a) set `FETCHCONTENT_BASE_DIR` / source-dir overrides to the shared main-checkout cache in the worktree-setup script, or (b) export `GIT_EXEC_PATH` in `scripts/dev/with-msvc-env.sh` so submodule-bearing deps clone cleanly in worktrees. ~1h (`build-doctor`).
   Status: applied (2026-06-12, #1166 `fix(build)` — chose option (b): `scripts/dev/with-msvc-env.sh` now re-adds git's `--exec-path` to PATH + exports `GIT_EXEC_PATH` after vcvars64's set-dump clobbers it, so FetchContent's `cmd.exe → git submodule update --init` (cpr's transitive curl, sol2's Catch, …) no longer dies `git-sh-setup: file not found`. Verified in the PR: cold-configure of `ninja-ui-test-msvc` ran to completion in a fresh worktree with an empty `.fetchcontent-src` (cpr-src + curl-src cold-cloned). Option (a) — the shared-cache redirect — remains documented as the skip-the-refetch optimization (infra.md worktree-FetchContent-cache entry), no longer required for correctness. To be archived to applied.md on next triage drain.)
   Last-reviewed: 2026-06-12
+
 - 2026-06-02 · orchestrator · [tooling] · P2 — `lint-cpp-drain.sh` Stop hook is branch-unaware: after an end-of-session branch switch it cppchecks the CURRENT working tree, false-flagging pre-existing code on the checked-out branch
   Details: The deferred-lint drain queues edited file *paths* during a session, then on Stop re-runs cppcheck against whatever is checked out. When the orchestrator finishes feature work on branch X and switches to develop (or another branch), the drain runs cppcheck on develop's pristine copies of those paths and reports develop's **pre-existing** debt (`useStlAlgorithm`, `variableScope`, unannotated `catch(...)`, etc.) as if it were the session's work — blocking the response with "fix before responding" for code the session never touched. Hit 4× in the full-function-size-compliance campaign (2026-06-02); each cost a verify-it's-pre-existing round (`git diff --quiet origin/develop -- <file>` confirms the working-tree copy is identical to develop). The actual edits live on the pushed PR branches and already passed their `--diff origin/develop` delta gates + clang-format.
   Concrete next action: make the drain branch/commit-aware like the other delta gates — evaluate findings against the diff that produced the queued paths (or vs merge-base of `origin/develop`), not the post-switch working tree; OR clear the queue on branch switch. Until fixed, the drain on a switched branch is advisory only. ~1-2h (`build-doctor`). Sibling of the shallow-clone `merge-base` false-flag already in this file's history.
   Resolution: **applied — feat/lint-drain-delta-aware**. `lint-cpp-common.sh` now delta-filters drain findings to the session's changed-vs-`origin/develop` lines via `lint_changed_lines` (parses `git diff -U0` `@@ +c,d @@` hunk ranges) + `lint_filter_delta` (keeps a finding only when its `:<line>:` is in that set), applied to both `lint_run_cppcheck` and `lint_run_clang_tidy`. A post-switch working tree that matches develop produces an EMPTY diff → every finding grandfathers (the exact branch-switch false-flag here), and an unresolvable baseline (non-git / no `origin/develop`) fails OPEN (old behaviour, never drops real new findings). `LINT_DELTA_BASE` overrides the baseline. Self-contained test `agents/scripts/core/test-lint-drain-delta.sh` (4 cases: changed-lines→{3,6}; keep-changed-drop-preexisting; fail-open; unchanged→empty), auto-enrolled by test-all.sh. Resolves the sibling :594 entry (same root) too.
   Status: applied
   Last-reviewed: 2026-06-14
+
 - 2026-06-02 · debug-detective · [test] · P1 — RESOLVED (#728) — deterministic Jira fixture backend was broken: sync completed but tickets never loaded
   Details: `tests/ui/jira_deterministic_backend.test.cpp` failed `!tickets.empty()` after a completed `SyncWithBackend()`. Root-caused (debug-detective, via Phase-0 yellow pilot) as a **test-fixture footgun, not product code** — see the P2 entry above. The real sync/stale-prune path was correct. **Fixed in #728** (13-line idempotent-refetch fix in `JiraFakeTrackerFixture.cpp`); deterministic driver now 3/3 (was 1/3), independently re-verified. Unblocks the Phase-0 yellow batch. Earlier framing (suspected scripted-client → `TicketSyncService` propagation in product code) was wrong — corrected here.
   Concrete next action: none — resolved by #728; archive to applied.md on merge. Durable hardening tracked in the P2 above.
   Status: applied (2026-06-16 — RESOLVED by #728; stale `Status: open` reconciled to applied during the backlog archival drain)
   Last-reviewed: 2026-06-16
+
 - 2026-06-02 · orchestrator · [process] · P2 — "build-green" ≠ "lint-green": decomposition subagents skip the local delta lint gate and ship branches that fail CI on comment-noise / comment-ratio / function-size
   Details: During the `full-function-size-compliance` green/wave batches, multiple decomposition subagents (and the orchestrator on #736) verified a change by building dual-target + running their bucket-A test, declared it green, and shipped — but the **comment-audit** (`comment-blank-run`, `comment-decorative-banner`, `comment-commented-out-code`, the soft comment-ratio WARN), **function-size delta** (`function-too-long`/`too-branchy`), and **strict-zone** gates run ONLY via `scripts/dev/test-all.sh` or in CI's "Windows + MSVC → Run non-UI bucket-A tests" step — NEVER via a targeted `cmake --build` or `ctest`. Concrete hit: #736 built green in the agent's worktree but failed CI because a bare `//` line in a newly-extracted `_detail.h` tripped `comment-blank-run` (and the header pushed the file's comment-ratio to 51%). Three wave-1 agents independently flagged the same gap in their `## Self-improvement`. The command that catches ALL of these locally already exists and is even documented in AGENTS.md § Tiered enforcement ("Run this delta gate locally before every push — `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`"), but it is under-advertised and not injected into subagent prompts, so a build-green-only loop reaches CI with avoidable lint failures, burning a CI round-trip + a fix-commit per occurrence.
   Concrete next action: (1) the orchestrator MUST include, verbatim, "before push run `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` and fix every FAIL (comment-noise, function-size, strict-zone) — a green dual-target build does NOT run these" in every decomposition / refactor subagent delegation packet. (2) Add the same line to the decompose playbook (`docs/guides/imgui-draw-pattern.md` § Verification) and the ship-loop's pre-push checklist. (3) Consider a one-shot `scripts/dev/pre-ship.sh` that runs the full `--diff origin/develop` lint set (comment-audit + function-size + strict-zone + shell-lint) so there is a single memorable pre-push command, distinct from the heavy full `test-all.sh`. ~30 min for (1)+(2); ~1h for (3).
   Status: applied-partial (2026-06-02 — action (1) shipped: `docs/agent-rules/delegation.md` § Orchestrator delegation packet now carries a verbatim "Pre-push lint gate" bullet injected into decomposition/refactor packets. Residual: (2) the imgui-draw-pattern playbook + ship-loop pre-push-checklist mirrors, and (3) the `scripts/dev/pre-ship.sh` convenience wrapper — both kept open as tooling follow-ups)
   Last-reviewed: 2026-06-02
+
 - 2026-06-02 · orchestrator · [process] · P2 — spawn_task chip can execute in-place in the main repo (switching its branch) and collide with active branch work
   Details: This session the orchestrator used `spawn_task` to flag an out-of-scope `ITrackerClient`→`ITrackerBackend` sweep while feature PR #720 was mid-merge-flow on `feat/per-subsystem-agent-docs`. The spawned session ran the sweep IN THE MAIN repo working tree (checked out a new `docs/sweep-itrackerclient-refs` branch + made 7 edits) rather than an isolated worktree — so the orchestrator's own working directory silently switched branches mid-flow, surfacing as "files reverted" reminders + a stale `git log origin/develop..HEAD`. Recovery worked (committed the uncommitted sweep to preserve it, switched back), but the spawned session had independently committed + PR'd + merged the same fix (#722 + #723), making the orchestrator's local `c2ea0c91` a redundant duplicate (correctly never pushed — else a 3rd duplicate PR).
   Concrete next action: encode in orchestrator discipline — (1) after any `spawn_task`, re-verify `git branch --show-current` + `git status` before the next git op (a chip may have switched the working tree); (2) avoid spawn_task during an active same-repo merge-flow, or require the chip to run isolated; (3) when a spawned fix and a local duplicate both exist, dedupe against the merged-PR set (`gh pr list --state merged --search`) before pushing. Candidate text for `docs/agent-rules/process-rules.md` § Git discipline.
   Status: applied (2026-06-02 — `docs/agent-rules/process-rules.md` § Git/p4 discipline now carries a "`spawn_task` can run in-place + switch the main tree's branch" rule encoding all three points, sited next to the watcher HEAD-swap rule)
   Last-reviewed: 2026-06-02
+
 - 2026-06-02 · orchestrator · [process] · P2 — Test goldens must be captured from a real run, never asserted by source-reading; orchestrator must run the FULL local suite before "done"
   Details: During `full-function-size-compliance` (PRs #694–#700), three decomposition agents shipped bucket-A tests whose expected values were fabricated by reading the code rather than captured by executing the function: (1) #695 `TrackerFieldValueParser` asserted `"Spent 30m"` for 1800s, but the formatter emits `"0h 30m"`; (2) #699 `CompactDateFormat` hardcoded a date-only golden `"2026-03-15"` that renders in local time → `"2026-03-14"` under EST, failing the full `ctest` on any non-UTC machine; (3) related: #696/#697/#700 shipped comments the comment-audit gate later flagged. CI masked #2 because runners are UTC, and the orchestrator's "tests compile-pending-CI" shortcut (skipping the local full suite because the `ninja-test-msvc` dir was stale) let all of them reach merge. Found only by a post-merge full-suite run during a double-check. Root pattern: a value asserted by inspection is a guess, and a value that flows through timezone/locale/clock/float formatting is a guess that happens to be right in exactly one environment.
   Concrete next action: (a) add to every test-authoring agent prompt (`test-rig` + subsystem specialists when they add tests): "Capture goldens by RUNNING the function or built binary — never transcribe an expected value from source. For any output through locale/timezone/clock/float formatting, assert shape + invariants, not an environment-dependent literal." (b) add to the ship-loop: run the FULL local `ctest` (not CI's filtered bucket-A subset) before declaring a test-bearing slice done. (c) unblock (b) by fixing the stale `ninja-test-msvc` configure so a full local run is cheap (`build-doctor`), and pair with a CI job pinned to a non-UTC `TZ` so this class fails in CI too.
   Status: applied-partial (2026-06-02 — action (a)+(b) shipped: `agents/core/test-rig.md` § Hard invariants now carries "Capture expected values by RUNNING — never transcribe a golden from source" + the locale/tz/clock/float assert-shape rule + the full-local-`ctest`-before-done mandate. Residual: (c) the stale `ninja-test-msvc` configure fix + a non-UTC `TZ` CI job — kept open as build-doctor / CI follow-ups so the class also fails in CI)
   Last-reviewed: 2026-06-02
+
 - 2026-06-02 · debug-detective · [test] · P2 — `FakeTrackerClient` finite fetch-queue silently degrades to an empty `fullSyncCompleted=true` fallback (footgun that masquerades as a server-side mass-delete)
   Details: Root cause of the "deterministic backend broken" P1 below, found + fixed via #728. `JiraFakeTrackerFixture::Configure()` enqueued a finite fetch queue (`EnqueueFetchResult`) but never set the static fallback; production streaming-sync fires more often than the fixture scripts (deferred initial auto-sync on first `SmatchetUI::Draw` + each bucket-E test's explicit `SyncWithBackend()`, all sharing one backend), so once the queue drains `FakeTrackerClient::FetchIssues` returns empty with `fetchFullSyncCompleted_=true` — which the **correct** real sync worker reads as "every issue deleted server-side" and stale-prunes the grid. It was a test-fixture wiring bug, NOT product code. #728 fixed it per-fixture (set the static fallback to the last scripted fetch); the durable fix is in the fake itself.
   Concrete next action: make `EnqueueFetchResult` auto-sticky on its last entry, OR default `fetchFullSyncCompleted_=false` when the queue empties with no explicit static result, so an unscripted re-fetch can't trigger stale-pruning. ~30min in `FakeTrackerClient`.
@@ -2258,6 +1915,7 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: add `scripts/dev/with-msvc.ps1` (vswhere → newest vcvars64.bat → exec the passed args in that env) and reference it from `agents/core/build-doctor.md` + the dual-target build note in AGENTS.md, so subagents call one wrapper instead of reinventing it. ~30 min.
   Status: applied (2026-06-02 — `scripts/dev/with-msvc.ps1` shipped + locally verified resolving `cl.exe` / `VCToolsVersion=14.38.33130`; referenced from `agents/core/build-doctor.md` § symptoms + AGENTS.md § Dual-target. Toolset-pinned via `build.msvc_toolset_pin` to avoid STL1001)
   Last-reviewed: 2026-06-02
+
 - 2026-06-01 · orchestrator · [test] · P2 — `JiraFakeTrackerFixture` injects a pre-built catalog and bypasses `FetchFieldCatalog`, so field-classification / enrichment bugs have zero fixture coverage
   Resolution: **applied by PR #939** (multi-grid Slice 0 WS2, 2026-06-07) — `tests/support/JiraCatalogHttpFixture.h` drives the real `FetchFieldCatalog` / `MergeProjectComponentsFromEndpoint` over scripted loopback HTTP (in-process httplib server + real cpr); `tests/Core/TrackerCatalogBuild.test.cpp` (11 cases / 95 assertions) covers every next-action item: unscoped fetch leaves `components` dropdown-eligible, scoped fetch populates per-project options (incl. pagination + sort), `customfield_*` arrays classify per schema.
   Status: applied
@@ -2280,4013 +1938,3 @@ before push. Archive to `applied.md` on the next sweep.
   Concrete next action: take ONE `TrackerConfig` snapshot at turn start, thread it through `RefreshProviderForTurn`/`ResolveModelAndEffort`/`BuildChatPayload` (helpers already take params — now cheap).
   Status: applied (2026-06-20 roadmap campaign — shipped #1515)
   Last-reviewed: 2026-06-20
-
-- 2026-05-31 · orchestrator · [infra] · P3 — merge-watcher autostart bridged by a hand-patched launcher bat until #644 lands
-  Details: Restarting the daemon this session surfaced two stacked breakages. (1) The auto-generated launcher bat + two zombie daemons pointed at the pre-migration `scripts/dev/merge-watcher.py` / `merge-gates.sh` paths (moved to `agents/scripts/core/` by `split-scripts-build-vs-agentic`) → every poll `EXIT_127`. (2) After re-pointing, the current installer's inline-cmd task action drops the `Git\bin` PATH prepend the old bat carried, so `_resolve_bin("bash")` resolves the WindowsApps WSL shim (`merge-watcher.py`'s override only caught `System32\bash.exe`) → `EXIT_127` with collapsed `C:\` paths (`/bin/bash: C:DevSmatchet...merge-gates.sh: No such file`). Restored locally with a hand-written `%LOCALAPPDATA%\Smatchet\merge-watch\run-merge-watcher.bat` (correct path + `Git\bin` first on PATH); the `SmatchetMergeWatcher` task now points at it and polls healthy (`BLOCKED`, CI 4/4). PR #644 fixes the daemon-side override to also catch `\windowsapps\`, making PATH order irrelevant. NB: the current daemon uses `clone_path` only as a `gh` cwd and does a server-side REST squash-merge — no local checkout/pull/branch-d — so the 2026-05-30 "HEAD-thrash" entry below appears stale for the merge path.
-  Concrete next action: after #644 merges to develop AND the main clone at `C:\Dev\Smatchet` pulls it, re-run `powershell -ExecutionPolicy Bypass -File agents/scripts/core/merge-watcher-install-autostart.ps1` to restore the canonical inline-cmd task action, then delete the bridge bat. Optionally generalize: have the installer prepend `Git\bin` defensively so a stale daemon checkout can't re-hit the WSL-bash trap. ~10 min.
-  Resolution (2026-08-05): applied — the bridge is gone and the condition that required it is fixed. `_resolve_bin("bash")`'s override now catches `\windowsapps\` as well as `system32\bash.exe` (`merge-watcher.py:157` on `origin/develop`, from #644), and `git` gained the same treatment (`:162-164`), so the installer's inline-cmd action no longer needs a PATH prepend and the `Git\bin` generalization is moot. The bridge `%LOCALAPPDATA%\Smatchet\merge-watch\run-merge-watcher.bat` no longer exists on the host — it was lost at some point rather than deliberately deleted, which is exactly how this entry surfaced again: the `SmatchetMergeWatcher` task action still pointed at the vanished `.bat`, so `cmd /c` exited 1 instantly on every trigger (`LastTaskResult: 1` on both the 2026-08-03 and 2026-08-05 11:43 runs) and the daemon had not run for days. Nothing is now hand-written: the canonical action is the installer's `cmd.exe /c ""<python>" "<repo>\agents\scripts\core\merge-watcher.py" daemon --poll-interval 60 > "<log>" 2>&1"`, and re-running `merge-watcher-install-autostart.ps1` (idempotent — it unregisters then re-registers) is the whole remedy. **Residual, tracked separately**: the reinstall is a human action on the Windows host (an agent session cannot register a Scheduled Task), and — the larger point — *nothing detected the dead daemon for two days*. That liveness gap is filed as `categories/infra/2026-08-05-merge-watcher-liveness-unmonitored.md`, which also carries the reinstall as its immediate step. This entry is closed because the bat-bridge it describes is obsolete, not because the task is running.
-  Status: applied
-  Last-reviewed: 2026-08-05
-
-- 2026-05-31 · orchestrator · [tooling] · P2 — `scan_narrowing` runs clang-tidy serially; the new `high-integrity-narrowing` develop job is ~10-13 min of clang-tidy per merge
-  Details: Wiring `cppcoreguidelines-narrowing-conversions` into CI (PR adds `high-integrity-narrowing`, windows-2022, develop post-merge) exposed that `agents/scripts/project/test-lint-rules.sh`'s `scan_narrowing` invokes `clang-tidy` once per strict `.cpp` TU in a plain `for` loop — ~100 TUs × ~5 s clang-tidy startup+parse = minutes. A local `--full` narrowing pass measured ~69 s wall at `-P12` (parallel, ad-hoc) vs an estimated ~10-13 min serial. The CI job pays the serial cost every develop merge (configure ~3-5 min + scan ~10 min, under the 30 min timeout but wasteful runner-time).
-  Concrete next action: parallelize the clang-tidy fan-out inside `scan_narrowing` — feed the `.cpp` list to `xargs -P "${SMATCHET_LINT_NARROWING_JOBS:-N}"` (or LLVM's `run-clang-tidy`), aggregate raw output, then apply the existing grep + sed-normalise + `ThirdParty`/first-party filter once. Keep the pipefail-safe wrapper (a clean TU must not abort the pipe). Gate `N` on `nproc`. ~1 h (bash + re-run the 12 lint bats + a fresh `--full` timing). Cuts the develop-merge narrowing job several-fold.
-  Status: applied (2026-06-12, #1166 `fix(build)` — `agents/scripts/project/test-lint-rules.sh` `scan_narrowing` now fans the strict `.cpp` TUs out via `xargs -P "${SMATCHET_LINT_NARROWING_JOBS:-$(nproc)≥4}"`, aggregates raw clang-tidy output, then applies the existing grep + sed-normalise + `ThirdParty`/first-party filter ONCE. Byte-identical findings proven on a 3-warning fixture (same triple hashes serial-vs-parallel); pipefail-safe wrapper kept (a clean TU does not abort the pipe). Cuts the `high-integrity-narrowing` develop-merge job several-fold. To be archived to applied.md on next triage drain.)
-  Last-reviewed: 2026-06-12
-- 2026-05-31 · general-agent · [test] · P2 — `SmatchetTests` link hard-errors locally on `tests/Core/OfflineQueueServiceRuntime.test.cpp` (`CHECK_THROWS` under exceptions-disabled MSVC) — blocks local ctest, forces a standalone-harness workaround
-  Resolution: STALE/env-specific — /EHsc is CMake's MSVC default (no explicit flag needed); OfflineQueueServiceRuntime.test.cpp no longer uses CHECK_THROWS; SmatchetTests builds + runs CHECK_THROWS-bearing TUs cleanly on ninja-test-msvc. (B8 phase-0).
-
-- 2026-05-31 · mcp-toolsmith · [tooling] · P3 — `comment-commented-out-code` classifier flags relocated/re-indented comments whose text starts with `ident()` as commented-out code
-  Details: During Slice 3 (`McpPlugin::OnStart` extraction) a pure-mechanical refactor that *moved* an unchanged comment block (lines beginning `OnStop()`, `svr.stop()`) into a helper tripped `comment-commented-out-code` in the delta gate — the classifier's `CODE_LIKE_RE` matches a leading `Identifier(...)` call shape, and a relocated comment line is an "added" line vs the base, so untouched prose reads as new commented-out code. Forces a reword on comments the refactor never authored.
-  Concrete next action: either (a) note in the strict-zone refactor guidance that moved comment blocks with line-leading `ident()` tokens should be pre-scanned + reworded, or (b) soften `comment_audit.py`'s `CODE_LIKE_RE` call-shape heuristic to require a trailing `;`/`{`/`}` (prose like "OnStop() is called on teardown" wouldn't match), so a bare `ident()` mid-sentence isn't classified as code. ~20-30 min. Low priority — the reword workaround is cheap.
-  Status: applied (2026-06-21 P3 sweep — shipped #1522)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-31 · orchestrator · [tooling] · P2 — No automated archive-staleness check; shipped plans rot in `docs/plans/active/` (16 of 25 this audit)
-  Details: `docs/agent-rules/process-rules.md` § Plan-doc family already mandates "Archive on revision" (the same PR that fills the post-ship sections must `git mv` the plan to `shipped/` + sed cross-refs). It's prose-only and has now been under-followed twice: the 2026-05-28 sweep found 33 of 48 archive-eligible, and a 2026-05-31 audit again found 16 of 25 active plans had already-shipped code (post-ship sections frequently still on the template stub). Across many parallel ship-loops the manual `git mv` step is the first thing dropped, so `active/` silently accumulates finished work and stops reflecting in-flight state. Root cause is no machine check — `git-janitor` *acts* but doesn't *report* archive-eligibility.
-  Concrete next action: add advisory-only `agents/scripts/project/test-plan-staleness.sh`, auto-enrolled by `scripts/dev/test-all.sh` (WARN, never hard-fail): for each `docs/plans/active/<slug>.md`, (1) classify § Implementation log as stub vs populated (real `<sha> · #<PR>` bullets); (2) optionally `gh pr view <N> --json state` on cited PRs — all MERGED ⇒ strong archive signal; (3) print the archive-eligible list with the exact `git mv` + cross-ref-sed one-liners. Stub-log plans (genuine in-flight) are exempt. Hook the same list into `git-janitor`'s end-of-session cleanup so archiving becomes part of the ship-line, not a periodic rescue sweep. ~1.5–2 h (bash + `gh pr list --json` join; reuse the moved-slug sed pattern from this audit's PR). Wins: stops the recurring stale-in-place drift at the source instead of re-running the manual sweep every few weeks.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1511)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-31 · orchestrator · [tooling] · P2 — `SmatchetMergeWatcher` daemon can notify the *human* (desktop toast) but has no channel to notify/wake the *agent* of PR state / CodeRabbit feedback; the orchestrator must hand-poll
-  Details: The watcher daemon (`agents/scripts/core/merge-watcher.py`, 60 s poll) detects CI / CodeRabbit / review-comment state changes and, on terminal states, fires `maybe_notify` → `smatchet-notify.sh` → a Smatchet in-app toast + Windows BurntToast fallback — i.e. it pings the **human**. There is no path that surfaces a state change into the agent/orchestrator session. So when a PR the orchestrator just opened gets CR actionable findings, the agent learns only by (a) the user relaying it, or (b) polling `gh pr checks` / the review threads itself. Hit repeatedly while shipping the split-scripts PRs (#609/#610/#615) — each needed a manual `gh pr checks --watch` + a `gh api graphql` thread fetch. Compounding: a freshly-opened PR is **not** auto-registered with the watcher (`merge-watcher-cli.py list` is empty for it), so the daemon's own `coderabbit-triage` doesn't even run unless registered — and that triage posts an advisory comment, it doesn't notify the agent or apply fixes. Net: the agent has *zero* passive signal and silently falls back to ad-hoc polling, which is easy to forget and burns turns.
-  Concrete next action: pick one (likely 2 + 3) — (1) **agent-reachable notify sink**: extend `maybe_notify` (or add a state-transition hook) to also write a structured event the harness can surface to the session — e.g. append to `.claude/.agent-events.jsonl` that a SessionStart/poll reads, or drive a `RemoteTrigger`-style wake. (2) **`merge-watcher-cli.py await <pr> [--until=blocking|terminal]`** — a thin blocking command the orchestrator runs right after opening a PR; returns on the next blocking/terminal state with a structured summary (CR findings, failing checks). No daemon change; directly replaces the ad-hoc `gh pr checks --watch` + thread-fetch dance. (3) **encode the reality in the orchestrator prompt / AGENTS.md ship-loop**: "the watcher pings the human, not the agent — after opening a PR you MUST either `await` it (option 2) or poll; never assume passive notification." ~2-3 h for (2); (3) is a doc edit.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1505)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-31 · orchestrator · [tooling] · P2 — subagent eval harness MVP is advisory; the live `code-review` smoke + judge-vs-human calibration are manual residue with no automation yet
-  Details: The Phase-1 subagent eval harness (`scripts/dev/agent-eval-{run.sh,score.py}`, `docs/agent-eval/*`, plan `docs/plans/shipped/subagent-eval-harness.md`) proves the scoring contract against fixtures — the bats suites (`tests/bats/agent_eval_score.bats`, `agent_eval_run.bats`) run fully deterministic with a fake judge + `--fake-runner`, no live tokens. Two things remain inherently manual: (a) one live `code-review` end-to-end smoke off-CI (real `claude -p` adapter against a curated case, real judge) to confirm the live path produces a conformant result; (b) judge-vs-human calibration — the corpus of agreement data needed before the advisory WARN can graduate to a blocking gate. Until (b) exists, a quality regression only WARNs (malformed artifacts still FAIL).
-  Concrete next action: (1) run the live smoke once and record the result JSON + any adapter-parse gaps (free-text→findings parsing in `agent-eval-run.sh` is best-effort regex today). (2) Stand up a calibration loop: collect N judge scores vs human labels on the same runs, measure agreement, then set BLOCK thresholds. (3) The trace flywheel — now Phase 2 of the unified `docs/plans/subagent-eval-agentic-coverage.md` plan (the former standalone `subagent-eval-flywheel.md` is superseded) — is the prerequisite for replacing the seed cases with harvested real traces; that unified plan's Phase 0 is the judge-calibration loop this entry's item (2) asks for. Smoke ~30 min; calibration is the unified plan.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1507)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-30 · orchestrator · [tooling] · P2 — No read-only `git-leftover-audit.sh`; the loss/residue map is hand-derived (and got it wrong) every time
-  Details: Answering "what's parked / might be lost in git?" this session took ~5 rounds of ad-hoc `git for-each-ref` + `rev-list` + tip-diff + `gh pr view` loops, re-run on every "check again" because sibling agents/daemon kept swapping HEAD and advancing origin. The hand-rolled flow produced two wrong verdicts (paired process entry) by diffing a stale local `develop`. No single canonical command exists: `git-janitor` *acts* (squash-merges + deletes), `coderabbit-current-head.sh` is CR-only — neither just *reports* the leftover map.
-  Concrete next action: add read-only `scripts/dev/git-leftover-audit.sh`: (1) `git fetch --prune`; (2) classify every local+remote branch vs `origin/develop` keyed on `gh pr` state (MERGED→residue / OPEN→active / none+ahead→WIP-or-orphan); (3) flag worktrees whose branch is MERGED (removable), uncommitted-in-worktree, and `origin/*` with no PR + behind develop + age>N (stale). Hardcodes the origin-compare so the paired process rule can't be skipped; orchestrator runs it instead of ad-hoc git. ~1-1.5 h (bash + a `gh pr list --json` join). Wins every "is anything lost?" / pre-`git-janitor` check.
-  Partially addressed: 2026-06-02 — PR #743 (`git-janitor` v5 § Stale-branch sweep) encodes the **classify-by-`gh pr` state** logic (MERGED/CLOSED/OPEN/NO-PR), the worktree-before-branch dirty-gate, and a protected-branch guard (config allowlist + code-reference net) **in-agent prose** — so the orchestrator now has a documented recipe and won't mis-derive the residue map by hand. Residual: the entry's ask for a **standalone read-only `git-leftover-audit.sh`** is NOT shipped — the recipe lives in the agent prompt, not a re-runnable script the orchestrator can invoke directly before a janitor pass. Re-scope to: "agent recipe shipped #743; extract to a reusable script."
-  Status: applied (2026-06-12, feat/worktree-hygiene — `scripts/dev/git-leftover-audit.sh` shipped: `git fetch --prune` → ONE `gh pr list --json headRefName,state` map → classify every worktree's branch via the pure `classify_leftover(pr_state, ahead)` (RESIDUE-merged / RESIDUE-closed / ACTIVE-open / WIP-or-orphan / STALE-no-pr), flagging DIRTY + PROTECTED rows. READ-ONLY (exit 0 always; never mutates). `--selftest` (asserts-failure: a merged PR is never ACTIVE) + `tests/bats/git_leftover_audit.bats` (3) via `test-git-leftover-audit-bats.sh` (auto-enrolled). Dogfooded on the live 40-worktree pile — correctly tagged ~30 RESIDUE-merged + the dirty/protected rows. To be archived to applied.md on next triage drain.)
-  Last-reviewed: 2026-06-12
-- 2026-05-30 · orchestrator · [process] · P2 — Loss/residue audits must diff vs origin/<base> post-fetch; ahead-count + tip-diff are NOT loss signals
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in process-rules.md § Git/p4 discipline.
-
-- 2026-05-30 · orchestrator · [process] · P3 — Backlog/SI/plan entries must verify the cited file before asserting file-behavior claims
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENT_SELF_IMPROVEMENT.md § Workflow step 2.
-
-- 2026-05-30 · log-a-bug-github · [security] · P1 — bug-reporter must NOT ship a GitHub token if Smatchet is distributed to external/untrusted users
-  Resolution: RESOLVED — relay deployed + verified live 2026-05-30. Relay at `tools/bug-report-relay/` (Cloudflare Worker; holds the token server-side, creates the issue + uploads screenshots/minidumps as Release assets, `x-relay-key` gate, 2 MB cap) deployed at `smatchet-bug-report-relay.smatchet.workers.dev` and verified end-to-end (issue `alexandrosk0/Smatchet#585`; 401 gate + 404 diagnosis exercised). App relay-mode wired (`bugreport_relay_url`/`bugreport_relay_key`; `ResolveBugReportTarget` → `UseRelay`; no client token). The binary bundles **no** GitHub token. Residual (operational, not a code blocker): a Cloudflare rate-limit rule on the route + ensuring the relay's `GITHUB_TOKEN` has `contents:write` + release perms. Archived: the credential-leak ship-blocker is closed; operational hardening is ops, not a code entry.
-
-- 2026-05-30 · orchestrator · [tooling] · P3 — No edit-time gate for portable-purity → NEW-literal leaks land in a PR and only fail at CI
-  Details: `scripts/dev/test-portable-purity.sh` (blocks NEW project literals in portable dirs `agents/core`, `agents/_shared`, `docs/agent-rules`, `docs/harness`) IS discovered by `scripts/dev/test-all.sh:46` (globs every `test-*.sh`) and runs in the `Doc anchors + agent contract` CI job — so the coverage exists. The gap is **when it fires**: there is no PostToolUse lint hook that runs it at edit time, and an agent editing a portable doc does not reliably run the full `test-all.sh` before pushing (the orchestrator pushed PR #557 without it). Result: a leak (`SMATCHET_*` env names + `Source/Core` example in `docs/agent-rules/memory-drain.md`) only surfaced at CR/CI → fix → re-push, a full round it would have caught in 5 sec at edit time. Distinct from the existing infra entry about *shrinking* the baseline.
-  Concrete next action: add a PostToolUse hook that runs `test-portable-purity.sh` when an edited path is under a portable dir (`agents/core/`, `agents/_shared/`, `docs/agent-rules/`, `docs/harness/`) — same trigger shape as the C++ lint hook. (`test-all.sh` already covers it for full-suite runs; the hook closes the edit-time fast-feedback gap, and is robust to the self-mod-guard case where the orchestrator can't run it inline.) ~20 min. Watch: the `split-scripts-build-vs-agentic` plan moves `test-portable-purity.sh` to `agents/scripts/core/`, so `test-all.sh`'s `scripts/dev/test-*.sh` glob must be widened to keep discovering it.
-  Status: applied (2026-06-21 P3 sweep — shipped #1530)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-30 · memory-triage · [tooling] · P3 — Document the two Windows/git-bash seams when stubbing `gh` in bats suites
-  Details: bats suites that PATH-stub `gh` for a native-Windows-Python consumer (e.g. `merge-watcher.py`, which pins `GH_BIN = shutil.which("gh")` at import) have two silent-failure seams; both already bit `merge_watcher_integration.bats` (0/4 on Windows until gated). (1) Native CreateProcess can't exec the driveless POSIX `gh` script git-bash prepends, so `shutil.which` skips it and returns the real `gh.EXE` — fix is a `gh.cmd` forwarder (`@echo off` + `bash "%~dp0gh" %*`) next to the bash stub so PATHEXT resolution picks the stub dir first. (2) `LOCALAPPDATA="$(mktemp -d)"` is a `/c/...` path native Python `open()`/`json.load` mis-resolves — convert with `cygpath -m` to mixed `C:/...` form (keep raw POSIX for teardown `rm`). Also: route gh `api -X PUT` fixtures on the REST path token (`*"/merge"*` vs `*"/update-branch"*`), not on `"$1 $2"`. These suites run under no CI gate (windows-2022 runner has no bats) so they rot silently.
-  Concrete next action: capture this as a comment block in a shared bats helper (or `docs/agent-rules/` test note) so the next bats author doesn't re-derive it; optionally add a windows-bats CI lane. ~30 min for the note. Source: memory `project-bats-gh-stub-windows` (drained 2026-05-30).
-  Status: applied (2026-06-21 P3 sweep — shipped #1524)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-30 · orchestrator · [infra] · P2 — merge-watcher daemon runs in the orchestrator's main clone → mid-session HEAD thrash + false working-tree reads
-  Details: the `SmatchetMergeWatcher` daemon (`scripts/dev/merge-watcher.py daemon`) operates on the **same** working copy the orchestrator edits in. Its git-janitor step (`git checkout develop` + `git pull` + `git branch -d`) runs underfoot whenever a registered sibling PR passes gates. Observed 5× in a single session (2026-05-30): HEAD swapped `fix/...` → `plan/separate-agents-repo` → `plan/reduce-source-comment-bloat` → `develop` between tool calls. Two concrete harms beyond the documented "re-check HEAD before commit" guard (AGENTS.md § Git/p4 discipline): (1) `git checkout <branch>` aborts when the daemon left the tree dirty with its own WIP, blocking the orchestrator; (2) **verification reads off the wrong branch** — a `with-msvc-env.sh` read during a swap showed the toolset pin missing and a backlog entry was filed as a regression that does not exist on develop (the pin is present), retracted only after `git show origin/develop:<file>` cross-check. The guard is a band-aid; the root cause is the shared working tree.
-  Concrete next action: run the daemon in a **dedicated clone or git worktree** (e.g. `.merge-watcher-clone/` or a `git worktree add`), so its checkout/pull/branch-delete never touches the orchestrator's HEAD or working tree. Registry `clone_path` already exists — point the daemon's git ops at an isolated path. Alternatively make the janitor step `git -C <isolated>` only and never `checkout` the shared tree. ~2-4 h (daemon git-op audit + isolation + restart-task wiring). Until then, agents MUST `git show origin/<branch>:<file>` (never the working tree) to verify any path-bearing claim mid-session.
-  Status: applied (2026-06-20 trap-sweep — server-side REST/`gh pr merge --auto` (no local checkout/pull/branch-d) + daemon self-resync resolves root from its own location + _resync_safety refuses on dirty/not-on-develop; the "never checkout the shared tree" alternative shipped)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-28 · deep-audit · [process] · P3 — Widespread PR-numbered temporal comments violate the comment-hygiene rule
-  Details: `docs/agent-rules/delegation.md:23` (comment discipline): "code comments explain durable intent, never task/PR/temporary plans (no comments like `PR 4:` or `remove in PR 7`)." Yet ~24-27 first-party files carry such comments (110+ comment-lines reference `PR<n>`), several describing now-stale future work: `Source/Core/src/AppController_CatalogAndFieldEdit.cpp:178` "PR 7 will replace this…"; `Source/Core/include/ITrackerConnectivity.h:35` "real impls land in PR 4 of the remove-global-project-key rollout"; `Source/Core/src/Config/ConfigManager.cpp:188` "still on TrackerConfig until PR 6 deletes them". Flagged by no tool today. Verified (deep-audit, adversarially confirmed; examples verbatim).
-  Concrete next action: sweep first-party `.cpp/.h` for `// PR <n>` / `PRn` comments — delete or rewrite to durable intent (describe what the code does, not which PR touched it); cross-reference design docs by stable slug. Add a cheap grep guard alongside `test-shell-lint`'s C++ checks to stop re-accumulation. ~1-2 h.
-  Resolution: applied — the sweep landed (the cited `AppController_CatalogAndFieldEdit.cpp` / `ITrackerConnectivity.h` / `ConfigManager.cpp` comments are gone; `grep -rE '//.*\bPR ?[0-9]+'` over `Source/` returns zero files) and a `pr-numbered-temporal-comments` lint rule (`agents/scripts/project/test-lint-rules.sh:1210`) guards re-accumulation, with a `SMATCHET_DEVIATION` escape.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-28 · orchestrator · [tooling] · P3 — `merge_gates.bats` runs only 22/71 under a non-UTF-8 locale (unicode `→` in test names); force `LC_ALL=C.UTF-8` in the bats invocation
-  Details: `tests/bats/merge_gates.bats` uses `→` (U+2192) in many `@test` names. Under a non-UTF-8 locale (the default in Git Bash on Windows here), bats mis-parses those names — emits `bats: unknown test name` and `Executed 22 instead of expected 71`. Pre-existing (reproduces on `develop` too); surfaced while validating PR #511's gh-bundled-jq refactor. `LC_ALL=C.UTF-8 LANG=C.UTF-8 bats tests/bats/merge_gates.bats` runs all 71 green. Not a correctness issue — CI / UTF-8 shells run the full suite — but a contributor running bats directly silently gets a 22/71 partial run with no clear signal it's truncated.
-  Concrete next action: force a UTF-8 locale around the bats run — either a `scripts/dev/test-merge-gates-bats.sh` wrapper that `export LC_ALL=C.UTF-8` before `bats`, or set it in `test-all.sh`'s bats step. Optionally also de-unicode the test names (`→` → `->`) as belt-and-suspenders. ~15 min.
-  Resolution (2026-06-18, #1397): applied — fix merged to develop.
-  Status: applied
-  Last-reviewed: 2026-05-28
-
-- 2026-05-28 · deep-audit · [tooling] · P2 — C++ lint (`lint-catch-all.py`, clang-tidy, cppcheck) runs only as local hooks, never in CI
-  Details: `.claude/hooks/lint-catch-all.py` flags unmarked empty `catch(...){}` as `[error]` (rc=2) but fires only as a local PostToolUse hook on Claude-Code edits — `grep` over `.github/workflows/*.yml` shows zero references. Same for clang-tidy + `run_cppcheck.py` (both only in `scripts/dev/`, not any workflow). This is why the 11 unmarked empty-catch blocks (paired bug entry) reached develop: the gate is local-only, so non-Claude-Code commits and any skipped hook run bypass it. Related: `.clang-tidy` enables only 3 checks (`-*,clang-analyzer-deadcode.DeadStores,misc-unused-using-decls,misc-unused-alias-decls`) — none of the `bugprone-*` / `clang-analyzer` memory families that back the Pillar-3 never-crash invariant; cppcheck carries the real static-analysis weight. Verified (deep-audit, adversarially confirmed: lint-catch-all + cppcheck + clang-tidy absent from all workflows).
-  Concrete next action: add a bucket-A CI step in `build-and-test.yml` that runs `lint-catch-all.py` over the diff (block on `[error]`-tier) + a curated cppcheck pass; decide whether clang-tidy joins (enable a `bugprone-*` subset) or is documented in `.clang-tidy` as intentionally cppcheck-primary. ~1-2 h.
-  Status: applied-partial (2026-06-12, #1166 `fix(build)` — new `cpp-lint-advisory` job in `build-and-test.yml` (ubuntu-latest) runs `lint-catch-all.py` + a curated cppcheck pass over the PR diff's first-party C++: blocks on `lint-catch-all` `[error]`-tier (unmarked empty `catch`); cppcheck warning/perf/portability is advisory. clang-tidy stays cppcheck-primary per `.clang-tidy` (decision recorded — no `bugprone-*` subset added). Shipped ADVISORY (`continue-on-error`, non-required) + diff-scoped because the current tree carries **6 standing `[error]`-tier empty-catch blocks** that would wedge develop if the job blocked. Residual (open): promote the job to BLOCKING (and add it to the required-context set) once those 6 standing blocks are burned down — tracked as this entry's follow-up.)
-  Last-reviewed: 2026-06-12
-- 2026-05-28 · deep-audit · [security] · P2 — JQL injection via unescaped issue keys in `JiraClient::FetchIssuesForKeys`
-  Details: `Source/Core/src/Tracker/JiraIssueSearch.cpp:470-487` interpolates issue keys into double-quoted JQL literals with no escaping of `"` or `\` — single-key path builds `jql = "key = \"" + keys[offset] + "\"";` (:472) and the IN-list appends raw `'"' + keys[offset+i] + '"'` (:479-481). `UrlEncode` (`TrackerHttpUtils.cpp:44-59`) only percent-encodes for transport; the Jira server URL-decodes before JQL parsing, so an embedded `"` reaches the parser intact and breaks out of the quoted literal (e.g. `FOO" OR project=SECRET OR key="BAR`), widening the query beyond the intended key set (cross-project disclosure). Callers: `AppController.cpp:514`, `Source/Core/src/Sync/OfflineQueueService.cpp:714` (offline-queue restore). Keys are mostly server-issued today, so this is defense-in-depth / fragility rather than currently-exploitable. Verified from real code (deep-audit, adversarially confirmed).
-  Concrete next action: add a `JqlQuoteLiteral()` helper in `TrackerHttpUtils` (escape `\` → `\\` then `"` → `\"`) OR validate keys against the `[A-Z][A-Z0-9]*-[0-9]+` grammar and skip non-matches before building the IN-list; unit-test it. Audit `PlaneIssueSearch` / GitHub equivalents the same way. ~1 h.
-  Status: applied (2026-06-14 — `BuildKeyInJql` (`JiraIssueSearch.cpp`) now escapes every key through the shared `tracker_jql::QuoteLiteral` helper for both the single-key `=` and the multi-key `in (...)` paths. Helper lives at `Source/Core/include/Tracker/JqlEscape.h` (one canonical copy; the former file-local `EscapeJqlString` in `JiraActivityFeed.cpp` was promoted into it and all three sites — JqlSuggestEngine, JiraIssueSearch, JiraActivityFeed — now share it). Doctest `tests/Core/JqlEscape.test.cpp` covers the break-out payloads. Plane/GitHub JQL-equivalent audit left as follow-up.)
-  Last-reviewed: 2026-06-14
-- 2026-05-28 · deep-audit · [security] · P2 — Tracker HTTP clients follow redirects with `Authorization` attached (cross-host credential forwarding) (E2; raised P3→P2 = H4 per the 2026-06-13 audit, both fleets confirmed HIGH)
-  Details: All tracker request helpers construct `cpr::Redirect redirect(true, true)` (`Source/Core/src/Tracker/TrackerHttpUtils.cpp:118,131,143,154,242`) while `BuildTrackerHeaders` attaches a Basic `Authorization` header (`BuildTrackerBasicAuthHeader`, :108-110). Because that header is a caller-set raw header (not libcurl `CURLOPT_USERPWD`), libcurl's default `CURLOPT_UNRESTRICTED_AUTH=0` does NOT strip it on cross-host redirects — a 30x from the configured tracker domain to an attacker/MITM host forwards the API token. The MCP attachment proxy already defends this with `cpr::Redirect(false,false)` (`Source/Plugins/Mcp/McpPlugin.cpp:289`); the tracker clients do not. Low severity: base Domain is user-configured (self-targeting trust boundary) and Jira/Plane/GitHub Cloud are HTTPS without cross-host auth redirects — residual risk is a compromised endpoint or an `http://` MITM. Verified (deep-audit, adversarially confirmed).
-  Concrete next action: disable redirect-following on the tracker helpers (`cpr::Redirect(false, ...)`) and handle same-host redirects explicitly, OR restrict follow to same host/scheme, OR strip `Authorization` on cross-origin redirects. Mirror the proxy's posture. ~1 h.
-  Status: applied (2026-06-14 — all 5 tracker verb helpers (`TrackerGetLogged` x2, `TrackerPostLogged`, `TrackerPutLogged`, `TrackerPatchLogged`) PLUS the previously-uncovered 6th sink — the multipart attachment upload at `JiraIssueMutation.cpp` ~:591 that bypasses the verb helpers — now build their redirect via a single exported `MakeTrackerRedirectPolicy()` returning `cpr::Redirect(false, false)`: redirect-following DISABLED, mirroring the MCP attachment proxy. cpr 1.9.2 exposes no same-host-only knob and `cont_send_cred=false` alone does NOT strip the caller-set RAW `Authorization` header on a cross-host 30x (UNRESTRICTED_AUTH governs only `CURLOPT_USERPWD`), so a blanket disable is the only complete fix; the Jira/Plane/GitHub REST verbs respond directly with 2xx/4xx and never depend on a 30x, so no legitimate same-host redirect is broken. A 30x now surfaces as a non-2xx the callers already handle. Shipped in the tracker-redirect PR. Note the lower-LOW siblings `ModelDownloader.cpp:314` (Whisper) and the AI-client `x-api-key` redirect remain open — distinct sinks.)
-  Last-reviewed: 2026-06-14
-- 2026-05-28 · deep-audit · [security] · P3 — Lua source tarball fetched with no integrity hash (only unpinned external fetch)
-  Details: `CMakeLists.txt:377` `file(DOWNLOAD https://www.lua.org/ftp/lua-5.3.6.tar.gz "${_lua_tar}")` has no `EXPECTED_HASH` (grep for EXPECTED_HASH/SHA256 across `CMakeLists.txt` + `cmake/` returns nothing). Every other dependency is pinned to an immutable git ref and FontAwesome's TTF is sha256-verified in CI (`build-and-test.yml:88-98`) — Lua is the lone gap. A compromised lua.org mirror or MITM injects unverified C source compiled into both standalone + Unreal targets. Inside `if(SMATCHET_WITH_LUA_AUTOMATION)` + guarded by `if(NOT EXISTS LUA_SRC_DIR)`, so the window is first-fetch / cache-miss CI runs. Mirrors the existing Mesa-archive-integrity entry (2026-05-24). Verified (deep-audit, adversarially confirmed).
-  Concrete next action: add `EXPECTED_HASH SHA256=<hash of lua-5.3.6.tar.gz>` to the `file(DOWNLOAD)` call (CMake supports it directly). One line. ~15 min.
-  Status: applied (2026-06-02 — `CMakeLists.txt` lua `file(DOWNLOAD)` now carries `EXPECTED_HASH SHA256=fc5fd69bb8736323f026672b1b7235da613d7177e72558893a0bdcd320466d60`, TOFU-pinned from the canonical upstream artifact; cache-hit builds skip the download entirely, fresh fetches are validated)
-  Last-reviewed: 2026-06-02
-- 2026-05-28 · deep-audit · [bug] · P2 — 11 empty `catch(...){}` blocks lack the mandated `// catch-all-ok:` marker
-  Resolution: STALE on sweep — `.claude/hooks/lint-catch-all.py Source/Standalone/CliCommandRunner.cpp` now returns rc=0 (was rc=2), and a tree-wide grep for unmarked truly-empty `catch(...){}` across Source/Core + Source/Standalone + Source/Plugins returns zero. The 11 named blocks are no longer unmarked-empty. (A softer advisory "catch without LOG" warning class remains, but that is not this entry's CRITICAL concern.) Archived stale.
-
-- 2026-05-28 · deep-audit · [infra] · P2 — Dead CI job `windows-msvc-no-agentic` tests a removed flag
-  Resolution: STALE on sweep — grep of `.github/workflows/build-and-test.yml` for `windows-msvc-no-agentic` / `WITH_AGENTIC` returns zero; the dead job was already deleted. Archived stale.
-
-- 2026-05-28 · orchestrator · [tooling] · P1 — `smatchet-merge-watcher` never merges (or notifies) a PR whose only blocker is a skipped/absent CodeRabbit review (`NONE` + status-SUCCESS, no inline); the CR grace window can't elapse under the daemon's `MAX_POLLS=1` driving
-  Resolution: shipped 2026-05-28. Root cause: `merge-gates.sh` passes CR state `NONE+status-SUCCESS` only after its in-process poll index `p >= CR_GRACE_POLLS` (default 10), but `merge-watcher.py poll_one` invokes merge-gates with `MERGE_GATES_MAX_POLLS=1`, so `p` is always 0 and resets every cycle — the grace fallthrough (`merge-gates.sh:485` / `:501`) is unreachable; the daemon loops `NONE+status-SUCCESS-waiting-for-inline (poll 1/10)` BLOCKED forever and, being a non-terminal state, never fires Phase-4a notify either. Surfaced live on PR #514 (a trivial shell-only diff CodeRabbit skipped). Fix (watcher-side, zero merge-gates change — the standalone orchestrator's default `MAX_POLLS=60` already reaches grace): new `maybe_pass_cr_none_grace` counts consecutive grace-wait cycles per HEAD in the registry (`cr_none_grace_polls` / `cr_none_grace_head`, mirroring `_bump_triage_attempts`); once `MERGE_WATCH_CR_NONE_GRACE_CYCLES` (default 10, floored 1) real cycles elapse it re-polls once with `MERGE_GATES_CR_GRACE_POLLS=0` so the single poll's grace passes → `GATES_PASSED` → `handle_pass` merges. Preserves the grace INTENT (wall-clock wait before assuming a status-only / skipped review) while making it reachable. Fail-closed on HEAD-fetch failure; resets on a new push or when CR leaves the NONE-wait shape. `poll_one` gained an `extra_gates_env` param; new detector `_looks_like_cr_none_grace_wait`; `daemon_loop` flips `BLOCKED`→`GATES_PASSED` before dispatch. 7 new bats tests in `tests/bats/merge_watcher.bats`. Cross-linked in `docs/plans/shipped/smatchet-merge-watcher.md` post-Phase-5 follow-up list.
-- 2026-05-28 · orchestrator · [tooling] · P2 — `merge-watcher.py` `_gh_json` leaks raw `OSError` on a bad subprocess `cwd` (stale/moved clone_path) → crashes the daemon poll instead of degrading; surfaced as a persistent red `maybe_notify suppresses repeat-notify` bats test
-  Resolution: shipped 2026-05-28. `_gh_json` (`scripts/dev/merge-watcher.py`) ran `subprocess.run([GH_BIN, ...], cwd=clone_path)` without guarding the launch: an invalid `cwd` raises `NotADirectoryError`/`FileNotFoundError` (both `OSError`), which is NOT a `RuntimeError` — so it escaped `_gh_owner_repo`'s `except (RuntimeError, KeyError)` (and every other caller's `except RuntimeError`) and propagated up through `maybe_notify`, crashing the daemon poll. On Windows a driveless git-bash path (`/c/Dev/Smatchet`, as the bats tests pass via `r'$(pwd)'`) reproduces it deterministically (`[WinError 267] The directory name is invalid`); in production a moved/deleted registered clone would do the same. Fix: wrap the `subprocess.run` in `_gh_json` and convert `(OSError, subprocess.SubprocessError)` → `RuntimeError`, so the function honors its documented single-exception contract that all ~8 callers already rely on. Verified every `_gh_json` caller catches `RuntimeError` (lines 518/544/618/792/1076/1167/1335/1461) and none relies on catching raw `OSError`/`TimeoutExpired` from it. Makes `maybe_notify suppresses repeat-notify` pass (bad cwd → RuntimeError → `_gh_owner_repo` None → notify proceeds → suppression works) without a networked `gh` call. New regression bats test asserts `_gh_json(bad cwd)` raises `RuntimeError` (not `OSError`) and `_gh_owner_repo` degrades to None. NOTE: 6 other `merge_watcher.bats` tests fail identically on clean `origin/develop` (registry-path / no-Smatchet / real-gh env) — separate pre-existing root causes, out of this fix's scope; flagged separately.
-- 2026-05-28 · orchestrator · [tooling] · P1 — `smatchet-merge-watcher` autostart daemon `EXIT_127` + closed PRs never auto-unregister
-  Resolution: shipped 2026-05-28 (filed in PR #512 as a tooling P1, resolved here). (1) The `EXIT_127` root cause — bare `gh`/`jq` not found inside the `merge-gates.sh` bash subprocess under the minimal Scheduled-Task PATH — was ALREADY fixed on develop before this entry was triaged: `merge-watcher.py:282-293` prepends the resolved `GH_BIN`+`JQ_BIN` dirs to the subprocess PATH, and `:99-109` overrides WSL `System32\bash.exe` with Git-for-Windows bash. The 17 stale `EXIT_127` registry entries (#372–#413) were pre-fix residue. (2) This PR adds the missing piece: `daemon_loop` now auto-unregisters a PR on the `PR_CLOSED_OR_MERGED` state (merge-gates exit 4) via the existing `maybe_remove_from_registry` helper, so closed PRs no longer accrete and the 17 stale entries self-clean on the next daemon poll (each polls → exit 4 → unregister). (3) Fixed `test-backlog-counts.sh --fix`, which shelled to bare `python3` (the Windows Store shim satisfies `command -v` but errors at runtime) — now probes `python3`/`python`/`py` by running each. Optional residue (a bats test asserting a clear "bash not found" message under empty PATH) left out — not load-bearing now that resolution is robust.
-- 2026-05-28 · orchestrator · [process] · P1 — Mid-task `git stash` + branch switch silently drops uncommitted CR-fix work from the intended commit
-  Resolution: shipped 2026-05-28. Three rules added to `docs/agent-rules/process-rules.md` § Git/p4 discipline under § CR-fix commit sequencing: (a) Commit before merge (CR-fix commit lands before `git merge origin/develop`, so it's independently visible via `git show <sha> --stat`; combined-diff merge views hide single-side-only changes); (b) Commit before branch switch (never `git checkout <other>` with uncommitted product changes — auto-stash + later pop reapplies them as "current state" instead of "missing from history"); (c) Post-push verification before claiming (`git show origin/<branch>:<file>` cross-check for at least one cited file before posting CR-triage reply). Mechanical enforcer `scripts/dev/verify-cr-reply.sh <branch> <file>...` diffs cited files between origin/<branch> and origin/develop; refuses if any cited file is byte-identical (meaning the CR-fix didn't land).
-- 2026-05-28 · orchestrator · [process] · P2 — Pre-implementation triage caught 5 already-resolved backlog items; encode as a slice-start rule
-  Resolution: verified-in-tree (already shipped via PR #484 — `docs/agent-rules/process-rules.md` § Plan-doc family contains "Pre-implementation triage — first action of every 'fix existing tooling' slice" with the two-step grep + git-log check and the archive-into-applied.md instruction). The session-friction-fixes plan slice 3 covered this; this duplicate backlog entry surfaced via the pre-implementation triage rule it itself encodes — meta-validating the rule.
-- 2026-05-28 · orchestrator · [process] · P1 — Implementer-side self-review didn't catch real shell-script bugs CR found in 4 of 9 slices this session
-  Resolution: `docs/plans/shipped/shell-script-self-review-lint.md`. `scripts/dev/test-shell-lint.sh` enforces 5 rules repo-wide (closed external allowlist of 19, shellcheck on SC2086/2046/2128/2155/2068, `curl -f` everywhere, sha256-verify within 10 lines of any `curl -o`, `--key=value` ↔ `--key value` parity for value-taking flags). Auto-discovered by `scripts/dev/test-all.sh`. Bypass via `SMATCHET_SKIP_SHELL_LINT=1` (emergency-only). Bats coverage in `tests/bats/shell_lint.bats` (9 tests, 6 fixtures under `tests/fixtures/shell_lint/`). Checklist at `docs/agent-rules/shell-script-self-review.md`; AGENTS.md and BUILD.md cross-links landed in the same PR. Pre-existing-violator cleanup: 21 scripts fixed in same PR (shellcheck word-splitting annotations on doctor.sh / p4-reconcile-check.sh, array-refactor on test-theme-roundtrip.sh, `curl -f` on smatchet-notify.sh, `command -v` preflights on 14 scripts, 6 `--key=*` ↔ `--key` twin cases). Deviation: `git` dropped from the grilled allowlist of 20 (would've forced 25 spurious preflights for a tool every dev environment ships with by definition).
-- 2026-05-28 · orchestrator · [tooling] · P2 — No `vcvars64.bat` wrapper for bash sessions; C++ slices ship without local build verification
-  Resolution: Slice 4 of `docs/plans/shipped/session-friction-fixes.md`. `scripts/dev/with-msvc-env.sh` ships: discovers VS install via `vswhere.exe -property installationPath` (covers Community / Professional / Enterprise / BuildTools without hard-coding globs), sources `vcvars64.bat` via PowerShell-mediated cmd.exe (works around Git Bash MSYS path-conversion quirks that mangle direct `cmd.exe //c` invocation), parses env via `while IFS='=' read` (no awk backslash escaping), and converts the Windows-shape PATH to bash-shape via `cygpath -p`. Smoke-tested with `cl` (compiler banner) and `cmake --version` (VS-bundled CMake). Documented in BUILD.md § MSVC from bash.
-- 2026-05-28 · orchestrator · [tooling] · P1 — `merge-watcher.py` triage loop latches `TRIAGE_BUDGET_EXHAUSTED` forever after auto-fixing CR findings; never re-evaluates gates so PRs that are objectively green sit blocked
-  Resolution: `docs/plans/shipped/merge-watcher-triage-recovery.md`. Sub-bug (a): `handle_blocked_cr_triage` now resets `triage_attempts` to 0 in the early-exit `not _looks_like_cr_finding_block` branch when the registry counter is non-zero, surfacing `triage_reset_on_cr_clear` in the state dict; sub-bug (b): new `maybe_resolve_stuck_cr_threads` helper (opt-in via `MERGE_WATCH_RESOLVE_CR_THREADS=true`) called from `daemon_loop` between triage and notify. Fires when (1) registry has `auto_act_for_head_sha`, (2) current `headRefOid` differs from it (push landed), (3) status_line is NOT CR-finding-shaped — fetches CR-authored non-outdated unresolved threads via `gh api graphql` and calls `mutation resolveReviewThread` per thread. `merge-gates.graphql` now selects `reviewThreads.nodes.id` so the mutation has its targets. 9 new bats tests cover both sub-bugs (counter-reset, env-gate, head-unchanged dedup, head-advanced fire, zero-thread no-op, same-head dedup, etc.). Sister bug 2026-05-21 P1 `GH_API_DOWN` (line 46) left for a separate slice.
-
-- 2026-05-28 · orchestrator · [tooling] · P2 — Backlog files conflict on every parallel-slice merge; entries are independent but the linear file structure forces manual resolution
-  Resolution: Slice 2 of `docs/plans/shipped/session-friction-fixes.md`. `.gitattributes` carries `merge=union` for `applied.md` only (scope-corrected during plan double-check — applying union to `process.md` / `tooling.md` would have wrongly preserved both deleted entries on parallel-delete conflicts; applying it to `AGENT_SELF_IMPROVEMENT.md` would have garbled the count line). `scripts/dev/sort-applied-md.sh` restores Latest-first ordering after union concatenation interleaves dates (`--check` for dry-run). Documented in `docs/agent-rules/process-rules.md` § Plan-doc family. ~70% of the original session's conflict-resolution time was on applied.md; this fix eliminates that. Process.md / tooling.md / index file still need manual resolution on adjacent-entry archives — defer to one-entry-per-file refactor if pain recurs.
-- 2026-05-28 · orchestrator · [process] · P2 — Pre-implementation triage caught 5 already-resolved backlog items; encode as a slice-start rule
-  Resolution: Slice 3 of `docs/plans/shipped/session-friction-fixes.md`. `docs/agent-rules/process-rules.md` § Plan-doc family now carries a **Pre-implementation triage** sub-rule mandating a two-step verification (Read the cited code + grep applied.md / `git log`) as the **first action** of every "fix existing tooling" slice. Items found already-shipped get archived with a `verified-in-tree` resolution; the slice is skipped. Plan-doc § Approach should pre-flight this for items known to overlap recent work. Empirical reference cited: `docs/plans/tooling-process-backlog-sweep.md` § Approach (5 stale items / ~3 h saved on a 37-item plan).
-
-- 2026-05-27 · orchestrator · [process] · P1 — Ship-loop breaks autonomy by asking the user for direction at stages that should proceed automatically (merge-gate polling, CR finding triage, post-gate merge)
-  Resolution: verified-in-tree. AGENTS.md § Autonomous ship-loop default now encodes the prescriptive contract: "Clarifications batched once at start via `AskUserQuestion`. After the user answers, the orchestrator MUST NOT use `AskUserQuestion` or pause for confirmation until either a defined exception fires or the post-ship 4-option menu. Each stage proceeds to the next automatically. CodeRabbit actionable findings are triaged and fixed autonomously; merge-gate polling starts immediately after PR creation; squash-merge fires immediately on `GATES_PASSED`." Full per-stage detail + post-ship 4-option contract in `docs/agent-rules/ship-loops.md` § Autonomous ship-loop default.
-
-- 2026-05-26 · orchestrator · [process] · P3 — Source/Core source files under 67 KB; split-recipe encoded
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Quality (File size + split recipe).
-
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a scripted post-merge git-janitor path
-  Resolution: Slice 8 of `docs/plans/tooling-process-backlog-sweep.md`. `scripts/dev/git-janitor.sh --post-merge <pr>` automates: clean-tree check, PR-merged verification via `gh pr view`, fetch+prune, ff-update develop, local branch delete (-D to handle squash-merge orphaning), dual-target build gate, concise report. Refuses on uncommitted work or non-MERGED PR.
-
-- 2026-05-26 · orchestrator · [tooling] · P2 — Merge-gates should explain GitHub `mergeStateStatus=BLOCKED`
-  Resolution: Slice 2 of `docs/plans/tooling-process-backlog-sweep.md`. `merge-gates.sh` now fetches `mergeStateStatus` from the GraphQL query and prints an INFO line on GATES_PASSED when GH reports anything other than CLEAN/UNSTABLE/UNKNOWN: "merge-gates pass; GitHub mergeStateStatus=<state> may be stale or branch-protection summary-only. REST squash-merge contract still applies."
-
-- 2026-05-26 · orchestrator · [tooling] · P2 — Add a P4/git mirror checklist helper
-  Resolution: Slice 5. `scripts/dev/p4-git-sync-check.sh` compares git-pending paths against `p4 opened` and reports both directions (git pending but not p4 opened; p4 opened but not git pending). Exit 0 = aligned, exit 1 = mismatch, exit 2 = p4 unreachable (informational for git-only sessions). `--quiet` flag for clean-on-success use.
-
-- 2026-05-26 · orchestrator · [tooling] · P2 — Summarize current-head CodeRabbit findings separately from history
-  Details: PR #460 had older CodeRabbit review bodies with actionable comment counts, but the current head had CodeRabbit `SUCCESS` and a latest comment saying no actionable comments were generated. Reading raw `gh pr view --json reviews,comments` made the historical comments look unresolved until the current-head check and merge-gates result were correlated manually.
-  Concrete next action: add a helper, likely `scripts/dev/coderabbit-current-head.sh <pr>`, that reports current head SHA, latest CodeRabbit check state, latest CodeRabbit review/comment for that head, and "historical comments ignored" when older actionable counts belong to previous commits. Estimated cost 45 min.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1504)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-26 · orchestrator · [infra] · P2 — Advisory CI jobs need step-level non-blocking templates
-  Details: PR #460 exposed that job-level `continue-on-error: true` was not enough to keep Bucket-C/Bucket-E soak-window failures from surfacing as red PR checks. Bucket-C and Bucket-E both needed step-level `continue-on-error` on the failing scenario/diff step, with artifact upload keyed off `steps.<id>.outcome` or `always()` so diagnostics still survive.
-  Concrete next action: add a shared workflow snippet or documented pattern for advisory jobs: give the risky step an `id`, set `continue-on-error: true` on that step, and upload artifacts using `if: ${{ steps.<id>.outcome == 'failure' }}` or `if: always()` as appropriate. Then audit existing advisory jobs for the same shape. Estimated cost 30 min.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1516)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-25 · orchestrator · [process] · P2 — `light-release-unreal-default` plan item 10 (`main.cpp` → `StandaloneAppBootstrap`) deferred without a tracked follow-up slice
-  Resolution: Follow-up slice in P4 task stream `light-release-unreal-default` — `InitAppAndPlugins` / `ParseStandaloneCli` / `BootEphemeral` / `ShutdownApplication` in `StandaloneAppBootstrap.{h,cpp}`; GUI render loop uses `bootCtx` + shared plugin init; `--ephemeral` early-outs via `BootEphemeral` (hidden window + forced MCP + `RunRenderLoop`). Process rule added at `docs/agent-rules/process-rules.md` § Deferred plan-file rows at ship boundary. Plan § Deviations updated on task stream. Light build verified (`ninja-publish-light-msvc`).
-
-- 2026-05-24 · orchestrator · [process] · P3 — plan-doc drafts should grep-verify pre-named TUs don't already exist
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (rg -l before naming a new TU).
-
-- 2026-05-24 · orchestrator · [process] · P3 — slice coordination should inline a not-yet-merged sibling's pattern shape
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (folded per B10 decision).
-
-- 2026-05-24 · orchestrator · [process] · P3 — slice->agent routing rejects test-rig for production-header slices
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in delegation.md § Subsystem specialists routing guard.
-
-- 2026-05-24 · coderabbit-triage · [security] · P3 — CI: workflow-level GITHUB_TOKEN `permissions: {}` + per-job least-privilege
-  Resolution: STALE on sweep — `.github/workflows/build-and-test.yml` now carries a workflow-root `permissions: contents: read` (`:9`) plus per-job `permissions: contents: read` overrides (e.g. `:223`). The least-privilege default this entry asked for is in place. (The sibling action-SHA-pinning + Mesa-integrity entries remain LIVE — separate concerns.) Archived stale.
-
-- 2026-05-24 · orchestrator · [process] · P2 — orchestrator session-start self-check for `SMATCHET_AGENT_VCS` mode-alignment
-  Resolution: Slice 5 of `docs/plans/tooling-process-backlog-sweep.md`. AGENTS.md § Autonomous ship-loop default carries a "**Session-start self-check (mandatory, regardless of user-prompt flavour)**" paragraph instructing the orchestrator to read the `## === p4-mode ACTIVE ===` banner emitted by `scripts/clear-session-context.sh` and follow the P4-gated ship-loop regardless of prompt flavour. Paired with the SessionStart-hook tooling entry below.
-
-- 2026-05-24 · orchestrator · [tooling] · P2 — SessionStart hook should announce `SMATCHET_AGENT_VCS=p4` mode to the orchestrator
-  Resolution: Slice 5. `scripts/clear-session-context.sh` now appends a `## === p4-mode ACTIVE ===` banner to `.session-context.md` when `$SMATCHET_AGENT_VCS=p4` AND `p4 info` succeeds (reports client + server). On `p4 info` failure, emits `## === p4-mode REQUESTED but UNREACHABLE ===` instructing the orchestrator to ask via `AskUserQuestion` per ship-loops.md (never silently downgrade). Paired with the AGENTS.md session-start self-check rule.
-
-- 2026-05-24 · coderabbit-triage · [security] · P3 — CI: pin all `uses:` action refs to commit SHAs + enable Dependabot
-  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXI` (deferred — repo-wide sweep, not slice-6 scope).
-  Details: `.github/workflows/build-and-test.yml` has 13 `uses:` sites across 5 jobs using floating `@v*` tags (`actions/checkout@v4` ×3, `msys2/setup-msys2@v2` ×3, `actions/cache@v4` ×3, `actions/upload-artifact@v4` ×3, `actions/download-artifact@v4` ×1). Only ~half are slice-6-introduced; pinning a subset leaves the workflow inconsistent and breaks the zizmor `unpinned-uses` blanket policy.
-  Concrete next action: 1 small PR — pin all 9 sites to commit SHAs + add `.github/dependabot.yml` (`package-ecosystem: github-actions`, weekly cadence) so SHAs stay current. Audit any other workflows under `.github/workflows/` for the same pattern in the same PR. Estimated cost ~30 min.
-  Resolution (2026-06-17 · PR #1365 ci(security): pin all workflow actions to commit SHAs + add Dependabot): every external `uses:` ref across the 21 `.github/workflows/*.yml` files is now pinned to a full 40-char commit SHA with a trailing `# vX` comment (11 distinct external actions; the repo-wide sweep over-delivered on the original build-and-test.yml-only scope). The local `.github/actions/cr-finding-gate` composite has no external refs and was left untouched. `.github/dependabot.yml` (github-actions ecosystem, weekly Monday, all refs grouped into one PR, `ci` commit prefix, `open-pull-requests-limit: 5`) keeps the pins fresh by bumping each SHA + its `# vX` comment on upstream releases — reconciling immutability against staleness. Closes the mutable-tag supply-chain hole (a moved tag executing attacker code with the workflow token / secrets). The paired Mesa-archive-integrity entry below stays open — #1365 was SHA-pin-scoped and does not resolve the unchecksummed-Mesa-download surface.
-  Status: fixed
-  Last-reviewed: 2026-06-17
-
-
-- 2026-05-24 · coderabbit-triage · [security] · P2 — CI: Mesa archive integrity verification (upstream publishes no checksum)
-  Source: CodeRabbit on PR #441 thread `PRRT_kwDORqx0G86EYIXK`. Live in `.github/workflows/build-and-test.yml:302,395` (slice-6 introduction).
-  Details: `bucket-c-screenshot-diff` + `bucket-e-ui-tests` jobs `curl` a 72 MB `mesa-3d-*.7z` from the `pal1000/mesa-dist-win` GitHub release with no SHA256 / signature check. Verified via `gh release view 24.2.5 --json assets` that upstream ships zero checksums: `digest: null` on every asset, no `.sha256` companion file, no checksum in the release body. CR's suggested `MESA_SHA256: "<published-sha256>"` literally cannot be filled with a publisher-attested value. Triage-mechanical-fix envelope insufficient.
-  Concrete next action: security PR must choose between (a) self-computed TOFU SHA256 pinned in workflow env (mitigates silent upstream tampering, not first-time-trust); (b) mirror the 7z to repo-controlled storage (release asset / LFS / private S3); (c) switch to a Mesa distribution that publishes signed artefacts (cosign-attested builds). Pair with the two entries above as one security PR. **P2** — supply-chain risk on every CI run, but exploit window narrow (public-repo CI, no secrets touched, output is a screenshot diff).
-  Resolution (2026-06-18 · branch feat/ci-mesa-tofu-sha256): shipped option (a) — self-computed TOFU SHA256 pin. Every Mesa download site now verifies the downloaded `mesa.7z` against a pinned `sha256sum -c -` immediately after `curl`, before `7z x`; a mismatch fails the step under the existing `set -euo pipefail`. All 6 sites covered: `build-and-test.yml` ×4 (bucket-C screenshot-diff, bucket-E UI tests, launch-smoke, mobile texture-guard), `perf-full.yml` ×1, `perf-pr-fast.yml` ×1. Pin `3f288b9d5d8b2d25ec0bd81dd82c6b8c77bc0ffad45cc467c37489170dd001ab` (mesa3d-24.2.5-release-msvc.7z, 71870710 bytes) was computed by downloading the upstream artifact twice over HTTPS and confirming the two hashes match (rules out a corrupt-transfer pin). Because upstream attests no checksum (`digest:null` on every asset, confirmed again at fix time), this is trust-on-first-use: it closes the silent-upstream-tampering / corrupt-mirror window but NOT first-time trust — options (b) repo-mirror and (c) signed-artefact distro remain the stronger-but-heavier follow-ups, tracked, not in scope here given the narrow public-repo-CI / no-secrets threat. The SHA is duplicated inline at each site to match the existing per-site `MESA_VERSION: "24.2.5"` duplication (no central env); a version bump updates both in lockstep.
-  Status: fixed
-  Last-reviewed: 2026-06-18
-
-
-- 2026-05-24 · test-author · [test] · P2 — `VerifyOnSave_TestConnection_SetsResult` bucket-E test fails under `--spawn` ephemeral runner (slice-9 ship-loop observation)
-  Details: Slice 9 of `docs/plans/shipped/autonomous-debugging-no-creds.md` aggregate UI-test run (34/35 pass) revealed a single pre-existing failure: `VerifyOnSave_TestConnection_SetsResult` from `tests/ui/ai_prefs_autosave_flow.test.cpp:215`. The variant depends on `SmatchetActiveUiTestAppController()` returning a non-null `AppController*` so it can call `AiPrefsTestConnection::TriggerProbe`. Under `--spawn --ephemeral` the AppController seam is wired (other variants in the same TU pass), but the worker-thread `ProbeReachability` succeeds, then the result-callback dispatched to the main thread doesn't always run before the test budget (240 yields) expires. Sibling variant `VerifyOnSave_CancelOnClose_ShortCircuits` passes consistently because cancel-then-yield is deterministic. Not a slice-9 regression — slice-9's own 18 new variants all pass.
-  Concrete next action: replace the 240-yield poll loop with a deterministic wait — either (a) drive the dispatcher tick from inside the test via `app.MainThreadDispatcher().DrainOnce()` after the worker join, or (b) gate `assistantPrefsTestInFlight=false` via a deterministic post-condition the test arms before TriggerProbe rather than waiting for the dispatched callback. ~1 h.
-  Status: applied (2026-06-20 trap-sweep — PR #1382)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-24 · coderabbit-triage · [test] · P2 — FakeP4Runner timeout vs spawn-fail fixture semantics conflated
-  Details: Slice 3 of `autonomous-debugging-no-creds.md` (PR #443) introduced `tests/support/FakeP4Runner.h` + fixture `tests/fixtures/p4/annotate_happy.json`. The fixture uses `exit_code = -1` as a *spawn-fail sentinel* (drives `P4RunCommand` to `return false`), but the same sentinel is reused for a `//depot/timeout.cpp` entry meant to model a p4 timeout. Real timeout behaviour in `Source/Core/src/P4Blame.cpp:65-80` populates stderr + exits via `return true` with non-zero `cap.exitCode` — i.e. completed-non-zero-exit, NOT spawn-fail. The test in `tests/Core/P4BlameAnnotateE2E.test.cpp:85` asserts the loose shape `err non-empty + rows empty`, which is satisfied by either path, so V3.1–V3.3 PASS even with the semantic conflation. Production P4Blame.cpp is correct; the bug is purely in the test fake.
-  Concrete next action: route to `test-author`. Reshape `tests/support/FakeP4Runner.h` so spawn-fail vs completed-non-zero-exit are distinguishable in the fixture schema (e.g. add explicit `simulate: spawn_fail` boolean OR rewrite the timeout fixture to use a non-(-1) non-zero exit code like 124 + tighten the timeout test to assert stderr-contains-"timed out"). Touch only `tests/support/FakeP4Runner.h`, `tests/fixtures/p4/annotate_happy.json`, `tests/Core/P4BlameAnnotateE2E.test.cpp`. C++14 hard; no std::optional / std::variant. CR thread at https://github.com/alexandrosk0/Smatchet/pull/443#discussion_r3294396615 has the full triage notes.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1518)
-  Last-reviewed: 2026-06-20
-- 2026-05-23 · debug-detective · [test] · P2 — No automated gate prevents description tooltip "long thin strip" regression
-  Details: Session 2026-05-23 `description-tooltip-consolidation` investigation. Adding `opts.wrapWidth = ImGui::GetFontSize() * 48.0f` to `RenderTextEditor`'s `BeginTooltip` block was confirmed only by hovering the description cell manually; no automated gate prevents the same regression. The symptom is severe: tooltip renders as an ultra-narrow vertical strip (~25 px wide) because `MarkdownPreviewRender::Render` samples `GetContentRegionAvail().x` internally, which is near-zero in a fresh `BeginTooltip()` window. The static grep gate (`scripts/dev/test-tooltip-wrapwidth.sh`, PR #430) catches missing `opts.wrapWidth` in source, but cannot verify the tooltip actually renders at the correct width at runtime.
-  Concrete next action: add `tests/ui/grid_description_tooltip_markdown.test.cpp` (ImGui Test Engine, bucket-E) that (1) opens the active-project grid with a synthetic ticket whose `description` field contains multi-paragraph markdown (heading + code-fence + bullet list), (2) hovers the description cell via the test-engine cursor API to force `IsItemHovered() == true`, (3) waits one frame for the tooltip window to spawn, (4) asserts tooltip window width > `ImGui::GetFontSize() * 30.0f` (far from ultra-narrow), (5) asserts the tooltip child's `DrawList` contains more than one Y-distinct draw command (verifying multiple lines). Re-use the scaffold at `tests/ui/views_columns_reorder.test.cpp`. ~3 h once bucket-E gains stable column-hover support. Deferred-automation note carried from `docs/plans/shipped/description-tooltip-consolidation.md` § Verification.
-  Resolution: applied — `tests/ui/description_tooltip_markdown_render.test.cpp` ships the runtime gate ('closes the defensive cover for the be2b1d9 wrapWidth-tooltip-render regression'), asserting the tooltip path honours `opts.wrapWidth = GetFontSize()*48` with drift-warnings pinned to the render sites; the pre-existing static grep gate `scripts/dev/test-tooltip-wrapwidth.sh` also remains.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-23 · orchestrator · [process] · P2-RESOLVED — `smatchet-merge-watcher` triage budget exhausts on every push because counter was per-PR-lifetime instead of per-HEAD
-  Resolution: Slice 10 archive. Fix landed in PR #418 (merged 2026-05-23): `handle_blocked_cr_triage` resets `triage_attempts` to 0 when `triage_for_head_sha` differs from current HEAD. Bats coverage at `tests/bats/merge_watcher.bats`. Per-HEAD reset confirmed in tree.
-
-- 2026-05-23 · orchestrator · [process] · P2 — Plan-revision direct-pushes vs classifier
-  Resolution: Slice 4 of `docs/plans/tooling-process-backlog-sweep.md`. Picked policy (b) — mandate PR-for-plan-revisions. AGENTS.md § Process rules § Plan-doc family now states "Plan-revision direct-pushes are PR-only … never direct-push to develop, even for one-line edits." Eliminates classifier-vs-rule drift; adds ~3 min ceremony per plan revision.
-
-- 2026-05-23 · debug-detective · [tooling] · P1 — No CI gate prevents BeginTooltip+MarkdownPreviewRender::Render blocks missing opts.wrapWidth
-  Resolution: Added `scripts/dev/test-tooltip-wrapwidth.sh` (PR #430). Scans all `Source/Core/src/*.cpp` files; for every `BeginTooltip...EndTooltip` block containing `MarkdownPreviewRender::Render`, asserts `opts.wrapWidth` is also present in that block. Exits 1 if any violation found; auto-discovered by `test-all.sh`. The check catches the exact class of bug that caused ~1.5 h of mis-navigation in session 2026-05-23: `MarkdownPreviewRender::Render` ignores `PushTextWrapPos` and samples `GetContentRegionAvail().x`, which is near-zero in a fresh tooltip window, producing an ultra-narrow vertical strip unless `opts.wrapWidth` is explicitly set. Backtest against the pre-fix codebase confirmed `SmatchetOfflineQueueUi.cpp` would have been flagged — that violation was fixed in the same PR.
-
-- 2026-05-23 · debug-detective · [test] · P3 — No unit test for IsDescriptionLikeFieldId predicate (planned extraction in description-tooltip-consolidation)
-  Details: `docs/plans/shipped/description-tooltip-consolidation.md` § Verification (Bucket A) calls for one test-rig case for `IsDescriptionLikeFieldId` covering `body`, `Body`, `description`, `customDescription`, `environment` (expected: true/true/true/true/false). The predicate does not yet exist as a named static helper — extraction is part of the consolidation plan (`Source/Core/src/TicketFieldEditor.cpp`). Without this test, the field-routing predicate can silently regress (e.g. losing the `body`/`Body` aliases used by GitHub tracker) after any rename or copy-paste.
-  Concrete next action: after `description-tooltip-consolidation` ships, add `tests/Core/IsDescriptionLikeFieldId.test.cpp` with 5 cases: `"body"` → true, `"Body"` → true, `"description"` → true, `"customDescription"` → true (contains "description"), `"environment"` → false. Wire in `tests/CMakeLists.txt`. ~15 min.
-  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/Core/IsDescriptionLikeFieldId.test.cpp exists (5 specified cases), wired in tests/CMakeLists.txt)
-  Last-reviewed: 2026-05-23
-
-
-- 2026-05-22 · orchestrator · [tooling] · P2 — `scripts/dev/merge-watcher.py daemon` crashes with `UnicodeEncodeError: 'charmap' codec can't encode character '→'` when poll-loop prints the `BLOCKED → triage:` line on Windows cp1252 stdout
-  Details: Session 2026-05-21 PR #372. User picked post-ship option 3 "Register with watcher". `merge-watcher-cli.py register 372` succeeded. `python scripts/dev/merge-watcher.py daemon --poll-interval 60` exited 1 on the first BLOCKED poll. Traceback: `File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode ... UnicodeEncodeError: 'charmap' codec can't encode character '→' in position 20`. Source: `scripts/dev/merge-watcher.py:640` prints `f"  PR#{state['pr']:<6} BLOCKED → triage: {extras.get('triage_action')}"` — the U+2192 arrow is not encodable under Windows' default cp1252 codepage when stdout is the console. Workaround applied in-session: `PYTHONIOENCODING=utf-8 python scripts/dev/merge-watcher.py daemon ...` — daemon then ran cleanly through the BLOCKED state. Net effect without the env var: the daemon crashes the first time it tries to log a BLOCKED triage event on any Windows host running `python` without `PYTHONIOENCODING=utf-8` configured; post-ship-option-3 path is broken end-to-end for those hosts.
-  Concrete next action: this PR fixes it two ways — (1) replace U+2192 with ASCII `->` on the affected print line (defence-in-depth — same char-set as the merge-gates.sh status-line format), and (2) `sys.stdout.reconfigure(encoding="utf-8", errors="replace")` + same for stderr at `main()` entry so any future non-ASCII glyph in a print call doesn't crash the daemon. Phase 4c autostart wrapper (`scripts/dev/merge-watcher-install-autostart.ps1`) should also export `PYTHONIOENCODING=utf-8` for belt-and-braces — flagged here as the secondary fix. Tests: a tiny bats / pytest that runs the daemon with `LANG=C` / `PYTHONIOENCODING=cp1252` + a forced BLOCKED fixture and asserts exit 0 + the line lands.
-  Status: applied (this PR fixes (1) + (2); autostart-wrapper env-var still open)
-  Last-reviewed: 2026-05-22
-- 2026-05-22 · orchestrator · [tooling] · P3 — retype change @2 revs to `text+w` so the dual-VCS ReadOnly contract holds across the whole baseline history
-  Resolution: Already shipped on 2026-05-21 by depot changes @3 ("chore(p4): retype @2 baseline t…") and @4 ("chore(p4): catch-all text+w typ…") — the backlog entry was raised on 2026-05-22 as a defensive note but never archived. Verified on the live Mainbot depot during the 2026-05-22 perforce-recovery session: `p4 -c smatchet_main_alexk files //smatchet/main/...` reports **689 `text+w` / 116 `text+wx` / 14 `binary+w` / 1 bare `text`** across 820 revs at HEAD. The lone bare-`text` holdout is `//smatchet/main/log#2` — a delete-tombstone (delete change @5) for an accidentally-tracked log file, with zero `p4 sync` impact (a fresh client never lands it). Spot-check via `p4 fstat -T 'depotFile,headType'` confirms representative live files (`CMakeLists.txt`, `Source/Core/include/AppController.h`, `.gitignore`) → `text+w`; `scripts/dev/test-all.sh` → `text+wx`. Closing as a docs cleanup; no further depot work needed.
-
-- 2026-05-21 · orchestrator · [process] · P3 — Plan-revision edits must grep the keyword family before declaring complete
-  Details: Commit `491f8425` rewrote ADR 0007 + plan A.12 + plan risks bullet + glossary entry to fix the audit-trail-substrate misnaming (SQLite → JSONL). The rewrite hit every obvious surface but **missed two orphans**: § Decisions locked point 3 still asserted `Schema bump bundled with this plan (agent_audit_trail migration)` and the bucket-A test description still said `+ migration apply`. Second-pass architect review caught both. Recurring failure shape: a substrate / shape / contract rewrite hits the structural sections (§ Approach, § Risks, ADR body) but skips the dense reference sections (§ Decisions locked, test descriptions, file-list rationales) where the same keyword recurs.
-  Concrete next action: when the orchestrator finishes a plan-revision edit that fixes a substrate / shape / contract change, run a final `grep` over the plan + ADR + glossary + backlog for the keyword family of the changed concept (here: `migration`, `schema`, `SQLite`, `agent_audit_trail`) and clear every hit before committing. Add this as a § Final-check rule under AGENTS.md § Project rules § Plan revision after implementation. ~10 min doc edit.
-  Status: applied (verified 2026-06-02 already present — AGENTS.md § Process rules § Plan-doc family carries "Same grep after any substrate/shape/contract rewrite — hit the keyword family of the changed concept and clear every stray reference". Landed since this entry was filed; closing as done)
-  Last-reviewed: 2026-06-02
-- 2026-05-21 · architect · [process] · P3 — Plan template dual-target build-gate callout
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in _plan-template.md § Files (one-liner, downgraded per B10 decision).
-
-- 2026-05-21 · architect · [tooling] · P3 — Architect: name the chokepoint binding-adapter shim, not the upstream caller
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in architect.md item 3 (Interface contracts).
-
-- 2026-05-21 · orchestrator · [tooling] · P1 — `merge-watcher.py daemon` mis-reports gates outcome as `GH_API_DOWN` when underlying `merge-gates.sh` returns a real blocked state; auto-merge can never fire
-  Resolution: ALREADY SHIPPED before this campaign's sweep. Verified against `agents/scripts/core/merge-watcher.py` on develop: the daemon resolves `ORCH_USER` via `_resolve_orch_user(clone_path)` and `env.setdefault("ORCH_USER", ...)` (~line 413), computes owner/repo via `_poll_owner_repo` and invokes gates through `_poll_run_gates(owner, repo, pr, env)` with the full positional shape, and classifies the FULL return-code space into distinct registry states — `{0:GATES_PASSED, 1:BLOCKED, 2:TIMEOUT, 3:GH_API_DOWN, 4:PR_CLOSED_OR_MERGED, 5:PAGINATION_OVERFLOW}` (~line 463-470), with stderr surfaced when stdout is empty. No blanket non-3→GH_API_DOWN mapping remains. Multiple sibling merge-watcher fixes also shipped 2026-05-28 (see entries below). Archived stale.
-
-- 2026-05-21 · orchestrator · [bug] · P1 — code-color slices shipped with long-text editor + tooltip not visibly applying syntax colors
-  Resolution: STALE on sweep — the long-text editor moved to `TicketFieldEditor_Modal.cpp` and now calls `s_LongTextEditor.Colorize(0, -1)` after `SetLanguageDefinition` (`:329-345`) with a "Re-arm the colorizer after LD swap" comment — exactly the missing initial-tokenize fix this entry described. The tooltip path renders through the polymorphic `DrawColoredCodeBlock` successor (shipped #651) which colors internally. Archived stale.
-
-- 2026-05-21 · orchestrator · [tooling] · P1 — Long-running CI / CodeRabbit polls block the interactive session; should run out-of-band
-  Resolution: STALE on sweep — `smatchet-merge-watcher` shipped (`agents/scripts/core/merge-watcher.py` + `merge-watcher-cli.py`, plan `docs/plans/shipped/smatchet-merge-watcher.md`). The host daemon polls registered PRs out-of-band per the merge-gates contract, auto-merges on PASS, and notifies on terminal states. The whole feature this entry requested exists. Archived stale.
-
-- 2026-05-21 · orchestrator · [process] · P1 — Force-merge on CR timeout silently discards STALE CR reviews on the prior commit; the poller treats "CR reviewed an older commit" the same as "CR never reviewed", and the timeout-fallthrough path doesn't surface the older review for explicit re-grading
-  Resolution: Slice 2 — verified the STALE_WITH_FINDINGS / STALE_CLEAN / STALE_RESOLVED / STALE_UNKNOWN discrimination is fully implemented in `merge-gates.sh:445-490`. STALE_WITH_FINDINGS and STALE_UNKNOWN block on timeout (no fallthrough to pass), STALE_CLEAN passes, STALE_RESOLVED (open=0 + status=SUCCESS) passes. The original session-bug from PR #357 cannot recur under current logic.
-
-- 2026-05-21 · orchestrator · [process] · P0 — Draft PRs silently bypass CodeRabbit review; merge-gates poll passes on the placeholder StatusContext without ever seeing a real review
-  Resolution: Slice 1 of `docs/plans/tooling-process-backlog-sweep.md`. Three-prong fix landed: (1) `MERGE_GATES_FLIP_READY=true` env knob in `scripts/dev/merge-gates.sh` flips draft→ready at poll start when authorized-merge callers (orchestrator + `smatchet-merge-watcher`) opt in. CR's auto-review fires immediately on the ready transition. `agents/core/git-janitor.md` updated to set the env. (2) The C4 prong 2 logic (`cr_thread_comments_on_head > 0` required for NONE+SUCCESS pass) already shipped in an earlier merge-gates patch — verified in-place at `merge-gates.sh:453`. (3) `@coderabbitai review` manual trigger documented in AGENTS.md § Merge gates and in `merge-gates.sh` header comment. ADR 0006 amended with "Authorized-merge flip-at-poll-start carve-out" section explaining the design. 3 bats tests cover the flip behavior. Plain poll-only callers (status checks, dry-runs) leave the env unset; draft-as-WIP semantics preserved.
-
-- 2026-05-21 · architect · [process] · P2 — Scope-reduction edits need a forward-reference grep over CONTEXT.md + ADRs for deferred-symbol orphans
-  Resolution: Slice 4. AGENTS.md § Process rules § Plan-doc family now requires forward-reference grep over `docs/CONTEXT.md` + `docs/adr/` + `agents/*.md` + `docs/self-improvement/categories/` for every symbol named in deferred work. Same rule applies to substrate/shape/contract rewrites — clear every stray reference in the keyword family.
-
-- 2026-05-21 · architect · [process] · P2 — Cross-cutting review must feasibility-check every prescribed plumbing channel
-  Resolution: Slice 4. `agents/core/architect.md` § Interface contracts checklist now requires naming the actual function signature / struct member / typedef arity at every hop of a prescribed X → Y → Z path; missing channels must be flagged as an explicit widening, not "plumb from context".
-
-- 2026-05-21 · grill-with-docs · [process] · P2 — Skill should pre-flight storage-substrate facts for every persistence claim
-  Resolution: Slice 4. `agents/_shared/skills/grill-with-docs/SKILL.md` § During the session now carries a "Storage-substrate pre-flight" rule — any decision mentioning audit / log / persistence / cache / schema / migration must point at one `file:line` proving the storage shape before being locked. Catches phantom-table claims that drive implementation agents to hunt for substrates that don't exist.
-
-- 2026-05-21 · orchestrator · [test] · P3 — `tests/Core/SmatchetThemeSyntaxColors.test.cpp:163-188` mixes ImGui-coupled fixture into pure-logic bucket
-  Details: CodeRabbit on PR #353 (post-merge feedback the session-poller missed; see process.md P1 'STALE CR review on timeout fallthrough') flagged that the `TEST_CASE_FIXTURE(ImGuiCtxFixture, "SmatchetTheme::ApplyStyle — every theme populates the slice-6 Identifier syntax color")` test uses `ImGuiCtxFixture` (creates an ImGui context to call `SmatchetTheme::ApplyStyle` / `GetSyntaxColors`) but lives under `tests/Core/` — the pure-logic doctest bucket per `tests/CMakeLists.txt` § "Per-unit linkage". The bucket-boundary convention is: pure-logic tests in `tests/Core/` (no ImGui dep), bucket-E ImGui-Test-Engine scenarios in `tests/ui/`. The file already has 3 other `ImGuiCtxFixture`-using cases (the WindowBg pin tests at lines 190+), so the boundary violation is bucket-wide, not just one case.
-  Concrete next action: two-step refactor — (1) Extract a pure-data accessor on `SmatchetTheme`: `static SmatchetThemeSyntaxColors BuildSyntaxColorsForTheme(ThemeId)` that returns the per-theme RGBA constants without going through `ApplyStyle()` (no ImGui side effects). The existing `ApplyStyle()` calls `BuildSyntaxColorsForTheme` internally + then publishes to the cached `GetSyntaxColors()` static. (2) Rewrite `SmatchetThemeSyntaxColors.test.cpp` cases to call `BuildSyntaxColorsForTheme` directly + drop the `ImGuiCtxFixture` dependency. The WindowBg / theme-switch cases that genuinely need ImGui style state can move to `tests/ui/theme_apply_window_bg.test.cpp` (bucket-E). ~2 h: 30 min extract, 1 h rewrite cases, 30 min bucket-E move. Low priority — current setup works correctly, this is convention hygiene.
-  Status: applied (2026-06-21 P3 sweep — shipped #1528)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-20 · handoff-implementer · [tooling] · P2 — Bucket-E coverage for DeepSeek auto-clear "[model changed - chat cleared]" strip (tooling-sweep #24)
-  Details: `docs/plans/shipped/deepseek-provider.md` § Verification flagged bucket-E as deferred. Pure-helper logic was covered by `tests/Core/AiModelSignature.test.cpp`; the gap was rendered-strip verification — after a Send-with-different-model the chat clears and `g_ui.assistantLastError` paints `"[model changed - chat cleared]"` in the assistant panel's orange strip.
-  Resolution (2026-06-18): shipped `tests/ui/ai_assistant_model_change_strip.test.cpp` + `scripts/dev/test-ui-ai-assistant-model-change.sh` (state-based oracle on `g_ui.assistantLastError`, stub `IAiClient` via `AiClientFactory::SetTestOverride`, deterministic `MainThreadDispatcher::Drain()`) — **PR #1372** (B8 L2 / slice-7 of `tooling-process-backlog-sweep`). Closes tooling-sweep item #24.
-  Status: applied
-  Last-reviewed: 2026-06-18
-
-- 2026-05-20 · orchestrator · [test] · P2 — Bucket-E coverage missing for description grid-cell tooltip rendering markdown
-  Resolution: STALE — tests/ui/description_tooltip_markdown_render.test.cpp shipped. (B8 phase-0).
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E coverage for Preferences > Agentic tab (T7 residue)
-  Resolution: MOOT — the Agentic tab/poll UI was removed; only a vestigial ConfigManager field + a localization string remain, no panel to drive. (B8 phase-0).
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Bucket-E live-PR end-to-end probe for coderabbit-react-loop
-  Resolution: MOOT — the coderabbit-react-loop runtime was deleted (applied.md deleted-runtime banner). (B8 phase-0).
-
-> **Backlog-campaign B10 (2026-06-02)** — 14 deferred process forcing-rules encoded into their home docs (one pure-docs PR). Each entry below flipped to applied; rule text verified live (not stale) before writing.
-
-- 2026-05-20 · orchestrator · [process] · P3 — Default git merge not rebase for squash-destined PR branches
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in process-rules.md § Git/p4 discipline (catch-up sync).
-
-- 2026-05-20 · git-janitor · [process] · P2 — Pre-flight should cross-check `git worktree list` against `.git/worktrees/` to detect orphan on-disk dirs before pruning
-  Resolution: Slice 8. `agents/core/git-janitor.md` § Pre-flight cross-checks (Step 0) — added three pre-flight items: worktree-bookkeeping audit (porcelain-based gitdir inspection), detached-HEAD salvage-tag recipe, and lock-staleness sweep invocation. Runs before any destructive op.
-
-- 2026-05-20 · orchestrator · [process] · P2 — Merge-gates poller has no encoded recovery for STALE-persist, MAX_POLLS-with-pushed-fix, or CR re-review trigger
-  Resolution: Slice 2. **(A) STALE auto-recovery**: `merge-gates.sh` now auto-posts `@coderabbitai review` once per HEAD when CR sits at STALE_WITH_FINDINGS / STALE_UNKNOWN for ≥`MERGE_GATES_STALE_REREVIEW_POLLS` consecutive polls (default 5; set to 0 to disable). Idempotent per HEAD — the trigger fires once per head SHA. **(C) `@coderabbitai review` reference**: documented in `merge-gates.sh` header + AGENTS.md § Merge gates (slice 1). **(B) auto-restart on push-after-COMMENTED** deferred — orchestrator's existing pattern (push fix, re-invoke poll) is functionally equivalent; encoding it in the script adds complexity without clear win.
-
-- 2026-05-20 · orchestrator · [process] · P2 — ADR 0006 hole: merge-gates poller on draft PR never gets a real CodeRabbit signal
-  Resolution: Closed in same slice as P0 sister entry above. ADR 0006 now carries a 2026-05-27 amendment documenting the `MERGE_GATES_FLIP_READY=true` carve-out for authorized-merge callers, closing the structural bypass while preserving draft-as-WIP for non-authorized polls.
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — 8 of 15 candidate perf scenarios don't emit `rows[]`; cannot be baselined under current shape
-  Resolution: Slice 9 of `docs/plans/tooling-process-backlog-sweep.md`. Audited current state: (a) the 3 bucket-C-only scenarios (`command-palette-fuzzy`, `theme-switch-roundtrip`, `dock-gap-sentinel`) are correctly classified as render-bound and don't need rows[]; (b) the 3 named roundtrip scenarios (`agent-handoff-roundtrip`, `agent-triage-roundtrip`, `whisper-dictation-roundtrip`) were removed in the agentic-runtime ripout (v1 PR1 of github-tracker-backend.md, sha b1d241bc); (c) the 2 named "scenarios that exist but don't emit rows" — `cell-edit-burst` already has rows[] in `OnFinish` (`CellEditBurstScenario.cpp:74-87`), and `whisper-ai-assistant-autosend` also already emits rows[]. Net: no retrofit work needed; the gap closed via prior PRs while this entry sat open.
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Release workflow does not fetch `fa-solid-900.ttf` (Font Awesome 6 Solid)
-  Resolution: Slice 6 of `docs/plans/tooling-process-backlog-sweep.md`. No release workflow exists yet; added pinned + sha256-verified `curl` fetch step to `.github/workflows/build-and-test.yml` before the configure step so all CI builds (and the bucket-C / bucket-E jobs that consume the uploaded exe) have icons available. Tag pinned at `6.7.2`; sha256 baked in env. When a release workflow is authored, it must duplicate this step before the configure step.
-
-- 2026-05-20 · orchestrator · [process] · P2 — Slice 1 of `pillar-1-2-perf-review-system.md` never captured initial dev-host baselines; perf-gatekeeper verdicts permanently MISSING_BASELINE
-  Resolution: 7 of 15 candidate scenarios baselined on `chore/backlog-best-wins`@dev — `docs/perf/baselines/{idle,priority-grid-scroll,attachment-preview-open,long-text-open-large-adf,lua-recorder-fuzz,preferences-slider-drag,ai-chat-history-render}.dev.json`. Captured against `c276d884` (develop tip at slice start) via `bash scripts/dev/perf-baseline.sh init <scenario>` per scenario. The remaining 8 scenarios named in the original entry don't emit `rows[]` under their current shape (3 bucket-C screenshot scenarios that require `--screenshotPath`, 3 roundtrip scenarios that run cleanly but don't include `UiPerfMonitor::Instance().GetLastFrameRows()` in OnFinish, 2 misc — `cell-edit-burst` + `whisper-ai-assistant-autosend`). New follow-up tracked at tooling.md "8 of 15 candidate perf scenarios don't emit rows[]" with the per-scenario retrofit plan. Net effect: `perf-gatekeeper` + the new AGENTS.md § Project rules § "Perf slice-boundary auto-run" rule now produce real deltas (not `MISSING_BASELINE`) for the 7 covered surfaces; the 8 surfaces remain advisory-only until their scenarios are retrofitted.
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Required CLI tools must be discoverable + verified at first-setup time
-  Resolution: New `scripts/dev/check-required-tools.sh` probes the standard orchestrator tool set (git, cmake, ninja, gcc, g++, python, jq, gh, clang-format, clang-tidy, cppcheck, flock; optional: OpenCppCoverage). PASS/FAIL summary; exits 1 on any missing required tool. Wired as the first step of `scripts/setup-harness.sh` so the absence fires at clone time — continues setup if a tool is missing so the user can finish adapter wiring + install separately. New "Required CLI tools" section in `docs/harness/SETUP.md` with per-tool install hints (MSYS2 + winget). Probe is also safe to invoke ad-hoc (`bash scripts/dev/check-required-tools.sh [--quiet]`). Validated against the local dev box: immediately flagged jq + flock as missing (matching the merge-gates-poller false-pass + lint-cpp-drain.sh gaps from the prior session).
-
-- 2026-05-20 · orchestrator · [tooling] · P2 — Running Smatchet.exe holds the file lock; rebuild link fails until the user kills the window
-  Resolution: New `scripts/dev/relaunch-smatchet.sh` wraps the iter-loop: (1) probes `tasklist /FI "IMAGENAME eq Smatchet.exe"` and `taskkill //IM Smatchet.exe //F` if running (gated on `tasklist`'s presence so non-Windows hosts no-op cleanly), (2) `cmake --build --preset <preset> --target SmatchetStandalone` (default ninja-iter-msvc; --preset=debug/publish supported), (3) `ls -la` the resulting exe for stale-exe sanity, (4) launches with `nohup ... &` to a per-launch `${TMPDIR:-/tmp}/Smatchet-relaunch-$$.log` so the caller can tail-f while iterating. `--no-launch` for build-only; `--args="..."` for verbatim arg passthrough. Idempotent PATH prepend for MSYS2 UCRT64 so the script works without manual export. Returns the launched PID on stdout.
-
-- 2026-05-20 · orchestrator · [process] · P2 — New-feature plans must include a `## Perf` section with before/after measurement + temp markers
-  Resolution: Slice 1 of `docs/plans/shipped/pillar-1-2-perf-review-system.md` ships the substrate (baseline registry at `docs/perf/baselines/<scenario>.<host>.json`, regression policy at `docs/perf/regression-policy.json`, driver scripts `scripts/dev/perf-{run,baseline,compare}.{sh,py}`). `docs/guides/perf-workflow.md` § Step 7 documents the gate-check loop. `AGENTS.md` § UX Pillars § Pillar 1 cross-links the new substrate. The `## Perf section mandate` itself (the original entry's deliverable) is left for Slice 3 (PR-fast CI gate) of the same plan — that's where the gate becomes merge-blocking and the AGENTS.md § Project rules mandate lands. The substrate must exist first; mandating a `## Perf` section that has no tools to satisfy it would have been an empty rule. Closing this entry as the upstream design (the plan) is now on develop + the foundation is shipping in the same window.
-
-  Resolution (status: observational -> applied): The underlying race itself is upstream — no single-mechanism in-repo fix. But the canonical recovery pattern is now documented in AGENTS.md § Project rules § Stale-read recovery on Edit (per grill Q5=A — top-level Project-rules visibility, auto-loaded for every agent every session). Documents the 3 causes (concurrent orchestrator in sibling worktree, PostToolUse hook reformat, user-side edit) + the 3-step recovery (re-Read at same offset/limit → diff intended change against new content → re-Edit with refreshed old_string). Names 3 hot files where the race rate is highest (`_plan-locks.generated.md`, AGENTS.md, `docs/self-improvement/categories/*.md`). Explicit "do NOT use replace_all: true as a force-write" callout because that widens the rewrite surface and amplifies collision risk. Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 6.
-
-- 2026-05-19 · coderabbit-triage · [test] · P2 — `AgentProposalStore.test.cpp` SQLite tests live in pure-logic rig; no bucket-E SQLite lane exists yet
-  Resolution: MOOT — AgentProposalStore removed from the tree (agentic runtime deleted); no store, no SQLite-lane need. (B8 phase-0).
-
-- 2026-05-19 · orchestrator · [process] · P3 — Post-squash-merge branch -D fast-path (5-step pre-flight exempt)
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in git-janitor.md § cleanup.
-
-- 2026-05-19 · coderabbit-react-loop · [bug] · P3 — `WhisperAiAssistantAutosendScenario.cpp` references unguarded `assistantPanelOpen` — DX12 link broken
-  Resolution: STALE on sweep — the three `g_ui.assistantPanelOpen` references are now inside `#if defined(SMATCHET_WITH_AI)` guards (`WhisperAiAssistantAutosendScenario.cpp:116-118,330-331,340`) with an explanatory comment. DX12 link no longer breaks on this TU. Archived stale.
-
-- 2026-05-19 · perf-detective · [tooling] · P2 — `perf-measure --spawn` `WaitForFile` stale-file footgun
-  Resolution: Slice 9. `Source/Core/src/Commands/Scenarios/ScenarioRunner.cpp` now calls `std::remove(outPath_.c_str())` before the scenario starts, eliminating the race where a prior run's result file looks like the new run's output to the spawn-mode WaitForFile poller.
-
-- 2026-05-19 · orchestrator · [tooling] · P2 — Cross-harness CI parity for skill-vs-agent forms
-  Resolution: Slice 9. `scripts/dev/test-skill-vs-agent-parity.sh` ships as a shape check: every skill under `agents/_shared/skills/*/SKILL.md` either has a matching `agents/<name>.md` twin OR is named in the script's `SKILL_ONLY_HELPERS` array. Auto-discovered by `test-all.sh`. The functional-parity stretch (driver scripts + stdout diff per harness) is deferred — naming the orphan-skill case is the immediate win; the test surfaces a real drift type that a pure-prose review wouldn't catch.
-
-- 2026-05-19 · debug-detective + test-author · [process] · P1 — Bootstrap-golden screenshot tests can enshrine the bug they were meant to catch
-  Resolution: AGENTS.md § Project rules now carries the "Golden-image approval contract" rule (after § Trivial-visual-only change envelope) — agents that bootstrap a checked-in reference artefact MUST hand the file + launched-app handle to the user and wait for explicit "looks right" verdict before `git add`. Iterate the underlying fix on rejection, never amend the golden to match a buggy state. Cross-linked from `agents/core/test-author.md` § Pattern C — Screenshot scan with a "Golden-image bootstrap requires user approval" sub-bullet + dual-capture-no-golden preference (`scripts/dev/test-theme-roundtrip.sh` reference). Motivated by the 2026-05-19 theme-switch-roundtrip incident where the bootstrap would have shipped a PNG of the bug.
-
-- 2026-05-19 · git-janitor · [process] · P2 — FF-clean docs-batch exception still gates on `bash scripts/dev/test-all.sh` for pure-docs / design-only diffs
-  Resolution: `agents/core/git-janitor.md` § FF-clean docs-batch exception gets a new sub-section "Pure-docs sub-exception (precondition 4 relaxation)" — when the ahead-range diff is strictly within `docs/**`, `backlog/**`, `AGENTS.md`, or root-level UPPERCASE `*.md`, the `test-all.sh` gate is skipped (per grill Q6=A — Locales/*.json stays under AGENTS.md § Trivial-visual-only change envelope, not merged here; agents/*.md stays in deny-list so `test-agent-contract.sh` still fires). Allow-list and deny-list explicitly named so the rule doesn't over-fire. New `scripts/dev/is-pure-docs-diff.sh <base-branch>` discriminator — exits 0 if ahead-range strictly allow-listed, 1 otherwise. Verified live on the current branch (mixed scripts/+agents/ diff returns exit 1 as expected). Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 2.
-
-- 2026-05-19 · orchestrator · [process] · P1 — Autonomous ship-loop fires commit+push during iterative UI/visual polish, before user can validate
-  Resolution: AGENTS.md § Autonomous ship-loop default § Exceptions gets new exception #5 "Visual-validation exception" — fires when BOTH (1) diff touches a visual-path file in the allow-list (`SmatchetTheme.cpp/h`, `Smatchet*Ui*.cpp`, `Locales/*.json`, ImGui style constants, dock-layout init) AND (2) no bucket-C/E coverage exists for the changed widget. Loop pauses after build with the launched exe; orchestrator presents the run command + bash background id + one-sentence "evaluate this" and waits for user verdict. On "looks good" → resume + commit. On "no" → leave dirty + iterate in-place (grill Q7=A; not stash, since the stash-list bookkeeping is more friction than value when the orchestrator already has the diff in context). Out-of-scope cases explicitly named so the exception doesn't over-fire: uncovered-but-non-visual changes route via the test backlog instead; visual changes that DO have coverage stay in the ship-loop. Pillar anchor added to AGENTS.md § UX Pillars § 4 § Visual-validation acceptance with a cross-link back to the exception. `agents/core/git-janitor.md` § Hard refusals extended with a "Squash-merge a PR carrying unvalidated visual commits — never" rule that defers to the merge-gates poller's user-comments gate (or asks if no comment present). Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 1.
-
-- 2026-05-19 · orchestrator · [tooling] · P2 — Token telemetry does not record Claude Code skill-load overhead
-  Resolution: Empirical probe (PostToolUse matcher="Skill" + a throwaway dump-stdin hook) confirmed that **PreToolUse and PostToolUse both fire for the `Skill` tool**, with `tool_input.skill` carrying the skill identifier and PostToolUse adding `duration_ms` + `tool_response.success`. Claude Code does **not** expose token-usage on the payload — skills load inline into the parent context, so the cost shows up only as the parent's next-turn input-token delta. `agents/_shared/token-tracking/skill-load-log.py` (PostToolUse:Skill hook) writes one JSONL line per invocation to `.claude/.skill-loads.jsonl` with `{ts, session, skill, duration_ms, success, approx_tokens, skill_md_path}`. `approx_tokens` is the file-size-divided-by-4 heuristic — populated for project skills (resolvable via `.claude/skills/<name>/SKILL.md`); 0 for namespaced plugin skills whose paths live in the per-user plugin cache and aren't enumerable from the hook. `agents-statusline.py` gains a `_skills_badge()` block — `[SKILLS] 🧠 skill×N · loads=M [· ~Kt]`. Wired in `docs/harness/claude-code/settings.json.tmpl` + linked by `setup-harness.sh setup_claude_code()` (new `link_file ".claude/hooks/skill-load-log.py" → agents/_shared/token-tracking/skill-load-log.py`). Bucket-A test `scripts/dev/test-skill-load-log.sh` (auto-enrolled in `test-all.sh`) covers: PostToolUse appends 1 row, PreToolUse silently ignored, non-Skill tool_name ignored, plugin-namespaced skill resolves null path + 0 tokens, project skill resolves path + non-zero tokens, setup-harness link present. 9/9 PASS live. Limitation called out in script docstring: `approx_tokens` is a heuristic — use for relative comparison (skill A vs skill B), not absolute budget accounting. Real measurement awaits Anthropic exposing a token-usage payload on the Skill tool's PostToolUse event.
-
-- 2026-05-19 · orchestrator · [tooling] · P3 — `test-doc-anchors.sh` advisory → blocking flip (4 known broken refs)
-  Resolution: Same-PR closure of the advisory-mode entry. All 4 known broken refs fixed: (1) `Anti-deception note` — new bold-prefix paragraph added to AGENTS.md § Handoff envelope describing the `HarnessRunState::IsTransitionAllowed` integrity boundary that the Source/Core headers reference. (2) `Auto-merge mechanics` — ref in external-blockers.md rewritten from `AGENTS.md § Auto-merge mechanics` to `docs/plans/shipped/test-suite-expansion.md § Auto-merge mechanics` (the actual location). (3) `Git workflow` — ref in tooling.md rewritten from `AGENTS.md § Git workflow` to `AGENTS.md § Project rules` (with cross-mention of the existing § Destructive git ops in shared worktrees sub-section). (4) `Pillar 2` — added `**Pillar 1**` / `**Pillar 2**` / `**Pillar 3**` / `**Pillar 4**` bold-prefix anchors inside AGENTS.md § UX Pillars subsections so the literal name "Pillar 2" resolves. Advisory mode flipped to blocking — `test_doc_anchors.py` now exits 1 on any unresolved ref. Final audit run: 45/45 refs resolved (was 43/47 broken on initial run).
-
-- 2026-05-19 · orchestrator · [process] · P3 — AGENTS.md § <section> cross-link rot when sections move
-  Resolution: `scripts/dev/test-doc-anchors.sh` (+ helper `scripts/dev/test_doc_anchors.py`) landed via PR #TBD. Collects valid anchors (headings + bold-prefix paragraphs) from `AGENTS.md` and every `docs/agent-rules/*.md`; greps every `AGENTS.md § <Name>` reference repo-wide; reports refs whose extracted name doesn't substring-match any anchor. Initial run found **4 legitimate broken refs** (Anti-deception note, Auto-merge mechanics, Git workflow, Pillar 2). Shipped in **advisory mode** (exit 0 with warnings) per Phase 9 coverage-gate soak pattern — flips to blocking once the 4 known refs are fixed; tracked as P3 `tooling.md` 2026-05-19. Auto-enrolled by `scripts/dev/test-all.sh`. 152 distinct anchors detected; 47 distinct refs scanned; 43 resolved (91%) on initial run.
-
-- 2026-05-19 · orchestrator · [process] · P2 — Wrong-worktree-path footgun recurs despite documentation
-  Resolution: Option (b) from the entry — Stop-time audit script — landed via PR #TBD. `scripts/dev/check-main-repo-clean.sh` runs from the Claude Code Stop hook (wired via `docs/harness/claude-code/settings.json.tmpl`); resolves the main repo via `git rev-parse --git-common-dir`, runs `git -C <main-repo> status --short`, and emits a loud STDERR banner if non-empty. Banner names the modified files + the worktree branch + the exact `git -C "$MAIN_REPO" stash push` recovery command. Best-effort: exit 0 always, never blocks Stop. Smoke-tested with a synthetic dirty marker — fires correctly. The harness setup script template propagates the new hook on next `bash scripts/setup-harness.sh claude-code` run; live `.claude/settings.json` updated in the same PR for this session. PreToolUse-rewrite option (a) deferred — option (b) catches the bug at session-end which is sufficient for the documented friction pattern.
-
-- 2026-05-19 · orchestrator · [process] · P3 — `link_file()` short-circuits forever when destination exists; canonical edits don't propagate to `.claude/hooks/`
-  Resolution: Option (b) from the entry — audit check in `scripts/dev/test-agent-contract.sh` — landed via PR #TBD as sub-check [9/9]. `cmp -s` between `agents/_shared/token-tracking/agent-token-log.py` (canonical) and `.claude/hooks/agent-token-log.py` (independent copy) fails loudly on byte drift. Skipped cleanly when the hook copy is absent (Claude Code harness not set up locally). Recovery command included in the failure message: `cp -f canonical hook_copy` OR `rm hook_copy && bash scripts/setup-harness.sh claude-code`. Audit run total: 19/19 sub-checks now (was 18/18). Option (a) `link_file()` drift detection in setup-harness.sh deferred — option (b) catches the bug at PR time which prevents the misclassification from shipping.
-
-- 2026-05-19 · orchestrator · [process] · P3 — Agent-docs improvements: 4 parked items deferred from PR #260
-  Resolution: All 4 parked items shipped as separate PRs after the PR #260 tracking entry was filed. PR #269 closed lock-terminology clarification (4-roles glossary). PR #270 closed CONTEXT.md glossary expansion (9 → 41 entries / 7 sections). PR #273 closed AGENTS.md three-way split — scoped down to a single-file extraction of § Delegation (~230 lines) to `docs/agent-rules/delegation.md` after audit found ~74 external `AGENTS.md § <section>` references; redirect stub in AGENTS.md preserves the cross-links. vexp-section-to-CLAUDE.md remains external-blocker (vexp installer auto-regenerates inside AGENTS.md). Plan revision appended to `docs/plans/shipped/agent-docs-improvements.md` § Implementation log per AGENTS.md § Plan revision after implementation.
-
-- 2026-05-19 · perf-detective · [process] · P3 — Sanctioned probe-scenario-via-lambda flow for ad-hoc perf investigations
-  Details: When `perf-detective` needs to drive a render path no production scenario covers (e.g. the AI chat history `DrawHistoryArea` path which is gated on `ImGui::Begin == true` and never fires in a hidden spawn instance), the current process is 5 mechanical steps: (1) write a one-off `IScenario` subclass, (2) register it in `AppController.cpp`'s scenario factory list, (3) build, (4) measure, (5) strip the file + the registration line. Step (5) is the failure mode — deleting the .cpp without removing the registration causes a compile break the next time someone touches `AppController.cpp`. Hit this during PR #311's perf investigation; recovered cleanly but the cleanup pass was a non-trivial scan across two files for residue.
-  Concrete next action: add a `ProbeScenario` factory in `Source/Core/include/Commands/Scenarios/` that takes a `std::function<void(int)>` per-frame lambda + an optional `std::function<void()>` setup hook. Auto-deregisters on destructor via a stack-allocated `ProbeScope` RAII wrapper in the perf-detective's investigation source. One TU, no `AppController.cpp` edits, zero residue when the investigation ends. ~3 h to design + implement; saves 15–30 min per future perf-detective investigation that needs a probe path.
-  Status: applied (2026-06-21 P3 sweep — shipped #1528)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-18 · whisper-phase-d · [process] · P3 — `AppController_LuaBindings.cpp:1816` calls `ImGui::InputText` raw, bypassing the `SmatchetLocalizedImGui` dictation wrapper
-  Details: Phase D of the whisper-dictation plan auto-wired dictation insertion to every ImGui input via the `SmatchetLocalizedImGui::InputText` / `InputTextMultiline` / `InputTextWithHint` wrappers (the existing `#define ImGui SmatchetLocalizedImGui` pattern). One first-party call site bypasses the wrapper: `Source/Core/src/AppController_LuaBindings.cpp:1816` invokes `ImGui::InputText` directly (it's inside the sol2 binding that lets Lua scripts spawn dynamic widgets — the wrapper macro is intentionally off in that TU). Effect: Lua-authored dynamic InputText widgets in `scripts/*.lua` do NOT participate in dictation; focused-buffer auto-registration skips them. Real-world impact is small (Lua-driven widgets are advanced-user territory; built-in surfaces are all already covered). No NEW raw-`ImGui::InputText` call sites should be allowed elsewhere — those would be regressions.
-  Concrete next action: either (a) extend the localized-ImGui wrapper macro into `AppController_LuaBindings.cpp` so Lua widgets pick up dictation automatically (need to verify the wrapper doesn't conflict with sol2's macro expansion — non-trivial), or (b) add an explicit `g_dictationRouter.RegisterInputText(buf, cap, nullptr)` call adjacent to the raw `ImGui::InputText` call and an unregister on the next-frame boundary. Option (b) is the minimal change. ~1 h.
-  Resolution: applied — 2026-07-08 cpp-cleanups campaign, option (b): the call site's post-refactor home `ReplayInputText` (Source/Core/src/AppController_LuaBindings_Draw.cpp) now calls `SmatchetLocalizedImGui::HookDictationOnLastItem(c.textBuf.data(), c.textBuf.size())` after the raw `ImGui::InputText` for non-ReadOnly widgets — the exact register-on-focus/unregister-on-blur discipline the wrappers use — and `~ImCmd` (AppController_LuaTypes.h) unregisters its `textBuf` from `g_dictationRouter` so a cmd-list rebuild mid-focus cannot leave the router's shadow holding a freed pointer (the CPP_CODE_AUDIT.md #21 non-static-buffer rule). ReadOnly widgets never register (a router splice writes the buffer directly, bypassing the ReadOnly flag).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-18 · orchestrator · [infra] · P2 — Whisper Phase H — `SMATCHET_WHISPER_LOCAL_BACKEND` default flip OFF→ON decision (binary size vs. local-by-default UX)
-  Details: User's chosen Whisper backend mode is "local default, cloud fallback" (per the dictation plan's locked decisions). Phase C shipped the local backend behind a new sub-option `SMATCHET_WHISPER_LOCAL_BACKEND` that defaults OFF — so default-built users get the plugin compiled in (+10.71 MB binary delta from Phase C) but the actual whisper.cpp link is opt-in. With sub-option OFF: `WhisperLocal::LoadModel` returns "local backend not built" and the mode router falls back to cloud. With sub-option ON: full whisper.cpp + ggml link, binary delta unmeasured (plan's open question #1 flagged a >50 MB risk threshold). Result: the locked "local default" UX does not match the shipped default for users who don't pass `-DSMATCHET_WHISPER_LOCAL_BACKEND=ON`. Three resolution paths: (a) flip default ON, accept binary growth, single-stage user experience matches the plan; (b) refactor whisper.cpp link to a runtime-loaded DLL — plugin compiles in but the whisper code only joins the process on first local-mode transcription, deferring the size hit until needed; (c) keep current state + document the OFF default as the canonical user UX, downgrading the "local default" decision to "cloud default, local available with rebuild". Option (b) is cleanest but a multi-day refactor.
-  Concrete next action: measure the binary delta when `SMATCHET_WHISPER_LOCAL_BACKEND=ON` (one `cmake -D... && cmake --build` cycle, compare exe size pre/post). If <50 MB delta — flip default ON. If >50 MB delta — author a separate "whisper-dll-loader" plan doc for option (b) and stay on the current sub-option OFF default in the interim. ~30 min to measure; multi-day if option (b) is chosen.
-  Resolution: applied — the binary delta was measured at ~1.37 MB (far under the 50 MB threshold) and the default flipped ON: `CMakeLists.txt:362-363` `option(SMATCHET_WHISPER_LOCAL_BACKEND "... (~1.37 MB static delta)" ON)` — resolution path (a); the shipped default now matches the locked 'local default, cloud fallback' UX.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-18 · git-janitor · [tooling] · P3 — Worktree cross-checkout cleanup gap: `[gone]` branches stranded in sibling worktrees
-  Details: After the whisper PR train squash-merged, `git branch -D <branch>` from the worktree that opened the PR failed for branches the active worktree didn't own — `git-janitor` correctly refused to reach into sibling worktrees to do checkout / pull / delete. End result: each operator has to manually visit each worktree at `git worktree list`, ff-pull develop, then delete the stale branch. Multi-worktree setups (this repo has 6 active) compound the friction.
-  Concrete next action: add `scripts/dev/worktree-prune.sh` that iterates `git worktree list`, for each worktree checks if HEAD branch is `[gone]`, ff-pulls develop, then deletes the stale branch. Refuses to act when worktree has uncommitted work (mirrors git-janitor's discipline). Document in `docs/agent-rules/delegation.md` or `CONTRIBUTING.md` as the end-of-PR-train one-liner. ~45 min.
-  Partially addressed: 2026-06-02 — PR #743 (`git-janitor` v5 § Stale-branch sweep) encodes the **worktree-before-branch ordering + uncommitted-work dirty-gate** (skip + surface a dirty worktree, never force) as in-agent prose, covering the discipline this entry asked for. Residual: a **standalone `scripts/dev/worktree-prune.sh`** one-liner for end-of-PR-train use outside a full `git-janitor` invocation is not shipped. Mechanism documented; convenience script still open.
-  Status: applied (2026-06-12, feat/worktree-hygiene — `scripts/dev/worktree-prune.sh` shipped (acting companion to `git-leftover-audit.sh`): reaps ONLY the unambiguously-safe MERGED-PR subset, **--dry-run by default** (--apply to act). Pure `prune_decision(state, dirty, protected)` guard → REAP only when MERGED AND clean AND not protected (develop/main/main-tree/self-worktree); a dirty worktree is SKIPped + surfaced, never force-removed. `--selftest` (asserts-failure: a dirty merged worktree is never REAP) + `tests/bats/worktree_prune.bats` (5, incl. a real temp-repo --apply mutation + dirty-skip + protected) via `test-worktree-prune-bats.sh` (auto-enrolled). Dry-run dogfood on the live pile: would-reap=37, skip-dirty=1. The entry's original `[gone]`/ff-pull framing was superseded by the safer MERGED-PR-keyed approach. To be archived to applied.md on next triage drain.)
-  Last-reviewed: 2026-06-12
-- 2026-05-18 · orchestrator · [test] · P3 — CodeRabbit '✅ Addressed' notation gives false confidence — verify the cited diff
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Merge gates.
-
-- 2026-05-18 · debug-detective · [debt] · P3 — `SmatchetLocalizedImGui::HookDictationOnLastItem` lives inline in a hot header (`hookdictation-header-split`)
-  Details: Adding `[temp-debug]` instrumentation to the hook required `#include "Logger.h"` + `<unordered_map>` in `Source/Core/include/SmatchetLocalizedImGui.h` — both contagious to every TU that pulls the wrapper. Long compile churn while iterating on the temp-debug spec; non-trivial cleanup risk (one missed include leaks Logger into hot paths). Migrated from `bug.md` (ADR-0014) — a header-hygiene / compile-time concern, no user-observable defect.
-  Concrete next action: split `HookDictationOnLastItem` out into a thin `Source/Core/src/SmatchetDictationHook.cpp` with the impl out-of-line behind a forward-declared free function in the header (signature unchanged: `void HookDictationOnLastItem(char*, std::size_t)`). Future debug instrumentation lives in the .cpp without touching every includer. ~1 h.
-  Status: applied (2026-06-16, PR #1317 `refactor(debt): move dictation hook body out of hot localized-imgui header` — moved the `HookDictationOnLastItem` body out of the ~45-includer hot header `SmatchetLocalizedImGui.h` into a new out-of-line TU `Source/Core/src/SmatchetDictationHook.cpp`; the header keeps only the forward declaration, so the ImGui item-state queries (`IsItemActive` / `IsItemFocused` / `GetItemID`) + the router splice no longer leak into every TU that merely draws a localized widget. The three routed InputText wrappers (`InputText` / `InputTextMultiline` / `InputTextWithHint`) still call `HookDictationOnLastItem` inline; behaviour is byte-for-byte identical. The Whisper-OFF stub TU `DictationInsertionRouter_Stubs.cpp` still exports `g_dictationRouter` as a no-op shell, so the LIGHT build links with no `SMATCHET_WITH_WHISPER` ifdefs at the call sites. Future debug instrumentation now lives in the .cpp without touching includers, exactly the entry's goal.)
-  Last-reviewed: 2026-06-16
-
-- 2026-05-18 · orchestrator · [tooling] · P2 — Plan-lock survives squash-merge of its PR
-  Resolution: Slice 8. `agents/core/git-janitor.md` § Pre-flight cross-checks (Step 0) now mandates `bash scripts/dev/lock-staleness-sweep.sh` before the final report — surfaces stale locks whose PR has already merged but the auto-release token didn't fire (squash-merge GH-Action edge case). The script itself ships.
-
-- 2026-05-18 · test-author · [tooling] · P2-RESOLVED — `--spawn` swallows child stdout/stderr, blinds bucket-E failure diagnosis
-  Resolution: Slice 10. `LaunchEphemeralInstance` in `Source/Standalone/CliCommandRunner.cpp` now redirects child stdout+stderr to `$TMPDIR/Smatchet-spawn-<parent-pid>-<port>.log` (Windows: `%TMP%/Smatchet-spawn-...`). The spawn driver emits the log path in the `[spawn] child stdout/stderr → <path>` banner so operators can tail it on test failures. Falls through to parent-handle inheritance if the log file can't be opened (non-fatal).
-
-- 2026-05-18 · debug-detective · [tooling] · P2 — Smatchet Logger has no console output + no default file sink
-  Resolution: `Source/Standalone/main.cpp` default-wires `Logger::Instance().SetFileSinkPath()` right after the SMATCHET_USER_DATA env-override block, BEFORE `ConfigManager::Load`. Path resolution honours `SMATCHET_DEBUG_LOG` env (operator override) first; falls back to `%LOCALAPPDATA%\Smatchet\Smatchet-<pid>.log` on Windows (per-PID suffix so concurrent ephemeral + manual instances don't trample shared sinks); `$TMPDIR/Smatchet-<unix-ts>.log` on POSIX. The wire emits a self-referential `LOG_INFO "Logger file sink: <path>"` as the first entry so debug sessions read that line to know which file to tail. In-memory deque + in-app Log window paths untouched. Smoke-tested both code paths — `Smatchet.exe --help` produces the log; `SMATCHET_DEBUG_LOG=/tmp/x.log` override is honoured.
-
-- 2026-05-18 · orchestrator · [process] · P2 — Pushing commits to a merged-PR branch silently orphans them
-  Resolution: New `scripts/git-hooks/pre-push` (Slice 3 of `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md`) — single-file executable hook (collapsed from plan's split, per grill Q2=A). Skips silently on develop/main/detached-HEAD, missing `gh` CLI, no-PR, or OPEN PR. Refuses on MERGED / CLOSED with a recovery banner naming the exact `git checkout -b <new-branch> origin/develop` + cherry-pick recipe. `SMATCHET_ALLOW_MERGED_PR_PUSH=1` override available for the rare legitimate case (logged loudly). Wired via `scripts/setup-harness.sh` new `install_git_hooks()` which sets `git config --local core.hooksPath scripts/git-hooks` only when current path is unset or already equal — won't trample a user-set custom hooks path; otherwise logs WARNING. Bucket-A test `scripts/dev/test-pre-push-merged-pr-guard.sh` covers 9 cases (develop/main/HEAD skip · no-PR skip · OPEN-PR skip · MERGED refuse + banner + recovery text · CLOSED refuse · override allow + warning · missing-gh silent skip): 12/12 PASS. Auto-enrolled by `scripts/dev/test-all.sh` glob. Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 3.
-
-- 2026-05-18 · orchestrator · [process] · P2 — Worktree bootstrap branches start on stale base (not origin/develop)
-  Resolution: Re-scoped during plan double-check pass — the original backlog entry's `scripts/dev/worktree-spawn.sh` does not exist (Glob 0 hits). Two worktree-creation paths surfaced — (1) `Source/Core/src/ClaudeCodeLocalRunner.cpp` for agentic-handoff `agent/<proposalId>` worktrees (already correct, bases on `origin/develop` with `handoff.auto_fetch_before_worktree` config flag); (2) Claude Code SDK's session-spawn for `claude/<id>` worktrees (the Phase D/E pain — bases on parent repo local HEAD). Investigation of `git config --local` confirmed `extensions.worktreeconfig=true` is enabled but the base-selection happens before config applies. **Escalated to external-blocker** for SDK upstream. **Workaround documented** in `docs/harness/SETUP.md` § Worktree base — known stale-HEAD pitfall (two-track: parent-on-develop pre-session, OR rebase-on-origin/develop first-move post-session).
-
-- 2026-05-18 · security-review · [process] · P2 — `agents/core/security-review.md` attack-surface map missing AI feature surfaces
-  Resolution: Two new bullets added to `agents/core/security-review.md` § Smatchet attack surface (after "Image fetches", before "Known crash classes"). **AI feature surface** bullet enumerates the 5 backlogged components (provider HTTP clients — OpenAi/Anthropic/Ollama; streaming parsers — `AiSseParser` / `AiNdjsonParser`; `AgentsMdLoader`; `AiContextBuilder`; `AiAssistantController`) with per-client checks (URL allow-list via `AiEndpointSanitize`, error-body redaction via `AiErrorRedact`, buffer caps, path validation, Lua `ai.*` rate limit, `AssistantContextBlockAuditTrail` default `false` invariant). **Coding-harness handoff surface** bullet (new — surfaced during plan double-check pass) covers the `ClaudeCodeLocalRunner` + sentinel files + spawned-claude subprocess trust boundary introduced by `docs/plans/active/agentic-coding-handoff.md`: env allow-list discipline (only `PATH, HOME, USER, USERPROFILE, TEMP, TMP, SYSTEMROOT, GH_TOKEN, GITHUB_TOKEN, ANTHROPIC_API_KEY`; no `SMATCHET_*` passthrough), sentinel-file write contracts per AGENTS.md § Handoff envelope, branch-name discipline (`agent/<proposalId>/<short-slug>` only), PR draft requirement, GH PAT scope, worktree GC. Frontmatter `description:` updated to mention both new surfaces so the agent's discovery banner names them.
-
-- 2026-05-18 · orchestrator · [process] · P2 — Autonomous ship-loop policy lives only in private user memory; not in `AGENTS.md`
-  Resolution: New top-level section `## Autonomous ship-loop default` added to AGENTS.md between § UX Pillars and § Project rules (after L71). Codifies the full sequence (diagnose → fix → build → commit → push → open PR → squash-merge → git-janitor cleanup → backlog entry, all in one turn), the front-loaded `AskUserQuestion` discipline (batch once at the start), and the exception list (debug-mode pause-loop override, destructive ops, cross-repo / external-service mutations, anything not previously authorised in a durable rule). Cross-links to § Delegation and § Debug-mode pause-loop. Other harnesses (Codex / Cursor / Aider) reading AGENTS.md now get the rule without depending on user-private Claude Code memory.
-
-- 2026-05-18 · orchestrator · [process] · P3 — Post-ship next-step prompt rule (`AskUserQuestion` not bulleted list) not encoded in `AGENTS.md`
-  Resolution: Sub-section `### Post-ship turn-end protocol` added under `## Autonomous ship-loop default`. Names the four canonical options as `AskUserQuestion` choices — Manual verify / Review PR / Squash-merge / Done — and the skip-condition ("user has already said 'no more changes coming' / 'ship it and stop' / 'merge when green' → hand off to git-janitor directly"). Batched in the same commit as the parent ship-loop section. Other harnesses now have a portable rule; free-form bulleted next-steps lists deprecated.
-
-- 2026-05-18 · test-author · [infra] · P2 — `AiClientFactory` test-injection seam + `runProbe` extraction
-  Resolution: PR `feat/ai-client-test-override` lands `AiClientFactory::SetTestOverride(TestOverrideFn)` — bucket-E TUs inject a stub `IAiClient` (success / gated). `runProbe` body lifted from `SmatchetPreferencesUi.cpp:520-680` into `AiPrefsTestConnection::TriggerProbe(d, app, provider)` under `Source/Core/{include,src}/AiPrefsTestConnection.{h,cpp}`. `UiTestScenario.cpp` exposes `SmatchetActiveUiTestAppController()` so test funcs can reach `app.mainThreadDispatcher`. `tests/ui/ai_prefs_autosave_flow.test.cpp` V2 + V3 lift from deferred placeholders to live coverage — V2 asserts `Verified.` success path against stub; V3 exercises cancel-on-close short-circuit. Follow-up open: `SmatchetPreferencesUi.cpp`'s inline `runProbe` lambda still needs the 5-line rewire to call `AiPrefsTestConnection::TriggerProbe` (held by `whisper-dictation-phase-f` PR #219 lock; rewire fires after #219 merges).
-
-- 2026-05-18 · orchestrator · [process] · P1 — `git reset --hard origin/develop` via `git -C <worktree>` reset the worktree's *current* branch, not `develop`; destroyed 5 uncommitted modified files of a parallel agent
-  Resolution: Mandatory 5-step pre-flight (branch verify → status inventory → stash → execute → decide on pop) landed in `AGENTS.md` as a new sub-section **"Destructive git ops in shared worktrees"** under § Project rules, directly after § Plan-doc safety. The rule names the four destructive ops (`reset --hard`, `checkout --`, `clean -f`, `branch -D`) and the `git -C <path>` discipline. Cross-link added to `agents/core/git-janitor.md` § Hard refusals (the agent most likely to hit this case) calling back to AGENTS.md for the authoritative checklist. Root cause documented inline: parallel agents reassign worktree HEADs between sessions, so the path name (e.g. "develop-worktree") is **not** authoritative for which branch is currently checked out — `git -C <path> branch --show-current` first, every time. Underscored fact: `reset --hard` permanently destroys uncommitted tracked-modified content (not in reflog); branch pointers recover, working-tree content does not.
-
-- 2026-05-18 · debug-detective · [bug] · P2 — `SmatchetAiAssistantUi.cpp` `#define ImGui SmatchetLocalizedImGui` macro is invisible at call sites
-  Details: While investigating the whisper splice-no-show (PR #258), the verbose `[temp-debug] a7b2c4 HookDictation REGISTER` log fired for `s_inputCharBuf` even though the AI Assistant TU appeared to call raw `ImGui::InputTextMultiline` (which doesn't go through the wrapper hook). 2 detective rounds were spent grepping for `SmatchetLocalizedImGui::InputTextMultiline` callers (none) before noticing the TU-local `#define ImGui SmatchetLocalizedImGui` at line 21. The macro rewrites every `ImGui::` call in the TU to the wrapper transparently. Greppable indirection (`using namespace`) would have shaved the investigation by half.
-  Concrete next action: replace `#define ImGui SmatchetLocalizedImGui` with explicit `using namespace SmatchetLocalizedImGui;` (the wrapper's `using namespace ::ImGui;` inside the namespace handles the fallthrough to underlying ImGui functions). Audit all TUs that do the same macro trick and apply uniformly. ~30 min for the AI Assistant TU + grep-and-sweep across the codebase.
-  Status: wont-fix (2026-06-21 decision — keep the macro) — the `#define ImGui SmatchetLocalizedImGui` is a deliberate, documented localization mechanism; replacing it with `using namespace` is unsound (cannot redirect qualified `ImGui::` names → would silently bypass localization across 40 TUs), and a full call-site conversion is a large risky sweep with no functional gain. Decision: keep the macro.
-  Last-reviewed: 2026-06-21
-
-- 2026-05-17 · code-review · [infra] · P3 — Worker-side per-chunk dispatcher post coalescing for AI stream
-  Details: `AiAssistantController::RunRequest`'s `onDelta` posts one task to `MainThreadDispatcher` per provider chunk. OpenAI streams 5–10 chunks/s, Anthropic ~30/s, Ollama ~50+/s for fast local models. The dispatcher queue stays drained but the per-frame `assistantStreamBuf.append` cost + redraw cost is proportional to chunk rate. Coalesce on the worker into 50–100 ms windows before posting; one task per window appends the concatenated chunks.
-  Concrete next action: add a small per-turn `std::string pendingChunks_` + `std::chrono::steady_clock::time_point lastPostAt_` on the worker side; flush when (a) pendingChunks_.size() > 4 KB OR (b) 80 ms elapsed since `lastPostAt_` OR (c) `isFinal`. Wire through `onDelta`. ~1 h.
-  Resolution: applied — 2026-07-08 cpp-cleanups campaign: `AiAssistantController::MakeOnDelta` buffers chunks worker-side in a shared-ptr `CoalesceState` (pending string + lastPostAt) and posts one dispatcher task per flush window (>4 KB accumulated, 80 ms elapsed, or `IsFinal`), preserving the turnGen stale-drop and the 4 MiB stream-buf cap on the UI side; `tests/Core/AiAssistantStreamHandoff.test.cpp` gained a 64-chunks→few-posts regression case that counts drained dispatcher tasks. Known trade-off: on cancel, up to one un-flushed window (~80 ms) of tail text is dropped before the `[cancelled]` partial commits.
-- 2026-05-17 · code-review · [process] · P3 — PR #140 `TrackerHttpUtils.cpp` clang-format reflow churn mixed into behavioural commit
-  Details: Should have been a separate `style:` commit per AGENTS.md commit hygiene.
-  Concrete next action: when next touching the file, split style-only changes into their own commit. Surfaced by retrospective code-review sweep on PR #140.
-  Resolution: applied — superseded by the format-first workflow: `scripts/dev/pre-ship.sh` whole-file clang-formats every changed first-party C++ file before the delta gate (`docs/agent-rules/cpp-rules.md:53`), making format reflow a systematic pre-commit step; `TrackerHttpUtils.cpp` has since been touched cleanly (#1629, #1677) with no style-split issue.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-17 · code-review · [infra] · P3 — `SmatchetAiAssistantUi` silently truncates 8 KiB paste
-  Details: `InputTextMultiline` is sized to `s_inputCharBuf.size()` (8 KiB). User pasting 9 KiB has the suffix silently dropped with no toast.
-  Concrete next action: detect truncation on paste (compare `clipboard.size()` against `kInputBufCap` in an `ImGuiInputTextCallback`); emit a toast naming the dropped suffix length. ~45 min.
-  Resolution: applied — `Source/Core/src/Ui/SmatchetAiAssistantUi.cpp:88-110` `InputBufferResizeCallback` (ImGui CallbackResize path) computes `AiTruncatedPasteDroppedBytes` against `kInputBufCap` and stashes the dropped-byte count for the draw code to toast — the exact detect-and-toast the entry asked for.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-17 · test-author · [process] · P3 — test.md P2 item (4) "Save / Discard + 'Assistant *' dirty-tab label" describes a UI surface that was never shipped
-  Details: `test.md` P2 item (4) (the AI Assistant Preferences batch 1 + 2 entry above) names "explicit Save / Discard buttons + 'Assistant *' dirty-tab label + Save-disabled-on-validation-error + tooltip-on-hover" as a flow needing bucket-E coverage. The Assistant tab is autosave (`MarkPrefsDirty` + ~100 ms debounce via `SmatchetUiSession.h:546-568` + `SmatchetUI.cpp:768-776`). There is NO Save button on the Assistant tab, NO Discard button, NO `Assistant *` dirty-tab label. The only "Save & Sync" button (`SmatchetPreferencesUi.cpp:1679`) is scoped to the Tracker + MCP tabs. Either ship explicit Save/Discard for the Assistant tab or amend test.md item (4) to describe autosave-and-verify. Cross-reference: `tests/ui/ai_prefs_autosave_flow.test.cpp` reframed per `docs/plans/shipped/ai-assistant-bucket-e-tus.md`.
-  Concrete next action: triage decision — ship explicit Save/Discard (feature work, new PR) OR rewrite the item (4) bullet inside the P2 entry above to read "autosave debounce + Test-connection verify + cancel-on-close". ~10 min for the rewrite path.
-  Resolution: applied — superseded: the parent P2 entry it wanted amended is archived (applied.md), the stale-spec disposition is recorded in code (`tests/ui/ai_prefs_autosave_flow.test.cpp:14-17` — 'describes a UI surface that was never shipped... This TU covers the actual shipped behaviour'), and `tests/ui/ai_assistant_preferences_save_discard.test.cpp` covers the autosave surface's effective save/discard semantics; nothing remains to rewrite.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-17 · test-author · [tooling] · P2 — Bucket-E tooltip-content-identity helper for production-driven hover tests (tooling-sweep #31)
-  Details: While writing `tests/ui/callstack_tooltip_hover.test.cpp` a production-driven variant 4 had to be dropped — a generic `##Tooltip_NN` probe cannot distinguish "my cell's tooltip" from concurrent host tooltips. The ask was a `BucketE::TooltipContentMatches(ctx, sentinel)` helper to assert content identity and re-enable the production-driven variant.
-  Resolution (2026-06-18): shipped `tests/ui/_helpers/BucketETooltip.h` (`BucketE::TooltipContentMatches` via a DrawList `UserCallback` sentinel marker — the plan's literal "walk CmdBuffer for text" is infeasible on ImGui 1.92.8, which retains only rasterised glyph geometry) and re-enabled the production-driven `CallstackTooltipHover_Production_ContentIdentity` variant — **PR #1364** (B8 L3 / slice-7 of `tooling-process-backlog-sweep`). Closes tooling-sweep item #31.
-- 2026-05-17 · test-author · [infra] · P2 — AiClientFactory has no test-injection seam for bucket-E success-path coverage
-  Details: `tests/ui/ai_prefs_autosave_flow.test.cpp` Variant 2 (`VerifyOnSave_TestConnection_SetsResult`) falls back to driving libcurl against `http://127.0.0.1:65530` (an unbound loopback port → immediate ECONNREFUSED) to exercise the Failed: branch of the Preferences Test-connection probe. This tests every layer EXCEPT the success-completion branch — `g_ui.assistantPrefsTestResult == "Verified."` + `assistantPrefsTestResultType == 1` is never reached. Adding a static test seam to `AiClientFactory` would let the variant assert the success path against an in-process stub `IAiClient` that returns immediately from `ProbeReachability` + emits a synthetic chat delta on `SendStreaming`.
-  Concrete next action: add `AiClientFactory::SetTestOverride(std::unique_ptr<IAiClient>)` + `ClearTestOverride()` statics gated on `#if defined(SMATCHET_BUILD_UI_TESTS)`. `MakeAiClient(...)` consults the override before the provider-kind switch. Stub `IAiClient` class lives under `tests/ui/support/`. Add Variant 4 `VerifyOnSave_TestConnection_StubSuccess_VerifiedLineLands` to the autosave-flow TU. ~3 h (seam + stub + variant + clear-on-test-end semantics).
-  Status: applied (2026-05-18, PR feat/ai-client-test-override — `AiClientFactory::SetTestOverride(TestOverrideFn)` lands; `runProbe` extracted to `AiPrefsTestConnection::TriggerProbe` to bypass the host-coupled `Preferences -> Assistant tab -> Test connection` path; V2 + V3 lift to live coverage. Follow-up tracked: 5-line UI rewire in `SmatchetPreferencesUi.cpp` once `whisper-dictation-phase-f` PR #219 merges.)
-  Last-reviewed: 2026-05-18
-- 2026-05-17 · code-review · [test] · P2 — `scripts/dev/test-screenshot-diff.sh:24` `SMATCHET_TEST_PORT=58733` hardcoded; two parallel runs collide
-  Details: Hard-coded port prevents parallel invocations (CI matrix, simultaneous local runs).
-  Concrete next action: use ephemeral port or `$((40000 + RANDOM % 20000))`. Surfaced by retrospective code-review sweep on PR #146.
-  Status: applied (2026-06-02 — verified the substantive fix already shipped: `test-screenshot-diff.sh:40` uses `${SMATCHET_TEST_PORT:-$((40000 + RANDOM % 20000))}`, so parallel runs no longer collide. This pass corrected the only residue — a stale header comment still claiming "default 58733")
-  Last-reviewed: 2026-06-02
-- 2026-05-17 · security-review · [security] · P2 — `AgentsMdLoader` path-traversal: `ProjectAgentsMdPath` / `AgentsMdGlobalPath` accepted verbatim
-  Details: A config-write attacker with access to `smatchet_config.json` can repoint either path to any readable file (`C:\Users\<victim>\.ssh\id_rsa`, browser cookies, ssh known_hosts). The first 64 KB are then silently injected into every system prompt sent to the third-party LLM. Loader at [`AgentsMdLoader.cpp:101-117`](../../../Source/Core/src/AgentsMdLoader.cpp) does no validation beyond the 64 KB cap.
-  Concrete next action: require the configured path's filename to end in one of `agents.md` / `AGENTS.md` / `.agents.md` (case-insensitive); call `ghc::filesystem::canonical` and reject if the canonical path escapes a small allow-list of roots (`%LOCALAPPDATA%/Smatchet/`, repo root, `%USERPROFILE%`); reject symlinks via `ghc::filesystem::is_symlink`. ~1.5 h.
-  Resolution: **applied — fix/agentsmd-path-containment** (the P1 entry above, which superseded this one). The shipped guard canonicalizes (resolving symlinks, so no separate `is_symlink` leg needed — a symlink to a secret resolves to the secret's non-`.md` real name and is rejected) and pins the resolved filename to `.md`. The proposed root-allow-list was deliberately NOT used: the override contract allows files outside any small root set (the user's own repos anywhere), so a root-containment would break valid configs while the `.md`-on-canonical pin already defeats the credential-file repoint vector this entry describes.
-  Status: applied
-  Last-reviewed: 2026-06-14
-- 2026-05-17 · security-review · [security] · P2 — `ai.prompt` Lua glue has no rate limit + no per-session consent toast
-  Details: Any Lua script (including one loaded via `Source/Plugins/LuaConsole` paste-and-run) can call `ai.prompt(...)` in a tight loop and burn the user's API quota or leak ticket data to the configured provider. `LuaAutomationHost`'s instruction-count `lua_sethook` doesn't cover the C++-side HTTP call. Sandbox escape with attacker-controlled outbound payload.
-  Concrete next action: at the `ai.prompt` C++ glue site in [`AppController_LuaBindings.cpp:776-779`](../../../Source/Core/src/AppController_LuaBindings.cpp), reject calls when an in-flight prompt is already pending OR when the last `ai.prompt` fired less than ~5 s ago. Add a one-time-per-session toast on the first `ai.prompt` call naming the provider host. ~1 h.
-  Resolution: applied 2026-06-14 (PR fix/ai-prompt-rate-limit-h5). The rate-limit decision was extracted to a pure header `Source/Core/include/AiLuaPromptRateLimit.h` (`DecideAiPromptGate` — re-entrancy checked first, then strict-`<` 5 s spacing via `kAiPromptMinIntervalMs`), unit-tested in `tests/Core/AiLuaPromptRateLimit.test.cpp`. Per-instance state (`aiPromptInFlight_`/`aiPromptLastCallAt_`/`aiPromptEverCalled_`/`aiPromptConsentShown_`, all under `aiPromptGateMutex_`) lives on `AppController::Impl`; the glue `LuaAiPromptGlue` calls `Impl::TryBeginLuaAiPromptTurn` BEFORE any context mutation / `PromptAi` submit and `luaL_error`s (no UI-thread block) on rejection, then `EndLuaAiPromptTurn` after submit. First accepted call fires a one-time `SmatchetToastManager` Warning toast naming `AiAssistantController::GetActiveProviderName()` (guarded `#if SMATCHET_WITH_AI`, falls back to a generic label).
-  Status: applied
-  Last-reviewed: 2026-06-14
-- 2026-05-17 · security-review · [security] · P3 — CR/LF/NUL strip at the config persist site (defense-in-depth)
-  Details: PR #176 strips CR/LF/NUL at the use site (`BuildClientConfig` in `AiAssistantController`). For pure defense-in-depth, also strip at the persist site (`ConfigManager::Save`) so a value that round-trips through disk never carries header-smuggling control characters in the first place. Same applies to `MCP config.set` + Lua-config paths that write `AiApiKey` / `AiAnthropicApiKey` / `AiBaseUrl` / `AiOllamaBaseUrl` / `McpAuthToken`.
-  Concrete next action: add a single `SanitizeConfigStringValue(...)` helper in `ConfigManager_PathUtils.cpp` (strip `\r`, `\n`, `\0`); call it in `ConfigManager::Save` for every header-bound string field. ~45 min.
-  Status: resolved
-  Resolution: 2026-06-15 (PR #1268) — added pure free function `smatchet::config_detail::SanitizeConfigStringValue` in `ConfigManager_PathUtils.cpp` (strips `\r`/`\n`/`\0`, declared in `ConfigManager_Internal.h`) and called it in `ConfigManager::Save` for all five header-bound fields just before the JSON write: `AiBaseUrl` / `AiOllamaBaseUrl` (in `SaveScalarFields`, overwriting the table-driven write) and `McpAuthToken` / `AiApiKey` / `AiAnthropicApiKey` (in `WriteSecretFields` — sanitized before DPAPI-encryption on Windows and before the plaintext write on POSIX; the empty-check that decides whether to drop the legacy plaintext key now keys off the sanitized value). Defense-in-depth behind the use-site strip in `AiAssistantController::BuildClientConfig` (PR #176). NB (rationale corrected): not every config writer funnels through `Save` — `config.set` (`RunConfigSet`) and the Lua layout writer write JSON directly via `WriteConfigJson`, bypassing `Save`. The header-bound fields are safe from those paths because they are *absent from the `config.set` allowlist* (`ConfigSetKeyTable` in `BuiltinCommands_Config.cpp`), not because of a funnel. This matters: adding a header-bound field (e.g. `aiBaseUrl`) to that allowlist later would silently reintroduce a header-smuggling bypass, so any such addition must also route through `SanitizeConfigStringValue`. New doctest `tests/Core/ConfigStringSanitize.test.cpp` (3 cases / 14 assertions: clean values unchanged incl. tabs/spaces, embedded + leading/trailing/run CR/LF/NUL stripped, control-only value sanitizes to empty). Full doctest suite 1868/1868 green; strict-zone lint clean.
-  Follow-up: 2026-06-15 — #1268 missed the structurally identical DeepSeek fields. Parity-extend added `SanitizeConfigStringValue` to `AiDeepSeekApiKey` (DPAPI + POSIX branches in `WriteSecretFields`, empty-check now keys off the sanitized value like its siblings) and to `AiDeepSeekBaseUrl` (post-loop overwrite in `SaveScalarFields`); explicit DeepSeek regression case added to `ConfigStringSanitize.test.cpp`. Same correct rationale (allowlist absence, not a funnel) applies.
-  Last-reviewed: 2026-06-15
-- 2026-05-17 · security-review · [security] · P3 — SSE/NDJSON parse-failure `LOG_WARN` first 200 B unredacted
-  Details: When a provider streams malformed JSON, the parse-failure path in `AnthropicClient.cpp:74`, `OpenAiClient.cpp:72`, and `OllamaClient.cpp:133` logs the first 200 bytes of raw `data` / `rawLine`. A misconfigured proxy could echo the request Authorization header in the malformed stream and it would land in logs.
-  Concrete next action: route those log-line payloads through `smatchet::ai::pure::RedactProviderErrorBody` before emit. ~15 min, one-line change × 3 files.
-  Resolution: 2026-06-15 (PR #1269) — all three SSE/NDJSON parse-failure `LOG_WARN` sites now redact before emit: `AnthropicClient::DispatchAnthropicEvent` (raw `ev.Data`), `OpenAiClient::DispatchOpenAiDataLine` (raw `data`), and `OllamaClient`'s `onParseError` lambda (raw `rawLine`) each compute `smatchet::ai::pure::RedactProviderErrorBody(...)` first, then apply the existing 200-char display cap to the REDACTED string via `%.*s`. `AiErrorRedact.h` was already included in all three files (no new include). Used the existing helper the AI clients already share for error bodies — no new redactor invented, matching the sibling resolutions (#11 redirect-strip / #12 tracker body redaction). The redactor itself is the testable unit (the cpr/stream-bound `LOG_WARN` is integration-only); its pure coverage in `tests/Core/AiErrorRedact.test.cpp` already pins Bearer / api-key / x-api-key / Authorization-echo stripping, and a new case (`Malformed SSE/NDJSON stream chunk redacts a reflected Authorization header before logging`) pins the exact malformed-stream shapes (Bearer + x-api-key echo) this fix guards.
-  Status: resolved
-  Last-reviewed: 2026-06-15
-- 2026-05-17 · lua-binder · [process] · P3 — Plan packet "stub parity" framing misleading when receivers are already always-on
-  Details: Phase E packet explicitly listed `Source/Core/src/AppController_LuaStubs.cpp` as a MOD path with "mirror stub implementations of the same 3 glue functions" claim. But the Lua surface in question (`ai.*`) calls `AppController::AddAiContext` / `ClearAiContext` / `PromptAi` which are **always-on** members (declared without `SMATCHET_WITH_LUA_AUTOMATION` gate, shipped Phase B specifically so Phase E Lua glue is stable across LUA=ON/OFF + AI=ON/OFF). No stub mirror was needed; the agent added a docstring to LuaStubs.cpp to honour the packet's write-set claim but no functional code change.
-  Concrete next action: distinguish two cases in orchestrator delegation packets that touch the LuaBindings ↔ LuaStubs pair — (a) glue calls a Lua-only method on AppController → stub mirror required + `LuaStubsCompile.test.cpp` sentinel update; (b) glue calls an always-on AppController method → **no** stub action; parity invariant already satisfied by the always-on declaration. ~5 min phrasing change to `agents/project/lua-binder.md` § Hard invariants as a checklist bullet.
-  Status: applied (2026-06-02 — `agents/project/lua-binder.md` § Hard invariants, "Parity applies to the glue function" sub-bullet under Bindings ↔ stubs parity)
-  Last-reviewed: 2026-06-02
-- 2026-05-17 · code-review · [debt] · P2 — `LuaToJson` / `JsonToLua` + `kJsonToLuaMaxDepth` duplicated verbatim across `AppController_LuaBindingsCore.cpp` ↔ `AppController_LuaBindings.cpp`
-  Details: File comment names the duplication as intentional (post-split keeps Core ImGui-free). Drift risk on the next marshalling change. Migrated from `bug.md` (ADR-0014) — duplication, no user-observable defect.
-  Concrete next action: lift to a shared internal header reachable from both TUs. Surfaced by retrospective code-review sweep on PR #144.
-  Status: applied (2026-06-16, verified shipped by PR #1325 / commit `1259bcdc` `refactor(lua): extract JsonToLua/LuaToJson to shared inline leaf (debt luajson-convert-leaf)` — the marshalling moved to a dependency-free leaf `Source/Core/include/Json/LuaJsonConvert.h` (sol2 + nlohmann only, no ImGui), covered by `tests/Lua/LuaJsonConvert.test.cpp`. Both TUs now consume it: `AppController_LuaBindingsCore.cpp:43` includes it directly; `AppController_LuaBindings.cpp` reaches it via `AppController_LuaBindings_detail.h:17`. The verbatim impls + `kJsonToLuaMaxDepth` are gone from both bindings TUs (replaced by comments pointing at the leaf); the Core-ImGui-free split is preserved because the leaf pulls no ImGui. Stale "open" — shipped by #1325 but never archived; reconciled in the 2026-06-16 P2-ledger sweep. The same clone tracked from a second angle by the still-open `dedup-clones-b-c-deferred` (P3) entry — its cluster (C) is resolved by #1325; only its cluster (B) AI-SSE skeleton remains deferred.)
-  Last-reviewed: 2026-06-16
-
-- 2026-05-17 · test-author · [infra] · P2 — Bucket-E `--spawn` ephemeral runner flakes intermittently (pre-existing)
-  Resolution: STALE — deterministic spawn-warmup gate shipped (slice 9, autonomous-debugging-no-creds): tests/ui/spawn_warmup_deterministic_gate.test.cpp + runner ('Closes infra.md P2 line 16'). (B8 phase-0).
-
-- 2026-05-17 · code-review · [test] · P2 — Bucket-E coverage missing for AI Assistant Preferences batch 1 + batch 2 user-visible flows
-  Resolution: STALE — 6 tests/ui/ai_assistant_preferences_*.test.cpp shipped (docking, enter_send, save_discard, test_connection, validation_banner, verify_on_save) covering all 6 flows. (B8 phase-0).
-
-- 2026-05-17 · orchestrator · [process] · P3 — unique_ptr<incomplete-type> footgun in headers
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in AGENTS.md § Quality.
-
-- 2026-05-17 · orchestrator · [process] · P3 — Plan packet pre-flight: INTERFACE target must be linked
-  Resolution: SHIPPED 2026-06-02 (B10). Encoded in delegation.md § Orchestrator delegation packet.
-
-- 2026-05-17 · security-review · [security] · P1 — AI-client URL allow-list policy (per-provider host opt-in beyond the IP-literal block)
-  Resolution: SHIPPED 2026-06-02 (campaign batch B4). `AiEndpointSanitize` gained `EndpointPolicy { CanonicalHost, AllowCustomHost, AllowInsecureHttp }` + verdicts `RejectedNonProviderHost` / `RejectedInsecureHttp`; the legacy 2-arg overload stays permissive. `AiEndpointPolicy.{h,cpp}` is the single source mapping TrackerConfig+AiProvider->policy (pins api.openai.com / api.anthropic.com gated by new `AiAllowCustomEndpointOpenAi` / `AiAllowCustomEndpointAnthropic` consent flags; Ollama / DeepSeek unpinned) consumed by all three validation sites (controller request, Test-connection probe, prefs inline validation) so they cannot diverge. Plain http:// to a non-loopback host requires consent (loopback always allowed for local Ollama). Default-deny posture (maintainer decision 2026-06-02) with a migration grandfather that auto-grants consent for a pre-existing custom AiBaseUrl so upgrading proxy users are not broken. One-time consent modal in the Preferences Assistant tab. 8 new doctest cases / 20 assertions (full suite 16/16). Dual-target build green. Residual (separate live entry): the first-send outbound-CONTEXT consent modal (P2) is a different concern and stays open.
-
-> **Backlog-campaign verification sweep (2026-06-02)** — `docs/plans/active/agentic-backlog-campaign.md` phase 0 verified each batch premise against the current tree before any code. The three entries immediately below were found ALREADY-SHIPPED (stale) and archived without new work — exactly the "verify file-claims before acting" process rule. More stale entries are expected as the sweep continues.
-
-- 2026-05-17 · code-review · [bug] · P2 — `AiClientFactory.cpp` uses `new OpenAiClient()` wrapped in `unique_ptr` instead of `make_unique`
-  Resolution: STALE on sweep — all three call sites now `std::make_unique<OpenAiClient>()` / `<AnthropicClient>` / `<OllamaClient>` (`AiClientFactory.cpp:32-36`). Archived stale.
-
-- 2026-05-17 · code-review · [bug] · P2 — `AiSseParser.h/.cpp` `partial_` member + `emitIfReady` is a stub no-op
-  Resolution: STALE on sweep — neither `partial_` nor `emitIfReady` exists anywhere in `AiSseParser.h`/`.cpp` on develop; the dead stub was removed. Archived stale.
-
-- 2026-05-17 · code-review · [bug] · P2 — `TicketSyncService.cpp` empty-fetch guard is permanent; legit-empty cache never reconverges
-  Resolution: STALE on sweep — the guard (now `Source/Core/src/Sync/TicketSyncService.cpp`) wipes only when `fullSyncCompleted && (!freshTickets.empty() || consecutiveEmptyFullSyncs_ >= kEmptyFullSyncWipeThreshold)` (`:91`), i.e. the "require N consecutive empty full-syncs before allowing the wipe" fix this entry proposed. Archived stale.
-
-- 2026-05-17 · code-review · [bug] · P2 — `PlaneIssueSearch.cpp` asymmetric vs `JiraIssueSearch.cpp` for empty-page handling
-  Resolution: STALE on sweep — Plane now sets `summary.FullSyncCompleted = syncEndedCleanly && pageCount > 0 && ...` (`PlaneIssueSearch.cpp:412`), mirroring Jira's `fetchedPages > 0` predicate (`JiraIssueSearch.cpp:246`). Archived stale.
-
-- 2026-05-17 · test-author · [tooling] · P2 — `test-all.sh` baseline drift across worktrees: 8 fails on agent worktree vs 0 fails on main repo
-  Resolution: Slice 8. `scripts/dev/test-all.sh` now detects worktree context via `git rev-parse --git-common-dir` vs `git rev-parse --git-dir` divergence; when running from a worktree, scripts matching the `WORKTREE_INCOMPATIBLE_RE` pattern (lint-hook-split, ui-test scripts) emit `SKIPPED (worktree)` instead of false-positive failures. Extend the regex as new worktree-incompatible scripts surface.
-
-- 2026-05-17 · perf-measure · [process] · P2 — "extend the CLI / scenarios if missing, never ask user to run UI manually" rule not encoded in `agents/core/perf-measure.md`
-  Resolution: Slice 4. The rule was already encoded in `agents/core/perf-measure.md` § Fallback ("Do not fall back to a manual UI session"). Extended `agents/core/perf-detective.md` § Hard rules and `agents/core/spike-hunter.md` § Hard rules with the same wording: "Extend the CLI / scenarios, never substitute a manual UI session. … The measurement is the deliverable."
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh:69` `tests/support/*.h` counts as a "test change"; gate is trivially dismissable
-  Resolution: Slice 6. Tightened the test-surface case-pattern to `tests/Core/*.test.cpp|tests/Lua/*.test.cpp|tests/Plugins/*.test.cpp|tests/Plugins/Mcp/*.test.cpp` (dropped `tests/support/*.h`).
-
-- 2026-05-17 · code-review · [tooling] · P2 — `scripts/dev/coverage.sh:35` `--threshold "${2:-0}"; shift 2` triggers `unbound variable` under `set -euo pipefail` when `$2` missing
-  Resolution: Slice 6. Replaced unguarded `shift 2` with explicit validation: `--threshold` now requires a numeric argument (rejects missing / flag values / non-integers with exit 2).
-
-- 2026-05-17 · code-review · [tooling] · P2 — `.github/workflows/coverage.yml:50` cache key hashes `CMakeLists.txt` but not `CMakePresets.json`
-  Resolution: Slice 6. Added `CMakePresets.json` to the hashFiles inputs.
-
-- 2026-05-17 · code-review · [test] · P1 — `scripts/dev/test-screenshot-diff.sh:104` `sleep 0.5` race between spawn-mode CLI return and PPM read
-  Resolution: Already fixed before this archival pass — `scripts/dev/test-screenshot-diff.sh:130-133` ships the deterministic poll loop (`for _ in $(seq 1 40); do [ -s "$captured" ] && break; sleep 0.05; done`) the backlog entry's "Concrete next action" prescribed. Likely landed in PR #165 (`fix(hotfix-batch): six P0/P1 findings from retrospective sweep`) but the backlog entry wasn't archived. Confirmed 2026-05-20 via `grep -n "sleep 0.5" scripts/dev/test-screenshot-diff.sh` → no matches. Archiving as a cleanup of stale backlog entries; no code change required.
-
-- 2026-05-17 · orchestrator · [tooling] · P1 — `--spawn` ephemeral MCP instance times out at 15s on develop tip (post Phase D/E AI merges)
-  Resolution: Cheap-fix path (a) shipped. `--spawn` ready-timeout bumped 15s → 30s in `Source/Standalone/CliCommandRunner.cpp:670`. New env override `SMATCHET_SPAWN_READY_MS=<ms>` lets faster runners tighten or cold-cache CI raise further. Bucket-E gates (`scripts/dev/test-ui-*.sh`, `scripts/dev/test-callstack-tooltip-hover.sh`) unblock. Architectural follow-up (path (b) — lazy-load AI clients so MCP server publishes ready faster) split to a new P3 entry under `tooling.md` since the cheap fix removes the merge-block urgency.
-
-- 2026-05-17 · security-review · [security] · P1 — Default `AssistantContextBlockAuditTrail = true` silently exfils audit-trail PII (default flipped; consent modal deferred)
-  Resolution: `Source/Core/include/ConfigManager.h:248` default flipped to `false`. New users no longer auto-ship `BackendAuditTrail::ReadRecentEvents` PII (assignee emails, custom-field values, freeform comments) on first AI prompt. Existing users retain their persisted setting (`j.value(...)` Load semantics preserve already-saved configs). One-time first-send consent modal split to a new P2 entry under `security.md` (downgraded P1→P2 since the riskiest default is now off).
-
-- 2026-05-17 · code-review · [bug] · P1 — `CommandPaletteFuzzyScenario` flips `BackendHasBeenReachable=true` before `outErr` early-return guard
-  Resolution: Verified `Source/Core/src/Commands/Scenarios/CommandPaletteFuzzyScenario.cpp` already has the screenshotPath empty-check `return` ahead of the latch flip (L60-63 before L72-73). Added a clarifying comment naming the invariant so any future outErr branch added between the path check and the flip is flagged at review.
-
-- 2026-05-17 · code-review · [bug] · P1 — `Source/Core/include/AppController.h:660-693` asymmetric `override` keyword guarding under `SMATCHET_WITH_LUA_AUTOMATION` (false positive)
-  Resolution: No code change. Audited every `override` in `AppController.h`. The two sites originally flagged (`FindFieldById` L698-702, `SubmitFieldEdit` L722-727) follow the correct shape: declarations always present, `override` keyword wrapped in `#if defined(SMATCHET_WITH_LUA_AUTOMATION)`. When LUA=OFF the keyword is elided and the declaration becomes a regular non-virtual method, which compiles cleanly. The cited L660-693 range contains zero `override` interactions. Other `override` sites (L123, L346-376) all sit inside larger `#if defined(SMATCHET_WITH_LUA_AUTOMATION)` blocks where the base class `ILuaBindingHost` is available. Entry archived as false positive.
-
-- 2026-05-17 · code-review · [tooling] · P3 — `ai.dump-request` debug body / URL drifted from OpenAi wire post PR #184
-  Resolution: PR #184 (`batch 2`) updated `OpenAiClient::BuildChatBody` to always emit `max_tokens = 4096` and `OpenAiClient::ResolveBaseUrl` to strip a trailing `/v1` / `/v1/`. The parallel debug builders in `Source/Core/src/Commands/Builtin/BuiltinCommands_Ai.cpp` (`BuildOpenAiBody`, `ResolveEndpointUrl`) were not updated, so `ai.dump-request` for `openai` + `ollama-openai` misreported the wire — no `max_tokens` field, and `http://localhost:1234/v1` showed `/v1/v1/chat/completions`. Anthropic dumper was already correct. Fix mirrors the wire path: `BuildOpenAiBody` gains a `maxTokens` param defaulting to 4096; new `StripOpenAiV1Suffix` helper applied to the OpenAi / OllamaOpenAiCompat branch of `ResolveEndpointUrl`. Same TU also picked up four pre-existing cppcheck / clang-tidy nits (`uselessCallsSubstr`, two `useStlAlgorithm` raw-loops folded into nlohmann's vector-conversion, `PInt` / `PString` using-decls moved inside `#if defined(SMATCHET_WITH_AI)` so the stub build is clean).
-
-- 2026-05-17 · code-review · [bug] · P0 — `.gitattributes` did not declare `*.ppm binary`
-  Resolution: `.gitattributes` now declares `*.ppm binary` alongside existing image-binary rules. Defense in depth — the bulk PPM goldens that originally triggered the risk were migrated to PNG in the same batch so the rule applies only to any future bootstrap captures that get accidentally committed before the writer change is picked up.
-
-- 2026-05-17 · code-review · [infra] · P0 — `tests/golden/*.ppm` 5.5 MB raw PPMs bloat pack
-  Resolution: Migrated PNG via stb_image_write — vendored `ThirdParty/stb/stb_image_write.h` (single-TU impl in `Source/Standalone/main.cpp`), updated `tests/support/GoldenImage.h` + `ScreenshotDiffMain.cpp` to read PNG via stb_image, updated `scripts/dev/test-screenshot-diff.sh` to use `.png` extensions + ephemeral port + deterministic poll, refreshed `tests/golden/README.md`. Old PPMs deleted; new PNGs ~280-310 KB each (≈10× smaller than the 2.76 MB raw P6s). Bootstrap path tested end-to-end via `bash scripts/dev/test-all.sh`. lint-cpp hook adjusted to skip clang-tidy on `tests/support/*` (no compile_commands entry).
-
-- 2026-05-17 · code-review · [security] · P1 — `OpenAiClient.cpp:140-180` API key leak via raw provider error body
-  Resolution: Provider error body now flows through `smatchet::ai::pure::RedactProviderErrorBody` before being appended to `AiStreamError::Message`. Helper lives in a sibling Pure TU (`Source/Core/{include,src}/AiErrorRedact.{h,cpp}` — no cpr/httplib/SQLite includes) per AGENTS.md § Pure-helper TU-split recipe. Strips Bearer tokens, `api_key` / `apiKey` / `Authorization` / `authorization` JSON values, `sk-` / `sk_` / `org-` / `proj_` / `asst_` id prefixes; length-caps to 240 chars (down from the prior 600) with `…` suffix. Test coverage: `tests/Core/AiErrorRedact.test.cpp` ships 5 `TEST_CASE`s / 20+ assertions across all redaction paths plus benign-input safety.
-
-- 2026-05-17 · code-review · [security] · P1 — `coverage.sh:155` python `-c` interpolation injection
-  Resolution: Both `python -c` invocations now pass values via `os.environ` (`XML_OUT` and `LINE_RATE`) instead of string-interpolation into the source. A path / rate containing `'` or `\` no longer breaks the script or can run attacker-controlled Python under `set -euo pipefail`.
-
-- 2026-05-17 · code-review · [bug] · P1 — `coverage.sh:148` second OpenCppCoverage run overwrote `coverage.xml`
-  Resolution: Each test exe now captures into its own binary intermediate (`coverage-tests.bin` + `coverage-lua.bin`); a third merge invocation reads both via `--input_coverage` and exports the final `coverage.xml` + optional HTML. SmatchetTests coverage is no longer silently dropped by the SmatchetLuaTests run.
-
-- 2026-05-17 · test-rig → p4-blame · [security] · P1 — `CallstackParser::ParseCallstackText` regex super-linear in line length
-  Resolution: Added a per-line length cap `kMaxLineLengthForRegex = 16384` in `Source/Core/src/CallstackParser.cpp`. Lines longer than the cap are skipped entirely without entering the three format regexes, so a malicious paste can no longer drive the parser into O(n^k) backtracking or stack-overflow the runner. New `[high-risk]` SUBCASE `64 KiB single line bypasses regex via length cap (DoS guard)` in `tests/Core/CallstackParser.test.cpp` locks the contract (completes <50 ms; only the trailing real frame survives).
-
-- 2026-05-17 · code-review · [retrospective] — Recent-PR audit findings (PRs #139–#148, #151)
-  Resolution: Retrospective `code-review` sweep across 13 merged PRs landed 2026-05-16/17 — four parallel `code-review` agents, read-only. Umbrella entry split into 29 per-finding atoms on 2026-05-17 (2 P0 / 6 P1 / 14 P2 / 7 P3) across bug / security / test / infra / tooling / process. See each category file for the individual entries.
-
-- 2026-05-17 · security-review · [security] · P2 — First-send outbound-context consent modal (consent-tracking field + UX)
-  Details: Default flip of `AssistantContextBlockAuditTrail` to `false` shipped (`ConfigManager.h:248`); remaining work from the original P1 entry is the one-time first-send consent modal. Modal should list the 5 `AssistantContextBlock*` block names + sample payload sizes + a "what gets sent" expander before the first turn. Drive via a new `cfg.AssistantOutboundConsentShown = false` field. Severity downgraded P1→P2 because the riskiest default (audit-trail PII auto-shipping) is now off.
-  Concrete next action: add `cfg.AssistantOutboundConsentShown` (default false); gate `AiAssistantController::RunRequest` on the consent modal first turn; render modal in `SmatchetAiAssistantUi.cpp`. ~3 h UX.
-  Resolution (2026-06-18 · branch feat/ai-outbound-consent-modal): Shipped the one-time first-send consent modal. New `TrackerConfig::AssistantOutboundConsentShown` bool latch (default false, persisted via the `kBoolFields` table in ConfigManager.cpp so it round-trips on save+load). The decision core is extracted to a pure header `Source/Core/include/AiOutboundConsent.h` — `ShouldRequireOutboundConsent` (defaults to FIRE, flips to never-again only once consent is recorded; cannot silently invert to "default to send"), `BuildOutboundConsentRows` (emits all five `AssistantContextBlock*` blocks in on-the-wire order — selected_tickets, visible_rows, active_ticket, active_view, audit_trail — disabled blocks zeroed, audit_trail always flagged deferred), and `SumOutboundConsentBytes` (totals only the enabled, non-deferred blocks). All three are pinned by an 8-case / 23-assertion doctest (`tests/Core/AiOutboundConsent.test.cpp`, satisfies the Test-delta gate without the tests-out-of-band escape). The gate is wired at the single `DispatchAiSend` choke-point in `SmatchetAiAssistantUi.cpp`, so BOTH the Send-button and Enter-key paths are covered, and it fires BEFORE any provider POST. On the first turn of a fresh profile `DrawOutboundConsentModal` raises an `ImGui::BeginPopupModal` listing every block with its REAL measured body size (taken from the actual `BuildSendContext` output, not an estimate; audit-trail labelled "fetched at send" and excluded from the displayed total), a "What gets sent" disclosure expander, and an honest total-bytes line. "Send and don't ask again" records consent (persisted via `ScheduleConfigSaveDetached`) and re-enters `DispatchAiSend` so the same turn dispatches with the typed text intact (no double-send; the now-true latch skips the gate so there is no recursion); "Cancel" leaves consent unset and the input intact, so the modal re-shows on the next attempt. Closes the remaining UX work from the original P1 entry (the riskiest default, audit-trail PII auto-shipping, was already off).
-  Status: fixed
-  Last-reviewed: 2026-06-18
-
-
-- 2026-05-17 · code-review · [security] · P2 — `tests/support/GoldenImage.h` `std::strtol` parses PPM `w`, `h`, `maxv` without overflow / negative checks (now resolved by PNG migration but the new stb-based reader still warrants a cap)
-  Details: Original PPM-P6 parser had no dim caps. The PNG migration (2026-05-17) replaced that reader with stb_image, which has its own `STBI_MAX_DIMENSIONS` (1<<24) plus an additional `kMaxGoldenImageDim = 16384` cap in `GoldenImage.h`. Entry kept open because (a) the cap should also be propagated to the Standalone screenshot writer (currently bounded only by GPU framebuffer size) and (b) a fuzz test against crafted PNG dims is still missing.
-  Concrete next action: add a fuzz test in `tests/Core/GoldenImage.test.cpp` (new file) covering crafted PNG dims at / above 16384 and verify the cap rejects them. Estimated cost 30 min once a synthetic crafted-PNG fixture is in place.
-  Resolution (2026-06-17 · PR #1363 fix(test-support): reject oversize-header image alloc bomb before decode): `GoldenImage.h` now pre-checks dims from the header alone via `stbi_info()` (no pixel alloc, no decode) and rejects dims > `kMaxGoldenImageDim` (16384) BEFORE `stbi_load`, closing the alloc-bomb window where a lying 100000×100000 header forced a ~30 GB allocation; a post-decode guard additionally asserts the decoded dims match the validated header dims (lying-header / header-body mismatch defense). Concern (b) — missing crafted-PNG fuzz coverage — resolved by the same PR's `tests/support/GoldenImageDimGuardMain.cpp` single-TU fuzz CLI + `scripts/dev/test-golden-image-dim-guard.sh` bucket-A driver (lying-header reject pre-decode, just-over-cap 16385 reject, at-cap 16384 accept, honest 2×2 accept, missing-file no-crash). Concern (a) — propagate the cap to the Standalone screenshot writer — assessed non-applicable: that writer's dims derive from `glfwGetFramebufferSize` (`Source/Standalone/StandaloneAppBootstrap.cpp:271`, mirrored in `main.cpp`), i.e. the live GL framebuffer bounded by window/GPU size and never file- or attacker-controlled, so there is no oversize-header / alloc-bomb vector to cap. The attacker-influenced surface was the golden LOADER, now fully guarded.
-  Status: fixed
-  Last-reviewed: 2026-06-17
-
-
-- 2026-05-17 · code-review · [test] · P2 — No automated coverage of `AiSseParser` (split-frame, `[DONE]`, malformed JSON, mid-frame cancel, `\r\n\r\n`)
-  Details: Critical for Phase A' of the AI assistant work; deferral is in the originating commit message. The full SSE state machine has zero test surface.
-  Concrete next action: verify the doctest TU lands as part of Phase A'. Estimated cost 1 h. Surfaced by retrospective code-review sweep on PR #140.
-  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/Core/AiSseParser.test.cpp covers all named cases; wired in tests/CMakeLists.txt)
-  Last-reviewed: 2026-05-17
-
-
-- 2026-05-17 · security-review · [test] · P2 — Per-client cancel-abort-within-N-chunks regression test
-  Details: PR #176's parser caps + `liveCancel` trust depend on the cpr WriteCallback contract (returning `false` aborts the in-flight request). If a future cpr / curl bump changes that semantic, cancel breaks silently with no test failure. Need a doctest per client (`OpenAi` / `Anthropic` / `Ollama`) that drives a fake HTTP server (cpp-httplib already linked) emitting a slow chunked stream, sets the cancel atom mid-stream, and asserts the client returns within K chunks with `WasCancelled = true`.
-  Concrete next action: add `tests/Core/AiClientCancel.test.cpp` parameterised across the 3 clients; reuse the cpp-httplib server pattern from existing `MCP` tests. Estimated 2-3 h.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-17 · code-review · [test] · P2 — Per-client error-body redaction regression test
-  Details: 26d3b6f and PR #176 both fixed sibling-client redaction misses. The fix is per-client manual wiring with no test enforcing every `IAiClient` implementation routes through `RedactProviderErrorBody`. Need a regression gate: a doctest that drives each client against a fake server returning a 401 with an echoed `x-api-key` / `Authorization` header in the body, asserts the resulting `AiStreamError::Message` does not contain the literal key.
-  Concrete next action: extend `AiClientCancel.test.cpp` (above) or new `AiClientErrorRedact.test.cpp` with one subcase per client. ~1.5 h on top of the cancel-test fixture.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-17 · test-author · [test] · P2 — Headless AiAssistant streaming scenarios (Scenarios 2/4/5) not yet covered
-  Details: Phase B (PR #163) shipped the assistant panel + worker + Cancel but live-API verification scenarios from `docs/plans/shipped/ai-assistant-side-panel.md` § Verification — happy-path streaming (S2), 401 bad-key error path (S4), transport-down within 5s (S5) — are deferred to a `test-author` follow-up. The mechanism is a canned `httplib::Server` fixture (same scaffold as `DockGapSentinelScenario` from PR #146) driving `IAiClient::SendStreaming` directly + asserting on `g_ui.assistantHistory` + `g_ui.assistantLastError` + the cancel-atom poll cadence. Estimated 4 h (fixture + 3 scenario classes + bash driver + golden-event assertions). Same scaffold is reusable for Phase D (Anthropic + Ollama clients) verification.
-  Concrete next action: add `tests/support/AiHttpFixture.h` + `Source/Core/src/Commands/Scenarios/AiAssistantSendScenario.cpp` against an in-process `httplib::Server` that emits canned SSE frames + 401 + transient-disconnect. Auto-enrol via `scripts/dev/test-ai-assistant.sh`.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1513)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-17 · code-review · [test] · P2 — `tests/Core/TicketSyncService.test.cpp:118-140` coverage gaps on empty-fetch guard
-  Details: No test for the partial/error path (non-empty `FetchError` + `FullSyncCompleted=false` + empty `freshTickets`); no test asserting the guard is bypassed on legitimate non-empty diff.
-  Concrete next action: add two cases covering the partial-error path and the bypass-on-non-empty-diff path. Surfaced by retrospective code-review sweep on PR #139.
-  Status: applied (2026-07-11 — the remaining exact combo landed: two cases for non-empty FetchError + FullSyncCompleted=false + empty Tickets (transient + non-transient), each asserting the cache is fully preserved and — the coverage gap — DeferredLiveNotifyCalls==0 (error path is NOT a success, vs ==1 for the clean-empty sibling); transient also asserts TransportDown + transient warning. Non-vacuous: forcing the success-branch open fails the non-transient case.)
-  Last-reviewed: 2026-07-11
-
-- 2026-05-17 · code-review · [test] · P3 — `Source/Plugins/Mcp/McpJsonRpcPure.cpp` anon-namespace helpers not exposed for Phase 5 dispatch tests
-  Details: `BasenameForDisplay`, `TrimAsciiWhitespace`, `ToLowerAscii`, `AppendAllowlistedArgKvs` live in an anonymous namespace.
-  Concrete next action: consider promoting to `pure::detail::` namespace so Phase 5 dispatch tests can reach them. Surfaced by retrospective code-review sweep on PR #141.
-  Status: applied (2026-06-21 P3 sweep — shipped #1528)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-17 · code-review · [tooling] · P3 — `tests/support/ScreenshotDiffMain.cpp:32` three-positional CLI with no `--help`
-  Details: Discovery friction for a one-off contributor; positional args undocumented.
-  Concrete next action: add a `--help` arm printing the three positional names + an example invocation. Surfaced by retrospective code-review sweep on PR #146.
-  Status: applied (2026-06-20 trap-sweep — PR #165)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-17 · code-review · [process] · P3 — PR #140 `Source/Core/include/AiTypes.h:35,60` `Temperature = -1.0f` and `MaxTokens = 0` sentinels for "unset"
-  Details: Future reader could set `0.0f` thinking it's a neutral value and not realise it's the sentinel for "unset".
-  Concrete next action: add a comment at each constant naming the sentinel semantics. Surfaced by retrospective code-review sweep on PR #140.
-  Status: applied (2026-06-21 P3 sweep — shipped #1527)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-17 · code-review · [infra] · P3 — `AiContextBuilder::BuildActiveTicketBody` O(N) ticket scan
-  Details: Linear scan over `tickets` to find the active id at [`AiContextBuilder.cpp:151-153`](../../../Source/Core/src/AiContextBuilder.cpp). For 10 K-ticket views the Send button blocks proportionally. `IdIndex` map already exists elsewhere in the codebase; pass through `Inputs` or accept a pre-resolved `const CachedTicket*`.
-  Concrete next action: extend `AiContextBuilder::Inputs` with `const CachedTicket* PreResolvedActiveTicket = nullptr`; populate from the UI side via `IdIndex` lookup. Fall back to the existing scan when null. ~30 min.
-  Status: applied (2026-06-21 P3 sweep — shipped #1527)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-17 · code-review · [infra] · P3 — `AgentsMdLoader` reads `maxBytes + 1` even when file is smaller
-  Details: [`AgentsMdLoader.cpp:45-46`](../../../Source/Core/src/AgentsMdLoader.cpp) `out.resize(maxBytes + 1)` then reads `maxBytes + 1` bytes regardless of actual file size. Functionally correct (over-cap detection works), but each load reads up to 64 KB+1 even for a 1 KB agents.md. Trivial waste; matters only when invalidation happens on a hot Preferences-change loop.
-  Concrete next action: stat the file first; cap the read at `min(maxBytes + 1, file_size)`. ~15 min.
-  Status: applied (2026-06-21 P3 sweep — shipped #1527)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-17 · code-review · [bug] · P3 — `AiSseParser::Flush()` synthesises `\n\n` boundary so a final non-terminated chunk delivers as a token
-  Details: `AiSseParser.cpp:91` appends `"\n\n"` to the in-progress buffer then re-enters `Feed(nullptr, 0, ...)` to force-emit a final frame. If a malicious or buggy server sends a final non-terminated chunk that happens to parse as a valid SSE frame body, it gets dispatched as a token even though the server never indicated the frame was complete. Low-impact (just a delivered chunk) but the policy "discard residual partial frame on Flush" is safer.
-  Concrete next action: change `Flush` to clear `buffer_` without re-feeding (drop the partial frame). Update `AiSseParser.test.cpp` "many small Feeds" or add a new test asserting Flush on `"data:partial"` (no boundary) emits zero events. ~20 min.
-  Status: applied (2026-06-21 P3 sweep — shipped #1527)
-  Last-reviewed: 2026-06-21
-
-- 2026-05-16 · test-author · [tooling] · P2 — Phase 7 pink-clear dock-gap scan (deferred from Phase 7 scenario set)
-  Details: AGENTS.md § Debug techniques documents the magenta-clear trick (`glClearColor(1, 0, 1, 1)`) for detecting dock-gap leaks. The Phase 7 `DockGapSentinelScenario` originally planned to flip the clear color during its warm-up frames so any visible pink in the captured PPM = real dock gap. Implementation required a new `UiDrawSession::requestClearColor` flag + a `Source/Standalone/main.cpp` consumer — non-trivial surface for marginal coverage given the L∞ diff against a clean golden already catches dock-shift regressions. `smatchet::test::CountPixels(img, 255, 0, 255, tol)` shipped in `tests/support/GoldenImage.h` to enable the scan once the clear-color toggle lands.
-  Concrete next action: add `requestClearColor{R,G,B,A}` fields to `UiDrawSession` + restore-on-clear-after-frame consumer in main.cpp; extend `DockGapSentinelScenario` to set pink-clear during warm-up + bash script to run `CountPixels(img, 255, 0, 255, 8) == 0` as a hard assertion. Estimated cost ~1.5 h.
-  Resolution: applied — the whole concrete action shipped: `UiDrawSession` `requestClearColor{R,G,B,A}/Active` consumed in `Source/Standalone/main.cpp:875-880`, `DockGapSentinelScenario.cpp` registered as `dock-gap-sentinel`, and `scripts/dev/test-screenshot-diff.sh` runs the pink-pixel-count zero assertion (`pink-clear-dock-gap-scan`).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-05-16 · orchestrator · [tooling] · P3 — `Source/Core/*.cpp` GLOB picks up new TUs for production targets — only test target needs explicit per-file entry
-  Details: Wave A2 agents wrote new pure-helper TUs (`TrackerLabelsPure.cpp`, `TrackerDateTimePure.cpp`, `TrackerFieldPayloadPure.cpp`, `TrackerFieldCatalogPure.cpp`). Production builds (Standalone + DX12) picked them up automatically via the existing `Source/Core/src/*.cpp` GLOB in the root `CMakeLists.txt`. The test target (`tests/CMakeLists.txt`) is **explicit per-file** — needs a per-source `.cpp` entry **and** a per-test `.cpp` entry. Mental-model save: agents otherwise reflexively touch both files.
-  Concrete next action: add a one-line note to `agents/core/test-rig.md` § Workflow: "Production targets auto-pick new `Source/Core/src/*.cpp` via GLOB — only `tests/CMakeLists.txt` needs explicit per-file source list updates."
-  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Production targets auto-pick new Source/Core/src/*.cpp via GLOB" bullet)
-  Last-reviewed: 2026-06-02
-- 2026-05-16 · test-rig · [process] · P3 — `AppControllerDepsAdapter.cpp` is a link-trap for tests
-  Details: PR D introduced `Source/Core/src/AppControllerDepsAdapter.cpp` as the production-side implementation of `IOfflineQueueDeps` + `ITicketSyncDeps` against a live `AppController&`. Adding it to a test target's source list drags unresolved `AppController::*` symbols (since `AppController.cpp` is correctly excluded — ImGui-tainted). Tests should always use `FakeOfflineQueueDeps` / `FakeTicketSyncDeps`; the adapter belongs only in the production exe. PR E lost a link-error round-trip before the agent figured this out.
-  Concrete next action: add a one-paragraph note to `agents/core/test-rig.md` § Workflow: "Adapter TUs (`AppControllerDepsAdapter.cpp` and similar) are production-only — never link them into test targets. Always use Fake* fixtures under `tests/support/`." Estimated cost 5 min doc edit.
-  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Adapter TUs are production-only" bullet)
-  Last-reviewed: 2026-06-02
-- 2026-05-16 · orchestrator · [process] · P3 — ReDoS / perf budget figures in agent packets must be STL-backend-qualified
-  Details: callstack-adversarial-subcases packet specified `≥64 KiB / 50 ms` for the ReDoS sentinel. On MinGW UCRT64 `std::regex` (`Source/Core/src/CallstackParser.cpp:57-58` regex, `-O2`), probe shows: 256 B → 1 ms, 512 B → 4 ms, 1 KiB → 21 ms, 2 KiB → 101 ms, 4 KiB → 403 ms, ≥ ~32 KiB stack-overflows runner (0xC00000FD). Orchestrator-spec was ~3 orders of magnitude away from achievable. Agent retuned to 1 KiB / 100 ms and routed regex hardening to `p4-blame` via the security-category backlog entry.
-  Concrete next action: at packet-composition time, the orchestrator runs a 4-point probe (256B / 512B / 1KiB / 2KiB) for any regex-bearing budget claim before pinning numbers. Land in AGENTS.md § Orchestrator delegation packet § Invariant decisions. Estimated cost 15 min doc edit (packet template note) + one-time 5 min per packet that names a regex budget.
-  Status: applied (2026-06-02 — `docs/agent-rules/delegation.md` § Orchestrator delegation packet § Invariant decisions now carries the "Regex-bearing budget claims → 4-point probe before pinning" rule with the MinGW UCRT64 `std::regex` magnitude warning)
-  Last-reviewed: 2026-06-02
-- 2026-05-16 · test-rig · [process] · P3 — Parallel-write-fan-in to `tests/CMakeLists.txt` needs sequential-merge stance documented
-  Details: 4 parallel Wave A2 test-rig agents (tracker-labels / datetime / payload / field-catalog) each appended their new test + source `.cpp` to the same lines of `tests/CMakeLists.txt`. Each PR after the first needed manual rebase resolving union-merge — orchestrator absorbed this cost (~5 min per PR). Already documented in `docs/plans/shipped/test-suite-expansion-completion.md` § Deviations from plan; not in agent-level docs.
-  Concrete next action: promote to `agents/core/test-rig.md` § Parallel-with-N-other-agents note — explicit rule "when N siblings touch `tests/CMakeLists.txt`, append at the END only; merge order is serial; orchestrator handles rebase". Saves explanation in every parallel-batch packet. Estimated cost 10 min doc edit.
-  Status: applied (2026-06-02 — `agents/core/test-rig.md` § Workflow gotchas, "Parallel siblings touching tests/CMakeLists.txt" bullet)
-  Last-reviewed: 2026-06-02
-
-- 2026-05-16 · test-rig · [process] · P2 — Worktree-absolute vs main-repo-absolute path discipline
-  Resolution: Slice 4. AGENTS.md § Process rules § Git/p4 discipline now includes the worktree-absolute path rule: when running in `.claude/worktrees/<id>/`, all `Edit` / `Write` absolute paths must use the worktree prefix, never the main-repo prefix. `agents/core/test-rig.md` § Hard invariants carries the same rule with verification recipe (`git rev-parse --show-toplevel`).
-
-- 2026-05-16 · orchestrator · [process] · P3 — Plan-doc file-level tables drift from grep ground truth; re-verify before sealing
-  Resolution: New `docs/agent-rules/delegation.md` § Orchestrator delegation packet § File-level table re-verify (before sealing) sub-section documents the 2-command probe (`git grep -nF -- "<symbol>"` for callers / definers; `grep -nE "(set|file\s*\(\s*GLOB).*<var>" CMakeLists.txt tests/CMakeLists.txt` for CMake variables — flagging GLOB-populated variables for row-drop). Target file = delegation.md (not AGENTS.md) per grill Q3=B and the codebase probe that revealed § Orchestrator delegation packet body lives in delegation.md (AGENTS.md carries only a one-line index pointer at line 264). New `scripts/dev/plan-doc-table-probe.sh <plan-path>` ships in v1 (also per grill Q3=B): parses § File-level changes section, recognises Symbol / Function / Caller / Definer / CMake variable / CMake target / Variable column headers (case-insensitive), runs both probes per row, reports hits / misses, exit 0 on all-resolved or no-tables-found, exit 1 on any miss. Self-test `scripts/dev/test-plan-doc-table-probe.sh` covers 6 cases (no section / unrecognised columns / valid symbol / missing symbol / CMake GLOB variable / mixed valid+invalid): 9/9 PASS. Auto-enrolled by `scripts/dev/test-all.sh` glob. Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 4.
-
-- 2026-05-16 · orchestrator · [process] · P3 — API-500 mid-run recovery procedure not documented
-  Resolution: New `docs/agent-rules/delegation.md` § API-500 mid-run recovery — 5-step procedure (inspect worktree state → run local gates → `git add -A` + commit → push + open draft PR → backlog entry per Slice 5 grill Q8=A). The `git add -A` (not `git add <list>`) gotcha is named explicitly. AGENTS.md § Delegation index pointer-line updated to include the new sub-section. New AGENTS.md § Project rules § Force-push carve-out for spawned-agent recovery (per grill Q4=A — covers `agent/<id>` AND `claude/<id>` spawned-agent branches only; `--force-with-lease` required, bare `--force` still banned; excludes develop/main and orchestrator branches `chore/feat/fix/docs/wip/*` and mixed-authorship branches). New ADR `docs/adr/0005-force-push-carve-out-for-spawned-agent-recovery.md` (per grill Q9=A — passes hard-to-reverse + surprising-without-context + real-trade-off triad) records the carve-out rationale with three rejected alternatives (always-new-commit; full ban + manual rescue; broader scope to all-your-branches). Plan: `docs/plans/shipped/process-backlog-tighten-1-2-3-9-11-12.md` § Slice 5.
-
-- 2026-05-16 · orchestrator · [external] · P2 — Auto-merge disabled on the repo; `gh pr merge --auto` errors
-  Resolution: Workaround option (a) chosen — `gh api -X PATCH repos/alexandrosk0/Smatchet -F allow_auto_merge=true -F delete_branch_on_merge=true` flipped both settings in one call (`{"allow_auto_merge":true,"delete_branch_on_merge":true}` verified). Branch protection on `develop` is absent (HTTP 404 on `gh api repos/.../branches/develop/protection`), so `--auto` degrades to instant-merge with no required check — noted but out of scope (separate branch-protection decision). `docs/plans/shipped/test-suite-expansion-completion.md` § Deviations from plan § Session 2026-05-16 updated with a parenthetical naming the re-enable date + the rationale that the AGENTS.md § Merge gates poller remains the canonical autonomous path because it also covers CodeRabbit + user comments, which `--auto` does not. Plan: `docs/plans/shipped/unblock-external-blockers-2-3-4.md` § Slice 1.
-
-- 2026-05-16 · build-doctor · [tooling] — Phase 9 `tests-out-of-band` GitHub label must be created at the repo
-  Resolution: user created the `tests-out-of-band` label at the repo level on 2026-05-16. Coverage-gate override mechanism now functional. Originally surfaced by Phase 9 of test-suite-expansion-completion.
-
-- 2026-05-16 · test-author · [tooling] — Phase 9 PR template documenting `tests-out-of-band` override label
-  Resolution: `.github/pull_request_template.md` shipped with Summary / Test plan / Coverage gate override / Plan revision sections.
-
-- 2026-05-16 · build-doctor · [infra] — OpenCppCoverage local install on dev machines (no auto-install path)
-  Resolution: (b) opt-in YELLOW check landed in both `scripts/dev/doctor.{sh,ps1}` gated by `SMATCHET_DOCTOR_CHECK_COVERAGE=1`; (c) `docs/harness/SETUP.md` now carries an `## Optional: coverage tooling` section documenting Chocolatey + releases-page install paths. (a) `bootstrap-msys2.ps1` integration deferred — Chocolatey isn't in the MSYS2 bootstrap surface and the opt-in env var keeps the friction low.
-
-- 2026-05-16 · lua-binder · [infra] — Lua bindings round-trip test (Phase 6 `LuaBindings.test.cpp`) blocked by `AppController_LuaBindings.cpp` Class C structure; needs production refactor
-  Resolution: TU split + `ILuaBindingHost` interface lift landed via PR #144 at sha 7e6762d (Phase-6-unblocker · lua-bindings-host-interface-lift); round-trip test (`LuaBindings.test.cpp` + `FakeLuaBindingHost`) shipped via PR #145 at sha d125b36 (Phase-6b · lua-bindings-roundtrip). New TU `Source/Core/src/AppController_LuaBindingsCore.cpp` is ImGui / GLFW / cpr / httplib / SQLite-free (verified via banned-deps grep + `nm -u` on the obj — zero matches). Eleven glue functions lifted out + receiver re-cast to `ILuaBindingHost*` via `state["__smatchet_app"]`. Behaviour-preserving: standalone + DX12 builds clean; ctest 2/2 PASS. Phase 6b round-trip test ships 13 cases on the `ILuaBindingHost` surface (3 high-risk) via `FakeLuaBindingHost.h`. Subsumed by AGENTS.md § Pure-helper TU-split recipe.
-
-- 2026-05-16 · mcp-toolsmith · [infra] — MCP wire-protocol pure logic entombed in cpr/httplib-tainted lambda; needs TU split before Phase 5 tests
-  Resolution: TU split landed via PR #141 at cfab599. 9 named helpers + 5 transitive support helpers + `TruncateOneLine` lifted to `Source/Plugins/Mcp/McpJsonRpcPure.{h,cpp}` in namespace `smatchet::mcp::pure`. New TU is cpr/httplib/winsock-free (grep guard empty). 12 call sites in `McpPlugin.cpp` rewired via using-decls inside the anon namespace. Standalone + DX12 builds clean; ctest 284 cases / 1509 assertions PASS. Phase 5 re-dispatch unblocked. Subsumed by AGENTS.md § Pure-helper TU-split recipe.
-
-- 2026-05-16 · orchestrator · [tooling] — Lint hook split into inline (clang-format only) + drain (cppcheck + clang-tidy + dual-target at Stop event)
-  Resolution: branch `feat/lint-hook-deferred-drain`. Plan + impl at `docs/plans/shipped/lint-hook-deferred-drain.md`. Verification: `scripts/dev/test-lint-hook-split.sh` 14/14 green. Stop-hook reprompt validated live (Part 0 spike). Discovered + fixed a pre-existing PATH bug in `lint-syntax-both.py` (cc1plus.exe silently exit-1'd when UCRT64 bin not on PATH). Shared `lint-cpp-common.sh` library factored. Five-agent version bump cluster (build-doctor, test-rig, debug-detective, perf-detective, code-review all v1 → v2).
-
-- 2026-05-16 · build-doctor · [process] — MSYS2 UCRT64 toolchain bin not on hook-inherited PATH causes silent cc1plus / cppcheck / clang-tidy skip
-  Resolution: `agents/core/build-doctor.md` § Common causes carries a new "cc1plus silent exit-1 with no diagnostics" bullet pointing at the toolchain-bin-on-PATH fix and replicating it in new sidecar wrappers. Fix landed in deferred-drain branch: `lint-cpp-common.sh` prepends `SMATCHET_TOOLCHAIN_BIN` (default `/c/msys64/ucrt64/bin`) to PATH; `lint-syntax-both.py` does the same via `subprocess.run(..., env=...)`.
-
-- 2026-05-16 · offline-sync · [bug] — `TicketSyncService::ApplyIssueFetchPack` empty fetch in full-sync mode deletes entire cache
-  Resolution: guard landed in `Source/Core/src/TicketSyncService.cpp:82-86`; test case 3 in `tests/Core/TicketSyncService.test.cpp` flipped from documents-delete-all to enforces-reject-and-preserves. Surfaced by PR #130.
-
-- 2026-05-16 · orchestrator · [process] — Trivial palette / theme tweaks must skip full build + test-all + bucket-E loop
-  Resolution: AGENTS.md § Project rules § Trivial-visual-only change envelope. Strict envelope: write set ⊆ `{Source/Core/src/SmatchetTheme.cpp, Locales/*.json, ImGui style constants}`, literals-only diff, zero touch under `Source/Core/include/` / `Source/Plugins/` / `cmake/` / `CMakePresets.json`. Under envelope: `ninja-iter-msvc SmatchetStandalone` build + `ninja-test-msvc` ctest (if relevant) suffice; bucket-E + isolated worktree both skipped.
-
-- 2026-05-16 · security-review · [infra] — `BackendAuditTrail::AuditWriter` caches `GetAuditFilePath()` on first event; per-test path redirection breaks
-  Resolution: `Source/Core/src/BackendAuditTrail.cpp` writer thread now resolves `GetAuditFilePath()` + `GetAuditFallbackPath()` inside the per-event `try` block (cheap string concat — no syscall) instead of caching on first event. ConfigManager dir changes at runtime route subsequent lines to the new path. New TEST_CASE `BackendAuditTrail: writer follows ConfigManager user-data dir change at runtime` proves the contract.
-
-- 2026-05-16 · offline-sync · [infra] — Phase 3 `OfflineQueueServiceRuntime.test.cpp` + `TicketSyncService.test.cpp` deferred
-  Resolution: interface extraction shipped via `feat/offline-queue-deps-interface` (PR D of `test-suite-expansion-completion`). `Source/Core/include/{IOfflineQueueDeps,ITicketSyncDeps,AppControllerDepsAdapter}.h` + `Source/Core/src/AppControllerDepsAdapter.cpp` land the production wiring; both services now hold an interface reference instead of `AppController&` and the two `friend class` decls collapsed into one `friend class AppControllerDepsAdapter;`. Test-side fixtures `tests/support/Fake{OfflineQueue,TicketSync}Deps.h` shipped for PR E + PR F.
-
-- 2026-05-16 · offline-sync · [test] — Phase 3 `BackendAuditTrail` async-writer is a process-wide singleton
-  Resolution: fix landed alongside the security-review · [infra] entry above. Production-side inline-path option chosen (option 1); per-event re-resolve in the writer thread's `try` block.
-
-- 2026-05-16 · code-review + security-review · [test] — `CallstackParser.test.cpp` (Phase 2) non-blocking polish
-  Resolution: shipped via `feat/test-callstack-adversarial`. The soft assertion at line 88 was pinned to `CHECK(f.Function.find("main") != std::string::npos)`. Four adversarial subcases added under TEST_CASE `CallstackParser::ParseCallstackText survives adversarial inputs` (`[high-risk]` suite). New backlog entry filed for the underlying super-linear-regex weakness (live in `security.md`).
-
-- 2026-05-16 · orchestrator · [process] — test-rig agent packet should pre-authorize `<Unit>Parse.{h,cpp}` TU split for anon-namespace pure helpers
-  Resolution: AGENTS.md § Orchestrator delegation packet § Test-rig `<Unit>Parse.{h,cpp}` TU-split pre-authorisation. Future `test-rig` phase packets must explicitly include the TU split in the allowed write set when the plan lists units with anonymous-namespace pure helpers. Subsumed by AGENTS.md § Pure-helper TU-split recipe.
-
-- 2026-05-16 · test-rig · [infra] — Phase 2 `P4BlameParse.test.cpp` deferred; pure parsers live in anonymous namespace inside `P4Blame.cpp`
-  Resolution: `feat/p4blame-parse-tu-split` shipped both the TU split and `tests/Core/P4BlameParse.test.cpp` (12 cases / 75 assertions, all green). `Source/Core/{include,src}/P4BlameParse.{h,cpp}` extracted byte-identical helpers; `P4Blame.cpp` uses `using P4BlameParse::*` for unchanged call sites. Mutation sanity: inverting `m[1]` ↔ `m[2]` in the `reUserColonCode` branch swaps changelist + user — `ParseAnnotateTextLine` SUBCASEs all fail under the mutation, revert restores green. Subsumed by AGENTS.md § Pure-helper TU-split recipe.
-
-- 2026-05-16 · test-rig · [infra] — `LocalCacheManager.h` mixes SQLite surface with pure `CachedTicket` POD
-  Resolution: `Source/Core/include/CachedTicketTypes.h` now owns `CachedTicket`, `PendingCreate`, `PendingFieldEditRecord`, `DeadPendingFieldEdit`, `DeadPendingCreate` (5 PODs, pure stdlib, no SQLite include). `LocalCacheManager.h` re-includes the new header so the 20 existing callers see no API change. Dual-target Standalone + DX12 build green; ctest 1/1; `scripts/dev/test-all.sh` 100/100. Note: Phase 3 (PR #107) pulled `Source/Core/src/LocalCacheManager.cpp` into the test target for hostile-fixture cache tests, so the test exe legitimately needs `SQLiteCpp` at link now.
-
-- 2026-05-16 · orchestrator · [process] — Plan-time `ls Source/Core/src/` cross-check missing
-  Resolution: AGENTS.md § Orchestrator delegation packet § Plan-time production-file existence check. Five-second Glob / skeleton scan before finalising any test-coverage plan; catches plan / tree drift before delegation.
-
-- 2026-05-16 · build-doctor · [tooling] — Windows-path-separator regex bug in build-log-grep scripts
-  Resolution: `agents/core/build-doctor.md` § Common causes now carries a "Build-log grep regex on Windows must accept both path separators" bullet with the `[\\/]` recipe + a negative-test fixture requirement.
-
-- 2026-05-16 · build-doctor · [tooling] — PS 5.1 `-Command "<multi-line>"` silently drops scope effects
-  Resolution: `agents/core/build-doctor.md` § Common causes now carries a "PowerShell 5.1 silently drops scope effects from multi-line `-Command`" bullet recommending temp `.ps1` + `pwsh -File <temp.ps1>` for any PS-driven wrapper depending on scope changes.
-
-- 2026-05-16 · build-doctor · [process] — Doctor strict `PATH contains C:\msys64\ucrt64\bin` produces false-fail on JetBrains-bundled-MinGW hosts
-  Resolution: `scripts/dev/doctor.ps1` + `scripts/dev/doctor.sh` now split the check: gcc-on-PATH at version ≥ 13 is the "toolchain reachable" REQUIRED gate (origin-agnostic; JetBrains-bundled MinGW passes); `C:\msys64\ucrt64\bin` literal on PATH is WARN-only. `scripts/dev/test-doctor.sh` assertion 2 updated.
-
-- 2026-05-16 · build-doctor · [tooling] · P2 — Phase 9 coverage threshold (≥70%) advisory soak → blocking flip
-  Details: Phase 9 (`test-phase-9-coverage-gates`) ships `scripts/dev/coverage.sh` + `.github/workflows/coverage.yml` running with `--threshold 0` and `continue-on-error: true` for the first two weeks. Parent plan's § End-state targets calls for ≥70% line coverage on `Source/Core/src/` (excluding ImGui / UI files) as a hard gate. Same advisory→blocking lifecycle as Phase 7's screenshot-diff.
-  Concrete next action: after two consecutive green weeks of `coverage.yml` runs, flip (a) `coverage.yml` `continue-on-error: true` → `false`; (b) `coverage.sh` invocation from `--threshold 0` → `--threshold 70`; (c) consider adding `--threshold 90` carve-out for the high-risk units (IssueCreatePipeline, IssueDraft, TrackerFieldValueParser, CallstackParser, LocalCacheManager, TicketSyncService, ConfigManager migrations, MCP dispatch, Lua bindings) per parent plan. Estimated cost 30 min once the soak baseline is collected.
-  Status: applied (2026-06-20 trap-sweep — PR #834)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-16 · build-doctor · [tooling] · P2 — Headless CI runners need GL context for spawn-mode UI tests (bucket C + bucket E)
-  Details: `.github/workflows/build-and-test.yml` runs `windows-2022` GitHub Actions runners. The runners advertise no display, and `glfwInit` + `glfwCreateWindow` against a hidden window returns a context whose `glReadPixels(GL_FRONT, ...)` reads an undefined / empty buffer (zero or driver-noise). Bucket-C screenshot diff therefore can't gate on cloud CI today — the Phase 7 advisory step is `continue-on-error: true`. Same blocker applies to the existing bucket-E `test-ui-views-columns-reorder.sh` (already excluded from the CI step).
-  Concrete next action: wire mesa (`opengl32sw.dll` on Windows runners) OR a headless GL context via ANGLE-D3D11. Either lets Standalone + ImGui Test Engine + screenshot capture run in CI. Estimated cost ~3-5 h to install mesa on the runner image + verify a screenshot-diff round-trip; or ~1 day to switch to ANGLE-D3D11 if mesa proves too lossy for the L∞ ≤ 4 tolerance. Until then, bucket-C + bucket-E gates run on dev machines only.
-  Status: applied (2026-06-20 trap-sweep — PR #441)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-16 · test-author · [tooling] · P2 — lint-hook deferred-drain verification gaps (4 checks deferred)
-  Details: `scripts/dev/test-lint-hook-split.sh` ships 14 assertions across 7 of 11 plan-spec checks. Four deferred for follow-up:
-    - Test 4 — issue surfacing with a real cppcheck violation. Requires fault-injection into a real .cpp under `Source/Core/` (write a deliberate `if (x = 1)` and expect drain exit 2). Either author a `tests/fixtures/` first-party-path subtree + carve-out, or run in a real-source mutation harness.
-    - Test 5 — chunked drain across > `SMATCHET_LINT_DRAIN_CHUNK` files. Synthesise 11+ distinct .cpp paths into the queue, run drain, assert remainder re-queued.
-    - Test 6 — parallel-subagent per-PID isolation. Stage two `.lint-queue.<distinct-pids>` files with overlapping + disjoint paths, run drain, assert both consumed without data loss.
-    - Test 10 — lockfile serialises concurrent drains. Spawn two `lint-cpp-drain.sh` invocations in parallel against a shared queue, assert exactly one processes + the other exits 0 without touching state.
-  Concrete next action: 1 h for tests 5+6+10 (pure file synthesis); 2 h for test 4 (needs the production-source mutation discipline). Not blocking the deferred-drain ship — pipeline behaviour is exercised by the 7 covered checks plus the live Part 0 spike.
-  Status: applied (2026-06-20 roadmap campaign — shipped #1506)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-16 · test-rig · [infra] · P2 — `IsTrackerTransportErrorText` is cpr-tainted by location; needs cpr-free TU split
-  Details: The symbol lives in `Source/Core/src/TrackerHttpUtils.cpp` next to cpr-using HTTP wrappers. Any test target that touches `OfflineQueueService.cpp` (or any other consumer of the symbol) must either (a) link `TrackerHttpUtils.cpp` + cpr (bloats test exe with the entire HTTP layer — what PR E + PR F ended up doing after rebase), or (b) re-define the symbol locally (drift surface — what PR E shipped initially before being forced into option (a) by the rebase cascade). Instance of the Pure-helper TU-split recipe — see AGENTS.md § Orchestrator delegation packet § Pure-helper TU-split recipe.
-  Concrete next action: lift the pure error-text classifier into `Source/Core/{include,src}/TrackerHttpErrorText.{h,cpp}` (same pattern as `P4BlameParse`, `TrackerLabelsPure`, `TrackerDateTimePure`). The classifier is <100 LoC, zero `<cpr/*>` includes. `TrackerHttpUtils.cpp` rewires its single call site via using-decl. Estimated cost 30 min refactor + ~5 cases / ~20 assertions doctest coverage.
-  Status: applied (2026-06-20 trap-sweep — PR #1339: IsTrackerTransportErrorText moved to TrackerHttpPure.cpp:131 (cpr-free); ConnectivityMonitorService includes TrackerHttpPure.h)
-  Last-reviewed: 2026-06-20
-
-- 2026-05-16 · test-rig · [infra] · P2 — Shared `tests/support/TestEnvGuard.h` should host the ConfigManager-redirect + audit-redirect RAII guard
-  Details: PR E (`OfflineQueueServiceRuntime.test.cpp`) hit `ConfigManager::Load()` returning `ReadOnlyMode=true` on fresh-install when no `smatchet_config.json` exists in cwd (`Source/Core/src/ConfigManager.cpp:713-714` safety branch). Every `QueueCreateOffline` / `QueueFieldEditOffline` call silently returned 0 because the service short-circuits on read-only mode. Fix landed test-side as a private `TestEnvGuard` RAII wrapper. PR F (`TicketSyncService.test.cpp`) hit the same problem and reimplemented its own guard. Phase 4 (Config + schema migration) will hit it again.
-  Concrete next action: hoist a shared `tests/support/TestEnvGuard.h` that creates a unique temp dir, points `ConfigManager::SetUserDataDirectory` at it, writes a minimal `smatchet_config.json` with `read_only_mode=false`, and on dtor restores + cleans. Estimated cost 20 min consolidate the two existing copies + replace one in each test file.
-  Status: applied (2026-06-20 trap-sweep — tests/support/TestEnvGuard.h shipped (class TestEnvGuard, SetUserDataDirectory, read_only_mode:false, dtor cleanup; PR #1343))
-  Last-reviewed: 2026-06-20
-
-- 2026-05-16 · test-rig · [infra] · P2 — Phase 1 deferred 4 tracker units pending production-side TU split
-  Details: `tests/Core/{IssueDraft,IssueCreatePipeline,TrackerFieldValueParser.extended,TrackerFieldValueUtils}.test.cpp` shipped (171 new CHECKs; 5/5 high-risk mutation sanity green). Plan-named units NOT shipped because each has pure helpers buried under ImGui / AppController / JiraClient / cpr includes — instance of the Pure-helper TU-split recipe (AGENTS.md § Orchestrator delegation packet § Pure-helper TU-split recipe):
-    - `Source/Core/src/TrackerLabelsEditor.cpp` — parse/serialize round-trip + dup-detection lives next to ImGui input handling.
-    - `Source/Core/src/TrackerDateTimeFieldEditor.cpp` — ISO-8601 parser lives next to ImGui calendar widget.
-    - `Source/Core/src/TrackerFieldPayload.cpp` — payload builder pulls JiraClient → cpr → ConfigManager transitively.
-    - `Source/Core/src/TrackerFieldCatalog.cpp` — catalog merge / lookup lives next to JiraClient catalog-fetch surface.
-  Concrete next action: per-unit TU split (lift pure helpers to a sibling `*Pure.cpp` + matching header with no ImGui/cpr includes), then add the doctest in a follow-up phase. Estimated cost ~1 h per unit (4 h total). Bonus: `IssueCreatePipeline::ApplyPostIssueSteps` decision logic also deferred — needs `ITrackerBackend` mock fixture (Phase 3 HTTP layer). Pick up after Phase 3 ships the HTTP / SQLite fixtures.
-  Status: applied (2026-06-20 trap-sweep — all 4 pure splits + 4 doctests exist: TrackerLabelsPure/TrackerDateTimePure/TrackerFieldPayloadPure/TrackerFieldCatalogPure (.h+.cpp + .test.cpp))
-  Last-reviewed: 2026-06-20
-
-- 2026-05-15 · git-janitor · [tooling] — `git pull --rebase --empty=drop` unsupported on shipped git version
-  Resolution: `agents/core/git-janitor.md` § Bringing `develop` to latest now uses `git pull --ff-only`. The agent's contract bans direct pushes to `develop`, so local develop is always upstream-tracking post-merge — FF is the correct op and the rebase path was dead code.
-
-- 2026-05-15 · git-janitor · [process] — PR-only-to-`develop` rule has no FF-clean docs-only escape valve
-  Resolution: agents/core/git-janitor.md § FF-clean docs-batch exception; version bumped 1 → 2; banner + Hard refusals updated with pointer to the exception.
-
-- 2026-05-15 · test-rig · [process] — `JiraClient.h` cascade blocks per-cpp testing of `TrackerFieldValueParser`
-  Resolution: (03576ff) — `Source/Core/include/TrackerFieldValueParser.h` now `#include "TrackerFieldSchema.h"` instead of `JiraClient.h`; `FormatWorkDurationFromSeconds` declaration moved from `JiraClient.h:18` to the value-parser header. `tests/Core/TrackerFieldValueParser.test.cpp` ships 10 cases / 38 assertions. Dual-target build green; ctest 1/1.
-
-- 2026-05-15 · test-rig · [process] — `OfflineCreateQueue::kMaxReplayAttempts` lives behind `<SQLiteCpp/SQLiteCpp.h>`
-  Resolution: (86895de) — option (b) landed. New `Source/Core/include/OfflineQueueReplayPolicy.h` declares `kMaxReplayAttempts = 5` + inline `ShouldArchive(int currentAttempts, int maxAttempts = kMaxReplayAttempts)`; zero banned includes. Four decision sites updated in `OfflineQueueService.cpp`. `tests/Core/OfflineQueueReplayPolicy.test.cpp` ships 5 cases / 26 assertions. Dual-target build green; SmatchetTests aggregate now 35 cases / 133 assertions.
-
-- 2026-05-15 · orchestrator · [process] — sequential subagent dispatch loses wall-clock when delegations are contract-independent
-  Resolution: d206de5 — AGENTS.md § Parallel dispatch.
-
-- 2026-05-15 · orchestrator · [tooling] — no session scratchpad
-  Resolution: 6df6170 + d206de5 — `.session-context.md` at repo root (gitignored); SessionStart hook truncates; SubagentStop hook (agent-token-log.py) appends a header block when subagent's report carries `## Session context append`.
-
-- 2026-05-15 · orchestrator · [tooling] — JSONL telemetry only tracked tokens
-  Resolution: 6df6170 — agent-token-log.py now emits outcome, halt_reason, agent_version, delegation_chain, tools_used, tool_trace per row.
-
-- 2026-05-15 · orchestrator · [process] — get_skeleton under-used
-  Resolution: d206de5 — AGENTS.md § Skeleton-first hard rule.
-
-- 2026-05-15 · orchestrator · [process] — agent prompts had no version field
-  Resolution: d206de5 — every agent now carries `version: <N>` in frontmatter; mirror banner reads `@v<N>`; telemetry surfaces drift.
-
-- 2026-05-15 · orchestrator · [process] — output-shape drift across agents
-  Resolution: d206de5 — AGENTS.md § Agent output contract codifies four classes (Investigator / Implementer / Helper / Maintenance) + mandatory `## Outcome: <state>`.
-
-- 2026-05-15 · orchestrator · [tooling] — trigger keywords lived in per-agent frontmatter but no central routing table
-  Resolution: AGENTS.md § Trigger auto-activation publishes the keyword → agent map.
-- 2026-05-15 · orchestrator · [test] · P3 — bucket-E coverage missing for inline Command Palette typing path
-  Details: PR #79 fixed a bug where typing into the menu-bar inline palette input did not update the modal filter until Enter (return value of `InputTextWithHint` was gated by `ImGuiInputTextFlags_EnterReturnsTrue`, so `IsItemEdited()` was needed alongside `IsItemActivated() / committed`). Verified only manually. Bucket-E (`tests/ui/views_columns_reorder.test.cpp` shape) is the right home, but the inline-palette path drags `AppController` + `CommandRegistry` + `CommandPaletteUi` modal state into the test harness — heavier than the columns-reorder replica which only re-creates the loop body.
-  Concrete next action: add `tests/ui/command_palette_inline_typing.test.cpp` that wraps a minimal `CommandRegistry` (one or two synthetic commands) and exercises the inline-input → modal-open → filter-applied path via `ItemInput` + assertion on `commandPalette_.FilterText()`. Surface a `FilterText()` accessor on `CommandPaletteUi` if not already present.
-  Status: applied (2026-06-20 backlog deep-triage — verified resolved: tests/ui/command_palette_inline_typing.test.cpp exists; wired in tests/ui/CMakeLists.txt)
-  Last-reviewed: 2026-05-17
-
-
-- 2026-05-14 · lua-binder · [process] — sol2 v2.20.6 API limitations not in plan
-  Resolution: agents/project/lua-binder.md § Hard invariants. "sol2 v2.20.6 — recorder/usertype methods take plain args (no `sol::this_state` first param); `new_usertype` takes only `name` + method-name/ptr pairs, no constructor sentinel."
-
-- 2026-05-14 · lua-binder · [process] — Lua-as-C++ needs more than `LANGUAGE CXX`
-  Resolution: agents/project/lua-binder.md § Hard invariants. "Compiling Lua 5.3 as C++ requires patching `luaconf.h` (or wrapping host-side `#include <lua.hpp>` blocks) with `extern \"C\"` — `LANGUAGE CXX` alone is insufficient."
-
-- 2026-05-14 · architect · [tooling] — `mcp__vexp__get_skeleton` empty result on indexed files
-  Resolution: agents/core/architect.md § Pre-flight (fall back to Read on empty skeleton, optional index_status at start of long runs).
-
-- 2026-05-13 · orchestrator · [external] · P3 — vexp `<!-- vexp -->` block auto-regenerates inside `AGENTS.md`; should land in `.claude/CLAUDE.md` instead
-  Resolution: In-repo workaround landed — `scripts/dev/vexp-strip-agents-md.sh` idempotently removes the vexp block (delimited by `## vexp <!-- vexp vX.Y.Z -->` … `<!-- /vexp -->`) from `AGENTS.md` on every Claude Code session start. Wired in `docs/harness/claude-code/settings.json.tmpl` § `SessionStart` (and the live `.claude/settings.json` for this session). Manual one-shot strip applied to the current `AGENTS.md`; AGENTS.md § Semantic-search exceptions reworded to drop the now-stale "below" reference; new § vexp — Claude-Code-only section names the canonical location (`.claude/CLAUDE.md`, sourced from `docs/harness/claude-code/CLAUDE.md.tmpl`) + the rationale that Codex / Cursor / Aider read AGENTS.md per the agents.md spec and can't use Claude-Code-only MCP guidance. Idempotency verified: re-running the script on a clean `AGENTS.md` is a no-op (exit 0, zero matches). Upstream issue against the vexp tool is a user task (draft text in `docs/plans/shipped/unblock-external-blockers-2-3-4.md` § Slice 2 step 5). Plan: `docs/plans/shipped/unblock-external-blockers-2-3-4.md` § Slice 2.
-
-- 2026-05-13 · p4-blame · [process] — multi-file split handoff packet missed transitive call closure
-  Resolution: AGENTS.md § Orchestrator delegation packet § File-split closure rule.
-
-- 2026-05-13 · p4-blame · [process] — missing-include after split is silent until build
-  Resolution: AGENTS.md § Orchestrator delegation packet § Post-split include-replication rule.
-
-- 2026-05-13 · orchestrator · [process] — branch-switch wipes untracked plan files
-  Resolution: 40c0bb2 — AGENTS.md § Project rules § Plan-doc safety.
-
-- 2026-05-13 · orchestrator · [process] — wrong-exe testing burns iterations
-  Resolution: 16eb7af — AGENTS.md § Debug techniques § Exe staleness check + agents/{perf-detective,spike-hunter,build-doctor}.md hard rules.
-
-- 2026-05-13 · orchestrator · [process] — schema-version churn
-  Resolution: 40c0bb2 — AGENTS.md § Project rules § Schema-version bumps.
-
-- 2026-05-13 · orchestrator · [process] — pink-diagnostic clear color for UI gap detection
-  Resolution: 40c0bb2 — AGENTS.md § Debug techniques § Pink-clear UI gap detection.
-
-- 2026-05-13 · spike-hunter / orchestrator · [process] — ImGui docking state cannot be re-parented at runtime
-  Resolution: 45c14c9 — agents/project/grid-engine.md + agents/project/unreal-bridge.md § Hard invariants.
-
-- 2026-05-13 · code-review · [tooling] — lint hook does not run clang-format on newly created `.h` files
-  Resolution: root cause was script-side, not harness-side. Sentinel-log reproducer (2026-05-15 session) confirmed `PostToolUse` fires on every `Edit`/`Write`. Real bug: under MSYS2 the hook received `CLAUDE_PROJECT_DIR=/c/Dev/Smatchet` (POSIX form) while `tool_input.file_path` arrived as `C:\Dev\Smatchet\...` (Windows form); after backslash normalisation, the case glob never matched. Fix: normalise both via `cygpath -m` before the prefix strip.
-
-- 2026-05-13 · architect · [process] — skip architect when prompt already specifies file paths + symbols + commit messages
-  Resolution: 40c0bb2 — AGENTS.md § Heuristic, new bullet.
-
-- 2026-05-13 · orchestrator · [process] — ASCII em-dash banner bars (`━━━`) at agent open / close burn input + output tokens per call with no routing value
-  Resolution: 94d5836 — one-line banner spec replaced multi-line ceremony.
-
-- 2026-05-13 · orchestrator · [process] — generic "Semantic search first" preamble duplicated across 11 agents
-  Resolution: 94d5836 — dropped from agents with no agent-specific guidance; kept on agents that add real twists. AGENTS.md § Semantic codebase search owns the canonical rule.
-
-- 2026-05-13 · debug-detective · [tooling] — NDJSON helper C++ template embedded inline in agent prompt (~85 lines)
-  Resolution: d79a8fc — externalized to `agents/_shared/templates/SmatchetAgentDebug.h.tmpl`. debug-detective.md shrunk 633 → 547 lines.
-
-- 2026-05-13 · orchestrator · [process] — `delegates-to:` frontmatter present on 8 of 18 agents with no documented rule
-  Resolution: d79a8fc — AGENTS.md § `delegates-to:` frontmatter. Absence ≠ "never delegates" but "via orchestrator, not direct."
-
-- 2026-05-13 · orchestrator · [tooling] — `harness-hints.claude-code.tools:` line duplicates `capabilities:` list and goes unread by Claude Code
-  Resolution: d6ba897 — dropped the line everywhere; kept `model:` + `effort:` (real routing knobs).
-
-- 2026-05-13 · test-author · [process] — verification-automation cadence not project-wide; manual residue could ship indefinitely
-  Resolution: a18f985 — AGENTS.md § Verification automation makes the cadence project-wide: plan-time + first-round + every-agent-handoff. architect.md mandates bucket-A/B/C/D/E classification; code-review.md flags manual residue as Critical.
-
-- 2026-05-13 · test-author · [tooling] — no unified test runner; each scripts/dev/test-*.sh ran in isolation
-  Resolution: a18f985 — `scripts/dev/test-all.sh` globs `scripts/dev/test-*.sh` (excluding self), runs each, aggregates Passed/Failed.
-
-- 2026-05-13 · test-author · [infra] — bucket E (ImGui Test Engine) not wired
-  Resolution: 2026-05-15 · execution plan at `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`. FetchContent + `cmake/ImGuiTestEngine.cmake` + `Source/Core/include/SmatchetImConfig.h` + `UiTestScenario` + `ui_test.run` CLI + `tests/ui/` enrolment + `scripts/dev/test-ui-views-columns-reorder.sh` driver all shipped against the Views → Columns reorder bug.
-
-- 2026-05-12 · tracker-backend · [external] · P3 — `mcp__vexp__run_pipeline` rejects `max_tokens` as float when JSON wire format is double
-  Resolution: In-repo audit confirmed zero real float-literal callsites (the only `max_tokens:\s*\d+\.\d+` matches in the repo are inside this entry + the plan doc that quotes it). Pinned the int-literal-only convention in `docs/harness/claude-code/CLAUDE.md.tmpl` § Advanced Parameters by appending **integer literal only** + the exact daemon error text `"floating point, expected usize"` to the existing `max_tokens: 12000` bullet so future agents don't re-trip the bug. The template is the source for `.claude/CLAUDE.md` regen via `scripts/setup-harness.sh claude-code`. Upstream issue against the vexp tool is a user task (draft text in `docs/plans/shipped/unblock-external-blockers-2-3-4.md` § Slice 3 step 3). Plan: `docs/plans/shipped/unblock-external-blockers-2-3-4.md` § Slice 3.
-
-- 2026-05-12 · orchestrator · [process] — pre-resolve hard-invariant collisions before delegating implementation slices
-  Resolution: d4714ad — AGENTS.md "Orchestrator delegation packet" § Invariant decisions; tracker-backend.md ITrackerClient widening rule hardened.
-
-- 2026-05-12 · orchestrator · [process] — build one shared literal inventory and pass it to every delegated agent
-  Resolution: d4714ad — AGENTS.md "Orchestrator delegation packet" § Shared inventory.
-
-- 2026-05-12 · orchestrator · [process] — inline relevant design-doc sections in agent prompts and forbid rereads unless blocked
-  Resolution: d4714ad — AGENTS.md "Orchestrator delegation packet" § Inline task context.
-
-- 2026-05-12 · orchestrator · [process] — cap routine implementation reports to short table form
-  Resolution: d4714ad — AGENTS.md "Orchestrator delegation packet" § Output budget.
-
-- 2026-05-12 · orchestrator · [process] — remind subagents that code comments must not reference the task or PR plan
-  Resolution: d4714ad — AGENTS.md "Orchestrator delegation packet" § Comment discipline.
-
-- 2026-05-12 · orchestrator · [tooling] — allow text-search first for exhaustive literal / symbol inventories
-  Resolution: d4714ad + follow-up — AGENTS.md "Semantic-search exceptions" section, placed outside the auto-managed vexp block so it survives vexp tool updates.
-
-- 2026-05-12 · orchestrator · [tooling] — dedupe or cap repeated lint-hook diagnostics from PostToolUse
-  Resolution: d4714ad — `.claude/hooks/lint-cpp.sh` adds `format_issues` (awk dedupe + cap); `SMATCHET_LINT_MAX_LINES` env var, default 120, documented in `agents/core/build-doctor.md`.
-
-- 2026-05-12 · command-system · [process] — when the harness lint hook auto-runs on every edit, don't also run a batch `clang-format` at the end
-  Resolution: 45c14c9 — agents/project/command-system.md § Hard invariants, new bullet.
-
-- 2026-05-12 · grid-engine, command-system · [process] — localization accessor is `SmatchetLocalization::T(key, englishFallback)`
-  Resolution: d4714ad — agents/project/grid-engine.md L55 + agents/project/command-system.md L54 both carry the `SmatchetLocalization::T(key, englishFallback)` invariant.
-
-- 2026-05-12 · grid-engine · [process] — design-doc PRs that span ≥3 subsystems have no clear owner
-  Resolution: d4714ad — AGENTS.md § Orchestrator delegation packet § Subsystem split bullet covers pre-split rule; `pr-driver` meta-agent not pursued — orchestrator-side discipline is sufficient.
-
-- 2026-05-12 · tracker-backend · [infra] — no test rig in the repo
-  Resolution: 5-commit migration per `docs/plans/shipped/test-rig-agent.md` landed on `develop`: 97ab7f1, 3b47ff0, 7f024fc, 1f2ad93, plus plan revision. Final state: 20 test cases / 69 assertions; `ctest --output-on-failure` 1/1 green on `ninja-test-msvc`. Two follow-on items surfaced (split `JiraClient.h`; lift offline-queue replay-cap decision) — also archived above.
-
-- 2026-05-12 · tracker-backend · [process] — design-doc PR sections that list line numbers should mark each as `(cfg-read)` / `(draft-write)` / `(audit-only)`
-  Resolution: d4714ad — AGENTS.md § Orchestrator delegation packet § Shared inventory mandates `<file>:<line>:<role>` with the exact role suffixes.
-
-- 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
-  Resolution: 45c14c9 — agents/project/command-system.md § Workflow step 3 + agents/project/tracker-backend.md § Workflow step 1.
-
-# Develop tip can go RED on a required check and silently block every PR until an author trips over it
-
-- **Category:** infra
-- **Priority:** P2
-- **Date:** 2026-07-10
-- **Status:** applied (2026-07-11 — `agents/scripts/core/develop-tip-required-green.sh` SessionStart nudge; flags a required check that ran on the develop tip and is terminal-non-success. Deliberately does NOT flag absent required checks — most are PR-only and never run on a develop push, which would false-fire every session; that self-disabled-gate case stays with postmortem-owed.sh's absence-present allow-list. Injectable data layer + `--selftest`; wired into `settings.json.tmpl`.)
-- **Postmortem:** [`postmortems.md`](../postmortems.md) § 2026-07-10 · PR #1698
-
-## What happened
-
-PR #1698 added `tests/bats/mutation_smoke.bats` with no `test-*.sh` wrapper. Its **required** `Doc anchors + agent contract` check ran ~60 s *after* the merge (merged 08:48:56Z, check started 08:49:56Z), so the `test-orphan-bats` failure landed on `develop` un-caught. Under **block-on-any-red**, that red develop tip was then inherited onto every open PR's own head — it silently blocked the whole repo until the #1666 fix (#1704) tripped over it and I root-caused it. Fixed the instance in #1705 (the missing wrapper).
-
-## The gap
-
-There's no cheap, standing signal that the **develop tip itself** has a RED required check. The failure is discovered only when the *next* author opens a PR and inherits the red — attributing the block to the wrong PR and costing a root-cause dig each time. Both detecting gates (`test-orphan-bats` in local pre-ship `test-docs.sh` AND the required CI check) exist and work; the miss was purely merge-*timing*, and nothing surfaces the resulting red-develop state proactively.
-- 2026-08-17 · orchestrator · [infra] · P2 — the merge-gate poller collapses duplicate check-runs by name; GitHub does not, so a concurrency-cancelled twin reports GATES_PASSED and then 405s the merge
-  Details: Hit on PR #2071 (head `90504efe0875`), a docs-only diff where every check
-    was green or skipped. Two workflow runs had published a check-run under the SAME
-    name `Perf PR-fast (windows-2022)`: run 31981596731 produced `skipped` at
-    00:43:19 (correct — the perf lane skips on a docs-only diff), and run
-    31981601014 had a `cancelled` one at 00:29:03, killed by its concurrency group
-    before it could resolve.
-    The poller collapses that pair. `agents/scripts/core/merge-gates.d/10-gate-filter.sh:82`
-    keys the rollup contexts by `["CheckRun", name]` then
-    `group_by(._k) | map(sort_by(.startedAt // "") | .[-1])`, so the 00:43:19
-    `skipped` wins and the 00:29:03 `cancelled` is discarded before any conclusion
-    is examined. GitHub's required-status-check evaluation applies no such collapse:
-    `PUT /repos/alexandrosk0/Smatchet/pulls/2071/merge` returned
-    **`405 Required status check "Perf PR-fast (windows-2022)" is cancelled`**.
-    Note the intent is already aligned — `:102` lists `CANCELLED` among the
-    conclusions that block. ONLY the latest-per-name dedup diverges, and it diverges
-    in the dangerous direction: the poller says green, the merge is impossible, and
-    there is no red check anywhere for an operator or an autonomous loop to point at.
-    Recovery (verified): `rerun_workflow_run` on the run that owns the stale
-    check-run — here 31981601014. No push, no force, no PR-body re-pin. The 405 text
-    transitions `is cancelled` -> `is expected` (the stale check is invalidated and
-    GitHub now awaits a fresh one), then the re-run's job 95255190961 reported
-    `skipped` at 01:03:26 and the merge succeeded as `ae6892c0`.
-    Cost this time: two rejected merge calls and ~35 min wall-clock on a docs-only
-    PR. The exposure is not rare — concurrency-cancelled twins are produced by the
-    repo's ordinary flow, every time a PR-body edit or a quick second push supersedes
-    an in-flight run. The `Intent section` body-repin dance manufactures exactly this
-    shape, so any PR that needs a verdict-line update can inherit it.
-  Concrete next action: (a) **Align the collapse with GitHub** — in `10-gate-filter.sh:82`,
-    do not let a newer same-named context mask an older one whose conclusion is in the
-    blocking set; treat the name as blocking if ANY of its contexts is
-    FAILURE/TIMED_OUT/CANCELLED/ACTION_REQUIRED/STARTUP_FAILURE. That trades a false
-    "green" for a false "wait", which is the correct direction — a false wait is
-    visible and self-clearing, a false green wedges the loop with nothing to point at.
-    (b) Cheaper interim, and worth doing regardless: emit a WARNING naming the
-    divergence when one check NAME carries >1 context with differing conclusions, so
-    the reason for the coming 405 is on screen before the merge is attempted.
-    (c) Document the recovery in `docs/agent-rules/merge-gates.md` — the rerun-the-owning-run
-    fix is cheap but completely non-obvious from the 405 text, and nothing in the repo
-    currently describes this failure shape.
-    Add a `tests/bats/merge_gates.bats` case pinning it: two contexts, same name,
-    elder CANCELLED + newer SKIPPED, asserting the gate does NOT report passed.
-    Prefer (c)+(b) immediately (docs + one log line), (a) as the real fix.
-  Update (a) SHIPPED 2026-08-17 — but NOT as proposed above, because the proposal
-    was wrong. "Treat the name as blocking if ANY of its contexts is FAILURE/…"
-    would have regressed the case the dedup exists for: `merge-gates.graphql:59-62`
-    records that a job rerun leaves BOTH the old FAILURE and the new SUCCESS on the
-    head, so an any-blocks rule wedges every PR ever fixed by a rerun. It would also
-    have over-blocked PR #2091, where two elder runs were cancelled by concurrency,
-    the newest succeeded, and GitHub merged on the first attempt.
-    The two cases are indistinguishable in the data the poller fetched, which is the
-    real defect: `startedAt` cannot tell "same job, rerun" from "different run,
-    cancelled by concurrency". Three observations pin the actual rule — GitHub reads
-    the newest WORKFLOW RUN for a name, the poller read the newest `startedAt`, and
-    those diverge only when a newer run is cancelled before an older run finishes.
-    Fix: query `checkSuite { createdAt }` and sort by `[suite createdAt, startedAt]`.
-    A rerun stays in one check suite, so it ties on the first key and still resolves
-    by `startedAt` (rerun-to-green preserved); different runs order by suite age,
-    which tracks the newest run (matches GitHub). Contexts with no `checkSuite` tie
-    at "" and behave exactly as before.
-    The first attempt used `workflowRun.databaseId` and was WRONG — caught by
-    CodeRabbit on PR #2107 before merge. GitHub types `databaseId` as GraphQL `Int`,
-    i.e. signed 32-bit (max 2147483647), and live run ids are ~1.5e10 — about 15x
-    past that ceiling. The fixture in the very test pinning this bug carried
-    31981601014. The server cannot serialise it, so the query errors, the poll
-    retries, and the gate returns GH_API_DOWN: the fix for a false-green would have
-    become a hard block on every merge. A DateTime carries the same ordering with no
-    integer, and is strictly more robust — if a rerun ever DID mint a fresh suite,
-    the newer SUCCESS still wins, so rerun-to-green holds under either reading.
-    Four `tests/bats/merge_gates.bats` cases pin it: rerun-same-suite, the #2071
-    elder-cancelled shape, the #2091 newest-success shape, and the no-checkSuite
-    fallback. All 213 merge_gates cases plus 359 across the seven sibling suites that
-    source merge-gates pass unchanged — existing fixtures carry no `checkSuite`, so
-    they tie at "" and keep their old ordering.
-    Still NOT verified: the field path could not be executed against the live schema
-    (this session serves only pinned PR-review operations; docs.github.com is
-    egress-blocked), and no CI lane runs the real query. If it is wrong the query
-    errors, which returns GH_API_DOWN — a terminal notifying state that blocks rather
-    than merges, so it fails safe and loudly. Watch the first real poller run. Note
-    this residual risk is exactly what bit the databaseId attempt, and what an
-    external reviewer caught that local tests could not: every bats fixture is
-    synthetic, so the suite happily passed 213 cases against a query the GitHub
-    server would have rejected.
-  Update (b)+(c) SHIPPED 2026-08-18. (b) the gate now emits a WARN naming any check
-    whose duplicate collapse discarded a BLOCKING context from a DIFFERENT check
-    suite — two new projection fields (35 dupMaskedNames / 36 dupMaskedCount, the
-    names-then-numeric-count tail shape the stale-override pair already used; the
-    field-count assertion and its fail-closed canary moved 35 -> 37). Scoped
-    CROSS-SUITE deliberately: the ledger wording ("any name with >1 context and
-    differing conclusions") would have fired on every rerun-to-green, since a rerun
-    leaves old-FAILURE + new-SUCCESS in one suite — a warning on the normal healthy
-    path is noise, not signal. Winner-blocking cases are excluded too: the gate
-    already blocks there, so a warning adds nothing.
-    (c) `docs/agent-rules/merge-gates.md` § Duplicate check-name divergence documents
-    both keys and the recovery, including the 405 message progression
-    (`is cancelled` -> `is expected` -> mergeable) and the two things NOT to do:
-    re-run the newer run, or re-run a body-dependent job like `Intent section`
-    (a re-run replays the original event payload, so it re-reads the stale body).
-    Source comments in merge-gates.graphql / 10-gate-filter.sh now cite that section
-    rather than this entry, so archiving this file cannot strand them.
-    Verification: 215 merge_gates cases (2 new for the WARN: fires cross-suite,
-    silent on same-suite rerun) + 359 across the seven sibling suites, 0 failures;
-    shellcheck introduces no new codes; markdown-link / plan-ref / backlog-count
-    gates pass.
-  Status: applied (2026-08-18 — (a) suite-aware dedup key, (b) divergence WARN,
-    (c) merge-gates.md recovery section; all with test coverage)
-  Last-reviewed: 2026-08-18
-
-# pre-push (B) is refspec-blind: it refuses `refs/locks/*` deletes from a merged branch
-
-- **Category**: tooling
-- **Priority**: P2
-- **Date**: 2026-08-17
-- **Found during**: releasing the plan-lock after [PR #2097](https://github.com/alexandrosk0/Smatchet/pull/2097) merged
-
-## Symptom
-
-The documented release path, run from the worktree of the branch whose PR had just
-merged:
-
-```bash
-bash agents/scripts/core/lock-release.sh github-issue-body-empty-line
-```
-
-refused with the merged-PR banner:
-
-```
-pre-push: REFUSING push.
-  branch:    claude/github-issue-body-empty-line-9aa2f2
-  PR #2097 state: MERGED
-Pushing to a MERGED PR branch silently lands commits the PR will never pick up.
-```
-
-Nothing was being pushed to the PR branch. `lock-release.sh:75` pushes a **delete**:
-`git push "$remote" ":$ref"` where `$ref` is `refs/locks/<slug>`. Cleared with
-`SMATCHET_ALLOW_MERGED_PR_PUSH=1` — an override the hook's own header labels *"rare,
-usually wrong"*, on the one path the ship-loop is supposed to take every time.
-
-## Cause
-
-Stage (B) of [`scripts/git-hooks/pre-push`](../../../scripts/git-hooks/pre-push)
-never looks at what is being pushed. It keys entirely on the checkout:
-
-- `:170` — `branch=$(git rev-parse --abbrev-ref HEAD)`
-- `:366` — `gh pr view "$branch" --json state`; `exit 0` only when empty or `OPEN`
-- `:373-396` — otherwise print the banner and `exit 1`
-
-The `push_updates` snapshot taken at `:62` — which carries `<local_ref> <local_sha>
-<remote_ref> <remote_sha>` for every update — is read by stage (A) and stage (E) but
-not by (B). Both of those stages already recognise a delete and skip it: (A) at `:72`
-(`[ "$local_sha" = "$zero_sha" ] && continue   # a branch DELETE — not a content push`),
-(E) by exempting deletes per its header at `:36`. (B) is the only stage that judges the
-push without reading it, so *every* refspec inherits the merged-PR refusal — lock
-deletes, tag pushes, any sibling ref — on the sole basis of which branch happens to be
-checked out.
-
-The guard's own justification does not extend to these: the banner's premise is
-"commits the PR will never pick up", and a `refs/locks/*` delete carries no commits and
-touches no branch ref.
-
-## Proposed fix
-
-Give (B) the same delete/ref awareness (A) and (E) already have: iterate `push_updates`
-and only refuse when at least one update targets `refs/heads/*` with a non-zero
-`local_sha`. That is a handful of lines and it preserves the guard's entire purpose (the
-orphaned-commit case) while removing the false refusal for lock deletes and other refs.
-
-One trap in the test harness, worth naming because it decides the default: the existing
-bucket-A harness
-[`agents/scripts/core/test-pre-push-merged-pr-guard.sh`](../../../agents/scripts/core/test-pre-push-merged-pr-guard.sh)
-(9 cases) runs the hook with **empty stdin** — its own comments note (A) "is stdin-driven
-and inert on the empty stdin here". A naive stdin-keyed (B) would therefore see zero
-updates and allow, flipping the harness's MERGED/CLOSED refusal cases (6, 7) green for
-the wrong reason. So: keep empty/unparseable stdin on the **refuse** side (fail-closed,
-matching today's behaviour), teach `run_hook` to pipe ref-update records, and add two
-cases — a `refs/locks/<slug>` delete from a MERGED-PR checkout is allowed, a
-`refs/heads/<branch>` content push from the same checkout still refuses.
-
-## Why it matters
-
-The stale-lock class this compounds is filed separately
-([`2026-08-17-pr-body-rewrite-drops-lock-slug-marker.md`](tooling/2026-08-17-pr-body-rewrite-drops-lock-slug-marker.md)),
-and the two chain: the automated release silently no-ops, and then the documented manual
-recovery is blocked by a hook that tells the operator they are almost certainly doing
-something wrong. The cost is not the extra env var — it is that reaching for
-`SMATCHET_ALLOW_MERGED_PR_PUSH=1` on a routine, correct operation is exactly how an
-override stops meaning anything.
-
-## Recurrence
-
-- **2026-08-18** — same refusal releasing the `fix-four-open-issues` lock after
-  [PR #2111](https://github.com/alexandrosk0/Smatchet/pull/2111) merged; cleared the same
-  way (`SMATCHET_ALLOW_MERGED_PR_PUSH=1 bash agents/scripts/core/lock-release.sh
-  fix-four-open-issues` → `refs/locks/fix-four-open-issues deleted`). Second occurrence in
-  two days, both on the routine post-merge release path — the override is now the *normal*
-  way to run `lock-release.sh`, which is the failure mode this entry predicted. Priority
-  unchanged at P2 (loud refusal with a documented escape, not a silent failure); the
-  frequency is the argument for scheduling the § Proposed fix rather than for a bump.
-
-## Status
-
-Applied (2026-08-19 — [`docs/plans/shipped/pre-push-refspec-scope.md`](../../plans/shipped/pre-push-refspec-scope.md), [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) squash-merged `56f5be77`).
-Stage (B) now iterates the `push_updates` snapshot before the `gh pr view` lookup and
-`exit 0`s unless at least one update targets `refs/heads/*` with a non-zero `local_sha`,
-mirroring (A)'s delete-skip idiom and reusing its `zero_sha` constant. Empty or
-unparseable stdin is treated as a branch push (fail-closed), exactly as this entry's
-§ Proposed fix prescribed — that is what keeps the harness's MERGED/CLOSED cases
-honest rather than accidentally green.
-
-`agents/scripts/core/test-pre-push-merged-pr-guard.sh` gained an optional stdin-records
-parameter (defaulting to an ordinary content push of the branch under test, so all nine
-pre-existing cases keep asserting what they asserted) and four new cases: a
-`refs/locks/<slug>` delete from a MERGED-PR checkout is allowed **and prints no banner**
-(10a/10b), a `refs/heads/<branch>` content push from the same checkout still refuses
-(11a/11b), empty stdin still refuses (12), and a post-merge `refs/heads/<branch>` delete
-is allowed (13). Confirmed the new cases fail against the pre-fix hook (10a/10b/13 red,
-11/12 green) so they are a real regression guard, not a tautology. 18/18 green after;
-`test-pre-push-stage-neutralisers.sh --check` passes (no new escape variable was added)
-and all 20 `tests/bats/pre_push_guard.bats` cases stay green.
-
-`lock-release.sh` now runs clean from a just-merged checkout, so
-`SMATCHET_ALLOW_MERGED_PR_PUSH=1` goes back to meaning what its own header says it
-means.
-- 2026-08-16 · orchestrator · [process] · P2 — a review finding was fixed at the flagged line instead of swept as a class, so ONE wrong statement cost THREE review rounds (PR #2023 rounds 4, 5, 6) — the class-sweep rule exists for exactly this and was not applied to review findings
-  Details: PR #2023 changed bootstrap's reporting contract, which made the
-    long-standing claim "Bootstrap runs always PASS" false. CodeRabbit flagged it
-    three times, each at a wider scope, because each fix was applied only where
-    the reviewer pointed: round 4 = the driver's file header; round 5 = the inline
-    `# Bootstrap mode: ... No diff, always PASS.` comment 300 lines below it (plus
-    the auto-bootstrap "soft PASS" comment and the exit-code table, swept only
-    once round 5 forced a file-wide look); round 6 = the SAME claim in
-    `tests/bats/bucket_lane_launch_smoke.bats`'s header, because round 5's sweep
-    was scoped to the driver file rather than to every file in the diff. Each
-    round costs a full CodeRabbit cycle — on an OSS repo that is a rate-limited,
-    ~25-55 min wait plus a re-stamp of the verdict and a PR-body edit, so this
-    single stale sentence consumed roughly an hour of wall-clock and three of the
-    PR's seven review rounds. The repo ALREADY has this rule for a different
-    trigger: `process-rules.md` § fabricated-quote class-sweep says that on a
-    fabricated/incorrect quote you grep the class across the tree rather than
-    fixing the cited line. Nothing said to apply the same move to a REVIEW
-    FINDING, and the finding's own framing ("Line 322 says X") invites the
-    narrow fix.
-  Concrete next action: add a short rule to
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Cadence and
-    verification — *when a review finding reports a stale/incorrect STATEMENT
-    (comment, doc line, header claim), fix the class, not the instance: grep the
-    offending phrase across every file in the PR diff (`git diff --name-only
-    <base>...HEAD`) before replying, and state in the reply that the sweep was
-    diff-wide.* Cheap and mechanical; it generalises the existing
-    fabricated-quote rule from "quotes" to "any statement a reviewer proves
-    wrong". Optional follow-on if it recurs: a `pre-ship.sh` helper that takes a
-    phrase and greps it across the diff's files, so the sweep is one command.
-  Status: applied (flipped at archival)
-  Last-reviewed: 2026-08-16
-
-- 2026-08-16 · orchestrator · [tooling] · P1 — the `CR findings` gate treats CodeRabbit's `Review skipped: manual review required for this OSS repository` status as "CR reviewed and found nothing", so on this repo it goes GREEN on an entirely unreviewed head — and that is the DEFAULT state of every new PR, not an edge case
-  Details: [`cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
-    disambiguates a head with no CR review node via CR's own `CodeRabbit`
-    StatusContext. It already special-cases ONE not-a-review description —
-    `grep -qiE 'rate.?limit|limit reached'` — and correctly resolves that to
-    PENDING plus a full-review nudge. Everything else falls through to
-    `SUCCESS) post success "CodeRabbit completed with no review on head
-    (skipped/clean)"; exit 0`. The in-file comment states the intent: *SUCCESS ->
-    CR is done and skipped the review (trivial / workflow / docs change)*.
-    But `Review skipped: manual review required for this OSS repository` does
-    NOT mean that. It means the opposite: CR has **not** looked and is waiting to
-    be asked. CodeRabbit requires a manual `@coderabbitai review` on repositories
-    with fewer than 10 stars, so this status is posted on **every** PR here at
-    creation time. The gate is therefore green-by-default on unreviewed code, and
-    only turns honest if a real review later lands.
-    Observed live on PR #2028: CR posted the skip status at 03:46:17, the gate
-    posted `success` at 03:46:30, and the PR then sat for **11.5 hours** with
-    `mergeable_state: clean`, all 36 CI checks green, and the CR gate green —
-    with zero review having occurred. The only thing that stopped an unreviewed
-    merge was the orchestrator manually applying the repo learning ("a skipped /
-    rate-limited stamp is NOT review evidence"). A `smatchet-merge-watcher`
-    registration, a `governance.auto_merge: on` grant, or any operator trusting
-    the checks would have merged it. #2023 and #2025 showed the same green.
-    This is the exact fail-open the rate-limit branch was added to close
-    (its comment: *"the branch below would translate that into 'completed with no
-    review on head (skipped/clean)' and pass an entirely unreviewed commit"*) —
-    the same sentence describes this case verbatim, only with a different
-    description string. The scoping decision ("an unrecognised description must
-    keep its existing pass behaviour instead of hanging every PR") was a
-    deliberate fail-open for UNKNOWN markers; `manual review required` is no
-    longer unknown.
-  Concrete next action: extend the not-a-review description match from
-    `rate.?limit|limit reached` to also cover `manual review required` /
-    `review skipped` (keeping the deliberate fail-open for genuinely unrecognised
-    descriptions), so the head resolves to PENDING and `maybe_nudge_full_review`
-    fires — which is already the right recovery and is proven to work (a manual
-    `@coderabbitai review` on #2028 produced a clean review in ~3 min). Guard
-    against the sibling risk the existing comment names: a docs-only PR whose
-    files are all path-excluded must still pass, and that case is already handled
-    up front by the `selfImpOnly` head-accurate file-list check, so widening this
-    match does not re-wedge it. Add a `merge_gates`/`cr_finding_gate` bats case
-    per description string (rate-limited, manual-review-required, genuinely
-    unknown) so the vocabulary cannot silently regress — the sibling entry
-    2026-08-16-coderabbit-trigger-identity-and-rate-limit-noop records the same
-    class of brittleness in the auto-nudge's own regexes. Est ~0.5d.
-  Status: applied — the CI action now classifies `manual review required` as a
-    not-a-review marker (PENDING, not a pass) and self-heals with a new
-    `never-reviewed` nudge that posts a plain `@coderabbitai review`; the
-    pre-existing nudge could not cover this state because it REQUIRED a prior
-    clean pass to key on. Matched on `manual review required`, never a bare
-    `review skipped`, so CR's terminal path-filter skip still passes. Correction
-    to this entry's original framing: the CLIENT-side poller was never
-    vulnerable — `merge-gates.d/10-gate-filter.sh` already excludes this string
-    (plus `available on request` and the rate-limit texts) from
-    `crReviewSkipped`, hardened on PR #2017. The gap was that the server-side
-    gate never received the same treatment, despite its own header describing
-    itself as lifting the client-side verdict server-side.
-    Merge-history evidence added 2026-08-16 (PR #2038, after the fix landed): a
-    sweep of all 1,416 merged PRs above #500 — each merged head SHA's status
-    contexts plus CR's reviews/comments on that same SHA — shows this class had
-    already merged **4 PRs with CR never having looked at all**: #2014, #2024,
-    #2027, #2031 (2026-08-15 → 08-16), none carrying an override label, and
-    #2024 is not docs (`fix(sync): stop multi-pane full syncs from deleting each
-    other's cached tickets`, 19 code files). #2030 carries the same green status
-    but did get a CR walkthrough on its head, so it is an instance of the status
-    and not of the never-reviewed outcome. The #2028 near-miss in the original
-    framing was the case that got caught; these four are the ones that did not.
-  Last-reviewed: 2026-08-16
-
-- 2026-08-16 · orchestrator · [infra] · P2 — a `send_later` check-in that fires while the remote container is suspended is silently lost, so an autonomous ship-loop can park a finished PR indefinitely with no alarm and no retry
-  Details: The autonomous backlog loop drives each PR to merge via self-scheduled
-    `send_later` check-ins. On PR #2028 the 04:23Z check-in — whose whole job was
-    to post the `@coderabbitai review` trigger once the rolling-hour quota
-    reopened — never ran: the trigger record shows `last_fired_at
-    2026-08-16T04:24:03Z` with `ended_reason: run_once_fired`, so the scheduler
-    considered it delivered, but the session was suspended and no work happened.
-    The PR then sat **11.5 hours** at head `8c1f1646` with all CI green and no
-    review requested. Nothing surfaced it: the fire-and-forget check-in is
-    one-shot, so a lost firing is indistinguishable from a firing that ran and
-    found nothing actionable (the loop deliberately re-arms *silently* in that
-    case, which is correct behaviour and exactly what makes the failure
-    invisible).
-    Compounding: the CR gate was green the whole time for an unrelated reason
-    (sibling entry 2026-08-16-cr-gate-greens-on-manual-review-required-skip), so
-    every surface signal said "ready to merge". The two failures point the same
-    way — toward an unreviewed merge — which is what makes the pair worth a gate
-    rather than a note.
-  Concrete next action: make loss detectable rather than trying to make delivery
-    reliable (the scheduler is not ours to fix). Cheapest shape: have the check-in
-    prompt stamp a heartbeat — e.g. append `<pr> <head> <iso8601>` to a
-    session-local file on every firing — and have the SessionStart nudge compare
-    the newest heartbeat against any OPEN PR authored by this session whose head
-    is older than ~2h, raising `WARN: PR #<n> has had no check-in for <N>h` so a
-    resumed session immediately re-arms instead of assuming the loop is alive.
-    A cheaper stopgap that needs no new state: on SessionStart, list this
-    account's open PRs on `claude/*` branches and re-poll each one's gates —
-    a resumed session should never assume an in-flight PR is being watched.
-    Related: infra/2026-08-05-merge-watcher-liveness-unmonitored covers the same
-    "the watcher itself is unwatched" shape for the merge-watcher process.
-  Status: applied — `agents/scripts/core/unwatched-pr-nudge.sh` (SessionStart,
-    wired into the claude-code + codex hook templates) reports any OPEN
-    non-draft PR on a `claude/`/`agent/` branch quiet longer than
-    SMATCHET_UNWATCHED_PR_STALE_SECONDS (default 2h), and says to re-poll the
-    gates before assuming anything still drives it. Took the STOPGAP shape from
-    this entry, not the heartbeat: a heartbeat file would be written by the very
-    process that dies, so a suspended container and a fresh checkout both look
-    identical to "never armed" — asking GitHub what is open needs no cooperation
-    from the thing that failed. Degrades silent with no gh / no auth / no
-    network, and skips drafts (parked on purpose) so it does not train readers
-    to ignore it. 14 bats cases + a fixture-driven --selftest, all
-    negative-tested.
-  Last-reviewed: 2026-08-16
-
-- 2026-08-13 · claude-code · [process] · P1 — the recorded review verdict named no commit, so one verdict outlived every push it never covered: six review-fix pushes on PR #2002 shipped with a stale "reviewed" claim standing
-
-  Observed on the #2002 merge drive. The verdict line the `Intent section`
-  check requires (`adversarial-code-review: N findings, <disposition>`) was
-  recorded once, before the first push — correctly, for that diff. Then twelve
-  CodeRabbit review rounds produced eleven fix commits across six pushes
-  (`2fbcd345`..`a960dab1`), and the verdict line sat unchanged through all of
-  them. Each of those pushes was exactly the thing the gate exists to make
-  visible — a diff no recorded self-review covers — and the gate stayed green
-  the whole time, because a verdict with no commit identity is a claim about
-  "the branch, at some point", satisfied forever.
-
-  Same failure class one layer down: the first batch of this session recorded
-  its verdict AFTER the first push (post-push, pre-PR), and nothing could tell,
-  because the claim carried no ordering evidence relative to any commit.
-
-  Mechanism: the check verified the *presence* of a claim; staleness was not
-  representable. Any assertion whose truth is per-commit but whose record is
-  per-branch degrades to "was ever true once" — the same rot shape as the
-  bucket-C golden mask (reported-once signals with no expiry) and the unearned
-  `review-ack`.
-
-  Shipped gate (this entry's PR):
-
-  1. The verdict line carries `(head=<sha>)`, stamped by
-     `agents/scripts/core/record-review-verdict.sh` (which validates the tail
-     through the real checker, so placeholders are rejected at recording time).
-  2. `check-pr-intent.sh` and the `Intent section` CI job reject a verdict with
-     no `head=` or with a `head=` that does not prefix-match the PR head
-     (`PR_HEAD_SHA` — CI re-runs on every synchronize with the fresh sha, which
-     is what makes every push invalidate the prior verdict automatically). The
-     regex pair stays byte-identical via `--check-workflow-sync`, which now
-     also compares the `head_re` line.
-  3. Pre-push hook stage (E) refuses a push whose non-protected `refs/heads/*`
-     update records carry a tip with no `$GIT_DIR/review-verdict-<sha>` marker
-     — the recorder stamps it, a commit made after the review lacks it. Judged
-     per update record (review round 1 on the gate's own PR caught the
-     HEAD-keyed first cut: a marked checkout could push an unmarked sibling
-     ref, and a delete from an unmarked checkout was spuriously blocked).
-     Deletes are exempt. Override `SMATCHET_SKIP_REVIEW_MARKER=1`; fail-open
-     on infra.
-
-  Residual limit, unchanged from the parent entry
-  (pre-first-push-review-step-is-unenforced-and-was-skipped): all three layers
-  verify a claim was recorded for the exact commit, never that the review ran.
-  What the binding adds is that the claim can no longer be *accidentally*
-  stale — going stale now requires re-stamping, an act, not an omission.
-
-  Status: applied — survival condition met on the #2006 merge drive
-  (2026-08-13): three CodeRabbit fix-push rounds, and on every push the
-  `Intent section` run that raced the body update FAILED on the stale
-  `head=` (three observed rejections) until `record-review-verdict.sh`
-  re-stamped the verdict for the new head — the binding fired exactly as
-  designed, and the PR merged with the verdict bound to the merged head
-  `18198525dd09`.
-  Last-reviewed: 2026-08-14
-
-# Empty-body CodeRabbit reply reviews defeat the CR gate's StatusContext fallback
-
-- **Category**: tooling
-- **Priority**: P1
-- **Date**: 2026-08-03
-- **Observed on**: PR #1928 (`feat/ui-thread-sync-reads`), head `0b077b5e`
-- **Status**: applied (2026-08-14 — both proposed fixes are live in
-  `.github/actions/cr-finding-gate/action.yml` `decide()`, landed on the #1996
-  re-occurrence of this class. Fix 1 verbatim: blank-bodied review nodes are
-  filtered out of BOTH the `n_reviews` count and the latest-body selection, so a
-  reply-only head falls back to the `CodeRabbit` StatusContext exactly as
-  proposed — pinned by `tests/bats/cr_finding_gate.bats` ("a blank-bodied thread
-  reply is NOT a review (the #1996 wedge)", "whitespace-only body", "findings
-  survive a LATER blank reply", "a clean review followed by a blank reply still
-  passes"). Fix 2 landed NARROWER than proposed, deliberately: only the
-  observed clean-with-nitpicks header-less shape passes (two-sided
-  discrimination pinned by the shape-3 bats block); an outside-diff-only
-  header-less body stays fail-closed because outside-diff comments ARE findings
-  — current CR format posts them alongside an `Actionable comments posted: N`
-  header, so the auto-pass this entry proposed would fail open on them. That
-  residual resolves to PENDING plus the gate's full-review auto-nudge rather
-  than a wedge.)
-
-## Friction
-
-`CR findings (0 actionable)` — a **required** commit StatusContext — sat PENDING
-for hours on a PR whose every other check was terminal-green, with no operator
-action able to clear it.
-
-`decide()` in [`.github/actions/cr-finding-gate/action.yml`](../../../.github/actions/cr-finding-gate/action.yml)
-branches on `n_reviews`, the count of CodeRabbit review nodes whose
-`commit.oid == headRefOid`:
-
-- `n_reviews == 0` → fall back to CodeRabbit's own `CodeRabbit` StatusContext;
-  `SUCCESS` ⇒ pass.
-- `n_reviews > 0` → grep the latest on-head review body for
-  `Actionable comments posted: N`. A **missing header is fail-closed**
-  (`return 1`, non-terminal, poll retries).
-
-The wedge: replying to a CodeRabbit inline thread with
-`addPullRequestReviewThreadReply` creates a **review node with an empty body**,
-and CodeRabbit's auto-acknowledgement of that reply creates **another**. On
-#1928 five thread replies produced three `coderabbitai[bot]` reviews on head
-`0b077b5e` with `bodylen=0`.
-
-That drove `n_reviews` from 0 to 3 — pushing the gate out of the branch where
-the green `CodeRabbit` StatusContext would have passed it, and into the
-header-grep branch, where three empty bodies can only ever fail closed. **The
-act of responding to the review is what broke the gate.**
-
-Worse, it is not self-healing on the same head. When CodeRabbit later posted a
-genuine 6415-char review, every finding was an *"Outside diff range comment"* —
-a body shape that carries **no** `Actionable comments posted:` header at all. So
-the header grep still returned nothing and the gate still failed closed. Once a
-head reaches this state the only exit is a **new head**.
-
-Neither existing entry covers this: the
-[adaptive-ratelimit](applied.md)
-one is about CR never *arriving*; the
-[stuck-blockers](tooling/2026-07-13-cr-merge-gate-stuck-blockers.md) one is about
-findings that *are* parseable. This is CR having arrived and the gate being
-structurally unable to read it.
-
-## Cost
-
-~3 h of a session spent diagnosing and attempting recovery on an
-otherwise-mergeable PR, ending in a no-op push purely to reset the head. Two
-false starts along the way: a GraphQL review-body dump that returned empty
-(needed the REST `repos/.../pulls/N/reviews` projection to reveal `bodylen=0`),
-and a CR re-trigger whose gate run was then cancelled by concurrency with no
-re-run.
-
-## Proposed fix
-
-Two independent changes, either of which unwedges this class:
-
-1. **Ignore empty-body reviews in the `n_reviews` count.** A zero-length body
-   carries no verdict, so it should not be evidence that CR reviewed this head.
-   Filter `bodylen == 0` out before the branch, which restores the
-   StatusContext fallback for the reply-only case.
-2. **Treat a non-empty body with no actionable header as `0 actionable`, not as
-   a retry.** The "Outside diff range comment" shape is a legitimate CR output
-   with genuinely zero actionable in-diff comments. Fail-closed is right for a
-   *truncated/unknown* body, but a body that parses as a complete CR review with
-   no header is a pass, not an indefinite retry.
-
-## Operator guidance until fixed
-
-- **Do not reply to CodeRabbit threads via `addPullRequestReviewThreadReply`**
-  while `CR findings (0 actionable)` is a required check. Address findings in
-  the commit message on the fixing commit instead.
-- If a head is already wedged, do not reach for `cr-out-of-band` on a code PR —
-  push a new head. The label exists for a rate-limited CR, and using it here
-  would wave un-reviewed code through.
-
-## Status
-
-Applied — see the Status header line for the disposition.
-
-# CR finding gate wedges on an empty-body CodeRabbit review
-
-- **Category**: process
-- **Priority**: P1
-- **Date**: 2026-08-05
-- **Observed on**: PR #1948 (`fix/fa-ttf-worktree-fallback`)
-- **Status**: applied (2026-08-14 — landed structurally stronger than proposed,
-  on the #1996 re-occurrence: instead of special-casing an empty body inside the
-  `n_reviews > 0` path, `decide()` in
-  `.github/actions/cr-finding-gate/action.yml` excludes blank-bodied review
-  nodes from `n_reviews` entirely, so this entry's shape (an empty CR
-  acknowledgement review as the only on-head node) takes the existing
-  `n_reviews == 0` StatusContext branch — `SUCCESS` ⇒ pass, exactly the
-  disambiguation proposed here. The paired rate-limit-description guard keeps a
-  `SUCCESS` whose description says "Review rate limited" from counting as review
-  evidence (CR repo learning, 2026-08-11), so the fix cannot fail open on an
-  unreviewed head. Decision-table cases pinned in
-  `tests/bats/cr_finding_gate.bats`: "a genuinely completed SUCCESS with no
-  review node still passes", "a rate-limited SUCCESS is NOT review evidence",
-  plus the blank-reply block.)
-
-## What happened
-
-CodeRabbit posted a `COMMENTED` review node on the PR head
-(`e56ac352`) with an **empty body** — its acknowledgement after the one inline
-finding was addressed and the thread resolved. No new push followed, so CR never
-posted another review.
-
-`.github/actions/cr-finding-gate/action.yml` then took its fail-closed branch:
-
-- `n_reviews > 0` (a review node exists on this head), so the
-  `n_reviews == 0` disambiguation via CR's own `CodeRabbit` StatusContext —
-  which *was* `SUCCESS` — is never reached;
-- the review body carries no `Actionable comments posted: N` header, so
-  `n` is empty and `decide()` returns non-terminal;
-- the 12×15 s window exhausts and the action posts
-  `pending — awaiting CodeRabbit review on current head`.
-
-`CR findings (0 actionable)` is a **required** StatusContext, so the PR sat at
-`mergeStateStatus=BLOCKED` with every other check green. Re-running the workflow
-re-ran the identical logic and re-posted PENDING — the state is not
-self-healing; only a new push or a fresh CR review can clear it, and neither is
-guaranteed to arrive.
-
-Unwedged by applying `cr-out-of-band` (user-authorised, "ignore cr") and
-re-running the gate, which took the label-override early-exit. That is an
-override label standing in for a gate that could not reach a verdict — the shape
-we normally treat as a gate escape.
-
-## Why it matters
-
-The fail-closed branch is correct in spirit (a header-less review is not proof
-of "0 actionable"), but it has no terminal state for the case where the
-header-less review is CR's *final* word on the head. Every such PR needs a human
-override, which erodes the label's meaning as a deliberate exception.
-
-## Proposed fix
-
-In the `n_reviews > 0` / empty-`n` path, disambiguate the same way the
-`n_reviews == 0` path already does, but only for a **body-less** review:
-
-- if the latest on-head CR review body is empty/whitespace **and** CR's own
-  `CodeRabbit` StatusContext on that head is `SUCCESS`, treat it as
-  "CR settled with nothing actionable" → `post success`;
-- keep the current non-terminal retry for a **non-empty** body that merely lacks
-  the header (that really is an unsettled/unexpected state).
-
-An empty body cannot hide a finding count, so this does not reopen the #524
-fail-open (which was a *preamble line above* the header, i.e. a non-empty body).
-
-Add a case to whichever harness covers the action's decision table so the
-empty-body + StatusContext-SUCCESS combination is pinned.
-
-# Develop-tip health assertion — second occurrence, promote it
-
-- **Category**: infra
-- **Priority**: P1
-- **Date**: 2026-08-05
-- **Observed on**: PR #1957 (installer smokes red on develop for 3 merges)
-- **Status**: applied (2026-08-14 — the widening this entry asked for is live in
-  `agents/scripts/core/develop-tip-required-green.sh` (file name kept for the
-  SessionStart-hook wiring): the pure detector now sweeps the develop tip's
-  ACTUAL check runs — required and non-required alike, block-on-any-red parity
-  — labeling each not-green check `required|non-required|unknown` so the nudge
-  distinguishes "blocks every PR" from "broken post-merge backstop". The
-  advisory-name exemption applies ONLY to non-required checks (true merge-gate
-  parity: a required red blocks every PR whatever its name says), and an
-  unreadable required set degrades the label to `unknown` instead of silencing
-  the sweep. CANCELLED gets its own unknown-not-green wording (the exact way
-  #1957 hid), with a later green re-run of the same check superseding an
-  earlier cancel; the tip's check-run pages are globally time-sorted before
-  last-wins so a >100-run tip cannot resurface a stale row. Selftest cases pin
-  the #1957 shapes: red non-required backstop reported,
-  cancelled-run-as-unknown, advisory silence for non-required only
-  (advisory-named REQUIRED red still reported), empty-required-set →
-  kind=unknown, superseded-cancel silence, plus the original required-red /
-  all-green / absent(PR-only) / in-progress cases.)
-
-## What happened
-
-`Windows x64 installer smoke` and `Windows-on-ARM ARM64 installer smoke` went RED
-on develop at #1957 and stayed red while #1959 and #1960 merged on top. Nothing in
-the pipeline asserts the develop tip is green before the next merge, and #1957's own
-develop run was **cancelled** by a superseding push, so the failure never even
-announced itself on the PR.
-
-This is the *identical class* the 2026-07-10 / #1698 postmortem already named and
-proposed a gate for — "required check goes red on develop and nobody notices until it
-blocks the next PR". That proposal was filed as a follow-up and never landed. This is
-its second occurrence, with a worse variant: the red checks here are **non-required**
-post-merge backstops, so even the block-on-any-red inheritance that surfaced #1698
-did not fire.
-
-## Proposed action
-
-Land the assertion the #1698 entry proposed, widened to non-required checks:
-
-- A `develop-tip-required-green.sh` (or an extension of
-  `agents/scripts/core/postmortem-owed.sh`'s sweep) that queries the develop tip's
-  check conclusions — **required and non-required alike**, matching the merge-gate
-  allow-list philosophy in `AGENTS.md` § Merge gates — and raises a loud, attributable
-  SessionStart nudge naming the PR whose merge introduced each red.
-- Treat a **cancelled** post-merge run on develop as unknown-not-green, since that is
-  precisely how #1957 hid.
-
-## Why it matters
-
-Post-merge backstop jobs are the *only* coverage for code PR checks structurally cannot
-run (here: a ~20-30 min LTO publish build). If nothing reads their result, they are
-decorative — the break sat on develop across three merges and was found by an ad-hoc
-adversarial review, not by the system.
-
-- 2026-08-12 · claude-code · [process] · P2 — a CodeRabbit review that COMPLETED can still leave the head with no review evidence the `CR findings` gate accepts, in three observed shapes: a rate-limit-stale `success` status, a comment-only clean pass that posts no review object, and a clean-with-nitpicks review object whose body omits the actionable-count header; all are indistinguishable from "never reviewed" until something re-triggers the reviewer
-
-  Details: the gate rule (shipped after #1996, tightened by the ledger learning
-  of 2026-08-11) is correct: `state: success` + description `Review rate
-  limited` is NOT review evidence, and the gate must see an actual review on
-  the CURRENT head. What this entry records is how often a genuinely-completed
-  review still fails to produce that evidence, measured across the #1999 merge
-  drive (2026-08-12, ~7 review rounds):
-
-  1. **Rate-limit-stale status.** The auto-review attempt posts `success /
-     "Review rate limited"` and never updates, even after a later
-     comment-triggered review of the same head completes clean. Observed on
-     head e33b5ca0: the 08:11 incremental pass replied "Review complete — no
-     actionable findings" as an ISSUE COMMENT, posted no review object, and
-     left the 07:13 rate-limit status in place; the gate re-polled at 08:22
-     and correctly reported "awaiting CodeRabbit review on current head".
-     Correct gate, wedged PR.
-  2. **Comment-only clean pass.** `@coderabbitai review` on an
-     incrementally-clean head can complete without submitting a GitHub review
-     object at all (its reply carries the verdict as prose). Nothing for the
-     gate's GraphQL query to find; same wedge from a different door.
-
-  Both resolved the same way both times: `@coderabbitai full review`, which
-  always submits a review object and refreshes the commit status ("It must
-  create current-head review evidence" — CodeRabbit's own ack of the request).
-  Cost when it recurs: one full extra review cycle plus however much of the
-  adaptive rate-limit window the retry burns (25-55 min per wait, four waits
-  during the #1999 drive).
-
-  3. **Header-less clean-with-nitpicks review** (added 2026-08-13, observed on
-     the #2002 merge drive, round 12). A full review CAN submit a review object
-     on the current head and still wedge the gate: a clean pass that carries
-     only nitpicks omits the `Actionable comments posted: N` header line from
-     the review body. `cr-finding-gate`'s parser greps for exactly that header,
-     treats a header-less body as "not parseable → retry", exhausts its retry
-     window, and resolves to PENDING — permanently, since the review it is
-     waiting for already happened. Unlike shapes 1–2, `@coderabbitai full
-     review` does NOT resolve this one: the fresh review is clean again, omits
-     the header again, and re-wedges. This is a gate bug, not a reviewer
-     quirk — the fix is in the gate: an on-head review object whose body has
-     nitpicks/summary content but no actionable-count header IS evidence of 0
-     actionable findings and must resolve to success. On #2002 the status sat
-     pending through a valid round-12 clean review and the merge proceeded on
-     directly-verified review evidence instead of the status (rationale on the
-     PR).
-
-  Also worth recording for the next long merge drive: pushing to a PR while
-  CodeRabbit is mid-review ABORTS the review ("head commit changed during the
-  review"), and the automatic retry burns the next rate-limit slot — the
-  costly half of the #1999 churn was self-inflicted by exactly that. Batch
-  fixes; push once; request once.
-
-  Concrete next action: teach the `CR finding gate` workflow's poller the
-  distinction it already half-knows. When it observes (a) a CodeRabbit status
-  whose description is terminal-but-evidence-free (`Review rate limited`, or
-  `Review completed` with no review object on the head) AND (b) a completed
-  clean pass advertised only in comments, it should POST the
-  `@coderabbitai full review` nudge itself — once per head, budget-capped —
-  instead of parking on `pending` until a human or a timer intervenes. The
-  merge-gates.sh side already has the auto-post shape
-  (MERGE_GATES_STALE_REREVIEW_POLLS); the CI gate lacks it. For shape 3 the
-  nudge is useless (see above) — the parser itself must accept an on-head
-  review object with no actionable-count header as 0 actionable. Est ~0.5d
-  including bats coverage for the once-per-head cap.
-
-  Status: applied (flipped at archival)
-  Last-reviewed: 2026-08-13
-
-- 2026-08-11 · claude-code · [process] · P3 — the shared staleness helper exists but only three of the core gates call it; `issue-sweep.sh` still runs whatever logic its checkout happens to hold, with nothing saying so
-
-  Details: carried forward from
-  [`2026-08-06-gate-tooling-run-from-stale-session-branch`](applied.md) (applied
-  2026-08-11), whose thesis — make staleness self-announcing instead of silent — is
-  shipped. [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
-  now provides `script_freshness_verdict` + `warn_if_script_stale`, and three callers
-  use it: `merge-gates.sh` (off/warn/block, default warn), `pre-ship.sh` (advisory,
-  printed immediately before its `Safe to push` line), and `postmortem-owed.sh`
-  (qualifying its `no gate escapes owed` clean result).
-
-  What is left is breadth, and it is deliberately P3 rather than P1 because the
-  highest-stakes surfaces are already covered:
-  - **`issue-sweep.sh`** — genuinely unwired. Lower stakes than the three above (it is
-    triage assistance, not a merge or push gate), but it is the last core script whose
-    verdict a stale checkout can silently change.
-  - **The lint gates** — covered *indirectly* and probably sufficiently:
-    `pre-ship.sh`'s declared set already fingerprints
-    `agents/scripts/project/test-lint-rules.sh` plus `lint-rules.d/*.sh`, so a stale
-    rule module is reported at the push gate, which is where it would do harm. A
-    direct call inside `test-lint-rules.sh` would additionally cover invoking it
-    standalone — worth it only if that turns out to be a common path.
-
-  Concrete next action: add the two-line `warn_if_script_stale` call to
-  `issue-sweep.sh` over its own declared set (itself + the helper), following the
-  `postmortem-owed.sh` shape. Then decide, from actual usage, whether
-  `test-lint-rules.sh` needs its own direct call or whether the `pre-ship.sh` coverage
-  is enough — do not add it reflexively; every call site pays a bounded `git fetch`
-  (~0.8s measured), which is immaterial for a push gate and less obviously so for
-  something invoked in a loop.
-
-  **Applied 2026-08-11.** `issue-sweep.sh` is wired: it resolves its own directory
-  before the `cd` (so the lib is locatable when invoked outside a checkout), sources
-  the helper, and calls `warn_if_script_stale` LAST — after both the Issue verdicts
-  and the out-of-band-label strip, since a stale checkout can change either. Missing
-  lib degrades to silence rather than an error. Three tests in
-  [`issue_sweep.bats`](../../../tests/bats/issue_sweep.bats) pin the wiring by
-  running a copy of the script beside a stub lib, so they assert the call actually
-  fires with the real declared set rather than grepping the source; removing the call
-  fails two of them.
-
-  **`test-lint-rules.sh` deliberately NOT wired**, and the reason is stronger than
-  "not worth it". Its two real invocation paths are `pre-ship.sh` — which already
-  fingerprints it plus `lint-rules.d/*.sh` in its own declared set, at the push gate
-  where staleness would do harm — and CI, where the warning would be actively WRONG:
-  CI checks out the PR head on purpose, so a freshness-vs-develop note would fire on
-  every PR that touches a lint rule and train readers to ignore it. Standalone
-  invocation is not a common path. Re-open only if that changes.
-
-  Status: applied
-  Last-reviewed: 2026-08-11
-
-- 2026-08-11 · claude-code · [tooling] · P2 — the documented archival command re-parents a per-entry file one directory UP, silently breaking every relative link in it; the docs gate catches it only after the fact, and only if someone runs it
-
-  Details: [`AGENT_SELF_IMPROVEMENT.md`](../AGENT_SELF_IMPROVEMENT.md) § workflow
-  step 4 prescribes archiving a per-entry file with
-
-  ```
-  cat docs/self-improvement/categories/<cat>/<file>.md >> docs/self-improvement/categories/applied.md
-  git rm docs/self-improvement/categories/<cat>/<file>.md
-  ```
-
-  The entry was authored at `categories/<cat>/` depth; `applied.md` lives one level up
-  at `categories/`. Every relative link in the body is therefore off by one directory
-  the instant it is appended. Hit live archiving
-  `2026-08-06-gate-tooling-run-from-stale-session-branch`: **7 dangling links** in one
-  entry — `../../../../agents/...` (correct from `categories/process/`) resolved to
-  `../agents/...` from `categories/`, `../../../agent-rules/...` to `agent-rules/...`,
-  and a sibling-category link `../tooling/<slug>.md` to `docs/self-improvement/tooling/`.
-
-  Two properties make this worse than a one-off:
-
-  1. **It fails silently at the moment of the mistake.** `cat` cannot fail here. The
-     only signal is `test-markdown-links.sh` reporting on `applied.md` later — and a
-     PR that archives an entry may not otherwise touch a file that trips the docs gate
-     locally, so the author's first notice can be CI.
-  2. **It degrades the archive specifically.** `applied.md` is the durable record read
-     months later; the whole value of an archived entry is that its cited paths still
-     resolve. This mechanically guarantees the opposite for exactly the entries that
-     carried the most cross-references.
-
-  **The same command breaks links in the mirror direction too, and that half bites
-  harder.** The `git rm` deletes a path other documents cite. Caught live in CI on this
-  very branch (PR #1996, `Agentic self-tests (bats)`): archiving
-  `2026-08-06-gate-tooling-run-from-stale-session-branch` left **2 inbound dangling
-  links** — from [`postmortems.md`](../postmortems.md) and from the sibling entry
-  [`2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](applied.md),
-  both of which had correctly linked a file that existed when they were written.
-
-  Inbound is the worse half for two reasons. The outbound breakage is confined to the
-  archived entry and is repairable by re-depthing, mechanically, inside one file. The
-  inbound breakage is scattered across files the archiver never opened, has no
-  mechanical fix — `applied.md` is a 3000-line append-only ledger with no per-entry
-  anchors, so there is no equivalent link to rewrite *to*, only prose to restate — and
-  it is invisible to any check scoped to the diff, because the referring files are
-  unmodified. Only a repo-wide `--all` sweep sees it. That is exactly why this surfaced
-  as a red required check rather than as a local pre-ship failure.
-
-  The 550+ legacy entries already in `applied.md` were largely moved from monolith
-  `categories/<cat>.md` files, which sit at the SAME depth as `applied.md` — so the
-  bug is new-ish, arriving with the one-file-per-entry convention, and will recur on
-  every per-entry archival from here.
-
-  Concrete next action: replace the raw `cat` in the § workflow step with a small
-  `archive-backlog-entry.sh` that appends AND re-depths — mechanically, `../../../../`
-  → `../../../` and `../../../` → `../../` for links leaving `docs/`, and
-  `../<sibling-cat>/` → `<sibling-cat>/` — then `git rm`s the source and re-runs
-  `test-markdown-links.sh` as a self-check. A script is the right shape rather than a
-  documented sed: the transform depends on the source entry's depth, which is exactly
-  the detail a human copying a command from a doc will not re-derive. The same script
-  must also handle the inbound half **before** the `git rm`: grep the repo for the
-  entry's slug and rewrite each referring link to prose naming the entry plus a link to
-  `applied.md`, refusing to delete while any inbound reference remains. Until it exists,
-  the doc should at minimum say "re-run `test-markdown-links.sh --all` after archiving" —
-  that one line would have caught both halves, and the `--all` is load-bearing: default
-  mode is diff-scoped and sees neither the re-parented body nor the orphaned referrers.
-
-  **Applied 2026-08-11.** [`archive-backlog-entry.sh`](../../../agents/scripts/core/archive-backlog-entry.sh)
-  replaces the raw recipe, and § workflow step 4 now calls it and says explicitly
-  not to hand-roll the `cat`. Two things came out different from the plan above:
-
-  - **The outbound transform is one rule, not a table.** The entry enumerated the
-    rewrites by hand (`../../../../` → `../../../`, `../<cat>/` → `<cat>/`). Those
-    are all instances of: a link `X` written at `categories/<cat>/` resolves to
-    `categories/<cat>/X`, so from `applied.md`'s home the equivalent is
-    `normalize("<cat>/" + X)`. Implementing the rule rather than the table also
-    covers same-dir links and stays correct if the convention ever nests deeper.
-  - **Prose mentions are advisory, not blocking.** The entry proposed refusing to
-    delete while any inbound reference remains. That is right for markdown links
-    (which dangle) but wrong for code spans and bare-path prose, which the link
-    gate does not follow — blocking on those would make some entries unarchivable
-    for a cosmetic reason. Links are repointed at `applied.md` at each referrer's
-    own depth; prose mentions are reported as WARN for a human to restate.
-
-  Nineteen tests in [`archive_backlog_entry.bats`](../../../tests/bats/archive_backlog_entry.bats)
-  drive a throwaway repo laid out like the real docs tree, and assert on the
-  RESULTING LINK TARGETS rather than exit status — reverting the fix fails 8 of
-  them. One test exists only because the first real run hit it: `git rm` refuses a
-  file with local modifications, which is the *normal* case here (you flip Status
-  to `applied` and archive in the same session), and it refused AFTER the append
-  had landed — leaving the tree half-archived, where a retry would double-append.
-  The removal is now forced (the working-tree body is what was preserved) and the
-  pre-flight happens before the first write.
-
-  Status: applied
-  Last-reviewed: 2026-08-11
-
-- 2026-08-11 · claude-code · [tooling] · P2 — `required-absent` judges every historical merge against TODAY's required-context set, so promoting a context retroactively flags PRs that merged before it existed and can hard-fail `--blocking` at SessionStart
-
-  Details: `postmortem-owed.sh` reads the required set once
-  (`REQ_CTX_JSON`, from `project.config.json`) and applies it uniformly to every PR
-  in the scan window. A context that became required *after* a PR merged is absent
-  from that PR's rollup **by design** — nothing was wrong with the merge — but the
-  cross-check cannot tell that apart from a genuine escape and reports
-  `required-absent`.
-
-  Consequence: the first sweep after any required-context promotion or rename flags
-  up to `SCAN_N` historical PRs at once. With `POSTMORTEM_BLOCKING_GRACE=0` that
-  hard-fails `--blocking`, which runs at SessionStart — so a routine branch-protection
-  change can wedge every new session until someone notices the flags are phantom.
-
-  Found by an explicit self-review of the diff in PR #1996 and independently
-  confirmed by CodeRabbit on the same PR. Both landed on the same two candidate
-  fixes:
-
-  - **Record the required set at merge time.** Most correct, most work: the sweep
-    would need a per-PR snapshot of what was required when it merged, which nothing
-    currently persists.
-  - **Apply each context only from its effective date.** Cheaper and self-contained:
-    derive a per-context "earliest observed present" from the scan window itself and
-    skip any PR merged before it. Needs the row stream buffered — the loop is
-    currently single-pass over a process substitution — so it is a real restructure
-    of `postmortem-owed.sh:573-719`, not a patch.
-
-  Deliberately **not** fixed in #1996. It fails LOUD and rarely (only on a
-  required-set change), which is the opposite of the silent false-green class that
-  PR exists to close; picking between the two designs is a judgement call rather
-  than a defect fix, and doing it badly would put noise into the one gate that is
-  supposed to be trustworthy. The sibling defect on the same detector — a POST-merge
-  re-run reading as `required-never-terminal` — WAS fixed there, because it fires on
-  ordinary PRs and the fix is local (ignore runs that started after `mergedAt`).
-
-  Escape hatch until fixed: `POSTMORTEM_ABSENT_GRACE_SECONDS` does not help (the
-  merges are old, so the grace has long elapsed). Either raise
-  `POSTMORTEM_BLOCKING_GRACE` or narrow `SCAN_N` past the promotion date for one
-  sweep.
-
-  **Applied 2026-08-11**, via the second (cheaper) option. The row stream is now
-  buffered into `ROWS` before judging — the loop was single-pass over a process
-  substitution, which is why this needed a restructure rather than a patch — and a
-  first pass derives `REQ_FIRST_SEEN[ctx]`, the earliest merge in the window on
-  which each required context was observed PRESENT. A PR that merged before its
-  first observation is not judged for that context.
-
-  Two cases the original write-up did not anticipate, both found by running the
-  existing suite against the change rather than by re-reading the plan:
-
-  - **A context observed on NO PR in the window is undatable**, and the two
-    explanations point opposite ways: a promotion so recent nothing has run it yet
-    (benign), or a context that never reports at all (the #1941 shape, and
-    serious). They are genuinely indistinguishable from the window alone. Flagging
-    per-PR would rebuild the exact wedge this fixes, so it is reported ONCE as a
-    WARN naming the context and the ambiguity. Signal preserved, wedge removed —
-    and critically it does not hard-fail `--blocking`.
-  - **An EMPTY rollup must stay exempt from the dating entirely.** The first
-    implementation suppressed it, which broke the #1941 regression test — correctly.
-    "Nothing reported at all" cannot be explained by a late promotion: had the
-    context merely been added since, the OTHER required contexts would still be in
-    the rollup. Empty rollups (#1941, #1972-#1974) now bypass the effective-date
-    gate and always flag.
-
-  Two existing tests changed shape rather than intent: their single-PR fixtures had
-  the missing context observed nowhere, so under the new rule they were undatable.
-  Both gained an earlier corroborating PR carrying the context — which is what a
-  real window looks like, since a required context reports on many PRs — and still
-  assert the escape is caught. Five new cases cover the boundary in both directions,
-  the whole-window promotion wedge, the once-only undatable report, and the
-  empty-rollup exemption; reverting the gate fails two of them.
-
-  The other candidate — persisting the required set at merge time — remains the
-  more correct fix and is still unbuilt. This one is derivable from data already
-  fetched, which is why it went first.
-
-  Status: applied
-  Last-reviewed: 2026-08-11
-
-- 2026-08-11 · claude-code · [process] · P2 — the `[pre-first-push gate]`'s self-review step is the only one with no backstop, so skipping it is invisible; skipped on PR #1996 and it cost ~8 CodeRabbit cycles, both bots' rate limits, and four locally-knowable defects reaching CI
-
-  Details: [`ship-loops.md`](../../agent-rules/ship-loops.md) § `[pre-first-push gate]`
-  makes a local self-review mandatory before the first push, "never deferring
-  locally-knowable findings to CI/CR", and the
-  [`adversarial-code-review`](../../../agents/_shared/skills/adversarial-code-review/SKILL.md)
-  skill says to use it "proactively before opening a PR". On PR #1996 the gate's
-  other steps were either run or genuinely n/a (no strict-zone C++ touched, so
-  the dual-target `/WX` build, `ctest`, and the leaf-`AGENTS.md` self-review did
-  not apply). **The review step was simply not run.** It happened 14 commits
-  later, only because the user asked "have you code reviewed the changes?".
-
-  **Measured cost on that one PR**, all of it the churn `reduce-coderabbit-review-spend`
-  Slice 1 exists to prevent:
-
-  - ~8 completed CodeRabbit review cycles across the PR's 16 commits.
-  - CodeRabbit's adaptive per-developer limit hit repeatedly (27–49 min waits,
-    three `@coderabbitai review` requests answered only by the plan/rate-limit
-    note). The rate-limiting that dominated the session was substantially
-    self-inflicted by this PR's own churn.
-  - Cursor Bugbot's usage cap hit on at least three separate heads.
-  - **Four locally-knowable defects reached CI/CR** that the review found the
-    moment it finally ran: the develop-side half-set glob enumeration, the
-    silently-dead grace cutoff, and two docs this PR itself falsified. None
-    needed CI, a reviewer, or a running gate to find — only reading the diff.
-    (A fifth of the same class, the CWD-relative glob expansion, was caught by
-    CodeRabbit as a *trivial* nitpick and escalated on inspection. A pre-push
-    review would plausibly have found it too, but the credit is CodeRabbit's,
-    not the self-review's — and this entry got that attribution wrong on its
-    first draft, caught only by re-checking before merge.)
-
-  **The structural point, which outlives this PR.** The automatic backstop
-  (`scripts/git-hooks/pre-push` step D) mirrors the *mechanical* required checks
-  — lint rules, doc anchors, markdown links, portable purity, clang-format,
-  shell-lint. It cannot mirror a judgement step. So of the four gate items, three
-  either self-enforce or are visibly n/a, and the fourth **leaves no trace either
-  way**: a PR whose review was skipped and a PR whose review was clean look
-  identical from outside.
-
-  That is precisely the `required-check-that-never-reports-is-invisible` shape
-  the same PR was fixing in CI — a check that produces no signal reads as a pass.
-  Worth noting the gate was skipped *by the session working on that entry*, which
-  suggests the failure is structural rather than a lapse of attention.
-
-  Candidate fixes, cheapest first:
-
-  - **Record the verdict.** Require the PR body's test plan to carry a line for
-    the pre-first-push review (e.g. `adversarial-code-review: N findings, all
-    fixed` or an explicit `n/a — trivial diff`). Makes absence visible without
-    enforcing anything; the `Intent section` workflow already parses the body, so
-    there is a home for the assertion.
-  - **Cite it like gate evidence.** PR #1996 added the rule that gate-tool output
-    must record the tree + commit it ran from. The same discipline applied here
-    would make "the review ran, against this diff" checkable rather than assumed.
-  - **Do not** try to enforce it in the pre-push hook. The step is a judgement
-    call; a hook can confirm a claim was made, never that the review was real.
-    An enforcement that can only check the claim would manufacture exactly the
-    kind of green this backlog keeps filing entries about.
-
-- 2026-08-11 · claude-code · [tooling] · P1 — `test-gate-selftests --check` proves a `# selftest: asserts-failure` marker EXISTS, not that the negative under it can ever fail; `test-plan-index.sh`'s negative had been satisfied by a `Permission denied` for its whole life, and four more vacuous negatives were written in the two sessions that touched this area
-
-  Details: [`test-gate-selftests.sh`](../../../agents/scripts/core/test-gate-selftests.sh)
-  enforces that every `--selftest`-exposing gate script carries a negative
-  assertion, marked `# selftest: asserts-failure`. That is the right gate to
-  have — it closed a real gap. But what it can check is the presence of a marker
-  and some negative-looking code near it. It cannot check the property that
-  matters: **that the negative actually fails when the behaviour it names is
-  removed.**
-
-  **The live instance.** [`test-plan-index.sh`](../../../agents/scripts/core/test-plan-index.sh)
-  case (3) fed a non-existent archive dir and required a non-zero exit. Two
-  independent reasons it could not fail:
-
-  1. It invoked `"$_SCRIPT_PATH" --check` — executing the script directly. The
-     file is mode **100644** in git (`git ls-files -s` confirms), so that exec
-     fails with **126 Permission denied** on every machine, including CI. The
-     assertion was satisfied by the permission error, never reaching the
-     archive-dir guard at all.
-  2. Even via `bash`, it accepted ANY non-zero status. Deleting the guard leaves
-     the script exiting non-zero on an unhandled `os.listdir` traceback — so the
-     assertion stayed green with the behaviour it names entirely removed.
-
-  Verified both ways: with the archive-dir guard deleted, the selftest reported
-  PASS before the fix and FAIL after it.
-
-  **This is a class, not an instance, and the evidence is uncomfortable.** In the
-  same two sessions, *four more* vacuous negatives were written — by the session
-  fixing this very family of bugs:
-
-  - `archive-backlog-entry.sh`'s first negative assertions (three of them) each
-    required only a non-zero exit; all three still passed with their own guard
-    deleted, because the script dies downstream for an unrelated reason.
-  - The `plan-date` marker selftest wrapped its assertions in `( set -e … ) || {…}`.
-    `set -e` is **suppressed inside a subshell that is the left operand of `||`**
-    — the shell disables it for any command in a `&&`/`||` list — so every step
-    ran regardless of failure and only the last command's status was reported. It
-    passed with the fix disabled.
-
-  Five vacuous negatives, none of which a reviewer or a marker-checking gate
-  caught. Every one was found the same way: **delete the code under the assertion
-  and re-run.** That is the only check that distinguishes a test from a comment.
-
-  Two recurring mechanical causes worth naming, because both are invisible on
-  inspection:
-
-  - **Accepting a bare non-zero status.** Any sufficiently broken program exits
-    non-zero. A negative must assert the *reason* — the refusal message, the
-    specific exit code — or it is satisfied by crashes, missing interpreters,
-    permission errors and typos in the test itself.
-  - **`set -e` inside a `&&`/`||` operand.** Already documented in
-    [`script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh)
-    for the callee side; the *test* side has the same trap and no note anywhere.
-
-  Concrete next action, cheapest first:
-
-  1. **Make `test-gate-selftests --check` reject self-exec.** A `--selftest` that
-     re-invokes its own script must do it via `bash "$path"`, never `"$path"`,
-     since every gate script in this repo is mode 100644. This is a grep, it is
-     exact, and it would have caught the live instance. Check the other 77
-     scripts for the same shape while adding it.
-  2. **Require negatives to assert a reason.** Flag an `asserts-failure` block
-     whose only assertion is a bare status test (`if ! cmd; then`/`|| fail=1`)
-     with no message/exit-code comparison anywhere in the block. Necessarily
-     heuristic, so WARN rather than block, and cite this entry in the message.
-  3. **Do NOT try to prove reachability mechanically.** Confirming a negative can
-     fail means mutating the subject and re-running — that is mutation testing,
-     and building it here would cost far more than it returns. The durable fix is
-     the authoring rule (delete the code, re-run, watch it go red), which belongs
-     in the review checklist rather than in a gate. A gate that pretended to
-     verify reachability would itself be the false green this entry is about.
-
-  Outcome (2026-08-12): action 1 shipped — `test-gate-selftests --check` now
-  blocks raw self-exec of `$_SCRIPT_PATH`/`$SCRIPT_PATH`/`$0` (comment lines
-  excluded; `bash|sh|.`-prefixed forms pass), with selftest coverage for both
-  the flagged and legitimate shapes; the sweep of the other scripts found no
-  further live instances. Action 2 was attempted and measured out: a
-  bare-status-negative heuristic over the 79 exposers produced ~24 false
-  positives (sampled files all assert reasons via shapes no enumeration
-  catches — captured output matched later, python `assertIn`, refusal tokens
-  grepped far from the status test). A WARN wrong ~30% of the time is the
-  wolf-cry this backlog already documents, so it was removed rather than
-  shipped — which is action 3's own reasoning applied one rung down. Action 3
-  remains "do not build" by design; the durable rule (delete the code under
-  the negative, watch it go red) lives in the review checklist and was applied
-  to every assertion in this batch.
-
-  Status: applied
-  Last-reviewed: 2026-08-12
-
-- 2026-08-11 · claude-code · [tooling] · P2 — a required context that stops reporting on EVERY PR is now only a WARN, so `postmortem-owed.sh --blocking` exits 0 on it; the effective-date fix traded this away to stop a SessionStart wedge, and only a merge-time snapshot buys it back
-
-  Details: the effective-date fix for
-  [`required-absent-judges-history-by-todays-required-set`](applied.md) (applied
-  2026-08-11) dates each required context from the earliest merge in the scan window
-  where it was observed PRESENT, and skips PRs that merged before that. A context
-  observed on **no** PR in the window cannot be dated at all, and the two
-  explanations point opposite ways:
-
-  - it was promoted so recently that nothing has run it yet — benign; or
-  - it never reports at all — the #1941 shape, and one of the most serious escapes
-    this detector exists to catch.
-
-  From the window alone these are **indistinguishable**: both produce exactly "the
-  name is in `required_contexts` and appears in zero rollups". So the undatable case
-  is reported once as a `warns` line naming the ambiguity, and `warns` never affects
-  the exit code.
-
-  **The cost, stated plainly.** Before the fix, a required workflow that silently
-  stopped reporting would flag every PR in the window and hard-fail `--blocking`.
-  After it, that same outage produces one advisory line and a green `--blocking`.
-  That is a real reduction in detection strength on the detector's headline case,
-  and it was accepted only because the alternative re-creates the wedge the fix
-  exists to remove: with `POSTMORTEM_BLOCKING_GRACE=0`, flagging per-PR means a
-  routine branch-protection change hard-fails `--blocking` at SessionStart for up to
-  `SCAN_N` PRs at once, wedging every new session on phantom escapes.
-
-  Two mitigations already limit the blast radius, which is why this is P2 and not P1:
-
-  - An **empty rollup** is exempt from the dating entirely and still flags. The
-    reported escapes (#1941, #1972-#1974) are all empty-rollup merges, so the
-    historical cases remain caught. The gap is narrower than "absence is unchecked":
-    it is specifically *one* context missing from otherwise-populated rollups, across
-    the whole window.
-  - The WARN is emitted on every sweep, so the signal is never lost — only
-    downgraded from blocking to advisory.
-
-  Found by the pre-first-push adversarial review of the fix itself, which correctly
-  called it out as "deliberate and documented, but the headline case of the detector
-  added in the immediately preceding commit". Recording it rather than leaving the
-  reasoning only in a code comment, because a deliberate trade-off that lives only in
-  a comment is indistinguishable from an oversight six months later.
-
-  Concrete next action: the fix is the OTHER candidate from the original entry —
-  **persist the required set at merge time**. The merge-snapshot ledger
-  (`merge-snapshots.jsonl`) already writes a per-merge record and is the natural
-  home: add the branch-protection required-context list to the snapshot the watcher
-  captures. Then "was this context required when this PR merged?" is a lookup rather
-  than an inference, the effective-date heuristic and the undatable case both
-  disappear, and a context that stops reporting can be flagged per-PR again without
-  any risk of the promotion wedge. Note this only helps merges made AFTER the
-  snapshot gains the field, so the window-derived dating has to stay as the fallback
-  for older merges — the two coexist rather than one replacing the other.
-
-  Update (2026-08-13): shipped as proposed. `merge-snapshot-append.sh` now
-  persists the branch-protection required set at the decision instant
-  (`requiredContexts`, schema 2; self-derived from `project.config.json`
-  § branch_protection — the file `setup-branch-protection.sh` applies, so it is
-  the set in force — with a `SNAPSHOT_REQUIRED_CONTEXTS` test seam; a capture-
-  time config miss records `[]`, which readers treat as "no merge-time set").
-  `postmortem-owed.sh` prefers the snapshot's merge-time set per merge: "was
-  this context required when this PR merged?" is a lookup, so the undatable
-  ambiguity disappears for snapshotted merges — a never-reporting required
-  context flags per-PR and hard-fails `--blocking` again, with zero
-  promotion-wedge risk (a context absent from the merge-time set is simply not
-  judged). The effective-date heuristic and the once-per-window WARN remain the
-  fallback for schema-1 history, exactly as the entry predicted the two would
-  coexist. The creation-lag grace still defers fresh merges. Six bats cases
-  (headline flag / not-required-then / schema-1 fallback / recorded-[] fallback
-  / grace deferral / --blocking exit 1) plus writer selftest coverage.
-
-  Status: applied
-  Last-reviewed: 2026-08-13
-
-- 2026-08-07 · claude-code · [tooling] · P1 — `postmortem-owed.sh`'s first dedup probe matches `PR #N` **anywhere** in the ledger, so a prose mention of a PR inside an unrelated entry permanently suppresses that PR's own gate-escape nudge
-
-  Observed after PR #1962 merged with `cr-out-of-band` +
-  `cr-disposition:cr-rate-limited` — a real override escape (CodeRabbit's
-  account quota was exhausted, so the diff was never reviewed). The escape owes
-  a postmortem by
-  [`AGENTS.md` § Self-improvement loop](../../../AGENTS.md), but
-  `bash agents/scripts/core/postmortem-owed.sh --list` reports
-  `no gate escapes owed a postmortem (last 20 merges clean)`. Four consecutive
-  invocations agree, so this is a deterministic miss, not a flake.
-
-  Mechanism. `has_entry()`
-  ([`postmortem-owed.sh:240-251`](../../../agents/scripts/core/postmortem-owed.sh))
-  runs two probes and the trigger-1 loop skips the PR when either fires:
-
-  ```bash
-  grep -qE "PR #$1([^0-9]|$)|commit $1([^0-9A-Fa-f]|$)" "$LEDGER" && return 0
-  grep -qE "^#+ .*PR #[0-9].*[,[:space:]/]#$1([^0-9]|$)" "$LEDGER"
-  ```
-
-  The **second** probe is correctly scoped to a heading line (`^#+ …`) — its
-  comment even states the intent: *"scoped to `^#+ …` so a #N mention in prose
-  body can't false-suppress a real owe"*. The **first** probe is not scoped at
-  all. It scans the whole file, so any sentence anywhere that happens to write
-  `PR #1962` satisfies it. Measured against `origin/develop`'s ledger:
-
-  ```
-  grep -cE "PR #1962([^0-9]|$)"        → 2     # prose, inside an unrelated entry
-  grep -cE "^#+ .*PR #1962([^0-9]|$)"  → 0     # no entry is actually filed
-  ```
-
-  Both hits are body prose in the 2026-08-05 `#1937` postmortem
-  ([`postmortems.md:2171,2184`](../postmortems.md)) — written by the very
-  work that produced #1962, citing it as the determinism fix its instance
-  ratchet rests on. Citing a PR is the normal way these entries are written, so
-  the failure mode is not exotic: **any PR named in an existing entry's prose is
-  silently exempted from ever being nudged again.** The suppression is
-  permanent and silent — the detector's output is indistinguishable from a
-  genuinely clean window, which is the same "mask discards the verdict" shape as
-  [`2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md`](tooling/2026-08-06-bucket-c-golden-mask-hides-stale-goldens.md).
-
-  Blast radius: this is the *detector for gate escapes*. A hole here doesn't
-  leak one defect, it suppresses the mechanism that converts escapes into new
-  gates. Entries accumulate cross-references over time, so the exempted set only
-  grows.
-
-  Proposed gate — **dedup on a structured field, never on free prose.**
-
-  1. **Scope probe 1 the same way probe 2 already is.** Require the `PR #N`
-     match to land on an entry heading (`^#+ .*PR #N([^0-9]|$)`), matching the
-     documented entry shape `## <date> · PR #N[, #M …] · <trigger>`. This is a
-     one-line change and immediately un-suppresses #1962. The `commit <sha>`
-     alternation should be split out and kept whole-file — `has_sha_entry`
-     already documents bare-sha matching as deliberate for triggers 3+4.
-  2. **Add a bats regression case.** `tests/bats/` should assert that a ledger
-     containing only a *prose* `PR #N` mention still reports #N as owed, and
-     that a real `## … PR #N …` heading dedupes it. This is the property both
-     probes are trying to express and neither one tests.
-  3. **Consider a machine-readable key.** Longer-term, have each entry carry an
-     explicit `### Escaped PRs: #A, #B` field and dedup on that alone, so
-     heading prose style can drift without re-opening the hole. Optional — (1)
-     plus (2) closes the class.
-
-  Item 1 is the fix; item 2 is what keeps it fixed. Do not apply from here —
-  suggestion-only per the skill's finder/applier split.
-
-  **Applied 2026-08-11** (items 1 + 2; item 3 deliberately not taken — (1)+(2)
-  close the class, as the entry itself says). Both probes are now heading-scoped,
-  and the symmetry is the fix.
-
-  Two refinements the write-up did not have:
-
-  - **The `commit <sha>` alternation was removed, not split out.** The entry
-    proposed keeping it whole-file. In fact `has_entry` is only ever called with
-    a PR NUMBER (both call sites pass one; the sha paths use `has_sha_entry`), so
-    that branch was matching the literal string `commit <pr-number>` — which
-    occurs **0 times** in the ledger, measured. It guarded a caller shape that
-    does not exist. `has_entry` now documents that it takes a PR number and that
-    sha dedup belongs to `has_sha_entry`.
-  - **Scoping was checked against the real ledger before landing**, since the
-    opposite error — re-nudging a PR that IS postmortemed — would be noisier than
-    the bug. 12 PR numbers were deduped by prose alone; all 12 are plain
-    citations ("shipped in PR #1953", "concurrently by PR #1078"), none an entry
-    of its own. Every PR-keyed heading uses the documented
-    `## <date> · PR #N[, #M …] · <trigger>` shape, so heading-scoping loses no
-    real entry. The one heading carrying a bare `#N` without the `PR ` prefix is
-    an Issue reference, never in scope here. #1962, the reported instance, has
-    since been given a real entry and still dedupes correctly.
-
-  Four bats cases pin the property both probes were expressing and neither
-  tested: prose does not dedupe, a documented heading does, prose cannot satisfy
-  the combined-heading probe either, and a substring PR number does not
-  cross-suppress. Restoring the unscoped probe fails the first.
-
-  Secondary observation, low confidence, recorded rather than actioned: one
-  earlier `--list` invocation in the same session emitted six owed escapes
-  (#1979, #1974, #1971, #1964, #1968, #1954) while six others reported clean.
-  Re-running four times after the fact was stable-clean, and the underlying
-  `gh pr list` query returned 20 rows on three consecutive checks, so the
-  transient was not a `gh` failure. The trigger-1 loop ends in
-  `2>/dev/null || true`, which would turn any upstream failure into a silent
-  "clean" — worth a `set -o pipefail` + explicit row-count assertion if it
-  recurs, but it is not reproducible today and is **not** the cause of the
-  #1962 miss (that one is fully explained above).
-
-  Status: applied
-  Last-reviewed: 2026-08-11
-
-- 2026-08-07 · claude-code · [process] · P1 — when review finds one fabricated verbatim quote, re-verify **every** quote in the changed doc; fixing only the flagged one leaves the class alive
-
-  Twice in one session I wrote a fenced code block that quoted code existing nowhere in the
-  tree. The first was caught as a Critical, and I fixed *that block*. The replacement text I
-  wrote in the same edit contained a second fabricated block, caught as a Critical by the next
-  review pass. Correcting the instance did nothing about the habit that produced it.
-
-  The mechanism is specific and worth naming: a verbatim block reconstructed from memory of
-  reading the file — rather than pasted from a fresh read — is plausible by construction. It
-  uses the right identifiers in the right shape, so it survives every check except resolving it
-  against the file. Reviewer attention and my own re-reading both slide over it.
-
-  Rule: a finding of the form "this quote does not exist" is a **class** finding. Its fix is not
-  the corrected quote — it is a sweep of every fenced block and every `file:line` citation in
-  every file the diff touches, each one re-resolved by an actual read at the cited line. Cheap:
-  a handful of `sed -n '<a>,<b>p'` calls. The cost of skipping it is a second Critical on the
-  fix commit, which is what happened here.
-
-  Then the sweep has to go one step further, because a third review pass on this same diff found
-  a Critical the rule as stated above would have **missed**: a claim that five call sites "can
-  still mint an orphan root node on a dead id" when all five already guard against exactly that.
-  Every citation in that paragraph was correct; the *characterization* of what the cited code
-  does was wrong — and the claim carried no line number at all, which is what let it through.
-  So the sweep covers **every claim about what cited code does**, verified by reading the
-  enclosing function rather than the cited line. A citation-shaped assertion with no citation is
-  the highest-risk case, not the lowest.
-
-  Corollary for authoring, not just for repair: quotes go into a doc by paste from a read
-  performed for that purpose. If the block was typed rather than pasted, treat it as unverified
-  until resolved, however confident it looks.
-
-  Belongs in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
-  § Cadence and verification, alongside the existing stale-`Edit` recovery rule — same shape
-  (a stale mental model of a file standing in for the file).
-
-- 2026-08-07 · claude-code · [process] · P2 — a background-task completion notification's "exit code 0" is the **pipeline's** exit, not the gate's; always read the in-file `*_EXIT=` value
-
-  Hit twice this session. A gate run in the background as
-
-  ```bash
-  bash agents/scripts/project/test-lint-rules.sh --diff origin/develop 2>&1 | tee out.txt
-  ```
-
-  completes with a notification reading `exit code 0` **regardless of the gate's verdict**,
-  because the reported status is the pipeline's, and the pipeline ends in `tee`. The same
-  trap bites the interactive form: `echo "$?"` after a pipe reports the **last** element's
-  exit — use `${PIPESTATUS[0]}`.
-
-  The concrete near-miss: two wrong bucket-E invocations
-  (`--target SmatchetUiTests` → `ninja: error: unknown target`, and
-  `bash scripts/dev/test-ui.sh` → `No such file or directory`) both surfaced as exit 0 and
-  were nearly recorded as passing runs. They were only caught by reading the output file,
-  which contained the errors in plain text.
-
-  Two fixes, both cheap:
-
-  1. **Convention** — every gate wrapper this repo runs in the background must end with an
-     explicit `echo "<NAME>_EXIT=${PIPESTATUS[0]}"` appended to the same output file, and
-     the reader must grep for that token rather than trusting the notification. This is an
-     ad-hoc habit today, not a repo convention — agents invent a token per run (`LINT_EXIT=`,
-     `DOCS_EXIT=`, `FMT=`, `BUILD_*_DONE`) and no gate wrapper in `scripts/` emits a verdict
-     token into its own output. (`scripts/dev/local/test-build-wrapper.sh:186` sets
-     `SMATCHET_TEST_WITHMSVC_EXIT=` — an env var handed to a subprocess, not a verdict written
-     where a reader will look for it.) Naming the convention and writing it down is the whole
-     proposal.
-  2. **Doc** — add the rule to [`process-rules.md`](../../agent-rules/process-rules.md)
-     § Cadence and verification, next to the existing note that `tail -N` can truncate a
-     gate's verdict off the head of its output.
-
-  Generalised: **a notification is a liveness signal, not a verdict.** Any claim that a
-  gate passed must cite a line from the gate's own output.
-
-- 2026-08-07 · claude-code · [process] · P2 — `code-review` told "review the staged diff" silently skips working-tree hunks on `MM` paths; it must report the split before reviewing
-
-  Concrete miss: the worktree A review of [PR #1966](https://github.com/alexandrosk0/Smatchet/pull/1966)
-  was scoped to `git diff --cached`, but `Source/Core/src/Ui/SmatchetWindowExpand.cpp` was
-  `MM` — the most substantive hunk under discussion (the `PushStyleColor` array/loop refactor
-  the requester explicitly asked to have its push/pop balance verified) existed **only in the
-  working tree**. The agent caught it, but only because it happened to run `git status`; a
-  reviewer that goes straight to `git diff --cached` reviews code the requester is not
-  looking at, and reports green on a file whose real content it never read.
-
-  The requester's mental model of "what I'm about to commit" is wrong precisely on `MM`
-  files — that is what `MM` means.
-
-  Fix, in [`agents/core/code-review.md`](../../../agents/core/code-review.md): make step 1
-  run `git status --short` and, for **any** `MM` path in scope, state the staged/unstaged
-  split up front and ask which one is under review (default: review the **working tree**,
-  since that is what will be built and tested). Cheap — one command — and it converts a
-  silent scope hole into an explicit question.
-
-- 2026-08-07 · claude-code · [process] · P2 — a doc-correction sweep must grep the *distinguishing phrase*, not the subsystem name, or it silently misses files
-
-  Correcting a stale claim across the docs tree ("the duplication gate is WARN-first" → "it is
-  blocking") I swept for the subsystem tokens — `duplication`, `dup_audit` — and declared the
-  drift bounded to two files. A reviewer then found a third, [`docs/CONTEXT.md`](../../CONTEXT.md),
-  which states the claim without naming the gate at all: it says only *"DRY is WARN-first today
-  per ADR-0015"*. The subsystem grep could not have found it.
-
-  The rule: sweep on the phrase that makes the claim **wrong** (`WARN-first`), not on the thing
-  the claim is **about**. The wrong phrase is what needs to change, so it is the complete
-  enumerator by construction; the subsystem name is only a proxy, and any doc that refers to
-  the subsystem obliquely escapes it.
-
-  Cost is real but bounded: `WARN-first` matches roughly **100 lines across 40 markdown files**
-  on this worktree, most legitimately describing *other* gates still in calibration. Triage is a
-  scan, not a rewrite, and it is the price of the sweep being complete rather than plausible.
-  (Approximate deliberately: this entry contains the phrase several times, so an exact count
-  self-invalidates on its own next revision — a hazard for any doc that counts a token it uses.)
-
-  Two scoping notes learned by running it: frozen docs (`docs/plans/shipped/**`, `evaluation/**`)
-  legitimately record what was true when written and should be **excluded by default** rather
-  than "fixed" — a shipped plan describing the gate as WARN-first at the time is accurate
-  history. And a stale-claim sweep is a *whole-file* scan, so a hit inside a fenced code block
-  or a quoted historical excerpt is a false positive to skip, not a line to edit.
-
-  Belongs as a line in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
-  § Cadence and verification, next to the existing "use `test-markdown-links.sh` as the enumerator, not grep"
-  note — same failure shape: a hand-rolled proxy standing in for a complete enumerator.
-
-- 2026-08-07 · claude-code · [process] · P2 — a backlog entry proposing a gate must name the concrete symbol the gate enumerates, and be checked against the bug that motivated it
-
-  I proposed a gate to catch dock-node-id constants that name no real slot, and specified it as
-  "enumerate `SmatchetDockNodeIds::kEntries`". That table lives in an anonymous namespace in the
-  `.cpp` (so the qualified name is not even addressable) and maps layout keys to only three
-  slots; `kSecondarySideBar` — the exact constant the gate exists to catch — never appears in
-  it. The gate as written would have stayed green through its own motivating bug.
-
-  The proposal read as concrete because it named a real symbol. Naming a symbol is necessary but
-  not sufficient; the symbol has to be the one that actually enumerates the population.
-
-  Two checks, both mechanical, both cheap enough to be unconditional:
-
-  1. **Name the enumerator explicitly** — the file and the declaration the gate iterates, not a
-     prose description of the population ("every dock id"). A prose population cannot be wrong,
-     which is precisely why it hides this failure.
-  2. **Replay the motivating bug against it** — walk the proposed enumerator by hand and confirm
-     the known-bad case appears in it. If the entry cannot point at the row the gate would have
-     tripped on, the gate is not specified yet.
-
-  Generalises past gates: the same check applies to any proposed automation described by the
-  population it covers. "Assert every X" is only meaningful once X resolves to an enumerable
-  declaration, and only correct once the known counterexample is shown to be inside it.
-
-  Concrete instance and the corrected proposal:
-  [`../debt/2026-08-07-dock-node-id-slot-liveness-followups.md`](debt/2026-08-07-dock-node-id-slot-liveness-followups.md).
-
-- 2026-08-07 · claude-code · [process] · P2 — add a `code-review` checklist line: an existence check on an ImGui / dock / handle id must also assert the **containment** relationship, because ids are recycled *and persisted*
-
-  Caught as a High in the [PR #1984](https://github.com/alexandrosk0/Smatchet/pull/1984)
-  review. The first cut of `EnsureDockSlotAlive` was:
-
-  ```cpp
-  return ImGui::DockBuilderGetNode(slot) != nullptr ? slot : 0;
-  ```
-
-  which looks obviously correct and is obviously wrong. `DockBuilderGetNode` is a flat
-  `DockContextFindNodeByID` map lookup (`imgui.cpp:20701-20705`). The orphan root nodes the
-  guard exists to reject are written to `imgui.ini` under `[Docking][Data]` and **reloaded
-  next launch** — so for every user who already ran the buggy build, the lookup succeeds for
-  exactly the ids that must fail. The guard would have been a no-op on the whole installed
-  base while passing every fresh-profile test.
-
-  The fix was one clause: also require `node->ParentNode != nullptr`, since every constant in
-  `SmatchetDockNodeIds.h` names a node the default layout cuts as a *child* of the dockspace
-  root, so a null parent means the id resolved to a detached node.
-
-  Generalised checklist line, for the `code-review` subsystem-invariants section under `Ui/`:
-
-  > An existence check on an ImGui id, dock node, or opaque handle is not a validity check.
-  > Ids are hashes — recycled across sessions and, for dock nodes, **persisted to `imgui.ini`**.
-  > A lookup that succeeds proves an object exists, not that it is the object you meant.
-  > Require the structural relationship too (parent / root / owning container), and name in a
-  > comment which relationship the constant is supposed to satisfy.
-
-  Broader than docking: the same shape applies to `ImGuiID` window lookups (`FindWindowByName`
-  finds a stale window from a previous layout) and to any `id -> object` map that outlives a
-  session.
-
-- 2026-08-07 · claude-code · [process] · P2 — when a claim reads "N sites do X, M do not-X" off a single grep, the two populations are usually **nested, not disjoint**; subtract before writing the numbers down
-
-  Caught as a High on the [PR #1966](https://github.com/alexandrosk0/Smatchet/pull/1966)
-  plan-doc addendum, and traced back into the already-pushed
-  [PR #1984](https://github.com/alexandrosk0/Smatchet/pull/1984) entry it summarised
-  ([`categories/test/2026-08-07-booted-app-or-skip-fails-open.md`](test/2026-08-07-booted-app-or-skip-fails-open.md)).
-  That entry stated the bucket-E guard "fails **open** at 56 call sites" and, four paragraphs
-  later, that "**6** sites already fail **closed**". Both numbers came from the same
-  `grep -c "AppController\* app = SmatchetActiveUiTestAppController();"` match set — the six
-  fail-closed sites are *inside* the 56, because 56 counts the **assignment** shape, which every
-  site shares regardless of what it does on the next line. The correct fail-open count is 50.
-  The entry contradicted itself in its own text (6 + 56 ≠ 56) and neither I nor two earlier
-  review passes read the two paragraphs against each other.
-
-  This is a distinct failure mode from the fabricated-quote class
-  ([`2026-08-07-fabricated-quote-is-a-class-not-an-instance.md`](applied.md)).
-  There the citation was invented; here every grep was real, its output was pasted correctly,
-  and the arithmetic was never done. A measured number with a wrong population reads exactly
-  like a measured number with the right one — there is no surface tell, which is why it survived
-  further than the fabricated quotes did.
-
-  Two mechanical checks, both cheap:
-
-  1. **Assert disjointness explicitly.** When one grep shape underlies both counts, the second
-     population is a *filter* of the first. Either re-grep the complement (`grep -L`, or grep the
-     shape and subtract the exception files' own counts) or state the relationship in the text —
-     "50 of its 56" rather than "56 … and separately 6".
-  2. **Read the paragraphs against each other before shipping.** The contradiction here was
-     internal to one file and visible without leaving it. A doc that quotes two counts of the
-     same population owes a sentence saying how they relate.
-
-  Same shape, different unit, in the addendum that summarised it: a sentence whose subject was
-  "commit A **and** commit B" carried counts derived from B alone. Check: when a claim names
-  multiple commits, run the union — `git diff --name-only <first>~1 <last> -- <path>` — rather
-  than reading one commit's `--stat`.
-
-  Belongs in [`docs/agent-rules/process-rules.md`](../../agent-rules/process-rules.md)
-  § Cadence and verification, next to the other verify-the-claim-not-the-tool rules.
-
-- 2026-08-07 · claude-code · [tooling] · P2 — `dup_audit.py` suppression is a **per-line** test, so a multi-line `SMATCHET_DEVIATION` comment whose last line is prose silently fails to suppress; neither `cpp-rules.md` nor the gate's own output says so
-
-  Mechanics, from [`dup_audit.py:353-381`](../../../agents/scripts/core/dup_audit.py):
-  `_has_dup_deviation(line)` requires the `SMATCHET_DEVIATION` token **on that one
-  line**, with `duplication` among the comma-separated `rule=` ids. `_suppressed`
-  then checks (a) the nearest **non-blank line immediately above** the clone start
-  and (b) **any line within** `[start_line, end_line]`. `run_diff` wraps it as
-  `any(_suppressed(...) for ... in c.locations)`, so a marker on **either**
-  occurrence exempts the pair.
-
-  Cost when this bites: a deviation written in the natural way —
-
-  ```cpp
-  // SMATCHET_DEVIATION(rule=duplication; reason=the MCP and Lua-console window-layout
-  // helpers are long-standing structural twins; unifying would couple independent
-  // subsystems; owner=ui-host; revisit=2026-12-31)
-  ```
-
-  — does not suppress, because the nearest line above the clone is line 3, which
-  carries no token. The gate reports a bare `[dup] FAIL a.cpp:111 <-> b.cpp:74`
-  with no hint that a marker was present-but-ineffective, so the reader's first
-  instinct is that the exemption text is wrong rather than its *shape*. Cost one
-  round of guessing before reading the script.
-
-  Two fixes, independent:
-
-  1. **Doc** — add to [`cpp-rules.md`](../../agent-rules/cpp-rules.md)
-     § `SMATCHET_DEVIATION` grammar: *the whole `SMATCHET_DEVIATION(...)` must fit on
-     a single line for the `duplication` rule; put explanatory prose on separate
-     comment lines **above** it.* (`.clang-format` `ColumnLimit: 120` is the real
-     constraint on how much reason text fits.)
-  2. **Gate** — when a clone pair FAILs, scan a small window (say 5 lines) above the
-     clone start for the literal string `SMATCHET_DEVIATION` and, if found without a
-     matching single-line marker, emit
-     `hint: a SMATCHET_DEVIATION comment is nearby but spans multiple lines — the marker must be on one line`.
-     Turns a silent shape error into a self-explaining one.
-
-  Related: the same file's `--diff` mode graduated `duplication` from WARN to
-  **BLOCKING** on 2026-06-21, which `AGENTS.md` and `agents/core/code-review.md`
-  still describe as WARN-first calibration — see the sibling entry.
-
-- 2026-08-07 · claude-code · [tooling] · P2 — repo paths written as inline code spans in backlog entries are never checked, so a backlog entry can cite a file that does not exist
-
-  [`agents/scripts/core/test-markdown-links.sh`](../../../agents/scripts/core/test-markdown-links.sh)
-  resolves markdown **links** — its `LINK_RE` matches only the bracketed-label-then-parenthesised-
-  href form. A repo path written as a bare code span
-  — `` `scripts/dev/test-ui-window-expand.sh` `` — is invisible to it. In this session I wrote a
-  [tooling] entry whose entire proposal was anchored on such a path, and the file does not exist
-  on `develop` (it lives only on a feature branch). The docs gate went green. A `code-review`
-  pass caught it as a Critical; nothing mechanical would have.
-
-  This matters more in `docs/self-improvement/categories/**` than elsewhere: a backlog entry is
-  read months later by someone who will act on it, and its whole value is that the cited
-  file:line is real. A stale entry there wastes the reader's time in exactly the way the backlog
-  exists to avoid.
-
-  Proposed: extend the markdown-link checker (or add a sibling) with a **WARN-first** rule scoped
-  to `docs/self-improvement/categories/**` — for each inline code span that looks like a repo path
-  (leading `scripts/`, `Source/`, `docs/`, `agents/`, `tests/`, `tools/` plus a file extension),
-  assert it resolves — **at `HEAD` first, falling back to `origin/develop`**. Checking only
-  `origin/develop` would false-warn on every path added by the same PR that adds the entry, which
-  is the common case; checking only `HEAD` would miss the failure this entry exists for. WARN-first
-  because a *deliberate* reference to a path on some other unmerged branch is legitimate; that
-  entry should then carry the "not on `develop` yet" caveat in prose, which is exactly the review
-  the warning prompts.
-
-  Same delta-gate shape as the other doc gates: only newly-added or modified lines, so the whole
-  existing backlog does not have to be clean on day one.
-
-  The blindness cuts both ways, and this entry tripped the other edge while being written: prose
-  quoting the *shape* of a markdown link inside a code span is read by the checker as a real link
-  and reported as a dangling one. So the same fix — teach the tokenizer about inline code spans —
-  removes a false negative (paths in spans never checked) and a false positive (link-shaped spans
-  checked as if they were links). Until then, a doc that needs to discuss link syntax has to
-  describe it in words, which is why the sentence above does.
-
-- 2026-08-06 · orchestrator · [process] · P1 — gate tooling invoked from a long-lived session branch runs a **months-old** copy of the gate logic and manufactures phantom blocks: `merge-gates.sh` run out of the integration tree (branch `claude/peaceful-faraday-6jm1w5` @ `ff0ee7a6`) predated the CR auto-exemption on `develop`, so it hard-blocked a PR that current `develop` passes — and the block was misdiagnosed as a product-gate defect, nearly costing a spurious ledger entry
-  Details: While auditing PR #1953 I ran
-    `bash agents/scripts/core/merge-gates.sh 1953` from `C:/Dev/Smatchet` — the shared integration
-    tree, sitting on session branch `claude/peaceful-faraday-6jm1w5` at `ff0ee7a6` (2026-08-05). That
-    copy hard-blocked on `CodeRabbit: NONE+size-skip`. The same PR class run from a fresh
-    `develop`-based worktree prints
-    `WARN: self-improvement doc PR — CR gate auto-skipped` and reaches `GATES_PASSED` (verified on
-    PR #1961, poll 12/90). The difference is commit `4685997d` — "feat(merge-gates): auto-exempt pure
-    self-improvement doc PRs from CR + Bugbot review" (#1468), merged **2026-06-20**, adding the
-    downgrade at :1201-1202. `grep -c "self-improvement doc PR — CR gate auto-skipped"` in the
-    integration tree returns **0**. The session branch was ~7 weeks behind on this file.
-    The failure mode is not "the script was wrong" — it is that **nothing in the output distinguishes
-    a stale-script block from a real one**. Every line the stale run emitted was a plausible, correctly
-    formatted BLOCK. I took it as evidence about `develop`'s gate behaviour, wrote a postmortem
-    asserting the sanctioned merge path was structurally unusable for self-improvement PRs, and only
-    caught it because a later run from a fresh worktree printed a WARN line the first run never had.
-    The withdrawn entry and the corrected finding are in
-    [`tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](applied.md).
-    Two properties make this recur rather than be a one-off:
-      1. **Session branches are long-lived by design.** `claude/<id>/*` branches persist across many
-         days; nothing pulls `agents/scripts/**` forward on them. The longer a session lives, the more
-         the gate logic it runs diverges from the logic that actually guards `develop`.
-      2. **The tree that tempts this is the shared one.** The SessionStart banner already warns that
-         `C:/Dev/Smatchet` is shared and that HEAD changes collide — so a session is *discouraged from
-         updating it*, which is exactly what keeps the scripts stale. The safe-for-siblings move and
-         the fresh-tooling move point in opposite directions.
-    Blast radius beyond this incident: every script under `agents/scripts/core/` has the same exposure
-    — `postmortem-owed.sh`, `issue-sweep.sh`, `pre-ship.sh` and the lint gates all encode rules that
-    change on `develop`. A stale `pre-ship.sh` is the worse direction: it can pass a diff that current
-    `develop` gates would fail, i.e. it produces false **greens**, not just false reds.
-  Concrete next action — make staleness self-announcing rather than silent:
-    (1) **Version self-check in the poller.** At startup `merge-gates.sh` compares the merge-base of
-    `HEAD` against `origin/develop` for its own path: if `git log --oneline HEAD..origin/develop --
-    agents/scripts/core/merge-gates.sh` is non-empty, print
-    `WARN: merge-gates.sh is N commit(s) behind origin/develop — re-run from a fresh worktree before
-    trusting a BLOCK` and echo the newest such commit's subject. Never fail on it (offline / detached
-    / no-remote must stay usable) — the point is that the operator can no longer read a BLOCK without
-    seeing the caveat. Cheap: one `git log` against an already-fetched ref, no network if
-    `origin/develop` is current, silently skipped when it is not.
-    (2) **Same check in the shared helper, not per-script.** Put it in a `warn_if_script_stale
-    <path>` helper (sourced by `merge-gates.sh`, `postmortem-owed.sh`, `pre-ship.sh`) so the other
-    gate scripts inherit it — `pre-ship.sh` especially, where staleness yields false greens.
-    (3) **Rule text.** Add to [`process-rules.md`](../../agent-rules/process-rules.md)
-    § Concurrent interactive sessions: *"Run gate tooling from a worktree freshly based on
-    `origin/develop`, never from a long-lived session branch. A BLOCK observed from a stale checkout
-    is not evidence about `develop`; reproduce from a fresh worktree before filing anything against a
-    gate."* This is the rule that would have stopped the bad entry with zero code.
-    (4) **Evidence rule for the ledger.** A postmortem or backlog entry whose central evidence is
-    gate-tool output must record the tree + commit the tool ran from. Fold into the
-    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
-    skill's evidence checklist — the discipline generalises past this bug.
-    Est ~0.5d ((1)+(2) helper + 2 bats cases; (3)+(4) doc edits).
-  Cross-ref: `agents/scripts/core/merge-gates.sh` (:1201-1202 the downgrade absent from the stale
-    copy); `4685997d` / PR #1468 (2026-06-20, the commit the session branch predates); PR #1953
-    (phantom block) vs PR #1961 (same class, passes from a fresh worktree);
-    [`process-rules.md`](../../agent-rules/process-rules.md) § Concurrent interactive sessions
-    (`nsc <slug>` one-worktree-per-session rule this extends from correctness to *freshness*).
-
-  **Update 2026-08-11 — (1), (3), (4) shipped; (2) is the remaining scope.**
-
-  - **(1) Version self-check in the poller — DONE, by fixing its default rather than
-    building it.** The machinery already existed (`MERGE_GATES_FRESHNESS`, added for
-    #1428: fingerprints `merge-gates.sh` + both `merge-gates.d/` modules against
-    `origin/develop` and warns or fails closed). It was **defaulted `off`**, and a repo
-    sweep found `merge-watcher.py` to be its only setter (`block`) — so the caveat
-    reached the one caller that is never stale, and never reached the human-invoked
-    poll this entry is about. The default is now **`warn`**: a BLOCK can no longer be
-    read without the "differs from origin/develop" line when the checkout is behind.
-    `warn` never sets `self_stale`, so no caller's verdict changes and offline /
-    detached / no-remote stay usable, exactly as this entry required. The bats suite
-    now sets `MERGE_GATES_FRESHNESS=off` explicitly (its ~170 cases would otherwise each
-    attempt a real `git fetch` and warn about the branch under development), and the
-    old "freshness OFF by default" test is replaced by one pinning the `warn` default
-    plus an explicit-off canary.
-  - **(2) Same check in the shared helper — DONE.** Extracted to
-    [`agents/scripts/core/lib/script-freshness.sh`](../../../agents/scripts/core/lib/script-freshness.sh):
-    `script_freshness_verdict` (the bounded fetch, the multi-file combined
-    fingerprint, the fail-closed blanking) plus the advisory `warn_if_script_stale`
-    wrapper. `merge-gates.sh` now delegates detection to it while keeping its own
-    message prose — the split is deliberate: prose duplication is cheap and lets each
-    gate cite its own history, whereas a second hand-rolled fetch is where hangs and
-    silent stale-compares come from. Behaviour-preserving, proven by the poller's
-    171-case suite passing unchanged across the extraction.
-    Wired into **`pre-ship.sh`**, the false-**greens** case this entry called the worse
-    direction: the caveat prints immediately before the `Safe to push` line (a startup
-    banner would have scrolled away behind minutes of gate output, and the verdict is
-    what it qualifies), over a declared set covering the entry point, the delta-lint
-    gate, its rule modules, the review-ack lib and the detector itself. Also wired into
-    **`postmortem-owed.sh`**, qualifying specifically its `no gate escapes owed` clean
-    result — a false green there is exactly the reading that let #1941 pass as clean.
-    `issue-sweep.sh` and the lint gates are still unwired; the helper is in place, so
-    each is now a two-line call rather than a re-implementation.
-    Three design points worth keeping: `unverifiable` is a verdict DISTINCT from
-    `stale` (a failed fetch must not be reported as drift, nor drift hidden when
-    offline); no fetch caching (measured 0.79s against the real remote, immaterial
-    beside what these gates already do, and caching would mean comparing against a
-    possibly-stale ref — the exact bug being fixed); and each caller's declared set
-    includes the detector itself, closing the one blind spot that could hide all the
-    others.
-    **Extraction bug worth recording**, caught by `pre-ship.sh --selftest` on first
-    wiring: the inline original used `local var="$(cmd)"`, where `local`'s own success
-    MASKS the command substitution's exit status. Plain assignments in a sourced lib
-    lose that mask, so under the `set -euo pipefail` its callers run, a missing file
-    killed the calling gate outright instead of degrading to `unverifiable`. Every
-    substitution now carries an explicit `|| var=""`, and
-    [`tests/bats/script_freshness.bats`](../../../tests/bats/script_freshness.bats)
-    pins it with four `set -e`/`set -u` survival cases (16 cases total).
-  - **(3) Rule text — DONE.** `process-rules.md` § Concurrent interactive sessions
-    carries "Run gate tooling from a tree freshly based on `origin/develop`, never from
-    a long-lived session branch", stating that a BLOCK from a stale checkout is not
-    evidence about `develop`, that the WARN is a stop-and-re-run signal, and that the
-    other core gates have no such guard yet.
-  - **(4) Evidence rule for the ledger — DONE.** The
-    [`gate-escape-postmortem`](../../../agents/_shared/skills/gate-escape-postmortem/SKILL.md)
-    skill's step 1 now requires recording the tree + commit any cited gate-tool output
-    ran from, and to reproduce from an `origin/develop`-based worktree before the
-    finding enters the ledger.
-
-  All four proposals are shipped, so this entry is closed. The one leftover — wiring
-  the remaining callers (`issue-sweep.sh`; the lint gates, already covered indirectly
-  because `pre-ship.sh` fingerprints `test-lint-rules.sh` + `lint-rules.d/`) — is
-  breadth over a helper that now exists, not this entry's thesis, and is carried
-  forward as its own P3: `2026-08-11-script-freshness-remaining-callers`.
-
-  Status: applied (2026-08-11 — (1)/(2)/(3)/(4) all shipped)
-  Last-reviewed: 2026-08-11
-
-- 2026-08-06 · orchestrator · [infra] · P1 — `required-check-that-never-reports-is-invisible`: the merge-gate poller and the gate-escape detector both key on RED checks; a required context that reports NOTHING is indistinguishable from a slow one at the merge box, and merges past silently.
-  Details: observed live on #1964 and #1970. `Agentic self-tests (bats)` is a branch-protection REQUIRED context (`project.config.json` § branch_protection.required_contexts). On #1964 its only run was created at 15:48, sat `queued` from 16:21 for ~2h20m, and was pinned to `6244d02b` — which then MERGED as part of that very PR, so the run could never have reported on the merged code. #1964 merged with ten contexts in a non-green terminal state, six of them still `queued`. Recorded losslessly in `merge-snapshots.jsonl` (PR #1969, `gates: GATES_INCOMPLETE`). On #1970 it was worse: after the stale run was cancelled, pushes of `000abdd9` and `216f1fbd` created NO run at all, and a close/reopen (the only lever — the workflow has no `workflow_dispatch`) still left `get_check_runs` at **total_count 0**. The PR merged with zero check runs in existence. Run creation was NOT broken repo-wide at the time (#1969 got a full set at 18:13), so this is per-PR/per-branch, not a global outage — which is exactly why "it's just the outage, it'll report eventually" was the wrong read for hours. `merge-gates.sh` GATE_FILTER and `postmortem-owed.sh` both enumerate *red* contexts; neither asserts that every required context has produced a terminal conclusion at all, so absence reads as "nothing to block on".
-  Concrete next action: add an ABSENT-REQUIRED-CONTEXT assertion to the merge-gate poller — enumerate `project.config.json` § branch_protection.required_contexts, intersect with the contexts present in the PR's `statusCheckRollup`, and BLOCK on any required name with no check-run/status at all (or one still `queued`/`in_progress` past a staleness cutoff), reported distinctly from a red check (e.g. `GATES_ABSENT` vs the existing red-check block) so an operator can tell "never ran" from "ran and failed". Mirror the same assertion in `postmortem-owed.sh` so an absent-required merge owes a postmortem the way a red-check merge does — today it owes nothing. Cheap sub-case worth doing first: flag a check-run whose `head_sha` is not the PR's current head (the #1964 phantom — a queued run pinned to an already-merged sha), which is detectable with no timing heuristic at all. Est ~3-4 h. Cross-ref: `merge-snapshots.jsonl` row for #1964 (the lossless capture); PR #1969; PR #1970 § comment "The `Agentic self-tests (bats)` lane has never run on this PR".
-  Recurrences (all 2026-08-06, same day the entry was filed):
-  - #1964 — merged with 10 contexts non-green, 6 still `queued`. Ledger row: `GATES_INCOMPLETE`.
-  - #1970 — merged with `get_check_runs` at **total_count 0**; a stale run pinned to an already-merged sha was cancelled, then two pushes AND a close/reopen produced no check suite. Ledger row: `GATES_ABSENT`.
-  - #1972, #1973, #1974 — each merged with exactly ONE check run (Bugbot) and **zero workflow runs**. #1974 carried real shell logic plus 9 new tests, none of which executed in CI. Queried directly: `list_workflow_runs` for `claude/verifier-slice2-preship` returned `total_count: 0` across ALL workflows.
-  - #1941 — independently reached by another session and written up as a full postmortem: an `--admin` merge past 22 required contexts that never ran, after which `postmortem-owed.sh --list` reported "no gate escapes owed (last 20 merges clean)". See [`postmortems.md`](../postmortems.md) 2026-08-06 · PR #1941, and the `process` entry `2026-08-06-admin-merge-past-absent-checks-undetected` landing in PR #1975 (not linked as a path — it is not on develop yet).
-
-  **Cross-link — this is the same hole as `2026-07-10 · PR #1698` and `2026-08-05 · PR #1937`, reached from a third direction.** Those two describe a check green on the PR head and red on develop; this entry describes a required context that never reports at all; #1941 describes an `--admin` merge past absent checks. All three are the same missing assertion — *no consumer verifies that every required context actually produced a terminal conclusion* — and both prior entries proposed a develop-tip required-green assertion that never landed. That is now **three prior proposals plus six observed occurrences**, which is the argument for building it rather than filing it a fourth time.
-
-  **Converge on ONE gate, not two.** PR #1975 proposes the strongest form: extend `postmortem-owed.sh` with a fifth signal that, for each merge commit on develop, resolves the merged PR's head sha and flags `actions/runs?head_sha=<sha>` returning `total_count == 0`, or a head rollup carrying fewer contexts than the branch-protection required set. That subsumes this entry's proposed cheap sub-case (flag a check-run whose `head_sha` is not the PR's current head) and needs no cooperation from the merge actor, which the label-keyed signals do. Build #1975's version; keep this entry's merge-gate-side assertion (block, don't merely detect) as the second half, since detection after the fact does not stop the merge.
-
-  **A likely mechanical cause for the zero-run PRs, from #1975's finding.** GitHub will not build a head whose `mergeStateStatus` is `DIRTY` / `mergeable` is `CONFLICTING`. #1972-#1974 all touched files with concurrent churn (`docs/plans/INDEX.md`, `merge-snapshots.jsonl`), so a conflicted head is the leading explanation for "no runs created" as distinct from the repo-wide queue jam — two different failures that present identically at the merge box. Unverified retroactively (the PRs are merged); worth confirming when the next zero-run PR appears.
-
-  **Confirmed against the next zero-run PR — and DIRTY does NOT explain it.** #1976 (this entry's own PR, seventh occurrence) sat at `total_count: 1` (Bugbot only, zero workflow runs) for over an hour, while its `mergeable_state` read **`blocked`**, not `dirty` — blocked precisely *because* the required contexts were absent. So a conflicted head is at most a contributing cause, not the mechanism. **The mechanism, measured: run creation LAGS by tens of minutes under backlog — it does not drop.** Tracking #1976's head continuously produced the number this entry was missing: a push at 21:20Z showed `total_count: 0` at 21:21Z and again at 21:25Z, and its full 15-run set was created at **21:46:58Z — a ~27-minute creation lag.** Two earlier readings that looked like permanent absence were simply taken inside that window. Those 15 runs subsequently all completed **success**.
-
-  **But BOTH failure modes are real, and the very next push proved it.** The successor head `92553244` (pushed 22:10Z) had **zero** runs at 23:16Z — 66 minutes, more than double the measured lag — while the queue was fully drained and healthy (1 queued, 3 in-progress, 12 successes repo-wide, newest run created 23:15:57Z, other branches getting suites within seconds). With a healthy queue as the control, that is not lag: for this head, runs were genuinely **never created**. The push was not lost — CodeRabbit posted against `92553244` minutes after it landed — so GitHub received the ref update and Actions alone did not act on it.
-
-  **That pair of observations is the actual requirement, and it is harder than either failure alone.** Consecutive pushes on the *same branch, same day* produced one head that lagged ~27 min and then succeeded, and one that never got a suite at all. The two are indistinguishable at every instant before the lagging one recovers. So no timeout constant can be *correct* — it can only trade false alarms against missed escapes. The gate must therefore **block on absent regardless of cause** (never merge a head whose rollup carries fewer contexts than the required set, with no time-based escape hatch), and treat the timeout purely as the threshold for *notifying a human*, not for deciding the merge is safe.
-
-  **This retracts two confident explanations recorded above, and both retractions matter.** An "Actions outage window; GitHub never retroactively creates a suite" claim was written on the 20:23Z/20:33Z recovery, then disproved by a re-push showing zero. A follow-on "creation is intermittently failing; a fresh head is not a reliable remedy" was written on that, then disproved by the 21:46:58Z creation. The lesson is methodological and belongs in the gate design: **`total_count == 0` at an instant does not distinguish "will never be created" from "not created yet",** and there is no API field that does. Any check keyed on a point-in-time zero — including #1975's proposed `actions/runs?head_sha=` signal — needs a lag tolerance, and (per the next paragraph) that tolerance can only ever be a heuristic for *when to shout*, never a proof that the checks are absent for good.
-
-  **Leading explanation for the merged zero-run PRs, and it is partly on the merge actor, not on GitHub.** #1972-#1974 were each merged within a few minutes of PR creation — well inside a lag window this large. So "zero runs at merge" was plausibly "runs not created yet", and the operative defect is **merging before the required contexts have had time to appear.** That is a materially more actionable finding than an Actions fault, because it is entirely within our control: the merge-gate half must refuse to merge while the head's rollup carries *fewer contexts than the required set*, treating absent-so-far exactly as it treats red — and must never interpret an empty rollup as "nothing to wait for". Unverified retroactively for those three PRs (they are merged and their creation timestamps cannot be recovered); verified prospectively on #1976.
-
-  **Auto-merge is the one consumer that behaves correctly here, and it is worth saying why.** Auto-merge armed on a head with an empty rollup simply waits, and once the lagged contexts are created and pass it fires normally — observed on #1976. The hazard is not that it breaks; it is that *waiting on absent contexts* and *waiting on pending contexts* are indistinguishable in every UI GitHub offers, so an operator watching a genuinely-stuck PR has no signal and an operator watching a merely-lagged one has no reassurance. That asymmetry is what the merge-gate-side half must fix: report **absent** distinctly from **pending**, block on both, and let elapsed-time-since-push decide when absent has stopped being lag and started being a fault.
-
-  **Update 2026-08-11 — the detector half landed; the entry narrows to one sub-case.** Both halves of "converge on ONE gate" are now in tree, from different directions:
-  - *Merge-gate side (block)* — already shipped before this sweep and re-verified: `merge-gates.d/10-gate-filter.sh` computes `$reqAbsent` (config `required_contexts` minus the head rollup's context names), `merge-gates.sh` BLOCKs on `req_absent > 0`, fails closed on a parse miss (`req_absent < 0`), and `req_absent -eq 0` is a conjunct of `GATES_PASSED`. It is reported distinctly from a red check (`required-missing:` vs the red-check block) and has **no time-based escape hatch**, which is the property this entry argued for. A required context that is PRESENT-but-`QUEUED` is correctly not "absent".
-  - *Detector side (after the fact)* — NEW: `postmortem-owed.sh` gained a required-ABSENT cross-check (field 5 `present_names` vs `$reqNames`), running on **both** the snapshot and live paths because a merge-instant snapshot records the red set, not rollup membership. This is the fifth signal PR #1975 proposed, and it closes the "`--admin` merge past absent checks owes nothing" hole for #1941 / #1972-#1974. Guarded by `POSTMORTEM_ABSENT_GRACE_SECONDS` (default 3600, ~2x the measured 27-min creation lag) so a merge still inside the lag window is deferred to the next sweep rather than false-flagged — per this entry's own methodological lesson, that grace is a *notification* threshold only and deliberately does NOT exist on the blocking side. Suite: `tests/bats/postmortem_owed.bats` § required-absent (8 cases, incl. the #1941 zero-rollup shape and the absent-vs-pending distinction).
-
-  **The last sub-case is closed too, but NOT as this entry proposed it — the `head_sha`-mismatch probe does not fit the mechanism.** This entry named "flag a check-run whose `head_sha` is not the PR's *current* head" as the cheap #1964 sub-case, detectable "with no timing heuristic at all". Checked against the actual query: the rollup is fetched via `commits(last: 1) { commit { statusCheckRollup … } }`, i.e. it is scoped to the PR's current head **by construction** — GitHub aggregates check runs whose `head_sha` IS that commit, so a foreign-sha run cannot appear in it and there is nothing for the probe to find. Re-reading this entry's own #1964 evidence confirms it: the run was pinned to `6244d02b`, which *was* the head at the time and then merged as part of that PR. It was never a mismatched sha; it was a run that **never reached a terminal conclusion**.
-  So the property that actually distinguishes the #1964 rollup from a healthy one is **non-terminality**, and that is what shipped: `postmortem-owed.sh` now also emits `required-never-terminal: <names>` for a required context PRESENT in a merged PR's rollup whose latest run is still `QUEUED`/`IN_PROGRESS` (or a `StatusContext` still `PENDING`). This is genuinely invisible to every other signal — the absence check sees it as present, and the red-check curation deliberately requires a terminal verdict, so it is neither absent nor red. It reuses the same `$absent_judgeable` grace gate and so needs no timing heuristic of its own: a check merely mid-flight at merge goes terminal within minutes, so one still non-terminal an hour later never finished at all. That reads a fact rather than guessing. Same latest-run-per-context dedupe as the red curation, so a queued *re-run* beside an older SUCCESS counts (the context's current state never reported). 6 cases in `tests/bats/postmortem_owed.bats` § required-never-terminal, including #1964's exact shape and the absent-vs-never-terminal partition.
-
-  **Nothing is left of this entry.** Both halves of the merge-box assertion (block pre-merge, detect post-merge) and both masks the escape wears (absent, present-but-never-terminal) are covered.
-
-  Status: applied (2026-08-11 — absent-required both halves + never-terminal; the proposed head_sha probe was investigated and does not apply, see above)
-  Last-reviewed: 2026-08-11
-
-- 2026-08-06 · claude-code · [process] · P1 — an `--admin` merge past checks that never ran leaves no trace any detector reads, and `merge-gates.sh` mislabels a CI-cannot-run head as "required-missing"
-
-  **Evidence.** PR #1941 (preferences IA re-segmentation + global search) squash-merged
-  2026-08-06T19:25:12Z as `c7fb2236` on `develop` via `gh pr merge --squash --admin`, with all
-  22 branch-protection-required contexts absent from the head rollup. The head `4617a034` was
-  never built at all: `gh api repos/<o>/<r>/actions/runs?head_sha=4617a034…` returned
-  `total_count: 0`. `postmortem-owed.sh --list` afterwards reported "no gate escapes owed
-  (last 20 merges clean)".
-
-  Two independent holes produced this:
-
-  1. **No defined behaviour when CI is structurally unavailable.** Actions was jammed
-     repo-wide — 75 runs stuck `queued` since 18:13 UTC, no new run created repo-wide after
-     19:16 UTC, and a `gh pr close && gh pr reopen` (to re-fire the `pull_request` event)
-     produced 0 runs. There was no path to a green head. The ship-loop's only defined move
-     is to keep polling, so the operator's choices collapse to "wait indefinitely" or
-     "override" — and the override is exactly what the gates exist to prevent. The escape is
-     the *absence of a third option*, not the person who took the second.
-
-  2. **The escape class is invisible to the detector.** `postmortem-owed.sh` keys on a
-     non-SUCCESS check at merge, an override label, a `Revert` commit, or an overdue
-     deviation. An `--admin` merge past *absent* checks emits none of those four signals:
-     there is no red check (there is no check), no label, no revert. This is the same
-     detection hole already recorded in the ledger twice — `2026-07-10 · PR #1698` and
-     `2026-08-05 · PR #1937` — both of which proposed a develop-tip required-green assertion
-     that never landed. Third recurrence.
-
-  A third, lower-severity contributor worth fixing in the same area: **`merge-gates.sh`
-  reports a conflicted head as N `required-missing` checks.** When `mergeStateStatus` is
-  `DIRTY` / `mergeable` is `CONFLICTING`, GitHub declines to build the head at all, so the
-  poller sees 22 absent required contexts and prints the generic "never ran; e.g. a
-  GITHUB_TOKEN bot push that did not re-trigger CI" hint. That cost a full 90-poll timeout
-  before the actual cause (a conflict in `docs/plans/INDEX.md`) was found by hand. The
-  actionable cause was available on poll 1 from a field the poller already fetches.
-
-  Proposed fixes:
-
-  1. **Detect the merge after the fact.** Extend `postmortem-owed.sh` with a fifth signal:
-     for each merge commit on `develop` in the scanned window, resolve the merged PR's head
-     sha and flag it when `actions/runs?head_sha=<sha>` yields `total_count == 0`, or when
-     the head rollup carries fewer contexts than the branch-protection required set. This
-     catches admin merges, zero-rollup merges, and the "CI never triggered" class in one
-     check, and it needs no cooperation from whoever performed the merge — which is the
-     property the label-keyed signals lack.
-  2. **Name the real cause in the poller.** In `merge-gates.sh`, branch on
-     `mergeStateStatus == DIRTY` / `mergeable == CONFLICTING` before reporting
-     `required-missing`, and emit a distinct blocked reason ("head is conflicted — CI will
-     not build it; merge origin/develop first"). Same for `BLOCKED` with a zero-length
-     rollup. Cheap: both fields are already in the existing GraphQL response.
-  3. **Give "CI is unavailable" a defined move.** Today the ship-loop has none. Minimum
-     viable: when the poller observes zero runs created repo-wide inside the poll window
-     (an Actions outage, not a PR problem), it should stop polling and escalate with that
-     diagnosis rather than time out at 90 polls with a per-check message — per
-     `AI_POLICY.md` § Escalate, don't assume, an unvalidatable state is an escalation, and
-     an outage is unvalidatable by construction.
-
-  Concrete next action: fix (1) — it is self-contained inside `postmortem-owed.sh`, closes
-  a hole that has now recurred three times, and is testable in `tests/bats/`. (2) is a small
-  follow-up in the same PR if the diff stays small. (3) needs a design call on what the
-  ship-loop does with an escalation and should not be bundled.
-
-  Related, distinct — do not merge these: the two prior ledger entries (2026-07-10 · #1698,
-  2026-08-05 · #1937) describe the same *detector* hole reached from a different direction
-  (a check green on the PR head and red on develop). A single develop-tip required-green
-  assertion would close all three, and that is the argument for finally building it.
-
-  Compensating verification actually performed on the merged head, for the record: dual-target
-  build (`SmatchetStandalone` + `SmatchetCore_DX12`) EXIT=0 and
-  `test-lint-rules.sh --diff origin/develop` EXIT=0 (advisory WARNs only). That is not CI and
-  does not substitute for it — the next `develop` post-merge run, once Actions drains, is the
-  backstop to watch.
-
-  **Update 2026-08-11 — fixes (1) and (2) shipped; (3) is all that remains.**
-
-  - **(1) Detect the merge after the fact — DONE.** `postmortem-owed.sh` gained the
-    fifth signal as a required-context-ABSENT cross-check: every name in
-    `branch_protection.required_contexts` must appear in the merged PR's rollup
-    (field 5, the `|||`-joined present-context list the script already parsed for the
-    expected-present allow-list), else the merge owes a postmortem. It runs on the
-    snapshot path as well as the live one — a snapshot records the merge-instant RED
-    set, never rollup *membership*, so absence is only ever observable from the live
-    rollup and an instrumented merge would otherwise be exempt from the one signal
-    snapshots cannot carry. It needs no cooperation from the merge actor, which is
-    the property this entry wanted. Implemented via rollup membership rather than the
-    proposed `actions/runs?head_sha=<sha>` probe: same escape class, no extra API call
-    per scanned merge, and it also catches a head that *was* built but whose suite is
-    missing contexts. Guarded by `POSTMORTEM_ABSENT_GRACE_SECONDS` (default 3600) —
-    the infra entry `required-check-that-never-reports-is-invisible` measured a ~27-min
-    check-suite creation lag, so a just-merged PR is deferred to the next sweep instead
-    of false-flagged. Suite: `tests/bats/postmortem_owed.bats` § required-absent,
-    including this PR's exact shape (zero rollup, no red, no label → owes).
-  - **(2) Name the real cause in the poller — DONE.** `merge-gates.sh` now branches on
-    `mergeStateStatus == DIRTY` before emitting the generic hint and reports "head is
-    CONFLICTED … merge origin/develop first; this is NOT a CI fault and polling will
-    not clear it". As predicted the field was already in the poller's GraphQL response,
-    so the diagnosis is available on poll 1 rather than after a 90-poll timeout. The
-    non-DIRTY branch keeps the original "never ran" hint and gained the creation-lag
-    caveat. Both are still BLOCKs — only the diagnosis differs. Cases in
-    `tests/bats/merge_gates.bats` § required-missing cause attribution, incl. a negative
-    canary that a DIRTY head with nothing absent emits no conflict line.
-    *Adjacent false-pass found while testing, and fixed:* the `mergeStateStatus`
-    guard blocked on `BLOCKED|BEHIND` only, so an all-green **DIRTY** head — one whose
-    required contexts DID report before the conflict appeared — reached `GATES_PASSED`
-    and failed later at the REST merge. Initially left alone on the reasoning that this
-    entry asked for diagnosis rather than a new block; that was too narrow, since an
-    unmergeable head passing the gate is the same false-pass class the entry is about.
-    `DIRTY` now joins the blocking set. Safe because `DIRTY` is a *computed* verdict —
-    GitHub reports `UNKNOWN` while mergeability is still being determined — so it
-    cannot fire on a pending computation, and `MERGE_GATES_IGNORE_MERGESTATE` still
-    covers a positively-confirmed stale `DIRTY` (pinned by its own test).
-  - **(3) Give "CI is unavailable" a defined move — DONE (2026-08-13).** Design call
-    made: escalation is a deterministic poller verdict, and the move on it is
-    stop-and-surface, never override. `merge-gates.sh` gained an Actions-outage
-    detector: after `MERGE_GATES_OUTAGE_POLLS` (default 15) consecutive
-    unexplained required-absent polls it probes `actions/runs?created=>=<poll
-    start>` repo-wide; zero runs created → stop polling, print `ESCALATE:
-    ACTIONS UNAVAILABLE` with the diagnosis, return the new exit code 7 —
-    instead of burning the remaining window to the generic per-check timeout.
-    The PROBE (not the threshold) separates an outage from the ~27 min
-    check-suite creation lag: backlogged-but-alive Actions still creates runs
-    repo-wide, so the count stays >0 and polling continues. Conflict-explained
-    absence (mergeStateStatus=DIRTY) never counts toward the streak, a failed
-    probe keeps polling (escalation is never taken on unverified evidence), and
-    0 disables. The ship-loop's defined move for exit 7 is documented at
-    `docs/agent-rules/ship-loops.md` § CI unavailable: escalate per
-    `AI_POLICY.md`, re-run when Actions drains or re-fire CI, never `--admin`
-    past absent checks — which fix (1)'s detector now flags regardless. Suite:
-    `tests/bats/merge_gates.bats` § Actions-outage escalation (8 cases:
-    escalate / alive / probe-fail / threshold / streak accumulation / DIRTY
-    exemption / disabled / knob validation).
-
-  Status: applied — all three fixes shipped ((1)+(2) 2026-08-11, (3) 2026-08-13)
-  Last-reviewed: 2026-08-13
-
-# The required CR-findings gate has no pass path when CodeRabbit never reviews (throttled, draft-skipped, or path-excluded)
-
-- 2026-08-06 · orchestrator · [tooling] · P2 — `merge-gates.sh` misclassifies **every** CodeRabbit skip as the too-many-files size-skip: the `$crskip` disjunct `contains("skip review by coderabbit.ai")` matches the HTML marker CR emits for *any* skip reason, so a **path-filter** skip is routed into the size-skip hard-block arm. Currently **masked** for the `docs/self-improvement/**` class by the 2026-06-20 auto-exemption, so it only bites other skip classes — hence P2, not P1
-  Details: The `$crskip` computation at `agents/scripts/core/merge-gates.sh:552-554` is:
-      `any(contains("skip review by coderabbit.ai") or (test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files"))))`
-    CR's skip comment carries the literal marker `<!-- This is an auto-generated comment: skip review
-    by coderabbit.ai -->` for **every** skip reason (path filters, docs-only, trivial diff,
-    too-many-files). The first disjunct therefore fires unconditionally on any skip, `$crskip=true`,
-    and the `case NONE` size-skip arm (:957-961) short-circuits to `cr_pass=false` +
-    `cr_size_skip_block=true` with "CodeRabbit skipped review — too many files (exceeds CR file
-    limit); split the PR" — advice that is unactionable when the diff is one file. The arm is
-    deliberately a hard short-circuit (it closed the hole that let a 638-file reorg merge with zero CR
-    review), so it also pre-empts the PASS arm below it, `$crreviewskipped` (:564-569) — which would
-    not have fired anyway: it keys on the `CodeRabbit` StatusContext **description** matching "review
-    skipped", and on the observed PRs that description read `Review completed`. CR's status text and
-    its comment text disagree about the same run, so the intended fallback is keyed on a field that
-    does not carry the fact.
-  Scope of the damage today — smaller than it first appeared, verified 2026-08-06: commit `4685997d`
-    (2026-06-20, "feat(merge-gates): auto-exempt pure self-improvement doc PRs from CR + Bugbot
-    review", #1468) added a belt-and-suspenders downgrade at :1201-1202 — when
-    `self_imp_only` (tuple field 27, diff entirely under `docs/self-improvement/**`) is true, a CR
-    block is downgraded to `WARN: self-improvement doc PR — CR gate auto-skipped`. So on current
-    `develop` the misclassification is **printed but not load-bearing** for self-improvement doc PRs;
-    confirmed on PR #1961, where the bogus size-skip BLOCK appeared every poll and the run still
-    reached `GATES_PASSED` at poll 12. The bug remains live for any *other* skip class — a different
-    `.coderabbit.yaml` path filter, a docs-only or trivial-diff skip on a non-self-improvement path —
-    where nothing downgrades it and the only exits are the `cr-out-of-band` label or an out-of-band
-    merge. That residual case is the reason to still fix it.
-  Correction to the first draft of this entry: it was written from a poller run on PR #1953 that
-    appeared to block indefinitely, and claimed the sanctioned merge path was structurally unusable
-    for self-improvement PRs. That was wrong on two counts and the ledger entry built on it has been
-    withdrawn. (1) That poller was invoked from the long-lived integration tree
-    (`C:/Dev/Smatchet` @ `ff0ee7a6`), whose `merge-gates.sh` predates `4685997d` and has no downgrade
-    — the block was an artefact of a stale checkout, not of current `develop`; filed separately as
-    `2026-08-06 · [process] · P1 — gate tooling run from a long-lived session branch`, since
-    archived as applied in [`applied.md`](applied.md).
-    (2) That run did **not** end in `GATES_TIMEOUT` at 60/60 as first reported — both poll logs end
-    `PR_MERGED` at poll 49, i.e. the poller observed the merge and exited normally. No gate was
-    escaped on #1953: CI was 22/22, `CR findings (0 actionable)` was SUCCESS with description
-    `self-improvement-only diff (1 file(s) under docs/self-improvement/**) — CR review exempt`, there
-    were no unresolved threads and no override label, and a sibling session merging an open green PR
-    on the shared login is documented-expected
-    ([`process-rules.md`](../../agent-rules/process-rules.md) § Git/p4 discipline).
-  Concrete next action: two changes in `agents/scripts/core/merge-gates.sh`, plus test pins.
-    (1) **Narrow `$crskip`** — drop the bare `contains("skip review by coderabbit.ai")` disjunct (a
-    generic skip marker, not a size marker) and keep only the size-specific test, i.e.
-    `any(test("##[[:space:]]*Review skipped"; "i") and (ascii_downcase | contains("too many files")))`.
-    A genuine too-many-files skip still blocks — it carries that exact phrase; a path-filter /
-    docs-only / trivial-diff skip then falls through to the terminal-pass arms as intended. This is
-    the whole fix; the rest is defence in depth.
-    (2) **Let the repo's own required gate win** — when the `CR findings (0 actionable)` StatusContext
-    is SUCCESS on the current head, pass the CR bucket without re-deriving a verdict. That context is
-    required and already fail-closed (it returns non-terminal rather than guess — see
-    `docs/self-improvement/postmortems.md`, 2026-08-06 · PR #1948), so a poller re-derivation that
-    disagrees with it can only produce a false block, never catch a real escape. Order it ahead of the
-    `case NONE` chain. Note this also makes the :1201 self-improvement downgrade redundant for the
-    common case rather than load-bearing, which is the healthier arrangement — today a masking
-    downgrade is the only thing standing between the misclassification and a false block.
-    (3) **Pin in `tests/bats/merge_gates.bats`**: (a) path-filter skip comment on a NON-self-improvement
-    path + `CR findings` SUCCESS → PASS (the currently-unmasked case); (b) `## Review skipped` +
-    "too many files" → still BLOCK (the #638-reorg contract preserved); (c) skip comment +
-    `CR findings` SUCCESS → PASS via the new precedence rule, with `self_imp_only=false` so the test
-    cannot pass merely via the :1201 downgrade.
-    Est ~0.5d (jq edit + precedence arm + 3 bats cases).
-  Cross-ref: `agents/scripts/core/merge-gates.sh` (:552-554 `$crskip`, :564-569 `$crreviewskipped`,
-    :937-980 the `case NONE` arms, :1201-1202 the self-improvement downgrade that masks it,
-    :1164-1167 the size-skip override message); `4685997d` / PR #1468 (the masking exemption);
-    PR #1953 + PR #1961 (observations); `.coderabbit.yaml` (`!docs/self-improvement/**` path filter);
-    `.github/actions/cr-finding-gate/action.yml` (the required gate whose SUCCESS the poller
-    re-derives). Related: [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](applied.md)
-    — the mirror-image hole (gate cannot reach a verdict) in the same CR path.
-
-- 2026-08-06 · orchestrator · [process] · P2 — `postmortem-owed.sh`'s `cr-out-of-band` de-noise drops a **load-bearing** override whenever the diff has no `Source/Core/src/*.cpp`: it assumes the label only ever waives an *advisory CR verdict*, but the label is also the only exit from a **wedged required CR gate**, and that class ships invisible to the nudge
-  Details: PR #1948 (the font-asset worktree fallback) merged 2026-08-05 carrying `cr-out-of-band`.
-    The label was strictly load-bearing: `CR findings (0 actionable)` — a **required** StatusContext —
-    was stuck PENDING because CR's last on-head review was body-less, so
-    `.github/actions/cr-finding-gate/action.yml` `decide()` could not terminate (root cause filed as
-    [`process/2026-08-05-cr-finding-gate-empty-body-review-wedge.md`](applied.md)).
-    Every other check was green; re-running the workflow re-posted PENDING. The label's early-exit was
-    the only way to clear `mergeStateStatus=BLOCKED`.
-    `bash agents/scripts/core/postmortem-owed.sh --list` nonetheless reports "no gate escapes owed":
-    `core_scoped_only_trigger()` (:156-163) returns 0 — drop — for the trigger string
-    `override: cr-out-of-band`, and the guard that would keep it, `pr_touches_core_cpp()` (:167-170),
-    is false because #1948 changed only `CMakeLists.txt`, `cmake/SmatchetFontAssets.cmake`,
-    `Source/Standalone/CMakeLists.txt`, a bats file, a wrapper script and a README.
-    The de-noise rationale (:149-155) is sound for its intended class — "cr-out-of-band only waives the
-    (advisory) CodeRabbit review, so on a non-Core diff the escape is a false positive". It does not
-    hold for the wedge class: there the label dismisses a **required, non-terminal gate**, and the diff
-    scope is irrelevant to whether that mattered. Note the two holes point opposite ways in the same
-    CR path — this one hides an override that WAS load-bearing; the sibling tooling entry
-    [`tooling/2026-08-06-merge-gates-cr-path-filter-skip-false-block.md`](applied.md)
-    manufactures override use where none is needed.
-  Concrete next action: make the drop conditional on the CR gate having actually *ruled*, not on diff
-    scope. In `postmortem-owed.sh`, before `core_scoped_only_trigger()` drops a `cr-out-of-band`
-    trigger, consult `gate_conclusion "$pr" 'CR findings'` (the helper already exists, :187-202):
-      - context SUCCESS on its own → the label dismissed nothing → drop (today's behaviour, now
-        justified by evidence rather than by diff scope);
-      - context PENDING / non-SUCCESS / absent at merge → the label was load-bearing → **keep**, owes a
-        postmortem, regardless of Core-cpp scope.
-    This reuses the same "moot vs load-bearing" test the script already applies to
-    `tests-out-of-band` / `perf-out-of-band` / `coverage-out-of-band` / `intent-out-of-band` in
-    `override_is_moot()` (:212-232) — `cr-out-of-band` is the one override currently exempted from that
-    test (:227-230 routes it to the scope heuristic instead). Folding it in removes the special case.
-    Caveat to encode: the live rollup is re-run-lossy and override labels are stripped post-merge, so
-    prefer the snapshot path where available and fall back to the live query with the existing
-    documented lossiness note. Add a `--selftest` case for each of the two arms.
-    Est ~0.5d (one helper call + branch + 2 selftest cases + comment rewrite at :149-155).
-  Cross-ref: `agents/scripts/core/postmortem-owed.sh` (:149-163 `core_scoped_only_trigger`,
-    :165-170 `pr_touches_core_cpp`, :187-202 `gate_conclusion`, :204-232 `override_is_moot`);
-    PR #1948 (`2602340e`, the escape this hid); `docs/self-improvement/postmortems.md`
-    (2026-08-06 · PR #1948 entry).
-
-- 2026-08-05 · claude-code · [tooling] · P1 — `test-plan-index.sh` derives shipped-plan index dates from `git log --follow`, which squash-merge rewrites — so a plan archived and merged across a midnight boundary reddens `develop` the instant it lands, with no pre-merge state that could have passed
-
-  Observed on PR #1937 (Help > About dialog). Merged `2026-08-05T11:33:25Z` as
-  `fce0951c` with the required `Doc anchors + agent contract` terminal-green. The
-  develop tip went RED on that same check immediately after:
-  `test-plan-index: DRIFT — shipped-plan index out of sync (182 plans in archive)`.
-  Full RCA in [`postmortems.md`](../postmortems.md) (2026-08-05 entry).
-
-  Mechanism. `agents/scripts/core/test-plan-index.sh:122-143` resolves each row's
-  date with `git log --follow --format=%ad --date=short -- <path>` — the file's
-  *first-commit* date. `--follow` is what normally makes this stable across the
-  `plans/active/` → `plans/shipped/` move. A squash-merge collapses the branch into
-  one commit and the per-file pre-merge history is unreachable from `develop`, so
-  `--follow` finds exactly one commit and returns the **squash date**:
-
-      $ git log --follow --format='%ad %h %s' --date=short \
-          -- docs/plans/shipped/about-dialog-help-menu.md
-      2026-08-05 fce0951c feat(about): About Smatchet dialog under Help, ... (#1937)
-
-  Three conditions, all common: the PR archives a plan *and* commits its index row;
-  the repo squash-merges; branch work and merge fall on different calendar days.
-  Every plan-shipping PR that spans a midnight hits this.
-
-  Why it is P1 rather than P2: the check is **required**, and a red required check
-  on the develop tip is inherited by every open PR's own head under block-on-any-red.
-  One late-evening merge blocks the whole queue until someone notices, and nothing
-  announces it — `postmortem-owed.sh` keys on merge-instant signals (non-SUCCESS
-  checks, override labels, `Revert`, overdue deviations) and this class emits none,
-  so it reports "no gate escapes owed" for the PR that caused it.
-
-  Proposed fix — **stop deriving the value from mutable git metadata.** Have
-  `--fix` write the resolved date into the plan file as an explicit
-  `<!-- plan-date: YYYY-MM-DD -->` marker when a plan is archived, and have the
-  generator prefer that marker, falling back to `git log --follow` only for legacy
-  plans without one. Content survives squash, shallow clone and staged rename
-  identically. This is not a fourth special case — it **retires the two already in
-  the script**, both of which exist to paper over the same history lookup: the
-  shallow-clone guard (`:45`, `:105`) and the staged-rename sibling-tier fallback
-  (`:135-143`, whose comment already cites the #1061 / #1092 archive date-drift
-  "twice"). Squash-merge is the third way the same lookup moves under the generator;
-  the recurring shape is the defect.
-
-  Concrete next action: add the marker read/write to `test-plan-index.sh`, plus two
-  `--selftest` cases — (1) a `shipped/` plan whose only commit is the current HEAD
-  still resolves a stable date; (2) a marker date disagreeing with its index row
-  FAILs. Migrate existing rows by running `--fix` once to stamp markers from the
-  currently-committed dates, so no archived plan's date changes on adoption.
-
-  Paired with: the develop-tip required-green assertion proposed in the
-  `2026-07-10 · PR #1698` postmortem and never landed. This is its second instance —
-  a gate that can only go red *after* the merge needs a detector that looks after
-  the merge.
-
-  **Applied 2026-08-11 (mechanism); back-catalogue migration still PENDING.**
-  `test-plan-index.sh` now reads a `<!-- plan-date: YYYY-MM-DD -->` marker in
-  preference to git, and `--fix` stamps one into any plan **the current change
-  touches** that lacks it. `--check` never writes, so the required gate stays
-  read-only. Stamping is diff-scoped deliberately: an unscoped `--fix` turned
-  the CI autosync into a bulk migration — with all 188 archived plans unstamped,
-  the first PR to trigger it had 188 bot-authored marker commits pushed onto its
-  branch (192 files, past CodeRabbit's 100-file review limit, required CR gate
-  wedged; observed live on PR #1999). That mass stamp was **reverted** and the
-  scope added; migrating the back catalogue is now a deliberate one-shot behind
-  `SMATCHET_PLAN_STAMP_ALL=1`, to land as its own reviewed PR.
-
-  An earlier draft of this block claimed the 188-plan migration had landed and
-  that shallow-clone `--check` was "demonstrated end to end". **As of this
-  writing it has not**: 1 of 188 shipped plans carries a marker, git is still
-  consulted for the other 187, and shallow-clone `--check` stays git-dependent
-  until the migration PR lands. What WAS verified: the migration built from
-  `INDEX.md`'s own committed rows leaves `INDEX.md` byte-identical, and with it
-  applied, `--check` flips from DRIFT to pass on a shallow clone — demonstrated
-  on a branch, then reverted with the rest of the mass stamp.
-
-  **One claim in the proposal is wrong and should not be carried forward.** The
-  entry says the marker "retires the two special cases already in the script"
-  (the shallow-clone guard and the staged-rename sibling fallback). It does not.
-  Both are still needed at STAMP time: a new plan is stamped from git exactly
-  once, and that one read must be correct — on a shallow clone it would not be,
-  and for a freshly `git mv`'d plan the sibling fallback is what resolves it at
-  all. What the marker changes is the *exposure*: from every run on every clone
-  forever, down to a single deterministic moment on the author's full-history
-  checkout. That is a large win, but it is a narrowing, not a retirement, and
-  deleting those guards on the strength of this entry would reintroduce the drift
-  at the one moment it still matters.
-
-  Two `--selftest` cases were added as asked, in a throwaway repo whose plan has
-  exactly ONE commit dated today — the post-squash shape, which cannot be staged
-  inside this repo: (a) the row carries the marker date, not the commit date;
-  (b) a marker disagreeing with its committed row FAILs `--check`. Disabling
-  marker precedence fails (a).
-
-  While adding them, the file's PRE-EXISTING negative assertion turned out to be
-  vacuous — it self-exec'd a mode-100644 script, so `126 Permission denied`
-  satisfied it — and the first version of the new cases was vacuous too, via
-  `set -e` inside a `||` operand. Both fixed here; the class is filed as
-  [`asserts-failure-marker-does-not-prove-the-negative-is-reachable`](applied.md).
-
-  Not addressed: the paired develop-tip required-green assertion. Still open, and
-  still the right second layer — this fix removes the cause, not the class of
-  "green on the PR head, red on develop".
-
-  Status: applied
-  Last-reviewed: 2026-08-11
-
-- 2026-08-05 · claude-code · [tooling] · P2 — The gate-poller filters bot review threads out of its user-comment gate, but `required_conversation_resolution` counts them — so the poller can report all-clear on a PR GitHub will never merge
-
-  Observed on PR #1937 (Help > About dialog). After the missing `CR finding gate`
-  check-run was resolved (see
-  `2026-08-04-required-check-cancelled-while-pending-wedges-poller.md`), the head
-  was 43 SUCCESS / 5 SKIPPED / 0 fail, `cr-out-of-band` was set with a
-  `cr-disposition:` marker, and the poller printed `User: 0`. GitHub still
-  reported `mergeStateStatus=BLOCKED` and refused the merge.
-
-  Cause: branch protection on `develop` sets
-  `required_conversation_resolution: {"enabled": true}`, and GitHub counts **every**
-  unresolved review thread — including bot-authored ones. Ten unresolved CodeRabbit
-  threads were open on the PR. The poller's gate #3 deliberately excludes them:
-  `agents/scripts/core/merge-gates.d/10-gate-filter.sh:210-212` selects only threads
-  with `.author.__typename != "Bot"` and a login other than `ORCH_USER`. Gate #2 (the
-  CodeRabbit gate) passes on `APPROVED` / `COMMENTED + 0 actionable` and is separately
-  waivable via `cr-out-of-band` — but that label waives the **poller's** gate. GitHub
-  branch protection has never heard of it. So both poller gates read green while the
-  thing actually holding the merge was a count neither of them measures.
-
-  Why it matters beyond this PR: the divergence is silent and it fails in the
-  expensive direction. The poller's own output is what an operator (or the
-  merge-watcher) reads to decide whether to keep waiting, and it says the PR is
-  ready. The only signal to the contrary is the opaque `mergeStateStatus=BLOCKED`
-  line, which names no cause. On #1937 this cost the full ~90 min budget and a
-  manual GraphQL sweep to discover the ten threads and resolve them one by one.
-  The `cr-out-of-band` label makes it *worse*, not better: waiving the CR gate is
-  precisely the situation in which unresolved CR threads are expected to remain,
-  so the label reliably steers into the wedge.
-
-  Proposed fix: project the **unfiltered** unresolved-non-outdated thread count as a
-  new field alongside the existing user count, and on a `mergeStateStatus=BLOCKED`
-  poll where every other gate passes, emit an actionable BLOCK naming it — e.g.
-
-      BLOCK: mergeStateStatus=BLOCKED with all gates green; 10 unresolved review
-             thread(s) (0 user, 10 bot) and branch protection requires conversation
-             resolution. Resolve them or the merge will never unblock.
-
-  The thread nodes are already fetched by the same GraphQL query, so this is a jq
-  projection change, not an extra API call. Gate the message on the repo actually
-  having `required_conversation_resolution` enabled (one `gh api
-  repos/{o}/{r}/branches/{base}/protection` read, cached per run) so it does not
-  fire spuriously on repos without it.
-
-  Deliberately **not** proposed: making the poller resolve bot threads itself. That
-  is a merge-blocking judgement call — auto-resolving CR threads would silently
-  discard findings, which is exactly the failure mode `cr-out-of-band` already has a
-  `cr-disposition:` attestation to prevent.
-
-  Concrete next action: add the unfiltered-thread-count field to
-  `agents/scripts/core/merge-gates.d/10-gate-filter.sh` and the BLOCK branch to
-  `agents/scripts/core/merge-gates.sh`, with a `tests/bats/merge_gates.bats` case
-  pinning the "all gates green + BLOCKED + N bot threads" path to the actionable
-  message. Also worth a line in `docs/agent-rules/merge-gates.md` § CodeRabbit gate:
-  `cr-out-of-band` waives the poller's gate only — it does not waive branch
-  protection's conversation-resolution requirement.
-
-  Update (2026-08-13): shipped as proposed. `10-gate-filter.sh` projects the
-  unfiltered unresolved-non-outdated thread counts (fields 31 total / 32
-  user-authored; the projection grew 31 -> 33 fields with the fail-closed
-  count assertion updated in lockstep), and `merge-gates.sh` names the cause on
-  the poll it appears: when `mergeStateStatus=BLOCKED` with every other gate
-  green and threads open, it emits the actionable BLOCK with the (user, bot)
-  split, gated on the base branch actually requiring conversation resolution
-  (one branch-protection read cached per run; env seam
-  `MERGE_GATES_CONV_RES_REQUIRED` mirrors pr-blocked-why.sh's; a probe miss
-  reports "may require" rather than staying silent). A user-authored open
-  thread never takes this path — it reds the user-comment gate, which already
-  names itself; the line is reserved for the invisible bot-only case, and it
-  points at `pr-blocked-why.sh` for the per-thread classification. merge-gates.md
-  § Per-PR overrides now states the general rule: out-of-band labels waive the
-  poller's gates only, never branch protection. Six bats cases pin the path
-  (named / conv-res-disabled silent / unknown hedged / zero threads silent /
-  other-gate-red silent / user-thread reds the user gate instead).
-
-  Status: applied
-  Last-reviewed: 2026-08-13
-
-- 2026-08-04 · claude-code · [tooling] · P2 — A required check cancelled *while pending* wedges the gate-poller for its full budget with no actionable signal
-
-  Observed on PR #1937 (Help > About dialog). The poller ran all 90 polls (~90 min)
-  and returned `GATES_TIMEOUT` having merged nothing. Every poll printed the same
-  three lines:
-
-      CI: 21/21 pass (0 fail, 0 pending, 0 warn-downgraded, 1 req-missing)
-      BLOCK: required-missing: CR finding gate (... never ran; e.g. a GITHUB_TOKEN
-             bot push that did not re-trigger CI).
-      BLOCK: GitHub mergeStateStatus=BLOCKED
-
-  Root cause: `.github/workflows/cr-finding-gate.yml` sets `concurrency.group` per
-  PR with `cancel-in-progress: false`. That flag stops a *newer* run from killing an
-  *in-progress* one — but GitHub still keeps only ONE **pending** run per group and
-  cancels the rest. Two pushes landed ~2 min apart (`ae082520`, then `289bb3ff`);
-  the first run was in-progress, the second went pending and was cancelled. A run
-  cancelled before it starts **creates no check-run at all**, so the required
-  context `CR finding gate` was not red on the head — it was *absent*. Branch
-  protection blocks on absent-required forever, and nothing re-triggers the
-  workflow, because its triggers are `pull_request` (already consumed) plus CR
-  review/comment events (CodeRabbit was rate-limited and never reviewed the head).
-
-  Two distinct problems, both worth fixing:
-
-  (1) **The poller cannot distinguish "not yet" from "never".** `required-missing`
-      is treated identically to `pending` — wait and re-poll — but the two have
-      opposite remedies. The head was otherwise 39 SUCCESS / 5 SKIPPED / 0 fail /
-      0 pending from the first poll onward; there was nothing left to arrive. The
-      diagnostic string already *guesses* the cause ("e.g. a GITHUB_TOKEN bot push
-      that did not re-trigger CI") without checking it. Proposed: when a required
-      context is missing AND every other check has reached a terminal state, query
-      `gh run list --workflow <w> --json conclusion,headSha` for that context's
-      workflow; if the newest run on the head is `cancelled`/`skipped`, emit an
-      actionable BLOCK naming the run id and the one-line fix
-      (`gh run rerun <id>`) and return immediately rather than burning the
-      remaining budget. Cheap: one extra API call, only on the missing-required
-      path, only once the rest of CI is terminal.
-
-  (2) **`cancel-in-progress: false` does not mean what the workflow comment says.**
-      The header comment reasons "let them all complete rather than cancel", which
-      is true only for in-progress runs. The 18:29:50 burst in the same PR shows
-      five `pull_request_review_comment` runs cancelled in one second — the pending
-      queue collapsing exactly as documented by GitHub, contrary to the comment's
-      stated intent. For a gate whose *absence* blocks merge, dropping pending runs
-      is the dangerous direction. Options: drop the `concurrency` block entirely
-      (the job is a few seconds and only posts a status, last-write-wins — which
-      the comment already argues), or keep it and add a scheduled/`workflow_run`
-      backstop that re-posts the context if the head lacks it.
-
-  Note the near-miss: the *status context* `CR findings (0 actionable)` WAS green on
-  the head ("cr-out-of-band label set — gate overridden"), so the override worked
-  end-to-end. What blocked was the *check-run* `CR finding gate` — the job name.
-  Same workflow, two surfaces, only one of them in the required list. Worth a line
-  in `docs/agent-rules/ci-required-check-pattern.md`: a workflow that posts a status
-  context under a different name than its job is two independently-failable gates.
-
-  Scope correction (2026-08-05): the missing check-run was *a* blocker, not the
-  last one. After a later push produced a green `CR finding gate`, the PR stayed
-  `BLOCKED` — the residual cause was `required_conversation_resolution` with ten
-  unresolved CodeRabbit threads, which the poller does not count. That is a
-  separate defect, filed as the 2026-08-05 poller-bot-thread-filter entry
-  (applied — the poller now names the cause; archived in `../applied.md`).
-  Everything above about the cancelled-pending run still holds; it just was not
-  the whole story, which is itself the lesson — the poller reported one BLOCK
-  reason at a time and cleared it into another.
-
-  Concrete next action: implement (1) in `agents/scripts/core/merge-gates.sh` with a
-  `tests/bats/merge_gates.bats` case pinning the cancelled-run→actionable-BLOCK
-  path; file (2) against the workflow separately, since it needs a decision on
-  which of the two remedies to take.
-
-  Status: applied (2026-08-14 — fix (1) landed in
-  `agents/scripts/core/merge-gates.sh`: in the unexplained required-missing
-  branch, once every other check is terminal-green, the poller probes the
-  head's workflow runs; ≥1 CANCELLED run with zero queued/in-progress is the
-  "never, not late" evidence — it emits `BLOCK: required-missing-cancelled`
-  naming each run id with its `gh run rerun <id>` one-liner and exits with the
-  new distinct code 8 instead of burning the remaining budget. Probe failure,
-  any active run, or no runs at all (the pure creation-lag shape) keep
-  polling, and the outage exit-7 path is regression-pinned to still fire —
-  six cases in `tests/bats/merge_gates.bats` (§ cancelled-while-pending).
-  The two-surface observation is now a section in
-  `docs/agent-rules/ci-required-check-pattern.md` ("Two surfaces per
-  workflow"). Fix (2) is filed separately as
-  `2026-08-14-cr-finding-gate-pending-queue-collapse.md` per this entry's own
-  scoping — it needs a workflow-design decision, with option 1 (drop the
-  concurrency block) recommended there.)
-  Last-reviewed: 2026-08-14
-
-# `cancel-in-progress: false` still collapses the PENDING queue — cr-finding-gate needs a decision
-
-- **Category**: tooling
-- **Priority**: P2
-- **Date**: 2026-08-14
-- **Split from**: `required-check-cancelled-while-pending-wedges-poller`
-  (2026-08-04, archived — its problem (2), filed separately per its own scoping
-  because this needs a workflow-design decision, not a poller change)
-
-## Problem
-
-`.github/workflows/cr-finding-gate.yml` sets `concurrency.group` per PR with
-`cancel-in-progress: false`. The header comment reasons "let them all complete
-rather than cancel" — true only for **in-progress** runs. GitHub keeps only ONE
-**pending** run per group and cancels the rest; on #1937 five
-`pull_request_review_comment` runs were cancelled in one second, and a
-cancelled-while-pending run creates **no check-run at all**, leaving the
-required `CR finding gate` context absent-forever (nothing re-triggers it).
-
-The poller side is fixed (merge-gates.sh exit 8 names the cancelled run and the
-`gh run rerun <id>` remedy), but the workflow still manufactures the wedge.
-
-## Decision needed (either resolves it)
-
-1. **Drop the `concurrency` block entirely.** The job only posts a status and
-   the comment already argues last-write-wins; every run evaluates the current
-   head state via GraphQL, so verdicts converge regardless of completion order.
-   Cost: bursts run more concurrent jobs, each polling up to
-   POLL_BUDGET_SECONDS (180 s) — runner minutes, not correctness.
-2. **Keep it and add a backstop** (scheduled or `workflow_run`) that re-posts
-   the context when the head lacks it. More moving parts; keeps burst cost low.
-
-Option 1 is simpler and removes the class; take it unless runner-minute cost
-is shown to matter.
-
-## Status
-
-Applied (2026-08-14, same day — option 1 taken per this entry's own
-recommendation: the `concurrency` block is removed from
-`.github/workflows/cr-finding-gate.yml`, with the replacement comment
-documenting why running every event is correct for this gate (each run
-evaluates current head state and posts last-write-wins, so parallel runs
-converge; burst cost is bounded by POLL_BUDGET_SECONDS per run). The
-no-concurrency shape is pinned by `tests/bats/cr_finding_gate.bats`
-("workflow has NO concurrency block", YAML-key match) so the collapse class
-cannot be silently reintroduced.
-
-## [P1] CR finding gate: poll loop outlives its own job timeout, wedging the PR
-
-**Category**: tooling
-**Date**: 2026-08-06
-**Observed on**: PR #1954
-
-### What happened
-
-`.github/actions/cr-finding-gate/action.yml` polled CodeRabbit with
-`ATTEMPTS=12` + `sleep 15`. That bounds only the *sleeping* (165 s); the loop's
-real cost is 165 s **plus 12 GraphQL round-trips**, which is unbounded from the
-step's point of view. The job carried `timeout-minutes: 5`, shared with setup +
-checkout.
-
-On a congested runner the job was killed mid-`sleep`, **before either terminal
-`post` ran**. Consequences, all silent:
-
-- the required check-run `CR finding gate` never reached a terminal state;
-- the StatusContext `CR findings (0 actionable)` kept whatever value it already
-  had (stale);
-- nothing re-triggers the workflow — its triggers are CR review/comment events,
-  and CR had already spoken.
-
-Net: the PR wedged with **no self-healing path**. Only a manual re-run cleared
-it. The gate's entire contract is "always leave a status behind", and the one
-failure mode that breaks that contract had no guard.
-
-### Why the existing gates missed it
-
-The two numbers that must be ordered (`POLL_BUDGET`/`ATTEMPTS` in the composite
-action, `timeout-minutes` in the workflow) live in **different files**, with no
-assertion tying them together. Nothing failed; the job simply died. A timeout
-kill is not a red test — it looks like infrastructure noise.
-
-### Preventing gate
-
-`tests/bats/cr_finding_gate.bats` (wrapper
-`agents/scripts/project/test-cr-finding-gate-bats.sh`) pins both invariants:
-
-1. **Timeout ordering** — `POLL_BUDGET_SECONDS` < Evaluate step
-   `timeout-minutes` < job `timeout-minutes`, so the poll window always closes
-   with time left to post and the step always dies before the job.
-2. **Fallback poster exists** — an `if: always()` step posts PENDING to the
-   *same* StatusContext when `steps.eval.outcome` is neither `success` nor
-   `skipped`, converting "wedged forever" into "pending, re-runnable".
-
-Both carry negative selftest fixtures (inverted ordering; fallback removed), so
-the checks are proven to fire rather than passing vacuously.
-
-### Generalisable lesson
-
-**A poll loop that bounds its sleeps has not bounded its runtime.** Bound the
-wall clock (`SECONDS`-based deadline), not the attempt count — then the exit
-time is an invariant of the step rather than a consequence of API latency.
-
-**Step-scoped vs job-scoped timeouts are not interchangeable.** A step timeout
-cancels one step and lets `if: always()` cleanup run; a job timeout takes the
-cleanup down with it. Any workflow whose contract is "always post something"
-needs its risky work step-scoped.
-
-- 2026-08-04 · orchestrator (py-probe-exec-validation-gate) · [tooling] · P2 — resolve-only python probes: single-candidate hard-require guards (~15 scripts) stay unflagged by shell-lint rule 9, and `_lock-json.py` emits CRLF-terminated lock-table rows that silently void every plan-lock on Windows
-  Details: on Windows `python3` on `PATH` is the Microsoft Store *App Execution Alias* stub — `command -v python3` resolves it and returns 0, but running it prints an install banner and exits non-zero. PR #1936 fixed the bats suites; this follow-up fixed the four remaining **pickers** (`doctor.sh`, `merge-watcher-stuck-nudge.sh`, `agent-eval-run.sh`, `test-tooltip-wrapwidth.sh`, plus `lock-table-cache.sh` `_ltc_pybin()`) and added rule 9 (`SHELL_LINT_PY_PROBE`). Two residuals were left deliberately. **(1)** The single-candidate shape (`command -v python3 || exit 2` … then a bare `python3 tools/foo.py`) is not flagged on purpose: with one candidate nothing can be mis-selected, so it fails loudly at the first invocation instead of silently preferring a stub over a working interpreter. Clearing it is not a probe edit — every downstream call site must become `"$PY" foo.py` across ~15 scripts — and `test-shell-lint.sh` has no WARN tier and no delta-gating, so a rule covering the shape would have to ship with all ~15 already converted. **(2)** `agents/scripts/core/_lock-json.py` writes its TSV rows with `sys.stdout.write("\n")` through a Windows **text-mode** stdout, so every row arrives CRLF-terminated and the trailing CR lands on the last field — the path. `_ltc_norm_path`'s exact-match in `lock-table-cache.sh` then fails for *every* locked path: a held plan-lock silently covers nothing. This was masked until now — the pre-fix `_ltc_pybin()` picked the stub, `_lock-json.py` never ran, `ltc_covering_slug` returned rc 2 ("undetermined") and the write-set guard took its documented fail-open path. Fixing the probe is what surfaced it: an inert mandatory concurrency guard started running and immediately mismatched. Mitigated at the shell normalization chokepoint (`_ltc_norm_path` strips CR before its existing backslash normalization); not fixed at the source because the module carries `from __future__ import print_function`, so `sys.stdout.reconfigure(newline="\n")` (py3.7+) needs a guarded py2-tolerant form that does not belong in a probe-fix diff. Both residuals are the same class the gate was added for — *silent-wrong on one platform* — and (2) is worse than the originally reported bug.
-  Concrete next action: (a) add `agents/scripts/core/lib/resolve-py.sh` with one exec-validating `resolve_py()`, convert the ~15 single-candidate guards to source it, then widen rule 9 to flag any python probe not routed through it (one shape to enforce instead of a regex guessing at intent); (b) fix `_lock-json.py` newline handling at the source (reconfigure the stream or write bytes), keep the shell-side strip as defence in depth, and add a test asserting no `\r` survives in a lock-table row on Windows.
-  Status: applied (flipped at archival)
-  Last-reviewed: 2026-08-04
-
-- 2026-08-04 · orchestrator · [tooling] · P3 — `scripts/dev/with-msvc.ps1` signals its own "no usable MSVC toolchain" failure **in-band**, as exit code `78`, on the same channel it uses to propagate the wrapped command's exit code; a wrapped command that ever returns 78 would be misreported by `build.ps1` as a missing toolchain
-  Details: Raised by CodeRabbit on PR #1933 (Major, `scripts/dev/with-msvc.ps1:27`) and accepted as a
-    known residual rather than fixed there. The wrapper's tail is `& $exe @rest; exit $LASTEXITCODE`,
-    so *every* code it emits other than its own four failure paths belongs to the child. PR #1933
-    already moved those four from `2` to `78` precisely because `2` was a **live** collision — cmake,
-    ninja and ctest all return 2 routinely, so an ordinary failed build printed "no usable MSVC
-    toolchain (see the with-msvc line above)" and a winget install hint. `78` was picked to sit
-    outside the range those tools use, which downgrades the collision from reachable to theoretical:
-    the only command `build.ps1` ever wraps is `powershell -File build_and_run.ps1`, whose failure
-    codes are cmake/ninja/ctest's 1/2/8 and PowerShell's 1. Nothing in the call graph returns 78
-    today. But the ambiguity is structural, not numeric — any single-channel scheme has it, and a
-    future wrapped command (or a future `build.ps1` that wraps something else) re-opens it.
-  Concrete next action: give the wrapper an **out-of-band** status channel and stop overloading the
-    exit code. Cheapest shape that fits the existing sandbox harness: have `with-msvc.ps1` write a
-    sentinel file (path passed in via an env var, e.g. `SMATCHET_MSVC_STATUS_FILE`) on each of its
-    four failure paths, and have `build.ps1` key its install hints on *that file's presence* rather
-    than on `$LASTEXITCODE -eq 78`, while still propagating whatever code came back. Two call sites
-    must move together: `build.ps1`'s else-branch currently reads only `$LASTEXITCODE`, and
-    `scripts/dev/local/test-build-wrapper.ps1` stubs the wrapper **by exit code alone** — test 7's
-    3-row table (78/msvc, 78/clang, wrapped-exit-2) would need its stub to write the sentinel too,
-    and gains a fourth row: a wrapped command that returns 78 *without* the sentinel must propagate
-    78 and print no hints. That fourth row is the assertion the current design cannot make, and is
-    the reason to do the work at all. Est ~0.5d.
-  Cross-ref: `scripts/dev/with-msvc.ps1` (`$ToolchainMissingExit`, the four `exit $ToolchainMissingExit`
-    sites, and the `& $exe @rest; exit $LASTEXITCODE` tail that creates the sharing);
-    `build.ps1` (the `-eq 78` branch); `scripts/dev/local/test-build-wrapper.ps1` (test 7);
-    `docs/agent-rules/build.md` § Entry point (the documented contract that would change);
-    `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` § Deviations (the bullet that
-    requires this entry); CodeRabbit thread on PR #1933 (comment `3714335162`).
-  Status: applied (flipped at archival — implemented against the bash ports that superseded the
-    PS files after PR #1956 deleted them: `scripts/dev/with-msvc-env.sh` writes a
-    `toolchain-missing` sentinel to `$SMATCHET_MSVC_STATUS_FILE` via a `fail_env` helper on every
-    own-failure exit, `build.sh` keys its install hints on the sentinel's presence while
-    propagating the exit code, and `scripts/dev/local/test-build-wrapper.sh` test 7 gained the
-    fourth row — wrapped exit 78 *without* the sentinel propagates with no hints)
-  Last-reviewed: 2026-08-15
-
-- 2026-08-03 · orchestrator · [tooling] · P1 — a shipped plan's § Deviations / § Implementation log can assert a delivery that never landed and **no gate reads it**: `msvc-build-onboarding-hardening.md:85` claims "`build_standalone.ps1` (plan file 1) already had the MSVC bootstrap from slice 1" — `git log -S vcvars` on that file is **empty across all history**; the promised vcvars/vswhere env import was never written, in any revision
-  Details: Surfaced while validating the `dev-onboarding-first-run-quickstart` plan, whose § Context
-    premise ("MSVC bootstrap already exists, just needs a root entry point") was inherited from that
-    line. Chain: PR #493 planned "locate `vcvars64.bat` through `vswhere.exe` … import via
-    `cmd /c \"...vcvars64.bat && set\"`" for `build_standalone.ps1`. PR #495 (`da36b45f`, 2026-05-28)
-    shipped the *other* items and closed the row with the § Deviations line above. The blameless root
-    cause is a **name conflation**: the file did contain a `Use-Msys2Ucrt64Environment` call (an **MSYS2**
-    UCRT64 env bootstrap) which #495 replaced with the retirement `throw` — that pre-existing env-setup
-    call was read as "the bootstrap", so the row was closed as already-done rather than dropped. The
-    file's only `vswhere` use is `Get-VsWherePath` (:71-83), which locates **MSBuild.exe**, not vcvars.
-    Nothing contradicted the claim: § Verification (actual) lists `test-build-wrapper.ps1` 3/3 green, but
-    all three cases test the msys2-retirement throw, the `Exe :`/`Time:` print, and the stale-sibling
-    table — **none exercises an MSVC env bootstrap**, so a passing verification block is fully consistent
-    with the capability being absent. And `postmortem-owed.sh --list` returns "no gate escapes owed": the
-    nudge reads merge signals (non-SUCCESS checks, override labels, `Revert`, overdue deviations), so an
-    *untrue prose claim* in a doc is structurally invisible to it. The claim then sat load-bearing for
-    ~2 months and seeded a false premise into a downstream plan.
-  Concrete next action: add gate rule **`plan-claim-anchor`** —
-    `agents/scripts/core/test-plan-claim-anchors.sh`, joining the existing plan-doc gate family
-    (`test-plan-index.sh` / `test-plan-ref-integrity.sh` / `test-markdown-links.sh`) in the
-    "Doc anchors + agent contract" doc-validation job. Rule: inside a plan's **§ Deviations** or
-    **§ Implementation log** sections only, a line matching the pre-existing-delivery claim set
-    (`already had|has|have|exists|existed|implemented|landed|shipped`, `was already`) MUST carry a
-    verifiable citation — a markdown link or backticked ref with a `:<line>` suffix, or a `#<PR>` /
-    commit-sha reference. Delta-gated vs `origin/develop` and baseline-grandfathered like every other
-    rule (measured 2026-08-03, claim pattern above + anchor pattern `:<line>` / `#<2+ digits>` /
-    7-40-char hex sha, scanning `## Deviations` / `## Implementation log` sections only:
-    **38 such claims across 30 files, 25 unanchored** — all grandfathered; only NEW claims must
-    anchor. The `--selftest` re-derives this baseline rather than hardcoding it). Escape:
-    `SMATCHET_DEVIATION(rule=plan-claim-anchor; reason=…; owner=…; revisit=…)` for claims about state
-    outside the repo (e.g. `solo-merge-review-gate.md:91` cites GitHub branch-protection API state,
-    which has no `file:line`). This does not prove a claim true — it forces the author to point at the
-    code, and **there is no line to point at for a vcvars import that does not exist**, which is exactly
-    where #495 would have stopped. Est ~0.5d (bash gate + `--selftest` + AGENTS.md contract-card row).
-    Explicitly NOT proposed: extending `postmortem-owed.sh` — this class carries no merge signal, so
-    detection belongs at doc-gate time, not at merge-nudge time.
-  Cross-ref: `docs/plans/shipped/msvc-build-onboarding-hardening.md` (:82 impl-log, :85 the false
-    § Deviations claim, § Verification (actual) 3/3 non-covering tests); `scripts/dev/local/build_standalone.ps1`
-    (:71-83 `Get-VsWherePath` → MSBuild only, zero vcvars); PR #493 (`a9058b96`, plan) / **PR #495**
-    (`da36b45f`, the escaping PR); `scripts/dev/with-msvc.ps1` :39-139 (where a real vcvars import DOES
-    live — the capability exists in the tree, just not in the file the plan named);
-    `docs/plans/shipped/dev-onboarding-first-run-quickstart.md` (downstream plan that inherited the false
-    premise); `docs/self-improvement/postmortems.md` (ledger entry).
-  Status: applied (this entry shipped as test-plan-claim-anchors.sh; Status flipped at archival)
-  Last-reviewed: 2026-08-03
-
-- 2026-08-03 · orchestrator · [test] · P1 — **every** bucket-E `--spawn` driver hung to its full timeout on a debug/asserts build, and the surfaced error named the wrong cause: the child process passed its tests, then tripped `"You need to call ImGui::DestroyContext() BEFORE ImGuiTestEngine_DestroyContext()"` during teardown and died before printing the result envelope, so the parent reported `{"code":"timeout","hint":"Try --timeout=<larger-ms> or --frames=<smaller-n>"}` — a hint that is actively misleading (no timeout value can fix a teardown assert, and `CliDispatch.cpp:476` ignores `pa.timeoutMs` on the `--spawn` path anyway)
-  Details: Surfaced writing the bucket-E TU for slice 2 of `dev-onboarding-first-run-quickstart`.
-    Isolated as pre-existing by running an **untouched** sibling driver
-    (`scripts/dev/test-ui-annotate-prefs-persist.sh`), which hung identically. Mechanism: the test
-    engine is created per `ui_test.run` and destroyed while the app's ImGui context is still alive
-    (the app outlives any single `ui_test.run`), and ImGui's settings-save path runs against the
-    engine's context during that window. Fixed in this slice by setting `io.ConfigSavedSettings = false`
-    in `Source/Core/src/Commands/Scenarios/UiTestScenario.cpp` — the scenario has no use for persisted
-    ini state, and disabling it removes the teardown write entirely. Two failure-visibility problems
-    remain and are the real lesson: (1) a child that dies after passing is indistinguishable at the
-    parent from a child that never finished; (2) the timeout hint asserts a remedy the code path does
-    not implement. Note: bucket-E **CI-lane** flake remediation (llvmpipe/Mesa collapse to
-    `Passed:0 Failed:73`) is separately in flight in the `bucket-e-gate-escape-pm` /
-    `bucket-e-residual-fix` worktrees — this entry is the **local driver/teardown** class, not that one.
-  Concrete next action: two small changes in `Source/Core/src/Commands/CliDispatch.cpp` around the
-    `--spawn` wait. (a) On child exit **without** a parsed envelope, distinguish the cases: report
-    `code:"child-died"` with the child's exit code and the tail of its log instead of `code:"timeout"`,
-    and only report `timeout` when the child is still alive at the deadline. (b) Either honour
-    `pa.timeoutMs` in the `scenarioWaitMs = (frames / 60 + 30) * 1000` computation at :476, or drop
-    `--timeout` from the hint string — a hint naming a flag the path ignores costs every future
-    investigator the same detour. Est ~0.5d. Optional follow-on: a bats case that plants a child
-    which exits non-zero after printing a PASS line and asserts the parent reports `child-died`.
-  Cross-ref: `Source/Core/src/Commands/Scenarios/UiTestScenario.cpp` (the `io.ConfigSavedSettings = false`
-    fix); `Source/Core/src/Commands/CliDispatch.cpp:476` (the `scenarioWaitMs` computation that drops
-    `pa.timeoutMs`); `scripts/dev/test-ui-tracker-first-run-setup.sh` + `scripts/dev/test-ui-annotate-prefs-persist.sh`
-    (drivers that both hung pre-fix); `docs/plans/shipped/dev-onboarding-first-run-quickstart.md`
-    § Deviations (the out-of-plan infra-fix entry).
-  Status: applied (flipped at archival — the spawn code had moved to `Source/Standalone/` in the
-    CliCommandRunner god-file split by implementation time. Part (b) was already resolved upstream:
-    `ScenarioWaitMs` (CliArgCoercion.cpp) honours `pa.timeoutMs`, so the `--timeout` hint is
-    accurate. Part (a) implemented: `LaunchEphemeralInstance` (CliSpawn.cpp) now hands back a
-    move-only `SpawnedChild` tracker (Windows keeps `pi.hProcess` instead of closing it at launch;
-    POSIX keeps the fork pid), `PollSpawnedChild` WNOHANG-probes liveness, and
-    `AwaitSpawnResultFile` (CliDispatch.cpp) interleaves the result-file wait with that probe — a
-    child observed dead without an envelope (after a 250 ms flush-grace re-check) reports
-    `code:"child-died"` with the child's exit code + a sanitized 2 KiB log tail + the log path,
-    exit `kExitHandler`; `code:"timeout"` is only reported when the child was never observed dead.
-    `ExitCodeForErrorCode` maps `child-died` explicitly, pinned in CliExitCodes.test.cpp. The
-    optional bats follow-on (plant a child that dies after a PASS line) is not automatable without
-    a real crashing spawn child — deferred with the CliExitCodes contract test as the deterministic
-    stand-in.)
-  Last-reviewed: 2026-08-15
-
-- 2026-07-13 · orchestrator (mutation-smoke Phase 3 corpus expansion) · [test] · P2 — the Phase-3 mutation sweep (`docs/plans/mutation-smoke-gate.md`, 23 new mutants over the 13 TUs the pilot didn't reach) found **1 new genuine weak assertion**: `JiraErrorMessagePure.test.cpp` "cap never splits a multi-byte UTF-8 sequence" never executed the truncation backoff it documents
-  Details: the test built a 200×'é' = exactly-400-byte message; `AppendCapped`'s `out.size() + candidate.size() <= kMaxJoinedErrorLen` (400) appended it whole, so the UTF-8 lead-byte backoff loop never ran and mutant JIRAERR-02 (`== 0x80u` → `!= 0x80u` in the continuation-byte test) survived. Same at-the-boundary-but-not-past-it shape as the pilot's MergeWatch-m3 finding — a test that stops exactly at a cap asserts nothing about the over-cap branch.
-  Resolution: applied — test now uses 300×'é' (600 B, past the cap) and additionally asserts the trailing ellipsis marker (proof the truncation path engaged, so the case can never silently regress to a no-op again); JIRAERR-02 re-run SURVIVED → KILLED, suite 2150/2150 green. Guard kept in `scripts/dev/mutation-smoke-corpus.json` as a permanent regression guard.
-  Status: applied
-  Last-reviewed: 2026-07-13
-
-<!-- reconcile round 2 (2026-07-11): entries below were fixed on develop but never marked applied; verified against the tree and archived. -->
-
-# `daemon_loop` bats tests don't stub `maybe_self_resync`, so they run real git/network and flake in the required selftests lane
-
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [test] · P1 — `test-merge-watcher-bats.sh` test 30 fails ~1-in-5 runs because `daemon_loop` calls `maybe_self_resync(0)` at startup and the test never stubs it, so a "unit" test exercises real `git fetch` + drift detection
-
-## Friction
-
-`tests/bats/merge_watcher.bats:679` ("daemon_loop per-PR backstop: a transient
-exception in one PR is logged + the loop continues") drives `mw.daemon_loop(0)`
-with `process_registered_pr`, `read_registry`, `write_pid_file`,
-`clear_pid_file`, and `time.sleep` all monkeypatched — but **not**
-`maybe_self_resync`. `daemon_loop` (verified `agents/scripts/core/merge-watcher.py:3171`)
-unconditionally calls `maybe_self_resync(0)` *before* the poll loop as a startup
-gate-freshness check, and that function runs a real bounded `git fetch` + drift
-detection against the live checkout (and "may re-exec on POSIX"). So the test's
-outcome depends on network latency and the working tree's drift state at run
-time — it passed 5/6 local runs and failed the 6th on exactly this test, and it
-reddened the required `Agentic self-tests (bats)` lane on an unrelated docs-only
-PR (#1718). The sibling `daemon_loop` tests at :709 and :739 have the same latent
-gap.
-
-The failure surfaces as a wrong `seen:`/missing-WARN assertion, which reads like a
-logic regression but is pure test-isolation leakage — a false red that costs a
-diagnosis round and blocks merge on a flake.
-
-## Proposal
-
-Stub `mw.maybe_self_resync = lambda *_a, **_k: {}` (a no-op returning an empty
-dict, matching its contract of `.get('resync_action')` / `.get('resync_needs_*')`)
-in the four `daemon_loop` tests (:679, :709, :739, :771) alongside the existing
-`write_pid_file`/`time.sleep` stubs, so `daemon_loop` never touches git/network in
-a unit test. Optionally add a module-level guard so `daemon_loop`'s startup resync
-is skippable via an env knob the tests already set. Est ~15 min. Deterministic
-after — the assertions are otherwise fully specified by the faked registry.
-
-**Update (2026-07-10): fixed in this PR (#1718).** Added the
-`mw.maybe_self_resync` no-op stub to all four `daemon_loop` tests; the suite went
-8/8 green locally (was ~1-in-5 red on test 30). Archive to `applied.md` on the
-next self-improvement sweep.
-
-## Format
-
-- Details: see § Friction. Verified: `merge-watcher.py:3171` `daemon_loop` calls
-  `maybe_self_resync(0)` unconditionally; the test at `merge_watcher.bats:679`
-  stubs five symbols but not `maybe_self_resync`; observed 1/6 local failure on
-  test 30 and the CI red on #1718 head `9101c9c7`.
-- Concrete next action: see § Proposal.
-- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
-- Last-reviewed: 2026-07-10
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: all four `daemon_loop` tests in tests/bats/merge_watcher.bats (:679/:710/:741/:774) now stub `mw.maybe_self_resync = lambda *_a, **_k: {}`, so the startup resync never touches real git/network.)
-
----
-
-# Perf gate is required but its mean-budget teeth are still unarmed (step-5 calibration owed)
-
-- **Category:** test
-- **Priority:** P2
-- **Date:** 2026-07-05
-- **Status:** RESOLVED 2026-07-06 — mean budget armed (`mean_abs_ceiling_ms = 6.94`); plan shipped: [`docs/plans/shipped/perf-gate-step5-calibration.md`](../../plans/shipped/perf-gate-step5-calibration.md)
-
-## What I hit
-
-Auditing "is the perf gate mandatory / healthy" after the all-gates-blocking flip, I confirmed `Perf PR-fast (windows-2022)` **is** a required branch-protection context **and** blocks via the poller's `MERGE_GATES_BLOCK_ALLOWLIST_RE="."` — so a perf red genuinely blocks merge. Good. But two teeth are still retracted, and neither is obvious from the green checkmark:
-
-1. **Mean budget disabled.** `regression-policy.json → default.mean_abs_ceiling_ms = null`. The Pillar-1 steady-state budget (6.94 ms / 144 Hz) is **not** enforced — a scope could sit at 8 ms `avgPerCallMs` and pass. This is a *documented, deliberate* deferral ("perf-gate-revival step-5 calibration"), not a bug — but it has sat null since 2026-06-07 with no follow-up plan, so it reads as done when it isn't.
-
-2. **Relative-regression coverage is thin because baselines are shallow.** Every committed `ci-windows-latest` baseline has per-scope `calls = 1–2` (only ONE scope across all six scenarios clears `min_baseline_calls = 10`). The relative 10%-delta gate skips every below-floor row *by design* (single-frame % swings are noise) — correct, but it means the relative gate is effectively a no-op for ~99% of scopes today. The absolute p99 (≤10 ms) + max (≤50 ms) ceilings *do* fire on every row (CR-949-1), so the gate isn't toothless — but steady-state drift below those ceilings is uncaught.
-
-Secondary: the committed baselines predate the `p99Ms` emitter (`GetLastFrameRows(includeP99=true)` shipped after capture), so baseline rows carry no `p99Ms` — the p99 ceiling works off the *fresh* run's absolute value only, and every p99 baseline-delta reads "(new)".
-
-## Why it matters
-
-"Gate, don't trust": a green `Perf PR-fast` currently certifies *no p99/max blowup*, not *within the 6.94 ms steady-state budget*. That gap is invisible to anyone reading the check status, and the calibration that closes it has no owning plan.
-
-## Fix
-
-Tracked in the plan doc (arm `mean_abs_ceiling_ms` + per-scenario overrides from observed CI runs; recapture baselines so p99 + call depth are real; decide whether to deepen scenario frame counts). Tightening a live gate's numbers is a human-judgment call — the plan gates it behind observed-run evidence + user sign-off, never an autonomous flip.
-
-## Self-improvement
-
-Empty.
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: docs/perf/regression-policy.json `mean_abs_ceiling_ms` is ARMED at 6.94 (perf-gate step-5 calibration pass, 2026-07-06) with an empty perScenario map; baselines recaptured #1659.)
-
----
-
-# `test-orphan-bats` runs only in the full suite / CI, not the pre-ship fast path — an unwrapped `.bats` reddens develop a merge later
-
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [tooling] · P2 — a new bats suite shipped without its `test-*.sh` wrapper; the orphan-bats gate caught it only in CI, on the *next* PR, masking which change introduced the red
-
-## Friction
-
-The mutation-smoke gate slice (#1698) added `tests/bats/mutation_smoke.bats`
-without a `test-*.sh` wrapper naming its path. `test-orphan-bats.sh` (which
-enforces that every bats suite has a runner, so an added suite can't silently
-never-run) **is** auto-enrolled in `scripts/dev/test-all.sh` — verified:
-`test-all.sh:113` globs `agents/scripts/core/test-*.sh` and orphan-bats lives
-there — but `scripts/dev/pre-ship.sh`, the fast pre-push gate, does **not** run
-it (verified: `grep -c orphan scripts/dev/pre-ship.sh` → 0).
-
-So the orphan escaped the local pre-push loop and surfaced only as a red
-`Agentic self-tests (bats)` lane on the **next** PR's CI (#1702), one merge after
-the change that caused it — the red pointed at an innocent PR and cost a
-diagnosis round to trace back to #1698. A trap: the mirror script
-`scripts/dev/test-mutation-smoke.sh` *looks* like it covers the suite but it
-validates the harness/corpus, not the bats file, so it does not satisfy the
-wrapper requirement.
-
-## Proposal
-
-1. Add a fast `bash agents/scripts/core/test-orphan-bats.sh` call to
-   `scripts/dev/pre-ship.sh` (the check is near-instant — no build, just a glob +
-   grep over wrappers) so an unwrapped suite is caught before push, not a merge
-   later on an unrelated PR's CI.
-2. Playbook one-liner: **adding a `tests/bats/*.bats` requires its
-   `test-<name>-bats.sh` wrapper (naming the suite by `tests/bats/<name>.bats`
-   path) in the SAME PR** — a harness/corpus mirror script does not count.
-
-Est ~15 min total. This session fixed the instance by adding
-`scripts/dev/test-mutation-smoke-bats.sh` (#1702), but the pre-ship gap remains
-and will bite the next suite added without a wrapper.
-
-**Update (2026-07-10): implemented.** Added a
-`bash agents/scripts/core/test-orphan-bats.sh` stage to `scripts/dev/pre-ship.sh`
-(next to the test-list consistency check), so a wrapper-less bats suite is caught
-before push. Archive to `applied.md` on the next sweep.
-
-## Format
-
-- Details: see § Friction. Verified against the committed tree at develop head.
-- Concrete next action: see § Proposal (1)–(2) — done.
-- Status: applied (stale `Status: open` reconciled during the 2026-08-12 archival sweep — entry already lived in applied.md)
-- Last-reviewed: 2026-07-10
-
-  Status: applied (2026-07-11 reconcile — verified fixed on develop: scripts/dev/pre-ship.sh:316 runs `bash agents/scripts/core/test-orphan-bats.sh` in the fast pre-push path.)
-
-
-<!-- reconcile 2026-07-11: entries below were `Status: applied` in categories/<cat>/ but never moved here; archived in one batch (PR reconcile). -->
-
-- 2026-07-10 · orchestrator (self-improvement campaign ship session) · [process] · P2 — the required `CR findings` status pends forever when CR doesn't produce a review; high-volume campaigns exhaust the adaptive rate-limit (and re-triggers reset it), while docs/self-improvement-only PRs are path-excluded outright — both wedge merge
-
-## Friction
-
-Shipping 11 campaign PRs (#1682–#1692) plus follow-ups in one session pushed
-CodeRabbit's per-developer review volume to the 95th percentile, where its
-**adaptive** limit releases new reviews only gradually. The repo's required
-`CR findings (0 actionable)` status check stays `pending` until CodeRabbit posts
-a *completed* review on the PR's current head SHA, so the throttle blocked
-#1702's merge for ~2h even though every real CI lane was green and Cursor Bugbot
-had already reviewed it with zero actionable findings.
-
-Two behaviours compounded it, both verified this session:
-
-- CodeRabbit **skips draft PRs entirely** — the gate can never satisfy while the
-  PR is a draft, so a fix-forward opened as draft sits pending until marked ready.
-- Each manual `@coderabbitai review` that lands *inside* an active rate-limit
-  window **resets the countdown** — observed the "next review available in" value
-  jump from `51 seconds` back up to `38 minutes` immediately after a trigger. So
-  re-triggering to "unstick" the gate is actively counterproductive.
-
-The required gate has no degrade path when the external reviewer is unavailable,
-so an upstream throttle translates directly into an unbounded merge block.
-
-**Stronger variant, observed on the PR logging this very entry (#1718):** CodeRabbit
-**path-excludes** `docs/self-improvement/**` (`!docs/self-improvement/**` in
-`.coderabbit.yaml`), so for a docs/self-improvement-only PR it posts "Review skipped
-due to path filters" and **never** produces a review. The `CR findings (0 actionable)`
-gate is then **structurally unsatisfiable** — no amount of waiting or re-triggering
-helps, because there is nothing for CR to review. Same class of failure (CR skips a
-draft too), and the fix is the same: the gate must treat "CR will not / cannot review
-this PR" (path-excluded, draft-skipped, throttled past a deadline) as **0 findings →
-pass**, not perpetual pending.
-
-## Proposal
-
-1. **Agent behaviour (cheap, do first):** when the `CR findings` gate is pending
-   due to a CodeRabbit rate-limit, do **not** re-trigger — let the rolling window
-   age out, then trigger once. Encode in the PR-babysit / ship-loop playbook next
-   to the existing draft-PR note.
-2. **Pace campaigns:** stagger PR *readiness* (mark ready in small batches) so CR
-   review volume stays under the adaptive limit instead of firing N reviews at once.
-3. **Gate design (load-bearing):** the required `CR findings` check must have a
-   pass path when CR does not produce a review. Two triggers: (a) an explicit
-   **"Review skipped due to path filters"** (or draft-skip) comment from CR on the
-   head SHA → treat as 0 findings → **pass immediately** (structural, not a wait);
-   (b) after N hours pending with zero findings from any other reviewer
-   (Bugbot/Copilot) → degrade to advisory. Without (a), any docs/self-improvement-only
-   PR — including the ones this very backlog process produces — can never merge
-   without an operator admin-merge.
-
-Est: (1) ~10 min doc; (2) ~15 min playbook; (3) ~1–2h (poller/gate change).
-This session resolved #1702 only via an operator-authorized admin merge past the
-pending gate.
-
-**Update (2026-07-10): partially implemented (the structural half of proposal 3).**
-Ported the **selfImpOnly** terminal pass-signal from the client gate
-(`merge-gates.sh`) to the SERVER gate (`.github/actions/cr-finding-gate/action.yml`),
-the one that actually blocks merge: a diff entirely under `docs/self-improvement/**`
-(path-excluded by `.coderabbit.yaml`, sanctioned by
-`self-improvement-pr-review-exemption`) passes immediately, no CR wait — exactly
-the docs-only-PR class that wedged. It is head-accurate (queries the PR's current
-file list) and fail-closed on any `gh` pagination error.
-
-A second, comment-body-based "terminal path-filter skip" pass was tried and
-**dropped after CodeRabbit review** (#1724): CR's skip summary comment carries no
-reliable head-commit anchor, so a stale skip comment from an earlier docs-only
-commit could pass a LATER code commit before CR re-reviewed it (fail-open race).
-selfImpOnly covers the recurring case without that hazard.
-
-Still open (deliberately NOT auto-passed — unsafe): the **rate-limit on a CODE
-PR** case. Auto-passing it would wave un-reviewed code through; the correct escape
-stays the `cr-out-of-band` label + `cr-disposition:` attestation (already
-supported). Proposals (1) don't-re-trigger and (2) pace-campaigns remain doc/
-playbook follow-ups.
-
-## Format
-
-- Details: see § Friction. Verified: the rate-limit countdown reset was observed
-  in the PR's `coderabbitai[bot]` comments (51s → 38m after a re-trigger); the
-  gate context string is `CR findings (0 actionable)` with description
-  "awaiting CodeRabbit review on current head".
-- Concrete next action: see § Proposal (1)–(3).
-- Triggered-follow-up: when=pr-count:base=develop;since=2026-07-10;n=25; action=re-check whether the required CR gate ever degraded gracefully under a throttle, or whether another campaign wedged again; baseline=#1702 blocked ~2h on CR rate-limit despite green CI + Bugbot clear; fired=2026-07-11
-- Follow-up observation (2026-07-11): no recurrence. The backlog-takeover session merged five PRs
-  (#1726, #1700, #1728, #1730, #1738) while CodeRabbit was continuously rate-limited (its
-  "review limit reached" comment present on every PR, windows 15–58 min); the
-  `CR findings (0 actionable)` check reached SUCCESS on each head within the normal CI window and
-  every merge proceeded without an admin-merge or `cr-out-of-band` label. The remaining unsafe
-  case (rate-limit wedging a code PR past its window) did not reproduce; proposals (1)/(2) stay
-  open as playbook follow-ups.
-- Update (2026-08-13): proposals (1) and (2) landed as the "CodeRabbit rate-limit
-  playbook" in `docs/agent-rules/merge-gates.md` (never re-trigger inside an active
-  window — the countdown resets; stagger campaign PR readiness; per-PR, batch fix
-  rounds into one push per the pre-first-push gate). The structural half of (3)
-  (selfImpOnly terminal pass) shipped 2026-07-10; the throttled-code-PR case stays a
-  deliberate BLOCK with the `cr-out-of-band` + `cr-disposition:` escape, per the
-  2026-07-11 follow-up observation that it never recurred across five rate-limited
-  merges. Separately, the CI gate now auto-posts a recency-gated
-  `@coderabbitai full review` nudge when a COMPLETED clean pass leaves no on-head
-  evidence (PR #2004) — the self-heal for the stale-evidence wedge family this
-  entry first recorded. Nothing remains open.
-- Status: applied
-- Last-reviewed: 2026-08-13
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [test] · P2 — MCP live-HTTP `Authorize` path (DNS-rebind gate, SSE cap) is tested only via pure helpers, never over a real socket
-  Details: `IsMcpHostOriginAllowed`, `ConstantTimeStringEquals`, and the SSE-cap predicate have solid doctest coverage (tests/Plugins/Mcp/), but no test drives `McpPlugin::Authorize` over a real `httplib` connection with a hostile `Host:`/`Origin:` header, a missing/wrong token, or a race on the SSE connection cap — the layer where the route registration order and header plumbing could silently diverge from the pure helpers. The repo already owns the exact fixture shape: `tests/support/JiraCatalogHttpFixture.h` runs an in-process httplib loopback server against real cpr. AGENTIC_INFRA_AUDIT.md finding C6; corroborates TEST_COVERAGE_GAP_MAP.md (Plugins/Mcp is 5 TUs).
-  Concrete next action: add an integration TU that starts `McpPlugin` on an ephemeral loopback port and asserts over real HTTP: 403 on non-loopback Host, 403 on cross-origin Origin, 401 without token when `McpRequireTokenOnLoopback`, 200 with token, and 503 past the SSE cap. Effort M.
-  Resolution: SHIPPED (2026-07-13, agentic-infra-audit-review PR) — bucket-E TU `tests/ui/mcp_live_http_auth.test.cpp` (test `McpLiveHttp/Authorize_RealSocket`) starts a SECOND `McpPlugin` on its own port (constructing/OnStart-ing it directly, so it never restarts the rig's own plugin that the parent CLI is driving over MCP) with the secure defaults (loopback bind, token set, `require_token_on_loopback` ON) and asserts over a real `httplib::Client`: 200 with a valid token + tools/list body, 401 without / with a wrong token (+ WWW-Authenticate), 403 on a DNS-rebind `Host:` even WITH a valid token (Host gate precedes the token check; cpp-httplib v0.49 honours a caller-supplied Host), 403 on a cross-origin `Origin:`, and 503 once `kMaxConcurrentSseConnections` (4) SSE streams are held open. A RAII fixture joins the SSE-holder threads, stops the test server, and restores both the persisted config (OnStart re-reads the token) and instance.json (OnStart overwrites / OnStop deletes the rig's discovery file). Registered in `tests/ui/ui_tests_registry.cpp` under `#if defined(SMATCHET_WITH_MCP)`, enrolled in `tests/ui/CMakeLists.txt`, driver `scripts/dev/test-ui-mcp-live-http-auth.sh` (zero-match fail-closed guard; auto-discovered by `test-all.sh`).
-  Status: applied — CI-VERIFIED 2026-07-13 on the `Bucket-E UI tests (Mesa headless GL)` lane (PR #1812, commit 1547763): `McpLiveHttp/Authorize_RealSocket` builds and passes all six assertions. Environment-parity postscript (finding C3, confirmed the hard way): the authoring session ran in a Linux container that cannot build the bucket-E rig, so the TU shipped code-complete-but-unrun — and CI then caught TWO MSVC `/W4 /WX` warnings the container was blind to, each costing a fix + CI round-trip: (1) `C2446` — `res != nullptr` on an `httplib::Result` (non-explicit `operator bool` wins overload resolution → `int != nullptr`), fixed by asserting `res.error() == httplib::Error::Success`; (2) `C4456` — the ImGui-Test-Engine `IM_CHECK` macro internally declares a `bool res` that shadowed the local `httplib::Result res`, fixed by renaming the local to `httpRes`. Neither is reproducible off a bucket-E-capable toolchain; both are exactly why C3 (declared capability tiers so a Linux agent knows what it cannot self-verify) matters. The regular `Windows + MSVC` lane is NOT sufficient coverage — it does not compile `tests/ui/` (opt-in `SMATCHET_BUILD_UI_TESTS`); only the bucket-E lanes do. PC/local re-run steps remain in [`docs/plans/shipped/pc-verify-agentic-audit-followups.md`](../../plans/shipped/pc-verify-agentic-audit-followups.md) Task A.
-  Last-reviewed: 2026-07-13
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AI_POLICY.md promises an automated cost-ceiling gate that was descoped and never re-tracked
-  Details: `AI_POLICY.md` § Cost control stated the automated cost-ceiling gate is "not yet built"; the shipped charter plan (`docs/plans/ai-control-policy.md` § Out of scope) descoped it to "a follow-up (pairs with token-tracking)" and no live tracker carried it since. AGENTIC_INFRA_AUDIT.md finding A6.
-  Resolution: applied (2026-07-09, audit-followups PR #1680 — A6-only after B1 landed separately on develop via #1686) — built option (a), the gate, in the WARN-first idiom: `agents/scripts/core/cost-ceiling-check.py` (with `--selftest` incl. malformed-config/non-dict-row fail-open cases; `--blocking` reserved for graduation) sums input+output tokens from the token-tracking JSONL and prints an ESCALATE banner at/over `project.config.json` § `governance.session_token_ceiling` (default 5000000; 0 disables); SessionStart wrapper `cost-ceiling-nudge.sh` wired into `docs/harness/claude-code/settings.json.tmpl`; `test-cost-ceiling-check.sh` auto-enrolls in test-all.sh; AI_POLICY.md § Cost control now describes the shipped advisory backstop instead of promising one.
-  Status: applied
-  Last-reviewed: 2026-07-09
-
-- 2026-07-06 · claude-code (perf-gate step-5 session) · [infra] · P2 — perf-full's gh/git steps lacked `shell: bash` → scheduled full-suite perpetually RED (silent); auto-issue/auto-PR mechanisms dead
-  Details: on `windows-2022` a `run:` step with no `shell:` defaults to PowerShell; perf-full.yml's three follow-up steps (scenario-run-failure issue / regression issue / baseline-bump PR) used bash syntax and crashed whenever they fired — and they fired every run because ~8 non-baselined scenarios always fail to spawn, so the scheduled suite was RED for ≥ a week unnoticed and the auto-issue/auto-PR mechanisms never actually ran. A naive `shell: bash` fix alone would have spammed one issue per run (per-run-id title), and the improvement-bump `gh pr create` hits the repo's "Actions may not create PRs" setting. Full analysis is in the original entry file (git history: `docs/self-improvement/categories/infra/2026-07-06-perf-full-steps-missing-shell-bash-perpetual-red.md`).
-  Resolution: applied — #1681 (`51989b6`) closed the remaining in-tree gaps: `shell: bash` on all steps (interim commits), "Discover scenarios" intersects `scenario.list` with the committed baseline set (`git ls-files docs/perf/baselines/*.ci-windows-latest.json`) so `run_failure_count` only counts real in-scope breaks, both issue steps are idempotent (stable title + find-then-comment), and the improvement bump is push-only (drops the blocked `gh pr create`). The 8 spawn failures are confirmed expected non-perf-runnable (screenshot-required / test-engine / not-a-perf-scenario), not broken.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [process] · P2 — AGENTS.md is 159 lines against its own ≤150 contract budget (grandfathered, never trims)
-  Details: `AGENTS.md` declares `contract_budget_lines: 150` and the `agent-too-long` lint enforces that token — but the file is 159 lines and `agent_size_audit.py`'s delta gate grandfathers keys already over-cap at the merge base, so the violation persists indefinitely and even growth never fires. The doc that anchors the enforcement contract-card being durably over its own budget is the self-description-drift class in miniature. AGENTIC_INFRA_AUDIT.md finding A1.
-  Concrete next action: judgment trim, not mechanical — extract detail-heavy prose (inline PR-number citations, per-exception detail already duplicated in `docs/agent-rules/ship-loops.md`) into the pointed-to `docs/agent-rules/` docs until AGENTS.md is ≤150 lines; then consider a one-time baseline refresh so the cap becomes binding again for this key. Effort M.
-  Resolution: applied — AGENTS.md trimmed 159 → 149 lines (merge-throughput paragraph moved to merge-gates.md, auto-merge/red-check prose condensed onto merge-gates.md pointers, § Semantic-search exceptions + caveman sections folded to bold-prefix paragraphs; every anchor kept, test-doc-anchors green) and the agent-size baseline refreshed (`--agentsize-baseline`; AGENTS.md key no longer grandfathered, cap binding again).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · claude (AppController extraction session) · [tooling] · P2 — `include-curation-freefunction-false-negative`: when splitting a TU into a companion `.cpp` in an environment where no Core TU compiles locally (curl/cpr fetch blocked by egress policy → `posix-core-check` can't even configure), curating the new TU's includes by a symbol-usage heuristic keyed on *type/class tokens* silently drops a header whose only use is a free function — a CI-only compile failure.
-  Details: Slice 1 of the AppController cluster extraction (PR #1653) curated `AppController_Init.cpp`'s includes down from a superset (the superset tripped the blocking DRY duplication gate). The trim heuristic checked each candidate header by searching the moved body for a representative *type* name — e.g. `Ui/SmatchetFieldRender.h` was probed for `FieldRender` (0 hits) and dropped. But `RunLegacyStartupSweeps` calls the *free function* `SetCallstackFieldIdHint` declared in that header, so the drop produced `error: use of undeclared identifier 'SetCallstackFieldIdHint'`. Because AppController.cpp needs cpr/curl (blocked here), nothing compiled locally; the error surfaced only on CI — first on the fast `Mobile — Android emulator smoke` lane (~1 min), then Windows MSVC light/ARM64 and Perf. One-commit fix (`4101155`) restored the header; cost ≈ one CI round-trip (~10 min latency).
-  Concrete next action (low urgency; process fix, no code owed): when curating a companion-TU include set without a local compiler, verify inclusion against BOTH (a) type/class/enum names AND (b) *every* `CapitalizedIdentifier(` free-function call site and every `ns::Func(` namespace-qualified call in the moved body, mapping each to its declaring header — this is what Slice 2 (`AppController_PaneContexts.cpp`) then did and it landed clean with zero round-trips. Candidate durable home: a one-liner in `docs/agent-rules/cpp-rules.md` § File-split (the post-split include-replication rule) noting "curate against free-function call sites too, not just types — a type-only grep gives false negatives that only CI catches when the TU can't compile locally." Alternatively, prefer the full-superset-plus-`duplication`-deviation approach when local compile is impossible and CI latency is the binding cost (guarantees compile, trades one dup exemption for zero round-trips).
-  Resolution: applied — one-liner added to docs/agent-rules/cpp-rules.md § File size (the file-split recipe): curate companion-TU includes against BOTH type/enum names AND every CapitalizedIdentifier( / ns::Func( free-function call site when no local compiler is available, or keep the full superset + a duplication deviation.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/sourcetrail/st_query.py` is documented as the primary semantic-nav tool but needs a prebuilt DB absent from fresh checkouts
-  Details: AGENTS.md sells `st_query.py` as the first stop before grep, but Sourcetrail is discontinued upstream and the required symbol DB is neither in the repo nor buildable by any checked-in script — in a fresh clone (and in every Linux container session) the "primary" nav tool is a no-op with extra steps. A rulebook recommending a tool that cannot run erodes trust in its other recommendations. AGENTIC_INFRA_AUDIT.md finding C7 / proposal P9.
-  Concrete next action: pick one: (a) retire — remove `tools/sourcetrail/` and the AGENTS.md claim, leaving grep + compile_commands-based tooling as the documented path; or (b) re-bootstrap — replace with a `clangd`-index-backed query script (clangd is alive and `compile_commands.json` already exists per preset) and update the rulebook pointer. Either way, stop documenting the dead path. Effort S (retire) / M (replace).
-  Resolution: applied — option (a) retire: tools/sourcetrail/ deleted; the Sourcetrail rung removed from the AGENTS.md § Semantic codebase search precedence ladder, docs/harness/claude-code/CLAUDE.md.tmpl, docs/harness/capability-adapter.md, and docs/CONTEXT.md; AGENTIC_INFRA_AUDIT.md finding C7 marked remediated.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [tooling] · P3 — `tools/repo-health/facts.json` rots silently between sessions; the dashboard shows stale gate states with no freshness signal
-  Details: the repo-health dashboard splits "computed" metrics (recomputed every run) from "facts" (CI lane statuses, PR gate states, campaign verdicts) that are session-maintained in `facts.json` because the generator cannot reach GitHub — its own README admits the rot risk. A dashboard rendering weeks-old gate states as current is worse than no dashboard for the human-on-the-loop visibility role AI_POLICY.md assigns it. AGENTIC_INFRA_AUDIT.md finding C8.
-  Concrete next action: (a) stamp each fact with a `last-updated` date and render age prominently (e.g. amber >7 days, red >30) in `generate.py`/`template.html`; (b) add a SessionStart nudge (pattern: `followup-due-nudge.sh`) that fires when `facts.json` is older than a threshold, prompting a refresh pass. Effort S.
-  Resolution: applied — facts.json gained a per-section `updated` stamp map; generate.py/template.html render the oldest stamp as a header freshness badge (green ≤7d / amber ≤30d / red beyond); new SessionStart nudge `agents/scripts/core/repo-health-facts-nudge.sh` (wired into both hook templates, bats-covered) nags when facts.json's git-commit age exceeds 7 days.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [debt] · P3 — `project.config.json` duplicates the 24-item required-checks list verbatim across `branch_protection.required_contexts` and `ci.required_checks`
-  Details: the two arrays are identical, and `test-required-context-parity.sh` guards them against divergence — so this is guarded duplication, not the unguarded-drift class. Still, in the value table that anchors a DRY-enforcing project (Engineering Pillar 5 is a blocking gate), deriving one list from the other would delete both the duplication and the guard that exists only to police it. AGENTIC_INFRA_AUDIT.md finding A5.
-  Concrete next action: keep `branch_protection.required_contexts` as the single source; make `ci.required_checks` consumers read the branch_protection list (via `scripts/dev/project-config.sh` / the schema), or replace the second array with a `"same-as": "branch_protection.required_contexts"` sentinel the schema validates; retire the parity gate once no second literal list exists. Check consumers of both keys before the cut. Effort S.
-  Resolution: applied — `ci.required_checks` deleted from project.config.json (branch_protection.required_contexts is the single source); project-config.sh derives `CI_REQUIRED_CHECKS` from it (its own emit was the sole consumer, with zero downstream readers); the schema now requires only `ci.path_filters` and its `additionalProperties:false` rejects a reintroduced second list. Note: the entry's parity-guard claim was stale — test-required-context-parity.sh validates required_contexts against the workflows and never compared the two arrays, so the duplication was in fact unguarded; that gate stays (it guards a different property and passes 22/22 post-cut).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [infra] · P2 — fresh-clone bootstrap hole: every session hook/guard is inert until `setup-harness.sh` runs, and only a manual probe warns
-  Details: the `.claude/` adapter dir (hooks, guards, settings) is gitignored and provisioned only by `agents/scripts/core/setup-harness.sh`; in a fresh clone the head-drift, plan-lock, and shared-tree guards plus every SessionStart nudge are silently absent. `check-harness-provisioned.sh` exists to surface this but must be invoked by hand. `docs/plans/session-guard-agnostic.md` names the fresh-clone gap as an explicit non-goal ("their own in-flight effort") — but no live tracker actually carries it. AGENTIC_INFRA_AUDIT.md finding C5.
-  Concrete next action: (a) fold `check-harness-provisioned.sh` into `scripts/dev/doctor.sh` so the standard preflight reports the unprovisioned state; (b) add a cheap self-check to the git `pre-push` hook path (already repo-owned, so it *does* run in fresh clones) that warns when `.claude/hooks/` is absent under a Claude-harness session. Effort S.
-  Resolution: applied — slice (a): `doctor.sh` now runs `check-harness-provisioned.sh --quiet` as a warn-only preflight check (`[WARN] harness` unprovisioned / `[PASS] harness` wired; covered by `tests/bats/harness_provisioned_doctor.bats`). Slice (b)'s premise was wrong: `scripts/git-hooks/pre-push` is itself only wired via `core.hooksPath` BY `setup-harness.sh`, so no git hook runs in a fresh clone either — replaced with a doc note in `docs/harness/SETUP.md` § Check anytime stating that fact and pointing at the doctor probe.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P1 — AI assistant auto-context bodies are injected into the system prompt unsanitized (prompt-injection surface)
-  Details: `ComposeSystemPrompt` (AiAssistantController.h) wraps each auto-context block in `<smatchet_context block="...">` tags and XML-escapes only the *attribute*; the *body* — ticket summaries, labels, audit-trail strings, visible grid rows, all attacker-influenceable via the tracker backend — is inserted verbatim. A malicious ticket summary can attempt closing-tag breakout or instruction injection into the model. The outbound-consent modal mitigates exfil *volume* (real byte counts) but shows sizes, not content, and does nothing against instruction injection. AGENTIC_INFRA_AUDIT.md finding B1.
-  Concrete next action: (a) escape/neutralize `</smatchet_context` sequences in block bodies before assembly (pure helper, unit-testable in the existing tests/Core/AiAssistantSystemPrompt TU); (b) append one fixed line to the composed system prompt stating that content inside `smatchet_context` tags is data from the tracker, never instructions. Effort S.
-  Resolution: applied — `NeutralizeContextBody` (AiXmlAttrEscape.h, pure) breaks `<smatchet_context`/`</smatchet_context` sequences in block bodies (`&lt;` on the leading `<`) at both assembly sites (`ComposeSystemPrompt` + `AiContextBuilder::AppendBlock`), and `ContextDataNotInstructionsLine()` adds the fixed data-not-instructions sentence after the context header; covered in tests/Core/AiAssistantSystemPrompt.test.cpp (breakout neutralized, benign unchanged, preamble iff blocks).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — MCP `tools/call` has no rate limit; only SSE connection count is bounded
-  Details: every MCP `tools/call` (JSON-RPC and the REST equivalent) dispatches into the command registry with bounded parsing and destructive gating, but no frequency bound — a buggy or hostile local client can hot-loop non-destructive commands (`tickets.search*`, `perf.dump`, ...) unthrottled. `CanAcceptSseConnection` bounds SSE streams (503 over-cap) but nothing bounds tool-call rate. Distinct from the archived "MCP registry dispatch un-gated after Authorize" entry (its destructive-confirm half shipped in PR #1246; its residual is capability *scoping*, not rate). AGENTIC_INFRA_AUDIT.md finding B3.
-  Concrete next action: add a token-bucket at `DispatchRegistryToolsCall` in `Source/Plugins/Mcp/McpPlugin.cpp` (one chokepoint covers JSON-RPC + REST + legacy routes); return a structured `rate-limited` error envelope; make bucket size/refill configurable via `TrackerConfig` with a sane default; extract the decision to a pure helper for doctest coverage. Effort M.
-  Resolution: applied — `ConsumeToolsCallToken` (McpRateLimitPure.h, pure token bucket, doctested in tests/Plugins/Mcp/McpRateLimit.test.cpp) gates both real entry points — REST `HandleToolsCall` and JSON-RPC `HandleJsonRpcToolsCall` (the JSON-RPC path does NOT funnel through `DispatchRegistryToolsCall`, so the gate sits one level up and covers every dispatch arm incl. run_lua/Lua tools/legacy) — sharing one bucket; deny returns the canonical HTTP-200 `rate-limited` envelope (REST) / JSON-RPC -32000 with retry-after; `TrackerConfig::McpToolsCallRateBurst`/`RateRefillPerSec` (default 20 burst / 5 per s, <=0 disables) persist as `mcp_tools_call_rate_*` and participate in `NeedsRestart`.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-06 · orchestrator (agentic-infra audit 2026-07) · [security] · P2 — debug `ai.dump-request` path re-implements AI client config/URL building and skips the production sanitizers
-  Details: PARTIALLY LANDED (2026-07-08, backlog batch security-ai-mcp): the config half is unified — `SanitizeHeaderValue` + `BuildClientConfig` (key sanitizing, base-URL fallback chains, `EndpointPolicyForProvider` sanitize-with-consent gate, streaming timeout) moved from `AiAssistantController.cpp`'s anonymous namespace to the shared seam `Source/Core/src/AiRequestBuilder.cpp` (+ header), now consumed by the controller AND all three debug call sites (`ai.dump-request` / `ai.probe` / `ai.send-once`); the `BuildClientConfigForProvider` clone in `BuiltinCommands_Ai.cpp` is deleted, so the debug path no longer skips the sanitizers (doctested in tests/Core/AiRequestBuilder.test.cpp). REMAINING: the debug body/URL builders (`BuildAnthropicBody`/`BuildOpenAiBody`/`BuildOllamaNativeBody`/`ResolveEndpointUrl`/`StripOpenAiV1Suffix` in `BuiltinCommands_Ai.cpp`) still mirror the per-client `BuildChatBody`/`ResolveBaseUrl`/`JoinUrl` (anonymous namespaces in OpenAiClient/AnthropicClient/OllamaClient.cpp) instead of calling them — the residual drift surface. The archived 2026-05-17 entry records `ai.dump-request` already misreporting the wire once (fixed post-PR #184). AGENTIC_INFRA_AUDIT.md finding B4 / proposal P4.
-  Concrete next action: expose the per-client body/URL builders (the `OllamaBuildRequestBodyJson` pattern already exists in OllamaClient.cpp) and make `ai.dump-request` call them, deleting the debug mirrors; then add doctest coverage asserting the debug dump equals the production wire for each provider.
-  Status: applied (2026-07-11 — the remaining drift surface is closed: new `AiWireIntrospect.h` exposes `smatchet::ai::{OpenAi,Anthropic,OllamaNative}BuildChatBodyJson` + `...ResolveChatUrl`, each a thin wrapper over the SAME anonymous-namespace `BuildChatBody`/`ResolveBaseUrl`/`JoinUrl` the live client dispatch uses. `ai.dump-request` builds an `AiChatRequest` and calls them; the `BuildAnthropicBody`/`BuildOpenAiBody`/`BuildOllamaNativeBody`/`ResolveEndpointUrl`/`StripOpenAiV1Suffix` mirrors in BuiltinCommands_Ai.cpp are deleted. Because the dump now shares the production builder, it can no longer drift OR drop history (the mirrors only ever emitted a single user turn). Doctest `tests/Core/AiWireIntrospect.test.cpp` locks the per-provider wire shape incl. the full system+multi-turn body. Dual-target compiled.)
-  Last-reviewed: 2026-07-11
-
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [tooling] · P2 — the mutation pilot built a small, reusable single-point-mutation harness that is a ready seed for roadmap Slice **F** (mutation-smoke / coverage-delta gate, `testing-surface-roadmap.md`)
-  Details: the harness drives a JSON spec of `{file, search, replace}` mutants against `SmatchetTsanTests` — for each: assert `git` tree clean → apply exact single-point edit → `cmake --build --preset ninja-tsan-linux` (incremental) → run the exe → classify KILLED/SURVIVED/BUILD_FAIL → `git checkout` revert → re-assert clean. Cheap + deterministic on the doctest rig; catches assertion rot the coverage-delta gate structurally cannot see.
-  Concrete next action (from the entry): promote the harness to `scripts/dev/mutation-smoke.sh` + a curated per-TU corpus, run it advisory-nightly over the dedicated-test TUs gating on a kill-rate floor, keep the equivalent-mutant exclusion list so the floor isn't gamed.
-  Resolution: applied — Slice F's mutation-smoke half shipped across four phases (plan `docs/plans/mutation-smoke-gate.md`). Phase 1/2: `mutation-smoke.sh` + seed corpus + advisory nightly step in `tsan-linux-nightly.yml` + bats + local mirrors. Phase 3 (#1818, 2026-07-13): corpus expanded to 38 mutants (33 `killed` guards + 5 `equivalent`) covering all 20 dedicated-test TUs; found + fixed 1 genuine weak assertion (JIRAERR-02). Phase 4 (2026-07-16): after 3 consecutive clean advisory nightlies (07-14/15/16, each 33/33 killed @ 100% adjusted kill rate), `continue-on-error` removed → the gate now blocks the nightly on a sub-floor survivor. The equivalent-exclusion list (DT2/DT5/JQL-01/MAP-05/Labels-m3) is preserved in the corpus. Coverage-delta half remains out of scope (the plan's stated non-goal).
-  Status: applied
-  Last-reviewed: 2026-07-16
-
-- 2026-07-05 · claude-code · [tooling] · P2 — lint: a non-"advisory"-named CI job must not carry job-level continue-on-error
-  Details: the all-gates-blocking flip had THREE lanes drift out of sync between three coupled attributes — check name de-advisoried, step/job mask retained, required-context promoted (bucket-E, mobile-texture-guard, cpp-lint). The pre-ship code-review round caught them by hand (4 HIGH findings). A cheap mechanical gate would catch the class: scan `.github/workflows/*.yml` and FAIL if any job whose `name:` does NOT contain "advisory" (case-insensitive) sets job-level `continue-on-error: true`. Job-level masks green-wash the whole workflow run and are the anti-pattern the flip removed; step-level masks (the sanctioned per-step survivors: fuzz stochastic, bucket golden diff, bucket-E per-test, cpp-lint cppcheck) are exempt — the rule is job-level only. Cross-ref: shipped/all-gates-blocking.md.
-  Resolution: applied — new gate `agents/scripts/core/test-workflow-job-mask.sh` (rule `gate-job-mask-non-advisory`): FAILs any workflow job whose name lacks "advisory" that sets job-level `continue-on-error` (literal `false` and step-level masks exempt; expression values count as masks); `--selftest` fixture + `tests/bats/workflow_job_mask.bats`; wired into doc-validation.yml beside the required-context-parity step.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code (nightly-monkey session) · [tooling] · P2 — `scripts/dev/coverage-delta-gate.sh` counts only `tests/{Core,Lua,Plugins,ui}/*.test.cpp` as a test-delta, so a PR that adds a whole NEW test directory (`tests/monkey/`) of real tests still red-walls the required `Test-delta gate`
-  Details: the gate's `TEST_CHANGES` list was a fixed per-directory glob. PR #1637 added a genuine new seeded-fuzz harness under `tests/monkey/` paired with a behaviour-preserving Core extraction — but `tests/monkey/*` was invisible to `TEST_CHANGES` AND its `.cpp/.h` lines count as "real surface" in the `_classify_diff` exemption pre-check, so the gate reported `FAIL: Source/Core/ changes without test deltas` despite hundreds of added test lines. Distinct from the SIGPIPE-crash fix (#1593) and the platform-`#else`-arm exemption gap (#1021) — both are about the exemption classifier; this one is about the test-file recognition glob.
-  Resolution: applied — option (a): `TEST_CHANGES` now recognizes any `tests/**/*.test.cpp` (with `tests/support/` + `tests/fixtures/` excluded as trivially-dismissable helper dirs), so a new harness dir earns gate credit via the `*.test.cpp` naming convention instead of a hand-synced directory allowlist; bats cases in `tests/bats/coverage_gate.bats` (new-dir `tests/monkey/*.test.cpp` delta → PASS; `tests/support/*.test.cpp` → no credit).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — doc-validation: flag a required_contexts addition that an ADR explicitly rejected
-  Details: the all-gates-blocking flip's first draft silently added `Intent section` + `Plan-lock gate` to `branch_protection.required_contexts` — a route ADR-0022 and plan-lock-enforcement Q7 had EXPLICITLY REJECTED (the label hatches can't reach GitHub branch protection; `plan-lock-gate.yml` has no `labeled` re-trigger, so a red + override label = unmergeable). The code-review round caught it; a gate would catch the class. Cross-ref: shipped/all-gates-blocking.md § Deviations; docs/adr/0022-intent-gate-promotion.md.
-  Resolution: applied — new `agents/scripts/core/test-required-context-adr-consistency.sh`: for each name ADDED to `branch_protection.required_contexts` vs `origin/develop`, greps `docs/adr/*.md` + `docs/plans/shipped/*.md` for the name inside a rejection window (±2 lines matching reject / "NOT a required" / "do not add" / "must not") and FAILs with the citation (base-ref-unreadable degrades to WARN+pass; CI uses fetch-depth 0); `--selftest` + `tests/bats/required_context_adr_consistency.bats`; wired into doc-validation.yml and `scripts/dev/test-docs.sh`; reproduces the ADR-0022 Intent-section/Plan-lock incident on a fixture.
-
-- 2026-07-05 · orchestrator (docs-reconciliation session) · [process] · P2 — audit docs (`CPP_CODE_AUDIT.md`, `SECURITY_AUDIT.md`) were left presenting every finding as open long after the remediation PRs shipped; nothing flags an audit doc whose findings are fixed-in-code but still unmarked
-  Details: `CPP_CODE_AUDIT.md` (2026-07-01) and `SECURITY_AUDIT.md` (2026-06-26) carried zero per-finding remediation status even though PR #1593/#1613 (code audit) and #1566 + follow-ups #1574/#1578/#1581/#1592/#1598 (security) had already fixed essentially every finding — a reader would conclude ~66 live defects were outstanding. The remediation plans (`cpp-code-audit-remediation.md`, `cpp-security-hardening.md`) tracked the fixes but the SOURCE audit docs they cite were never back-annotated, and the plans themselves sat in `docs/plans/active/` after all slices shipped. This entire session existed to reconcile that drift (added REMEDIATED banners + per-finding status tables to both audits, archived 5 shipped plans, refreshed the backlog/coverage docs). Root cause: a remediation PR updates the plan + code but not the originating audit doc, and no gate notices the divergence.
-  Concrete next action: (1) encode "a remediation PR that closes findings from an audit doc updates that doc's per-finding status in the same PR" as a rule in `docs/agent-rules/process-rules.md`; and/or (2) add a lightweight advisory gate — for each root `*_AUDIT.md` whose companion remediation plan lives in `docs/plans/shipped/`, warn if the audit doc contains no `REMEDIATED`/✅ marker. Cheap heuristic, catches exactly this drift class before it accumulates. Cross-ref: this session's audit banners + `plan-archival-owed.sh` (the sibling nag that already covers the "shipped plan still in active/" half).
-  Resolution: applied — rule encoded in docs/agent-rules/process-rules.md § Audit-doc status sync ('a remediation PR that closes findings from a root *_AUDIT.md updates that doc's per-finding status in the same PR'), plus the advisory backstop `agents/scripts/core/audit-doc-status-owed.sh` (--list/--nudge/--selftest, sibling of plan-archival-owed.sh; warns when a root *_AUDIT.md with a shipped companion remediation plan lacks a REMEDIATED/✅ marker), wired as a SessionStart nudge in the claude-code + codex harness templates.
-
-- 2026-07-05 · claude-code · [tooling] · P3 — perf-compare delta table shows big % on 1-sample scopes without flagging them as below-floor noise
-  Details: `scripts/dev/perf-compare.py`'s per-scenario delta table (surfaced in the `Perf PR-fast` job summary + PR comment) prints eye-catching relative deltas for scopes that have too few samples to be meaningful. On PR #1632's `ai-chat-history-render` run, `SmatchetUI::Draw` read `0.424 → 0.493 ms (+16.2 %)`, `SmatchetToolbarUi::Draw +56.9 %`, `SmatchetToastManager::Render +3575.0 %` — all with **`baseline calls = 1`**. The GATE correctly reports 0 regressions (the `min_baseline_calls = 10` floor + `mean_min_abs_delta_ms = 0.05` noise floor in `regression-policy.json` reject them), but the TABLE renders the raw percentages with no marker, so a human reading the PR sees "+3575 %" and reasonably suspects a real regression. This session had to hand-explain in the PR body why those aren't regressions — the presentation should carry that itself.
-  Impact: not a gate bug (the gate is correct), but a **legibility** gap that produces false alarm + wasted triage on every low-sample scenario. The PR author / reviewer can't tell "this % is noise below the sample floor" from "this % is a real move" without cross-referencing the policy thresholds by hand.
-  Concrete next action: in `perf-compare.py`'s table renderer, tag any row whose `baseline calls < min_baseline_calls` (or whose absolute delta < mean_min_abs_delta_ms) with an inline marker — e.g. append `· (noise: <N samples < floor)` or move such rows under a collapsed "below sample/noise floor — not gated" sub-section — so a reader distinguishes gated signal from sampling noise at a glance. Optionally sort gated-eligible rows first. Keep the raw numbers (transparency), just annotate.
-  Cross-ref: PR #1632 Validation section (the hand-written noise explanation this would have made unnecessary); `docs/perf/regression-policy.json` (the floors).
-  Resolution: applied — perf-compare.py's evaluate() now tags rows below the sample floor (`· (noise: N < M calls)`) or the absolute-delta noise floor (`· (noise: abs Δ ≤ X ms)`); emit_markdown sinks marked rows below the gated-eligible ones and appends a not-gated legend line. Raw numbers kept; gate behaviour unchanged (fixture-verified: floored rows exit 0, a real regression still exits 1).
-
-- 2026-07-05 · orchestrator (docs-reconciliation session) · [tooling] · P2 — `scripts/dev/test-docs.sh` bills itself as the local mirror of `doc-validation.yml` but omits the `md_lint` (MD028 etc.) step the CI lane actually runs, so a doc author gets a green local mirror and then a red "Doc anchors + agent contract" CI lane on the same content
-  Details: `test-docs.sh`'s own header reads "local mirror of the .github/workflows/doc-validation.yml gate", and it runs 14 checks (`test-doc-anchors`, `test-plan-index`, `test-plan-ref-integrity`, `test-markdown-links`, …) — but NOT `python3 agents/scripts/core/md_lint.py --all`, which the CI doc lane runs as its "md_lint — markdown style (MD028 etc.)" step. This session added a staleness blockquote to `backlog/MANUAL_TEST_QUEUE.md` that left a bare blank line between two adjacent blockquotes; `test-docs.sh` passed 14/14 locally, then CI failed `md_lint: MD028 blank line inside blockquote`, costing a diagnosis round-trip plus a fix commit. The mirror's entire value is "catch locally what CI catches"; a missing sub-check silently defeats that for the single most common markdown-authoring mistake.
-  Concrete next action: add `md_lint` to the `CHECKS` array in `scripts/dev/test-docs.sh` (e.g. `"md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all"`), mirroring how `doc-validation.yml` invokes it, so the local mirror is a true superset-or-equal of the CI doc lane. One-line addition, no new dependency (md_lint is pure Python already in-tree).
-  Resolution: applied — `md_lint|python3 $CORE/md_lint.py --selftest && python3 $CORE/md_lint.py --all` added to the STEPS array in `scripts/dev/test-docs.sh`, positioned between test-plan-naming and test-portable-purity to mirror the doc-validation.yml step order; verified by running test-docs.sh locally (md_lint green).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — pre-push clang-format check is whole-file, not delta; pre-existing drift in a touched file blocks an unrelated change
-
-  Details: `scripts/git-hooks/pre-push` step 3 runs `clang-format --dry-run --Werror
-  "$ci_f"` over each **changed first-party C++ file as a whole**. The CI lint gate
-  (`Windows + MSVC` clang-format step) is **delta-based** (flags only NEW violations
-  vs origin/develop, grandfathering pre-existing drift), so the local hook is
-  STRICTER than the gate it claims to mirror. Observed this session on the
-  `perf-win-hunt` one-line change to `SmatchetAiAssistantUi.cpp`: my edit was
-  clang-format-clean, but a PRE-EXISTING drift at line 1036 (an over-long
-  `EnqueueAppendAndTrim` call from an earlier commit) tripped the whole-file
-  `--Werror` and refused the push. The remedy (`clang-format -i` the file) then
-  reformats a line I never touched, adding unrelated churn to the diff — or forces
-  the `SMATCHET_SKIP_PRESHIP_GATE=1` override for a legitimately-clean change.
-
-  Impact: low-frequency friction, but it (a) makes the hook disagree with CI (the
-  parity the hook exists to provide — `docs/agent-rules/ci-local-parity.md`), and
-  (b) nudges toward either scope-creep (reformatting untouched lines) or the
-  sanctioned-but-noisy skip override.
-
-  Concrete next action: make the pre-push clang-format check delta-aware to match
-  the CI gate — e.g. `git clang-format --diff <merge-base>` (formats/checks only the
-  changed hunks) instead of `clang-format --dry-run --Werror <whole-file>`. If a
-  whole-file check is intentional (catch latent drift early), then it should
-  *offer* to reformat only the changed hunks, and its message should say "whole-file
-  (stricter than CI delta)" so the operator isn't surprised the hook rejects a
-  CI-green change. Home: `scripts/git-hooks/pre-push` step 3.
-
-  Resolution: applied — pre-push step 3 now runs `git clang-format --diff
-  <merge-base> HEAD -- <changed first-party C++>` (delta: only changed hunks
-  flag, matching the CI gate; rc=1 = violation, any other rc = infra →
-  fail-open) and falls back to the whole-file `clang-format --dry-run --Werror`
-  loop only when git-clang-format is absent, with the failure line then
-  labelled "[whole-file — stricter than the CI delta]". Covered by
-  `tests/bats/pre_push_format_delta.bats` (clean hunk atop pre-existing drift
-  passes; bad new hunk still refuses).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · user-facing-text session (PRs #1614/#1615) · [infra] · P3 — remote-container builds: GitHub release tarballs 403 through the agent proxy; posix-core-check needs a manual curl clone + apt packages
-  Details: in the Claude Code remote container the network policy allows `git clone` but returns 403 for GitHub release-asset and codeload tarball downloads; the `posix-core-check` configure fails at cpr's internal FetchContent of `curl-7.80.0.tar.xz`. `xorg-dev`/`libgl1-mesa-dev` are also not preinstalled (glfw's configure needs them even though it never builds in that preset) and need an `apt-get update` first. Validated workaround (2026-07-05 session): `git clone --depth 1 --branch curl-7_80_0 https://github.com/curl/curl.git .fetchcontent-src/curl-manual`, then `apt-get install -y xorg-dev libgl1-mesa-dev`, then `cmake --preset posix-core-check -DFETCHCONTENT_SOURCE_DIR_CURL=$PWD/.fetchcontent-src/curl-manual`. Proposal: fold the steps into a SessionStart hook or a `scripts/dev/remote-container-bootstrap.sh` so future remote sessions get a working posix-core-check lane without rediscovering the workaround.
-  Resolution (2026-07-08): applied — `scripts/dev/remote-container-bootstrap.sh` wraps the workaround (idempotent: clone skipped when present, apt skipped when installed; `--no-configure` provisions only), referenced from `docs/agent-rules/build.md` § Remote-container posix-core-check bootstrap and `docs/harness/claude-code/setup.md` § Remote container; validated end-to-end in the target container (fresh configure green in ~80s; re-run skips both steps).
-
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [test] · P2 — the mutation pilot (`MUTATION_PILOT.md`) found 10 genuine weak assertions in the headless `SmatchetTsanTests` rig; 3 worst fixed in the pilot PR, **7 residual survivors** remain unasserted (each a plausible single-point bug the current suite would ship uncaught)
-  Details: 68 mutants over 12 TUs → 52 killed / 16 survived (5 equivalent, 1 out-of-oracle, 10 real weak assertions). The 7 residual (all reproduced + diffed in `MUTATION_PILOT.md` § "Every surviving mutant"):
-  - `TrackerGridFieldDisplayPure.cpp` **GR5** — `if (s.MaxResults > 0)` → `>= 0`: "Page size (maxResults):" tooltip line emitted at 0, no subcase asserts it.
-  - `TrackerGridFieldDisplayPure.cpp` **GR6** — `if (s.Total > 0 && s.WorklogsOnPage > 0)` → `||`: "This page: a–b of N" tooltip branch unexercised when exactly one operand is 0.
-  - `PlaneQuerySuggestEnginePure.cpp` **PLANE-03** — `if (raw.empty())` guard in `tryAdd` neutralised: an empty catalog option value would emit an empty suggestion; no field carries an empty option value.
-  - `JqlSuggestEnginePure.cpp` **JQL-03** — `if (++added >= kMaxUsers)` → `>`: the 50-user suggestion cap boundary (50 vs 51 emitted) is never tested.
-  - `LinearQueryFromJql.cpp` **JQL-05** — `if (s.size() >= 2 ...)` → `> 2`: 2-char quoted operand (`""`/`''`) unquote edge unasserted.
-  - `MergeWatchNotifyPure.cpp` **m3** — `if (out.size() > kMaxMessageBytes)` → `>=`: exact-at-cap truncation of the localhost-listener payload (SECURITY_AUDIT Tier-1 #6) — test uses 600 B, never exactly `kMaxMessageBytes`.
-  - `LinearClientHelpers.cpp` **m5** — `negative = (s[0] == '-')` → `false`: `ParseLongOr` negative-magnitude path (incl. `LONG_MIN` reconstruction) unasserted; `ParseLinearRateLimitHeaders` only tested with positive values.
-  Concrete next action: add the pinning assertions (each is a 1–3 line addition to the existing suite, template proven by the 3 fixed in the pilot PR): GR5/GR6 assert the tooltip strings on `maxResults==0` / `total==0,page>0` shapes; PLANE-03 feeds an empty-value option and asserts no empty suggestion; JQL-03 builds 51 matching users and asserts the cap; LinearQueryFromJql JQL-05 asserts `""` round-trips; MergeWatch m3 asserts an exactly-`kMaxMessageBytes` message is not truncated; LinearClientHelpers m5 asserts a negative `x-complexity` header parses to its signed value. NB: 5 mutants that survived are EQUIVALENT (DT2, DT5, JQL-01-notin, MAP-05-reserve, Labels-m3 — documented, do not "fix"). Cross-ref: `MUTATION_PILOT.md`, plan `docs/plans/mutation-testing-pilot.md`, roadmap Slice F (`testing-surface-roadmap.md`).
-  Resolution: applied — all 7 pinning assertions added to the existing pure doctest TUs (GR5/GR6 in TrackerGridFieldDisplayPure.test.cpp, PLANE-03 in PlaneQuerySuggestEnginePure.test.cpp, JQL-03 in JqlSuggestEnginePure.test.cpp, JQL-05 in LinearQueryFromJql.test.cpp, m3 in MergeWatchNotifyPure.test.cpp, m5 in LinearClientHelpers.test.cpp). Each mutant re-applied locally against the Linux `ninja-tsan-linux` rig: all 7 now KILLED; the 5 documented equivalent mutants were left alone.
-  Status: applied
-  Last-reviewed: 2026-07-09
-
-- 2026-07-05 · orchestrator (mutation-testing pilot) · [infra] · P2 — the `ninja-tsan-linux` preset compiles but **fails to link** on a fresh container: the Clang TSan runtime archive (`libclang_rt.tsan-x86_64.a`) is absent from the image, so `SmatchetTsanTests` cannot be built or run without a manual `apt-get install libclang-rt-18-dev` first
-  Details: on this Linux image `clang-18` is present but `/usr/lib/llvm-18/lib/clang/18/lib/linux/` (the compiler-rt sanitizer archives) does not exist until `libclang-rt-18-dev` is installed. All 93 TUs of `SmatchetTsanTests` compiled cleanly; only the final link failed (`ld.lld: cannot open .../libclang_rt.tsan-x86_64.a`). This is the ONLY assertion-based test executable that builds+runs headless on Linux (the primary doctest/UI rigs need MSVC ABI or ImGui/GLFW/X11/GL), so any Linux/web session doing test or mutation work hits this wall first. The nightly `tsan-linux-nightly.yml` CI runner presumably has the package pre-installed, masking the gap for local/container sessions.
-  Concrete next action: add `libclang-rt-18-dev` (or the toolchain-matched `libclang-rt-$LLVM_VERSION-dev`) to the SessionStart provisioning / devcontainer setup so `ninja-tsan-linux` links out-of-the-box; alternatively document the one-liner in `docs/agent-rules/build.md` next to the tsan preset. Cheap, unblocks the entire headless-Linux test surface. Cross-ref: `MUTATION_PILOT.md` § Phase 0 footnote 1; `CMakePresets.json` `ninja-tsan-linux`.
-  Resolution: applied — docs/agent-rules/build.md gained a "TSan on Linux" section with the `libclang-rt-18-dev` one-liner next to the preset docs, verified end-to-end in the exhibiting container (install → configure → build → link → suite green). The remote-container bootstrap-script fold is deliberately left to the `remote-container-fetchcontent-403` entry, whose PR creates `scripts/dev/remote-container-bootstrap.sh`.
-  Status: applied
-  Last-reviewed: 2026-07-09
-
-- 2026-07-05 · claude-code · [tooling] · P2 — plan-lock records the CURRENT branch; claiming from the wrong tree self-collides with your own push
-
-  Details: `agents/scripts/core/lock-claim.sh <slug> <write-set>` stamps the lock's
-  owner branch as **whatever branch the invoking tree is on** (`git rev-parse
-  --abbrev-ref HEAD`). This session claimed `refs/locks/perf-win-hunt` from the MAIN
-  repo tree (`/c/Development/Smatchet`, on `develop`) while the actual work + the
-  push happened in a WORKTREE on `perf/win-hunt`. Result: the lock recorded
-  `branch=develop`, and the pre-push plan-lock guard then rejected the
-  `perf/win-hunt` push as a **collision with a DIFFERENT branch's write-set** — the
-  agent colliding with its own lock. Recovery was a delete-ref + re-claim from the
-  worktree (so `branch=perf/win-hunt`), plus a wasted push cycle.
-
-  The confusing part: the lock and the branch are BOTH the operator's, so "plan-lock
-  collision — overlaps the write set owned by a DIFFERENT branch" reads as if a
-  second session is contending, when really it's a self-inflicted branch mismatch.
-
-  Concrete next action (pick one):
-  1. **Warn on tree/branch mismatch:** in `lock-claim.sh`, if the current branch is
-     the repo's default/integration branch (`develop`/`main`) — an unlikely branch
-     to hold a feature plan-lock — emit a loud "claiming lock owner=<branch>; you
-     usually claim from the feature worktree, not the integration tree" note before
-     the push. Cheapest, non-breaking.
-  2. **Let the branch be explicit:** accept an optional `--branch <name>` (or
-     `LOCK_CLAIM_BRANCH` env) so the caller pins the intended owner regardless of
-     which tree runs the script — mirrors the worktree-per-session model.
-  3. **Doc the gotcha** in `docs/perforce/AGENT_FLOWS.md` / the plan-lock section:
-     "claim the lock from the SAME worktree that will push, so owner == pushing
-     branch." (Do this regardless of 1/2.)
-
-  Cross-ref: session PR #1632 (perf-win-hunt) — the lock claimed on `develop` blocked
-  the `perf/win-hunt` push until released + re-claimed from the worktree.
-  Resolution: applied — satisfied by the explicit `LOCK_BRANCH` env override (`lock-claim.sh` header + `branch=` resolution, the entry's option 2) plus the `docs/agent-rules/ship-loops.md:140-145` mandate to pass `LOCK_BRANCH` explicitly from the worktree HEAD with the detached-HEAD skip (option 3); option 1's loud integration-branch warning added to `lock-claim.sh` in this archival PR.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · claude-code · [tooling] · P3 — required-context "teeth" check: can this required context ever red a PR?
-
-  Details: `test-required-context-parity.sh` verifies each
-  `branch_protection.required_contexts` name matches a workflow job `name:`
-  (byte-exact) — but not whether that job can EVER fail a PR. The all-gates-blocking
-  review found a required context (`C++ lint`) that structurally could not fail
-  (job-level mask + `cppcheck --error-exitcode=0`) and two (`High-integrity
-  baseline/narrowing`) that always skip on PRs (`if: github.event_name == 'push'`)
-  — required checks implying protection that doesn't exist. Add a heuristic warn:
-  a required context whose hosting job is `if:`-gated to exclude `pull_request`,
-  OR whose every failing path is masked, is a NO-OP gate. Emit WARN (not FAIL —
-  a skip-on-PR job is legitimately vacuously-satisfied for merge-queue readiness),
-  naming the vacuous contexts so a human confirms intent. Home: extend
-  `test-required-context-parity.sh`. Cross-ref: shipped/all-gates-blocking.md § Deviations.
-  Resolution: applied — the pr_triggered teeth shipped in `agents/scripts/core/test-required-context-parity.sh` (:93-102; selftest :190-191 asserts a push-only job hosting a required context FAILs — stronger than the proposed WARN); the residual every-failing-path-is-masked heuristic stays tracked by the sibling `tooling/2026-07-05-gate-lane-no-job-level-continue-on-error.md` entry (single tracker, no dual bookkeeping).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-05 · orchestrator (recurring-findings gate campaign #1605 ship session) · [tooling] · P2 — `native-automerge-bypasses-merge-snapshot-ledger`: a PR merged via GitHub's native auto-merge appended no line to `docs/self-improvement/merge-snapshots.jsonl`, so the ADR-0017 lossless merge-time capture had a hole for exactly the merge path a session without the `gh` CLI ends up arming.
-  Details: ship-loops.md § merge-snapshot mandated the append for three actors (in-session orchestrator REST merge, `git-janitor`, `merge-watcher handle_pass()`), but a session that ARMS GitHub-native auto-merge is none of them — the merge fires server-side, possibly after the session goes idle, and nothing writes the row. Hit live on #1605/#1608 (cloud session; no `gh`, so `safe-merge.sh` could not run; full gate set hand-verified before arming). Sweeper-workflow alternatives were evaluated and rejected: a GITHUB_TOKEN workflow can neither push develop (required-status-check protection, non-bypass actor) nor open harvest PRs that trigger the required contexts (GITHUB_TOKEN-created PRs spawn no workflow runs), and a scheduled retro-composer would write confidently-wrong rows from an already-rewritten rollup — a stale line is worse than a hole, since `postmortem-owed.sh` reads the ledger BEFORE the live fallback.
-  Resolution: applied — ship-loops.md § merge-snapshot gained the **fourth writer**: the session that armed the auto-merge appends the row on receiving the merged notification (PR-activity webhook / check-in), fetching `mergeCommit`/`headSha`/labels via MCP when `gh` is absent, calling the same idempotent helper with `mergeActor=orchestrator-automerge` + `SNAPSHOT_MERGED_AT=<mergedAt>`, and landing it in its next develop-bound commit. The #1605 + #1608 rows were seeded through exactly that path in the same PR. Residual (accepted, documented in the mandate): a session that dies before the merge event, or with no further develop-bound commit, leaves the hole to ADR-0017's live fallback — best-effort, never blindness; no retro-composition.
-  Status: applied
-  Last-reviewed: 2026-07-05
-
-- 2026-07-04 · orchestrator (remote-session ship-loop) · [process] · P1 — a draft PR wedged the daemon-free autonomous merge path: `safe-merge.sh` never flipped draft→ready, so under the standing `governance.auto_merge: on` grant the loop paused on a PR the harness opened draft
-  Details: The watcher daemon's first step on a registered PR is `ensure_pr_ready_for_review` (C4 prong 1), but the daemon-free path — the orchestrator driving `safe-merge.sh` in-session, the ONLY autonomous-merge path on remote/web sessions where no daemon persists — left `MERGE_GATES_FLIP_READY` unset. Remote/web harnesses open PRs DRAFT by default, so the sequence was: CodeRabbit skips the draft (`auto_review.drafts: false`), the CR gate blocks on NONE past the grace window, `safe-merge.sh` REFUSES, and the "autonomous" loop pauses on a state that never self-resolves — and even a CR-exempt pass would then fail the arm step (`gh pr merge` refuses drafts). The authorization model already covered this (invoking safe-merge IS the merge authorization, per AGENTS.md § Merge gates), but the flip was left to the caller's memory instead of the wrapper's contract.
-  Concrete next action: applied — `safe-merge.sh` now defaults `MERGE_GATES_FLIP_READY=true` when unset (explicit caller values, including `false`, preserved for poll-only semantics) and runs `gh_pr_ready_idempotent` once more immediately before arming (mirrors the watcher's pre-merge flip). Selftest CASES 12–13 + two bats cases pin the default and the opt-out; documented in `merge-gates.md` (§ Draft never pauses an authorized merge), `ship-loops.md` (§ standing grant bullet), and the AGENTS.md § Merge gates one-liner.
-  Status: applied (2026-07-04 — fix(merge): safe-merge defaults draft→ready flip so a draft PR never pauses an authorized autonomous merge)
-  Last-reviewed: 2026-07-04
-
-- 2026-07-04 · orchestrator (PR #1603 CI triage) · [infra] · P2 — Mobile advisory lanes red on every PR since the cpp-httplib bump: cached `.fetchcontent-src` lacks the new pinned ref and `UPDATE_DISCONNECTED` forbids fetching it
-  Details: `Mobile — POSIX core compile gate (Linux clang, advisory)` and `Mobile — Android NDK arm64-v8a (.so configure+link, advisory)` both fail at configure with `Requested git ref "2132205e1a69c9fce8096f085b1b8d72efc759fa" is not present locally, and not allowed to contact remote due to UPDATE_DISCONNECTED` (FetchContent `httplib-populate`, `CMakeLists.txt:606`). Mechanism: the lanes restore a FetchContent source cache saved BEFORE #1588 bumped the cpp-httplib pin; the cached checkout doesn't contain the new ref, and `UPDATE_DISCONNECTED` turns the would-be re-fetch into a hard configure error. Observed on PR #1603 (a shell/docs/bats-only diff that cannot influence FetchContent), head 43956b1. develop's own latest push run skipped these lanes (docs-only change detection), so the red is invisible on develop and taxes every code-running PR instead.
-  Concrete next action: include the dependency-pin in the lanes' FetchContent cache key (e.g. hash of the `CMakeLists.txt` FetchContent block or the pinned SHA) so a pin bump invalidates the cache, OR drop `UPDATE_DISCONNECTED` for cache-restored sources so a missing ref re-fetches instead of hard-failing. Until then these two advisory reds on unrelated PRs are this known infra issue, not the PR's diff.
-  Resolution: applied — `CMakeLists.txt:479-487` sets `FETCHCONTENT_UPDATES_DISCONNECTED=OFF` when `ENV{CI}` is defined ('stale restored caches self-heal' — the entry's second remedy verbatim) while local/IDE configures keep the disconnected fast path; both mobile lanes are now blocking required contexts (`project.config.json` `required_contexts`), so a recurrence cannot hide as advisory noise.
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-04 · orchestrator (CPP_CODE_AUDIT.md remediation, #1593) · [tooling] · P3 — writing a `SMATCHET_DEVIATION(rule=duplication; ...)` marker to suppress a copy-paste-clone finding took 2-3 iterations to fit under the 120-column line limit at least 4 separate times in one PR, because the natural wording for `reason=`/`owner=`/`revisit=` overruns the budget before the fields are even done
-  Details: the dup-audit tool's suppression check requires the marker comment to live on a single physical line (or the single line containing "rule=duplication"); `clang-format`'s `ReflowComments` will wrap any comment line over ~120 columns onto a second line, which breaks the suppression match even though the marker was written correctly. Every time this PR added a `SMATCHET_DEVIATION(rule=duplication; ...)` marker (`TrackerFieldCatalog.cpp`, `PlaneIssueMutation.cpp`, `AttachmentAppUpdateService.cpp`'s pre-existing markers re-shortened after an unrelated edit re-triggered `clang-format` on the file, `SmatchetToolbarUi.cpp`), the first-attempt wording — a natural-language `reason=` clause plus `owner=cpp-audit; revisit=<date>` — landed at 130-180 columns and had to be shortened 1-2 more times (first attempt often still too long even after an initial trim) before `test-lint-rules.sh`/`pre-ship.sh` passed. This is pure iteration waste: the fix is always the same shape (terser `reason=`), so the budget could be known up front instead of discovered by repeated gate failures.
-  Concrete next action: document the working budget directly at the point of use — either a one-line comment near `SMATCHET_DEVIATION`'s definition/grammar doc (likely `cpp-rules.md` or wherever the grammar is specified) stating "the full marker line, including the `// ` prefix and `owner=`/`revisit=` suffix, must fit in 120 columns — budget roughly 60-70 characters for `reason=` and keep it to a terse noun phrase (e.g. `reason=ParseBounded clone #8` not a full sentence explaining why)", or add a `--selftest`/lint-time hint that suggests a shortened `reason=` when a `SMATCHET_DEVIATION(rule=duplication; ...)` line is rejected purely for length (as opposed to missing/malformed fields). Either would turn a 2-3-iteration gate-fight into a single correct first attempt.
-  Resolution: applied — column-budget note added to docs/agent-rules/cpp-rules.md § SMATCHET_DEVIATION grammar: full marker line incl. // prefix and owner=/revisit= must fit 120 columns (clang-format ReflowComments otherwise wraps it and breaks the suppression match); budget ~60-70 chars for a terse noun-phrase reason=. The optional dup_audit.py length-rejection hint was not taken (docs at point of use judged sufficient).
-  Status: applied
-  Last-reviewed: 2026-07-08
-
-- 2026-07-02 · orchestrator (PR #1593 CI failure) · [tooling] · P2 — `coverage-delta-gate.sh`'s test-light exemption pre-check crashes with exit 141 (SIGPIPE) instead of reporting a clean gate failure
-  Details: `_classify_diff` deliberately `break`s out of its `while read` loop on the first real-runtime-surface line (by design — it only needs one counterexample to know the diff isn't exemptable). When it was fed via a `|` pipe (`git diff ... | _classify_diff`) under `set -euo pipefail`, that early `break` closes the reader's end of the pipe before `git diff` finishes writing; `git diff` then gets SIGPIPE and exits 128+13=141, `pipefail` propagates that 141 through the `EXEMPTION="$(...)"` assignment, and `set -e` kills the whole script — so any real (non-exempt) `Source/Core/src/*.cpp` diff without a test delta crashed the "Test-delta gate" CI check with a bare `Process completed with exit code 141` instead of reaching the intended `FAIL: Source/Core/ changes without test deltas.` message with remediation instructions. Reproduced + confirmed the mechanism with a minimal repro (early-`break` pipe reader under `set -o pipefail` reliably yields 141; the same reader via process substitution `reader < <(producer)` yields 0, since `pipefail`/`$?` don't track a process-substitution's background writer). Same defect class as the `pipefail var=$(...|head)` SIGPIPE/truncation guard added to `test-shell-lint.sh` Rule 6 (PR #1420) — but `coverage-delta-gate.sh` postdates that sweep and wasn't covered by it.
-  Concrete next action: done — fixed in the PR that hit it (alexandrosk0/Smatchet#1593), in two passes. First pass changed `git diff ... | _classify_diff` to `_classify_diff < <(git diff ...)` (process substitution instead of a pipe) so an early `break` in the reader can no longer SIGPIPE the writer through `pipefail` — but this traded away `git diff`'s own exit-status propagation entirely: a bad `MERGE_BASE`/git error would now produce empty input, which `_classify_diff` reports as `EXEMPT`, silently PASSING a gate that should hard-fail. CodeRabbit's review of the PR caught this regression before merge. Final fix: write the diff to a `mktemp` temp file first (`git diff ... >"$GIT_DIFF_TMPFILE" 2>/dev/null`), check its exit status explicitly with `if ! ...; then FAIL; fi`, then feed the file to `_classify_diff` — no pipe (so no SIGPIPE risk) and no lost exit code, with a `trap ... EXIT` for cleanup. Follow-up: extend `test-shell-lint.sh` Rule 6 (or add a sibling rule) to also flag `<producer> | <fn-with-early-break>` shapes generically, not just the `$(...|head)` shape — this exact "early-break reader on a live pipe" pattern is the general case and will recur in future gate scripts. A second, narrower rule worth considering: flag a process-substitution `< <(producer ...)` feeding a function/loop that exits early, since that shape reliably drops the producer's own exit-status observability — the same trap this fix fell into on its first pass.
-  Status: applied (fixed inline in #1593, verified regression-free by an independent review pass after CodeRabbit's catch; the generic shell-lint rule extensions above are the deferred follow-up)
-  Last-reviewed: 2026-07-03
-

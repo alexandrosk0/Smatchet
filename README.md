@@ -95,35 +95,9 @@ Missing override keys fall back to the built-in strings, and missing translation
 
 ## Building Smatchet
 
-> **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — clone, install prerequisites, run one command, see the app. This section is the fuller reference.
+> **New here? Start with [QUICKSTART.md](QUICKSTART.md)** — clone, install prerequisites, run one command, see the app. **[BUILD.md](BUILD.md)** is the full build reference.
 
 Smatchet's build system uses CMake and is designed to require **zero manual dependency downloads**. All third-party libraries (ImGui, SQLiteCpp, cpr, nlohmann/json, etc.) are fetched and built automatically via `FetchContent`.
-
-### Prerequisites
-
-- CMake 3.24 or higher
-- Ninja build system
-- Git
-- One of:
-  - **MSVC** — Visual Studio 2022 (Community or Build Tools) installed. The `*-msvc` presets need the MSVC toolchain (`cl.exe`) on `PATH`: run from a Visual Studio Developer Command Prompt/PowerShell, or activate the environment first (the bash flows use `scripts/dev/with-msvc-env.sh`).
-  - **Clang/LLVM** — `winget install LLVM.LLVM` on Windows. Uses `clang-cl` for MSVC ABI compatibility.
-
-### Supported Presets
-
-**MSVC (primary):**
-
-- `ninja-iter-msvc`: fast standalone iteration (`RelWithDebInfo`)
-- `ninja-debug-msvc`: full standalone debug (`Debug`)
-- `ninja-test-msvc`: doctest rig (`RelWithDebInfo`)
-- `ninja-msvc-asan`: ASAN via `/fsanitize=address`
-
-**Clang/LLVM (primary):**
-
-- `ninja-iter-clang`: fast standalone iteration (`RelWithDebInfo`)
-- `ninja-debug-clang`: full standalone debug (`Debug`)
-- `ninja-test-clang`: doctest rig (`RelWithDebInfo`)
-- `ninja-clang-asan`: ASAN + UBSan
-
 
 ### Build Workflows
 
@@ -145,67 +119,9 @@ already active — **no Visual Studio Developer Command Prompt required**. Pass 
 
 If no usable Visual Studio install is found it exits `78` with the winget commands to install one.
 
-> **MSYS2 is not required and not supported for building Smatchet.** The `ninja-iter-msys2` /
-> `*-msys2` presets are **retired** — use `ninja-iter-msvc` (MSVC) or `ninja-iter-clang` (clang-cl).
-> The repo-owned build scripts fail fast with that hint if a `*-msys2` preset is passed.
-
-#### Advanced — raw presets
-
-These are what CI runs, and what you want once `cl.exe` is already on `PATH` (a VS Developer
-Command Prompt). `scripts/dev/with-msvc-env.sh` is a command *wrapper*, not a shell — it cannot
-export the environment to your shell, so run each command through it:
-`bash scripts/dev/with-msvc-env.sh cmake --preset ninja-iter-msvc`.
-
-**MSVC:**
-
-```powershell
-cmake --preset ninja-iter-msvc
-cmake --build --preset ninja-iter-msvc
-```
-
-**Clang/LLVM** — ensure `clang-cl` is on PATH:
-
-```powershell
-cmake --preset ninja-iter-clang
-cmake --build --preset ninja-iter-clang
-```
-
-Standalone debug:
-
-```powershell
-cmake --preset ninja-debug-msvc
-cmake --build --preset ninja-debug-msvc
-```
-
-Tests:
-
-```powershell
-cmake --preset ninja-test-msvc
-cmake --build --preset ninja-test-msvc
-ctest --test-dir build/ninja-test-msvc --output-on-failure
-```
-
-Dual-target verification (Standalone + DX12):
-
-```powershell
-cmake --build --preset ninja-iter-msvc --target SmatchetStandalone SmatchetCore_DX12
-```
-
-### Configuration Options
-
-Smatchet exposes several CMake options to customize the build:
-
-| Option | Default | Description |
-| :--- | :--- | :--- |
-| `SMATCHET_WITH_LUA_AUTOMATION` | `ON` | Builds with the Lua console plugin and `sol2` bindings for field automation. |
-| `SMATCHET_WITH_MCP` | `ON` | Builds the Model Context Protocol (MCP) server plugin. |
-| `SMATCHET_WITH_AI` | `ON` | Builds the AI assistant side panel (provider-pluggable `IAiClient`). |
-| `SMATCHET_WITH_WHISPER` | `ON` | Builds the Whisper push-to-talk dictation plugin (Windows). |
-| `SMATCHET_ENABLE_STRICT_WARNINGS`| `ON`  | Applies strict compiler warnings (`/W4` or `-Wall -Wextra`) to first-party code. |
-
-### Unreal Engine Plugin
-
-When built on Windows, Smatchet provides a target (`SmatchetPackageUnrealLibs_DX12`) that automatically packages the DX12-compatible core library, ImGui, and public headers into the `Source/UnrealPlugins/SmatchetImGuiPlugin/ThirdParty/Smatchet` layout for immediate consumption by the Unreal Build Tool.
+Prerequisites, the full preset catalog (MSVC + Clang/LLVM, debug/test/ASAN), raw
+`cmake --preset` workflows, configuration options, and Unreal packaging are all in
+**[BUILD.md](BUILD.md)**.
 
 ## Architecture
 

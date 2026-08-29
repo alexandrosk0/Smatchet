@@ -10,10 +10,9 @@
 // selection layer.
 // Usage:
 //   auto& ctx = SelectableText::Begin("##MyPreview");
-//   for (each styled run) {
-//       SelectableText::TextRun(ctx, runBegin, runEnd, runFont, runColor,
-//                               wrapWidth, hrefOpaque);
-//   }
+//   ...then, for each styled run the caller has already drawn, record it via
+//   SelectableText::RegisterSegment with the run's text bounds, screen
+//   position, line height, font, width and optional hrefOpaque — see below.
 //   SelectableText::EndBlock(ctx);  // optional — call after each markdown block
 //                                    // so Ctrl+C inserts a newline between them.
 //   SelectableText::End(ctx);       // services mouse + Ctrl+C, draws overlay.
@@ -41,7 +40,7 @@ struct ImFont;
 
 namespace SelectableText {
 
-// One rendered text segment. Constructed by `TextRun`; one per styled-run call.
+// One rendered text segment. Constructed by `RegisterSegment`; one per styled-run call.
 // The struct is exposed (not opaque) so the bucket-A test rig can construct
 // synthetic contexts without an ImGui context.
 struct Segment {
@@ -86,16 +85,6 @@ Context& Begin(const char* strId);
 // can insert `\n` between segments crossing this boundary. Call after each
 // markdown block (paragraph, heading, list item, code block, table row).
 void EndBlock(Context&);
-
-// Emit one drawable run + record a Segment for selection bookkeeping.
-// MVP implementation does NOT do its own word-wrap — the caller's wrap loop is
-// expected to slice text into segments that fit within `wrapWidth` and
-// position the cursor before each call. `wrapWidth` is currently a hint
-// reserved for the eventual self-wrapping implementation.
-// `hrefOpaque` is stored per-segment so `GetHoveredHref` can return the
-// caller's link target without SelectableText needing to know the type.
-void TextRun(Context& ctx, const char* begin, const char* end, ImFont* font, ImU32 color, float wrapWidth = 0.0f,
-             void* hrefOpaque = nullptr);
 
 // Register a Segment for an already-rendered text run. Use when the caller is
 // emitting glyphs through its own `ImGui::TextUnformatted` / `ImDrawList::AddText`

@@ -103,10 +103,9 @@ struct PreviewState {
     /// <=0 falls back to ImGui::GetContentRegionAvail().x. Lets callers pin a wrap
     /// width independent of the surrounding window (tooltip option).
     float fixedWrapWidth = 0.0f;
-    /// Active SelectableText context. Non-null → prose `ImGui::TextUnformatted`
-    /// calls inside `PreviewRenderRuns` route through `SelectableText::TextRun`
-    /// so glyphs are drag-selectable + Ctrl+C-copyable. Code blocks + tables
-    /// remain non-selectable in MVP (handled by a follow-up).
+    /// Active SelectableText context. Non-null → rendered runs (prose, code
+    /// blocks, tables) are recorded via `SelectableText::RegisterSegment`
+    /// so glyphs are drag-selectable + Ctrl+C-copyable.
     SelectableText::Context* selCtx = nullptr;
     /// When non-null, parse-side callbacks APPEND plan blocks to this instead
     /// of calling ImGui directly. The corresponding `RenderPlan` then walks

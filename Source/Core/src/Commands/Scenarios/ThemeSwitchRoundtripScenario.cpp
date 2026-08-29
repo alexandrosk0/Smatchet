@@ -1,4 +1,21 @@
-// ThemeSwitchRoundtripScenario — see header for rationale. Drives a
+// ThemeSwitchRoundtripScenario — bucket-C screenshot-diff guard for the
+// SmatchetDark <-> NortonCommander <-> SmatchetDark round-trip. The user-facing
+// bug was: after switching themes A -> B -> A, residual colours from theme B
+// leaked into the restored A view. Three rounds of fixes hardened the static
+// ImGuiStyle path (Colors[] reseed, ImGuiStyle{} full reset, theme-aware
+// TextEditor::Palette refresh in AiChat + LuaConsole editors); this scenario
+// pins the result so a future regression in any of those layers breaks the
+// pixel diff. The expected output matches a clean "boot straight into
+// SmatchetDark" capture within the standard bucket-C per-channel L∞ ≤ 4
+// tolerance (absorbs AA / sub-pixel rounding); any real colour drift beyond
+// that — one leaked palette slot in one TextEditor pane — breaks the diff.
+// The scenario lives in Source/Core/ so DX12 / Unreal still compiles the TU.
+// The screenshot path is renderer-agnostic (GL front-buffer readback or DX12
+// swapchain back-buffer capture); CI pins the bucket-C launch to
+// `--renderer=gl` to keep the Mesa-rendered goldens byte-stable.
+// The factory (`MakeThemeSwitchRoundtripScenario`) is `extern`-declared by
+// SmatchetScenarioRegistry.cpp — there is deliberately no header.
+// Drives a
 // SmatchetDark -> NortonCommander -> SmatchetDark theme round-trip by mutating
 // g_ui.cfg.Theme on the schedule documented below, then triggers
 // `debug.window.screenshot` so the bash driver can pixel-diff the captured PNG

@@ -90,11 +90,37 @@ script_freshness_fetch() {  # script_freshness_fetch <repo_root> → 0 ok / 1 fa
 # below so the literal and glob-expanded branches cannot drift apart; sets the
 # shared `SCRIPT_FRESHNESS_INCOMPLETE` flag rather than returning, because a gap
 # has to blank BOTH sides and a `return 1` here would kill `set -e` callers.
-script_freshness_fingerprint_one() {  # <root> <relpath>
-    local _root="$1" _rp="$2" _rh _dh
+script_freshness_fingerprint_one() {  # <root> <relpath> [mode: literal|glob]
+    local _root="$1" _rp="$2" _mode="${3:-literal}" _rh _dh
     # Same `|| var=""` discipline as the caller — see the note there.
     _rh="$(git -C "$_root" hash-object "$_root/$_rp" 2>/dev/null)" || _rh=""
     _dh="$(git -C "$_root" rev-parse -q --verify "origin/develop:$_rp" 2>/dev/null)" || _dh=""
+
+    # LOCAL-ONLY GLOB MATCH — present here, absent on develop. Under the literal
+    # rule this blanked BOTH fingerprints and forced `unverifiable`, which
+    # warn_if_script_stale prints NOTHING for. pre-ship.sh declares
+    # `agents/scripts/project/lint-rules.d/*.sh`, so ANY branch that adds one lint
+    # rule silently switched off the whole freshness caveat — including for the
+    # OTHER declared files that had genuinely drifted and would have warned. A
+    # detector whose entire job is to prevent a false green produced one (#1996).
+    #
+    # A local-only file is "ahead", not "unknown": drop it from BOTH sides and let
+    # the remaining declared files decide fresh vs stale. Deliberately NOT the
+    # develop-side treatment a few lines down in the caller, which appends a
+    # placeholder to force `stale` — a file on develop and missing here means the
+    # checkout is BEHIND (real drift); a file only here means it is AHEAD, which is
+    # not staleness.
+    #
+    # KNOWN GAP, accepted: a file DELETED on develop that still exists locally is
+    # also "local-only" by this test, and that IS a stale checkout. Distinguishing
+    # the two needs extra git work (did the path ever exist in develop's history)
+    # that this hot path does not do today. The trade is deliberate — the previous
+    # behaviour silenced the warning for every declared file, this one silences it
+    # for a single path — but it is a gap, not a complete rule.
+    if [ "$_mode" = glob ] && [ -n "$_rh" ] && [ -z "$_dh" ]; then
+        return 0
+    fi
+
     if [ -z "$_rh" ] || [ -z "$_dh" ]; then SCRIPT_FRESHNESS_INCOMPLETE=true; fi
     SCRIPT_FRESHNESS_RUN_BLOB="$SCRIPT_FRESHNESS_RUN_BLOB $_rh"
     SCRIPT_FRESHNESS_DEV_BLOB="$SCRIPT_FRESHNESS_DEV_BLOB $_dh"
@@ -189,7 +215,7 @@ script_freshness_verdict() {  # <run_override> <dev_override> <relpath-or-glob>.
                             _matched=true
                             _rel="${_m#"$_root"/}"
                             _seen="$_seen $_rel"
-                            script_freshness_fingerprint_one "$_root" "$_rel"
+                            script_freshness_fingerprint_one "$_root" "$_rel" glob
                         done
 
                         # The worktree is only HALF the set. Expanding the pattern
