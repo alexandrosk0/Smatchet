@@ -383,74 +383,6 @@ void SmatchetImGuiHost::SetRendererNumSrvDescriptors(int numSrvDescriptors) {
     ImplData->OptionsSet.store(true, std::memory_order_release);
 }
 
-bool SmatchetImGuiHost::UpdateRendererColorFormat(int colorFormat, std::string& outError) {
-    outError.clear();
-    if (!ImplData) {
-        outError = "ImplData is null.";
-        return false;
-    }
-    if (colorFormat <= 0) {
-        outError = "Invalid renderer color format.";
-        return false;
-    }
-
-    if (ImplData->CachedOptions.Renderer.ColorFormat == colorFormat) {
-        return true;
-    }
-
-    ImplData->CachedOptions.Renderer.ColorFormat = colorFormat;
-    ImplData->OptionsSet.store(true, std::memory_order_release);
-
-#if !defined(_WIN32)
-    outError = "Renderer RTV update is Win32/DX12-only.";
-    return false;
-#else
-    if (!ImplData->Initialized.load(std::memory_order_acquire)) {
-        // Not initialized yet; new format will apply on first Initialize().
-        return true;
-    }
-
-    const SmatchetRendererInitInfo& renderer = ImplData->CachedOptions.Renderer;
-    if (renderer.Backend != SmatchetRendererBackend::Dx12) {
-        outError = "Renderer color format update supports only DX12 backend.";
-        return false;
-    }
-
-    if (!renderer.NativeDevice || !renderer.NativeCommandQueue || !renderer.RendererResource0 ||
-        !renderer.RendererResource1 || !renderer.RendererResource2) {
-        outError = "Missing required DX12 resources for RTV format update.";
-        return false;
-    }
-
-    std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
-    if (ImplData->ImGuiCtx) {
-        ImGui::SetCurrentContext(ImplData->ImGuiCtx);
-    }
-
-    ImGui_ImplDX12_Shutdown();
-    if (!Smatchet_ImplDX12_InitBackend(renderer, outError)) {
-        // Backend is now torn down. Without clearing Initialized, every gated
-        // path (DrawUI / RenderDrawData / NewFrame) would happily call into a
-        // dead backend on subsequent frames. Flip the flag so BuildFrame's
-        // lazy-retry path (~once per second while the UI is visible) will
-        // re-attempt Initialize(), and surface the error via LastInitError
-        // for the host's diagnostic accessors.
-        ImplData->Initialized.store(false, std::memory_order_release);
-        ImplData->LastInitError = outError;
-        LOG_ERROR("SmatchetImGuiHost::UpdateRendererColorFormat backend re-init failed: %s", outError.c_str());
-        return false;
-    }
-
-    ImplData->RendererResource0 = renderer.RendererResource0;
-    ImGuiIO& io = ImGui::GetIO();
-    unsigned char* pixels = nullptr;
-    int width = 0;
-    int height = 0;
-    io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
-    return true;
-#endif
-}
-
 #if defined(_WIN32)
 // Resolve the runtime asset + user-data directories from the DB path on first init. Plugin defaults
 // to the Portable per-Unreal-project preference to preserve historical config-file behaviour. The
@@ -890,18 +822,6 @@ void SmatchetImGuiHost::AddMouseWheel(float wheelX, float wheelY) {
     io.MouseWheel += wheelY;
 }
 
-void SmatchetImGuiHost::SetKeyDown(int imguiKey, bool isDown) {
-    if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
-        return;
-    }
-    std::lock_guard<std::mutex> lock(ImplData->ImGuiMutex);
-    if (ImplData->ImGuiCtx) {
-        ImGui::SetCurrentContext(ImplData->ImGuiCtx);
-    }
-    ImGuiIO& io = ImGui::GetIO();
-    io.AddKeyEvent(static_cast<ImGuiKey>(imguiKey), isDown);
-}
-
 void SmatchetImGuiHost::SetKeyModifiers(bool ctrl, bool shift, bool alt, bool superKey) {
     if (!ImplData || !ImplData->Initialized.load(std::memory_order_acquire)) {
         return;
@@ -1210,14 +1130,6 @@ void SmatchetHost_SetInitOptions(SmatchetImGuiHostHandle host, const char* dbPat
     h->SetInitOptions(opts);
 }
 
-bool SmatchetHost_UpdateRendererColorFormat(SmatchetImGuiHostHandle host, int colorFormat) {
-    auto* h = LookupHost(host);
-    if (!h)
-        return false;
-    std::string err;
-    return h->UpdateRendererColorFormat(colorFormat, err);
-}
-
 void SmatchetHost_SetNumSrvDescriptors(SmatchetImGuiHostHandle host, int numSrvDescriptors) {
     auto* h = LookupHost(host);
     if (!h)
@@ -1369,13 +1281,6 @@ void SmatchetHost_AddMouseWheel(SmatchetImGuiHostHandle host, float wheelX, floa
     if (!h)
         return;
     h->AddMouseWheel(wheelX, wheelY);
-}
-
-void SmatchetHost_SetKeyDown(SmatchetImGuiHostHandle host, int imguiKey, bool isDown) {
-    auto* h = LookupHost(host);
-    if (!h)
-        return;
-    h->SetKeyDown(imguiKey, isDown);
 }
 
 void SmatchetHost_SetKeyModifiers(SmatchetImGuiHostHandle host, bool ctrl, bool shift, bool alt, bool superKey) {
