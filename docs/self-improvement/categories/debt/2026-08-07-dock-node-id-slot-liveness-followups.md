@@ -55,4 +55,5 @@
   off that table would have stayed green through exactly the bug it is proposed for.
 
   Context on why an existence check alone is insufficient:
-  [`../process/2026-08-07-id-existence-checks-need-containment.md`](../applied.md).
+  the 2026-08-07 id-existence-checks-need-containment entry, archived in
+  [`categories/applied.md`](../applied.md).

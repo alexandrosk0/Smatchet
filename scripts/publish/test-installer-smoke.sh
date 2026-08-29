@@ -112,7 +112,7 @@ invoke_silent_uninstall_if_present() {
     [ -n "${uninstall_string//[[:space:]]/}" ] || return 0
     local uninstaller
     uninstaller="$(cygpath -u "$uninstall_string" 2>/dev/null || printf '%s' "$uninstall_string")"
-    "$uninstaller" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART || true
+    MSYS_NO_PATHCONV=1 "$uninstaller" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART || true
     # Inno's uninstaller relaunches itself from a temp copy and returns before
     # the real work finishes, so wait for the registry key to disappear rather
     # than trusting the exit of the first process.
@@ -132,10 +132,14 @@ signature_summary_json() {
         "$PYTHON" -c 'import json,sys; print(json.dumps({"Path": sys.argv[1], "Status": "Unknown", "StatusMessage": "signtool.exe not found on PATH", "Subject": "", "Thumbprint": ""}))' "$path"
         return 0
     fi
-    if out="$(signtool verify /pa /v "$(winpath "$path")" 2>&1)"; then
+    if out="$(MSYS_NO_PATHCONV=1 signtool verify /pa /v "$(winpath "$path")" 2>&1)"; then
         status="Valid"
-    else
+    elif printf '%s' "$out" | grep -qi 'No signature found'; then
         status="NotSigned"
+    else
+        # signtool failed for a non-Authenticode reason (bad invocation, I/O):
+        # report Unknown rather than a false NotSigned verdict on a signed file.
+        status="Unknown"
     fi
     subject="$(printf '%s' "$out" | sed -n 's/.*Issued to:[[:space:]]*//p' | head -1)"
     thumbprint="$(printf '%s' "$out" | sed -n 's/.*SHA1 hash:[[:space:]]*//p' | head -1 | tr -d '\r')"
@@ -165,7 +169,7 @@ if [ "$CHECK_SIGNATURES" -eq 1 ]; then
     INSTALLER_SIGNATURE="$(signature_summary_json "$INSTALLER")"
 fi
 
-"$INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART || die "Installer exited non-zero."
+MSYS_NO_PATHCONV=1 "$INSTALLER" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART || die "Installer exited non-zero."
 
 INSTALLED_EXE="$INSTALL_DIR/Smatchet.exe"
 INSTALLED_UNINSTALLER="$INSTALL_DIR/unins000.exe"

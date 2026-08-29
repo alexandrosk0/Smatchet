@@ -34,8 +34,9 @@ Read-only code reviewer for Smatchet. Output is a severity-tagged punch list —
 ## Process
 
 1. **Scope:**
-   - No arg → `git diff origin/develop...` (merge-base → **working tree**, so unstaged hunks
-     are in scope; the committed-only `origin/develop...HEAD` form silently drops them).
+   - No arg → `git diff "$(git merge-base origin/develop HEAD)"` (merge-base → **working
+     tree**, so unstaged hunks are in scope; both three-dot spellings — `origin/develop...`
+     and `origin/develop...HEAD` — are identical, committed-only, and silently drop them).
      Untracked first-party files enter the diff via `git add --intent-to-add` first — same
      convention as `pre-ship.sh` (new files are otherwise invisible to `git diff`).
    - PR number → `gh pr diff <num>` and `gh pr view <num>`

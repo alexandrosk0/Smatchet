@@ -79,6 +79,26 @@ assert_guarded() {
     assert_guarded scripts/publish/release-github.sh SIGN_TOOL
 }
 
+@test "installer-smoke installer and uninstaller invocations are guarded" {
+    # test-installer-smoke.sh runs the built installer and its uninstaller with
+    # Inno /switches; unguarded, MSYS rewrites /VERYSILENT into a path and the
+    # interactive wizard hangs every headless run (same class the ISCC test
+    # above pins for release-github.sh).
+    assert_guarded scripts/publish/test-installer-smoke.sh INSTALLER
+    assert_guarded scripts/publish/test-installer-smoke.sh uninstaller
+}
+
+@test "installer-smoke signtool invocation is guarded" {
+    # signtool is invoked by bare name inside a command substitution, so the
+    # variable-anchored assert_guarded does not cover it: assert the guard
+    # immediately prefixes every `signtool verify` call site instead.
+    run grep -E 'signtool[[:space:]]+verify' scripts/publish/test-installer-smoke.sh
+    [ "$status" -eq 0 ]
+    run bash -c "grep -nE 'signtool[[:space:]]+verify' scripts/publish/test-installer-smoke.sh \
+        | grep -vE 'MSYS_NO_PATHCONV=1[[:space:]]+signtool[[:space:]]+verify'"
+    [ "$status" -ne 0 ]
+}
+
 @test "every cmd.exe invocation in tracked shell scripts is guarded" {
     # Matches an actual invocation (`cmd.exe` followed by a `/switch`), not a
     # mention inside a comment or a PowerShell string.
