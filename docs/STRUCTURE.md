@@ -38,7 +38,6 @@ The single seam for project values is **`project.config.json`** (schema-validate
 | `docs/{CONTEXT.md,adr,perf,perforce,high-integrity}` | project | glossary, decisions, perf, p4, lint baseline | their own gates |
 | `docs/audits/{SECURITY,CPP_CODE,AGENTIC_INFRA}_AUDIT.md`, `docs/audits/UX_DESIGN_CRITIQUE.md`, `docs/audits/TEST_COVERAGE_GAP_MAP.md`, `docs/audits/MUTATION_PILOT.md` | project | **dated whole-tree audit reports** — one campaign each, `**Date:**` + `**Branch:**` + `**Scope:**` header, findings numbered and cited normatively from production comments (135 `CPP_CODE_AUDIT.md #N` / `SECURITY_AUDIT.md #N` citations across `Source/` and `tests/`) | `test-markdown-links` (link hygiene) · **no content/lifecycle guard** — deliberate, see below |
 | `/AI_POLICY.md`, `/CONTEXT-MAP.md` | project | root-level policy + registry (see § Naming for why these two stay at the root) | `test-markdown-links` (gate-blind-spot-sweep Slice 3) |
-| `backlog/` | project | pre-plan review queues (`BACKLOG_CODE_REVIEW.md`, `MANUAL_TEST_QUEUE.md`, `DEEP_REVIEW_*.md`) — findings not yet promoted to a plan or an ADR | `is-pure-docs-diff` / `merge-gates` treat it as docs · `issue-sweep` reads `elevate-to-issue:` lines · **no freshness guard** |
 
 **Why the audit reports have no content guard (explicit `—`, not an oversight).** They are *dated snapshots of a finished campaign*, not living documents: a report is correct as of its `**Date:**` header and is never edited to track the tree. So there is nothing for a freshness gate to assert — a stale report is the expected steady state, and the numbered findings must stay stable precisely because production comments cite them by number. What they are NOT is scratch files: deleting or renumbering one silently breaks 135 first-party code comments. Treat them as append-only-by-campaign, like `docs/adr/`.
 
@@ -76,7 +75,7 @@ A dated snapshot that is *not* a numbered-findings audit (a one-off measurement,
 - A project value (path, preset, threshold, label) → `project.config.json` (never hardcode in a portable file).
 - A how-to → `docs/guides/` (+ a `tier:` marker); a dated snapshot → `docs/reference/`.
 - A whole-tree audit campaign with numbered findings → `docs/audits/SCREAMING_CASE.md` (+ a taxonomy row) — see § Naming.
-- A review finding not yet worth a plan → `backlog/` (promote to `docs/plans/active/` or `docs/adr/` when it is).
+- A review finding not yet worth a plan → a GitHub Issue (product bug, ADR-0014) or a `docs/self-improvement/categories/` entry (agent-system / debt); promote to `docs/plans/active/` or `docs/adr/` when it grows into one. (The old root `backlog/` review-queue directory was retired 2026-08-29 — all ledgers closed; see git history.)
 
 ## Enforcement guards (`doc-validation.yml`, cheap Ubuntu lane)
 

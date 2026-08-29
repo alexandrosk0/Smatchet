@@ -1,8 +1,11 @@
 # Plan — N4 TrackerActions interface (assessment + verdict)
+<!-- plan-date: 2026-07-13 -->
 
 > **Slug**: `n4-trackeractions-interface` (matches this file's basename without `.md`).
 >
-> **Status**: `active` — an **assessment plan**: it evaluates whether the `TrackerActions` interface that BACKLOG_CODE_REVIEW.md N4 calls "the overdue Phase 2 step" is still worth building, given six shipped fan-in phases + the deps-adapter extraction that post-date the N4 ledger note. Verdict below is **do not build TrackerActions; close N4** — but the plan documents the exact residual coupling surface so a future author can re-open with eyes open if the friend ever regrows.
+> **Status**: `shipped` — verdict delivered and applied (N4 closed in the ledger's 2026-08-18
+> reconciliation; the ledger itself was retired 2026-08-29, and this assessment archived per its
+> own outstanding-bookkeeping note). Originally an **assessment plan**: it evaluates whether the `TrackerActions` interface that BACKLOG_CODE_REVIEW.md N4 calls "the overdue Phase 2 step" is still worth building, given six shipped fan-in phases + the deps-adapter extraction that post-date the N4 ledger note. Verdict below is **do not build TrackerActions; close N4** — but the plan documents the exact residual coupling surface so a future author can re-open with eyes open if the friend ever regrows.
 
 ## Context
 
@@ -135,7 +138,7 @@ N/A — this is an assessment/verdict plan; it extracts nothing. (The Part-A DTO
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
-N/A — this plan's PR is docs-only (`docs/plans/active/n4-trackeractions-interface.md`). No `Source/Core/` diff. (Were the not-recommended implementation built, the touched paths are cold wiring — gate 1 maps to no hot scenario; gates 2-5 do not fire.)
+N/A — this plan's PR is docs-only (`docs/plans/n4-trackeractions-interface.md`). No `Source/Core/` diff. (Were the not-recommended implementation built, the touched paths are cold wiring — gate 1 maps to no hot scenario; gates 2-5 do not fire.)
 
 ## Risks / non-goals
 
