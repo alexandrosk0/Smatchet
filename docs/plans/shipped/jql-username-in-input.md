@@ -1,7 +1,9 @@
 # jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical
+<!-- plan-date: 2026-08-30 -->
 
 ## Status
-Active. Branch `claude/jql-name-in-input` off `origin/develop` (2fd8e2af2).
+Shipped. PR #2176 squash-merged to `develop` 2026-08-30 (`17aa5c63f`).
+Branch `claude/jql-name-in-input` deleted (remote auto-delete on squash; local removed post-merge).
 
 ## Problem
 Picking a user from the async live-search dropdown inserts the raw Jira account id
@@ -19,10 +21,10 @@ line under the bar translated ids to names, but the user rejected that design:
 2. **Beautify pass** — `TrackerQueryAcp_DrawUserEcho` becomes
    `TrackerQueryAcp_ApplyUserNamesToBuffer`: when the input is NOT hot, no pending
    replace is queued, and the backend is Jira, rewrite `st.buf` id→name in place via
-   `RenderQueryWithUserNames` (catalog pass then search-resolved pass — safe forward,
-   ids are unique keys). Sets `jqlBufSemanticRewrite` so the views dirty-compare can
-   ignore the rewrite. Memoised exactly like the old echo (renamed fields
-   `jqlNameRewrite*`) — steady frame is one string compare + two scalar compares.
+   `RenderQueryWithUserNames` (ONE merged catalog+search-resolved vector — superseded the original two-sequential-pass design, see Implementation log 2026-08-30; safe forward, rewrite only on round-trip-unique names). Sets `jqlBufSemanticRewrite` so the views dirty-compare can
+   ignore the rewrite. Memoised like the old echo (renamed fields
+   `jqlNameRewrite*`), with the fields snapshot joining the memo key in the final
+   implementation — steady frame is one string compare + scalar compares.
 3. **Reverse map at apply boundaries** — new pure
    `jql_user_display::RenderQueryWithAccountIds(query, fields, users, outReplaced)`:
    field-aware state machine over `ForEachValueToken` that replaces unique
@@ -66,8 +68,9 @@ line under the bar translated ids to names, but the user rejected that design:
 
 ## Perf-gate (mandatory — diff touches Source/Core/)
 - **Steady frame (Pillar 1)**: the beautify pass is memoised on
-  (`buf`, catalog data ptr, catalog size) exactly like the old echo — a steady frame
-  costs one `std::string` compare + two scalar compares, no allocation. The rewrite
+  (`buf`, catalog data ptr/size, fields snapshot — the final implementation added the
+  fields key; see Implementation log 2026-08-30) — a steady frame costs one
+  `std::string` compare + scalar compares, no allocation. The rewrite
   itself runs only when the buffer or catalog actually changed AND the input is not
   focused (i.e. after a pick/apply, not per keystroke).
 - **Reverse map** runs only on user actions (Apply / Create / Enter / Open-in-browser),
@@ -87,6 +90,9 @@ line under the bar translated ids to names, but the user rejected that design:
   still hits Jira correctly.
   2026-08-29: user verdict on build `eb90f3d7`: "it works" (after the duplicate-row
   fix; earlier verdict on `843536b9` reported the two-rows-per-user defect).
+- Final (head `b335714be`): full unit suite 3031 cases / 42992 assertions, 0 failed;
+  `Smatchet.exe` links (`ninja-iter-msvc`); delta lint gates all PASS (advisory WARNs only).
+  Merge gates 22/22 CI green, CodeRabbit 0 open findings, Bugbot 0 open, 0 user threads.
 
 ## Implementation log
 - 2026-08-29: echo (`TrackerQueryAcp_DrawUserEcho`) deleted; input buffer now holds display
@@ -130,6 +136,19 @@ line under the bar translated ids to names, but the user rejected that design:
   cases / 85 assertions green; full suite 7/7 ctest lanes green; lint gates all PASS
   (advisory WARNs only: pre-existing tu-line-ceiling, func-size soft 103>100 on the walker,
   comment-ratio on two headers).
+
+- 2026-08-30 (CR-triage pass, addresses the 1 confirmed-Major CodeRabbit finding on PR
+  #2176): the id->name direction now carries a round-trip guard — `RenderQueryWithUserNames`
+  rewrites an id to a display name only when `UniqueAccountIdForName` maps that name back to
+  exactly this id across the supplied `users`, so a display name shared by two accounts keeps
+  BOTH ids as typed (naming either would render a query the name->id inverse refuses to undo).
+  Call site (`TrackerQueryAcp_ApplyUserNamesToBuffer`) reworked from two sequential passes
+  (catalog, then search-resolved over the first pass output — each pass blind to the other
+  list, so cross-list duplicate names looked unique) to ONE merged catalog+search-resolved
+  vector, mirroring `TrackerQueryAcp_QueryWithAccountIds`; merge cost is memo-miss-only
+  (Pillar 1). Header doc pins the ONE-merged-vector contract. New doctest: ambiguous name
+  keeps id / same account listed twice still counts as one. 3031 cases / 42992 assertions
+  green. Commit `b335714be`.
 
 ## Deviations
 - **Scope add — `TrackerQueryAcp_CanonicalQueryForApply`** (SmatchetAutocompleteUi.{h,cpp}):

@@ -83,4 +83,17 @@ Ordered — (b) before (a) turns a soft repo-wide wedge into a hard one.
    is the real remediation and is not a gate. Recording it here keeps 1–4 from being mistaken for a
    fix to the underlying blindness.
 
-Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=re-check whether `CR findings (0 actionable)` still posts `pending` on merged heads, whether the terminal arm shipped, and whether the context joined required_contexts; baseline=7 consecutive merges past a pending context with 0 override labels, 2026-08-18/19; fired=never
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=re-check whether `CR findings (0 actionable)` still posts `pending` on merged heads, whether the terminal arm shipped, and whether the context joined required_contexts; baseline=7 consecutive merges past a pending context with 0 override labels, 2026-08-18/19; fired=2026-08-30
+
+## Re-check 2026-08-30 (fired via PR #2176 ship-loop)
+
+- **Terminal arm: NOT shipped.** `action.yml:510-511` still handles `manual review required` by
+  nudging + `return 1` — no `post failure`; `:635` still posts the unbounded
+  `pending "awaiting CodeRabbit review on current head"`.
+- **Name gap: still open.** `project.config.json` `.branch_protection.required_contexts` carries
+  the job name `CR finding gate`, not the posted context `CR findings (0 actionable)`.
+- **But no merge escaped past it this time**: on #2176 `merge-gates.sh` block-on-any-red held the
+  merge until the pending context resolved (poll 41/90, 22/22 green) — the baseline's
+  "7 consecutive merges past a pending context" class did not recur. The remaining risk is the
+  silent wedge, not a silent escape; the wedge's root cause is the bot-authored nudge —
+  see [`2026-08-30-cr-gate-auto-nudge-is-bot-authored-so-coderabbit-ignores-it.md`](2026-08-30-cr-gate-auto-nudge-is-bot-authored-so-coderabbit-ignores-it.md).
