@@ -1,7 +1,8 @@
 # jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical
 
 ## Status
-Active. Branch `claude/jql-name-in-input` off `origin/develop` (2fd8e2af2).
+Shipped. PR #2176 squash-merged to `develop` 2026-08-30 (`17aa5c63f`).
+Branch `claude/jql-name-in-input` deleted (remote auto-delete on squash; local removed post-merge).
 
 ## Problem
 Picking a user from the async live-search dropdown inserts the raw Jira account id
@@ -87,6 +88,9 @@ line under the bar translated ids to names, but the user rejected that design:
   still hits Jira correctly.
   2026-08-29: user verdict on build `eb90f3d7`: "it works" (after the duplicate-row
   fix; earlier verdict on `843536b9` reported the two-rows-per-user defect).
+- Final (head `b335714be`): full unit suite 3031 cases / 42992 assertions, 0 failed;
+  `Smatchet.exe` links (`ninja-iter-msvc`); delta lint gates all PASS (advisory WARNs only).
+  Merge gates 22/22 CI green, CodeRabbit 0 open findings, Bugbot 0 open, 0 user threads.
 
 ## Implementation log
 - 2026-08-29: echo (`TrackerQueryAcp_DrawUserEcho`) deleted; input buffer now holds display
@@ -130,6 +134,19 @@ line under the bar translated ids to names, but the user rejected that design:
   cases / 85 assertions green; full suite 7/7 ctest lanes green; lint gates all PASS
   (advisory WARNs only: pre-existing tu-line-ceiling, func-size soft 103>100 on the walker,
   comment-ratio on two headers).
+
+- 2026-08-30 (CR-triage pass, addresses the 1 confirmed-Major CodeRabbit finding on PR
+  #2176): the id->name direction now carries a round-trip guard — `RenderQueryWithUserNames`
+  rewrites an id to a display name only when `UniqueAccountIdForName` maps that name back to
+  exactly this id across the supplied `users`, so a display name shared by two accounts keeps
+  BOTH ids as typed (naming either would render a query the name->id inverse refuses to undo).
+  Call site (`TrackerQueryAcp_ApplyUserNamesToBuffer`) reworked from two sequential passes
+  (catalog, then search-resolved over the first pass output — each pass blind to the other
+  list, so cross-list duplicate names looked unique) to ONE merged catalog+search-resolved
+  vector, mirroring `TrackerQueryAcp_QueryWithAccountIds`; merge cost is memo-miss-only
+  (Pillar 1). Header doc pins the ONE-merged-vector contract. New doctest: ambiguous name
+  keeps id / same account listed twice still counts as one. 3031 cases / 42992 assertions
+  green. Commit `b335714be`.
 
 ## Deviations
 - **Scope add — `TrackerQueryAcp_CanonicalQueryForApply`** (SmatchetAutocompleteUi.{h,cpp}):
