@@ -39,6 +39,8 @@
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "SmatchetUiSession.h"
 
+#include "ui_test_skip.h" // SmatchetUiTestIsHeadlessSoftwareGl
+
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the proven real-window probe
 #include "imgui_te_context.h"
@@ -172,6 +174,12 @@ void RegisterBulkImportWindowRenderSmoke(ImGuiTestEngine* engine) {
         const AppController* app = SmatchetActiveUiTestAppController();
         if (app == nullptr) {
             ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
+            return;
+        }
+        if (SmatchetUiTestIsHeadlessSoftwareGl()) {
+            // Under llvmpipe the docked window never goes live within the yield
+            // budget (deterministic on every CI run; passes on real GL).
+            ctx->LogInfo("SKIP: render/timing-dependent under headless software GL (see ui_test_skip.h)");
             return;
         }
 

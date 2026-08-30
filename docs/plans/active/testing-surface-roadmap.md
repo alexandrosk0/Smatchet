@@ -4,10 +4,14 @@
 **Owner:** orchestrator. **Created:** 2026-06-14. **Drives:** execution of the
 [`testing-surface.md`](../../guides/testing-surface.md) §6 roadmap (8 items, P0–P3).
 
-**Progress (2026-06-20):** shipped — **H, A, D, E1, C** (both phases), **E2**, **G**
-(Phases 1–2). Blocked — **B** (Mesa bucket-lane exe-boot prerequisite broken).
-Remaining — **G** Phase 3 / G2, **J, F, I**. Detail in § Implementation log +
-§ Deviations. NB: E2 + G shipped *ahead of* B (reorder forced by B's blocker).
+**Progress (2026-08-29):** shipped — **H, A, D, E1, C** (both phases), **E2**, **G**
+(Phases 1–2), **F** (mutation-smoke gates the tsan nightly at `--floor 80`), **I**
+(Phase 0, #1507). **B unblocked** — its exe-boot blocker was falsified 2026-06-18
+and the all-gates-blocking flip already makes both Mesa lanes block on broken
+harness; residual (a) — bucket-E per-test verdicts blocking — shipped 2026-08-29
+(PR #2161), residual (b) — CI-native bucket-C goldens — remains (see
+§ Deviations). Remaining — **B** residual (b), **G** Phase 3 / G2, **J**. Detail
+in § Implementation log + § Deviations.
 
 ## Purpose
 
@@ -268,18 +272,42 @@ Each lands in the slice that resolves it (don't batch into a separate PR):
   wiring `TrackerHttpRequestWithRetry` into the live paths shipped together with the
   fault-injection tests in one PR.
 - **Sequence reordered — E2 + G shipped ahead of B.** The approved order
-  (`…C→B→E2→G…`) put B before E2 and G, but B is **blocked** (next bullet), so the
+  (`…C→B→E2→G…`) put B before E2 and G, but B was believed **blocked** at the time
+  (next bullet — the blocker was later falsified), so the
   additive, zero-merge-risk slices E2 (#1296/#1301/#1307) and G (#1327/#1352) were
   pulled forward rather than stall the roadmap behind B's prerequisite. Leverage-per-
   cost ordering otherwise preserved; only B's position changed.
-- **Slice B — blocked, not started.** Making bucket-E/C merge-gating (enumerate
-  scenarios + quarantine lane + drop blanket `continue-on-error`) requires the Mesa
-  software-GL bucket-C/E lanes to boot the CI exe — and they currently **can't**, so
-  `Bucket-` was *dropped* from the merge-poller meant-to-block allow-list on 2026-06-15
-  (`infra.md` `bucket-mesa-exe-boot` P1; both lanes are now fully advisory until a
-  boot-fix graduates). B's enumeration + quarantine work stays unstarted behind that
-  boot-fix. Slice A's launch-smoke — since graduated to a dedicated BLOCKING check
-  (#1375) — is the partial stand-in (catches dead-harness) until B can land.
+- **Slice B — unblocked and mostly superseded (status corrected 2026-08-29).**
+  The originally-stated blocker was falsified on 2026-06-18: the Mesa software-GL
+  exe **boots in ~2 s** under llvmpipe (the ~26 s "can't boot" was a since-fixed
+  `--spawn` exit-code bug — see `bucket-mesa-exe-boot` in
+  `docs/self-improvement/categories/applied.md`). The all-gates-blocking flip
+  (`MERGE_GATES_BLOCK_ALLOWLIST_RE="."`,
+  `agents/scripts/core/merge-gates.d/00-common.sh:42`) then retired the
+  meant-to-block allow-list entirely — every check blocks unless its NAME contains
+  `advisory`, and neither bucket lane carries a job-level `continue-on-error` any
+  more. The lanes' broken-harness teeth (zero-pass, lane-integrity) already BLOCK;
+  only two documented step-level masks keep the render verdicts advisory. Residual
+  B work is therefore narrow: **(a)** fix or skip the ~3/74 render-dependent
+  bucket-E tests under llvmpipe so the per-test step mask
+  (`.github/workflows/build-and-test.yml` bucket-E per-test run) can go; **(b)**
+  establish CI-native goldens (provenance report: 0/7 CI-native today) so the
+  bucket-C per-scenario golden-diff mask can go. Slice A's launch-smoke —
+  graduated to a dedicated BLOCKING check (#1375) — covers dead-harness meanwhile.
+- **Slice B residual (a) — DONE (2026-08-29, PR #2161).** The render-dependent
+  set turned out to be 4 tests (not ~3), deterministic and identical across
+  three sampled CI runs spanning a week: `TrackerFirstRun/
+  VerifiedPinClearsOnWindowClose`, `NotificationCenter/
+  OpenViaToastClickRequest_RendersRowsAndClears`, `FuncSizeWindowRender/
+  AuditWindow_RendersAndShowsRefreshButton`, `FuncSizeMainUi/
+  BulkImportWindow_RendersAndShowsLoadFile`. Each now self-skips under the
+  headless software-GL lane via the shared predicate
+  `tests/ui/ui_test_skip.h` (keyed on `LIBGL_ALWAYS_SOFTWARE`, which the lane
+  exports — a local run setting it reproduces the skip set), and the bucket-E
+  lane-integrity step now fails on `status=fail` too, making per-test verdicts
+  BLOCKING. The run step keeps `continue-on-error` only for the unreliable exe
+  exit code — it no longer masks per-test failures. Residual (b) (CI-native
+  goldens for bucket-C) remains open.
 
 ## Verification
 
