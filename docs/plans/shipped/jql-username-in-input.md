@@ -1,4 +1,5 @@
 # jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical
+<!-- plan-date: 2026-08-30 -->
 
 ## Status
 Shipped. PR #2176 squash-merged to `develop` 2026-08-30 (`17aa5c63f`).
