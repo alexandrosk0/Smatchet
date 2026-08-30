@@ -21,10 +21,10 @@ line under the bar translated ids to names, but the user rejected that design:
 2. **Beautify pass** — `TrackerQueryAcp_DrawUserEcho` becomes
    `TrackerQueryAcp_ApplyUserNamesToBuffer`: when the input is NOT hot, no pending
    replace is queued, and the backend is Jira, rewrite `st.buf` id→name in place via
-   `RenderQueryWithUserNames` (catalog pass then search-resolved pass — safe forward,
-   ids are unique keys). Sets `jqlBufSemanticRewrite` so the views dirty-compare can
-   ignore the rewrite. Memoised exactly like the old echo (renamed fields
-   `jqlNameRewrite*`) — steady frame is one string compare + two scalar compares.
+   `RenderQueryWithUserNames` (ONE merged catalog+search-resolved vector — superseded the original two-sequential-pass design, see Implementation log 2026-08-30; safe forward, rewrite only on round-trip-unique names). Sets `jqlBufSemanticRewrite` so the views dirty-compare can
+   ignore the rewrite. Memoised like the old echo (renamed fields
+   `jqlNameRewrite*`), with the fields snapshot joining the memo key in the final
+   implementation — steady frame is one string compare + scalar compares.
 3. **Reverse map at apply boundaries** — new pure
    `jql_user_display::RenderQueryWithAccountIds(query, fields, users, outReplaced)`:
    field-aware state machine over `ForEachValueToken` that replaces unique
@@ -68,8 +68,9 @@ line under the bar translated ids to names, but the user rejected that design:
 
 ## Perf-gate (mandatory — diff touches Source/Core/)
 - **Steady frame (Pillar 1)**: the beautify pass is memoised on
-  (`buf`, catalog data ptr, catalog size) exactly like the old echo — a steady frame
-  costs one `std::string` compare + two scalar compares, no allocation. The rewrite
+  (`buf`, catalog data ptr/size, fields snapshot — the final implementation added the
+  fields key; see Implementation log 2026-08-30) — a steady frame costs one
+  `std::string` compare + scalar compares, no allocation. The rewrite
   itself runs only when the buffer or catalog actually changed AND the input is not
   focused (i.e. after a pick/apply, not per keystroke).
 - **Reverse map** runs only on user actions (Apply / Create / Enter / Open-in-browser),
