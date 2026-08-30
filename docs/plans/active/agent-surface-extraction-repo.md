@@ -41,17 +41,28 @@ After this lands: the agent surface is a standalone **public** repo — **`the-u
 
 Grouped by phase. Path lists below are the known consumers (from `docs/PORTABILITY.md` § External path contracts + a workflow grep); **Phase A opens with an exhaustive repo-wide sweep** (`rg -l 'agents/(core|project|_shared|scripts)|docs/agent-rules|docs/harness|docs/self-improvement'`) whose full hit-list is committed as the phase's checklist — the rows here are the anchors, not the closed set.
 
+> **Companion detail docs.** Each row below is the anchor; the expanded form — sub-rows, exact edit sites with line numbers, PR split, and the adversarial findings folded in — lives in a companion file under [`agent-surface-extraction-repo/`](agent-surface-extraction-repo/):
+> [`phase-a.md`](agent-surface-extraction-repo/phase-a.md) (Phase A, incl. the A1/A2/A3 PR split) ·
+> [`phase-b-c.md`](agent-surface-extraction-repo/phase-b-c.md) (Phase B seed + Phase C flip) ·
+> [`phase-d-risks.md`](agent-surface-extraction-repo/phase-d-risks.md) (Phase D process/docs + expanded risks) ·
+> [`verification.md`](agent-surface-extraction-repo/verification.md) (existing-utilities detail + the 30-row per-phase verification matrix).
+> This plan file stays the authoritative scope + status document; a companion never overrides it. **At archive time the companion directory is `git mv`'d together with this file** (`git mv docs/plans/active/agent-surface-extraction-repo docs/plans/shipped/`), so the relative links above keep resolving.
+
 ### Phase A — indirection prep (Smatchet PR, no file moves)
+
+*Detail: [`phase-a.md`](agent-surface-extraction-repo/phase-a.md) — sub-rows 1a–7c and the three-PR split (A1 → A2, A3 independent).*
 
 1. `scripts/dev/project-config.sh` — export the dual-root pair: `AGENT_LAYER_ROOT` (default `$REPO_ROOT`) + `PROJECT_ROOT` (default `$REPO_ROOT`) + `PC_*` twins; `project.config.json` resolution order `$SMATCHET_PROJECT_CONFIG` env → superproject root (`git rev-parse --show-superproject-working-tree`) → layer repo root, so the same script works host-side, from inside the future submodule, and standalone in the layer repo's own CI (`PROJECT_ROOT=$AGENT_LAYER_ROOT` there).
 2. `.github/workflows/*.yml` (14 files referencing `agents/`: `agentic-selftests`, `build-and-test`, `codeql`, `cr-oob-review-backfill`, `dependabot-auto-merge`, `doc-validation`, `dup-scan`, `issue-janitor`, `locks-render`, `lock-staleness`, `mobile-security`, `perf-pr-fast`, `plan-lock-gate`, `shell-lint`) — route script invocations through the variable; add `submodules: recursive` to **every** `actions/checkout` step repo-wide (harmless now, mandatory after the flip).
 3. `scripts/dev/pre-ship.sh`, `scripts/dev/test-all.sh`, `agents/scripts/project/test-lint-rules.sh` — invoke `agents/scripts/…` via `AGENT_LAYER_ROOT`.
-4. `agents/scripts/core/setup-harness.sh` — `link_dir ".claude/agents" "$AGENT_LAYER_ROOT/agents"`; codex/cursor/pi mirror generators likewise; hook-command paths it writes into `.claude/settings.json` likewise.
+4. `agents/scripts/core/setup-harness.sh` — re-point `link_agents()` (per-file `mklink //H` hardlinks, not a directory junction — `link_dir` no longer exists) at `$AGENT_LAYER_ROOT/agents`; codex/cursor/pi mirror generators likewise; hook-command paths it writes into `.claude/settings.json` likewise.
 5. `agents/scripts/core/{test-agent-contract.sh,test-backlog-counts.sh,sort-applied-md.sh,test-plan-index.sh,check-harness-provisioned.sh}` — path config vars via the right root: `test-agent-contract.sh` + `check-harness-provisioned.sh` read layer content → `AGENT_LAYER_ROOT`; `test-backlog-counts.sh` + `sort-applied-md.sh` + `test-plan-index.sh` read **host** content (entries + plans stay host-side) → `PROJECT_ROOT`. Extend `check-harness-provisioned.sh` to fail loudly when the layer dir is missing/empty (the "checkout forgot submodules" guard).
-6. `scripts/dev/new-session.sh` (`nsc`) — run `git submodule update --init --recursive` in freshly created worktrees (no-op pre-flip).
+6. `scripts/dev/worktree.sh` `cmd_new()` — run `git submodule update --init --recursive` in freshly created worktrees (no-op pre-flip). This is the real creator; `scripts/dev/new-session.sh` (`nsc`) only delegates to it, and `bash scripts/dev/worktree.sh new <slug>` is separately documented, so the hook belongs in `cmd_new()` to cover both entry points.
 7. `.gitattributes` — `merge=union` row for `docs/self-improvement/categories/applied.md` stays host-side **permanently** (entries never move — grill decision 4); no layer-repo twin needed.
 
 ### Phase B — seed `the-unwilling-agentic-bunch` (new public repo; user creates it — pause exception 3, cross-repo mutation)
+
+*Detail: [`phase-b-c.md`](agent-surface-extraction-repo/phase-b-c.md) — rows 8a–10c, the seed-script contract, and the human preconditions.*
 
 8. New repo seeded by `git filter-repo` from a fresh Smatchet clone: `--path agents/ --path docs/agent-rules/ --path docs/harness/ --path docs/self-improvement/AGENT_SELF_IMPROVEMENT.md --path AGENTS.md --path scripts/dev/project-config.sh` + one `--path tests/bats/<file>` per layer-coupled suite (the 61-file list generated at seed time via `grep -l 'agents/' tests/bats/*.bats`, committed alongside the seed script as the audit trail). Entries (`docs/self-improvement/categories/`, `postmortems.md`, `applied.md`, `.jsonl` ledgers) are **excluded** — they stay host-side. History preserved; layout unchanged.
 9. New repo CI: `agentic-selftests.yml` (over the 61 moved bats suites), `shell-lint.yml`, and a doc-validation subset (anchors / agent-contract / portable-purity / markdown-links scoped to the moved tree) — all reusing the moved scripts on themselves; branch protection + `merge-gates.sh` self-hosted as its own gate-poller; a **fresh** `.coderabbit.yaml` (no self-improvement auto-exemption — those paths stay in Smatchet, whose `.coderabbit.yaml` keeps the path_filter unchanged).
@@ -59,15 +70,19 @@ Grouped by phase. Path lists below are the known consumers (from `docs/PORTABILI
 
 ### Phase C — the flip (Smatchet PR)
 
+*Detail: [`phase-b-c.md`](agent-surface-extraction-repo/phase-b-c.md) — rows 11a–16, the flip checklist, and the rollback recipe.*
+
 11. `git rm -r agents/ docs/agent-rules/ docs/harness/` + `git rm docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + `git rm` the 61 layer-coupled bats suites + `git submodule add ../the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (relative URL — both repos public, resolves tokenless). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
 12. `scripts/dev/project-config.sh` (or `project.config.json` § paths) — `AGENT_LAYER_ROOT=agent-layer`; `PROJECT_ROOT` stays the Smatchet root.
 12b. New `.github/workflows/agent-layer-integration.yml` (host) — path-filtered on `agent-layer` + `.gitmodules`: checkout with `submodules: recursive`, run `check-harness-provisioned.sh` + `setup-harness.sh` + the host-side gate scripts through the submodule. This is the binding check for pointer-bump PRs (grill decision 3 — without it a bump PR changes only the gitlink and merges on docs-tier CI alone).
 13. `AGENTS.md` (root) — becomes a thin stub: harness auto-load entry point, `@agent-layer/AGENTS.md`-style import for Claude Code via the regenerated `.claude/CLAUDE.md`, prose pointer for Codex/others. Root stub stays under the 150-line cap trivially.
-14. `.claude/CLAUDE.md` template inside `setup-harness.sh` — import path `../agent-layer/AGENTS.md`.
+14. `docs/harness/claude-code/CLAUDE.md.tmpl` — the tracked template `setup-harness.sh` copies to `.claude/CLAUDE.md`; its import line becomes `@../agent-layer/AGENTS.md`. The template is a tracked file, not a heredoc inside the script.
 15. Cross-boundary markdown-link sweep — run `test-markdown-links.sh` from both repos; fix host→layer links to `agent-layer/…` and layer→host links via the documented superproject convention (`../` from submodule root); baseline the residue that must wait for full de-Smatchet-ification.
 16. Delta-gate baselines that key on paths (`portable-purity-baseline.txt`, agent-size grandfather list `docs/high-integrity/agent-size-baseline.md`, include-cycle baseline untouched) — regenerate where the move re-keys entries; one-time, in the flip PR (layer-side copies live in the new repo after Phase B).
 
 ### Phase D — process + docs
+
+*Detail: [`phase-d-risks.md`](agent-surface-extraction-repo/phase-d-risks.md) — rows 17–20c plus the expanded risk analysis.*
 
 17. `docs/agent-rules/ship-loops.md` (now in the new repo) — new § Two-repo ship-loop: edit flow, pointer-bump PR shape (`chore(agent-layer): bump to <sha>`), what gates run where, `is-pure-docs-diff.sh` classifying a pointer-only bump as docs-tier (the `agent-layer-integration.yml` lane still binds on it — docs-tier classification skips the build, not the gates).
 18. New layer-repo workflow `auto-bump.yml` — on every merge to the layer's default branch, opens the `chore(agent-layer): bump to <sha>` PR in Smatchet (grill decision 5; needs a cross-repo token with `contents+pull-requests` write on Smatchet — user provisions, pause exception 3). `docs/agent-rules/merge-gates.md` + `git-janitor` — janitor demotes to **backstop**: proposes a bump only when the layer is ahead of the pin AND no open bump PR exists (auto-bump missed/failed).
@@ -77,6 +92,8 @@ Grouped by phase. Path lists below are the known consumers (from `docs/PORTABILI
 ### Phase E — verification + residue (below, § Verification)
 
 ## Existing utilities reused
+
+*Detail: [`verification.md`](agent-surface-extraction-repo/verification.md) § Existing utilities reused — splits these into reused-as-is vs reused-with-a-scoped-edit, naming the edit and its line numbers per row.*
 
 - `agents/scripts/core/setup-harness.sh` — already the single place that materializes harness adapters (flat hardlinks, codex/pi mirrors); the flip only changes its source dir.
 - `scripts/dev/project-config.sh` — already the one config seam; `AGENT_LAYER_ROOT` extends it rather than inventing a second mechanism.
@@ -104,15 +121,18 @@ N/A — pure docs / agentic-shell / CI-config restructure; no `Source/Core/` fil
 
 - **Two-PR friction for every agent-surface edit** — accepted (the point of extraction is independent versioning); measured traffic ~6 layer commits/day over 3 months; mitigated by batching layer edits, the per-merge auto-bump workflow (Phase D row 18), and the janitor backstop. Keeping entries host-side (grill decision 4) removes the hottest write path (525 commits) from the two-repo dance entirely.
 - **CI checkout without submodules silently loses the layer** — mitigated twice: `submodules: recursive` added to every workflow in Phase A (before the flip), and `check-harness-provisioned.sh` fails loudly on an empty `agent-layer/`.
-- **Windows + worktrees + submodules** — `git worktree` shares `.git/modules` storage; each worktree still needs `submodule update --init`. `nsc` handles it (Phase A row 6); recovery documented in process-rules (Phase D row 20). Risk of long-path issues on Windows: `core.longpaths` already required by the repo.
+- **Windows + worktrees + submodules** — `git worktree` shares `.git/modules` storage; each worktree still needs `submodule update --init`. `worktree.sh cmd_new()` handles it (Phase A row 6); recovery documented in process-rules (Phase D row 20). **Long-path exposure is open, not mitigated**: the repo does *not* require `core.longpaths` today (zero tracked references), and a per-worktree submodule checkout nests one level deeper than usual (`<main>/.git/worktrees/<wt>/modules/agent-layer`) as a full independent clone. The verification matrix repeats the fresh-clone proof under a deliberately long worktree slug to surface it; if it bites, `git config --global core.longpaths true` becomes a documented setup prerequisite.
 - **`project-config.sh` chicken-and-egg** — the layer's scripts need host values; resolved by the three-rung resolution order (grill decision 2): `$SMATCHET_PROJECT_CONFIG` env → superproject root (`--show-superproject-working-tree`) → layer repo root (the layer's own config, standalone mode). If superproject detection proves flaky on Windows worktrees, the env rung is the escape hatch; fall back `AGENT_LAYER_ROOT/..` as last resort. Deviation risk logged here deliberately.
 - **Delta gates across the move** — the flip PR is a giant delete in Smatchet and the layer repo's history starts at the filter-repo seed; gates that diff `origin/develop` see deletions only (safe). Layer-side gates re-baseline once in Phase B. Rename-tracking (`git log --follow`) works within each repo.
 - **`docs/self-improvement/**` auto-exemption stays host-side** — entries never move (grill decision 4), so Smatchet's `.coderabbit.yaml` path_filter + the `selfImpOnly` Bugbot exemption are untouched; the layer repo's fresh `.coderabbit.yaml` carries no such exemption. A Smatchet pointer-bump PR is NOT auto-exempt and rides normal gates (incl. the new integration lane).
 - **Submodule working tree is not a write target** — anything an agent session writes under `agent-layer/` is discarded by the next `submodule update`; process-rules (Phase D row 20) must say so explicitly. Entries staying host-side removes the main historical writer from this hazard.
+- **`project-config.sh` forks silently** — the file is deliberately dual-homed (host + layer), so two copies drift invisibly: each repo's tests pass against its own copy. Mitigated by Phase B row 8g — the **layer copy is canonical**, the host copy a byte-identical mirror carried by each bump PR, enforced by a `cmp -s` drift gate in `agent-layer-integration.yml` plus a host `test-docs.sh` step. Detail: [`phase-d-risks.md`](agent-surface-extraction-repo/phase-d-risks.md) § Risks.
 - **Fork/clone friction** — resolved: both repos public (grill decision 6), relative `../the-unwilling-agentic-bunch.git` URL in `.gitmodules` resolves tokenless for forks and CI. Revisit only if either repo ever goes private (read-token needed then).
 - **Non-goals**: full de-Smatchet-ification of portable prose (stays the tracked follow-up in `docs/self-improvement/categories/` — the move does not require it); moving `docs/plans/` (project history, ~252 code-comment citations pin `docs/plans/shipped/` paths — `docs/STRUCTURE.md` § Plan lifecycle rule 4 forbids the rename); moving the self-improvement **entries** (project-specific + hottest write path — grill decision 4); moving `evaluation/` (dated expert-persona report snapshot, zero machine consumers — stays as project reference material); moving `AI_POLICY.md` / `CONTEXT-MAP.md` / `project.config.json` (root-pinned by tools per `docs/STRUCTURE.md` § Naming); publishing the layer as a Claude Code plugin (possible later shape, out of scope).
 
 ## Verification
+
+*Detail: [`verification.md`](agent-surface-extraction-repo/verification.md) § Verification — the 30-row per-phase matrix (command, lane, pass criterion) and the stop conditions.*
 
 - **Bucket A (pure-logic ctest)**: N/A — no C++ touched.
 - **Bucket E (ImGui Test Engine)**: N/A — no UI touched.
