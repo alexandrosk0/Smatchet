@@ -132,8 +132,8 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
             app, d, d.omniJqlEditor,
             /*drawProjectPill=*/false,
             SmatchetLocalization::T("omnibar.hint", "Search issues: key, filter query, or title text"));
-        // The embedded editor latches jqlBufSemanticRewrite for the dashboard dirty-compare;
-        // nothing on the omnibar consumes it, so clear it rather than leave it set forever.
+        // The embedded editor latches jqlBufSemanticRewrite for the dashboard dirty-compare.
+        // Nothing on the omnibar consumes it, so clear it rather than leave it set forever.
         d.omniJqlEditor.jqlBufSemanticRewrite = false;
 
         if (d.omniJqlEditor.jqlWantsApplyFromEnter) {
