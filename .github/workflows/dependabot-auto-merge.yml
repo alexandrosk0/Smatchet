@@ -55,6 +55,12 @@ concurrency:
   group: dependabot-automerge-${{ github.event.workflow_run.id }}
   cancel-in-progress: false
 
+env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
+
 jobs:
   automerge:
     # Cheap pre-filter: a same-repo Dependabot PR run that went GREEN. The
@@ -106,6 +112,7 @@ jobs:
         if: steps.pr.outputs.num != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           ref: develop
           persist-credentials: false
 
@@ -150,7 +157,7 @@ jobs:
           # down, config). Surface 2/3 as real failures so a setup/API bug is
           # visible — EXCEPT the benign "already merged by a sibling run" race,
           # which is a no-op, not an error.
-          if bash agents/scripts/core/safe-merge.sh "${PR_NUM}"; then
+          if bash "$AGENT_LAYER_ROOT/agents/scripts/core/safe-merge.sh" "${PR_NUM}"; then
             echo "safe-merge.sh armed squash auto-merge for #${PR_NUM}."
           else
             rc=$?

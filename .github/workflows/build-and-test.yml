@@ -20,6 +20,10 @@ permissions:
 # (mozilla-actions/sccache-action) + caches $SCCACHE_DIR. Disable with
 # SMATCHET_NO_CCACHE=1.
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
   # Pin the standalone renderer to OpenGL workflow-wide so EVERY headless exe
@@ -99,6 +103,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
       - name: Detect non-docs changes
@@ -275,6 +280,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
 
@@ -294,7 +300,7 @@ jobs:
           git fetch --no-tags origin develop
           git rev-parse --verify --quiet origin/develop >/dev/null || {
             echo "::error::origin/develop unavailable — cannot run high-integrity delta gate"; exit 1; }
-          bash agents/scripts/project/test-lint-rules.sh --diff origin/develop
+          bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-lint-rules.sh" --diff origin/develop
           # NB: the gate's bats (tests/bats/lint_rules.bats via test-lint-rules-bats.sh)
           # run at the pre-push gate (test-all.sh, where bats is installed), NOT here.
           # CI enforces the gate itself (--diff above); the bats are the gate's unit tests.
@@ -310,6 +316,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -428,6 +435,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 cross)
@@ -505,6 +513,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
@@ -688,6 +697,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment (ARM64 native)
@@ -827,6 +837,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -956,6 +967,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -1039,6 +1051,7 @@ jobs:
           # or push — so it keeps no checkout credentials around for that code to
           # reach (zizmor `artipacked`).
           persist-credentials: false
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1321,6 +1334,7 @@ jobs:
           # pushes. No credentials left around for the branch-controlled driver
           # it runs (zizmor `artipacked`).
           persist-credentials: false
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1424,6 +1438,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1699,6 +1715,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1821,6 +1839,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
@@ -1959,6 +1979,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false  # runs a PR-built binary; no git creds needed (artipacked / CodeRabbit #1375)
 
       - name: Setup MSVC dev environment
@@ -2031,6 +2052,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -2171,6 +2193,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -2285,6 +2308,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -2354,11 +2378,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
       - name: Refresh baseline + assert no drift
         shell: bash
         run: |
-          bash agents/scripts/project/test-lint-rules.sh --catalog --refresh
+          bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-lint-rules.sh" --catalog --refresh
           if ! git diff --exit-code docs/high-integrity/baseline.md; then
             echo "::error::baseline stale — run 'bash agents/scripts/project/test-lint-rules.sh --catalog --refresh' locally and commit"
             exit 1
@@ -2380,6 +2405,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment
@@ -2406,7 +2432,7 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
-          out="$(SMATCHET_LINT_NARROWING=1 bash agents/scripts/project/test-lint-rules.sh --catalog)"
+          out="$(SMATCHET_LINT_NARROWING=1 bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-lint-rules.sh" --catalog)"
           printf '%s\n' "$out"
           n="$(printf '%s\n' "$out" | grep -oE 'narrowing-conversions \([0-9]+ entries\)' | grep -oE '[0-9]+' | head -1 || true)"
           if [ "${n:-1}" != "0" ]; then
@@ -2438,6 +2464,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Install clang + X11/GL dev headers (glfw configure-time deps)
@@ -2527,6 +2554,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Install OpenSSL build prereqs (make + perl)
@@ -2650,6 +2678,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Set up JDK 17 (AGP 8.5 toolchain)
@@ -2839,6 +2868,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
 

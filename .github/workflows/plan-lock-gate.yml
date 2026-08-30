@@ -29,6 +29,12 @@ concurrency:
   group: plan-lock-gate-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
+env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
+
 jobs:
   plan-lock-gate:
     name: Plan-lock gate
@@ -43,6 +49,7 @@ jobs:
           # mandatory.
           fetch-depth: 0
           persist-credentials: false
+          submodules: recursive
 
       - name: Ensure `plan-lock-out-of-band` label exists
         env:
@@ -79,4 +86,4 @@ jobs:
           PLAN_LOCK_HEAD_REF: ${{ github.head_ref }}
           LOCK_REMOTE: origin
           SMATCHET_LOCK_BYPASS_REPO_CHECK: "1"
-        run: bash agents/scripts/core/plan-lock-gate.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/plan-lock-gate.sh"

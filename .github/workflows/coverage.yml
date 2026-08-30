@@ -67,6 +67,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0  # delta gate needs full history for merge-base
 
       # Self-gate: this required check runs on EVERY PR (no workflow paths filter

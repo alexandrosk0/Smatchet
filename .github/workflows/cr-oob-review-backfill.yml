@@ -41,6 +41,10 @@ permissions:
   pull-requests: write             # the entire write surface: one comment
 
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
@@ -50,15 +54,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Selftest the decision core
         # The rate-limit arithmetic fails SILENTLY in production — firing early
         # burns a request CR drops, firing late just stalls. Gate the run on it.
-        run: bash agents/scripts/core/cr-oob-review-backfill.sh --selftest
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/cr-oob-review-backfill.sh" --selftest
 
       - name: Poll the CR quota and drip one request
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SMATCHET_CR_BACKFILL_DRY_RUN: ${{ inputs.dry_run == 'true' && '1' || '0' }}
           VERBOSE: '1'
-        run: bash agents/scripts/core/cr-oob-review-backfill.sh --poll
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/cr-oob-review-backfill.sh" --poll
