@@ -320,6 +320,13 @@ std::string RenderQueryWithUserNames(const std::string& query, const std::vector
                                       if (name.empty()) {
                                           return std::string();
                                       }
+                                      // Round-trip guard: rewrite only when the name maps back to
+                                      // exactly this id across `users` — a display name shared by
+                                      // two accounts would strand the precise id as an ambiguous
+                                      // literal name the inverse refuses at apply.
+                                      if (UniqueAccountIdForName(AsciiLowered(name), users) != token) {
+                                          return std::string();
+                                      }
                                       return tracker_query_suggest::InsertForValueToken(name);
                                   });
 }

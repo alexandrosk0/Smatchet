@@ -374,18 +374,17 @@ void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerField>& fie
         st.jqlNameRewriteFieldsSize == fields.size() && st.jqlNameRewriteSource == st.buf) {
         return;
     }
-    int fromCatalog = 0;
-    int fromSearch = 0;
-    std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, fields, catalogUsers, &fromCatalog);
-    if (!st.jqlAcpSearchResolvedUsers.empty()) {
-        // Second pass over the first pass's output: an id the catalog could not name is
-        // left verbatim, so the search-resolved names compose onto the same string. Safe in
-        // the id→name direction only — ids are unique keys (the name→id inverse must merge
-        // the lists instead; see TrackerQueryAcp_QueryWithAccountIds).
-        rendered =
-            jql_user_display::RenderQueryWithUserNames(rendered, fields, st.jqlAcpSearchResolvedUsers, &fromSearch);
-    }
-    if ((fromCatalog + fromSearch) > 0 && rendered.size() < sizeof(st.buf) && rendered != st.buf) {
+    // Catalog + search-resolved merged into ONE vector, mirroring the name→id inverse in
+    // TrackerQueryAcp_QueryWithAccountIds: the pure layer's round-trip guard judges name
+    // uniqueness across the list it is given, so a display name duplicated across the two
+    // lists must be visible in a single pass — two passes would each see it as unique and
+    // rewrite an id the inverse then refuses to undo. The merge runs on memo misses only,
+    // never the steady frame (Pillar 1).
+    std::vector<TrackerUser> merged = catalogUsers;
+    merged.insert(merged.end(), st.jqlAcpSearchResolvedUsers.begin(), st.jqlAcpSearchResolvedUsers.end());
+    int replaced = 0;
+    std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, fields, merged, &replaced);
+    if (replaced > 0 && rendered.size() < sizeof(st.buf) && rendered != st.buf) {
         SmatchetViewsDashboardUiDetail::CopyStringToBuffer(st.buf, rendered);
         // Cosmetic, not an edit: the views dirty-compare consumes this flag so the rewrite
         // alone never marks the view dirty.

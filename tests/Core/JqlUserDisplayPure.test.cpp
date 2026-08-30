@@ -310,3 +310,24 @@ TEST_CASE("jql_user_display::RenderQueryWithAccountIds tolerates degenerate inpu
     CHECK(jql_user_display::RenderQueryWithAccountIds(jql, Fields(), Catalog(), nullptr) ==
           "assignee = 5b10ac8d82e05b22cc7d4ef5");
 }
+
+TEST_CASE("jql_user_display::RenderQueryWithUserNames keeps an id whose display name is ambiguous") {
+    // Two different accounts share "Jane Doe": naming either id would render a query the
+    // name->id inverse refuses to undo, so both ids stay as typed. A unique name still maps.
+    std::vector<TrackerUser> users = Catalog();
+    users.push_back(MakeUser("616161:11bb5cd5-9acf-4b2e-bc03-efbb1215ef93", "Jane Doe"));
+    int replaced = -1;
+    const std::string jql =
+        "assignee = 5b10ac8d82e05b22cc7d4ef5 OR reporter = \"712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93\"";
+    CHECK(jql_user_display::RenderQueryWithUserNames(jql, Fields(), users, &replaced) ==
+          "assignee = 5b10ac8d82e05b22cc7d4ef5 OR reporter = \"Alex Konstantonis\"");
+    CHECK(replaced == 1);
+
+    // The same account listed twice (catalog + search-resolved overlap) still counts as one.
+    std::vector<TrackerUser> dupSameAccount = Catalog();
+    dupSameAccount.push_back(MakeUser("5b10ac8d82e05b22cc7d4ef5", "Jane Doe"));
+    const std::string out = jql_user_display::RenderQueryWithUserNames("assignee = 5b10ac8d82e05b22cc7d4ef5", Fields(),
+                                                                       dupSameAccount, &replaced);
+    CHECK(out == "assignee = \"Jane Doe\"");
+    CHECK(replaced == 1);
+}

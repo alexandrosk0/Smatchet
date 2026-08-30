@@ -37,9 +37,12 @@ std::string UnquoteValueToken(const std::string& text);
 /// against `fields`, the same clause walk RenderQueryWithAccountIds uses), a value token
 /// matching a known `TrackerUser::AccountId` becomes that user's display name, re-quoted
 /// when the name needs it. Ids anywhere else — non-user fields, cf[…] clauses, function
-/// arguments, the ORDER BY tail — stay byte-for-byte, so the editor only ever shows a
-/// rewrite the reverse mapping can undo. Empty `fields` rewrites nothing (fail-safe).
-/// `outReplaced`, when non-null, receives the substitution count.
+/// arguments, the ORDER BY tail — stay byte-for-byte, and an id whose display name is
+/// shared by another account stays as the id, so the editor only ever shows a rewrite the
+/// reverse mapping can undo. Like RenderQueryWithAccountIds, `users` must be ONE merged
+/// vector (catalog + search-resolved) — name uniqueness is judged across all known users
+/// at once. Empty `fields` rewrites nothing (fail-safe). `outReplaced`, when non-null,
+/// receives the substitution count.
 std::string RenderQueryWithUserNames(const std::string& query, const std::vector<TrackerField>& fields,
                                      const std::vector<TrackerUser>& users, int* outReplaced);
 
