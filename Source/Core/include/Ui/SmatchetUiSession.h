@@ -277,9 +277,10 @@ struct JqlEditorState {
     int jqlIdResolveFailures = 0;
 
     /// Memo for the in-place id→name buffer rewrite. `jqlNameRewriteSource` is the exact
-    /// (post-rewrite) buffer content the last pass ran on and `jqlNameRewriteCatalog*`
-    /// identify the user-catalog snapshot it resolved names against, so the transform runs
-    /// on a real change only and a steady frame costs one string compare plus two scalar
+    /// (post-rewrite) buffer content the last pass ran on; the `jqlNameRewriteCatalog*` /
+    /// `jqlNameRewriteFields*` pairs identify the user- and field-catalog snapshots it
+    /// resolved against (fields gate WHICH value positions rewrite), so the transform runs
+    /// on a real change only and a steady frame costs one string compare plus scalar
     /// compares (Pillar 1). The search-resolved list is not keyed here — it clears
     /// `jqlNameRewriteValid` directly when it changes. `jqlBufSemanticRewrite` latches when
     /// a rewrite actually mutated `buf`; the views dirty-compare consumes (reads + clears)
@@ -287,6 +288,8 @@ struct JqlEditorState {
     std::string jqlNameRewriteSource;
     const void* jqlNameRewriteCatalogData = nullptr;
     size_t jqlNameRewriteCatalogSize = 0;
+    const void* jqlNameRewriteFieldsData = nullptr;
+    size_t jqlNameRewriteFieldsSize = 0;
     bool jqlNameRewriteValid = false;
     bool jqlBufSemanticRewrite = false;
 };

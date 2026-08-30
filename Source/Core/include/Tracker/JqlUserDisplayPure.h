@@ -33,11 +33,15 @@ std::vector<std::string> CollectUnresolvedAccountIds(const std::string& query,
 /// insert applies, so a caller holding an insert string can recover the raw value.
 std::string UnquoteValueToken(const std::string& text);
 
-/// Rewrite `query` for DISPLAY: every value token (quoted or bare) matching a known
-/// `TrackerUser::AccountId` becomes that user's display name, re-quoted when the name needs
-/// it; unmatched tokens are left byte-for-byte. `outReplaced`, when non-null, receives the
-/// substitution count — 0 means the caller should show the raw query and skip the echo.
-std::string RenderQueryWithUserNames(const std::string& query, const std::vector<TrackerUser>& users, int* outReplaced);
+/// Rewrite `query` for DISPLAY: inside the value position of a user-type field (resolved
+/// against `fields`, the same clause walk RenderQueryWithAccountIds uses), a value token
+/// matching a known `TrackerUser::AccountId` becomes that user's display name, re-quoted
+/// when the name needs it. Ids anywhere else — non-user fields, cf[…] clauses, function
+/// arguments, the ORDER BY tail — stay byte-for-byte, so the editor only ever shows a
+/// rewrite the reverse mapping can undo. Empty `fields` rewrites nothing (fail-safe).
+/// `outReplaced`, when non-null, receives the substitution count.
+std::string RenderQueryWithUserNames(const std::string& query, const std::vector<TrackerField>& fields,
+                                     const std::vector<TrackerUser>& users, int* outReplaced);
 
 /// Rewrite `query` for the WIRE: inside the value position of a user-type field (resolved
 /// against `fields` via FindTrackerField + IsQueryUserField), a value token that uniquely

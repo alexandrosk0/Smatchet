@@ -113,6 +113,23 @@ line under the bar translated ids to names, but the user rejected that design:
   green. Intended side effects: empty-prefix `assignee = ` no longer dumps the whole org
   list (matches the catalog path's empty-prefix bail-out design); options-only users with no
   catalog backing are no longer suggested (their name insert could never reverse-map).
+- 2026-08-29 (review-refinement pass, addresses the 2 Bugbot findings on PR #2176): both
+  mapping directions now share ONE clause-aware walker (`RewriteUserFieldValues` template in
+  JqlUserDisplayPure.cpp) so id->name and name->id are exact inverses — a token is only
+  rewritten in a position the opposite direction would rewrite back. Fixes: (1) function
+  arguments no longer map in EITHER direction (`funcDepth` short-circuit + paren-kind stack
+  'f'/'l'/'b' — a quoted `membersOf("Group")` arg can no longer be rewritten to an account
+  id); (2) quoted field names now arm the user-value state (`"Assignee" = Jane Doe` maps
+  both ways; `FindTrackerField` matches Id then Name on the unquoted token); cf[...] clauses
+  stay untouched in BOTH directions (symmetric — `cf` never resolves as a field token).
+  id->name direction is now field-catalog-gated: only user-type field value positions
+  rewrite, empty catalog = fail-safe no-op; rewrite memo keyed on the fields snapshot too
+  (`jqlNameRewriteFieldsData/Size` in SmatchetUiSession.h). Omnibar clears
+  `jqlBufSemanticRewrite` after draw (NIT-b). Tests migrated to the 4-arg field-gated
+  signature + new position-gating and byte-for-byte round-trip cases — 17 jql_user_display
+  cases / 85 assertions green; full suite 7/7 ctest lanes green; lint gates all PASS
+  (advisory WARNs only: pre-existing tu-line-ceiling, func-size soft 103>100 on the walker,
+  comment-ratio on two headers).
 
 ## Deviations
 - **Scope add — `TrackerQueryAcp_CanonicalQueryForApply`** (SmatchetAutocompleteUi.{h,cpp}):
@@ -122,5 +139,6 @@ line under the bar translated ids to names, but the user rejected that design:
 - **Scope add — grid Save boundaries**: plan listed only the dashboard boundaries; the grid
   unsaved-strip Save and Save-as-new popup also persist `viewJqlEditor.buf` and needed the
   same reverse map.
-- `omniJqlEditor.jqlBufSemanticRewrite` has no consumer (latches harmlessly — omnibar has
-  no dirty-compare). Accepted.
+- `omniJqlEditor.jqlBufSemanticRewrite` has no consumer (omnibar has no dirty-compare);
+  the omnibar now clears it after its hint draw so the latch cannot leak a stale `true`
+  into any future consumer.

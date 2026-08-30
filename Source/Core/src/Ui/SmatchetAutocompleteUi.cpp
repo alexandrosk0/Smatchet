@@ -357,27 +357,33 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
     ImGui::PopStyleVar();
 }
 
-void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
+void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerField>& fields,
+                                            const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
     // Memoised on the buffer text plus the catalog SNAPSHOT the names came from — its buffer
     // address and size, not a name-by-name compare, so a steady frame stays O(1) (Pillar 1).
     // The catalog is only ever replaced wholesale (`AvailableUsers = std::move(...)`, or a
     // whole-vector copy on pane switch), so a refresh lands on a new allocation and is caught
     // even when it renames a user without changing the count. The search-resolved side needs
-    // no key at all: RememberResolvedUser drops the memo on every insert and rename.
+    // no key at all: RememberResolvedUser drops the memo on every insert and rename. The
+    // field catalog gates WHICH value positions may rewrite, so its snapshot is keyed the
+    // same way (it too is only ever replaced wholesale).
     const void* catalogData = static_cast<const void*>(catalogUsers.data());
+    const void* fieldsData = static_cast<const void*>(fields.data());
     if (st.jqlNameRewriteValid && st.jqlNameRewriteCatalogData == catalogData &&
-        st.jqlNameRewriteCatalogSize == catalogUsers.size() && st.jqlNameRewriteSource == st.buf) {
+        st.jqlNameRewriteCatalogSize == catalogUsers.size() && st.jqlNameRewriteFieldsData == fieldsData &&
+        st.jqlNameRewriteFieldsSize == fields.size() && st.jqlNameRewriteSource == st.buf) {
         return;
     }
     int fromCatalog = 0;
     int fromSearch = 0;
-    std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, catalogUsers, &fromCatalog);
+    std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, fields, catalogUsers, &fromCatalog);
     if (!st.jqlAcpSearchResolvedUsers.empty()) {
         // Second pass over the first pass's output: an id the catalog could not name is
         // left verbatim, so the search-resolved names compose onto the same string. Safe in
         // the id→name direction only — ids are unique keys (the name→id inverse must merge
         // the lists instead; see TrackerQueryAcp_QueryWithAccountIds).
-        rendered = jql_user_display::RenderQueryWithUserNames(rendered, st.jqlAcpSearchResolvedUsers, &fromSearch);
+        rendered =
+            jql_user_display::RenderQueryWithUserNames(rendered, fields, st.jqlAcpSearchResolvedUsers, &fromSearch);
     }
     if ((fromCatalog + fromSearch) > 0 && rendered.size() < sizeof(st.buf) && rendered != st.buf) {
         SmatchetViewsDashboardUiDetail::CopyStringToBuffer(st.buf, rendered);
@@ -388,12 +394,14 @@ void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerUser>& cata
     st.jqlNameRewriteSource = st.buf; // post-rewrite content, so the steady frame is O(1)
     st.jqlNameRewriteCatalogData = catalogData;
     st.jqlNameRewriteCatalogSize = catalogUsers.size();
+    st.jqlNameRewriteFieldsData = fieldsData;
+    st.jqlNameRewriteFieldsSize = fields.size();
     st.jqlNameRewriteValid = true;
 }
 
 std::string TrackerQueryAcp_QueryWithAccountIds(const std::vector<TrackerField>& fields,
-                                                const std::vector<TrackerUser>& catalogUsers,
-                                                const JqlEditorState& st, const std::string& query) {
+                                                const std::vector<TrackerUser>& catalogUsers, const JqlEditorState& st,
+                                                const std::string& query) {
     // Catalog + search-resolved merged into ONE vector: whether a display name is unique
     // must be judged across everything known at once — two separate passes would each call
     // a duplicate name split across the lists unique and silently pick the wrong account.

@@ -54,9 +54,11 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
  *  is not focused and no pending replace is queued (the caller gates on both). Sets
  *  `st.jqlBufSemanticRewrite` when the buffer changed so callers' dirty-compares can ignore
  *  the rewrite; the id-canonical form is recovered at the apply boundaries by
- *  TrackerQueryAcp_QueryWithAccountIds. `catalogUsers` is the app-owned user catalog; the
+ *  TrackerQueryAcp_QueryWithAccountIds. `fields` is the app-owned field catalog — only
+ *  user-type field values are rewritten; `catalogUsers` is the app-owned user catalog; the
  *  editor's own search-resolved names are folded in on top of it. */
-void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
+void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerField>& fields,
+                                            const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
 
 /** Map display names in `query` back to account ids (user-type field values only), resolving
  *  against the catalog + the editor's search-resolved users merged into ONE list (uniqueness
@@ -64,8 +66,8 @@ void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerUser>& cata
  *  query. Call at apply boundaries only (view save / Enter / open-in-browser), never per
  *  frame. */
 std::string TrackerQueryAcp_QueryWithAccountIds(const std::vector<TrackerField>& fields,
-                                                const std::vector<TrackerUser>& catalogUsers,
-                                                const JqlEditorState& st, const std::string& query);
+                                                const std::vector<TrackerUser>& catalogUsers, const JqlEditorState& st,
+                                                const std::string& query);
 
 /** Apply-boundary convenience over TrackerQueryAcp_QueryWithAccountIds: on a Jira-family
  *  backend (`trackerType` resolves to kBackendJira) returns the wire/disk-canonical form of
