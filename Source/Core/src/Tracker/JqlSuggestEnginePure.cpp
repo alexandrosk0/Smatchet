@@ -129,21 +129,6 @@ static bool IsNonSystemTrackerUser(const TrackerUser& user) {
     return user.AccountType != "app" && user.AccountType != "customer";
 }
 
-/// Build the JQL value-token for a user. Prefer the display name (more readable in the
-/// query), else the accountId. Both originate from the tracker server, so both are
-/// JQL-escaped through tracker_jql::QuoteLiteral before the surrounding quotes are added —
-/// a `"` or `\` in either field is escaped, never allowed to break out of the literal
-/// (security: H3 + E1).
-static std::string BuildJqlUserInsert(const TrackerUser& user) {
-    if (!user.DisplayName.empty()) {
-        return "\"" + tracker_jql::QuoteLiteral(user.DisplayName) + "\"";
-    }
-    if (!user.AccountId.empty()) {
-        return "\"" + tracker_jql::QuoteLiteral(user.AccountId) + "\"";
-    }
-    return user.DisplayName;
-}
-
 /// Emit non-system users from the cached catalog as JQL value suggestions, matched
 /// case-insensitively anywhere inside display name + email — typing a surname ("smith")
 /// or a mail domain finds the account, not just typing the leading characters. Prefix
@@ -409,7 +394,13 @@ static JqlSuggestMode DetermineJqlSuggestMode(const std::vector<JqlToken>& token
 void AppendJqlValueModeSuggestions(const std::vector<TrackerUser>& users, const std::string& prefix,
                                    const TrackerField* valueField, QuerySuggestBuild& out,
                                    std::unordered_set<std::string>& seen, QuerySuggestMeta* metaOut) {
-    if (valueField != nullptr && (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
+    // User fields skip the allowed-value rows: TrackerFieldCatalog mirrors the whole user
+    // catalog into a user field's options, so each user would surface twice — once as the
+    // catalog row below (name-form insert) and once as an options row whose raw-accountId
+    // insert leaves the opaque id in the input. Catalog + async search are the only user-row
+    // sources; both build the same BuildJqlUserInsert token, so they dedup to one row.
+    if (valueField != nullptr && !IsQueryUserField(*valueField) &&
+        (!valueField->AllowedValueOptions.empty() || !valueField->AllowedValues.empty())) {
         AppendValueSuggestions(*valueField, prefix, kJiraUserDisplaySuffix, out.Items, seen);
     }
     if (valueField != nullptr) {
@@ -467,6 +458,21 @@ void AppendJqlSuggestionsForMode(JqlSuggestMode mode, const std::vector<TrackerF
 }
 
 } // namespace
+
+/// Build the JQL value-token for a user. Prefer the display name (more readable in the
+/// query), else the accountId. Both originate from the tracker server, so both are
+/// JQL-escaped through tracker_jql::QuoteLiteral before the surrounding quotes are added —
+/// a `"` or `\` in either field is escaped, never allowed to break out of the literal
+/// (security: H3 + E1).
+std::string BuildJqlUserInsert(const TrackerUser& user) {
+    if (!user.DisplayName.empty()) {
+        return "\"" + tracker_jql::QuoteLiteral(user.DisplayName) + "\"";
+    }
+    if (!user.AccountId.empty()) {
+        return "\"" + tracker_jql::QuoteLiteral(user.AccountId) + "\"";
+    }
+    return user.DisplayName;
+}
 
 void BuildJqlSuggestionsPure(const char* buf, int bufLen, int cursor, int selStart, int selEnd,
                              const std::vector<TrackerField>& fields, const std::vector<TrackerUser>& users,

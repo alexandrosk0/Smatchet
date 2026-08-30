@@ -6,8 +6,10 @@
 #include "JqlSuggestEngine.h"
 #include "PlaneQuerySuggestEngine.h"
 // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing UI-TU include-block boilerplate clone re-surfaced by adding one include here; de-duping independent UI subsystems' include lists is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)
+#include "Tracker/JqlSuggestEnginePure.h"
 #include "Tracker/JqlUserDisplayPure.h"
 #include "Tracker/TrackerQuerySuggestCommon.h"
+#include "Tracker/TrackerBackendKind.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "imgui.h"
@@ -27,8 +29,8 @@
 namespace {
 
 /// Keep the accountId -> display-name pairing a completed user search taught us, so the
-/// readable echo under the query bar can still name the account after the popup closes.
-/// De-duplicated by accountId and capped — this outlives a single search by design.
+/// in-place name rewrite of the query buffer can still name the account after the popup
+/// closes. De-duplicated by accountId and capped — this outlives a single search by design.
 static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
     constexpr size_t kMaxResolved = 200;
     for (auto& known : st.jqlAcpSearchResolvedUsers) {
@@ -36,11 +38,11 @@ static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
             continue;
         }
         // A later search can carry a corrected name for an account already retained. Take it
-        // and drop the echo memo by hand: the memo keys on the retained COUNT, which a rename
-        // leaves untouched, so without this the echo keeps spelling out the stale name.
+        // and drop the rewrite memo by hand: the memo keys on the retained COUNT, which a
+        // rename leaves untouched, so without this the buffer keeps the stale name.
         if (!u.DisplayName.empty() && known.DisplayName != u.DisplayName) {
             known = u;
-            st.jqlUserEchoValid = false;
+            st.jqlNameRewriteValid = false;
         }
         return;
     }
@@ -48,13 +50,15 @@ static void RememberResolvedUser(JqlEditorState& st, const TrackerUser& u) {
         st.jqlAcpSearchResolvedUsers.erase(st.jqlAcpSearchResolvedUsers.begin());
     }
     st.jqlAcpSearchResolvedUsers.push_back(u);
-    // Every insertion changes what the echo can name, and at the cap the evict-then-append
+    // Every insertion changes what the rewrite can name, and at the cap the evict-then-append
     // pair leaves the size identical — so drop the memo here rather than infer it from a size.
-    st.jqlUserEchoValid = false;
+    st.jqlNameRewriteValid = false;
 }
 
 /// Turn a completed user search into popup rows: one row per named account, capped, and
-/// each account's name remembered for the readable echo.
+/// each account's name remembered for the buffer rewrite. Rows insert the same name-form
+/// token the catalog path builds (BuildJqlUserInsert) so async and catalog rows dedup
+/// against each other and a pick shows the user's name in the input, not the account id.
 static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vector<TrackerUser>& users) {
     constexpr int kMaxAsyncRows = 40;
     st.jqlAcpAsyncUserItems.clear();
@@ -63,13 +67,16 @@ static void ReduceUserSearchResultIntoItems(JqlEditorState& st, const std::vecto
         if (u.AccountId.empty()) {
             continue;
         }
-        const std::string ins = tracker_query_suggest::InsertForValueToken(u.AccountId);
-        if (!seen.insert(ins).second) {
+        std::string ins = BuildJqlUserInsert(u);
+        if (ins.empty() || !seen.insert(ins).second) {
             continue;
         }
         RememberResolvedUser(st, u);
-        std::string label = u.DisplayName.empty() ? u.AccountId : (u.DisplayName + " -> " + ins);
-        st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), ins});
+        std::string label = u.DisplayName.empty() ? u.AccountId : u.DisplayName;
+        if (!u.DisplayName.empty() && !u.EmailAddress.empty()) {
+            label += " (" + u.EmailAddress + ")";
+        }
+        st.jqlAcpAsyncUserItems.push_back(QuerySuggestion{std::move(label), std::move(ins)});
         if (static_cast<int>(st.jqlAcpAsyncUserItems.size()) >= kMaxAsyncRows) {
             break;
         }
@@ -350,38 +357,70 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
     ImGui::PopStyleVar();
 }
 
-void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
+void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerField>& fields,
+                                            const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st) {
     // Memoised on the buffer text plus the catalog SNAPSHOT the names came from — its buffer
     // address and size, not a name-by-name compare, so a steady frame stays O(1) (Pillar 1).
     // The catalog is only ever replaced wholesale (`AvailableUsers = std::move(...)`, or a
     // whole-vector copy on pane switch), so a refresh lands on a new allocation and is caught
     // even when it renames a user without changing the count. The search-resolved side needs
-    // no key at all: RememberResolvedUser drops the memo on every insert and rename.
+    // no key at all: RememberResolvedUser drops the memo on every insert and rename. The
+    // field catalog gates WHICH value positions may rewrite, so its snapshot is keyed the
+    // same way (it too is only ever replaced wholesale).
     const void* catalogData = static_cast<const void*>(catalogUsers.data());
-    if (!st.jqlUserEchoValid || st.jqlUserEchoCatalogData != catalogData ||
-        st.jqlUserEchoCatalogSize != catalogUsers.size() || st.jqlUserEchoSource != st.buf) {
-        int fromCatalog = 0;
-        int fromSearch = 0;
-        std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, catalogUsers, &fromCatalog);
-        if (!st.jqlAcpSearchResolvedUsers.empty()) {
-            // Second pass over the first pass's output: an id the catalog could not name is
-            // left verbatim, so the search-resolved names compose onto the same string.
-            rendered = jql_user_display::RenderQueryWithUserNames(rendered, st.jqlAcpSearchResolvedUsers, &fromSearch);
-        }
-        st.jqlUserEcho = (fromCatalog + fromSearch) > 0 ? rendered : std::string();
-        st.jqlUserEchoSource = st.buf;
-        st.jqlUserEchoCatalogData = catalogData;
-        st.jqlUserEchoCatalogSize = catalogUsers.size();
-        st.jqlUserEchoValid = true;
-    }
-    if (st.jqlUserEcho.empty()) {
+    const void* fieldsData = static_cast<const void*>(fields.data());
+    if (st.jqlNameRewriteValid && st.jqlNameRewriteCatalogData == catalogData &&
+        st.jqlNameRewriteCatalogSize == catalogUsers.size() && st.jqlNameRewriteFieldsData == fieldsData &&
+        st.jqlNameRewriteFieldsSize == fields.size() && st.jqlNameRewriteSource == st.buf) {
         return;
     }
-    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-    ImGui::TextWrapped("reads as: %s", st.jqlUserEcho.c_str());
-    ImGui::PopStyleColor();
-    ImGui::SetItemTooltip("The query runs on account ids (the only form the tracker matches on) - this line "
-                          "spells them out as names.");
+    // Catalog + search-resolved merged into ONE vector, mirroring the name→id inverse in
+    // TrackerQueryAcp_QueryWithAccountIds: the pure layer's round-trip guard judges name
+    // uniqueness across the list it is given, so a display name duplicated across the two
+    // lists must be visible in a single pass — two passes would each see it as unique and
+    // rewrite an id the inverse then refuses to undo. The merge runs on memo misses only,
+    // never the steady frame (Pillar 1).
+    std::vector<TrackerUser> merged = catalogUsers;
+    merged.insert(merged.end(), st.jqlAcpSearchResolvedUsers.begin(), st.jqlAcpSearchResolvedUsers.end());
+    int replaced = 0;
+    std::string rendered = jql_user_display::RenderQueryWithUserNames(st.buf, fields, merged, &replaced);
+    if (replaced > 0 && rendered.size() < sizeof(st.buf) && rendered != st.buf) {
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(st.buf, rendered);
+        // Cosmetic, not an edit: the views dirty-compare consumes this flag so the rewrite
+        // alone never marks the view dirty.
+        st.jqlBufSemanticRewrite = true;
+    }
+    st.jqlNameRewriteSource = st.buf; // post-rewrite content, so the steady frame is O(1)
+    st.jqlNameRewriteCatalogData = catalogData;
+    st.jqlNameRewriteCatalogSize = catalogUsers.size();
+    st.jqlNameRewriteFieldsData = fieldsData;
+    st.jqlNameRewriteFieldsSize = fields.size();
+    st.jqlNameRewriteValid = true;
+}
+
+std::string TrackerQueryAcp_QueryWithAccountIds(const std::vector<TrackerField>& fields,
+                                                const std::vector<TrackerUser>& catalogUsers, const JqlEditorState& st,
+                                                const std::string& query) {
+    // Catalog + search-resolved merged into ONE vector: whether a display name is unique
+    // must be judged across everything known at once — two separate passes would each call
+    // a duplicate name split across the lists unique and silently pick the wrong account.
+    // Runs on user actions only (apply / Enter / open-in-browser), never per frame, so the
+    // bounded catalog copy is off the hot path (Pillar 1).
+    std::vector<TrackerUser> merged = catalogUsers;
+    merged.insert(merged.end(), st.jqlAcpSearchResolvedUsers.begin(), st.jqlAcpSearchResolvedUsers.end());
+    return jql_user_display::RenderQueryWithAccountIds(query, fields, merged, nullptr);
+}
+
+std::string TrackerQueryAcp_CanonicalQueryForApply(const std::string& trackerType,
+                                                   const std::vector<TrackerField>& fields,
+                                                   const std::vector<TrackerUser>& catalogUsers,
+                                                   const JqlEditorState& st, const std::string& query) {
+    // Only Jira carries the id<->name rewrite (JQL matches a user by accountId); every other
+    // backend's query text is already canonical.
+    if (smatchet::tracker::BackendIndexFromType(trackerType) != smatchet::tracker::kBackendJira) {
+        return query;
+    }
+    return TrackerQueryAcp_QueryWithAccountIds(fields, catalogUsers, st, query);
 }
 
 void TrackerQueryAcp_TickAccountIdResolve(const IAppUsers& userSearch, const std::vector<TrackerUser>& catalogUsers,

@@ -7,6 +7,7 @@
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewsDashboardUi_detail.h"
+#include "SmatchetAutocompleteUi.h"
 #include "UiPerfMonitor.h"
 
 #include "IconsFontAwesome6.h"
@@ -131,6 +132,9 @@ void SmatchetUI::drawOmnibar(AppController& app, UiDrawSession& d) {
             app, d, d.omniJqlEditor,
             /*drawProjectPill=*/false,
             SmatchetLocalization::T("omnibar.hint", "Search issues: key, filter query, or title text"));
+        // The embedded editor latches jqlBufSemanticRewrite for the dashboard dirty-compare.
+        // Nothing on the omnibar consumes it, so clear it rather than leave it set forever.
+        d.omniJqlEditor.jqlBufSemanticRewrite = false;
 
         if (d.omniJqlEditor.jqlWantsApplyFromEnter) {
             d.omniJqlEditor.jqlWantsApplyFromEnter = false;
@@ -170,7 +174,14 @@ void SmatchetUI::applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPan
     default:
         break;
     }
-    switch (applyQueryToPaneView(app, d, target, input)) {
+    // The editor buffer holds display names on Jira — apply the id-canonical form so the
+    // view of record and the backend both see accountIds. Gate on the PANE's backend (the
+    // omnibar is per-pane; d.cfg.TrackerType may describe a different pane's backend).
+    const std::string query = backend == omni::OmnibarBackend::Jira
+                                  ? TrackerQueryAcp_QueryWithAccountIds(app.GetAvailableFields(),
+                                                                        app.GetAvailableUsers(), d.omniJqlEditor, input)
+                                  : input;
+    switch (applyQueryToPaneView(app, d, target, query)) {
     case ApplyQueryResult::Ok:
         break; // happy path — the grid re-runs; no toast needed.
     case ApplyQueryResult::ViewUnavailable:

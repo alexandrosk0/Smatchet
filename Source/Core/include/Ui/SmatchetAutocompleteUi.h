@@ -3,6 +3,7 @@
 #include "QuerySuggestTypes.h"
 #include "imgui.h"
 
+#include <string>
 #include <vector>
 
 struct ImGuiInputTextCallbackData;
@@ -47,12 +48,35 @@ void TrackerQueryAcp_DrawPopup(UiDrawSession& d, JqlEditorState& st, const ImVec
                                const ImVec2& fieldRectSize, const QuerySuggestBuild& syncBuild,
                                const std::vector<QuerySuggestion>& mergedItems);
 
-/** Draw the readable echo of the query under the query bar: the same query with every
- *  account id it carries replaced by that user's display name. Nothing is drawn when the
- *  query names no resolvable account. `catalogUsers` is the app-owned user catalog; the
- *  editor's own search-resolved names are folded in on top of it. Presentation only — the
- *  query of record in `st.buf` (the one the backend runs) is never rewritten. */
-void TrackerQueryAcp_DrawUserEcho(const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
+/** Rewrite the query buffer for DISPLAY: every account id `st.buf` carries that a catalog /
+ *  search-resolved user can name is replaced in place by that user's display name, so the
+ *  input shows `assignee = "Jane Doe"` rather than the opaque id. Call only while the input
+ *  is not focused and no pending replace is queued (the caller gates on both). Sets
+ *  `st.jqlBufSemanticRewrite` when the buffer changed so callers' dirty-compares can ignore
+ *  the rewrite; the id-canonical form is recovered at the apply boundaries by
+ *  TrackerQueryAcp_QueryWithAccountIds. `fields` is the app-owned field catalog — only
+ *  user-type field values are rewritten; `catalogUsers` is the app-owned user catalog; the
+ *  editor's own search-resolved names are folded in on top of it. */
+void TrackerQueryAcp_ApplyUserNamesToBuffer(const std::vector<TrackerField>& fields,
+                                            const std::vector<TrackerUser>& catalogUsers, JqlEditorState& st);
+
+/** Map display names in `query` back to account ids (user-type field values only), resolving
+ *  against the catalog + the editor's search-resolved users merged into ONE list (uniqueness
+ *  of a name is judged across everything known at once). Returns the wire/disk-canonical
+ *  query. Call at apply boundaries only (view save / Enter / open-in-browser), never per
+ *  frame. */
+std::string TrackerQueryAcp_QueryWithAccountIds(const std::vector<TrackerField>& fields,
+                                                const std::vector<TrackerUser>& catalogUsers, const JqlEditorState& st,
+                                                const std::string& query);
+
+/** Apply-boundary convenience over TrackerQueryAcp_QueryWithAccountIds: on a Jira-family
+ *  backend (`trackerType` resolves to kBackendJira) returns the wire/disk-canonical form of
+ *  `query` with display names reverse-mapped to account ids; every other backend's query
+ *  never carries the name rewrite and passes through byte-for-byte. */
+std::string TrackerQueryAcp_CanonicalQueryForApply(const std::string& trackerType,
+                                                   const std::vector<TrackerField>& fields,
+                                                   const std::vector<TrackerUser>& catalogUsers,
+                                                   const JqlEditorState& st, const std::string& query);
 
 /** Resolve account ids the query carries but no catalog / prior search has named, via the
  *  backend's by-accountId lookup (worker thread, polled per frame). Results land in the

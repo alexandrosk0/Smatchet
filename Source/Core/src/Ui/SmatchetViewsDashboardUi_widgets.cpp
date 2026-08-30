@@ -356,9 +356,14 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     }
     TrackerQueryAcp_FlushPendingReplace(st);
 
-    // Readable echo of the query: user clauses carry an opaque account id (the only form
-    // Jira Cloud matches a user on), so spell those ids out as names right under the bar.
-    TrackerQueryAcp_DrawUserEcho(app.GetAvailableUsers(), st);
+    // The input shows user display names, not opaque account ids: while the input is idle
+    // (not focused, no replace pending) rewrite any account id a known user can name into
+    // that user's display name. Jira-only; the apply boundaries reverse-map names back to
+    // ids (TrackerQueryAcp_CanonicalQueryForApply) so the wire/disk query stays id-canonical.
+    if (smatchet::tracker::BackendIndexFromType(d.cfg.TrackerType) == smatchet::tracker::kBackendJira && !jqlInputHot &&
+        !st.jqlAcpApplyReplace) {
+        TrackerQueryAcp_ApplyUserNamesToBuffer(app.GetAvailableFields(), app.GetAvailableUsers(), st);
+    }
 
     // Project pill beneath the query bar — pick a single project scope for the active view.
     // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.
