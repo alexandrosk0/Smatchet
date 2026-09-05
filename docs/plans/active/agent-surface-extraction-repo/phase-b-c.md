@@ -2,7 +2,7 @@
 
 > Companion detail doc for the plan [`agent-surface-extraction-repo.md`](../agent-surface-extraction-repo.md). This file carries the 2x-depth expansion of Phase B (rows 8–10: the seed of `the-unwilling-agentic-bunch`, its CI, its root files) and Phase C (rows 11–16: the flip PR). The main plan stays the authoritative scope + status document; at archive time this companion directory is `git mv`'d together with the plan file.
 
-### Phase B — seed `the-unwilling-agentic-bunch` (new public repo; user creates it — pause exception 3, cross-repo mutation)
+## Phase B — seed `the-unwilling-agentic-bunch` (new public repo; user creates it — pause exception 3, cross-repo mutation)
 
 **Preconditions (all human, all pause-exception 3).** (a) `gh repo create alexandrosk0/the-unwilling-agentic-bunch --public` with **no** auto-init (`--add-readme`/`--license`/`--gitignore` all omitted) — a non-empty target makes the seed push a non-fast-forward; (b) `git-filter-repo` on `PATH` (`pip install git-filter-repo`, needs git ≥ 2.24 + python ≥ 3.6 — `git filter-repo --version` is the probe); (c) CodeRabbit app installed on the new repo. Everything else in this phase is scripted (row 8f).
 
@@ -58,17 +58,26 @@ seed-agent-layer-repo.sh --target <owner/repo> [--work-dir DIR] [--dry-run] [--h
 
 Exit: 0 seeded · 1 assertion failed · 2 usage / tooling missing · 3 target not empty
 
-phase 1 preflight  git-filter-repo on PATH; gh auth status; target repo exists AND has
-                   zero commits; work-dir absent (refuse to reuse — see 8a)
+phase 1 preflight  git-filter-repo on PATH; gh auth status; a secret scanner on PATH (gitleaks
+                   or trufflehog — phase 4b is not optional); target repo exists AND has zero
+                   commits; work-dir absent (refuse to reuse — see 8a)
 phase 2 manifest   regenerate seed-paths.txt; assert 61 bats lines; assert suite/wrapper
                    co-location (8e); assert no path under docs/self-improvement/categories/,
                    docs/plans/, Source/; print the manifest for review; stop here on --dry-run
 phase 3 rewrite    clone (8a) + filter-repo (8c)
 phase 4 scaffold   write the row 9 workflow files, row 10 root files, .coderabbit.yaml;
                    commit as `chore(seed): layer CI + consumption contract`
-phase 5 publish    remote add + push develop; gh label create (the override labels from
-                   the layer's own project.config.json § merge_gates.override_labels);
-                   setup-branch-protection.sh against the layer's required_contexts
+phase 4b audit     history-wide secret scan of the REWRITTEN history (gitleaks detect --redact
+                   --log-opts=--all, or the trufflehog equivalent) plus a check that every
+                   seeded path carries a verdict in docs/seed-audit.md (the row-1 portability
+                   + history audit). ANY hit is a hard stop (exit 1): scrub via filter-repo
+                   --replace-text / --invert-paths and re-run from phase 3, or revoke the
+                   credential and record the revocation. Nothing is pushed until this is clean
+phase 5 publish    hard-refuse unless phase 4b exited clean — the push is irreversible, a
+                   public history cannot be un-published; then remote add + push develop; gh
+                   label create (the override labels from the layer's own project.config.json
+                   § merge_gates.override_labels); setup-branch-protection.sh against the
+                   layer's required_contexts
 phase 6 report     print the row-8 Accept checks with PASS/FAIL and the seed SHA
 ```
 
@@ -76,7 +85,7 @@ It must pass the host `shell-lint` lane it will be committed under — `test-lin
 
 8g. **`scripts/dev/project-config.sh` is a deliberate two-copy mirror, not an accident — and it gets a drift gate.** The host copy is **not** removed in row 11 and cannot be: `docs/plans/split-scripts-build-vs-agentic.md` fixed the rule that "the code repo must build with **no** dependency on the `agents/` tree", and the file is sourced by build-path callers (`scripts/dev/with-msvc-env.sh`) and by host-side agentic callers on the literal path (`agents/scripts/core/postmortem-owed.sh` does `. scripts/dev/project-config.sh`). Rules for the two copies:
    - The **layer copy is canonical**; the host copy is a byte-identical mirror. Both work unmodified because the file derives everything from its own location (`_pc_root` = two dirs up from `$BASH_SOURCE`) and the Phase A three-rung resolution order finds the host `project.config.json` from inside the submodule via `--show-superproject-working-tree`.
-   - **Drift gate**: `cmp -s "$PROJECT_ROOT/scripts/dev/project-config.sh" "$AGENT_LAYER_ROOT/scripts/dev/project-config.sh"` — a new step in `agent-layer-integration.yml` (row 12b) and a new `test-docs.sh` step host-side. Edit direction is layer-first: a layer PR changes the canonical copy, the bump PR carries the mirrored host copy in the same diff, and the gate reds until it does.
+   - **Drift gate**: the mirror set is a **list, not one file**. It lives in a committed `docs/mirrored-paths.txt` (one repo-relative path per line — today `scripts/dev/project-config.sh` plus the two lane runners `scripts/dev/test-all.sh` and `scripts/dev/test-docs.sh` from row 9, and it grows whenever a file is mirrored), and the gate loops it rather than naming a single path: `while read -r p; do cmp -s "$PROJECT_ROOT/$p" "$AGENT_LAYER_ROOT/$p" || fail "$p"; done`, plus a completeness assertion that every listed path exists in **both** trees so a vanished mirror reds instead of silently passing. A new step in `agent-layer-integration.yml` (row 12b) and a new `test-docs.sh` step host-side. Edit direction is layer-first: a layer PR changes the canonical copy, the bump PR carries every mirrored host copy in the same diff, and the gate reds until it does.
    - **Rejected alternative** (record it so it is not re-proposed): making the host copy a 5-line shim that sources the layer copy. It inverts the dependency the split-scripts decision established, and it turns a missing/empty `agent-layer/` from one loud `check-harness-provisioned.sh` diagnostic into a hard failure of every host script's config load.
 
 9. New repo CI: `agentic-selftests.yml` (over the 61 moved bats suites), `shell-lint.yml`, and a doc-validation subset (anchors / agent-contract / portable-purity / markdown-links scoped to the moved tree) — all reusing the moved scripts on themselves; branch protection + `merge-gates.sh` self-hosted as its own gate-poller; a **fresh** `.coderabbit.yaml` (no self-improvement auto-exemption — those paths stay in Smatchet, whose `.coderabbit.yaml` keeps the path_filter unchanged).
@@ -91,7 +100,7 @@ It must pass the host `shell-lint` lane it will be committed under — `test-lin
 | `merge-gates` (no workflow) | — | `merge-gates.sh` invoked by the layer's own janitor/watcher; self-hosted per grill decision 2 |
 | `auto-bump.yml` | — | **Phase D row 18**, not seeded here; branch protection must exist first |
 
-`scripts/dev/test-all.sh` and `scripts/dev/test-docs.sh` are **not** in row 8's path list but the lanes above invoke them, so `docs/seed-paths.txt` gains the lines `scripts/dev/test-all.sh` and `scripts/dev/test-docs.sh` — appended to the committed path file, never passed as bare `--path` argv (row 8c's `--paths-from-file` is the single canonical form) (both are pure runners over the `test-*.sh` glob; they stay host-side too, as a second sanctioned mirror covered by the same 8g `cmp` gate).
+`scripts/dev/test-all.sh` and `scripts/dev/test-docs.sh` are **not** in row 8's path list but the lanes above invoke them, so `docs/seed-paths.txt` gains the lines `scripts/dev/test-all.sh` and `scripts/dev/test-docs.sh` — appended to the committed path file, never passed as bare `--path` argv (row 8c's `--paths-from-file` is the single canonical form) (both are pure runners over the `test-*.sh` glob; they stay host-side too, as sanctioned mirrors — and they are added to `docs/mirrored-paths.txt`, so the 8g gate covers them by construction rather than by a per-file special case).
 
 9b. **Doc-validation subset — the include/exclude split is not a judgement call, it is host-content reachability.** Included (layer content only): `test-doc-anchors.sh`, `test-agent-contract.sh` (with the 9c fix), `test-portable-purity.sh`, `test-markdown-links.sh`, `md_lint.py --all`, `test-agent-discovery-fixture.sh`, `test-gate-selftests.sh --check`, `test-oob-label-impl.sh`, `test-portable-agent-vexp.sh`, `test-orphan-bats.sh`. **Excluded, with the reason each would hard-fail standalone**: `test-plan-index.sh` / `test-plan-ref-integrity.sh` / `test-plan-claim-anchors.sh` / `test-plan-naming.sh` (read `docs/plans/`, host-side); `test-agent-build-facts.sh` (opens `CMakePresets.json` and resolves every `ninja-*` token in it — host-only, verified); `test-config-globs.sh` (asserts every `project.config.json` glob matches ≥ 1 tracked file — the layer's globs point at `Source/`); `work_item_lint.py` (reads `docs/work/`); `check-pr-intent.sh --check-workflow-sync` (diffs a verdict regex against `.github/workflows/`, which is a *different* file set in the layer — re-point it or drop it, do not run it blind); `test-required-context-adr-consistency.sh` (greps `docs/adr/*.md` + `docs/plans/shipped/*.md`, both host-side). **10 included + 9 excluded = 19**, which is exactly the length of `scripts/dev/test-docs.sh`'s `STEPS` array — assert that equality when implementing, so a step added to `STEPS` cannot silently fall out of the split.
 
@@ -120,26 +129,38 @@ It must pass the host `shell-lint` lane it will be committed under — `test-lin
 
 **Accept (row 10):** `PC_CONFIG_FILE=<layer>/project.config.json bash scripts/dev/project-config.sh` exits 0 and prints `PC_BUILD_PRESETS=''`; the host jsonschema step validates **both** configs; host `Smatchet/project.config.json` still validates unchanged (the loosening is additive); `test-portable-purity.sh` green in the layer.
 
-### Phase C — the flip (Smatchet PR)
+## Phase C — the flip (Smatchet PR)
 
-11. `git rm -r agents/ docs/agent-rules/ docs/harness/` + `git rm docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + `git rm` the 61 layer-coupled bats suites + `git submodule add ../the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (relative URL — both repos public, resolves tokenless). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
+11. `git rm -r agents/ docs/agent-rules/ docs/harness/` + `git rm docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` + `git rm` the 61 layer-coupled bats suites + `git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer` + `.gitmodules` (absolute public HTTPS URL — both repos public, resolves tokenless from forks and CI alike; 11b has the why-not-relative). `docs/self-improvement/categories/` + ledgers + the 33 product-coupled bats suites stay.
 
 11a. **Ordered checklist.** Two commits, deliberately — a delete commit and an add commit — so the rollback in 11d has clean granularity and `git log --follow` in the host still traces the deletions:
 
 ```bash
-# 0. branch + pre-flip inventory (the acceptance oracle)
+# -1. vendor the seed manifest host-side FIRST — it is both the flip's removal list and its
+#     acceptance oracle, and it lives in the layer repo (row 8), which is not mounted yet.
+#     Copy it out of the seed work-dir (or fetch it with `gh api repos/<owner>/
+#     the-unwilling-agentic-bunch/contents/docs/seed-paths.txt`). It stays host-side
+#     permanently as the record of what left, so no later `git rm` may touch it.
 git switch -c feat/agent-layer-flip
-git ls-files agents docs/agent-rules docs/harness > /tmp/pre-flip-inventory.txt
+cp <seed-work-dir>/docs/seed-paths.txt docs/seed-paths.txt
+git add docs/seed-paths.txt && git commit -m "chore(agent-layer): vendor the seed manifest"
+
+# 0. pre-flip inventory (the acceptance oracle) — derived from the manifest, never from three
+#    hand-typed dirs: the manifest also carries AGENT_SELF_IMPROVEMENT.md, the two moved
+#    docs/high-integrity baselines and the 61 bats suites, every one of which an
+#    `agents docs/agent-rules docs/harness` listing silently omits.
+awk 'NF && $1 !~ /^#/' docs/seed-paths.txt > /tmp/seed-paths.pathspec   # ls-files has no comment syntax
+git ls-files --pathspec-from-file=/tmp/seed-paths.pathspec > /tmp/pre-flip-inventory.txt
 
 # 1. remove the in-tree surface
 git rm -r -q agents docs/agent-rules docs/harness
 git rm -q docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
 git rm -q docs/high-integrity/portable-purity-baseline.txt docs/high-integrity/agent-size-baseline.md
-grep '^tests/bats/' docs/seed-paths.txt | xargs git rm -q   # the 61, from the committed seed list
+grep '^tests/bats/' docs/seed-paths.txt | xargs git rm -q   # the 61, from the vendored manifest
 git commit -m "refactor(agent-layer)!: remove the in-tree agent surface"
 
 # 2. mount the layer, pinned at the seed SHA
-git submodule add ../the-unwilling-agentic-bunch.git agent-layer
+git submodule add https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git agent-layer
 git config -f .gitmodules submodule.agent-layer.branch develop
 git -C agent-layer checkout <layer-sha-with-the-row-14-tmpl-fix>
 git add .gitmodules agent-layer
@@ -156,26 +177,32 @@ bash agent-layer/agents/scripts/core/check-harness-provisioned.sh
 ```gitconfig
 [submodule "agent-layer"]
 	path = agent-layer
-	url = ../the-unwilling-agentic-bunch.git
+	url = https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git
 	branch = develop
 ```
 
-Do **not** add `shallow = true`: the host lanes run the layer's merge-base-delta gates through the submodule and a depth-1 checkout has no `origin/develop` to diff against (the exact class the `feat/pillar2-fetch-depth` fix already burned once). Relative-URL semantics: the URL resolves against the **superproject's** `origin`, i.e. `https://github.com/alexandrosk0/Smatchet.git` → `https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git`. **Failure mode:** a fork at `github.com/<other>/Smatchet` resolves to `<other>/the-unwilling-agentic-bunch`, which does not exist — the documented escape is a local, uncommitted override `git config submodule.agent-layer.url https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git && git submodule sync`. Put that line in the root `AGENTS.md` stub (row 13) and the layer README.
+Do **not** add `shallow = true`: the host lanes run the layer's merge-base-delta gates through the submodule and a depth-1 checkout has no `origin/develop` to diff against (the exact class the `feat/pillar2-fetch-depth` fix already burned once).
+
+**Why the URL is absolute, not relative.** A relative `../the-unwilling-agentic-bunch.git` resolves against the **superproject's** `origin`, so it is correct only for clones of `alexandrosk0/Smatchet` itself. A fork at `github.com/<other>/Smatchet` resolves it to `<other>/the-unwilling-agentic-bunch`, which does not exist, so `git submodule update --init` fails for every forker and every fork-based CI run — and it fails as an auth prompt rather than a clear 404, because GitHub answers 404 for absent-or-private alike. The absolute public HTTPS URL `https://github.com/alexandrosk0/the-unwilling-agentic-bunch.git` is tokenless from any clone, fork or CI checkout, which is the whole point of publishing the layer. A forker who genuinely wants *their own* layer overrides it locally and uncommitted: `git config submodule.agent-layer.url https://github.com/<other>/the-unwilling-agentic-bunch.git && git submodule sync`. Put both the `git submodule update --init --recursive` bootstrap and that override line in the root `AGENTS.md` stub (row 13) and the layer README. **Acceptance:** a fork-clone proof — clone through an origin that is *not* `alexandrosk0/Smatchet` (a real fork, or `git clone --origin upstream` from a mirror path) and assert `git submodule update --init --recursive` exits 0 with no credential prompt; it is a § Verification row and a step of the fresh-clone lane, and a relative URL fails it by construction.
 
 11c. **Verification battery, run locally before push** (each of these is a known post-flip break, not a formality): `bash agent-layer/agents/scripts/core/plan-lock-gate.sh` — it resolves `lib="$root/agents/scripts/core/lock-table-cache.sh"` from `git rev-parse --show-toplevel` and hard-exits 1 when absent, so the CI-invoked fail-CLOSED net reds on the very first post-flip PR unless Phase A rewired it; `bash scripts/dev/test-all.sh` — count the suites and compare against the pre-flip count (a drop means the `[ -d "$root" ]` root guard silently skipped a root, per 9d); `bash scripts/dev/test-docs.sh`; `bash agent-layer/agents/scripts/core/test-agent-discovery-fixture.sh`; `bash agent-layer/agents/scripts/core/test-orphan-bats.sh`.
 
 11d. **Rollback recipe.** `git revert` restores the *tracked* state and nothing else — empirically it leaves the `[submodule "agent-layer"]` section in `.git/config`, an orphaned `.git/modules/agent-layer`, and `agent-layer/` on disk as an untracked non-empty directory (git itself warns `unable to rmdir agent-layer: Directory not empty`). Full recipe, for a flip that reached `develop` as a squash-merge:
 
 ```bash
+# ORDER MATTERS: deinit BEFORE the revert. `git submodule deinit` needs the gitlink and the
+# .gitmodules entry still in the tree; run it afterwards and it errors with
+# "error: pathspec 'agent-layer' did not match any file(s) known to git", leaving the
+# .git/config section and .git/modules/agent-layer behind exactly as if it never ran.
+git submodule deinit -f agent-layer                     # local state, per worktree
+rm -rf .git/modules/agent-layer                         # the orphaned module clone
+rm -rf agent-layer                                      # the now-untracked working-tree dir
 git revert --no-edit <flip-squash-sha>     # squash-merge = an ordinary commit; NOT -m 1
-# git revert cannot touch these — they are local state, per worktree:
-git submodule deinit -f agent-layer
-git config --remove-section submodule.agent-layer 2>/dev/null || true
-rm -rf .git/modules/agent-layer agent-layer
+git config --remove-section submodule.agent-layer 2>/dev/null || true   # belt-and-braces
 bash agents/scripts/core/setup-harness.sh claude-code   # relink to the restored in-tree files
 ```
 
-Pre-merge (two commits still on the branch) the equivalent is `git revert --no-commit <add-sha> <rm-sha> && git commit` followed by the same four local-state lines. **Every sibling worktree needs the local-state lines run independently** — a worktree keeps its own submodule clone under `<main>/.git/worktrees/<wt>/modules/agent-layer`, so clearing the main repo's copy leaves siblings stale.
+Pre-merge (two commits still on the branch) the equivalent is `git revert --no-commit <add-sha> <rm-sha> && git commit` **preceded** by the same three local-state lines (`deinit` → `rm -rf .git/modules/agent-layer` → `rm -rf agent-layer`), for the same reason: `deinit` needs `.gitmodules` still in the tree. **Every sibling worktree needs the local-state lines run independently** — a worktree keeps its own submodule clone under `<main>/.git/worktrees/<wt>/modules/agent-layer`, so clearing the main repo's copy leaves siblings stale.
 
 **Accept (row 11):** `git ls-files | grep -c '^agents/'` is 0; `git submodule status` shows a clean pin with no `+`/`-` prefix; `diff <(sed 's|^|agent-layer/|' /tmp/pre-flip-inventory.txt | sort) <(git -C agent-layer ls-files | sed 's|^|agent-layer/|' | sort)` shows only the seed-time additions; `ls .claude/agents/*.md | wc -l` matches the pre-flip count; every command in 11c exits 0.
 
@@ -185,15 +212,15 @@ Prefer the **config** form over a literal in the script — a new `"paths": { "a
 
 12a. **Host callers of `merge-gates.sh` must pin the config explicitly.** Per 9e the script's default resolves to the layer's config once it lives inside the submodule. Export `MERGE_GATES_CONFIG_FILE="$PROJECT_ROOT/project.config.json"` at every host invocation site — `git-janitor` / the `git-cleanup-procedures` skill, `smatchet-merge-watcher`, `merge-gates-prompt.sh`, and the orchestrator's documented one-liner — and add a regression assertion to `tests/bats/merge_gates.bats` that an unset `MERGE_GATES_CONFIG_FILE` in a submodule-shaped layout resolves to the *superproject* config. Silent-degradation class: without this the required-absent detector is inert on every Smatchet PR and nothing reds.
 
-12b. New `.github/workflows/agent-layer-integration.yml` (host) — path-filtered on `agent-layer` + `.gitmodules`: checkout with `submodules: recursive`, run `check-harness-provisioned.sh` + `setup-harness.sh` + the host-side gate scripts through the submodule. This is the binding check for pointer-bump PRs (grill decision 3 — without it a bump PR changes only the gitlink and merges on docs-tier CI alone).
+12b. New `.github/workflows/agent-layer-integration.yml` (host) — path-filtered on `agent-layer` + `.gitmodules`: checkout with `submodules: recursive`, **`fetch-depth: 0`** and `persist-credentials: false` — the same contract row 9a already mandates for every layer lane, and load-bearing here for the same reason: the steps below run the layer's merge-base-delta gates *through* the submodule, and a shallow checkout has no `origin/develop` to diff against (the `feat/pillar2-fetch-depth` class, burned once already). `actions/checkout` propagates the unshallowed depth to its `submodule update`, so the nested clone is full too — prove that on the synthetic bump PR (§ Verification) rather than assuming it. Run `check-harness-provisioned.sh` + `setup-harness.sh` + the host-side gate scripts through the submodule. This is the binding check for pointer-bump PRs (grill decision 3 — without it a bump PR changes only the gitlink and merges on docs-tier CI alone).
 
-Add `workflow_dispatch` with a `layer_ref` input (default `develop`) so a layer change can be validated against real Smatchet content **before** the layer PR merges: the lane checks out the host, then `git -C agent-layer fetch origin <layer_ref> && git -C agent-layer checkout FETCH_HEAD` (uncommitted — the gitlink is never touched), then runs the same steps. Without it there is no pre-merge host validation path at all and the first signal on a layer change arrives after it is already merged. Steps: `check-harness-provisioned.sh`, `setup-harness.sh claude-code`, the 8g `cmp` drift gate, `test-agent-discovery-fixture.sh`, `test-docs.sh`, `test-all.sh --ci`, `plan-lock-gate.sh`. `test-required-context-parity.sh` applies — if this becomes a required context it must emit unconditionally, so gate the *work* on the path filter, never the job's existence.
+Add `workflow_dispatch` with a `layer_ref` input (default `develop`) so a layer change can be validated against real Smatchet content **before** the layer PR merges: the lane checks out the host, then `git -C agent-layer fetch origin <layer_ref> && git -C agent-layer checkout FETCH_HEAD` (uncommitted — the gitlink is never touched), then runs the same steps. Without it there is no pre-merge host validation path at all and the first signal on a layer change arrives after it is already merged. Steps: `check-harness-provisioned.sh`, `setup-harness.sh claude-code`, the 8g drift gate (the `cmp` loop over every path in `docs/mirrored-paths.txt`, not `project-config.sh` alone), `test-agent-discovery-fixture.sh`, `test-docs.sh`, `test-all.sh --ci`, `plan-lock-gate.sh`. `test-required-context-parity.sh` applies — if this becomes a required context it must emit unconditionally, so gate the *work* on the path filter, never the job's existence.
 
 12c. Pointer-bump docs-tier classification — the `is-pure-docs-diff.sh` allow-list must learn `agent-layer` + `.gitmodules`; the edit lands in the **layer repo** (the script moves in Phase B), so the full spec + acceptance live in Phase D row 17b. Noted here because the flip creates the need — the first post-flip bump PR rides the full build gate until 17b lands.
 
 13. `AGENTS.md` (root) — becomes a thin stub: harness auto-load entry point, `@agent-layer/AGENTS.md`-style import for Claude Code via the regenerated `.claude/CLAUDE.md`, prose pointer for Codex/others. Root stub stays under the 150-line cap trivially.
 
-13a. **The stub breaks every `AGENTS.md § <section>` cross-reference unless `test-doc-anchors.sh` is re-pointed.** That gate resolves each `AGENTS.md § X` reference against the root file's headings; once the headings live in `agent-layer/AGENTS.md` the whole corpus of references in agent prompts, rule-docs and plan files dangles at once. Phase A must teach `test_doc_anchors.py` to resolve the anchor set from `$AGENT_LAYER_ROOT/AGENTS.md` (falling back to the root file when the two are the same path, which is the pre-flip no-op). **Accept:** `bash agent-layer/agents/scripts/core/test-doc-anchors.sh` exits 0 post-flip with zero baseline additions.
+13a. **The stub breaks every `AGENTS.md § <section>` cross-reference unless `test-doc-anchors.sh` is re-pointed.** That gate resolves each `AGENTS.md § X` reference against the root file's headings; once the headings live in `agent-layer/AGENTS.md` the whole corpus of references in agent prompts, rule-docs and plan files dangles at once. Phase A must give `test_doc_anchors.py` **two independent roots**: the *anchor* root — where `AGENTS.md`'s headings are read from, `$AGENT_LAYER_ROOT/AGENTS.md` post-flip, falling back to the root file when the two are the same path (the pre-flip no-op) — and the *scan* root, the tree walked for referencing files, which must stay `$PROJECT_ROOT`. Collapsing both onto `AGENT_LAYER_ROOT` is the trap: the gate would go green by checking only the layer's own docs while `docs/plans/`, `CONTEXT-MAP.md`, the subsystem leaf `AGENTS.md`s and `docs/self-improvement/` — the bulk of the referencing corpus — quietly leave the scan set. **Accept:** `bash agent-layer/agents/scripts/core/test-doc-anchors.sh` exits 0 post-flip with zero baseline additions; **and** a negative regression — a fixture host doc carrying a cross-reference to a deliberately absent `AGENTS.md` section makes the gate exit non-zero post-flip, proving the host tree is still walked.
 
 13b. Stub contents (≈ 30 lines): what the repo is; the one-line mount contract; the `git submodule update --init --recursive` bootstrap; the fork URL-override line from 11b; "the canonical rules live in `agent-layer/AGENTS.md` — every `AGENTS.md § <section>` reference resolves there"; the host-only pointers that must stay reachable from the root (`AI_POLICY.md`, `CONTEXT-MAP.md`, `project.config.json`, `docs/plans/`). It carries no rule detail — `agent_size_audit.py` still gates it at 150 lines and the `SMATCHET_DEVIATION(rule=agent-too-long; …)` marker must **not** be carried over.
 
@@ -212,7 +239,7 @@ The template is **not** inline in `setup-harness.sh`; that script only does `cop
 
 15. Cross-boundary markdown-link sweep — run `test-markdown-links.sh` from both repos; fix host→layer links to `agent-layer/…` and layer→host links via the documented superproject convention (`../` from submodule root); baseline the residue that must wait for full de-Smatchet-ification.
 
-Use the checker as the **enumerator**, never grep: `bash agent-layer/agents/scripts/core/test-markdown-links.sh --all` host-side and the layer's own copy layer-side. Its default mode is diff-scoped (it grandfathers by scope and only checks markdown the change touched), which is exactly wrong for a move of this size — `--all` is the census. Then rebaseline: `docs/high-integrity/markdown-link-baseline.md` is keyed `source::href` (not by line), so a re-key is only needed for links whose *href* changed, and `--all` reports any already-fixed entry as stale so the residue list stays honest. The layer repo gets its own baseline file, seeded from its first `--all` run.
+Use the checker as the **enumerator**, never grep: `bash agent-layer/agents/scripts/core/test-markdown-links.sh --all` host-side and the layer's own copy layer-side. Its default mode is diff-scoped (it grandfathers by scope and only checks markdown the change touched), which is exactly wrong for a move of this size — `--all` is the census. Then rebaseline: `docs/high-integrity/markdown-link-baseline.md` is keyed on the **pair** `(source_md, href)` (`test-markdown-links.sh:280-290`), not by line — so a *moved source file* re-keys every one of its baselined entries even when the href is untouched, and this move relocates whole trees (`agents/**`, `docs/agent-rules/**`, `docs/harness/**`) at once. Both halves of the key get rewritten: source paths gain the `agent-layer/` prefix (or migrate to the layer's own baseline file), hrefs are rewritten per the link fixes above, and `--all` reports any already-fixed entry as stale so the residue list stays honest. The layer repo gets its own baseline file, seeded from its first `--all` run.
 
 **Accept (row 15):** `--all` in both repos reports zero non-baselined dangling links; the host baseline's diff in this PR contains no entry whose href still starts with `agents/`, `docs/agent-rules/` or `docs/harness/` without the `agent-layer/` prefix.
 

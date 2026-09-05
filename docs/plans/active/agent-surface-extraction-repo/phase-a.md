@@ -62,16 +62,28 @@ A2 may split again along the 5a classification seam (single-root rows 5b–5c vs
      ```
 
      Note `PC_SCHEMA_FILE` (line 42 today) hardcodes `$_pc_root/…` — it **must** follow the resolved config, not the script's own root, or the no-deps required-key gate at lines 52-61 validates the layer's config against the host's schema (or silently skips via the `FileNotFoundError` pass).
-   - **1b — the root exports.** `AGENT_LAYER_ROOT` derives from the script's own location (`$_pc_layer_root`) because the script is dual-homed and always ships *inside* the layer; `PROJECT_ROOT` derives from the resolved config's directory, which yields the superproject root inside a submodule and the layer root standalone — one derivation, no second mechanism:
+   - **1b — the root exports.** `PROJECT_ROOT` derives from the resolved config's directory, which yields the superproject root inside a submodule and the layer root standalone. `AGENT_LAYER_ROOT` **cannot** simply be `$_pc_layer_root`: the script is dual-homed (row 1d), so post-flip it also exists at `$PROJECT_ROOT/scripts/dev/` host-side, where `$_pc_layer_root` is the *host* root — and every `$AGENT_LAYER_ROOT/agents/…` path would then silently point at the directory the flip just deleted. It is resolved by **content probe** instead, and the result is absolutised against `PROJECT_ROOT` (never `$PWD`) before export. Order matters: `PROJECT_ROOT` is computed first because both the probe and the absolutisation anchor on it:
 
      ```sh
-     AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_pc_layer_root}"
      PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}"
+     if [ -z "${AGENT_LAYER_ROOT:-}" ]; then
+       if [ -d "$_pc_layer_root/agents/scripts/core" ]; then
+         AGENT_LAYER_ROOT="$_pc_layer_root"             # running from inside the layer
+       elif [ -d "$PROJECT_ROOT/agent-layer/agents/scripts/core" ]; then
+         AGENT_LAYER_ROOT="$PROJECT_ROOT/agent-layer"   # host: layer is the mounted submodule
+       else
+         AGENT_LAYER_ROOT="$_pc_layer_root"             # pre-flip / submodule not initialised
+       fi
+     fi
+     case "$AGENT_LAYER_ROOT" in
+       /*|[A-Za-z]:*) ;;                                         # already absolute
+       *) AGENT_LAYER_ROOT="$PROJECT_ROOT/$AGENT_LAYER_ROOT" ;;  # relative: anchor on PROJECT_ROOT, never $PWD
+     esac
      PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"; PC_PROJECT_ROOT="$PROJECT_ROOT"
      export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
      ```
 
-     Both honour a caller-set value (`${VAR:-…}`) so standalone layer CI can force `PROJECT_ROOT=$AGENT_LAYER_ROOT` and the row-12 flip can force `AGENT_LAYER_ROOT=agent-layer` without touching the resolution logic. **Fixture hazard, must be enumerated before this lands**: deriving `PROJECT_ROOT` from `dirname "$PC_CONFIG_FILE"` means any caller injecting `PC_CONFIG_FILE` — rung 0, which is exactly what the bats fixtures do — silently re-points `PROJECT_ROOT` at that fixture's temp dir instead of the repo. Enumerate every injector first (`grep -rln 'PC_CONFIG_FILE' tests/bats/`) and, per suite, either set `PROJECT_ROOT` explicitly in the fixture or assert the temp-dir value is what the suite actually wants. A suite that silently gains a temp-dir `PROJECT_ROOT` is the failure mode this sub-row exists to catch.
+     Both still honour a caller-set value, so standalone layer CI can force `PROJECT_ROOT=$AGENT_LAYER_ROOT` and the row-12 flip can force `AGENT_LAYER_ROOT=agent-layer` without touching the resolution logic — and because the `case` normalisation runs *after* the probe, that bare relative `agent-layer` is exported as `$PROJECT_ROOT/agent-layer`, so a consumer that `cd`s before dereferencing it still resolves. The `case` pattern is `/*|[A-Za-z]:*` rather than a bracket expression containing a backslash, which `sh` glob patterns read ambiguously; MSYS `/c/…` matches the first arm, Windows `C:/…` the second. **Fixture hazard, must be enumerated before this lands**: deriving `PROJECT_ROOT` from `dirname "$PC_CONFIG_FILE"` means any caller injecting `PC_CONFIG_FILE` — rung 0, which is exactly what the bats fixtures do — silently re-points `PROJECT_ROOT` at that fixture's temp dir instead of the repo. Enumerate every injector first (`grep -rln 'PC_CONFIG_FILE' tests/bats/`) and, per suite, either set `PROJECT_ROOT` explicitly in the fixture or assert the temp-dir value is what the suite actually wants. A suite that silently gains a temp-dir `PROJECT_ROOT` is the failure mode this sub-row exists to catch.
    - **1c — bare-name collision, checked.** `PROJECT_ROOT` is already used as a *local* variable in three unrelated Unreal-plugin scripts (`scripts/dev/local/package-unreal-plugin-msvc.sh`, `scripts/dev/local/build-and-deploy-unreal-plugin.sh`, `scripts/publish/install-unreal-plugin.sh`, where it means "the Unreal project to deploy into", fed by `SMATCHET_UNREAL_PROJECT_ROOT`). Verified safe: none of the three sources `project-config.sh` and each assigns the variable before first use, so the export cannot leak in. The `PC_PROJECT_ROOT` twin exists precisely so scripts that dislike the bare name have a namespaced alias. Add a one-line comment at the export site naming this collision so a future reader does not "fix" it.
    - **1d — dual-homing is deliberate, not an oversight.** This file ships in **both** repos after Phase B (the layer needs it to bootstrap standalone; the host needs it before the submodule is initialised). The single-source rule for the fork and its drift check are Phase B/C's obligation — row 1 only guarantees the logic is *location-independent* (no path in the sketch above assumes which repo it is running from), which is what makes a byte-identical copy safe in the first place.
    - **Acceptance**: row 1b must also append the four new vars to the `_pc_exports` string — the direct-execution branch emits **only** `printf '%s
