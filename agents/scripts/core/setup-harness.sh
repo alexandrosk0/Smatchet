@@ -372,6 +372,25 @@ install_git_hooks() {
   fi
 }
 
+# enable_long_paths: opt this clone into Windows long-path support. Once the
+# agent surface is a submodule, a worktree's copy of it is nested at
+# <main>/.git/worktrees/<slug>/modules/<name>/ — one level deeper than the
+# ordinary .git/modules/<name>/ — and a deep enough base path makes that clone
+# fail with "Filename too long". core.longpaths is a per-machine setting with no
+# tracked provisioning anywhere else in the repo, so nothing turns it on unless
+# this does. Local scope only (never --global), and idempotent.
+enable_long_paths() {
+  local current
+  current="$(git_cmd config --local --get core.longpaths 2>/dev/null || echo '')"
+  if [[ "$current" == "true" ]]; then
+    echo "  longpaths  core.longpaths already true"
+  elif git_cmd config --local core.longpaths true; then
+    echo "  longpaths  core.longpaths set to true"
+  else
+    echo "  longpaths  WARNING: could not set core.longpaths — a deeply nested submodule clone may fail." >&2
+  fi
+}
+
 # --- pi (earendil-works/pi-coding-agent) -----------------------------------
 # Two pieces, both written under the gitignored .pi/ (regenerated, never
 # committed — mirrors .claude/ / .codex/ / .cursor/):
@@ -568,6 +587,10 @@ if [[ "${SMATCHET_AGENT_VCS:-git}" == "p4" ]]; then
   else
     echo "  OK    p4 client reaches ${P4PORT}." >&2
   fi
+fi
+
+if [[ "$IS_WINDOWS" -eq 1 ]]; then
+  enable_long_paths
 fi
 
 case "$HARNESS" in
