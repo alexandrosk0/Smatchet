@@ -21,6 +21,7 @@
 #include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
+#include "TicketGridFilterPure.h"
 #include "TicketGridModel.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
@@ -238,14 +239,8 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        if (pane.gridFilterBuf[0] == '\0')
-            return true;
-        const auto& t = tickets[idx];
-        if (ContainsCaseInsensitive(t.id, pane.gridFilterBuf))
-            return true;
-        if (ContainsCaseInsensitive(t.GetFieldValue("summary"), pane.gridFilterBuf))
-            return true;
-        return false;
+        return TicketMatchesGridFilter(tickets[idx], pane.gridFilterBuf,
+                                       [&](const std::string& fieldId) { return catalogIndex.Find(fieldId); });
     };
 
     for (size_t idx : pane.cachedSortedIndices) {
