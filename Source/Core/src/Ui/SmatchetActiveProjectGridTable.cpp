@@ -22,6 +22,7 @@
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
+#include "Tracker/TrackerQuerySuggestCommon.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
@@ -245,6 +246,15 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
             return true;
         if (ContainsCaseInsensitive(t.GetFieldValue("summary"), pane.gridFilterBuf))
             return true;
+        // Also match any user-type field (assignee, reporter, watchers, or a
+        // backend-specific custom user field) so typing a person's name finds
+        // every issue that names them, not just the summary/title.
+        for (const auto& fieldEntry : t.fieldValues) {
+            const TrackerField* meta = catalogIndex.Find(fieldEntry.first);
+            if (meta && tracker_query_suggest::IsQueryUserField(*meta) &&
+                ContainsCaseInsensitive(fieldEntry.second, pane.gridFilterBuf))
+                return true;
+        }
         return false;
     };
 
