@@ -12,10 +12,43 @@
 # Scalars -> PC_<UPPER_SNAKE>. Arrays -> space-joined PC_<NAME> (use `read -ra`).
 # Uses python (a required tool; jq may be absent on the Windows dev env).
 
-# Resolve repo root from this script's location (scripts/dev/ -> repo root).
+# Resolve the agent-layer root from this script's location (scripts/dev/ -> root
+# of whichever tree carries this file). This script is deliberately dual-homed:
+# it ships inside the agent layer (so the layer can bootstrap standalone) and in
+# the host project (so the host works before the layer is checked out). Nothing
+# below assumes which of the two it is running from.
 _pc_self="${BASH_SOURCE[0]:-$0}"
-_pc_root="$(cd "$(dirname "$_pc_self")/../.." && pwd)"
-PC_CONFIG_FILE="${PC_CONFIG_FILE:-$_pc_root/project.config.json}"
+_pc_layer_root="$(cd "$(dirname "$_pc_self")/../.." && pwd)"
+# `git rev-parse --show-superproject-working-tree` prints the host tree when this
+# copy lives inside a submodule, and nothing otherwise. Strip a trailing CR: on
+# Windows the value can arrive with one and would corrupt every path built from it.
+_pc_super="$(git -C "$_pc_layer_root" rev-parse --show-superproject-working-tree 2>/dev/null | tr -d '\r')"
+
+# project.config.json resolution, most specific first:
+#   rung 0  PC_CONFIG_FILE          — an exact file named by the caller (bats fixtures)
+#   rung 1  SMATCHET_PROJECT_CONFIG — a file or a directory (documented escape hatch)
+#   rung 2  the superproject working tree, when this copy lives in a submodule
+#   rung 3  this tree's own root — the host pre-flip, the layer standalone
+_pc_resolve_config() {
+  if [ -n "${PC_CONFIG_FILE:-}" ]; then
+    printf '%s\n' "$PC_CONFIG_FILE"
+    return
+  fi
+  if [ -n "${SMATCHET_PROJECT_CONFIG:-}" ]; then
+    if [ -d "$SMATCHET_PROJECT_CONFIG" ]; then
+      printf '%s/project.config.json\n' "$SMATCHET_PROJECT_CONFIG"
+    else
+      printf '%s\n' "$SMATCHET_PROJECT_CONFIG"
+    fi
+    return
+  fi
+  if [ -n "$_pc_super" ] && [ -f "$_pc_super/project.config.json" ]; then
+    printf '%s/project.config.json\n' "$_pc_super"
+    return
+  fi
+  printf '%s/project.config.json\n' "$_pc_layer_root"
+}
+PC_CONFIG_FILE="$(_pc_resolve_config)"
 
 if [ ! -f "$PC_CONFIG_FILE" ]; then
   echo "project-config.sh: $PC_CONFIG_FILE not found" >&2
@@ -39,7 +72,30 @@ if [ -z "$_pc_python" ]; then
   return 1 2>/dev/null || exit 1
 fi
 
-PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$_pc_root/project.config.schema.json}"
+# The schema must follow the RESOLVED config, not this script's own root: pairing
+# one repo's config with another's schema would validate the wrong required-key
+# list, and the FileNotFoundError branch below would silently skip the gate.
+PC_SCHEMA_FILE="${PC_SCHEMA_FILE:-$(dirname "$PC_CONFIG_FILE")/project.config.schema.json}"
+
+# Dual-root pair. AGENT_LAYER_ROOT is the tree holding agents/, docs/agent-rules/
+# and docs/harness/; PROJECT_ROOT is the tree holding plans, backlog entries,
+# Source/ and project.config.json. Pre-flip both are the repo root, so every
+# consumer rewritten to address a tree through one of these is a provable no-op.
+# Both honour a caller-set value, which is what lets the layer's standalone CI
+# force PROJECT_ROOT=$AGENT_LAYER_ROOT and the flip set AGENT_LAYER_ROOT=agent-layer
+# without touching the resolution logic above.
+#
+# Note the bare name PROJECT_ROOT is also a LOCAL variable in the Unreal-plugin
+# scripts under scripts/dev/local/ and scripts/publish/, where it means "the
+# Unreal project to deploy into". None of those source this file and each assigns
+# the variable before first use, so the export cannot leak in — do not "fix" the
+# apparent collision. PC_PROJECT_ROOT is the namespaced alias for callers that
+# prefer to avoid the bare name entirely.
+AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$_pc_layer_root}"
+PROJECT_ROOT="${PROJECT_ROOT:-$(dirname "$PC_CONFIG_FILE")}"
+PC_AGENT_LAYER_ROOT="$AGENT_LAYER_ROOT"
+PC_PROJECT_ROOT="$PROJECT_ROOT"
+export AGENT_LAYER_ROOT PROJECT_ROOT PC_AGENT_LAYER_ROOT PC_PROJECT_ROOT
 
 # Emit `KEY=value` lines (arrays space-joined). eval them into the caller.
 # Fail-fast (exit 2) on a malformed config or a missing required top-level key
@@ -127,5 +183,9 @@ PY
 if (return 0 2>/dev/null); then
   eval "$_pc_exports"
 else
+  # The two roots are plain shell assignments above, not part of the python
+  # output, so echo them alongside it to keep the debug dump complete.
+  printf 'export PC_PROJECT_ROOT=%s\n' "$(printf '%q' "$PC_PROJECT_ROOT")"
+  printf 'export PC_AGENT_LAYER_ROOT=%s\n' "$(printf '%q' "$PC_AGENT_LAYER_ROOT")"
   printf '%s\n' "$_pc_exports"
 fi

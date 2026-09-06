@@ -52,7 +52,12 @@ import re
 import sys
 
 src, dst = sys.argv[1], sys.argv[2]
-with open(src, encoding="utf-8") as f:
+# newline="" on both ends: text mode would otherwise translate every newline
+# to the platform separator on write, so on Windows the rewritten copy differs
+# from the source in line endings alone and the `cmp -s` below never matches:
+# --check reports a sorted file as unsorted, and a real run rewrites the whole
+# file to CRLF.
+with open(src, encoding="utf-8", newline="") as f:
     lines = f.readlines()
 
 # Split: header (everything up to first entry) + list of entries.
@@ -65,7 +70,7 @@ for i, line in enumerate(lines):
         break
 else:
     # No entries — nothing to sort.
-    with open(dst, "w", encoding="utf-8") as f:
+    with open(dst, "w", encoding="utf-8", newline="") as f:
         f.writelines(lines)
     sys.exit(0)
 
@@ -91,7 +96,7 @@ if current:
 # Sort descending by date prefix. Stable sort preserves intra-date order.
 entries.sort(key=lambda e: e[0], reverse=True)
 
-with open(dst, "w", encoding="utf-8") as f:
+with open(dst, "w", encoding="utf-8", newline="") as f:
     f.writelines(header)
     for _, block in entries:
         f.writelines(block)

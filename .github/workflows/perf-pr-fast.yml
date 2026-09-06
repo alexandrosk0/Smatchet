@@ -57,6 +57,10 @@ concurrency:
 # build. /Z7 (CI gate in CMakeLists.txt) is perf-neutral — debug-info location
 # only, no codegen change (plan Q3).
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   SCCACHE_DIR: ${{ github.workspace }}\.sccache
   # NOTE: the SMATCHET_MCP_REQUIRE_TOKEN_ON_LOOPBACK=false opt-out (PR A / #1574,
@@ -81,6 +85,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
       - name: Detect perf-relevant changes
@@ -166,6 +171,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
 
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1

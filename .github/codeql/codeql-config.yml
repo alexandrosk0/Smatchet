@@ -9,6 +9,10 @@ paths-ignore:
   - ThirdParty
   - build
   - '**/_deps/**'
+  # The agent layer is shell + markdown, covered by shell-lint and
+  # doc-validation. Naming it here keeps the analysed tree unchanged when
+  # the layer becomes a submodule mounted at agent-layer/.
+  - 'agent-layer/**'
 
 # Query suite -- staged escalation ladder (plan:
 # docs/plans/codeql-code-scanning.md § Approach). v1 ships the DEFAULT suite

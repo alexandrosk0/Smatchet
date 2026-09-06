@@ -44,7 +44,11 @@ fi
 
 for f in "${YAMLS[@]}"; do
     if [ "$PYYAML_OK" -eq 1 ]; then
-        if $PY -c "import sys, yaml; yaml.safe_load(open('$f'))" 2>/tmp/workflow_yaml.err; then
+        # encoding="utf-8" is explicit: workflow files carry non-ASCII (em
+        # dashes in echo strings), and Python's default text encoding follows
+        # the locale, so on a cp1252 Windows shell every such file fails to
+        # decode and the gate reports a false FAIL on a valid workflow.
+        if $PY -c "import sys, yaml; yaml.safe_load(open('$f', encoding='utf-8'))" 2>/tmp/workflow_yaml.err; then
             echo "[test-workflow-yaml] OK   $f"
             PASSED=$((PASSED + 1))
         else

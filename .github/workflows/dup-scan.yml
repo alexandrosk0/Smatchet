@@ -23,6 +23,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
   # incl. third-party actions with no Node 24 release yet.
@@ -37,6 +41,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
           fetch-depth: 0
 
@@ -62,7 +67,7 @@ jobs:
           # dup_audit.py --diff prints [dup] FAIL lines to stderr and exits 1 on a NEW clone (exit 0
           # clean, >=2 infra error). Capture stderr, echo it back, then fail CLOSED on its exit code.
           rc=0
-          python3 agents/scripts/core/dup_audit.py --diff "$base" 2>/tmp/dup.warn || rc=$?
+          python3 "$AGENT_LAYER_ROOT/agents/scripts/core/dup_audit.py" --diff "$base" 2>/tmp/dup.warn || rc=$?
           cat /tmp/dup.warn >&2 || true
           if [ "$rc" -eq 0 ]; then
             echo "Duplication scanner: no new clones."
