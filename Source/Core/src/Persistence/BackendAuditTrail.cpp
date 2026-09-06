@@ -1,5 +1,7 @@
 #include "BackendAuditTrail.h"
 
+#include "TimeNowPure.h"
+
 #include "ConfigManager.h"
 #include "FileIo.h"
 #include "Json/BoundedJsonParse.h"
@@ -36,11 +38,6 @@ struct AuditReadCache {
 AuditReadCache& ReaderCache() {
     static AuditReadCache cache;
     return cache;
-}
-
-std::int64_t NowEpochMs() {
-    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
 }
 
 std::string NowLocalIso() {
@@ -319,7 +316,7 @@ AuditWriter& Writer() {
 std::string MakeOperationId(const std::string& prefix) {
     static std::atomic<unsigned long long> counter{0};
     std::ostringstream os;
-    os << (prefix.empty() ? "audit" : prefix) << "-" << NowEpochMs() << "-" << counter.fetch_add(1);
+    os << (prefix.empty() ? "audit" : prefix) << "-" << TimeNowPure::NowUnixMs() << "-" << counter.fetch_add(1);
     return os.str();
 }
 
@@ -376,7 +373,7 @@ void AppendResult(const std::string& action, const std::string& source, const st
 void AppendEvent(const AuditEvent& event) {
     try {
         nlohmann::json j = nlohmann::json::object();
-        j["timestamp_ms"] = NowEpochMs();
+        j["timestamp_ms"] = TimeNowPure::NowUnixMs();
         j["timestamp_local"] = NowLocalIso();
         j["action"] = event.Action;
         j["source"] = event.Source.empty() ? "app" : event.Source;

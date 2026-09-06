@@ -23,6 +23,7 @@
 // slice 9.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "MarkdownPreviewRender.h"
@@ -117,18 +118,7 @@ class DescriptionTooltipMarkdownRenderScenario : public IScenario {
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            nlohmann::json rj;
-            rj["name"] = r.name;
-            rj["lastTotalMs"] = r.lastTotalMs;
-            rj["avgPerCallMs"] = r.avgPerCallMs;
-            rj["maxMs"] = r.maxMs;
-            rj["calls"] = r.calls;
-            rj["emaAvgMs"] = r.emaAvgMs;
-            rj["p99Ms"] = r.p99Ms;
-            rowsJson.push_back(std::move(rj));
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["frames"] = frames_;
         out["wrapWidth"] = wrapWidth_;

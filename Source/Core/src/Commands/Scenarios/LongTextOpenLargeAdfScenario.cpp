@@ -17,6 +17,7 @@
 // this PR. The pure compute timing is a proxy for the worker dispatch's win.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "TicketFieldEditorLongTextPure.h"
@@ -105,18 +106,7 @@ class LongTextOpenLargeAdfScenario : public IScenario {
             }
         }
 
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
 
         nlohmann::json out;
         out["frames"] = frames_;

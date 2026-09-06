@@ -5,6 +5,8 @@
 
 #include "BugReportService.h"
 
+#include "GitHubRestHeaders.h"
+
 #include "Interfaces/IAppMeta.h"
 #include "BackendAuditTrail.h"
 #include "Diagnostics/HostMachineInfo.h"
@@ -41,15 +43,9 @@ namespace {
 
 const char* const kAssetsBranch = "bug-report-assets";
 
-// GitHub REST headers for the bug-report dev client (Bearer PAT). Mirrors
-// GitHubClient's internal BuildGitHubHeaders (private to that TU).
+// GitHub REST headers for the bug-report dev client (shared recipe, bug-report User-Agent).
 cpr::Header BugReportGitHubHeaders(const std::string& pat) {
-    return cpr::Header{
-        {"Authorization", std::string("Bearer ") + pat},
-        {"Accept", "application/vnd.github+json"},
-        {"X-GitHub-Api-Version", "2022-11-28"},
-        {"User-Agent", "Smatchet-BugReport"},
-    };
+    return smatchet::github::GitHubRestHeaders(pat, "Smatchet-BugReport");
 }
 
 std::string UtcNowIso8601() {

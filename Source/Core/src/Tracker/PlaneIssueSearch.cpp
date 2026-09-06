@@ -1,4 +1,6 @@
 #include "PlaneClient.h"
+
+#include "TimeNowPure.h"
 #include "PlaneClient_Internal.h"
 #include "PlaneIssueMappingPure.h"
 
@@ -116,11 +118,6 @@ std::string ExtractProjectFromPlaneQuery(const std::string& planeQueryJson) {
 }
 
 constexpr std::int64_t kPlaneListProjectsTtlSeconds = 300; // 5 minutes
-
-std::int64_t PlaneNowUnixSeconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
 
 std::string ActiveViewJqlFromStore(const ViewsStore* viewsOverride) {
     if (viewsOverride == nullptr) {
@@ -707,7 +704,7 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
     // Fast path: serve from cache when still warm.
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
-        const std::int64_t now = PlaneNowUnixSeconds();
+        const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (!cachedProjects_.empty() && (now - cachedProjectsAtUnix_) < kPlaneListProjectsTtlSeconds) {
             return cachedProjects_;
         }
@@ -784,7 +781,7 @@ std::vector<RemoteProject> PlaneClient::ListProjects() {
     {
         std::lock_guard<std::recursive_mutex> lock(planeCacheMutex_);
         cachedProjects_ = projects;
-        cachedProjectsAtUnix_ = PlaneNowUnixSeconds();
+        cachedProjectsAtUnix_ = TimeNowPure::NowUnixSeconds();
     }
     return projects;
 }

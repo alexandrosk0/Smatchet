@@ -251,6 +251,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/CommentBlobFormatPure.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
+        # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
+        # Jira duration-id list behind IsTimeDurationField, IsSprintField's two
+        # trigger conditions, and UiPerfRowsToJson's seven-field contract.
+        Core/TimeNowPure.test.cpp
         # --- Offline-queue replay + config-save concurrency (debt P2 TSan-subset-expand,
         #     #1339 follow-up). OfflineQueueService drains PendingCreate / PendingFieldEdit
         #     on the sync/reconnect thread while a live backend swap can land mid-replay
@@ -454,6 +458,9 @@ add_executable(SmatchetTests
     Core/TrackerFieldValueParser.test.cpp
     Core/TrackerFieldValueParser.extended.test.cpp
     Core/TrackerFieldValueUtils.test.cpp
+    # DRY consolidation (#2178) — shared TimeNowPure clocks, the delegated Jira
+    # duration-id list, IsSprintField, and the UiPerfRowsToJson field contract.
+    Core/TimeNowPure.test.cpp
     # security H3 + E1 — shared JQL string-literal escape (tracker_jql::QuoteLiteral) used by
     # BuildJqlUserInsert / BuildKeyInJql / BuildActivityDiscoveryJql. Pure string helper,
     # no cpr/sqlite — safe in the doctest rig.

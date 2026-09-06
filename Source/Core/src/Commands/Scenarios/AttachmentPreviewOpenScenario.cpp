@@ -12,6 +12,7 @@
 // ever reintroduced the synchronous cpr::Get would surface here as a one-frame spike.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 // clang-format off
 // SMATCHET_DEVIATION(rule=duplication; reason=the shared scenario-TU include + namespace-open boilerplate is grandfathered across the Scenarios/*.cpp siblings; dropping the vestigial AppController.h include (fan-in Phase 6 T1a) re-hashed the boilerplate clone window vs a sibling scenario — not a real copy-paste; owner=orchestrator; revisit=when the scenario prologue is factored into a shared header)
 // clang-format on
@@ -36,16 +37,12 @@ class AttachmentPreviewOpenScenario : public IScenario {
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Sample the dominant per-frame UI scope so a one-frame spike is
-        // captured. GetLastFrameRows is updated by UiPerfMonitor::BeginFrame
-        // (called from SmatchetUI::Draw); reading it here gives us the prior
-        // frame's totals, which is exactly the cadence we want.
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
-        double topMs = 0.0;
-        for (const UiPerfRow& r : rows) {
-            if (r.lastTotalMs > topMs)
-                topMs = r.lastTotalMs;
-        }
+        // captured. LastFrameTopTotalMs reads the prior frame's totals
+        // (aggregated by UiPerfMonitor::BeginFrame, called from
+        // SmatchetUI::Draw), which is exactly the cadence we want.
+        const double topMs = UiPerfMonitor::Instance().LastFrameTopTotalMs();
         if (topMs > maxFrameTopMs_)
+            // SMATCHET_DEVIATION(rule=duplication; reason=perf-scenario framing clone (passive OnFrame observer + OnFinish tail) re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; the residual framing is per-scenario configuration; owner=scenarios; revisit=2027-03-01)
             maxFrameTopMs_ = topMs;
     }
 
@@ -53,18 +50,7 @@ class AttachmentPreviewOpenScenario : public IScenario {
 
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["frames"] = frames_;
         out["maxFrameTopMs"] = maxFrameTopMs_;

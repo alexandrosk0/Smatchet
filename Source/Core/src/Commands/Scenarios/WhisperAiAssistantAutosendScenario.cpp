@@ -32,6 +32,7 @@
 // surrounding SmatchetUI::Draw frame, identical to WhisperDictationScenario.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // the scenario headers expose only json_fwd; this TU uses nlohmann::json directly.
@@ -259,18 +260,7 @@ class WhisperAiAssistantAutosendScenario : public IScenario {
         // retrofit in docs/self-improvement/categories/tooling.md). Pattern
         // mirrors PriorityGridScrollScenario::OnFinish.
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        std::transform(rows.begin(), rows.end(), std::back_inserter(rowsJson), [](const UiPerfRow& r) {
-            return nlohmann::json{
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            };
-        });
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         out["rows"] = std::move(rowsJson);
         return out;
     }

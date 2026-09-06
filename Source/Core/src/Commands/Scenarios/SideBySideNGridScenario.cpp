@@ -14,6 +14,7 @@
 // is untouched. Mirrors the passive-observer shape of side-by-side-2-grid.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 // clang-format off
 #include "Interfaces/IAppScenarioHost.h"
@@ -105,14 +106,9 @@ class SideBySideNGridScenario : public IScenario {
 
     void OnFrame(IAppScenarioHost& /*app*/, int /*frameIndex*/) override {
         // Passive observer: track the worst per-frame UI scope across the run so a
-        // one-frame spike from the N-grid draw is captured. GetLastFrameRows returns
-        // the prior frame's totals (updated by UiPerfMonitor::BeginFrame).
-        const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows();
-        double topMs = 0.0;
-        for (const UiPerfRow& r : rows) {
-            if (r.lastTotalMs > topMs)
-                topMs = r.lastTotalMs;
-        }
+        // one-frame spike from the N-grid draw is captured. LastFrameTopTotalMs
+        // reads the prior frame's totals (aggregated by UiPerfMonitor::BeginFrame).
+        const double topMs = UiPerfMonitor::Instance().LastFrameTopTotalMs();
         if (topMs > maxFrameTopMs_)
             maxFrameTopMs_ = topMs;
     }
@@ -125,18 +121,7 @@ class SideBySideNGridScenario : public IScenario {
         RemoveSyntheticPanes();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["scenario"] = "side-by-side-grids";
         out["panes"] = paneTarget_;

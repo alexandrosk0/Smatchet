@@ -19,6 +19,7 @@
 // taken by the launch harness.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 // clang-format off
 #include "Interfaces/IAppScenarioHost.h"
@@ -181,6 +182,7 @@ class InteractiveGridStressScenario : public IScenario {
 
     bool IsDone(int frameIndex) const override { return frameIndex >= frames_; }
 
+    // SMATCHET_DEVIATION(rule=duplication; reason=perf-scenario framing clone (IsDone/OnCancel/OnFinish skeleton) re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; the residual framing is per-scenario configuration; owner=scenarios; revisit=2027-03-01)
     int CurrentScrollY() const override { return scrollY_; }
 
     void OnCancel(IAppScenarioHost& /*app*/) override { Cleanup(); }
@@ -188,18 +190,7 @@ class InteractiveGridStressScenario : public IScenario {
     nlohmann::json OnFinish(IAppScenarioHost& /*app*/) override {
         Cleanup();
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["scenario"] = "interactive-grid-stress";
         out["panes"] = kPaneCount;

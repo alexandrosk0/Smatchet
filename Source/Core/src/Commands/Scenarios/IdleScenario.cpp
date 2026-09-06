@@ -8,6 +8,7 @@
 // from raw mean-per-frame numbers across other scenarios.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
 #include "UiPerfMonitor.h"
@@ -24,6 +25,7 @@ class IdleScenario : public IScenario {
     void OnStart(IAppScenarioHost& /*app*/, const nlohmann::json& args, std::string& /*outErr*/) override {
         frames_ = (std::max)(1, args.value("frames", 600));
         // Reset so the captured numbers reflect this run only.
+        // SMATCHET_DEVIATION(rule=duplication; reason=perf-scenario framing clone (OnStart reset + passive OnFrame observer) re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; the residual framing is per-scenario configuration; owner=scenarios; revisit=2027-03-01)
         UiPerfMonitor::Instance().Reset();
     }
 
@@ -47,18 +49,7 @@ class IdleScenario : public IScenario {
             }
         }
 
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["frames"] = frames_;
         out["topName"] = topName;

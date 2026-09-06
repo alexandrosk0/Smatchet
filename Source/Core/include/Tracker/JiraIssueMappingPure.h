@@ -25,6 +25,10 @@ struct ViewsStore;
 namespace smatchet {
 namespace jira {
 
+/// The six Jira duration-in-seconds field ids — the single source of truth
+/// that TrackerFieldValueUtils::IsTimeDurationField delegates to.
+bool IsJiraDurationSecondsFieldKey(const std::string& fieldKey);
+
 /// Result of matching a requested status against Jira's `transitions` array.
 /// `id` is empty when no candidate was found. `usedNameFallback` is true when the
 /// match came from the LAST-RESORT transition-name heuristic (not an exact status

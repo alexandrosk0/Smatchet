@@ -1,5 +1,7 @@
 #include "JiraClient.h"
 
+#include "TimeNowPure.h"
+
 #include "Json/BoundedJsonParse.h"
 #include "JqlProjectScope.h"
 #include "Logger.h"
@@ -49,12 +51,8 @@ TrackerReachabilityProbeResult JiraClient::ProbeReachability(const TrackerConfig
 namespace {
 
 constexpr std::int64_t kJiraListProjectsTtlSeconds = 300; // 5 minutes
+// SMATCHET_DEVIATION(rule=duplication; reason=the Jira and Plane adapters share the ListProjects TTL-cache skeleton by necessity (parallel provider adapters, different mutex types); the clone re-entered the delta scan when the file-local NowUnixSeconds copies were folded into TimeNowPure.h; owner=tracker-adapters; revisit=2027-03-01)
 constexpr size_t kJiraListProjectsCap = 200;
-
-std::int64_t NowUnixSeconds() {
-    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch())
-        .count();
-}
 
 } // namespace
 
@@ -68,7 +66,7 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
     // Fast path: serve from cache when still warm.
     {
         std::lock_guard<std::mutex> lock(listProjectsMutex_);
-        const std::int64_t now = NowUnixSeconds();
+        const std::int64_t now = TimeNowPure::NowUnixSeconds();
         if (!cachedProjects_.empty() && (now - cachedProjectsAtUnix_) < kJiraListProjectsTtlSeconds) {
             return cachedProjects_;
         }
@@ -137,7 +135,7 @@ std::vector<RemoteProject> JiraClient::ListProjects() {
     {
         std::lock_guard<std::mutex> lock(listProjectsMutex_);
         cachedProjects_ = projects;
-        cachedProjectsAtUnix_ = NowUnixSeconds();
+        cachedProjectsAtUnix_ = TimeNowPure::NowUnixSeconds();
     }
     return projects;
 }

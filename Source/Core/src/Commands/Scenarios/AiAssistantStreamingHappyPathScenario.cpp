@@ -18,6 +18,7 @@
 // `#else` branch so the registry name still resolves.
 
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #if defined(SMATCHET_WITH_AI)
 
@@ -196,18 +197,7 @@ class AiAssistantStreamingHappyPathScenario : public IScenario {
         ClearOverride();
 
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            nlohmann::json rj;
-            rj["name"] = r.name;
-            rj["lastTotalMs"] = r.lastTotalMs;
-            rj["avgPerCallMs"] = r.avgPerCallMs;
-            rj["maxMs"] = r.maxMs;
-            rj["calls"] = r.calls;
-            rj["emaAvgMs"] = r.emaAvgMs;
-            rj["p99Ms"] = r.p99Ms;
-            rowsJson.push_back(std::move(rj));
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
 
         nlohmann::json out;
         out["frames"] = frames_;

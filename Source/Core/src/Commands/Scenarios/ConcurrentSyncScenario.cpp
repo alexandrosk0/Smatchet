@@ -91,6 +91,7 @@ class ConcurrentSyncScenario : public IScenario {
                 {"p99Ms", r.p99Ms},
             });
         }
+        // SMATCHET_DEVIATION(rule=duplication; reason=perf-scenario OnFinish tail clone (out[scenario]/frames/targets emit) re-entered the delta scan when the shared rows serializer moved to UiPerfRowsJson.h; this TU keeps its own rows loop to extract tickAllContextsLastTotalMs inline; owner=scenarios; revisit=2027-03-01)
         nlohmann::json out;
         out["scenario"] = "concurrent-sync";
         out["frames"] = frames_;

@@ -9,7 +9,9 @@
 // hold across this run.
 // Default frames = 600 (10 s at 60 fps). For a CI smoke job, raise to 3600.
 
+// SMATCHET_DEVIATION(rule=duplication; reason=plain include-prologue clone shared with the sibling perf scenarios — re-entered the delta scan by the UiPerfRowsJson.h include added for the shared rows serializer; owner=scenarios; revisit=2027-03-01)
 #include "Commands/Scenarios/IScenario.h"
+#include "Ui/UiPerfRowsJson.h"
 
 #include "Interfaces/IAppScenarioHost.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -66,18 +68,7 @@ class LuaRecorderFuzzScenario : public IScenario {
             boundField_.clear();
         }
         const std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-        nlohmann::json rowsJson = nlohmann::json::array();
-        for (const UiPerfRow& r : rows) {
-            rowsJson.push_back({
-                {"name", r.name},
-                {"lastTotalMs", r.lastTotalMs},
-                {"avgPerCallMs", r.avgPerCallMs},
-                {"maxMs", r.maxMs},
-                {"calls", r.calls},
-                {"emaAvgMs", r.emaAvgMs},
-                {"p99Ms", r.p99Ms},
-            });
-        }
+        nlohmann::json rowsJson = UiPerfRowsToJson(rows);
         nlohmann::json out;
         out["frames"] = frames_;
         out["rows"] = std::move(rowsJson);

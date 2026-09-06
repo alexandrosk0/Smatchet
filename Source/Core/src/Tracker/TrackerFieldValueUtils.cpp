@@ -1,4 +1,5 @@
 #include "TrackerFieldValueUtils.h"
+#include "JiraIssueMappingPure.h"
 #include "StringUtil.h"
 #include "ConfigManager.h"
 #include <fstream>
@@ -126,12 +127,8 @@ std::vector<std::string> LoadCommentTemplates() {
 }
 
 bool IsTimeDurationField(const std::string& fieldId) {
-    return fieldId == "timeoriginalestimate" ||
-           fieldId == "timeestimate" ||
-           fieldId == "timespent" ||
-           fieldId == "aggregatetimeoriginalestimate" ||
-           fieldId == "aggregatetimeestimate" ||
-           fieldId == "aggregatetimespent";
+    // Same six ids as the Jira wire mapping — one list, owned by the pure unit.
+    return smatchet::jira::IsJiraDurationSecondsFieldKey(fieldId);
 }
 
 bool IsEditableTimetrackingEstimateFieldId(const std::string& fieldId) {
