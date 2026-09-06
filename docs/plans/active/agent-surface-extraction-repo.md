@@ -175,7 +175,7 @@ N/A — pure docs / agentic-shell / CI-config restructure; no `Source/Core/` fil
    > carves out the *placeholder* form on the Archive `git mv` line; the
    > expanded form defeats that carve-out. Run the literal command with your
    > slug substituted at the shell — never bake the expansion into the file.
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+3. *regen the index: `bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-index.sh" --fix` (this plan archives **after** the flip, when `agents/` lives in the submodule and the bare host-root path no longer resolves; regenerate `docs/plans/INDEX.md` from the script — never hand-edit a generated row).*
 
 *No ref-sweep — references use the tier-less form `docs/plans/<slug>.md` (the gates resolve it against any tier; PR #890), so the move can't break them. Write new plan references tier-less.*
 
