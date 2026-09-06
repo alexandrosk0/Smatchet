@@ -19,4 +19,4 @@
 /// resolves a field id to its catalog metadata (or nullptr when unknown) so a person's name
 /// is found regardless of which user field it lives in.
 bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter,
-                              const std::function<const TrackerField*(const std::string&)>& fieldMetaLookup);
+                             const std::function<const TrackerField*(const std::string&)>& fieldMetaLookup);

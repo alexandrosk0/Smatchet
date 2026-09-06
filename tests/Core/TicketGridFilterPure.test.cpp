@@ -55,7 +55,8 @@ TEST_CASE("TicketMatchesGridFilter — matches the summary field") {
 }
 
 TEST_CASE("TicketMatchesGridFilter — matches a user-type field (e.g. assignee)") {
-    const CachedTicket t = Ticket("PROJ-1", {{"summary", "Unrelated summary"}, {"assignee", "Alexandros Konstantinos"}});
+    const CachedTicket t =
+        Ticket("PROJ-1", {{"summary", "Unrelated summary"}, {"assignee", "Alexandros Konstantinos"}});
     const TrackerField assignee = UserField("assignee");
     auto lookup = [&](const std::string& id) -> const TrackerField* { return id == "assignee" ? &assignee : nullptr; };
     CHECK(TicketMatchesGridFilter(t, "Alexandros", lookup));

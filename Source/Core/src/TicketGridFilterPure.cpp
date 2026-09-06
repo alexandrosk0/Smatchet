@@ -8,7 +8,7 @@
 #include "Tracker/TrackerQuerySuggestCommon.h"
 
 bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter,
-                              const std::function<const TrackerField*(const std::string&)>& fieldMetaLookup) {
+                             const std::function<const TrackerField*(const std::string&)>& fieldMetaLookup) {
     if (filter.empty()) {
         return true;
     }
@@ -20,7 +20,8 @@ bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filt
     }
     for (const auto& fieldEntry : ticket.fieldValues) {
         const TrackerField* meta = fieldMetaLookup ? fieldMetaLookup(fieldEntry.first) : nullptr;
-        if (meta && tracker_query_suggest::IsQueryUserField(*meta) && ContainsCaseInsensitive(fieldEntry.second, filter)) {
+        if (meta && tracker_query_suggest::IsQueryUserField(*meta) &&
+            ContainsCaseInsensitive(fieldEntry.second, filter)) {
             return true;
         }
     }
