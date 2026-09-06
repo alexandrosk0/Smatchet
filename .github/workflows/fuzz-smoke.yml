@@ -17,7 +17,9 @@ name: Fuzz smoke (Linux libFuzzer)
 # build/ninja-fuzzer-linux/tests/fuzz/ is built (the build preset builds the
 # default `all` target) and fuzzed. Adding a driver in tests/fuzz/CMakeLists.txt
 # (Slice E2b/E2c, PR 2) requires NO edit here — the tests/fuzz/** path trigger and
-# the find-loop pick it up. SMATCHET_BUILD_APP=OFF (set by ninja-fuzzer-linux)
+# the find-loop pick it up, and the fuzz step divides ONE whole-step wall-clock
+# budget across the drivers it discovers, so the run cannot outgrow the job's
+# timeout-minutes as they accrue. SMATCHET_BUILD_APP=OFF (set by ninja-fuzzer-linux)
 # skips GLFW / Dear ImGui / Lua / whisper / Standalone / DX12, so only clang, lld,
 # and the TLS/zlib headers cpr's (unbuilt) curl config probes are needed.
 
@@ -97,30 +99,67 @@ jobs:
         working-directory: build/ninja-fuzzer-linux
         run: |
           set -uo pipefail
+          # TOTAL is a WHOLE-STEP wall-clock budget split across the discovered drivers,
+          # NOT a per-driver constant. A per-driver constant silently outgrows the job's
+          # timeout-minutes as drivers accrue: 300s x 16 auto-discovered drivers is 80
+          # minutes inside a 45-minute job, which killed 62 consecutive nightlies at
+          # driver 9 of 16 (a timeout-minutes kill is reported as `cancelled`, not
+          # `failure`, and the issue-filing step below is DOWNSTREAM of the kill, so it
+          # was skipped every time and the dead lane filed nothing). Budget vs cap is now
+          # arithmetic: the projected total is echoed, and the run asserts it reached
+          # every driver it discovered.
           # Short on PRs (keep the advisory lane fast); longer on the nightly cron.
-          if [ "${{ github.event_name }}" = "schedule" ]; then BUDGET=300; else BUDGET=45; fi
+          if [ "${{ github.event_name }}" = "schedule" ]; then TOTAL=1800; else TOTAL=720; fi
           mkdir -p crashes
-          # Auto-discover every fuzz_* driver — PR 2 drivers scale in with no edit.
+          # Auto-discover every fuzz_* driver — new drivers scale in with no edit.
           mapfile -t targets < <(find tests/fuzz -maxdepth 1 -type f -name 'fuzz_*' -perm -u+x | sort)
           if [ ${#targets[@]} -eq 0 ]; then
             echo "No fuzz_* binaries under tests/fuzz — build produced none." >&2
             exit 1
           fi
-          echo "Fuzzing ${#targets[@]} target(s) at ${BUDGET}s each."
+          BUDGET=$(( TOTAL / ${#targets[@]} ))
+          # Floor: -max_total_time=0 means UNLIMITED to libFuzzer, so a driver count above
+          # TOTAL must never round the budget down to zero.
+          if [ "$BUDGET" -lt 10 ]; then BUDGET=10; fi
+          projected=$(( BUDGET * ${#targets[@]} ))
+          echo "Fuzzing ${#targets[@]} target(s) at ${BUDGET}s each" \
+               "(~${projected}s projected of a ${TOTAL}s step budget)."
+          # Only reachable through the floor above — i.e. more drivers than TOTAL can give
+          # 10s each. Say so loudly rather than let the box quietly outgrow the job again.
+          if [ "$projected" -gt "$TOTAL" ]; then
+            echo "::warning::Fuzz budget floor engaged — ${#targets[@]} drivers project" \
+                 "~${projected}s against a ${TOTAL}s step budget; raise TOTAL and" \
+                 "timeout-minutes together, or split the lane."
+          fi
           status=0
+          ran=0
           for bin in "${targets[@]}"; do
             name=$(basename "$bin")
             corpus="../../tests/fuzz/corpus/${name#fuzz_}"
             seedargs=()
             [ -d "$corpus" ] && seedargs+=("$corpus")
             echo "::group::${name} (${BUDGET}s)"
-            if ! "$bin" -max_total_time="$BUDGET" -print_final_stats=1 \
-                   -artifact_prefix="crashes/${name}-" "${seedargs[@]}"; then
-              echo "FUZZ FAILURE: ${name} found a crash/leak/timeout."
+            # -max_total_time is checked BETWEEN runs, so a single wedged input would sail
+            # past it: -timeout caps one input (and saves it as a `timeout-*` artifact,
+            # which a bare wall-clock kill cannot), and the outer `timeout` is the backstop
+            # for a driver that honours neither. Both stay inside BUDGET.
+            timeout -k 5 "$(( BUDGET + 30 ))" \
+              "$bin" -max_total_time="$BUDGET" -timeout=25 -print_final_stats=1 \
+                     -artifact_prefix="crashes/${name}-" "${seedargs[@]}"
+            rc=$?
+            ran=$(( ran + 1 ))
+            if [ "$rc" -ne 0 ]; then
+              echo "FUZZ FAILURE: ${name} exited ${rc} (crash/leak/timeout)."
               status=1
             fi
             echo "::endgroup::"
           done
+          # The lane is only worth its green if it actually reached every driver — assert
+          # coverage rather than trusting the arithmetic above to stay true.
+          if [ "$ran" -ne "${#targets[@]}" ]; then
+            echo "Fuzzed ${ran} of ${#targets[@]} discovered drivers — coverage truncated." >&2
+            status=1
+          fi
           exit $status
 
       - name: Upload crash artifacts
