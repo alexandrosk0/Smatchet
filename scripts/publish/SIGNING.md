@@ -167,6 +167,24 @@ Repository **secrets** — an Entra service principal holding the
 - `AZURE_CLIENT_ID`
 - `AZURE_CLIENT_SECRET`
 
+[`setup-trusted-signing-sp.sh`](setup-trusted-signing-sp.sh) creates that
+service principal and both role assignments, then prints all six values (and
+the `gh variable set` / `gh secret set` lines for them):
+
+```bash
+az login
+bash scripts/publish/setup-trusted-signing-sp.sh \
+  --resource-group <rg> --account <signing-account> --profile <certificate-profile>
+```
+
+It refuses to touch anything if the account or profile name doesn't resolve, so
+a typo can't strand an app registration with a live secret. The client secret is
+printed once and cannot be retrieved again — run it in a terminal you're
+watching, not into a shared log. Two role scopes matter and the script gets them
+right: **Signer on the certificate profile**, **Reader on the account**. Reader
+scoped to the profile alone authenticates and then fails at profile lookup with
+an opaque signtool error.
+
 The workflow downloads the provider package by pinned version and SHA-256,
 writes `metadata.json` into `RUNNER_TEMP`, and exposes the `AZURE_*` credentials
 only to the step that builds and signs. Missing configuration fails the run
