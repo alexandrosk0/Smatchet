@@ -60,7 +60,6 @@
 #include "PlaneFixtureBackend.h"
 
 #include "LuaAutomationHost.h"
-#include "LuaScriptsRootPure.h" // scripts-root derivation shared with the pre-Initialize path (#2144)
 #include "OfflineQueueService.h"
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
@@ -544,11 +543,12 @@ void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType)
 void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {
     const std::string fileBase = ConfigManager::GetRuntimeAssetDirectory();
 
-    // Latch the scripts root through the same derivation the pre-Initialize path uses, so the
-    // member and the OnEarlyInit fallback can never disagree (#2144). Derived from `fileBase`
-    // alone (no latched value passed in) so a re-Initialize re-reads the current asset directory
-    // instead of keeping the previous run's root.
-    luaScriptsDirectory_ = smatchet::lua_scripts::ResolveScriptsRoot(std::string(), fileBase);
+    // Latch the scripts root through the same helper the pre-Initialize path resolves against, so
+    // the member and the OnEarlyInit fallback can never disagree (#2144). Cleared first because
+    // the helper returns the member when it is already set: a re-Initialize must re-derive from
+    // the current asset directory rather than keep the previous run's root.
+    luaScriptsDirectory_.clear();
+    luaScriptsDirectory_ = LuaScriptsRootDirectory();
 
     LOG_INFO("AppController: ConfigManager files base %s (len=%zu); luaScriptsDirectory=\"%s\"",
 
