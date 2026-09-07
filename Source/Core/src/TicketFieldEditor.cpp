@@ -1156,6 +1156,13 @@ void HandleWorklogSave(AppController& app) {
             // success/failure the user never learns about.
             if (SmatchetCommentsModalGen::CallbackIsStale(s_ActiveWorklogState.Initialized, s_ActiveWorklogState.Gen,
                                                           gen, s_ActiveWorklogState.IssueId, issueId)) {
+                // Stale because the SAME ticket was re-opened mid-POST (#2168): that open seeded
+                // SubmitInFlight from the latch released above, so the re-opened dialog would
+                // otherwise keep Save disabled forever. The seed stood for exactly this POST.
+                if (smatchet::worklog::StalePostBackReleasesDialogSubmit(s_ActiveWorklogState.Initialized,
+                                                                         s_ActiveWorklogState.IssueId, issueId)) {
+                    s_ActiveWorklogState.SubmitInFlight = false;
+                }
                 if (ok) {
                     SmatchetToastManager::Instance().Push(
                         SmatchetLocalization::T("worklog.toast.saved_title", "Worklog saved"), issueId,

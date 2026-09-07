@@ -12,6 +12,7 @@
 #include <string>
 
 using smatchet::worklog::CanSubmitWorklog;
+using smatchet::worklog::StalePostBackReleasesDialogSubmit;
 using smatchet::worklog::ValidateWorklogSubmission;
 using smatchet::worklog::WorklogSubmitOutstandingFor;
 
@@ -72,4 +73,18 @@ TEST_CASE("WorklogSubmitOutstandingFor is exact, not prefix or case-folded") {
     CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-1", "PROJ-10"));
     CHECK_FALSE(WorklogSubmitOutstandingFor("PROJ-10", "PROJ-1"));
     CHECK_FALSE(WorklogSubmitOutstandingFor("proj-1", "PROJ-1"));
+}
+
+TEST_CASE("StalePostBackReleasesDialogSubmit frees a re-opened same-ticket dialog (#2168)") {
+    // Re-open the SAME ticket mid-POST: the open seeded SubmitInFlight=true and burned a fresh
+    // generation, so the post-back is stale — but it is THIS ticket's POST that completed, so
+    // the seed must be released or Save stays disabled until the dialog is closed and re-opened.
+    CHECK(StalePostBackReleasesDialogSubmit(true, "PROJ-1", "PROJ-1"));
+    // A dialog on another ticket owns its own state; a late post-back leaves it alone.
+    CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "PROJ-2", "PROJ-1"));
+    // No dialog open (Cancel mid-flight): nothing to release.
+    CHECK_FALSE(StalePostBackReleasesDialogSubmit(false, "PROJ-1", "PROJ-1"));
+    // Defensive: an empty post-back id never matches, even an uninitialised dialog id.
+    CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "", ""));
+    CHECK_FALSE(StalePostBackReleasesDialogSubmit(true, "PROJ-1", ""));
 }
