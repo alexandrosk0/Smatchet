@@ -7,14 +7,28 @@
 namespace {
 
 // A raw JSON payload only reaches fieldValues as nlohmann's compact dump (the attachment list
-// the grid parses itself, or the unrecognized-object fallback), and a dump of a non-empty
-// object or array always opens with one of these byte pairs. Display text never does.
+// the grid parses itself, or the unrecognized-object fallback). A dump of a non-empty object
+// or array opens with a quote-or-brace pair AND closes with the matching bracket as its last
+// byte; an empty one is exactly two bytes. Checking both ends keeps bracketed prose such as
+// "[]. release notes" or "[Bug] crash" searchable.
 bool IsRawJsonDump(const std::string& s) {
-    if (s.size() < 2 || (s[0] != '{' && s[0] != '[')) {
+    const std::size_t n = s.size();
+    if (n < 2) {
         return false;
     }
+    const char first = s[0];
     const char second = s[1];
-    return second == '"' || second == '{' || second == '}' || second == ']';
+    const char last = s[n - 1];
+    if (n == 2) {
+        return (first == '{' && second == '}') || (first == '[' && second == ']');
+    }
+    if (first == '{') {
+        return second == '"' && last == '}';
+    }
+    if (first == '[') {
+        return (second == '{' || second == '"') && last == ']';
+    }
+    return false;
 }
 
 unsigned char FoldAscii(unsigned char c) {

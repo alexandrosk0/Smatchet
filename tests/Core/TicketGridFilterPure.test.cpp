@@ -95,6 +95,20 @@ TEST_CASE("TicketMatchesGridFilter — unrecognized-object fallback dumps are sk
     CHECK(TicketMatchesGridFilter(t, "[Bug]"));
 }
 
+TEST_CASE("TicketMatchesGridFilter — prose that merely opens with an empty bracket pair is still searchable") {
+    // Regression: an opener-pair-only signature classified "[]. release notes" as a payload.
+    const CachedTicket t = Ticket("PROJ-1", {{"summary", "[]. release notes"},
+                                             {"description", "{} placeholder for the sprint report"},
+                                             {"labels", "[\"quoted\"] is not a dump"}});
+    CHECK(TicketMatchesGridFilter(t, "release notes"));
+    CHECK(TicketMatchesGridFilter(t, "sprint report"));
+    CHECK(TicketMatchesGridFilter(t, "not a dump"));
+    // The genuinely empty dumps carry nothing searchable, so skipping them is harmless.
+    const CachedTicket empty = Ticket("PROJ-2", {{"attachment", "[]"}, {"customfield_3", "{}"}});
+    CHECK_FALSE(TicketMatchesGridFilter(empty, "]"));
+    CHECK_FALSE(TicketMatchesGridFilter(empty, "}"));
+}
+
 TEST_CASE("TicketMatchesGridFilter — non-ASCII text matches byte-exact and is not corrupted by the fold") {
     const CachedTicket t = Ticket("PROJ-1", {{"assignee", "Αλέξανδρος Κωνσταντόνης"}});
     CHECK(TicketMatchesGridFilter(t, "Αλέξανδρος"));
