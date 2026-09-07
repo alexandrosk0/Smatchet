@@ -210,20 +210,16 @@ std::string UploadScreenshotAsset(const std::string& baseUrl, const std::string&
     return "";
 }
 
-// True only when the repo is confirmed PRIVATE. Fails closed: an error, a non-200, or
-// unparseable JSON all answer "not private", because the caller's fallback (skip the
-// upload) is recoverable and publishing a dump is not.
+// True only when the repo is confirmed PRIVATE. The decision itself lives in the pure
+// layer (RepoResponseSaysPrivate, BugReportBody.cpp) so the fail-closed rule is
+// unit-tested; this wrapper only supplies the HTTP response. A throw from the client
+// is caught here and answers "not private" — same fail-closed direction.
 bool IsRepoPrivate(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                    const std::string& repo) {
-    const cpr::Response resp =
-        TrackerGetLogged("BugReport", baseUrl + "/repos/" + owner + "/" + repo, BugReportGitHubHeaders(pat));
-    if (resp.status_code != 200) {
-        return false;
-    }
     try {
-        std::string parseErr;
-        const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
-        return parseErr.empty() && j.value("private", false);
+        const cpr::Response resp =
+            TrackerGetLogged("BugReport", baseUrl + "/repos/" + owner + "/" + repo, BugReportGitHubHeaders(pat));
+        return RepoResponseSaysPrivate(resp.status_code, resp.text);
     } catch (const std::exception&) {
         return false;
     }
@@ -537,12 +533,9 @@ SubmitResult SubmitBugReport(IAppMeta& app, const BugReportOptions& opts) {
         const std::string dumpName = fs::path(opts.DumpAbsPath).filename().string();
         const std::string url = UploadCrashDumpRelease(target.BaseUrl, target.Pat, target.AssetsOwner,
                                                        target.AssetsRepo, opts.DumpAbsPath, dumpName);
-        // On failure name only the FILE, never opts.DumpAbsPath: the absolute path runs
-        // through the user's home directory, so echoing it into the issue body would leak
-        // their account name — and this markdown is appended after the egress preview, so
-        // the user never saw it to redact it.
-        dumpMarkdown = url.empty() ? ("_Crash minidump `" + dumpName + "` kept locally (not uploaded)._")
-                                   : ("[Crash minidump](" + url + ")");
+        // BuildCrashDumpMarkdown names only the FILE, never opts.DumpAbsPath — see its
+        // contract in the header for why the absolute path must not reach the body.
+        dumpMarkdown = BuildCrashDumpMarkdown(dumpName, url);
     }
 
     // WYSIWYG: when the user edited the egress preview, that text IS the body; we
