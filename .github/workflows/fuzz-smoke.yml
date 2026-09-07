@@ -143,10 +143,15 @@ jobs:
             # past it: -timeout caps one input (and saves it as a `timeout-*` artifact,
             # which a bare wall-clock kill cannot), and the outer `timeout` is the backstop
             # for a driver that honours neither. Both stay inside BUDGET.
+            # GitHub runs this step under `bash -e` (`shell: /usr/bin/bash -e {0}`) and the
+            # `set -uo pipefail` above does NOT clear errexit, so a bare invocation followed
+            # by `rc=$?` would abort the whole step on the first failing driver — no
+            # FUZZ FAILURE line, no later drivers, no coverage assertion. `|| rc=$?` keeps
+            # the status while staying in a condition context, which errexit exempts.
+            rc=0
             timeout -k 5 "$(( BUDGET + 30 ))" \
               "$bin" -max_total_time="$BUDGET" -timeout=25 -print_final_stats=1 \
-                     -artifact_prefix="crashes/${name}-" "${seedargs[@]}"
-            rc=$?
+                     -artifact_prefix="crashes/${name}-" "${seedargs[@]}" || rc=$?
             ran=$(( ran + 1 ))
             if [ "$rc" -ne 0 ]; then
               echo "FUZZ FAILURE: ${name} exited ${rc} (crash/leak/timeout)."

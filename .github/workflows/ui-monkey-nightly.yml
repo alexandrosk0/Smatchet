@@ -107,9 +107,15 @@ jobs:
           # and this lane ran vacuously from its first nightly (Issue #1666 — the
           # "crash" it reported was actually this zero-match, mislabeled).
           echo "ui-monkey: ui_test.run --name=UiMonkey --frames=8000 --spawn --yes"
+          # errexit is on (`shell: bash` => `bash --noprofile --norc -eo pipefail {0}`) and
+          # `set -uo pipefail` does not clear it, so a bare invocation + `rc=$?` would exit
+          # the script the moment the hang backstop fires (rc 124) — skipping the taskkill
+          # reap, the log tee and the $GITHUB_OUTPUT writes, leaving Evaluate result with
+          # empty outputs on exactly the path this backstop exists to catch. `|| rc=$?`
+          # keeps the status in an errexit-exempt condition context.
+          rc=0
           timeout -k 30 600 ./Smatchet.exe cmd ui_test.run --name='UiMonkey' \
-            --frames=8000 --spawn --yes > ui-monkey-run.out 2>&1
-          rc=$?
+            --frames=8000 --spawn --yes > ui-monkey-run.out 2>&1 || rc=$?
           # `timeout` has returned, so the parent is gone and any surviving Smatchet.exe is
           # the orphaned --spawn grandchild. Reap it before reading the log so it cannot
           # outlive the step (no-op on a clean run, hence the `|| true`).
