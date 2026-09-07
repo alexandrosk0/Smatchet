@@ -24,6 +24,29 @@
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
 # Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob.
 #
+# HOST-COUPLED CHECKS (plan agent-surface-extraction-repo, Phase A row 5d).
+# This gate moves into the agent-layer repo, where it is also the lane that
+# demonstrates the framework running on ITSELF. All 15 checks were audited for
+# host coupling; exactly these read content that stays host-side and so cannot
+# be satisfied by a standalone layer checkout:
+#
+#   [12/15]  Source/Core/src/P4Annotate.cpp — Source/ is host-only and is not in
+#            the layer's seed, so this check would `check_fail` on EVERY run of
+#            the layer's own agentic-selftests lane. It is now check_skip'd
+#            behind host_content_present().
+#   [9/15]   .claude/hooks/agent-token-log.py — the host-side adapter copy. Not
+#            newly host-coupled and not converted: it already degrades to a pass
+#            when the copy is absent, which is the same tree state.
+#
+# 13 of 15 are pure layer checks. That is well short of the third-of-checks
+# threshold at which the plan says to reconsider splitting this script in two,
+# so the predicate stays and the harness and pass/fail accounting are not
+# duplicated. Any check added later that names a host path MUST be added to this
+# list and gated the same way.
+#
+# The predicate is deliberately not a blanket disarm: on the host, where Source/
+# is present, every check runs and the run must report 15/15 with ZERO skips.
+#
 # Modes:
 #   (no args) | --check   run all 15 checks against the tree.
 #   --selftest            dogfood the locale-safe matcher (see grep_fixed below).
@@ -264,14 +287,32 @@ esac
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" >&2; exit 2; }
 
-cd "$(git rev-parse --show-toplevel)"
+# Dual-root bootstrap (row 3a): a location-relative climb, correct pre- and
+# post-flip. It replaces `cd "$(git rev-parse --show-toplevel)"`, which names the
+# SUBMODULE once this script lives in one — right for the layer checks by
+# accident, wrong for the host ones with no error.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+
+# The bulk of this gate reads LAYER content (agents/, docs/agent-rules/), so cwd
+# is the layer root and those paths stay the bare relative literals they were.
+# The two host-side paths are anchored on $PROJECT_ROOT explicitly.
+cd "$AGENT_LAYER_ROOT"
+
+# True when the host product tree is present. False in a standalone layer
+# checkout — the layer repo's seed carries no Source/.
+host_content_present() { [ -d "$PROJECT_ROOT/Source" ]; }
 
 PASS=0
 FAIL=0
+SKIP=0
 FAILED_CHECKS=()
 
 check_pass() { PASS=$((PASS+1)); printf '  PASS  %s\n' "$1"; }
 check_fail() { FAIL=$((FAIL+1)); FAILED_CHECKS+=("$1"); printf '  FAIL  %s\n' "$1"; }
+# A skip is NOT a pass: counted separately and printed with its reason, so a
+# host run silently degrading to skips is visible rather than reading 15/15.
+check_skip() { SKIP=$((SKIP+1)); printf '  SKIP  %s (host content absent)\n' "$1"; }
 
 # Agents live under agents/{core,project}/ (the portable/project split) — resolve
 # by name so this contract is location-agnostic. Excludes agents/_shared/.
@@ -468,7 +509,8 @@ fi
 echo
 echo "[9/15] agent-token-log.py — canonical vs .claude/hooks/ copy drift"
 canonical=agents/_shared/token-tracking/agent-token-log.py
-hook_copy=.claude/hooks/agent-token-log.py
+# .claude/ is the HOST-side adapter dir and stays host-side after the flip.
+hook_copy="$PROJECT_ROOT/.claude/hooks/agent-token-log.py"
 if [[ ! -f "$hook_copy" ]]; then
   # Hook copy absent — Claude Code harness not set up locally. Skip cleanly.
   check_pass "drift check skipped (hook copy absent — setup-harness.sh not run)"
@@ -560,8 +602,14 @@ fi
 # -------------------------------------------------------------------------
 echo
 echo "[12/15] V3.3 — Source/Core/src/P4Annotate.cpp has exactly one SubprocessCapture::Run call site"
-p4annotate_src=Source/Core/src/P4Annotate.cpp
-if [[ ! -f "$p4annotate_src" ]]; then
+p4annotate_src="$PROJECT_ROOT/Source/Core/src/P4Annotate.cpp"
+if ! host_content_present; then
+  # Standalone layer checkout: Source/ is host-only and out of the layer's seed.
+  # Failing here would red the layer's own agentic-selftests lane on every run —
+  # the very lane meant to demonstrate the framework running on itself.
+  check_skip "V3.3: Source/Core/src/P4Annotate.cpp"
+elif [[ ! -f "$p4annotate_src" ]]; then
+  # Host tree present but the file is gone — a real regression, not absence.
   check_fail "V3.3: $p4annotate_src missing"
 else
   run_count=$(grep -cE 'SubprocessCapture::Run\(' "$p4annotate_src" || true)
@@ -641,7 +689,10 @@ fi
 # -------------------------------------------------------------------------
 echo
 echo "----------------------------------------"
-echo "test-agent-contract — Passed: $PASS  Failed: $FAIL"
+echo "test-agent-contract — Passed: $PASS  Failed: $FAIL  Skipped: $SKIP"
+if [[ $SKIP -gt 0 ]]; then
+  echo "  ($SKIP host-coupled check(s) skipped — no host content at $PROJECT_ROOT)"
+fi
 if [[ $FAIL -gt 0 ]]; then
   echo
   echo "Failures:"

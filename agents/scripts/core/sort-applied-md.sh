@@ -27,9 +27,21 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
-cd "$(dirname "$0")/../../.."
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
+# The climb is location-relative: pre-flip it lands on the repo root, post-flip
+# on agent-layer/, and project-config.sh resolves the HOST tree from there.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
 
-APPLIED="docs/self-improvement/categories/applied.md"
+# applied.md is HOST content and stays host-side permanently — it is the
+# merge=union entries file (grill decision 4), and this script is its repair
+# tool: a LAYER script reading a HOST path (plan row 7b names the pair). The
+# `cd` climb that used to anchor it lands in the layer post-flip, where the file
+# does not exist, so the path is anchored on $PROJECT_ROOT instead. cwd is now
+# the host tree for the same reason.
+cd "$PROJECT_ROOT"
+
+APPLIED="${SMATCHET_APPLIED_MD:-$PROJECT_ROOT/docs/self-improvement/categories/applied.md}"
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
     CHECK_ONLY=1
