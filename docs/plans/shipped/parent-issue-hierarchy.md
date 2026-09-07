@@ -1,8 +1,9 @@
 # Plan — Parent issue hierarchy (FS parity)
+<!-- plan-date: 2026-09-06 -->
 
 > **Slug**: `parent-issue-hierarchy`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Origin**: user request 2026-09-06 — "look into how parent jiras are loaded, I want to duplicate the functionality from `C:\Dev\FS`". Scope pinned by user: **full FS parity**, **all backends via the `ITrackerIssueReader` interface**, **per-view flag**.
 >
@@ -136,17 +137,35 @@ N/A — no over-cap file is split; the new pure TU is additive.
 - **Plane / GitHub parent parsing** — their read-side parsers do not emit `parent` today; adding it is a per-backend field-mapping slice, not hierarchy work.
 
 ## Implementation log
-*(populated post-ship)*
+
+Shipped in one PR on branch `claude/parent-jiras-loading-b8f99c` (2026-09-07), all three slices together:
+
+- **Tracker**: new `ParentHierarchyPure.{h,cpp}` (`kMaxHierarchyDepth = 64`; `ParentKeyFromFieldValue`, `ParentKeyOf`, `ReferencedParentIds`, `MissingParentKeys`, `PresentParentIds`, `AncestorChain`, `ComputeDepths`, `StoryGroupOrder`). `IssueDraft.cpp`, `TrackerFieldPayloadPure.cpp`, `SmatchetNewIssueDraftUi.cpp` now split the `"KEY - summary"` value through `ParentKeyFromFieldValue`. `JiraIssueMappingPure.cpp` adds `issuelinks` to the fixed fetch list; the issuelinks "is part of" fallback runs as a post-loop helper in the Jira mapper (row 2 in § Files to modify named the parser TU; the mapper owns the per-issue field loop, so the fallback landed where the parsed `parent` field is finalised).
+- **Sync**: `TicketSyncService::FetchMissingParentsIntoQueue` (private) runs after `FetchIssuesStreamed`, skips on `FetchError` / cancel / `HideParents`, resolves the active view via the new `ConfigManager::FindActiveViewOrFirst`, pushes the parent batch under the same `RequestId` guard, extends `workerKeepIds`, and downgrades a keyed-fetch failure to `summary.Warning`. `TrackerIssueFetchSummary` is forward-declared in the header.
+- **Config**: `ViewDefinition::HideParents` / `StoryGroupSort` (`"hide_parents"` / `"story_group_sort"`, default false); `ConfigManager::FindActiveViewOrFirst(views, activeViewId)` shared by the sync worker and `AppController::ResolveActiveViewProjectKeyForCatalog`.
+- **Ui**: Sort By popup gains the `Story group` / `Hide parent stories` checkboxes (loc keys `grid.sort.story_group` / `grid.sort.hide_parents` + `.tip`, EN + FR). `RebuildGridSortAndFilterProjection` takes `GridHierarchyOptions` (story-group post-order, hide-parents filter, filter-text ancestor re-add, `cachedDepths` / `cachedParentIds`); the filter step is its own helper. Row loop: parent-row tint (`ParentRowBg` / `ParentRowNestedBg` semantic colours, status colour wins) + Id-cell indent `depth * 20`. The projection fingerprint carries `H` / `G` so a toggle rebuilds even when the column sort specs did not move; `BuildGridSortFingerprint` + `HierarchyOptionsForView` were extracted from `drawActiveProjectGridSort`.
+- **Tests**: `tests/Core/ParentHierarchyPure.test.cpp` (new), worker-drain cases in `TicketSyncService.test.cpp`, round-trip + resolver cases in `ConfigManagerViews.test.cpp`, bucket-E `tests/ui/grid_parent_hierarchy.test.cpp` (Sort By toggles → view dirty + projection refresh).
 
 ## Deviations from plan
-*(populated post-ship)*
+
+- **Issuelinks fallback site** (row 2): landed as a post-loop helper in `JiraIssueMappingPure.cpp` instead of inside `NormalizeParentRefObject` — the parser sees one field value at a time and never has the sibling `issuelinks` array; the mapper does. Same `"KEY - summary"` output.
+- **Extra pure helpers**: `ParentKeyOf` and `PresentParentIds` were added beyond the planned list — both projection steps and the sync path needed them, and inlining would have tripped the dup gate.
+- **Shared active-view resolver** (not in the plan): the sync worker's active-view loop was a 76-token clone of `AppController_Init.cpp`'s; the dup gate fired, so `ConfigManager::FindActiveViewOrFirst` now serves both (`ViewsStore` and `ViewWorkspaceState` share the `Views` / `ActiveViewId` shape).
+- **`drawActiveProjectGridSort` decomposition** (not in the plan): the `H` / `G` fingerprint bits pushed it to 31 decision points (cap 30); fingerprint build + hierarchy-options snapshot moved to two static helpers.
+- **Test-target registration**: each doctest target that links `ParentHierarchyPure.cpp` lists it once (explicit source lists, no glob) — a second entry produced duplicate-symbol link errors on the first attempt.
+- **Bucket-E test is fixture-agnostic**: `basic-grid.json` has no parent / child pair, so the UI test asserts the toggle → dirty → projection-refresh contract rather than row order; row-order / depth semantics are pinned by bucket-A (`StoryGroupOrder`, `ComputeDepths`) instead. A fixture with a parent / child pair is the deferred-automation item (§ Verification (actual)).
+- **Plan-lock path typo** fixed in the seeded lock (`refs/locks/parent-issue-hierarchy`) when the hook rejected the first write-set.
+- **`grill-with-docs`**: run at plan time ("triple check the plan"); no post-implementation re-grill — the deviations above are all mechanical (gate-driven) and change no contract.
 
 ## Verification (actual)
-*(populated post-ship)*
 
-## Archive (post-ship — DO IN THIS PR, never a follow-up)
-1. *flip the § Status header to `shipped`,*
-2. *`git mv docs/plans/active/<slug>.md docs/plans/shipped/<slug>.md`,*
-3. *regen the index: `bash agents/scripts/core/test-plan-index.sh --fix`.*
+All run on 2026-09-07 in the session worktree, after the final lint-driven refactors (shared `FindActiveViewOrFirst`, `drawActiveProjectGridSort` decomposition).
 
-*(Delete this `## Archive` block as part of step 2.)*
+- **Builds**: `ninja-iter-msvc` (GL standalone) rc=0; `SmatchetCore_DX12` dual-target rc=0; `ninja-test-msvc` rc=0; `ninja-ui-test-msvc` rc=0.
+- **Bucket-A (doctest)**: `ctest --preset ninja-test-msvc` 7/7; filtered run `-tc="*ParentHierarchy*,*FindActiveViewOrFirst*,*HideParents*,*parent*"` 31 cases / 148 assertions, all pass.
+- **Bucket-E (ImGui Test Engine)**: `UI_TEST_FILTER=GridParentHierarchy bash scripts/dev/test-ui-jira-deterministic-backend.sh` → `SortByToggles_ProjectionAndDirty` passed=1 failed=0.
+- **Lint**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` rc=0, all gates PASS (dup gate clean after the shared resolver; func caps clean after the fingerprint extraction). Advisory WARNs only: `tu-line-ceiling` on the pre-existing `SmatchetLocalization.cpp` whale, `comment-ratio` on two headers (unchanged ratios).
+- **Docs**: `docs/guides/parent-hierarchy.md` + README § Features / § Documentation; `bash scripts/dev/test-docs.sh` (result recorded in the PR body).
+- **Visual-validation pause**: exe launched from the iter build for the user's verdict (Sort By ↕ popup → Story group / Hide parent stories, indent, lavender tint).
+- **`scripts/dev/test-all.sh`**: every gate through `test-lint-hook-split` passed; the run was stopped after hanging 12+ min inside `test-merge-gates.sh` (bats + `gh`, local env). Three pre-existing local-env failures, none touching this diff (no `.sh` / `.py` / `.bats` changed): `test-adapter-drift` (stale gitignored `.claude/agents` mirror), `archive_backlog_entry.bats` #16 and `gate_selftests.bats` #2 (both `--selftest` dogfoods, CRLF working copy).
+- **Deferred automation**: a `tests/fixtures/jira_backend/` fixture with a parent / child pair so bucket-E can pin row order + depth + tint (today pinned only by bucket-A pure tests).

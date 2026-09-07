@@ -98,8 +98,8 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
 
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,
                                   std::vector<std::string>& outSelectedFields) {
-    outFieldsList = std::vector<std::string>{"summary",   "description", "status",  "assignee", "priority",
-                                             "issuetype", "parent",      "comment", "changelog"};
+    outFieldsList = std::vector<std::string>{"summary",   "description", "status",     "assignee", "priority",
+                                             "issuetype", "parent",      "issuelinks", "comment",  "changelog"};
     std::unordered_set<std::string> seenFields(outFieldsList.begin(), outFieldsList.end());
     outSelectedFields.clear();
     std::unordered_set<std::string> seenSelectedFields;
@@ -238,6 +238,44 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
     }
 }
 
+/// Fallback parent source (FS parity): a Jira instance whose hierarchy is expressed through
+/// issue links rather than the `parent` field. An inward "is part of" link names the parent;
+/// emit it in the same `"KEY - summary"` shape the `parent` field produces so every consumer
+/// (ParentHierarchyPure, IssueDraft, ExtractIssueKey) sees one contract. No-op when `parent`
+/// is already filled — the native field always wins.
+void ApplyIssueLinksParentFallback(const nlohmann::json& issueFields, CachedTicket& ticket) {
+    const auto parentIt = ticket.fieldValues.find("parent");
+    if (parentIt != ticket.fieldValues.end() && !parentIt->second.empty()) {
+        return;
+    }
+    if (!issueFields.contains("issuelinks") || !issueFields["issuelinks"].is_array()) {
+        return;
+    }
+    for (const nlohmann::json& link : issueFields["issuelinks"]) {
+        if (!link.is_object() || !link.contains("type") || !link["type"].is_object()) {
+            continue;
+        }
+        const std::string inward = JsonGetStringIfString(link["type"], "inward");
+        if (!IEquals(inward, "is part of") && !IEquals(inward, "part of")) {
+            continue;
+        }
+        if (!link.contains("inwardIssue") || !link["inwardIssue"].is_object()) {
+            continue;
+        }
+        const nlohmann::json& inwardIssue = link["inwardIssue"];
+        const std::string key = JsonGetStringIfString(inwardIssue, "key");
+        if (key.empty()) {
+            continue;
+        }
+        std::string summary;
+        if (inwardIssue.contains("fields") && inwardIssue["fields"].is_object()) {
+            summary = JsonGetStringIfString(inwardIssue["fields"], "summary");
+        }
+        ticket.fieldValues["parent"] = summary.empty() ? key : key + " - " + summary;
+        return;
+    }
+}
+
 void MapJiraWatchersField(const nlohmann::json& issueFields, CachedTicket& ticket) {
     if (issueFields.contains("watchers")) {
         ticket.fieldValues["watchers"] = StringifyJiraFieldForGrid(issueFields["watchers"]);
@@ -335,6 +373,7 @@ bool AppendCachedTicketFromJiraSearchIssue(
         if (issueFields.contains("issuetype")) {
             ticket.fieldValues["issuetype"] = NormalizeTrackerFieldValue(issueFields["issuetype"]);
         }
+        ApplyIssueLinksParentFallback(issueFields, ticket);
         results.push_back(std::move(ticket));
         return true;
     } catch (const std::exception&) {

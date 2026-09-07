@@ -779,3 +779,97 @@ TEST_CASE("TicketSyncService busy-defer keeps only the LAST pending request (lat
 
     svc.CancelAndJoinActiveStreamingSync();
 }
+
+// --- parent-issue-hierarchy: missing-parent fetch after the streamed fetch ----------------------
+
+namespace {
+CachedTicket MakeChildTicket(const std::string& id, const std::string& parentRef) {
+    CachedTicket t = MakeTicket(id, "child of " + parentRef);
+    t.fieldValues["parent"] = parentRef;
+    return t;
+}
+} // namespace
+
+TEST_CASE("TicketSyncService fetches parents referenced by streamed rows but absent from the result") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9 - Big epic"));
+    scripted.push_back(MakeChildTicket("CHILD-2", "EPIC-9"));
+    scripted.push_back(MakeChildTicket("CHILD-3", "CHILD-1")); // present parent: never requested
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> parents;
+    parents.push_back(MakeTicket("EPIC-9", "Big epic"));
+    fake->SetFetchIssuesForKeysResult(true, parents);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 4; }));
+    CHECK(fake->FetchIssuesForKeysCallCount() == 1);
+    REQUIRE(fake->FetchIssuesForKeysLastKeys().size() == 1);
+    CHECK(fake->FetchIssuesForKeysLastKeys()[0] == "EPIC-9");
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "EPIC-9", got));
+    CHECK(got.fieldValues["summary"] == "Big epic");
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService surfaces a soft warning when the parent fetch fails; streamed rows still land") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9"));
+    scripted.push_back(MakeTicket("LEAF-1", "leaf"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchIssuesForKeysError(TrackerErrorTransport("timeout"));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 2; }));
+    CHECK(fake->FetchIssuesForKeysCallCount() == 1);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("parent issue(s) could not be loaded") != std::string::npos);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("timeout") != std::string::npos);
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "CHILD-1", got));
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "LEAF-1", got));
+    CHECK_FALSE(deps.CacheImpl->TryGetTicket("Jira", "EPIC-9", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService skips the parent fetch when the active view hides parents") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    ViewDefinition leafOnly;
+    leafOnly.Id = "leaf-only";
+    leafOnly.Name = "Leaf only";
+    leafOnly.HideParents = true;
+    views.Views.push_back(leafOnly);
+    views.ActiveViewId = leafOnly.Id;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK(fake->FetchIssuesForKeysCallCount() == 0);
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}

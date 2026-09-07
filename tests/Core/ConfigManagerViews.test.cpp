@@ -442,3 +442,79 @@ TEST_CASE("ConfigManager::EnsureViewBucketBootstrapped is idempotent and repairs
     CHECK(disk.Backends["Jira"].Views.size() == 1);
     CHECK(disk.Backends["Jira"].ActiveViewId == "default_view");
 }
+
+// --- parent-issue-hierarchy: per-view HideParents / StoryGroupSort persistence -----------------
+
+TEST_CASE("ViewDefinition parent-hierarchy flags default off") {
+    ViewDefinition v;
+    CHECK_FALSE(v.HideParents);
+    CHECK_FALSE(v.StoryGroupSort);
+}
+
+TEST_CASE("ConfigManager persists HideParents + StoryGroupSort per view across a save -> load round-trip") {
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    PersistentViewsFile disk;
+    disk.Version = 2;
+
+    ViewWorkspaceState jiraWs;
+    jiraWs.ActiveViewId = "leaf";
+    ViewDefinition leaf;
+    leaf.Id = "leaf";
+    leaf.Name = "Leaf tasks";
+    leaf.HideParents = true;
+    ViewDefinition grouped;
+    grouped.Id = "grouped";
+    grouped.Name = "Story grouped";
+    grouped.StoryGroupSort = true;
+    ViewDefinition plain;
+    plain.Id = "plain";
+    plain.Name = "Plain";
+    jiraWs.Views.push_back(leaf);
+    jiraWs.Views.push_back(grouped);
+    jiraWs.Views.push_back(plain);
+    disk.Backends["Jira"] = jiraWs;
+
+    ConfigManager::SavePersistentViewsToDisk(disk);
+    PersistentViewsFile loaded = ConfigManager::LoadPersistentViewsFromDisk();
+
+    REQUIRE(loaded.Backends.count("Jira") == 1);
+    const ViewWorkspaceState& ws = loaded.Backends["Jira"];
+    REQUIRE(ws.Views.size() == 3);
+    CHECK(ws.Views[0].Id == "leaf");
+    CHECK(ws.Views[0].HideParents);
+    CHECK_FALSE(ws.Views[0].StoryGroupSort);
+    CHECK(ws.Views[1].Id == "grouped");
+    CHECK_FALSE(ws.Views[1].HideParents);
+    CHECK(ws.Views[1].StoryGroupSort);
+    CHECK(ws.Views[2].Id == "plain");
+    CHECK_FALSE(ws.Views[2].HideParents);
+    CHECK_FALSE(ws.Views[2].StoryGroupSort);
+}
+
+TEST_CASE("ConfigManager::FindActiveViewOrFirst resolves the active id, falls back to first, nullptr on empty") {
+    std::vector<ViewDefinition> views;
+    CHECK(ConfigManager::FindActiveViewOrFirst(views, "anything") == nullptr);
+
+    ViewDefinition a;
+    a.Id = "a";
+    ViewDefinition b;
+    b.Id = "b";
+    b.HideParents = true;
+    views.push_back(a);
+    views.push_back(b);
+
+    const ViewDefinition* hit = ConfigManager::FindActiveViewOrFirst(views, "b");
+    REQUIRE(hit != nullptr);
+    CHECK(hit->Id == "b");
+    CHECK(hit->HideParents);
+
+    const ViewDefinition* fallback = ConfigManager::FindActiveViewOrFirst(views, "missing");
+    REQUIRE(fallback != nullptr);
+    CHECK(fallback->Id == "a");
+
+    const ViewDefinition* blank = ConfigManager::FindActiveViewOrFirst(views, "");
+    REQUIRE(blank != nullptr);
+    CHECK(blank->Id == "a");
+}

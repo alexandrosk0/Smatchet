@@ -164,6 +164,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # parent-issue-hierarchy: TicketSyncService.cpp + IssueDraft.cpp resolve
+        # ParentHierarchyPure::ParentKeyOf (missing-parent fetch) — pure, ImGui-free.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ParentHierarchyPure.cpp"
         # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
         # redactor — link its TU so the connectivity-banner scrub resolves in this target.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
@@ -1119,6 +1122,10 @@ add_executable(SmatchetTests
     # Plane and GitHub splits above.
     Core/JiraIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+    # parent-issue-hierarchy — pure parent-key / depth / story-group-order / ancestor
+    # helpers shared by the grid projection + the sync-time missing-parent fetch.
+    Core/ParentHierarchyPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ParentHierarchyPure.cpp"
     # PR A6 (function-size-compliance) — pure editmeta field-editability decision
     # extracted from JiraUserAndMeta.cpp::FetchIssueEditMeta (which pulls cpr), to
     # bring that fn under the 30-branch cap. Same pure-seam shape as the mappers.

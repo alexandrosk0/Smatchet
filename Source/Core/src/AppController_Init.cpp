@@ -616,16 +616,7 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
         const auto bucketIt = disk.Backends.find(backendKey);
         if (bucketIt != disk.Backends.end()) {
             const ViewWorkspaceState& bucket = bucketIt->second;
-            const ViewDefinition* activeView = nullptr;
-            for (const ViewDefinition& view : bucket.Views) {
-                if (view.Id == bucket.ActiveViewId) {
-                    activeView = &view;
-                    break;
-                }
-            }
-            if (activeView == nullptr && !bucket.Views.empty()) {
-                activeView = &bucket.Views.front();
-            }
+            const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(bucket.Views, bucket.ActiveViewId);
             if (activeView != nullptr) {
                 projectKeyForCache = focusedContext().Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
             }

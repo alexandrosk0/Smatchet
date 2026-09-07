@@ -890,24 +890,24 @@ SmatchetThemeSemanticColors SmatchetTheme::BuildSemanticColorsForTheme(ThemeId t
     case ThemeId::Vs2022Light:
         // Darker, saturated variants — the dark-family pastels drop below 2:1 contrast
         // on the light theme's near-white surfaces (the P2-H9 failure).
-        return {ImVec4(0.72f, 0.05f, 0.09f, 1.0f), ImVec4(0.58f, 0.38f, 0.00f, 1.0f),
-                ImVec4(0.05f, 0.45f, 0.15f, 1.0f)};
+        return {ImVec4(0.72f, 0.05f, 0.09f, 1.0f), ImVec4(0.58f, 0.38f, 0.00f, 1.0f), ImVec4(0.05f, 0.45f, 0.15f, 1.0f),
+                ImVec4(0.45f, 0.25f, 0.55f, 0.18f), ImVec4(0.45f, 0.25f, 0.55f, 0.09f)};
     case ThemeId::HighContrast:
         // Saturated primaries on pure black — matches the syntax-palette philosophy.
-        return {ImVec4(1.00f, 0.25f, 0.25f, 1.0f), ImVec4(1.00f, 0.80f, 0.00f, 1.0f),
-                ImVec4(0.00f, 1.00f, 0.20f, 1.0f)};
+        return {ImVec4(1.00f, 0.25f, 0.25f, 1.0f), ImVec4(1.00f, 0.80f, 0.00f, 1.0f), ImVec4(0.00f, 1.00f, 0.20f, 1.0f),
+                ImVec4(0.60f, 0.30f, 0.80f, 0.50f), ImVec4(0.60f, 0.30f, 0.80f, 0.25f)};
     case ThemeId::NortonCommander:
         // NC panel tones: light red / bright yellow / bright green read on the blue panel.
-        return {ImVec4(1.00f, 0.50f, 0.50f, 1.0f), ImVec4(1.00f, 1.00f, 0.33f, 1.0f),
-                ImVec4(0.33f, 1.00f, 0.33f, 1.0f)};
+        return {ImVec4(1.00f, 0.50f, 0.50f, 1.0f), ImVec4(1.00f, 1.00f, 0.33f, 1.0f), ImVec4(0.33f, 1.00f, 0.33f, 1.0f),
+                ImVec4(0.70f, 0.40f, 0.85f, 0.45f), ImVec4(0.70f, 0.40f, 0.85f, 0.22f)};
     case ThemeId::SmatchetDark:
     case ThemeId::ModernDark:
     case ThemeId::Vs2022Dark:
     case ThemeId::ImGuiDefaultDark:
     default:
         // Dark family — the pre-P2-H9 literals, now routed through the seam.
-        return {ImVec4(0.95f, 0.35f, 0.35f, 1.0f), ImVec4(1.00f, 0.85f, 0.30f, 1.0f),
-                ImVec4(0.45f, 0.95f, 0.55f, 1.0f)};
+        return {ImVec4(0.95f, 0.35f, 0.35f, 1.0f), ImVec4(1.00f, 0.85f, 0.30f, 1.0f), ImVec4(0.45f, 0.95f, 0.55f, 1.0f),
+                ImVec4(0.50f, 0.30f, 0.60f, 0.40f), ImVec4(0.50f, 0.30f, 0.60f, 0.20f)};
     }
 }
 

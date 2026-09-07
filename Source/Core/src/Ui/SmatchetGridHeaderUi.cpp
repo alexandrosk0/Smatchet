@@ -91,8 +91,28 @@ float AccumulateRightWidth(const GridHeaderRightChips& c, bool readOnlyMode) {
 // Body of the "Sort By" popup: per-rule direction combos, delete buttons, add-rule menu.
 void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                          const std::vector<TicketGridColumn>& columns) {
-    ImGui::TextDisabled("Active Sort Rules");
     bool sortChanged = false;
+
+    // Parent-issue hierarchy toggles (per-view, persisted). Both re-run the sort/filter projection.
+    bool storyGroup = activeViewForGrid->StoryGroupSort;
+    if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.story_group", "Story group"), &storyGroup)) {
+        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
+        activeViewForGrid->StoryGroupSort = storyGroup;
+        sortChanged = true;
+    }
+    ImGui::SetItemTooltip(
+        "%s", SmatchetLocalization::T("grid.sort.story_group.tip", "Group children under their parent story"));
+    bool hideParents = activeViewForGrid->HideParents;
+    if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.hide_parents", "Hide parent stories"), &hideParents)) {
+        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
+        activeViewForGrid->HideParents = hideParents;
+        sortChanged = true;
+    }
+    ImGui::SetItemTooltip(
+        "%s", SmatchetLocalization::T("grid.sort.hide_parents.tip", "Hide parent stories (show only leaf tasks/bugs)"));
+    ImGui::Separator();
+
+    ImGui::TextDisabled("Active Sort Rules");
 
     for (size_t i = 0; i < activeViewForGrid->SortSpecs.size();) {
         ViewSortSpec& spec = activeViewForGrid->SortSpecs[i];
