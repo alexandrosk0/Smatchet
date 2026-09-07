@@ -1101,22 +1101,3 @@ to the ship-loop commit step in `docs/agent-rules/process-rules.md` (or the
 worktree commit recipe) that the `@'…'@` form is PowerShell-only and the Bash
 path uses `-F`. Cheap, prevents a silent malformed-subject commit that only the
 `%s` readback catches.
-
-- 2026-05-12 · command-system · [process] — when a PR plan names a specific line/symbol, do a 30-second sanity grep before editing
-  Resolution: 45c14c9 — agents/project/command-system.md § Workflow step 3 + agents/project/tracker-backend.md § Workflow step 1.
-
-# Develop tip can go RED on a required check and silently block every PR until an author trips over it
-
-- **Category:** infra
-- **Priority:** P2
-- **Date:** 2026-07-10
-- **Status:** applied (2026-07-11 — `agents/scripts/core/develop-tip-required-green.sh` SessionStart nudge; flags a required check that ran on the develop tip and is terminal-non-success. Deliberately does NOT flag absent required checks — most are PR-only and never run on a develop push, which would false-fire every session; that self-disabled-gate case stays with postmortem-owed.sh's absence-present allow-list. Injectable data layer + `--selftest`; wired into `settings.json.tmpl`.)
-- **Postmortem:** [`postmortems.md`](../postmortems.md) § 2026-07-10 · PR #1698
-
-## What happened
-
-PR #1698 added `tests/bats/mutation_smoke.bats` with no `test-*.sh` wrapper. Its **required** `Doc anchors + agent contract` check ran ~60 s *after* the merge (merged 08:48:56Z, check started 08:49:56Z), so the `test-orphan-bats` failure landed on `develop` un-caught. Under **block-on-any-red**, that red develop tip was then inherited onto every open PR's own head — it silently blocked the whole repo until the #1666 fix (#1704) tripped over it and I root-caused it. Fixed the instance in #1705 (the missing wrapper).
-
-## The gap
-
-There's no cheap, standing signal that the **develop tip itself** has a RED required check. The failure is discovered only when the *next* author opens a PR and inherits the red — attributing the block to the wrong PR and costing a root-cause dig each time. Both detecting gates (`test-orphan-bats` in local pre-ship `test-docs.sh` AND the required CI check) exist and work; the miss was purely merge-*timing*, and nothing surfaces the resulting red-develop state proactively.
