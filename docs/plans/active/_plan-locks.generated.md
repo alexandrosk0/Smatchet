@@ -8,7 +8,96 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (5 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `fa-fetch-raw-host`
+
+- **Owner**: `orchestrator`
+- **Branch**: `fix/fa-fetch-raw-host`
+- **Started**: 2026-08-17T14:22:31Z
+- **Write set** (1 paths):
+  - `.github/actions/fetch-fontawesome/action.yml`
+- **Notes**: github.com /raw/ shim 404s; switch to raw.githubusercontent.com
+
+### `gate-selftest-msys-execbit`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/stoic-mccarthy-082155`
+- **Started**: 2026-08-29T16:46:48Z
+- **Updated**: 2026-08-29T17:22:38Z
+- **Write set** (5 paths):
+  - `docs/plans/active/gate-selftest-msys-execbit.md`
+  - `docs/plans/shipped/gate-selftest-msys-execbit.md`
+  - `docs/plans/INDEX.md`
+  - `agents/scripts/core/test-gate-selftests.sh`
+  - `tests/bats/gate_selftests.bats`
+
+### `parent-issue-hierarchy`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/parent-jiras-loading-b8f99c`
+- **Originating plan**: [`docs/plans/active/parent-issue-hierarchy.md`](../../../docs/plans/active/parent-issue-hierarchy.md)
+- **Started**: 2026-09-06T23:57:24Z
+- **Write set** (27 paths):
+  - `docs/plans/active/parent-issue-hierarchy.md`
+  - `docs/plans/active/README.md`
+  - `docs/plans/README.md`
+  - `Source/Core/include/Tracker/ParentHierarchyPure.h`
+  - `Source/Core/src/Tracker/ParentHierarchyPure.cpp`
+  - `Source/Core/src/Tracker/TrackerFieldValueParser.cpp`
+  - `Source/Core/src/Tracker/IssueDraft.cpp`
+  - `Source/Core/src/Tracker/TrackerFieldPayloadPure.cpp`
+  - `Source/Core/src/Tracker/JiraIssueMappingPure.cpp`
+  - `Source/Core/src/Tracker/AGENTS.md`
+  - `Source/Core/src/Sync/TicketSyncService.cpp`
+  - `Source/Core/include/Sync/TicketSyncService.h`
+  - `Source/Core/src/Sync/AGENTS.md`
+  - `Source/Core/include/Config/ConfigManager.h`
+  - `Source/Core/src/Config/ConfigManager_Views.cpp`
+  - `Source/Core/include/GridPane.h`
+  - `Source/Core/include/Ui/SmatchetTheme.h`
+  - `Source/Core/src/Ui/SmatchetTheme.cpp`
+  - `Source/Core/src/Ui/SmatchetGridHeaderUi.cpp`
+  - `Source/Core/src/Ui/SmatchetActiveProjectGridTable.cpp`
+  - `Source/Core/src/Ui/SmatchetNewIssueDraftUi.cpp`
+  - `Source/Core/src/Ui/SmatchetLocalization.cpp`
+  - `Source/Core/CMakeLists.txt`
+  - `tests/CMakeLists.txt`
+  - `tests/Core/ParentHierarchyPure.test.cpp`
+  - `tests/Core/TicketSyncService.test.cpp`
+  - `tests/Core/ConfigManagerViews.test.cpp`
+
+### `pillar2-shutdown-flush`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/build-run-latest-8adc6a`
+- **Started**: 2026-08-17T23:29:37Z
+- **Updated**: 2026-08-18T00:58:55Z
+- **Write set** (6 paths):
+  - `Source/Standalone/main.cpp`
+  - `docs/harness/claude-code/hooks/lint-syntax-both.py`
+  - `.claude/hooks/lint-syntax-both.py`
+  - `docs/plans/active/pillar2-ui-thread-config-io.md`
+  - `docs/self-improvement/categories/tooling/2026-08-17-syntax-check-error-tally-residue-fp.md`
+  - `docs/self-improvement/categories/tooling/2026-08-17-ccache-pch-phony-edge-survives-toolset-bump.md`
+
+### `testing-surface-activation`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/testing-surface-activation-904b38`
+- **Originating plan**: [`docs/plans/active/testing-surface-roadmap.md`](../../../docs/plans/active/testing-surface-roadmap.md)
+- **Started**: 2026-08-29T14:51:42Z
+- **Updated**: 2026-08-29T15:13:47Z
+- **Write set** (11 paths):
+  - `docs/plans/active/testing-surface-roadmap.md`
+  - `docs/guides/testing-surface.md`
+  - `docs/self-improvement/categories/infra.md`
+  - `docs/self-improvement/categories/applied.md`
+  - `docs/self-improvement/categories/infra/2026-08-16-stale-advisory-lane-docs.md`
+  - `tests/ui/ui_test_skip.h`
+  - `tests/ui/tracker_first_run_setup.test.cpp`
+  - `tests/ui/notification_center.test.cpp`
+  - `tests/ui/funcsize_window_render_smoke.test.cpp`
+  - `tests/ui/funcsize_main_ui_smoke.test.cpp`
+  - `.github/workflows/build-and-test.yml`
+
