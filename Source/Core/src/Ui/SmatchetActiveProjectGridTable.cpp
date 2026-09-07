@@ -21,6 +21,7 @@
 #include "SmatchetToast.h"
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
+#include "TicketGridFilterPure.h"
 #include "TicketGridModel.h"
 #include "Tracker/ParentHierarchyPure.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
@@ -208,25 +209,19 @@ static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs
 }
 
 // Step 2 of RebuildGridSortAndFilterProjection: `pane.cachedSortedIndices` → `pane.filteredIndices`.
-// Quick-filter matches on id / summary. Parent-hierarchy rules (FS parity):
+// Quick-filter is the full-text match (TicketMatchesGridFilter). Parent-hierarchy rules (FS parity):
 //  - hideParents: a row that is a present parent of another row is dropped (leaf-only view).
 //  - storyGroupSort + non-empty filter: a matched child pulls its ancestor chain back in so the
 //    tree stays readable; ancestors are re-inserted at their sorted position (never hidden ones).
 static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTicket>& tickets,
                                       const GridHierarchyOptions& hierarchy) {
     pane.filteredIndices.clear();
-    const bool filterActive = pane.gridFilterBuf[0] != '\0';
+    const std::string filter(pane.gridFilterBuf);
+    const bool filterActive = !filter.empty();
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        if (!filterActive)
-            return true;
-        const auto& t = tickets[idx];
-        if (ContainsCaseInsensitive(t.id, pane.gridFilterBuf))
-            return true;
-        if (ContainsCaseInsensitive(t.GetFieldValue("summary"), pane.gridFilterBuf))
-            return true;
-        return false;
+        return TicketMatchesGridFilter(tickets[idx], filter);
     };
     auto isPresentParent = [&](size_t idx) {
         return hierarchy.hideParents && idx < tickets.size() && pane.cachedParentIds.count(tickets[idx].id) != 0;

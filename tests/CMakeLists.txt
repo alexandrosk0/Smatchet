@@ -102,6 +102,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
+        # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — full-text
+        # match over the ticket id + every displayable field value (raw JSON payloads are skipped;
+        # user fields arrive as display names). Self-contained, no extra closure to link.
+        Core/TicketGridFilterPure.test.cpp
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridFilterPure.cpp"
         # Gap map Tier 1 #6 — the merge-watch notify endpoint's request-validation core
         # (SECURITY_AUDIT-flagged localhost listener). Pure decision surface; no httplib.
         Core/MergeWatchNotifyPure.test.cpp
@@ -761,6 +766,10 @@ add_executable(SmatchetTests
     # TicketGridModel.cpp (whose render-plan/column-builder code pulls the ImGui-coupled grid
     # draw headers). ImGui-free after the split, so tests link it without those deps.
     Core/TicketGridSortPure.test.cpp
+    # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — full-text
+    # match over the ticket id + every displayable field value (raw JSON payloads are skipped;
+    # user fields arrive as display names). Self-contained, no extra closure to link.
+    Core/TicketGridFilterPure.test.cpp
     # Ticket-grid column display-order consistency + visual-order permutation predicates,
     # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over
     # plain vectors; no extra production .cpp to link.
@@ -1250,6 +1259,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketFieldEditorLongTextPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridDurationSortPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridSortPure.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridFilterPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/SemanticVersionPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlSuggestEnginePure.cpp"

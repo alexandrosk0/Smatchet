@@ -19,6 +19,11 @@
 #   bash scripts/publish/release-github.sh --tag v1.2.3 --sign --publish --draft --notes-file RELEASE_NOTES.md
 #   bash scripts/publish/release-github.sh --tag v1.2.3 --arch arm64
 #
+# Signing accepts exactly one certificate selector: a PFX file, a store
+# thumbprint, a store subject, or Azure Trusted Signing (a `/dlib` provider DLL
+# + its metadata JSON — no certificate material on disk). See
+# scripts/publish/SIGNING.md.
+#
 # --publish requires --sign (unsigned public releases trip SmartScreen and the
 # in-app updater refuses unverified installers); --allow-unsigned-publish
 # overrides knowingly.
@@ -67,6 +72,8 @@ SIGNING_CERT_PATH=""
 SIGNING_CERT_PASSWORD=""
 SIGNING_CERT_THUMBPRINT=""
 SIGNING_CERT_SUBJECT=""
+SIGNING_TRUSTED_SIGNING_DLIB=""
+SIGNING_TRUSTED_SIGNING_METADATA=""
 TIMESTAMP_URL=""
 USE_MACHINE_CERT_STORE=0
 
@@ -98,6 +105,9 @@ Usage: bash scripts/publish/release-github.sh [options]
   --signing-certificate-password <secret>  PFX password
   --signing-certificate-thumbprint <sha1>  Store certificate by SHA1
   --signing-certificate-subject <name>     Store certificate by subject
+  --signing-trusted-signing-dlib <path>     Azure Trusted Signing dlib
+                                            (Azure.CodeSigning.Dlib.dll)
+  --signing-trusted-signing-metadata <path> Azure Trusted Signing metadata JSON
   --timestamp-url <url>        RFC3161 timestamp server
   --use-machine-certificate-store          Use LocalMachine store (signtool /sm)
 
@@ -141,6 +151,10 @@ while [ $# -gt 0 ]; do
         --signing-certificate-thumbprint=*) SIGNING_CERT_THUMBPRINT="${1#*=}"; shift ;;
         --signing-certificate-subject)      need_value $# "$1"; SIGNING_CERT_SUBJECT="$2"; shift 2 ;;
         --signing-certificate-subject=*)    SIGNING_CERT_SUBJECT="${1#*=}"; shift ;;
+        --signing-trusted-signing-dlib)       need_value $# "$1"; SIGNING_TRUSTED_SIGNING_DLIB="$2"; shift 2 ;;
+        --signing-trusted-signing-dlib=*)     SIGNING_TRUSTED_SIGNING_DLIB="${1#*=}"; shift ;;
+        --signing-trusted-signing-metadata)   need_value $# "$1"; SIGNING_TRUSTED_SIGNING_METADATA="$2"; shift 2 ;;
+        --signing-trusted-signing-metadata=*) SIGNING_TRUSTED_SIGNING_METADATA="${1#*=}"; shift ;;
         --timestamp-url)             need_value $# "$1"; TIMESTAMP_URL="$2"; shift 2 ;;
         --timestamp-url=*)           TIMESTAMP_URL="${1#*=}"; shift ;;
         --skip-build)                SKIP_BUILD=1; shift ;;
@@ -389,13 +403,21 @@ SIGN_CERT_PATH=""
 SIGN_CERT_PASSWORD=""
 SIGN_CERT_THUMBPRINT=""
 SIGN_CERT_SUBJECT=""
+SIGN_TS_DLIB=""
+SIGN_TS_METADATA=""
 SIGN_TIMESTAMP_URL=""
 SIGN_USE_MACHINE_STORE=0
 
+# Azure Trusted Signing has no long-lived certificate to hold: signtool loads a
+# provider DLL (`/dlib`) that mints a short-lived cert from the signing account
+# named in the metadata JSON (`/dmdf`). Certificates rotate every few days, so
+# the signature MUST be timestamped or it stops verifying the moment the leaf
+# expires — and only Microsoft's own RFC3161 server is supported for the ACS
+# chain, hence a selector-specific default instead of the DigiCert one.
+TRUSTED_SIGNING_TIMESTAMP_URL='http://timestamp.acs.microsoft.com'
+
 configure_signing() {
     [ "$SIGN" -eq 1 ] || return 0
-
-    SIGN_TOOL="$(resolve_signtool "${SIGNTOOL_PATH:-${SMATCHET_SIGNTOOL_PATH:-}}")"
 
     if [ -n "$SIGNING_CERT_PATH" ]; then
         SIGN_CERT_PATH="$(abs_path "$SIGNING_CERT_PATH")"
@@ -405,7 +427,18 @@ configure_signing() {
     SIGN_CERT_PASSWORD="${SIGNING_CERT_PASSWORD:-${SMATCHET_SIGN_PFX_PASSWORD:-}}"
     SIGN_CERT_THUMBPRINT="${SIGNING_CERT_THUMBPRINT:-${SMATCHET_SIGN_CERT_SHA1:-}}"
     SIGN_CERT_SUBJECT="${SIGNING_CERT_SUBJECT:-${SMATCHET_SIGN_CERT_SUBJECT:-}}"
-    SIGN_TIMESTAMP_URL="${TIMESTAMP_URL:-${SMATCHET_SIGN_TIMESTAMP_URL:-http://timestamp.digicert.com}}"
+
+    local ts_dlib ts_metadata
+    ts_dlib="${SIGNING_TRUSTED_SIGNING_DLIB:-${SMATCHET_SIGN_TRUSTED_SIGNING_DLIB:-}}"
+    ts_metadata="${SIGNING_TRUSTED_SIGNING_METADATA:-${SMATCHET_SIGN_TRUSTED_SIGNING_METADATA:-}}"
+    [ -n "$ts_dlib" ] && SIGN_TS_DLIB="$(abs_path "$ts_dlib")"
+    [ -n "$ts_metadata" ] && SIGN_TS_METADATA="$(abs_path "$ts_metadata")"
+
+    if [ -n "$SIGN_TS_DLIB" ]; then
+        SIGN_TIMESTAMP_URL="${TIMESTAMP_URL:-${SMATCHET_SIGN_TIMESTAMP_URL:-$TRUSTED_SIGNING_TIMESTAMP_URL}}"
+    else
+        SIGN_TIMESTAMP_URL="${TIMESTAMP_URL:-${SMATCHET_SIGN_TIMESTAMP_URL:-http://timestamp.digicert.com}}"
+    fi
     if [ "$USE_MACHINE_CERT_STORE" -eq 1 ]; then
         SIGN_USE_MACHINE_STORE=1
     else
@@ -418,20 +451,39 @@ configure_signing() {
         die "Signing certificate not found: $SIGN_CERT_PATH"
     fi
 
+    # Selector arity is checked BEFORE resolve_signtool: a misconfigured selector
+    # is a caller error worth reporting on any host, and burying it behind a
+    # Windows-SDK lookup makes it undiagnosable from a Linux shell or a bats run.
     local selectors=0
     [ -n "$SIGN_CERT_PATH" ] && selectors=$((selectors + 1))
     [ -n "$SIGN_CERT_THUMBPRINT" ] && selectors=$((selectors + 1))
     [ -n "$SIGN_CERT_SUBJECT" ] && selectors=$((selectors + 1))
+    [ -n "$SIGN_TS_DLIB" ] && selectors=$((selectors + 1))
     if [ "$selectors" -ne 1 ]; then
-        die "Signing requires exactly one certificate selector: PFX path, certificate thumbprint, or certificate subject."
+        die "Signing requires exactly one certificate selector: PFX path, certificate thumbprint, certificate subject, or Azure Trusted Signing dlib."
     fi
+
+    # The dlib is inert without the metadata that names the account + certificate
+    # profile, and signtool's own failure for a missing /dmdf is a bare HRESULT.
+    if [ -n "$SIGN_TS_DLIB" ]; then
+        [ -f "$SIGN_TS_DLIB" ] || die "Azure Trusted Signing dlib not found: $SIGN_TS_DLIB"
+        [ -n "$SIGN_TS_METADATA" ] \
+            || die "Azure Trusted Signing requires --signing-trusted-signing-metadata (or SMATCHET_SIGN_TRUSTED_SIGNING_METADATA) alongside the dlib."
+        [ -f "$SIGN_TS_METADATA" ] || die "Azure Trusted Signing metadata not found: $SIGN_TS_METADATA"
+    elif [ -n "$SIGN_TS_METADATA" ]; then
+        die "Azure Trusted Signing metadata was given without --signing-trusted-signing-dlib (or SMATCHET_SIGN_TRUSTED_SIGNING_DLIB)."
+    fi
+
+    SIGN_TOOL="$(resolve_signtool "${SIGNTOOL_PATH:-${SMATCHET_SIGNTOOL_PATH:-}}")"
 }
 
 # Emits the signtool argv (one arg per line) for a single file.
 signtool_argv() {
     local file="$1"
     printf '%s\n' sign /fd SHA256 /td SHA256 /tr "$SIGN_TIMESTAMP_URL"
-    if [ -n "$SIGN_CERT_PATH" ]; then
+    if [ -n "$SIGN_TS_DLIB" ]; then
+        printf '%s\n' /dlib "$(winpath "$SIGN_TS_DLIB")" /dmdf "$(winpath "$SIGN_TS_METADATA")"
+    elif [ -n "$SIGN_CERT_PATH" ]; then
         printf '%s\n' /f "$(winpath "$SIGN_CERT_PATH")"
         [ -n "$SIGN_CERT_PASSWORD" ] && printf '%s\n' /p "$SIGN_CERT_PASSWORD"
     elif [ -n "$SIGN_CERT_THUMBPRINT" ]; then
@@ -469,7 +521,10 @@ inno_signtool_definition() {
     parts="$(quote_inno_value "$(winpath "$SIGN_TOOL")") sign /fd SHA256 /td SHA256"
     parts="$parts /tr $(quote_inno_value "$SIGN_TIMESTAMP_URL")"
     parts="$parts /d $(quote_inno_value "$description")"
-    if [ -n "$SIGN_CERT_PATH" ]; then
+    if [ -n "$SIGN_TS_DLIB" ]; then
+        parts="$parts /dlib $(quote_inno_value "$(winpath "$SIGN_TS_DLIB")")"
+        parts="$parts /dmdf $(quote_inno_value "$(winpath "$SIGN_TS_METADATA")")"
+    elif [ -n "$SIGN_CERT_PATH" ]; then
         parts="$parts /f $(quote_inno_value "$(winpath "$SIGN_CERT_PATH")")"
         [ -n "$SIGN_CERT_PASSWORD" ] && parts="$parts /p $(quote_inno_value "$SIGN_CERT_PASSWORD")"
     elif [ -n "$SIGN_CERT_THUMBPRINT" ]; then
