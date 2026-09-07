@@ -810,7 +810,29 @@ class ConfigManager {
     /// Call after WriteConfigJson() to ensure the change is visible without restarting.
     static void InvalidateCache();
 
+    /// Whole-image write of `config` over the on-disk tracker keys. Serialized against every other
+    /// config writer, and — since #2191 — correctly SEQUENCED against the coalescing config-save
+    /// worker: a snapshot still queued when this is called is written FIRST, inside the same
+    /// critical section, so it can never land afterwards and revert this write.
+    /// Correct only for a caller whose `config` derives from the same live object the worker's
+    /// snapshots do (the UI's `d.cfg`). A caller that builds its image from a fresh `Load()` must
+    /// use `Update()` instead, or it will clobber concurrent edits it never read.
     static void Save(const TrackerConfig& config);
+
+    /// Read-modify-write the persisted `TrackerConfig` under the config write lock: flush any
+    /// queued worker snapshot, re-read from disk, apply `mutate`, write the result back. Returns
+    /// the image that was written. This is the seam for every writer that does NOT own the live
+    /// config object — it reads inside the critical section, so it cannot revert an edit made
+    /// between its read and its write, which the `Load()`-modify-`Save()` shape it replaces could
+    /// (#2191). `mutate` runs with the write lock held: keep it to plain field assignment, and
+    /// never call back into `ConfigManager` from it or it will deadlock. An empty `mutate` writes
+    /// nothing and just returns the current config.
+    static TrackerConfig Update(const std::function<void(TrackerConfig&)>& mutate);
+
+    /// Write the config-save worker's queued `TrackerConfig` snapshot, if any, right now. Used by
+    /// the worker's own drain — the snapshot may only ever be written from inside the write lock,
+    /// which is what keeps it ordered against synchronous saves (#2191).
+    static void FlushPendingTrackerSave();
     static AnnotateAnalysisConfig LoadAnnotateAnalysis();
     static void SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b);
 

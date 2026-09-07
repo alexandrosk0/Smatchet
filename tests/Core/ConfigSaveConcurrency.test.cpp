@@ -15,6 +15,7 @@
 
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "Config/TrackerConfigSaveQueue.h"
 #include "Config/TrackerConfigSaveRepair.h"
 
 #include <doctest/doctest.h>
@@ -343,4 +344,148 @@ TEST_CASE("a hook that unregisters itself from inside a save neither deadlocks n
     ConfigManager::Save(second);
     ConfigManager::InvalidateCache();
     CHECK(ConfigManager::Load().GitHubPat == "second-write");
+}
+
+// --- Queued-snapshot ordering (Issue #2191) -----------------------------------------------------
+//
+// `ConfigManager::Save` is a WHOLE-IMAGE write, so the RMW mutex alone makes each write atomic but
+// not correctly SEQUENCED: the worker used to lift a snapshot out of its slot and then block on the
+// lock, so a synchronous `Save` issued AFTER the enqueue could complete first and be silently
+// reverted by the older snapshot landing behind it. The fix gives the queued snapshot exactly one
+// place it can be written from — inside the write lock, immediately before the caller's own image.
+
+TEST_CASE("a queued snapshot is written BEFORE a later synchronous Save, never after") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Drive the seam directly (worker not running) so the interleaving is exercised deterministically
+    // rather than hoped for: the hook stands in for a slot filled the instant before this Save.
+    static TrackerConfig queued;
+    static int takes = 0;
+    queued = TrackerConfig();
+    takes = 0;
+    queued.TrackerType = "Jira";
+    queued.Domain = "queued-older";
+    smatchet::config_save_queue::SetTakePendingHook([](TrackerConfig& out) {
+        if (takes++ != 0) {
+            return false; // one snapshot, taken once — a second take would be a re-write of stale data
+        }
+        out = queued;
+        return true;
+    });
+
+    TrackerConfig newer;
+    newer.TrackerType = "Jira";
+    newer.Domain = "synchronous-newer";
+    ConfigManager::Save(newer);
+
+    smatchet::config_save_queue::SetTakePendingHook(nullptr);
+
+    ConfigManager::InvalidateCache();
+    CHECK(takes == 1);                                          // the slot was drained, not ignored
+    CHECK(ConfigManager::Load().Domain == "synchronous-newer"); // ...and drained FIRST, so it lost
+}
+
+TEST_CASE("a worker-queued snapshot cannot revert a synchronous Save that follows it") {
+    smatchet_tests::TestEnvGuard env;
+
+    smatchet::config_save::Start();
+
+    // Repeat: the two writers genuinely race for the write lock, and the assertion has to hold for
+    // BOTH orders (worker first, then the sync save; or the sync save draining the slot itself).
+    for (int i = 0; i < 50; ++i) {
+        TrackerConfig queued; // what the UI enqueued a moment ago
+        queued.TrackerType = "Jira";
+        queued.Domain = "queued-" + std::to_string(i);
+        smatchet::config_save::EnqueueTrackerConfig(queued);
+
+        TrackerConfig newer; // the same live config, one user action later
+        newer.TrackerType = "Jira";
+        newer.Domain = "newer-" + std::to_string(i);
+        ConfigManager::Save(newer);
+
+        ConfigManager::InvalidateCache();
+        const std::string onDisk = ConfigManager::Load().Domain;
+        // Not "eventually" — by construction. Either the worker wrote the snapshot before the save
+        // took the lock, or the save drained the slot itself; the snapshot can no longer be sitting
+        // in a worker local waiting to land on top.
+        REQUIRE(onDisk == "newer-" + std::to_string(i));
+    }
+
+    smatchet::config_save::Stop();
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().Domain == "newer-49");
+}
+
+// --- ConfigManager::Update (Issue #2191) --------------------------------------------------------
+//
+// The writers that do NOT own the live config (`app.set_readonly`, the Lua consent gate, the
+// local-cache-db test hook) used to do Load() -> tweak one field -> Save(), which reverts anything
+// written between their read and their write. Update collapses that into one critical section.
+
+TEST_CASE("Update folds a queued snapshot in rather than clobbering it") {
+    smatchet_tests::TestEnvGuard env;
+
+    smatchet::config_save::Start();
+
+    TrackerConfig fromUi;
+    fromUi.TrackerType = "Jira";
+    fromUi.Domain = "ui-edit";
+    smatchet::config_save::EnqueueTrackerConfig(fromUi);
+
+    // A Load()-modify-Save() here would read the pre-enqueue file and revert `Domain`. Update reads
+    // INSIDE the write lock, after the queued snapshot has been flushed.
+    const TrackerConfig written = ConfigManager::Update([](TrackerConfig& cfg) { cfg.ReadOnlyMode = true; });
+    CHECK(written.Domain == "ui-edit");
+    CHECK(written.ReadOnlyMode == true);
+
+    smatchet::config_save::Stop();
+    ConfigManager::InvalidateCache();
+    const TrackerConfig onDisk = ConfigManager::Load();
+    CHECK(onDisk.Domain == "ui-edit");  // the UI's edit survived the one-field write...
+    CHECK(onDisk.ReadOnlyMode == true); // ...and the one-field write survived too
+}
+
+TEST_CASE("Update persists its mutation with no worker running, and an empty mutation is a no-op") {
+    smatchet_tests::TestEnvGuard env;
+
+    TrackerConfig seed;
+    seed.TrackerType = "Jira";
+    seed.Domain = "seed-domain";
+    ConfigManager::Save(seed);
+
+    ConfigManager::Update([](TrackerConfig& cfg) { cfg.ReadOnlyMode = true; });
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().Domain == "seed-domain"); // untouched fields round-trip
+    CHECK(ConfigManager::Load().ReadOnlyMode == true);
+
+    // An empty std::function writes nothing and just reports the current config — callers built on
+    // a maybe-null mutation must not be able to trigger a spurious whole-image rewrite.
+    const TrackerConfig same = ConfigManager::Update(nullptr);
+    CHECK(same.Domain == "seed-domain");
+    CHECK(same.ReadOnlyMode == true);
+}
+
+TEST_CASE("Update repairs pinned fields on the way to disk, like every other TrackerConfig write") {
+    smatchet_tests::TestEnvGuard env;
+
+    // Update funnels through the same locked writer as Save, so the #2047 capture-scenario guard
+    // covers it too — a one-field command firing inside a capture window must not persist the
+    // scenario's cleared credential.
+    TrackerConfig seed;
+    seed.TrackerType = "Jira";
+    seed.GitHubPat = "user-real-pat";
+    ConfigManager::Save(seed);
+
+    const int token = smatchet::config_repair::RegisterTrackerConfigRepair(
+        [](TrackerConfig& cfg) { cfg.GitHubPat = "user-real-pat"; });
+    REQUIRE(token != 0);
+    ConfigManager::Update([](TrackerConfig& cfg) {
+        cfg.GitHubPat.clear(); // what a capture scenario left on the image this write started from
+        cfg.ReadOnlyMode = true;
+    });
+    smatchet::config_repair::UnregisterTrackerConfigRepair(token);
+
+    ConfigManager::InvalidateCache();
+    CHECK(ConfigManager::Load().GitHubPat == "user-real-pat");
+    CHECK(ConfigManager::Load().ReadOnlyMode == true);
 }
