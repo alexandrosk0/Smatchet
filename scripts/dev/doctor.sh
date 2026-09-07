@@ -353,11 +353,18 @@ fi
 # state in the standard preflight instead of relying on a hand-run probe.
 harness_probe="$REPO_ROOT/agents/scripts/core/check-harness-provisioned.sh"
 if [ -f "$harness_probe" ]; then
-    if bash "$harness_probe" --quiet "$REPO_ROOT" >/dev/null 2>&1; then
-        write_pass 'harness' 'session guards provisioned (.claude/hooks wired)'
-    else
-        write_warn 'harness' 'NOT provisioned -- session guards inert; fix: bash agents/scripts/core/setup-harness.sh claude-code'
-    fi
+    harness_rc=0
+    bash "$harness_probe" --quiet "$REPO_ROOT" >/dev/null 2>&1 || harness_rc="$?"
+    case "$harness_rc" in
+        0) write_pass 'harness' 'session guards provisioned (.claude/hooks wired, agent links current)' ;;
+        # Exit 3 is the agent-LAYER state, and it needs its own message: the
+        # submodule is uninitialised or was advanced without re-linking, and
+        # setup-harness.sh alone fixes neither (post-flip it does not even exist
+        # until the submodule is checked out). Collapsing it into the exit-1
+        # message below would print a remedy that cannot work.
+        3) write_warn 'harness' 'agent layer missing/empty or agent links STALE; fix: git submodule update --init --recursive && bash agents/scripts/core/setup-harness.sh claude-code' ;;
+        *) write_warn 'harness' 'NOT provisioned -- session guards inert; fix: bash agents/scripts/core/setup-harness.sh claude-code' ;;
+    esac
 fi
 
 # Opt-in: OpenCppCoverage check is skipped by default. Set the env var

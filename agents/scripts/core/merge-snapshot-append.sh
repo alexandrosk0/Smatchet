@@ -39,8 +39,16 @@ set -euo pipefail
 
 # Repo-root-anchored default ledger (this script lives in agents/scripts/core/).
 _msa_self="${BASH_SOURCE[0]:-$0}"
+# Row 5h, the other half of the pair: git-janitor.sh's comment states that both
+# resolve the ledger through the SAME anchor, and it passes its resolved path in
+# explicitly so the dedup check and the append can never diverge. Moving only one
+# of the two defaults off the self-climb would break that invariant on any caller
+# that does NOT pass the path — the ledger is HOST content and both must follow
+# $PROJECT_ROOT. Bootstrap is location-relative per row 3a.
 _msa_root="$(cd "$(dirname "$_msa_self")/../../.." && pwd)"
-: "${MERGE_SNAPSHOT_LEDGER:=$_msa_root/docs/self-improvement/merge-snapshots.jsonl}"
+# shellcheck source=scripts/dev/project-config.sh
+. "$_msa_root/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${MERGE_SNAPSHOT_LEDGER:=${PROJECT_ROOT:-$_msa_root}/docs/self-improvement/merge-snapshots.jsonl}"
 
 # csv_to_json_array <csv> — turn "a,b , c" into a JSON array ["a","b","c"],
 # trimming surrounding whitespace per element and dropping empties. Empty/blank
