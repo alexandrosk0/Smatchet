@@ -11,8 +11,36 @@
 # tweaks don't propagate back to the tracked template.
 set -euo pipefail
 
-cd "$(dirname "$0")/../../.."
-ROOT="$(pwd)"
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A rows 3a + 4).
+# The climb is location-relative so it is correct in both worlds: pre-flip it
+# lands on the repo root, post-flip on agent-layer/. project-config.sh resolves
+# the HOST tree from there (its superproject rung) and exports both roots.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+
+# This script reads LAYER content (agents/, docs/harness/) and writes HOST-side
+# adapter dirs (.claude/, .codex/, .cursor/, .pi/). Pre-flip the two roots are the
+# same directory, which is why this rewire is a provable no-op; post-flip they are
+# not, and every path below must say which tree it means.
+#
+# cwd is the HOST root, so every DESTINATION stays a bare `.claude/...` relative
+# path exactly as before. ROOT keeps its name but is now explicitly the LAYER
+# root: it was already the source-side prefix at every use (`$ROOT/$target`,
+# `$ROOT/$f`), so redefining it moves the whole source side in one edit. The two
+# uses that were host-side — the generator OUTPUT dirs and check-required-tools.sh
+# — are re-pointed at $PROJECT_ROOT individually below.
+ROOT="$AGENT_LAYER_ROOT"
+cd "$PROJECT_ROOT"
+
+# Resolve a link/copy SOURCE against the layer root. Sources are layer-relative
+# by contract (`agents/...`, `docs/harness/...`); an absolute one — the pi package
+# under node_modules is the only such caller — is passed through untouched.
+_layer_src() {
+  case "$1" in
+    /*|[A-Za-z]:[\\/]*) printf '%s' "$1" ;;
+    *) printf '%s/%s' "$ROOT" "$1" ;;
+  esac
+}
 
 HARNESS="${1:-}"
 if [[ -z "$HARNESS" || "$HARNESS" == "-h" || "$HARNESS" == "--help" ]]; then
@@ -91,10 +119,10 @@ link_dir() {
   if [[ "$IS_WINDOWS" == "1" ]]; then
     local link_win target_win
     link_win="$(to_win_path "$link")"
-    target_win="$(to_win_path "$ROOT/$target")"
+    target_win="$(to_win_path "$(_layer_src "$target")")"
     cmd.exe //c mklink //J "$link_win" "$target_win" >/dev/null
   else
-    ln -s "$(realpath --relative-to="$(dirname "$link")" "$target" 2>/dev/null || echo "$ROOT/$target")" "$link"
+    ln -s "$(realpath --relative-to="$(dirname "$link")" "$(_layer_src "$target")" 2>/dev/null || _layer_src "$target")" "$link"
   fi
   echo "  link-dir   $link -> $target"
 }
@@ -113,27 +141,22 @@ link_dir() {
 # no-op (and stay silent) on an unchanged re-run — matching link_file's contract.
 # A junction/symlink, a count mismatch (agent added/removed), or any content
 # drift (e.g. a stale cp-fallback copy) fails the probe and forces a rebuild.
-_agents_dir_current() {
-  local dest="$1" f base exp=0 got=0
-  [[ -d "$dest" && ! -L "$dest" ]] || return 1
-  for f in agents/core/*.md agents/project/*.md; do [[ -e "$f" ]] && exp=$((exp + 1)); done
-  for f in "$dest"/*.md; do [[ -e "$f" ]] && got=$((got + 1)); done
-  [[ "$got" -eq "$exp" ]] || return 1
-  for f in agents/core/*.md agents/project/*.md; do
-    [[ -e "$f" ]] || continue
-    base="$(basename "$f")"
-    cmp -s "$f" "$dest/$base" || return 1
-  done
-  return 0
-}
+#
+# The probe now lives in lib/agents-dir-current.sh as `agents_dir_current
+# <dest> <layer_root>`: check-harness-provisioned.sh needs the same content
+# comparison to see a stale hardlink after a submodule update (rows 4c + 5e),
+# and a second copy of this cmp loop would be the DRY failure the plan's
+# § Existing utilities reused warns about.
+# shellcheck source=agents/scripts/core/lib/agents-dir-current.sh
+. "$ROOT/agents/scripts/core/lib/agents-dir-current.sh"
 
 link_agents() {
   local dest=".claude/agents" f base
   # Idempotent: skip the clear+relink (and the link-agents echo) when already current.
-  _agents_dir_current "$dest" && return 0
+  agents_dir_current "$dest" "$ROOT" && return 0
   _clear_dir_link "$dest"
   mkdir -p "$dest"
-  for f in agents/core/*.md agents/project/*.md; do
+  for f in "$ROOT"/agents/core/*.md "$ROOT"/agents/project/*.md; do
     [[ -e "$f" ]] || continue
     base="$(basename "$f")"
     # $dest was just cleared, so an existing link here means a same-run basename
@@ -144,10 +167,10 @@ link_agents() {
       continue
     fi
     if [[ "$IS_WINDOWS" == "1" ]]; then
-      cmd.exe //c mklink //H "$(to_win_path "$dest/$base")" "$(to_win_path "$ROOT/$f")" >/dev/null 2>&1 \
-        || cp "$ROOT/$f" "$dest/$base"
+      cmd.exe //c mklink //H "$(to_win_path "$dest/$base")" "$(to_win_path "$f")" >/dev/null 2>&1 \
+        || cp "$f" "$dest/$base"
     else
-      ln -s "$(realpath --relative-to="$dest" "$f" 2>/dev/null || echo "$ROOT/$f")" "$dest/$base"
+      ln -s "$(realpath --relative-to="$dest" "$f" 2>/dev/null || printf '%s' "$f")" "$dest/$base"
     fi
   done
   echo "  link-agents  .claude/agents/*.md (flat hardlinks) <- agents/{core,project}/"
@@ -180,12 +203,12 @@ link_file() {
   if [[ "$IS_WINDOWS" == "1" ]]; then
     local link_win target_win
     link_win="$(to_win_path "$link")"
-    target_win="$(to_win_path "$ROOT/$target")"
+    target_win="$(to_win_path "$(_layer_src "$target")")"
     if ! cmd.exe //c mklink "$link_win" "$target_win" >/dev/null 2>&1; then
       cmd.exe //c mklink //H "$link_win" "$target_win" >/dev/null
     fi
   else
-    ln -s "$(realpath --relative-to="$(dirname "$link")" "$target" 2>/dev/null || echo "$ROOT/$target")" "$link"
+    ln -s "$(realpath --relative-to="$(dirname "$link")" "$(_layer_src "$target")" 2>/dev/null || _layer_src "$target")" "$link"
   fi
   echo "  link-file  $link -> $target"
 }
@@ -210,7 +233,8 @@ gen_subsystem_claude_shims() {
 }
 
 copy_template() {
-  local src="$1" dst="$2"
+  local src dst="$2"
+  src="$(_layer_src "$1")"
   mkdir -p "$(dirname "$dst")"
   if [[ -e "$dst" ]]; then
     if cmp -s "$src" "$dst"; then
@@ -234,8 +258,8 @@ setup_claude_code() {
   # Heal an already-provisioned (user-modified) settings.json that copy_template
   # skipped: additively bring in any NEW template hooks (e.g. postmortem-owed
   # --nudge) without clobbering the user's permissions/customisations.
-  bash agents/scripts/core/sync-settings-hooks.sh \
-    "docs/harness/claude-code/settings.json.tmpl" ".claude/settings.json" || true
+  bash "$ROOT/agents/scripts/core/sync-settings-hooks.sh" \
+    "$ROOT/docs/harness/claude-code/settings.json.tmpl" ".claude/settings.json" || true
   copy_template "docs/harness/claude-code/hooks/lint-cpp.sh"         ".claude/hooks/lint-cpp.sh"
   copy_template "docs/harness/claude-code/hooks/lint-cpp-common.sh"  ".claude/hooks/lint-cpp-common.sh"
   # lint-cpp-common.sh invokes .claude/hooks/lint-catch-all.py (its empty-catch
@@ -306,11 +330,11 @@ PY
   # skills get picked up with no script edit. Existing skills here today:
   # grill-with-docs, scratchpad-recall. v3 of the perf-skill-aliases plan
   # adds perf-instrument + perf-measure under this same root.
-  if [[ -d "agents/_shared/skills" ]]; then
-    for skill_dir in agents/_shared/skills/*/; do
+  if [[ -d "$ROOT/agents/_shared/skills" ]]; then
+    for skill_dir in "$ROOT"/agents/_shared/skills/*/; do
       [[ -d "$skill_dir" ]] || continue
       skill_name="$(basename "$skill_dir")"
-      link_dir ".claude/skills/$skill_name" "${skill_dir%/}"
+      link_dir ".claude/skills/$skill_name" "agents/_shared/skills/$skill_name"
     done
   fi
 
@@ -319,20 +343,20 @@ PY
   # (Workflow({name: '<base>'})). Workflows are single .js files (link_file,
   # not link_dir like skills). Future workflows get picked up with no script
   # edit. See docs/agent-rules/workflow-orchestration.md.
-  if [[ -d "agents/_shared/workflows" ]]; then
-    for wf in agents/_shared/workflows/*.js; do
+  if [[ -d "$ROOT/agents/_shared/workflows" ]]; then
+    for wf in "$ROOT"/agents/_shared/workflows/*.js; do
       [[ -e "$wf" ]] || continue
-      link_file ".claude/workflows/$(basename "$wf")" "$wf"
+      link_file ".claude/workflows/$(basename "$wf")" "agents/_shared/workflows/$(basename "$wf")"
     done
   fi
   # Same, for PROJECT-scoped workflows under agents/project/workflows/ — those
   # that embed project literals (paths, subsystem names) and so cannot live in
   # the portable, purity-gated agents/_shared/workflows/. Both link into the
   # same .claude/workflows/, so all resolve by name (Workflow({name: '<base>'})).
-  if [[ -d "agents/project/workflows" ]]; then
-    for wf in agents/project/workflows/*.js; do
+  if [[ -d "$ROOT/agents/project/workflows" ]]; then
+    for wf in "$ROOT"/agents/project/workflows/*.js; do
       [[ -e "$wf" ]] || continue
-      link_file ".claude/workflows/$(basename "$wf")" "$wf"
+      link_file ".claude/workflows/$(basename "$wf")" "agents/project/workflows/$(basename "$wf")"
     done
   fi
 
@@ -424,7 +448,7 @@ setup_pi() {
   # the codex branch below.
   local py
   if py="$(find_python)"; then
-    "$py" agents/scripts/core/gen-pi-agents.py "$ROOT" "$ROOT/.pi/agents"
+    "$py" "$ROOT/agents/scripts/core/gen-pi-agents.py" "$ROOT" "$PROJECT_ROOT/.pi/agents"
   else
     echo "  error: python not found — needed to generate .pi/agents/*.md" >&2
     exit 1
@@ -467,14 +491,17 @@ setup_codex() {
 
   local py
   if py="$(find_python)"; then
-    "$py" agents/scripts/core/gen-codex-agents.py "$ROOT" "$ROOT/.codex/agents"
+    "$py" "$ROOT/agents/scripts/core/gen-codex-agents.py" "$ROOT" "$PROJECT_ROOT/.codex/agents"
   else
     echo "  FAIL python not found - needed to generate .codex/agents/*.toml" >&2
     exit 1
   fi
 
   echo "Verify:"
-  if [[ -f "AGENTS.md" ]]; then
+  # AGENTS.md is LAYER content — it moves with agents/ (grill decision 1), so
+  # this probe follows the layer root, not cwd. Post-flip the host root has no
+  # AGENTS.md of its own; the codex adapter reads the layer's copy.
+  if [[ -f "$ROOT/AGENTS.md" ]]; then
     echo "  OK  AGENTS.md present at repo root"
   else
     echo "  FAIL AGENTS.md missing"
@@ -482,8 +509,8 @@ setup_codex() {
   fi
 
   local core_count project_count count duplicate_basenames leaf_count
-  core_count="$(find agents/core -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
-  project_count="$(find agents/project -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  core_count="$(find "$ROOT/agents/core" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
+  project_count="$(find "$ROOT/agents/project" -maxdepth 1 -name '*.md' 2>/dev/null | wc -l | tr -d ' ')"
   count=$((core_count + project_count))
   if [[ "$count" -eq 0 ]]; then
     echo "  FAIL agents/{core,project}/*.md has no agent definitions"
@@ -501,7 +528,7 @@ setup_codex() {
   fi
 
   duplicate_basenames="$(
-    find agents/core agents/project -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
+    find "$ROOT/agents/core" "$ROOT/agents/project" -maxdepth 1 -name '*.md' -exec basename {} \; 2>/dev/null \
       | sort | uniq -d
   )"
   if [[ -n "$duplicate_basenames" ]]; then
@@ -561,8 +588,8 @@ setup_cursor() {
 # adapter wiring + install the missing tool separately. See
 # docs/self-improvement/categories/tooling.md "Required CLI tools must be
 # discoverable + verified at first-setup time" for the motivating incident.
-if [[ -x "$ROOT/scripts/dev/check-required-tools.sh" ]]; then
-  bash "$ROOT/scripts/dev/check-required-tools.sh" || {
+if [[ -x "$PROJECT_ROOT/scripts/dev/check-required-tools.sh" ]]; then
+  bash "$PROJECT_ROOT/scripts/dev/check-required-tools.sh" || {
     echo "" >&2
     echo "note: continuing setup despite missing required tool(s). Install the flagged" >&2
     echo "      tools above before running build/test/poller commands. Re-run" >&2
