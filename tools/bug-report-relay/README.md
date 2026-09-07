@@ -86,21 +86,83 @@ relay and is rate-limited + rotatable server-side, so bundling it is acceptable.
 ## Endpoints
 
 - `POST /report` — body `{ title, body, screenshotBase64?, censored? }`; returns
-  `{ ok, issueKey: "owner/repo#N", url }`. Requires `x-relay-key` when `RELAY_KEY`
+  `{ ok, issueKey: "owner/repo#N", url }`. Rate-limited per IP and globally (429 +
+  `Retry-After` when over budget). Requires `x-relay-key` when `RELAY_KEY`
   is set. Payload hard-capped at 2 MB (base64 screenshots inflate ~4/3; the app downscales captures to 1280px first).
 - `GET /health` — `{ ok: true }`.
 
+## Crash minidumps must go to a PRIVATE repo
+
+A minidump carries the crashing thread's **stack memory** and the loaded-module
+list. A GitHub Release asset on a **public** repo is world-downloadable with no
+auth, so uploading one there publishes a stranger's process state.
+
+The Worker therefore checks the destination repo's visibility before uploading a
+dump and **discards it unless the repo is private**, filing the issue with a note
+instead. The check fails closed: if the visibility answer is missing or
+unreadable, the dump is dropped.
+
+Point dumps at a private repo with the `DUMPS_REPO` var (falls back to
+`ASSETS_REPO`, then `REPO`):
+
+```toml
+# wrangler.toml
+[vars]
+DUMPS_REPO = "you/smatchet-crash-dumps"   # must be PRIVATE
+```
+
+The bot token needs **Contents: write** on that repo (Release assets). Redeploy
+after editing — vars are bundled at deploy time.
+
+> Screenshots are unaffected: they are font-redacted client-side (every glyph
+> renders as a block) and still go to `ASSETS_REPO`.
+
 ## Abuse protection
 
+Run **both** layers — they cover different things:
+
+**1. In-Worker rate limits (ship with the code, already configured).**
+`wrangler.toml` declares two [rate-limit bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/):
+
+| Binding | Key | Default budget |
+|---|---|---|
+| `REPORT_RATE_LIMITER` | client IP (`CF-Connecting-IP`) | 5 requests / 60s |
+| `GLOBAL_RATE_LIMITER` | the whole relay | 60 requests / 60s |
+
+Both apply to `POST /report` and run **before** the `RELAY_KEY` check, so a
+key-guessing flood is throttled too. Over budget → `429` with `Retry-After: 60`.
+The global bucket is what stops a distributed flood (many IPs, each individually
+under the per-IP budget) from burning the GitHub token's secondary-rate-limit
+allowance. Tune the numbers in `wrangler.toml` and redeploy; `simple.period`
+accepts only `10` or `60`.
+
+These are enforced in the Worker itself, so they also apply on `*.workers.dev`,
+where a dashboard WAF rule cannot reach. They fail **open** — a limiter outage
+must not take the bug reporter down.
+
+**2. A Cloudflare Rate Limiting rule (dashboard).** Only attachable to a
+**custom-domain** route, not `*.workers.dev`. If you put the relay on your own
+domain, add one as defence in depth — it rejects at the edge, before the Worker
+runs, so it also protects against request floods that would otherwise cost
+Worker invocations. Security → WAF → Rate limiting rules, e.g.:
+
+- **If** `http.request.uri.path eq "/report"`
+- **Then** block for 60s when a client IP exceeds 10 requests / 60s
+
+Free tier covers basic rules. See the
+[Rate Limiting rules docs](https://developers.cloudflare.com/waf/rate-limiting-rules/).
+
+**Also:**
+
 - Set `RELAY_KEY` so the endpoint isn't open to the world.
-- Add a [Cloudflare Rate Limiting rule](https://developers.cloudflare.com/waf/rate-limiting-rules/)
-  on the Worker route (e.g. N requests/min/IP) — the free tier covers basic rules.
 - The 2 MB payload cap bounds screenshot size (the app downscales to 1280px before upload).
 - Revoke/rotate the bot token any time from GitHub without touching the app.
 
 ## Local test
 
 ```bash
+npm test           # rate-limit + private-dump-repo gates (node:test, no network)
+
 npx wrangler dev   # serves on http://localhost:8787
 curl -s localhost:8787/health
 curl -s -X POST localhost:8787/report -H 'content-type: application/json' \
@@ -143,6 +205,9 @@ Invoke-RestMethod -Method Post `
 |---|---|---|
 | `{"ok":false,"error":"bad or missing relay key"}` (401) | `RELAY_KEY` is set but the request's `x-relay-key` is missing/wrong | Send the matching key. This 401 *confirms* the auth gate works. |
 | `{"ok":false,"error":"GitHub create failed: Not Found"}` (the relay returns 502) | `REPO` points at a repo that **doesn't exist**, or the `GITHUB_TOKEN` lacks access (GitHub returns 404, not 403, for no-access to hide existence) | Verify `REPO` in `wrangler.toml` is a real `owner/repo`; ensure the bot token has **Issues: write** on it (a private repo needs the bot added as a collaborator). Redeploy after editing `REPO`. |
+| `{"ok":false,"error":"rate limited (per-IP)"}` (429) | You exceeded `REPORT_RATE_LIMITER` (default 5/min/IP) | Wait `Retry-After` seconds. Raise the limit in `wrangler.toml` and redeploy if it's too tight for real use. |
+| `{"ok":false,"error":"rate limited (global)"}` (429) | The whole relay exceeded `GLOBAL_RATE_LIMITER` (default 60/min) | Either you're under a flood, or the ceiling is too low for your traffic — raise it in `wrangler.toml` and redeploy. |
+| Issue files, but says the minidump was **discarded** | The dump repo (`DUMPS_REPO` → `ASSETS_REPO` → `REPO`) is not private, or its visibility couldn't be read | Set `DUMPS_REPO` to a **private** repo the bot token can write, redeploy. See "Crash minidumps must go to a PRIVATE repo". |
 | `{"ok":false,"error":"payload too large"}` (413) | base64 screenshot exceeds the cap | The app downscales captures to 1280px (≈ well under the 2 MB cap). If you see this, redeploy a Worker built from current `src/index.js` (the cap was raised from 256 KB → 2 MB). |
 | `relay REPO var not configured as owner/repo` (500) | `REPO` unset or malformed | Set `[vars].REPO = "owner/repo"` in `wrangler.toml`, redeploy. |
 | Screenshot doesn't render inline; issue still files | Token lacks **Contents: write**, so the asset upload is skipped | Grant Contents: write on the assets repo, or accept text-only reports. |

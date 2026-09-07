@@ -210,12 +210,39 @@ std::string UploadScreenshotAsset(const std::string& baseUrl, const std::string&
     return "";
 }
 
+// True only when the repo is confirmed PRIVATE. Fails closed: an error, a non-200, or
+// unparseable JSON all answer "not private", because the caller's fallback (skip the
+// upload) is recoverable and publishing a dump is not.
+bool IsRepoPrivate(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                   const std::string& repo) {
+    const cpr::Response resp =
+        TrackerGetLogged("BugReport", baseUrl + "/repos/" + owner + "/" + repo, BugReportGitHubHeaders(pat));
+    if (resp.status_code != 200) {
+        return false;
+    }
+    try {
+        std::string parseErr;
+        const nlohmann::json j = smatchet::json_safe::ParseBounded(resp.text, parseErr);
+        return parseErr.empty() && j.value("private", false);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 // Upload a minidump as a GitHub Release asset (binaries off the git tree).
 // Ensures a `crash-dumps` prerelease exists, then uploads the .dmp. Returns the
 // browser download URL, or "" on any failure. cloud + Enterprise both work — the
 // upload host comes from the release JSON's `upload_url`.
+//
+// Refuses outright when the destination repo is public: a Release asset there is
+// world-downloadable with no auth, and a minidump carries the crashing thread's stack
+// memory. The relay enforces the same rule server-side (tools/bug-report-relay).
 std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                                    const std::string& repo, const std::string& dumpPath, const std::string& dumpName) {
+    if (!IsRepoPrivate(baseUrl, pat, owner, repo)) {
+        LOG_WARN("BugReport: refusing to upload crash dump — %s/%s is not a private repo", owner.c_str(), repo.c_str());
+        return "";
+    }
     std::vector<unsigned char> bytes;
     if (!ReadFileBytes(dumpPath, bytes)) {
         LOG_WARN("BugReport: cannot read crash dump for upload: %s", dumpPath.c_str());
@@ -510,7 +537,11 @@ SubmitResult SubmitBugReport(IAppMeta& app, const BugReportOptions& opts) {
         const std::string dumpName = fs::path(opts.DumpAbsPath).filename().string();
         const std::string url = UploadCrashDumpRelease(target.BaseUrl, target.Pat, target.AssetsOwner,
                                                        target.AssetsRepo, opts.DumpAbsPath, dumpName);
-        dumpMarkdown = url.empty() ? ("_Crash minidump at `" + opts.DumpAbsPath + "` (upload failed)._")
+        // On failure name only the FILE, never opts.DumpAbsPath: the absolute path runs
+        // through the user's home directory, so echoing it into the issue body would leak
+        // their account name — and this markdown is appended after the egress preview, so
+        // the user never saw it to redact it.
+        dumpMarkdown = url.empty() ? ("_Crash minidump `" + dumpName + "` kept locally (not uploaded)._")
                                    : ("[Crash minidump](" + url + ")");
     }
 

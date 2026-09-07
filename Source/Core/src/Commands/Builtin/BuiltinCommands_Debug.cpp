@@ -288,11 +288,13 @@ static void RegisterDebugDumpSelfCommand(CommandRegistry& reg) {
             return CommandResult::Success(std::move(out));
         });
     c.Title = "Dump Self";
-    c.Description = "Returns {wrote, available, path} on success, or {wrote:false, available:false, reason} on a host "
-                    "with no writer (DX12/Unreal, Android). Writes <userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp "
-                    "using MiniDumpNormal — the same scope the crash handler uses, chosen so heap-resident secrets are "
-                    "not swept into the dump. Triage with `bash agents/scripts/core/dump-triage.sh <path>`. Example: "
-                    "`Smatchet.exe cmd debug.dump_self`.";
+    c.Description =
+        "Returns {wrote, available, path} on success, or {wrote:false, available:false, reason} on a host "
+        "with no writer (DX12/Unreal, Android). Writes <userData>agent-dumps/ondemand-<epochMs>-<pid>.dmp "
+        "using MiniDumpNormal|MiniDumpFilterModulePaths — the same scope the crash handler uses, chosen so "
+        "heap-resident secrets are not swept into the dump and module paths (which embed the user's account "
+        "name) are stripped. Triage with `bash agents/scripts/core/dump-triage.sh <path>`. Example: "
+        "`Smatchet.exe cmd debug.dump_self`.";
     c.Idempotent = false;
     c.DryRunSupported = true;
     reg.Register(std::move(c));
