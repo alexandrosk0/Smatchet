@@ -21,10 +21,10 @@
 #include <unordered_map>
 #include <vector>
 
-using SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore;
-using SmatchetGridPaneWindows::detail::ResolveNewPaneView;
 using smatchet::cmd::detail::DecidePaneAddRequest;
 using smatchet::cmd::detail::PaneAddDecision;
+using SmatchetGridPaneWindows::detail::ApplyPaneAddAndCloseRequestsCore;
+using SmatchetGridPaneWindows::detail::ResolveNewPaneView;
 
 namespace {
 
@@ -43,8 +43,7 @@ ViewDefinition MakeView(const std::string& id) {
     return v;
 }
 
-ViewWorkspaceState MakeBucket(const std::string& activeViewId,
-                               const std::vector<std::string>& viewIds) {
+ViewWorkspaceState MakeBucket(const std::string& activeViewId, const std::vector<std::string>& viewIds) {
     ViewWorkspaceState ws;
     ws.ActiveViewId = activeViewId;
     for (const auto& vid : viewIds) {
@@ -131,6 +130,89 @@ TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same-backend duplicate inherits bac
     CHECK(dup.ticketsSnapshot.get() == snap.get()); // shared_ptr identity, not printed by doctest
     CHECK(dup.snapshotRevision == 42);
     CHECK(req.sourceId.empty()); // request consumed
+}
+
+// #2170: the "+" backend picker also lists the pane's OWN backend with its saved views.
+// Choosing a different view of the current backend must open THAT view — the old same-
+// backend branch ignored targetViewId and produced a duplicate of the current view.
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same-backend with a different targetViewId opens that view") {
+    auto snap = std::make_shared<const std::vector<CachedTicket>>();
+    GridPane src = MakePane("main", "Jira", "v1");
+    src.ticketsSnapshot = snap;
+    src.snapshotRevision = 42;
+    std::vector<GridPane> panes = {src};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Jira"; // the pane's own backend
+    req.targetViewId = "v2";
+
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = MakeBucket("v1", {"v1", "v2"});
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, buckets);
+    CHECK(out.Changed);
+    REQUIRE(panes.size() == 2);
+    const GridPane& dup = panes.back();
+    CHECK(dup.backendKey == "Jira");
+    CHECK(dup.viewId == "v2");
+    // A different view's rows are different data: no snapshot inherit.
+    CHECK(dup.ticketsSnapshot.get() == nullptr);
+    CHECK(dup.snapshotRevision == 0);
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same-backend with the CURRENT view as target stays a duplicate") {
+    auto snap = std::make_shared<const std::vector<CachedTicket>>();
+    GridPane src = MakePane("main", "Jira", "v1");
+    src.ticketsSnapshot = snap;
+    src.snapshotRevision = 42;
+    std::vector<GridPane> panes = {src};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Jira";
+    req.targetViewId = "v1";
+
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = MakeBucket("v1", {"v1", "v2"});
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, buckets);
+    CHECK(out.Changed);
+    REQUIRE(panes.size() == 2);
+    const GridPane& dup = panes.back();
+    CHECK(dup.viewId == "v1");
+    CHECK(dup.ticketsSnapshot.get() == snap.get());
+    CHECK(dup.snapshotRevision == 42);
+}
+
+TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same-backend with a stale targetViewId falls back like cross-backend") {
+    // The picker offered a view that was deleted before the click landed: resolve through the
+    // bucket (active view), and since that differs from the source view, no snapshot inherit.
+    std::vector<GridPane> panes = {MakePane("main", "Jira", "v1")};
+    std::string focused = "main";
+    PaneAddRequest req;
+    req.sourceId = "main";
+    req.targetBackendKey = "Jira";
+    req.targetViewId = "gone";
+
+    std::unordered_map<std::string, ViewWorkspaceState> buckets;
+    buckets["Jira"] = MakeBucket("v2", {"v1", "v2"});
+
+    const auto out = ApplyPaneAddAndCloseRequestsCore(panes, focused, req, buckets);
+    CHECK(out.Changed);
+    REQUIRE(panes.size() == 2);
+    CHECK(panes.back().viewId == "v2");
+
+    // No bucket at all: nothing to resolve against, so the plain duplicate is kept.
+    std::vector<GridPane> panes2 = {MakePane("main", "Jira", "v1")};
+    PaneAddRequest req2;
+    req2.sourceId = "main";
+    req2.targetBackendKey = "Jira";
+    req2.targetViewId = "v2";
+    const std::unordered_map<std::string, ViewWorkspaceState> empty;
+    ApplyPaneAddAndCloseRequestsCore(panes2, focused, req2, empty);
+    REQUIRE(panes2.size() == 2);
+    CHECK(panes2.back().viewId == "v1");
 }
 
 // ---------------------------------------------------------------------------
@@ -220,19 +302,20 @@ TEST_CASE("ApplyPaneAddAndCloseRequestsCore: same targetBackendKey as source is 
 // Slice 3 — BackendCredentialsPresent + KnownBackendKeys (pane.new backend/view params)
 // ---------------------------------------------------------------------------
 
-
 namespace {
 
-TrackerConfig MakeCfg(const std::string& domain, const std::string& apiToken,
-                      const std::string& planeUrl, const std::string& planeApiKey,
-                      const std::string& planeWorkspaceSlug,
-                      const std::string& ghPat, const std::string& ghOwner,
-                      const std::string& ghRepo) {
+TrackerConfig MakeCfg(const std::string& domain, const std::string& apiToken, const std::string& planeUrl,
+                      const std::string& planeApiKey, const std::string& planeWorkspaceSlug, const std::string& ghPat,
+                      const std::string& ghOwner, const std::string& ghRepo) {
     TrackerConfig cfg;
-    cfg.Domain   = domain;   cfg.ApiToken   = apiToken;
-    cfg.PlaneUrl = planeUrl; cfg.PlaneApiKey = planeApiKey;
+    cfg.Domain = domain;
+    cfg.ApiToken = apiToken;
+    cfg.PlaneUrl = planeUrl;
+    cfg.PlaneApiKey = planeApiKey;
     cfg.PlaneWorkspaceSlug = planeWorkspaceSlug;
-    cfg.GitHubPat = ghPat;   cfg.GitHubOwner = ghOwner; cfg.GitHubRepo = ghRepo;
+    cfg.GitHubPat = ghPat;
+    cfg.GitHubOwner = ghOwner;
+    cfg.GitHubRepo = ghRepo;
     return cfg;
 }
 
@@ -292,8 +375,8 @@ TEST_CASE("BackendCredentialsPresent: unknown key → false (Jira fallback check
 
 TEST_CASE("KnownBackendKeys: contains Jira, Plane, GitHub") {
     const std::vector<std::string>& keys = ConfigManager::KnownBackendKeys();
-    const bool hasJira   = std::find(keys.begin(), keys.end(), "Jira")   != keys.end();
-    const bool hasPlane  = std::find(keys.begin(), keys.end(), "Plane")  != keys.end();
+    const bool hasJira = std::find(keys.begin(), keys.end(), "Jira") != keys.end();
+    const bool hasPlane = std::find(keys.begin(), keys.end(), "Plane") != keys.end();
     const bool hasGitHub = std::find(keys.begin(), keys.end(), "GitHub") != keys.end();
     CHECK(hasJira);
     CHECK(hasPlane);
@@ -302,9 +385,9 @@ TEST_CASE("KnownBackendKeys: contains Jira, Plane, GitHub") {
 
 TEST_CASE("PaneAddRequest: backend + view fields round-trip") {
     PaneAddRequest req;
-    req.sourceId          = "pane-1";
-    req.targetBackendKey  = "GitHub";
-    req.targetViewId      = "view-42";
+    req.sourceId = "pane-1";
+    req.targetBackendKey = "GitHub";
+    req.targetViewId = "view-42";
     CHECK(req.sourceId == "pane-1");
     CHECK(req.targetBackendKey == "GitHub");
     CHECK(req.targetViewId == "view-42");
@@ -322,8 +405,7 @@ TEST_CASE("PaneAddRequest: backend + view fields round-trip") {
 
 TEST_CASE("DecidePaneAddRequest: un-credentialed backend → failure, request NOT armed") {
     const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "", ""); // no creds for any backend
-    const PaneAddDecision decision =
-        DecidePaneAddRequest("main", /*acceptBackend=*/true, "Plane", "", cfg);
+    const PaneAddDecision decision = DecidePaneAddRequest("main", /*acceptBackend=*/true, "Plane", "", cfg);
     CHECK_FALSE(decision.Ok);
     CHECK(decision.FailureMessage == "Backend 'Plane' has no credentials configured.");
     // The crux of #1458: a failure must leave the latch un-armed so no pane is created.
@@ -345,8 +427,7 @@ TEST_CASE("DecidePaneAddRequest: credentialed backend → success, latch armed w
 
 TEST_CASE("DecidePaneAddRequest: no backend arg → same-backend duplicate, latch armed") {
     const TrackerConfig cfg = MakeCfg("my.jira.net", "tok", "", "", "", "", "", "");
-    const PaneAddDecision decision =
-        DecidePaneAddRequest("main", /*acceptBackend=*/true, "", "", cfg);
+    const PaneAddDecision decision = DecidePaneAddRequest("main", /*acceptBackend=*/true, "", "", cfg);
     CHECK(decision.Ok);
     CHECK(decision.Request.sourceId == "main");
     CHECK(decision.Request.targetBackendKey.empty()); // empty = duplicate source's backend
@@ -356,8 +437,7 @@ TEST_CASE("DecidePaneAddRequest: no backend arg → same-backend duplicate, latc
 TEST_CASE("DecidePaneAddRequest: acceptBackend false ignores backend arg, latch armed") {
     // pane.duplicate / pane.split pass acceptBackend=false — backend arg must not be consumed.
     const TrackerConfig cfg = MakeCfg("", "", "", "", "", "", "", ""); // no creds at all
-    const PaneAddDecision decision =
-        DecidePaneAddRequest("main", /*acceptBackend=*/false, "Plane", "v9", cfg);
+    const PaneAddDecision decision = DecidePaneAddRequest("main", /*acceptBackend=*/false, "Plane", "v9", cfg);
     CHECK(decision.Ok); // never checks creds when acceptBackend is false
     CHECK(decision.Request.sourceId == "main");
     CHECK(decision.Request.targetBackendKey.empty());
