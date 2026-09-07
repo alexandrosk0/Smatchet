@@ -15,8 +15,8 @@ the active view (per-backend, alongside the view's filter, columns and sort):
 
 | Toggle | Effect |
 |---|---|
-| **Story group** | Reorder the grid so every issue sits directly under its parent, nested by depth. The regular column sort still decides the order *among* siblings and among top-level rows. |
-| **Hide parent stories** | Drop every row that is the parent of another row, leaving only the leaf tasks/bugs, drawn flat: no indent and no parent tint even when *Story group* is also on. Handy for a personal "what do I actually work on" view. |
+| **Parent group** | Reorder the grid so every issue sits directly under its parent, nested by depth. The regular column sort still decides the order *among* siblings and among top-level rows. |
+| **Hide parent stories** | Drop every row that is the parent of another row, leaving only the leaf tasks/bugs, drawn flat: no indent and no parent tint even when *Parent group* is also on. Handy for a personal "what do I actually work on" view. |
 
 Flipping either toggle marks the view as changed, so the *Unsaved layout
 changes* strip appears and you can **Save**, **Save as new...** or **Discard**
@@ -25,13 +25,13 @@ are stored as `story_group_sort` and `hide_parents` on the view.
 
 ## What the grid shows
 
-- **Indent**: with *Story group* on, the Id cell is indented 20 px per nesting
+- **Indent**: with *Parent group* on, the Id cell is indented 20 px per nesting
   level, so a sub-task under a task under a story is indented twice.
 - **Parent tint**: a row that is the parent of another visible row gets a
   lavender background. A parent that is itself nested gets a half-strength
   tint so the tree reads top-down. A status colour, when the view assigns one,
   wins over the parent tint.
-- **Story group + quick filter**: when you type into the quick filter, the
+- **Parent group + quick filter**: when you type into the quick filter, the
   ancestors of every matching row are put back into the grid so the match
   keeps its context. With *Hide parent stories* on they stay hidden: the
   leaf-only list is meant to be flat.

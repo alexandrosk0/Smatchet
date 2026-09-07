@@ -46,7 +46,7 @@ void DrawGridSectionBody(UiDrawSession& d) {
         ImGui::SameLine();
         SmatchetHelpMarker::Render("prefs.grid.load_parent_issues.help",
                                    "After each sync, parent issues referenced by the fetched rows but missing "
-                                   "from the result are fetched in one extra request so the Story group tree "
+                                   "from the result are fetched in one extra request so the Parent group tree "
                                    "has its roots. Turn off to skip that request; children of a missing parent "
                                    "then show as top-level rows.");
     }

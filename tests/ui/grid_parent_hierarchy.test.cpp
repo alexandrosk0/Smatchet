@@ -63,7 +63,7 @@ const char* kPrimary = "Smatchet - Active Project";
 
 // Sort By popup opener (header button label) + the two hierarchy checkboxes inside it.
 const char* kSortByButton = "Sort By \xE2\x86\x95";
-const char* kStoryGroupRef = "**/Story group";
+const char* kStoryGroupRef = "**/Parent group";
 const char* kHideParentsRef = "**/Hide parent stories";
 
 // Boot preamble: fixture gate + backend sync + primary pane live/focused + panes-loaded check.
