@@ -259,7 +259,7 @@ class AppController : public IAppThreading,
     void ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                           std::vector<TrackerComponent> snapComponents,
                                           std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
-                                          const std::string& activeTrackerType);
+                                          const std::string& activeTrackerType, const std::string& projectKey);
 
     /// Phase 4 — initialise Lua, start the merge-watch notify endpoint, run the Lua
     /// setup script + automation worker, and warm the Jira issue-type edit-meta.
@@ -919,6 +919,14 @@ class AppController : public IAppThreading,
      *  grid views. Returns a by-value copy taken under availableFieldsMutex_; empty when the project
      *  has not been warmed yet (caller falls back to the global components catalog). */
     std::vector<TrackerFieldOption> GetComponentOptionsForProject(const std::string& projectKey) const;
+
+    /** True when the focused context's field catalog was fetched for the Jira backend WITHOUT a
+     *  project scope (#2146): the active view's JQL resolved to no single project, so createmeta
+     *  enrichment was skipped and every project-scoped option list (versions, project custom-field
+     *  options; components have their own lazy per-project path) is empty by construction. The
+     *  grid editors use this to explain an empty dropdown instead of showing a bare "(no options)".
+     *  Reads the catalog's project key under availableFieldsMutex_. */
+    bool FieldCatalogLacksProjectScope() const;
 
     /** True once a component fetch for `projectKey` has SUCCEEDED (the key is present in
      *  projectComponentOptions_), regardless of how many components it returned. Lets the editor

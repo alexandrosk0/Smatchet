@@ -693,12 +693,32 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
+// The "(no options)" line of an open select combo, plus — when the catalog was fetched without a
+// project scope (#2146) — the one sentence that tells the user WHY the list is empty and what to
+// change. Without it an unscoped default view ("assignee=currentUser()") produced silently empty
+// version / custom-option dropdowns while the log said the catalog had loaded fine.
+void RenderEmptyOptionsNotice(const std::string& filterLower, bool catalogUnscoped) {
+    if (!filterLower.empty()) {
+        ImGui::TextDisabled("(no matching options)");
+        return;
+    }
+    ImGui::TextDisabled("(no options)");
+    if (catalogUnscoped) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("field.no_options.unscoped_hint",
+                                                          "This view has no single project, so project-scoped "
+                                                          "options were not loaded. Add `project = KEY` to the "
+                                                          "view's JQL to load them."));
+        ImGui::PopTextWrapPos();
+    }
+}
+
 // Draws the open single-select combo body: clear option, auto-focused filter input, and the
 // filtered option list with typeahead enter-commit. Lifted from the single-select editor, whose
 // caller owns the begin / end combo pair. Behaviour byte-identical to the inlined block.
 void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                  SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
-                                 const std::string& editorKey) {
+                                 const std::string& editorKey, bool catalogUnscoped) {
     const bool justOpened = (state.SingleSelectActiveKey != editorKey);
     if (justOpened) {
         state.SingleSelectActiveKey = editorKey;
@@ -749,7 +769,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
         ImGui::PopID();
     }
     if (!drewAny) {
-        ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+        RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
     }
     // Pressing enter commits when the filter narrows to a single match. When several still match,
     // the top one is committed as a least-surprise default that mirrors typeahead pickers.
@@ -812,7 +832,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey);
+        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+                                    field.AllowedValueOptions.empty() && app.FieldCatalogLacksProjectScope());
         ImGui::EndCombo();
     }
 
@@ -837,7 +858,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
 void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
                                 const std::vector<TrackerFieldOption>* opts, bool componentsLoaded,
-                                std::unordered_set<std::string>& selectedSet) {
+                                std::unordered_set<std::string>& selectedSet, bool catalogUnscoped) {
     if (state.MultiSelectActiveKey != editorKey) {
         state.MultiSelectActiveKey = editorKey;
         state.MultiSelectSearchBuf[0] = '\0';
@@ -899,7 +920,7 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
             // shows the no-options text rather than spinning here forever.
             ImGui::TextDisabled("Loading components\xE2\x80\xA6");
         } else {
-            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+            RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
         }
     }
 }
@@ -953,7 +974,11 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet);
+        // Components have their own per-project lazy path, so the unscoped-catalog hint would
+        // mislead there; every other project-scoped multi-select (versions, custom options) gets it.
+        const bool catalogUnscoped = field.Id != "components" && opts->empty() && app.FieldCatalogLacksProjectScope();
+        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet,
+                                   catalogUnscoped);
         ImGui::EndCombo();
     }
     DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);

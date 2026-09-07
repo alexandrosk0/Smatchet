@@ -813,6 +813,11 @@ const TranslationEntry kEntries[] = {
     {"field.no_matching_labels", "(no matching labels)", u8"(aucune étiquette correspondante)"},
     {"field.required_tooltip", "Required field", u8"Champ obligatoire"},
     {"field.required_inline_hint", "(required)", u8"(obligatoire)"},
+    {"field.no_options.unscoped_hint",
+     "This view has no single project, so project-scoped options were not loaded. Add `project = KEY` to the "
+     "view's JQL to load them.",
+     u8"Cette vue ne cible pas un projet unique : les options liées au projet n'ont pas été chargées. Ajoutez "
+     u8"`project = KEY` au JQL de la vue pour les charger."},
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",

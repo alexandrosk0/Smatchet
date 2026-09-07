@@ -571,6 +571,19 @@ std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(con
     return it->second;
 }
 
+bool AppController::FieldCatalogLacksProjectScope() const {
+    // Jira only: Plane resolves its project per operation and GitHub / Linear have no
+    // createmeta-shaped scoping, so an empty key means nothing for them.
+    const std::shared_ptr<ITrackerBackend> backend = BackendShared();
+    if (!backend || backend->Connectivity().GetTrackerType() != "Jira") {
+        return false;
+    }
+    const GridContextFieldCatalog& cat =
+        fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
+    std::lock_guard<std::mutex> lock(cat.availableFieldsMutex_);
+    return cat.fieldCatalogEverLoaded_ && cat.currentCatalogProjectKey_.empty();
+}
+
 bool AppController::IsProjectComponentsLoaded(const std::string& projectKey) const {
     const GridContextFieldCatalog& cat =
         fieldCatalog(); // latch once — lock/object must resolve to the same context (Pillar 3)
