@@ -1327,8 +1327,8 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
                                ImGuiWindowFlags_AlwaysAutoResize)) {
         // Name the domain that is actually dirty: the Tracker wording is kept verbatim for the
         // Tracker-only case; an uncommitted MCP field (#2133) gets its own sentence.
+        // `trackerDirty` is the nav-marker value computed above — same frame, same buffers.
         const bool mcpDirty = McpPrefsDirty(d);
-        const bool trackerDirty = d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d);
         if (mcpDirty && !trackerDirty) {
             ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.mcp.close_guard.body",
                                                              "The MCP section has unsaved edits. Save & Sync applies "
