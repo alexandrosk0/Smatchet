@@ -873,3 +873,24 @@ TEST_CASE("TicketSyncService skips the parent fetch when the active view hides p
 
     svc.CancelAndJoinActiveStreamingSync();
 }
+
+TEST_CASE("TicketSyncService skips the parent fetch when LoadParentIssues is off") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeChildTicket("CHILD-1", "EPIC-9"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    cfg.LoadParentIssues = false;
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK(fake->FetchIssuesForKeysCallCount() == 0);
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}

@@ -137,6 +137,11 @@ struct TrackerConfig {
     // When true (default), single click on a grid cell starts editing. False requires double-click.
     // Exposed in Settings -> Preferences -> Appearance.
     bool SingleClickToEditGridCells = true;
+    // When true (default), each sync also fetches the parent issues that the streamed rows
+    // reference but the view's query did not return, so the story-group tree has its roots.
+    // Off skips that keyed top-up entirely: missing parents stay absent and their children
+    // render as top-level rows. Exposed in Settings -> Preferences -> Editing -> Grid behaviour.
+    bool LoadParentIssues = true;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.

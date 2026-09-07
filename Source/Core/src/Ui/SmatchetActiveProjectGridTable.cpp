@@ -327,8 +327,14 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
     // sets for the row draw. Off → caches stay empty so the common path is branch-free.
     if (hierarchy.storyGroupSort) {
         pane.cachedSortedIndices = ParentHierarchyPure::StoryGroupOrder(tickets, pane.cachedSortedIndices);
-        pane.cachedDepths = ParentHierarchyPure::ComputeDepths(tickets);
         pane.cachedParentIds = ParentHierarchyPure::PresentParentIds(tickets);
+        // Leaf-only view: nothing to indent against once the parents are gone, so the rows read
+        // as a flat (still story-grouped) list. Depth stays empty; the tint is dropped below.
+        if (hierarchy.hideParents) {
+            pane.cachedDepths.clear();
+        } else {
+            pane.cachedDepths = ParentHierarchyPure::ComputeDepths(tickets);
+        }
     } else if (hierarchy.hideParents) {
         pane.cachedDepths.clear();
         pane.cachedParentIds = ParentHierarchyPure::PresentParentIds(tickets);
@@ -344,6 +350,11 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
 
     // 2. Run Filter and rebuild pane.filteredIndices
     ApplyGridFilterProjection(pane, tickets, hierarchy);
+    if (hierarchy.hideParents) {
+        // The parent-id set has done its job (dropping the parent rows); the row draw reads it
+        // only for the tint, and a leaf-only grid must not carry parent colouring.
+        pane.cachedParentIds.clear();
+    }
 
     // snprintf guarantees null-termination and avoids the strncpy
     // truncation warning when the source fills the buffer exactly.
@@ -997,7 +1008,8 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
             // ToLowerAsciiCopy + 4 string::find are paid once per unique status value,
             // not once per visible row. Cache is a lambda-captured unordered_map.
             const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
-            // Parent-hierarchy depth for this row (Id-cell indent); 0 unless StoryGroupSort is on.
+            // Parent-hierarchy depth for this row (Id-cell indent); 0 unless StoryGroupSort is on
+            // with parents shown (HideParents flattens the indent and drops the tint).
             ctx.currentRowDepth = (ticketIndex < pane.cachedDepths.size()) ? pane.cachedDepths[ticketIndex] : 0;
             if (statusColor.w > 0.0f) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,

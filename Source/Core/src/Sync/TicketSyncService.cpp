@@ -853,6 +853,10 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
     if (parentRefs.empty()) {
         return;
     }
+    // Global opt-out (Preferences -> Editing -> Grid behaviour -> Load parent issues).
+    if (!cfgCopy.LoadParentIssues) {
+        return;
+    }
     // Per-view opt-out: a view that hides parents never pays for the keyed fetch (FS parity).
     const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
     if (activeView != nullptr && activeView->HideParents) {

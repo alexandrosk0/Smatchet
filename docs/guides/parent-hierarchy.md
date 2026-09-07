@@ -16,7 +16,7 @@ the active view (per-backend, alongside the view's filter, columns and sort):
 | Toggle | Effect |
 |---|---|
 | **Story group** | Reorder the grid so every issue sits directly under its parent, nested by depth. The regular column sort still decides the order *among* siblings and among top-level rows. |
-| **Hide parent stories** | Drop every row that is the parent of another row, leaving only the leaf tasks/bugs. Handy for a personal "what do I actually work on" view. |
+| **Hide parent stories** | Drop every row that is the parent of another row, leaving only the leaf tasks/bugs, drawn flat: no indent and no parent tint even when *Story group* is also on. Handy for a personal "what do I actually work on" view. |
 
 Flipping either toggle marks the view as changed, so the *Unsaved layout
 changes* strip appears and you can **Save**, **Save as new...** or **Discard**
@@ -31,10 +31,12 @@ are stored as `story_group_sort` and `hide_parents` on the view.
   lavender background. A parent that is itself nested gets a half-strength
   tint so the tree reads top-down. A status colour, when the view assigns one,
   wins over the parent tint.
-- **Hide parents + quick filter**: when *Hide parent stories* is on and you
-  type into the quick filter, any parent whose descendant matches is put back
-  into the grid so the match keeps its context. With an empty filter the
-  parents stay hidden.
+- **Story group + quick filter**: when you type into the quick filter, the
+  ancestors of every matching row are put back into the grid so the match
+  keeps its context. With *Hide parent stories* on they stay hidden: the
+  leaf-only list is meant to be flat.
+- **Hide parent stories** resets the indent and the tint: the surviving leaf
+  rows keep their story-group order but draw like a plain list.
 - Nesting depth is capped at 64 levels; a parent cycle in the tracker data
   (A's parent is B, B's parent is A) is broken at that cap instead of hanging.
 
@@ -52,6 +54,11 @@ parents reference them.
   the tree, the tint and the indent.
 - When the view has *Hide parent stories* on, the extra fetch is skipped
   entirely: the rows would be dropped anyway.
+- **Load parent issues** (Preferences → Editing → Grid behaviour, on by
+  default; `load_parent_issues` in the config file, `config.set
+  loadParentIssues` from the CLI) turns the extra fetch off for every view.
+  Children of a missing parent then show as top-level rows. Takes effect on
+  the next sync.
 - A failed parent fetch never fails the sync. The grid keeps the children and
   the sync summary carries a warning such as
   `3 parent issue(s) could not be loaded: <detail>`.
