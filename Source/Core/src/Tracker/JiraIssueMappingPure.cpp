@@ -373,6 +373,14 @@ bool AppendCachedTicketFromJiraSearchIssue(
         if (issueFields.contains("issuetype")) {
             ticket.fieldValues["issuetype"] = NormalizeTrackerFieldValue(issueFields["issuetype"]);
         }
+        // `parent` is always on the wire (BuildFetchFieldListsFromView) but, like `comment`, is
+        // rarely a view column, so the selected-field loop alone would drop it and leave the
+        // hierarchy projection (ParentHierarchyPure) and the missing-parent fetch nothing to key
+        // on. Map it unconditionally; a value the loop already wrote (when `parent` IS a column)
+        // wins. Runs before the issuelinks fallback, which only fills an EMPTY parent.
+        if (issueFields.contains("parent") && ticket.fieldValues.find("parent") == ticket.fieldValues.end()) {
+            ticket.fieldValues["parent"] = NormalizeTrackerFieldValue(issueFields["parent"]);
+        }
         ApplyIssueLinksParentFallback(issueFields, ticket);
         results.push_back(std::move(ticket));
         return true;
