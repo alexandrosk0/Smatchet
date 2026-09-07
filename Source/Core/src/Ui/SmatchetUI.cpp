@@ -1384,8 +1384,13 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // happens outside any mid-panel state. See SmatchetUiSession.h MarkPrefsDirty
     // and docs/plans/shipped/pillar-1-2-audit-2026-05-17.md § H11 + § Pillar 1 P1.
     if (g_ui.prefsDirty && std::chrono::steady_clock::now() >= g_ui.prefsSaveDueAt) {
-        SMATCHET_UI_PERF_SCOPE("ConfigManager::Save (prefs-debounced)");
-        ConfigManager::Save(g_ui.cfg);
+        SMATCHET_UI_PERF_SCOPE("config_save::EnqueueTrackerConfig (prefs-debounced)");
+        // Pillar 2 (#2145 audit): the debounce already coalesces the *frequency* of this write,
+        // but the write itself still ran on the frame thread. Hand the snapshot to the config-save
+        // worker instead — it coalesces again (latest-wins) and does the whole-file replace
+        // off-thread. The teardown drain (DrainUiDrawSessionFuturesBeforeAppTeardown) enqueues
+        // through the same slot, so the newest snapshot always wins and nothing is lost at exit.
+        smatchet::config_save::EnqueueTrackerConfig(g_ui.cfg);
         g_ui.prefsDirty = false;
     }
 }
@@ -1472,7 +1477,11 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
             d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
         }
         if (!d.initialTicketSyncStarted) {
-            ConfigManager::Save(d.cfg);
+            // Pillar 2 (#2145 audit): this block re-runs every frame until the grid panes are
+            // loaded (neither latch is set on that path), so the save is repeating, not one-shot.
+            // `d.cfg` is passed by pointer to the sync kicks below, so deferring only the disk
+            // write changes nothing they observe.
+            smatchet::config_save::EnqueueTrackerConfig(d.cfg);
             app.ClearLastTrackerTicketSyncWarning();
             // Initial refresh already covers a same-frame connectivity-recovery latch; skip the
             // follow-up resync on the next frame (would duplicate SyncWithBackend / toasts).
@@ -1511,7 +1520,10 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
         if (app.IsStreamingSyncActive()) {
             return;
         }
-        ConfigManager::Save(d.cfg);
+        // Pillar 2 (#2145 audit): per-sync path — one write per connectivity recovery, on the
+        // frame thread. Same treatment as SyncWithCurrentView; SyncWithBackend reads `d.cfg` by
+        // pointer.
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
         app.ClearLastTrackerTicketSyncWarning();
         d.connectivityRecoveryTicketResyncPending = false;
         app.SyncWithBackend(&d.cfg, &ViewState.GetStore());

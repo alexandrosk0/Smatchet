@@ -7,6 +7,7 @@
 #include "AppController.h"
 #include "AnnotateAnalysisUi.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "SmatchetInputModifierBridge.h"
 #include "StringUtil.h"
 #include "Ui/SmatchetUserInfoUi.h"
@@ -578,7 +579,14 @@ std::string SanitizeClipboardCell(const std::string& value) {
 }
 
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
-    ConfigManager::Save(d.cfg);
+    // Pillar 2 (#2145): `ConfigManager::Save` funnels into `WriteConfigJson` (io mutex +
+    // ScopedFileLock + atomic whole-file replace). This helper sits on the view/sync path and ran
+    // that write inline on the frame thread every time a view was synced — the repeating half of
+    // the #2026 violation pair that was missed there. Route it through the coalescing config-save
+    // worker (started/stopped by AppController, so nothing outlives it). `d.cfg` is already
+    // up to date in memory and `SyncWithBackend` reads it by pointer, so the sync below and every
+    // downstream fetcher see exactly the same values as before; only the disk write is deferred.
+    smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     if (pushHistory)
         d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
     app.SyncWithBackend(&d.cfg, &store);

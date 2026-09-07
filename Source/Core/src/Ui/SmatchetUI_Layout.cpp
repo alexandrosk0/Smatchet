@@ -391,7 +391,12 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     // "user changed a setting + immediately quit before the 100 ms debounce fired"
     // case. See SmatchetUiSession.h MarkPrefsDirty + SmatchetUI.cpp Draw tail.
     if (d.cfgInitialized && d.prefsDirty) {
-        ConfigManager::Save(d.cfg);
+        // Enqueue rather than Save (#2145): the end-of-frame drain now fills the worker's
+        // coalescing slot, and a direct Save here could be overwritten by an older snapshot still
+        // pending in that slot. Enqueue replaces the slot with this newest snapshot instead, and
+        // falls back to a synchronous save when the worker is already stopped, so the final state
+        // reaches disk either way (config_save::Stop flushes pending writes before joining).
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
         d.prefsDirty = false;
     }
 

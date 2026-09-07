@@ -1,8 +1,10 @@
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetJqlProjectPill_detail.h"
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "ConfigSaveWorker.h"
 #include "ITrackerBackend.h"
 #include "JqlProjectScope.h"
 #include "PlaneProjectScope.h"
@@ -35,7 +37,14 @@ void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view) {
 }
 
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
-    ConfigManager::Save(d.cfg);
+    // Pillar 2 (#2145): `ConfigManager::Save` funnels into `WriteConfigJson` (io mutex +
+    // ScopedFileLock + atomic whole-file replace). This helper sits on the view/sync path and ran
+    // that write inline on the frame thread every time a view was synced — the repeating half of
+    // the #2026 violation pair that was missed there. Route it through the coalescing config-save
+    // worker (started/stopped by AppController, so nothing outlives it). `d.cfg` is already
+    // up to date in memory and `SyncWithBackend` reads it by pointer, so the sync below and every
+    // downstream fetcher see exactly the same values as before; only the disk write is deferred.
+    smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     if (pushHistory) {
         d.navHistory.Push(NavigationEntry{d.cfg.JqlQuery});
     }
