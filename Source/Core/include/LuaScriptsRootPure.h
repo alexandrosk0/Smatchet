@@ -15,8 +15,8 @@
 // files that directory happened to carry. With no configured root the answer is empty, and every
 // caller fails closed on it.
 //
-// Pure and side-effect-free (no file I/O, no config access) so it is unit-testable off-target;
-// the AppController owns reading `ConfigManager::GetRuntimeAssetDirectory()` and the latching.
+// No file I/O and no config access here, so the decision is unit-testable off-target. The
+// AppController owns reading `ConfigManager::GetRuntimeAssetDirectory()` and the latching.
 
 #include <string>
 
