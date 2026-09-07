@@ -1,6 +1,8 @@
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetGridHeaderUi_detail.h"
 
+#include "Ui/GridSearchInputClassifier.h"
+
 #include "AppController.h"
 #include "ConfigManager.h"
 #include "SmatchetUiSession.h"
@@ -236,7 +238,69 @@ void DrawNewPaneMenu(UiDrawSession& d, const GridPane& pane,
     }
 }
 
-// Left toolbar: new-pane "+", view selector combo, refresh button, quick filter, sort-by popup.
+// Leading mode glyph for the search box, picked from the live classification so the affordance
+// always previews what Enter will do: # jump-to-ticket / funnel replace-the-view-query / lens
+// filter-the-loaded-rows.
+const char* GridSearchModeGlyph(smatchet::gridsearch::GridSearchInputKind kind) {
+    switch (kind) {
+    case smatchet::gridsearch::GridSearchInputKind::TicketKey:
+        return ICON_FA_HASHTAG;
+    case smatchet::gridsearch::GridSearchInputKind::Jql:
+        return ICON_FA_FILTER;
+    case smatchet::gridsearch::GridSearchInputKind::TitleSearch:
+    default:
+        return ICON_FA_MAGNIFYING_GLASS;
+    }
+}
+
+// Hover hint paired with the glyph — spells out the current mode in words.
+const char* GridSearchModeTooltip(smatchet::gridsearch::GridSearchInputKind kind) {
+    switch (kind) {
+    case smatchet::gridsearch::GridSearchInputKind::TicketKey:
+        return SmatchetLocalization::T("gridsearch.mode.ticket_key", "Issue key — Enter opens this issue.");
+    case smatchet::gridsearch::GridSearchInputKind::Jql:
+        return SmatchetLocalization::T("gridsearch.mode.jql", "Filter query — Enter replaces this view's query.");
+    case smatchet::gridsearch::GridSearchInputKind::TitleSearch:
+    default:
+        return SmatchetLocalization::T("gridsearch.mode.title_search", "Title search — filters the loaded rows.");
+    }
+}
+
+// The pane's ONE search input. It carries the whole input range the removed global omnibox
+// used to: plain words filter the loaded rows as they are typed (GridSearchRowFilterText gates
+// that on the same classification), while a bare issue key or a structured query commits on
+// Enter. The Enter is only LATCHED here — drawGridPaneWindows replays it after the pane loop,
+// because a query apply re-runs the view and must not fire mid-table-submit.
+void DrawGridSearchBox(UiDrawSession& d, GridPane& pane) {
+    namespace gs = smatchet::gridsearch;
+    const gs::GridSearchInputKind kind =
+        gs::ClassifyGridSearchInput(pane.gridSearchBuf, gs::GridSearchBackendFromKey(pane.backendKey));
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(GridSearchModeGlyph(kind)); // falls back to text if the FA glyph is absent
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", GridSearchModeTooltip(kind));
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(260.0f);
+    // The placeholder distinguishes this ISSUE-search box from the command-search entry points
+    // (menu-bar box / Ctrl+Shift+P palette). The ##GridFilter id is unchanged: it is the
+    // grid-rendered probe several UI tests key on.
+    if (ImGui::InputTextWithHint(
+            "##GridFilter", SmatchetLocalization::T("gridsearch.hint", "Search issues: key, query, or title text"),
+            pane.gridSearchBuf, sizeof(pane.gridSearchBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+        d.paneDeferredActionPaneId = pane.id;
+        d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::GridSearchCommit;
+        d.paneDeferredSearchText.assign(pane.gridSearchBuf);
+    }
+    if (pane.gridSearchBuf[0] != '\0') {
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) {
+            pane.gridSearchBuf[0] = '\0';
+        }
+    }
+}
+
+// Left toolbar: new-pane "+", view selector combo, refresh button, search box, sort-by popup.
 void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                            const std::vector<TicketGridColumn>& columns, Views& viewState, bool embedded) {
     // Live-focus gate context (review MEDIUM-2): pane.focused is LAST frame's host
@@ -313,18 +377,9 @@ void DrawHeaderViewToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
         }
     }
 
-    // Quick Filter UI — per-pane buffer (Slice 2): each pane window filters alone.
+    // Search box — per-pane (Slice 2): each pane window searches alone.
     ImGui::SameLine(0, 30.0f);
-    ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::InputTextWithHint("##GridFilter", "Filter...", pane.gridFilterBuf, sizeof(pane.gridFilterBuf))) {
-        // Filter changed
-    }
-    if (pane.gridFilterBuf[0] != '\0') {
-        ImGui::SameLine();
-        if (ImGui::Button("Clear")) {
-            pane.gridFilterBuf[0] = '\0';
-        }
-    }
+    DrawGridSearchBox(d, pane);
 
     // Modern Sort By Popup UX
     if (activeViewForGrid) {

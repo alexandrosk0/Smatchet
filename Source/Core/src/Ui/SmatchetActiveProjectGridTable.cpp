@@ -236,7 +236,11 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
 
     // 2. Run Filter and rebuild pane.filteredIndices
     pane.filteredIndices.clear();
-    const std::string filter(pane.gridFilterBuf);
+    // Effective filter, not the raw box text: a ticket key / structured query in the box is a
+    // commit-on-Enter action, and substring-matching it against the rows would blank the grid
+    // (most visibly right after its Enter re-ran the view). GridSearchRowFilterText returns
+    // empty for those kinds, which TicketMatchesGridFilter treats as "match everything".
+    const std::string filter = GridSearchRowFilterText(pane);
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
@@ -251,7 +255,7 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
 
     // snprintf guarantees null-termination and avoids the strncpy
     // truncation warning when the source fills the buffer exactly.
-    std::snprintf(lastFilter, lastFilterCap, "%s", pane.gridFilterBuf);
+    std::snprintf(lastFilter, lastFilterCap, "%s", pane.gridSearchBuf);
 }
 
 // Mirror header-click sort changes back onto the active view definition, marking it
@@ -510,13 +514,13 @@ void DrawGridErrorState(ActiveProjectDrawCtx& ctx) {
 void DrawGridZeroResultsStrip(ActiveProjectDrawCtx& ctx, bool viewIsEmpty) {
     UiDrawSession& d = ctx.d;
     GridPane& pane = ctx.pane;
-    const bool filterActive = !viewIsEmpty && pane.gridFilterBuf[0] != '\0';
+    const bool filterActive = !viewIsEmpty && GridSearchFiltersRows(pane);
     ImGui::AlignTextToFramePadding();
     if (filterActive) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.state.filter_no_match", "No issues match the filter."));
         ImGui::SameLine();
         if (ImGui::SmallButton(SmatchetLocalization::T("grid.state.clear_filter", "Clear filter"))) {
-            pane.gridFilterBuf[0] = '\0';
+            pane.gridSearchBuf[0] = '\0';
         }
     } else {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("grid.state.no_results", "No issues match this view."));
@@ -577,8 +581,8 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
             return;
         }
         DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/true);
-    } else if (ctx.pane.filteredIndices.empty() && ctx.pane.gridFilterBuf[0] != '\0') {
-        // Loaded rows exist but the quick filter hides them all (filteredIndices lags one
+    } else if (ctx.pane.filteredIndices.empty() && GridSearchFiltersRows(ctx.pane)) {
+        // Loaded rows exist but the search box's filter hides them all (filteredIndices lags one
         // frame behind the projection rebuild inside the table — fine for a hint strip).
         DrawGridZeroResultsStrip(ctx, /*viewIsEmpty=*/false);
     }
@@ -719,7 +723,7 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     const TrackerFieldCatalogIndex& catalogIndex = ctx.catalogIndex;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
     const bool gridSortEnvironmentChanged = ctx.gridSortEnvironmentChanged;
-    char* lastFilter = pane.lastFilterBuf; // per-pane (was a SmatchetUI member; the filter is per-pane now)
+    char* lastFilter = pane.lastSearchBuf; // per-pane (was a SmatchetUI member; the filter is per-pane now)
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.sort");
     ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
@@ -781,7 +785,9 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         }
     }
 
-    bool filterChanged = (std::strcmp(lastFilter, pane.gridFilterBuf) != 0);
+    // Compare RAW box text: a change that only flips the classification (plain words gaining an
+    // "=") leaves the effective filter empty but must still rebuild the projection.
+    bool filterChanged = (std::strcmp(lastFilter, pane.gridSearchBuf) != 0);
     if (filterChanged) {
         pane.gridState.RectSel.ClearAll();
     }
@@ -811,7 +817,7 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     if (needsProjectionRefresh && okToRefreshProjection) {
         RebuildGridSortAndFilterProjection(pane, sortSpecs, tickets, columns, catalogIndex, fingerprint,
                                            activeTicketsRevision, catalogRevision, lastFilter,
-                                           sizeof(pane.lastFilterBuf));
+                                           sizeof(pane.lastSearchBuf));
     }
 }
 

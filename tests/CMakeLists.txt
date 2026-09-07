@@ -1035,12 +1035,12 @@ add_executable(SmatchetTests
     # SQLite-free. No threading surface, so the TSan rig loses nothing.
     Core/LinearMutationPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/LinearMutationPure.cpp"
-    # jql-omnibox plan Stream B slice 2c — pure omnibar input classifier
+    # pure grid-search input classifier
     # (Jql | TicketKey | TitleSearch). Header-only (Source/Core/include/Ui/
-    # OmnibarInputClassifier.h); reuses ExtractIssueKeyPrefix (ProjectResolver.cpp)
+    # GridSearchInputClassifier.h); reuses ExtractIssueKeyPrefix (ProjectResolver.cpp)
     # + ParseGitHubIssueKey (GitHubClientHelpers.cpp) — both already linked above,
     # so no new production TU.
-    Core/OmnibarInputClassifier.test.cpp
+    Core/GridSearchInputClassifier.test.cpp
     # docs/plans/shipped/log-a-bug-github.md Slice 2 — pure half of the bug-report
     # service (target/PAT resolution + markdown body) + redaction + censor. The
     # heavy half (BugReportService.cpp: cpr/host/AppController) is NOT linked here.

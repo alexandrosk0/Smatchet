@@ -203,7 +203,13 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // a request whose pane did not gain focus is dropped, never replayed.
     if (!d.paneDeferredActionPaneId.empty()) {
         if (d.paneDeferredActionPaneId == d.focusedPaneId) {
-            if (const ViewDefinition* active = ViewState.GetActiveView()) {
+            // The search-box commit runs OUTSIDE the active-view guard below: a ticket-key jump
+            // needs no view at all, and a query apply reports its own "no active view" toast.
+            if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::GridSearchCommit) {
+                if (GridPane* target = FindGridPaneById(d.gridPanes, d.paneDeferredActionPaneId)) {
+                    applyGridSearchEnter(app, d, *target, d.paneDeferredSearchText);
+                }
+            } else if (const ViewDefinition* active = ViewState.GetActiveView()) {
                 if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView) {
                     d.cfg.JqlQuery = active->Jql;
                     d.cfg.SelectedFields = active->Fields;
@@ -218,6 +224,7 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         }
         d.paneDeferredActionPaneId.clear();
         d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::None;
+        d.paneDeferredSearchText.clear();
     }
 
     // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes

@@ -758,7 +758,7 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // immutable content — their parsed plan is computed once + cached. Only
     // the streaming tail re-parses every frame.
     // Honor BeginChild's contract: when the history scroll-child is fully
-    // collapsed/clipped (e.g. the omnibar shrinks the assistant panel below the
+    // collapsed/clipped (e.g. a viewport side-bar shrinks the assistant panel below the
     // child's reserved height at small window sizes), BeginChild returns false
     // and sets SkipItems — every turn would otherwise render into a zero-height
     // clip rect, defeating the off-screen cull and paying per-turn hash + plan
@@ -1166,7 +1166,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // buffer actually differs — the panel redraws every frame, so an unconditional assign()
     // copies (and can reallocate) the std::string each frame even when nothing was typed. The
     // std::string vs const char* compare is allocation-free and skips the write in the steady
-    // state (same per-frame-alloc guard as the omnibar mirror).
+    // state (same per-frame-alloc guard as the grid search box's mirror).
     if (d.assistantInputBuf != s_inputCharBuf.data()) {
         d.assistantInputBuf.assign(s_inputCharBuf.data());
     }

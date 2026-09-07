@@ -1,19 +1,26 @@
 #pragma once
 
-// OmnibarInputClassifier — pure, header-only classifier for the global Chrome-
-// omnibox search bar (jql-omnibox plan, Stream B slice 2c). Given what the user
-// typed plus the focused pane's backend, it decides which of three actions Enter
-// should drive:
+// GridSearchInputClassifier — pure, header-only classifier for the grid header's
+// search box (formerly the global omnibox; the two search inputs were merged into
+// the per-pane box, see docs/plans). Given what the user typed plus the pane's
+// backend, it decides which of three actions Enter should drive:
 //   * TicketKey    — a bare issue key for the active backend ("PROJ-123",
 //                    "owner/repo#42"); Enter jumps to that ticket.
 //   * Jql          — a structured filter query (operators / grouping / field:value
-//                    / ORDER BY); Enter replaces the focused pane's view query.
-//   * TitleSearch  — plain words; Enter filters the focused pane's loaded rows.
+//                    / ORDER BY); Enter replaces the pane's view query.
+//   * TitleSearch  — plain words; Enter (and every keystroke) filters the pane's
+//                    loaded rows.
+
+// The classification ALSO gates the live row filter (see AppliesAsRowFilter): plain
+// words and a ticket key are matched against the loaded rows as they are typed, a
+// structured query never is. A half-typed query — or a query still sitting in the
+// box after its Enter re-ran the view — must not be matched as a substring against
+// the rows it just fetched, which would blank the grid.
 
 // No ImGui / no session state / no I/O — bucket-A testable in isolation
-// (tests/Core/OmnibarInputClassifier.test.cpp). Ticket-key shape detection reuses
+// (tests/Core/GridSearchInputClassifier.test.cpp). Ticket-key shape detection reuses
 // the single-source backend helpers (ExtractIssueKeyPrefix for Jira keys,
-// ParseGitHubIssueKey for GitHub keys) so the omnibar never re-implements key
+// ParseGitHubIssueKey for GitHub keys) so the search box never re-implements key
 // validation. Plane ids are project-scoped UUIDs with no typeable key shape, so
 // the Plane backend never yields TicketKey — it degrades to Jql / TitleSearch.
 
@@ -25,31 +32,31 @@
 #include <string>
 
 namespace smatchet {
-namespace omnibar {
+namespace gridsearch {
 
-/// The three omnibar actions Enter can drive. Defaults to TitleSearch — the
-/// safest fallback (a plain substring filter never mutates a saved view or opens
-/// a browser tab).
-enum class OmnibarInputKind { Jql, TicketKey, TitleSearch };
+/// The three actions the grid search box's Enter can drive. Defaults to TitleSearch
+/// — the safest fallback (a plain substring filter never mutates a saved view or
+/// opens a browser tab).
+enum class GridSearchInputKind { Jql, TicketKey, TitleSearch };
 
-/// Which backend the focused pane is bound to. Mirrors the three shipped
-/// backends (DefaultTrackerBackendFactory); only TicketKey detection branches on
-/// it. Unknown / empty keys default to Jira to match the factory's Jira-default.
-enum class OmnibarBackend { Jira, Plane, GitHub };
+/// Which backend the pane is bound to. Mirrors the three shipped backends
+/// (DefaultTrackerBackendFactory); only TicketKey detection branches on it. Unknown
+/// / empty keys default to Jira to match the factory's Jira-default.
+enum class GridSearchBackend { Jira, Plane, GitHub };
 
 /// Map a `GridPane::backendKey` (ConfigManager::NormalizeViewsBackendKey output:
 /// "Jira" / "Plane" / "GitHub") to the enum, case-insensitively. Unknown / empty
 /// → Jira (matches DefaultTrackerBackendFactory's fallback so a stale key still
 /// classifies sensibly). Pure.
-inline OmnibarBackend OmnibarBackendFromKey(const std::string& backendKey) {
+inline GridSearchBackend GridSearchBackendFromKey(const std::string& backendKey) {
     const std::string lower = ToLowerAsciiCopy(backendKey);
     if (lower == "plane") {
-        return OmnibarBackend::Plane;
+        return GridSearchBackend::Plane;
     }
     if (lower == "github") {
-        return OmnibarBackend::GitHub;
+        return GridSearchBackend::GitHub;
     }
-    return OmnibarBackend::Jira;
+    return GridSearchBackend::Jira;
 }
 
 /// True when `input` is a bare, whole-string issue key for `backend`. Reuses the
@@ -59,15 +66,15 @@ inline OmnibarBackend OmnibarBackendFromKey(const std::string& backendKey) {
 /// shape → always false. A multi-token query like "PROJ-123 AND status = Open"
 /// is NOT a bare key (the whole-string validators reject the spaces), so it falls
 /// through to the structured-query / title heuristics. Pure.
-inline bool LooksLikeTicketKey(const std::string& input, OmnibarBackend backend) {
+inline bool LooksLikeTicketKey(const std::string& input, GridSearchBackend backend) {
     switch (backend) {
-    case OmnibarBackend::Jira:
+    case GridSearchBackend::Jira:
         return !smatchet::ExtractIssueKeyPrefix(input).empty();
-    case OmnibarBackend::GitHub: {
+    case GridSearchBackend::GitHub: {
         smatchet::github::ParsedIssueKey parsed;
         return smatchet::github::ParseGitHubIssueKey(input, parsed);
     }
-    case OmnibarBackend::Plane:
+    case GridSearchBackend::Plane:
     default:
         return false;
     }
@@ -102,22 +109,30 @@ inline bool LooksLikeStructuredQuery(const std::string& input) {
 
 /// Classify trimmed `raw` for `backend`. Precedence: bare ticket key → structured
 /// query → title search. Empty / whitespace-only input → TitleSearch (a no-op
-/// filter, never a destructive view rewrite). Pure — the omnibar calls this both
-/// every frame (to pick the leading mode glyph) and on Enter (to route the
-/// action).
-inline OmnibarInputKind ClassifyOmnibarInput(const std::string& raw, OmnibarBackend backend) {
+/// filter, never a destructive view rewrite). Pure — the search box calls this to
+/// pick its leading mode glyph, to gate the live row filter, and on Enter to route
+/// the action.
+inline GridSearchInputKind ClassifyGridSearchInput(const std::string& raw, GridSearchBackend backend) {
     const std::string input = TrimCopyAsciiWhitespace(raw);
     if (input.empty()) {
-        return OmnibarInputKind::TitleSearch;
+        return GridSearchInputKind::TitleSearch;
     }
     if (LooksLikeTicketKey(input, backend)) {
-        return OmnibarInputKind::TicketKey;
+        return GridSearchInputKind::TicketKey;
     }
     if (LooksLikeStructuredQuery(input)) {
-        return OmnibarInputKind::Jql;
+        return GridSearchInputKind::Jql;
     }
-    return OmnibarInputKind::TitleSearch;
+    return GridSearchInputKind::TitleSearch;
 }
 
-} // namespace omnibar
+/// True when text of this kind filters the pane's LOADED rows as it is typed. Plain title
+/// text does, and so does a ticket key — typing one narrows the grid to that row, which is
+/// what the box did before the key/query modes arrived, and its Enter additionally jumps.
+/// A structured query does NOT: its text addresses the backend, not row content, and it
+/// stays in the box after its own Enter re-runs the view — matching it as a substring would
+/// hide every row that Enter just fetched. Pure.
+inline bool AppliesAsRowFilter(GridSearchInputKind kind) { return kind != GridSearchInputKind::Jql; }
+
+} // namespace gridsearch
 } // namespace smatchet

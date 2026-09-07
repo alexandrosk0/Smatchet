@@ -382,10 +382,6 @@ void SmatchetUI::Draw(AppController& app) {
     drawMobileRestoreDesktopIni(d);
 
     drawChromeAndModeToggles(app, d);
-    // Global Chrome-omnibox search bar (jql-omnibox plan, Stream B). Drawn after the chrome
-    // and before the docked windows so its BeginViewportSideBar(Up) strip shrinks the work
-    // area the grid panes dock into (mechanism A — no host/frame-loop edit).
-    drawOmnibar(app, d);
     DrainAppUpdateCheck(d);
     drawSecondaryWindows(app, d);
     // P4V-style bottom-panel gestures: splitter drag-to-hide + the drag-up reveal grip.
@@ -1198,7 +1194,7 @@ void SmatchetUI::userInfoAddToQuery(AppController& app, UiDrawSession& d, const 
     }
     // Per-backend key clause: Plane filter syntax vs Jira JQL.
     const std::string query = (target->backendKey == "plane") ? ("key:" + issueKey) : ("key = \"" + issueKey + "\"");
-    // Shared apply path (slice 2b) — same core the global omnibar drives. Each variant maps
+    // Shared apply path (slice 2b) — same core the grid search box drives. Each variant maps
     // to this command's own User-Info toast copy; UpdateFailed stays a silent no-op to match
     // the original behaviour (ViewState.UpdateActive false → no toast).
     switch (applyQueryToPaneView(app, d, *target, query)) {

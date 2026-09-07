@@ -1129,16 +1129,18 @@ const TranslationEntry kEntries[] = {
     {"toast.ai_prompt_from_lua_body", "A Lua script called ai.prompt — sending your AI context to %s.",
      u8"Un script Lua a appelé ai.prompt — envoi de votre contexte IA à %s."},
 
-    // Omnibar (global search bar).
+    // Grid header search box (one box per pane: key jump / query / title filter).
     {"toast.search", "Search", u8"Recherche"},
-    {"omnibar.no_active_view", "No active view to search — open a grid pane first.",
+    {"gridsearch.no_active_view", "No active view to search — open a grid pane first.",
      u8"Aucune vue active à rechercher — ouvrez d'abord un panneau de grille."},
-    {"omnibar.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
-    {"omnibar.mode.ticket_key", "Issue key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
-    {"omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.",
-     u8"Requête de filtre — Entrée remplace la requête de la vue active."},
-    {"omnibar.mode.title_search", "Title search — Enter filters the focused grid.",
-     u8"Recherche par titre — Entrée filtre la grille active."},
+    {"gridsearch.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
+    {"gridsearch.mode.ticket_key", "Issue key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
+    {"gridsearch.mode.jql", "Filter query — Enter replaces this view's query.",
+     u8"Requête de filtre — Entrée remplace la requête de cette vue."},
+    {"gridsearch.mode.title_search", "Title search — filters the loaded rows.",
+     u8"Recherche par titre — filtre les lignes chargées."},
+    {"gridsearch.hint", "Search issues: key, query, or title text",
+     u8"Rechercher des tickets : clé, requête ou texte du titre"},
 
     // UX critique pass 2 (UX_DESIGN_CRITIQUE.md §8) — confirmation guards, probe verdicts,
     // and feedback strings added by the pass-2 implementation.

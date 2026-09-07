@@ -452,25 +452,22 @@ class SmatchetUI {
     /// view query with a single-key lookup (bound into d.onUserInfoAddToQuery).
     void userInfoAddToQuery(AppController& app, UiDrawSession& d, const std::string& sourcePaneId,
                             const std::string& issueKey);
-    /// Global Chrome-omnibox-style search bar (jql-omnibox plan, Stream B). Reserved as a
-    /// top viewport side-bar (ImGui::BeginViewportSideBar) and drawn between the chrome and
-    /// the docked windows in Draw; drives the FOCUSED grid pane's view. Owns its own
-    /// JqlEditorState instance (d.omniJqlEditor) so its in-flight autocomplete request-ids
-    /// never collide with the dashboard editor's.
-    void drawOmnibar(AppController& app, UiDrawSession& d);
     /// Outcome of applyQueryToPaneView — each caller maps the variants to its own toast copy.
     enum class ApplyQueryResult { Ok, ViewUnavailable, UpdateFailed };
     /// Replaces the view owned by `target` with `query` and re-runs it, adopting that view's
     /// identity first if it isn't the active one. Mirrors the applied query into d.cfg.JqlQuery
-    /// and the dashboard JQL editor buffer. Shared core of userInfoAddToQuery + the omnibar.
+    /// and the dashboard JQL editor buffer. Shared core of userInfoAddToQuery + the grid
+    /// header's search box.
     ApplyQueryResult applyQueryToPaneView(AppController& app, UiDrawSession& d, GridPane& target,
                                           const std::string& query);
-    /// Routes a committed omnibar Enter against `target` per OmnibarInputClassifier (slice 2c,
-    /// sync v1): a bare ticket key jumps the pane (SetActiveIssue if the row is already loaded,
-    /// else opens the browse URL); a structured query drives applyQueryToPaneView; plain words
-    /// fill the pane's grid filter box. No network on the UI thread — the loaded-row check is a
-    /// snapshot membership test (an async existence-fetch is a deferred follow-up).
-    void applyOmnibarEnter(AppController& app, UiDrawSession& d, GridPane& target, const std::string& raw);
+    /// Routes a committed search-box Enter against `target` per GridSearchInputClassifier:
+    /// a bare ticket key jumps the pane (SetActiveIssue if the row is already loaded, else
+    /// opens the browse URL); a structured query drives applyQueryToPaneView; plain words are
+    /// already live in the row filter, so Enter is a no-op for them. No network on the UI
+    /// thread — the loaded-row check is a snapshot membership test (an async existence-fetch
+    /// is a deferred follow-up). Called from the pane host's deferred-action drain, never
+    /// mid-pane-draw (a query apply re-runs the view).
+    void applyGridSearchEnter(AppController& app, UiDrawSession& d, GridPane& target, const std::string& raw);
     void viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                               const std::string& id);
     void viewsCreateNewView(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
@@ -579,7 +576,7 @@ class SmatchetUI {
     /// promoting to members removes the statics so the section helpers stay reentrant-safe.
     struct ActiveProjectWindowState {
         char newViewNameBuf[128] = {}; // was `static char s_newViewName[128]`
-        // lastFilterBuf moved into GridPane (Slice 2) — the filter is per-pane state.
+        // lastSearchBuf moved into GridPane (Slice 2) — the search box is per-pane state.
         /// DR22 — the "Save as new..." button lives inside the ##UnsavedLayoutStrip child
         /// window, so OpenPopup issued there resolves to a different id than the parent-scope
         /// BeginPopupModal and the modal never appeared. This flag defers OpenPopup to the
