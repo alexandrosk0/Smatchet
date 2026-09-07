@@ -349,8 +349,11 @@ TEST_CASE("JiraClient::FetchUsersByAccountIds — a terminal page keeps inactive
 
 TEST_CASE("JiraClient::FetchUsersByAccountIds — a multi-page response is followed via startAt until isLast") {
     JiraCatalogHttpFixture fx;
-    // A server that clamps the page size below maxResults: page startAt=0 carries a1 with
-    // isLast:false; the follow-up page (startAt=128) carries a2 with isLast:true.
+    // A server that clamps the page size below maxResults (here: to ONE row per page). The
+    // handler is strict about the cursor: page startAt=0 carries a1 with isLast:false and the
+    // follow-up must ask for startAt=1 — the number of rows actually returned, not the
+    // requested page size (128). Any other offset answers an empty terminal page, so a client
+    // that jumps by the requested size loses a2 and fails the size check below (#2169).
     fx.ScriptHandler("/rest/api/3/user/bulk", [](const httplib::Request& req) {
         const std::string startAt = req.get_param_value("startAt");
         if (startAt == "0") {
@@ -360,11 +363,14 @@ TEST_CASE("JiraClient::FetchUsersByAccountIds — a multi-page response is follo
                                nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
                            })}};
         }
-        return nlohmann::json{
-            {"isLast", true},
-            {"values", nlohmann::json::array({
-                           nlohmann::json{{"accountId", "a2"}, {"displayName", "Bob"}, {"active", true}},
-                       })}};
+        if (startAt == "1") {
+            return nlohmann::json{
+                {"isLast", true},
+                {"values", nlohmann::json::array({
+                               nlohmann::json{{"accountId", "a2"}, {"displayName", "Bob"}, {"active", true}},
+                           })}};
+        }
+        return nlohmann::json{{"isLast", true}, {"values", nlohmann::json::array()}};
     });
     JiraClient client;
     const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1", "a2"});
@@ -372,6 +378,52 @@ TEST_CASE("JiraClient::FetchUsersByAccountIds — a multi-page response is follo
     CHECK(res.value().size() == 2);
     // Both pages fetched, then the isLast:true page terminated the loop.
     CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 2);
+}
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — startAt advances by the RAW page size, filtered rows included") {
+    JiraCatalogHttpFixture fx;
+    // The server's cursor indexes ITS rows. A page whose rows are all dropped client-side (a
+    // duplicate of an id already seen, a row with no accountId) must still advance the cursor
+    // by the rows the server sent, or the next request re-asks the same offset.
+    fx.ScriptHandler("/rest/api/3/user/bulk", [](const httplib::Request& req) {
+        const std::string startAt = req.get_param_value("startAt");
+        if (startAt == "0") {
+            return nlohmann::json{
+                {"isLast", false},
+                {"values", nlohmann::json::array({
+                               nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
+                               nlohmann::json{{"accountId", "a1"}, {"displayName", "AliceDup"}, {"active", true}},
+                               nlohmann::json{{"displayName", "NoId"}, {"active", true}},
+                           })}};
+        }
+        if (startAt == "3") {
+            return nlohmann::json{
+                {"isLast", true},
+                {"values", nlohmann::json::array({
+                               nlohmann::json{{"accountId", "a2"}, {"displayName", "Bob"}, {"active", true}},
+                           })}};
+        }
+        return nlohmann::json{{"isLast", true}, {"values", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1", "a2"});
+    REQUIRE(res.has_value());
+    CHECK(res.value().size() == 2);
+    CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 2);
+}
+
+TEST_CASE("JiraClient::FetchUsersByAccountIds — an empty page without isLast ends the chunk instead of looping") {
+    JiraCatalogHttpFixture fx;
+    // A misbehaving server: no rows and no terminal marker. Re-asking the same offset can only
+    // repeat the answer, so the chunk stops after that one page.
+    fx.ScriptHandler("/rest/api/3/user/bulk", [](const httplib::Request&) {
+        return nlohmann::json{{"isLast", false}, {"values", nlohmann::json::array()}};
+    });
+    JiraClient client;
+    const auto res = client.FetchUsersByAccountIds(fx.Config(), {"a1"});
+    REQUIRE(res.has_value());
+    CHECK(res.value().empty());
+    CHECK(fx.RequestCount("/rest/api/3/user/bulk") == 1);
 }
 
 TEST_CASE("JiraClient::FetchUsersByAccountIds — non-200 maps the status") {
