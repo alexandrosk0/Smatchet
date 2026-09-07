@@ -39,7 +39,10 @@ std::string UnquoteValueToken(const std::string& text);
 /// when the name needs it. Ids anywhere else — non-user fields, cf[…] clauses, function
 /// arguments, the ORDER BY tail — stay byte-for-byte, and an id whose display name is
 /// shared by another account stays as the id, so the editor only ever shows a rewrite the
-/// reverse mapping can undo. Like RenderQueryWithAccountIds, `users` must be ONE merged
+/// reverse mapping can undo. For the same reason a name colliding with a JQL keyword
+/// (`Empty`, `And`, `Order`, …) is always emitted QUOTED — bare, the reverse walk would read
+/// it as the keyword — and an id-shaped display name (which that walk refuses in either
+/// quoting) keeps the id on screen. Like RenderQueryWithAccountIds, `users` must be ONE merged
 /// vector (catalog + search-resolved) — name uniqueness is judged across all known users
 /// at once. Empty `fields` rewrites nothing (fail-safe). `outReplaced`, when non-null,
 /// receives the substitution count.
