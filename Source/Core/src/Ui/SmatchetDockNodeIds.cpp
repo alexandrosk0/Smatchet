@@ -58,6 +58,22 @@ ImGuiID EnsureDockSlotAlive(ImGuiID slot) {
     return slot;
 }
 
+bool DockNodeIsWithinSlot(ImGuiID nodeId, ImGuiID slot) {
+    if (nodeId == 0 || slot == 0 || ImGui::GetCurrentContext() == nullptr) {
+        return false;
+    }
+    // A dock tree is shallow in practice; the bound only guards against a corrupt parent chain.
+    constexpr int kMaxDepth = 64;
+    const ImGuiDockNode* node = ImGui::DockBuilderGetNode(nodeId);
+    for (int depth = 0; node != nullptr && depth < kMaxDepth; ++depth) {
+        if (node->ID == slot) {
+            return true;
+        }
+        node = node->ParentNode;
+    }
+    return false;
+}
+
 void DockNextWindowOnFirstUse(ImGuiID slot) {
     const ImGuiID live = EnsureDockSlotAlive(slot);
     if (live == 0 || ImGui::IsMouseDown(0) || ImGui::IsMouseReleased(0)) {
