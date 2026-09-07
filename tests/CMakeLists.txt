@@ -102,9 +102,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/PlaneQuerySuggestEnginePure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerQuerySuggestCommon.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
-        # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — matches
-        # a person's name against any user-type field (assignee/reporter/watchers/custom),
-        # not just id/summary. Links the same TrackerQuerySuggestCommon closure above.
+        # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — full-text
+        # match over the ticket id + every flattened field value (user fields arrive as display
+        # names, never account ids). StringUtil.h-only, no extra closure to link.
         Core/TicketGridFilterPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/TicketGridFilterPure.cpp"
         # Gap map Tier 1 #6 — the merge-watch notify endpoint's request-validation core
@@ -763,9 +763,9 @@ add_executable(SmatchetTests
     # TicketGridModel.cpp (whose render-plan/column-builder code pulls the ImGui-coupled grid
     # draw headers). ImGui-free after the split, so tests link it without those deps.
     Core/TicketGridSortPure.test.cpp
-    # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — matches
-    # a person's name against any user-type field (assignee/reporter/watchers/custom), not
-    # just id/summary. Links the same TrackerQuerySuggestCommon closure linked below.
+    # Grid text-filter predicate lifted out of SmatchetActiveProjectGridTable.cpp — full-text
+    # match over the ticket id + every flattened field value (user fields arrive as display
+    # names, never account ids). StringUtil.h-only, no extra closure to link.
     Core/TicketGridFilterPure.test.cpp
     # Ticket-grid column display-order consistency + visual-order permutation predicates,
     # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over

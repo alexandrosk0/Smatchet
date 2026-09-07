@@ -239,8 +239,7 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
     auto checkMatch = [&](size_t idx) {
         if (idx >= tickets.size())
             return false;
-        return TicketMatchesGridFilter(tickets[idx], pane.gridFilterBuf,
-                                       [&](const std::string& fieldId) { return catalogIndex.Find(fieldId); });
+        return TicketMatchesGridFilter(tickets[idx], pane.gridFilterBuf);
     };
 
     for (size_t idx : pane.cachedSortedIndices) {
