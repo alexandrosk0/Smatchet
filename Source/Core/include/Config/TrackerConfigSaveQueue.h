@@ -9,10 +9,10 @@
 // cannot be ordered by the read-modify-write mutex alone — it makes each write atomic, not
 // correctly SEQUENCED. The losing interleaving was not narrow:
 //
-//   1. the UI enqueues snapshot S1 (the worker wakes and blocks on the RMW mutex);
-//   2. the UI then runs a synchronous `ConfigManager::Save(S2)` carrying a LATER change;
+//   1. the UI enqueues snapshot S1, so the worker wakes and blocks on the RMW mutex
+//   2. the UI then runs a synchronous `ConfigManager::Save(S2)` carrying a LATER change
 //   3. the worker takes the lock the moment step 2 releases it and writes the stale S1,
-//      silently reverting step 2 — visible to the user only on the next launch.
+//      silently reverting step 2 — visible to the user only on the next launch
 //
 // The fix is to give the queued snapshot exactly one place it can be written from: INSIDE the RMW
 // critical section, immediately before the caller's own image. `ConfigManager::Save` (and
