@@ -11,6 +11,40 @@
 > auto-fixed. User-visible product defects should be elevated to GitHub Issues
 > (ADR-0014); the rest is tech-debt. Newest batch on top.
 
+## Batch 25 — #2160–#2161 + #2176–#2179 (6-PR sweep, 2026-09-06)
+
+Coverage: **6 reviewed — 5 with findings, 1 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 3 MEDIUM, 5 LOW** (8 findings, 1 `userVisible`). **The frontier is now #1–#2179 contiguous for PRs merged as of 2026-09-06; the next sweep resumes from #2180 — plus #2151 and #2164, the two PRs still open below the frontier at sweep time (late-merge rule below).** Reviewer agents inherited the session model; 6/6 returned, ~0.48M tokens, ~4 min.
+
+**Two computed ranges, not one.** #2160 and #2161 were open PRs when Batch 24 swept [2160, 2175] and merged into that frontier afterwards (#2161 ~1h40m after Batch 24 landed, #2160 on 2026-09-06) — Batch 24's "resume from #2176" pointer would have skipped both forever. The work-list therefore came from two `historical-review-worklist.sh --json --merged-list` runs against the GitHub merged list: `--range 2160 2161` → *{authoritative: 2, scraped: 2, missed: [], covered: 2, units: 2}* and `--range 2176 2179` → *{authoritative: 4, scraped: 4, missed: [], covered: 4, units: 4}*. #2162–#2175 were already covered by Batch 24; #2180–#2185 are open PRs at sweep time and belong to the next batch. No merge-commit PRs, so no constituent expansion.
+
+> **Late-merge rule (new, closes this batch's own #2177 finding):** a frontier is only contiguous for PRs that were *merged* when the sweep ran; a PR numbered below the frontier but still open can merge later and would never be enumerated by a `frontier+1` work-list. So every batch must **name the PRs still open below its frontier**, and the next sweep must check each one against the GitHub merged list and add it (as its own `--range N N` unit) when it has merged. Open below the frontier at this sweep: **#2151** (bot/plan-locks-sync) and **#2164** (test-gate-selftests Windows false-red). #2180–#2185 are outside the range and belong to the next batch regardless.
+>
+> **Young-slice caveat (fourth consecutive batch):** #2176–#2179 merged 7 days before the sweep and #2178 the same day, so ~0 lines are superseded on those; only #2179 (85/222 alive) carries real "survived N later PRs" evidence.
+
+The headline is a **user-visible round-trip break in the JQL display-name rewrite** (#2176): a single-word display name that is a JQL keyword (`Empty`, `And`, `In`, …) or is id-shaped is inserted bare and refused by the reverse walk, so the saved / sent query silently loses the account id — elevated per ADR-0014 to **Issue #2186**. The other seven findings are internal debt: the stale resume pointer this batch corrects (#2177), a plan + ADR citing a script path that never existed (#2160), two pre-broken roadmap links and a ledger line contradicting its own PR (#2161), and a dead grep alternation in a process ledger entry (#2179). #2178's 37-file DRY consolidation was verified helper-by-helper against the removed per-TU copies and is clean.
+
+### Actionable set — CRITICAL / HIGH / every `userVisible` finding (1)
+
+Full problem + fix. Everything below this block is one-line; the complete structured set, fixes included, is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl).
+
+**MEDIUM (1)**
+- **#2176 (17aa5c63) · `Source/Core/src/Tracker/JqlUserDisplayPure.cpp:330`** · **userVisible** — `RenderQueryWithUserNames` emits `InsertForValueToken(name)`, which leaves a display name BARE when it is made only of id-chars, but never checks that the bare token survives the inverse walk. `RenderQueryWithAccountIds` classifies a bare token as a keyword before it reaches `mapUserValue` (`IsClauseBreakKeyword` / `IsValuePositionKeyword` at lines 225/233 precede the `inUserValue` branch at 239), and the name→id lambda refuses anything `LooksLikeAccountId` (line 376). Verified with a harness against HEAD: a user named "Empty" turns `assignee = 5b10ac8d82e05b22cc7d4ef5` into `assignee = Empty`, and the reverse map returns it unchanged → the view of record / wire query silently becomes an unassigned filter; a user named "And" yields `assignee = And AND project = X` (JQL syntax error); a UUID-shaped display name is likewise never mapped back. The round-trip guard at line 327 checks only name uniqueness, violating the header contract (`JqlUserDisplayPure.h:36-42`) that the editor only shows a rewrite the reverse mapping can undo. **Fix:** in the id→name lambda refuse the rewrite when `!QueryValueNeedsQuotes(name)` and the lowered name is a clause-break / value-position keyword, or when `LooksLikeAccountId(name)`; or force-quote such names via `QueryQuotedValue` (a quoted token bypasses the keyword checks), keeping the id-shape refusal. Add tests for "Empty", "And" and a UUID-shaped name asserting `RenderQueryWithAccountIds(RenderQueryWithUserNames(q)) == q`. → **Issue #2186**.
+
+### Internal debt — 2 MEDIUM + 5 LOW, indexed by file
+
+All `userVisible:false`. Listed per file rather than per finding — the full problem + fix for every row below is in [`historical-review-findings-2026-08-16.jsonl`](historical-review-findings-2026-08-16.jsonl), keyed by `pr` + `file` + `line`.
+
+- `docs/self-improvement/historical-review-findings.md` — 1 MEDIUM — #2177:684 — **closed by this batch** (resume pointer corrected + late-merge rule above)
+- `docs/plans/active/agent-surface-extraction-repo.md` — 1 MEDIUM — #2160:69
+- `docs/adr/0025-agent-surface-extraction-submodule.md` — 1 LOW — #2160:13
+- `docs/guides/testing-surface.md` — 2 LOW — #2161:151, #2161:192
+- `docs/self-improvement/categories/infra.md` — 1 LOW — #2161:15
+- `docs/self-improvement/categories/process/2026-08-30-cr-gate-auto-nudge-is-bot-authored-so-coderabbit-ignores-it.md` — 1 LOW — #2179:39
+
+**Clean (1, surviving lines read in full, no findings):** #2178.
+
+**Fully superseded (0, no review surface):**  — every introduced line was changed or removed by a later PR; excluded by construction.
+
 ## Batch 24 — #2160–#2175 (6-PR sweep, 2026-08-29)
 
 Coverage: **6 reviewed — 4 with findings, 2 clean, 0 fully superseded, 0 errored, 0 died.** Net: **0 CRITICAL, 0 HIGH, 3 MEDIUM, 2 LOW** (5 findings, 0 `userVisible`). **The frontier is now #1–#2175 contiguous; the next sweep resumes from #2176.** Reviewer agents inherited the session model; 6/6 returned, ~0.42M tokens, ~3 min.
@@ -681,8 +715,17 @@ PRs or GitHub Issues per ADR-0014. Each item verified still-alive at
   Batch 22 (#2033–#2041) is the first batch whose work-list was **computed** by
   `historical-review-worklist.sh` rather than asserted — its coverage line is the
   gate's own triple.
-  **2026-08-29 — frontier now #1–#2175 (Batches 23 + 24); the next sweep resumes
-  from #2176.** Build the work-list with `historical-review-worklist.sh --json`: the
+  ~~**2026-08-29 — frontier now #1–#2175 (Batches 23 + 24); the next sweep resumes
+  from #2176.**~~ Corrected 2026-09-06: #2160/#2161 were open at that sweep and
+  merged into the claimed frontier afterwards (Batch 25's #2177 finding).
+  **2026-09-06 — frontier now #1–#2179 (Batch 25) for PRs merged as of that date;
+  the next sweep resumes from #2180 AND must check #2151 / #2164** — the PRs
+  still open below the frontier at sweep time — against the GitHub merged list,
+  adding each as its own `--range N N` unit once merged. A frontier is only
+  contiguous for PRs merged when the sweep ran, so every batch names the open
+  PRs below its frontier and the next one re-checks them, never trusting
+  frontier+1 alone (§ Batch 25 late-merge rule).
+  Build the work-list with `historical-review-worklist.sh --json`: the
   object it emits carries the computed coverage triple alongside the units, and
   passing that whole object as the sweep workflow's `args` makes the workflow
   RETURN the triple (`result.coverage`) — quote that in the batch header, never
