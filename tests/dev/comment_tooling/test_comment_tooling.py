@@ -93,6 +93,17 @@ check("// custom-deleter" in new_text, "trailing protect marker on code line KEP
 check("SMATCHET_DEVIATION" in new_text, "SMATCHET_DEVIATION suppressor KEPT")
 check("// oldCall(arg);" in new_text, "commented-out code KEPT in Wave 1 (flag-only)")
 check("} // namespace Foo" in new_text, "namespace-close nav label KEPT")
+# A bare `///` is doc structure: the mechanical stripper must never delete it (it would
+# silently reflow a `///` block into one wall of text). The audit gate still flags a RUN.
+doc_text, doc_removed = strip.strip_file_text(
+    "/// Doc paragraph one.\n///\n/// Doc paragraph two.\nint z = 0;\n")
+check(doc_removed == [] and "///\n" in doc_text, "bare /// doc separator NOT stripped")
+check(audit.is_allowed_blank_separator(
+    ["/// Doc paragraph one.", "///", "/// Doc paragraph two."], 2),
+    "lone bare /// between doc text lines is an allowed separator")
+check(not audit.is_allowed_blank_separator(
+    ["/// one", "///", "///", "/// two"], 2),
+    "a run of 2+ bare /// is NOT an allowed separator")
 # the load-bearing proof: stripping changed ONLY comments
 check(cl.code_token_residue(SRC) == cl.code_token_residue(new_text),
       "code-token residue byte-identical before/after strip")
@@ -109,6 +120,13 @@ cases = [
     ("/* PILLAR2_WORKER_ONLY */", "protect"),
     ("} // namespace Foo", "protect"),
     ("/// returns the count", "judge-apidoc"),
+    # A BARE `///` is the paragraph break of a `///` doc block, not a decorative divider:
+    # bucketed with the bare `//` so a lone one is an allowed intra-block separator.
+    ("///", "cut-blank"),
+    ("    ///", "cut-blank"),
+    # Exactly-three-slashes only: a `////`+ run stays a decorative banner.
+    ("////", "cut-decorative"),
+    ("//////////////", "cut-decorative"),
     # PR #1112 regression: a BARE Javadoc/Doxygen doc-block opener on its own line is a doc
     # comment, NOT a decorative divider (DECORATIVE_RE would otherwise eat the second '*').
     ("/**", "judge-apidoc"),
