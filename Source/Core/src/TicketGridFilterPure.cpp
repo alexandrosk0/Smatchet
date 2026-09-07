@@ -1,27 +1,91 @@
-// Pure grid text-filter predicate — see TicketGridFilterPure.h for the contract. Moved
-// verbatim out of SmatchetActiveProjectGridTable.cpp's checkMatch lambda; behaviour is
-// unchanged except that the match now also covers user-type fields beyond "summary".
+// Pure grid text-filter predicate — see TicketGridFilterPure.h for the contract.
 
 #include "TicketGridFilterPure.h"
 
-#include "StringUtil.h"
-#include "Tracker/TrackerQuerySuggestCommon.h"
+#include <cstddef>
 
-bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter,
-                             const std::function<const TrackerField*(const std::string&)>& fieldMetaLookup) {
+namespace {
+
+// A raw JSON payload only reaches fieldValues as nlohmann's compact dump (the attachment list
+// the grid parses itself, or the unrecognized-object fallback). A dump of a non-empty object
+// or array opens with a quote-or-brace pair AND closes with the matching bracket as its last
+// byte; an empty one is exactly two bytes. Checking both ends keeps bracketed prose such as
+// "[]. release notes" or "[Bug] crash" searchable.
+bool IsRawJsonDump(const std::string& s) {
+    const std::size_t n = s.size();
+    if (n < 2) {
+        return false;
+    }
+    const char first = s[0];
+    const char second = s[1];
+    const char last = s[n - 1];
+    if (n == 2) {
+        return (first == '{' && second == '}') || (first == '[' && second == ']');
+    }
+    if (first == '{') {
+        return second == '"' && last == '}';
+    }
+    if (first == '[') {
+        return (second == '{' || second == '"') && last == ']';
+    }
+    return false;
+}
+
+unsigned char FoldAscii(unsigned char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<unsigned char>(c - 'A' + 'a') : c;
+}
+
+std::string FoldAsciiCopy(const std::string& s) {
+    std::string out(s);
+    for (char& c : out) {
+        c = static_cast<char>(FoldAscii(static_cast<unsigned char>(c)));
+    }
+    return out;
+}
+
+// This runs per keystroke over every field of every cached ticket, so the fold must stay a
+// compare-and-subtract: std::search with a std::tolower comparator pays two locale calls per byte.
+bool ContainsFolded(const std::string& haystack, const std::string& needleLower) {
+    const std::size_t n = needleLower.size();
+    const std::size_t h = haystack.size();
+    if (n == 0) {
+        return true;
+    }
+    if (h < n) {
+        return false;
+    }
+    const unsigned char first = static_cast<unsigned char>(needleLower[0]);
+    for (std::size_t i = 0; i + n <= h; ++i) {
+        if (FoldAscii(static_cast<unsigned char>(haystack[i])) != first) {
+            continue;
+        }
+        std::size_t k = 1;
+        while (k < n &&
+               FoldAscii(static_cast<unsigned char>(haystack[i + k])) == static_cast<unsigned char>(needleLower[k])) {
+            ++k;
+        }
+        if (k == n) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
+bool TicketMatchesGridFilter(const CachedTicket& ticket, const std::string& filter) {
     if (filter.empty()) {
         return true;
     }
-    if (ContainsCaseInsensitive(ticket.id, filter)) {
-        return true;
-    }
-    if (ContainsCaseInsensitive(ticket.GetFieldValue("summary"), filter)) {
+    const std::string needle = FoldAsciiCopy(filter);
+    if (ContainsFolded(ticket.id, needle)) {
         return true;
     }
     for (const auto& fieldEntry : ticket.fieldValues) {
-        const TrackerField* meta = fieldMetaLookup ? fieldMetaLookup(fieldEntry.first) : nullptr;
-        if (meta && tracker_query_suggest::IsQueryUserField(*meta) &&
-            ContainsCaseInsensitive(fieldEntry.second, filter)) {
+        if (IsRawJsonDump(fieldEntry.second)) {
+            continue;
+        }
+        if (ContainsFolded(fieldEntry.second, needle)) {
             return true;
         }
     }
