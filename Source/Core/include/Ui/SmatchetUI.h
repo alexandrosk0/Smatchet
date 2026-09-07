@@ -487,6 +487,12 @@ class SmatchetUI {
     // loop (min 1 pane survives), and debounce-saves the panes file. Defined in
     // SmatchetGridPaneWindows.cpp.
     void drawGridPaneWindows(AppController& app, UiDrawSession& d);
+    /// Consume the one-frame {paneId, kind} deferred pane-action latch (search-box Enter,
+    /// "Refresh View", "+ New Issue"). Called by BOTH hosts after their draw — the desktop
+    /// pane loop and the mobile embedded grid, whose shell never runs drawGridPaneWindows.
+    /// A latch left undrained would not just be dropped: it is session state, so a later
+    /// desktop frame would apply it stale.
+    void drainPaneDeferredActions(AppController& app, UiDrawSession& d);
     // Per-frame steady-state sync for the focused pane: follows the active view
     // (viewId/title), and on a focus SWITCH activates the pane's view + lets the
     // sync path swap the backend (Slice-2: one live context, focused pane drives it).

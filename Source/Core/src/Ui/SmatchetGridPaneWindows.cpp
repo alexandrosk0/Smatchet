@@ -199,8 +199,35 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // Deferred toolbar actions ({paneId, kind} latch — review MEDIUM-2, extended to
     // "+ New Issue" by plan item 19): a click in a not-yet-focused pane is applied
     // HERE, after the focus/view switch above landed, so the action targets the
-    // clicked pane's view/context — not the previously focused pane's. Consume-once:
-    // a request whose pane did not gain focus is dropped, never replayed.
+    // clicked pane's view/context — not the previously focused pane's.
+    drainPaneDeferredActions(app, d);
+
+    // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
+    // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
+    // faster and could dequeue an edit during a non-focused pane's call, snapshotting
+    // estimate bases from that pane's FROZEN ticket snapshot. The pump reads the
+    // focused pane's live snapshot.
+    {
+        const bool readOnlyMode =
+            d.cfg.ReadOnlyMode || (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+        static const std::vector<CachedTicket> kNoTickets;
+        const GridPane& focused = d.focusedPane();
+        const std::vector<CachedTicket>& pumpTickets = focused.ticketsSnapshot ? *focused.ticketsSnapshot : kNoTickets;
+        PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
+    }
+
+    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {
+        SmatchetGridPaneWindows::MarkPanesDirty(d);
+    }
+    SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);
+}
+
+// Consume-once drain of the {paneId, kind} deferred pane-action latch. Both hosts call this
+// after their draw: the desktop pane loop (once the focus/view switch has landed, so the
+// action targets the clicked pane's context) and the mobile embedded grid. A request whose
+// pane did not gain focus is dropped, never replayed — and the latch is always cleared, so a
+// mobile-latched action can never surface stale on a later desktop frame.
+void SmatchetUI::drainPaneDeferredActions(AppController& app, UiDrawSession& d) {
     if (!d.paneDeferredActionPaneId.empty()) {
         if (d.paneDeferredActionPaneId == d.focusedPaneId) {
             // The search-box commit runs OUTSIDE the active-view guard below: a ticket-key jump
@@ -226,25 +253,6 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::None;
         d.paneDeferredSearchText.clear();
     }
-
-    // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
-    // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
-    // faster and could dequeue an edit during a non-focused pane's call, snapshotting
-    // estimate bases from that pane's FROZEN ticket snapshot. The pump reads the
-    // focused pane's live snapshot.
-    {
-        const bool readOnlyMode =
-            d.cfg.ReadOnlyMode || (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
-        static const std::vector<CachedTicket> kNoTickets;
-        const GridPane& focused = d.focusedPane();
-        const std::vector<CachedTicket>& pumpTickets = focused.ticketsSnapshot ? *focused.ticketsSnapshot : kNoTickets;
-        PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
-    }
-
-    if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {
-        SmatchetGridPaneWindows::MarkPanesDirty(d);
-    }
-    SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);
 }
 
 // Focused-pane <-> active-view reconciliation. Two directions:
