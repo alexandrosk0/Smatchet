@@ -171,13 +171,12 @@ bool IsValuePositionKeyword(const std::string& tokenLowered) {
 /// bare token is claimed by `IsClauseBreakKeyword` / `IsValuePositionKeyword` before it ever
 /// reaches the name→id mapping, stranding a user called `Empty` or `And` as a keyword the
 /// inverse never undoes. Both keyword checks are skipped for a quoted token, so force-quote
-/// such a name.
-std::string InsertForUserDisplayName(const std::string& name) {
+/// such a name. `nameLowered` is `AsciiLowered(name)`, already computed by the caller.
+std::string InsertForUserDisplayName(const std::string& name, const std::string& nameLowered) {
     const std::string insert = tracker_query_suggest::InsertForValueToken(name);
     if (!insert.empty() && insert[0] == '"') {
         return insert; // already quoted: bypasses the keyword classification
     }
-    const std::string nameLowered = AsciiLowered(name);
     if (IsClauseBreakKeyword(nameLowered) || IsValuePositionKeyword(nameLowered)) {
         return tracker_query_suggest::QueryQuotedValue(name);
     }
@@ -346,10 +345,11 @@ std::string RenderQueryWithUserNames(const std::string& query, const std::vector
                                       // exactly this id across `users` — a display name shared by
                                       // two accounts would strand the precise id as an ambiguous
                                       // literal name the inverse refuses at apply.
-                                      if (UniqueAccountIdForName(AsciiLowered(name), users) != token) {
+                                      const std::string nameLowered = AsciiLowered(name);
+                                      if (UniqueAccountIdForName(nameLowered, users) != token) {
                                           return std::string();
                                       }
-                                      return InsertForUserDisplayName(name);
+                                      return InsertForUserDisplayName(name, nameLowered);
                                   });
 }
 
