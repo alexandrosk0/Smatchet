@@ -36,6 +36,7 @@
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h" // SmatchetActiveUiTestAppController
+#include "SmatchetToast.h"                     // SmatchetToastManager — clear the overlay before interacting
 #include "SmatchetUiSession.h"                 // UiDrawSession, MarkPrefsDirty, g_ui
 #include "Ui/SmatchetLayoutBreakpoints.h"      // smatchet::ui::kNarrowLayoutWidthPx
 
@@ -103,6 +104,15 @@ struct UserInfoStateGuard {
 // sibling OpenPreferences recipe). An empty source-pane id resolves to the focused context
 // (paneContextOrFocused_), so the window always has a valid backend to adopt against.
 bool OpenUserInfoLive(ImGuiTestContext* ctx) {
+    // Clear any toast still on screen from an EARLIER test in the run (#2199). A live toast
+    // pins an invisible hit-test window over its rect and brings it to the display front
+    // (SmatchetToast.cpp, the P2-H6 input-capture guarantee), and that window is NoMove — so
+    // when the engine tries to "make space to click" for a drag underneath it, the move fails
+    // and the interaction fails with it. Whether a stale toast is still up depends on toast
+    // lifetime (Push defaults to 4000 ms) versus how long the preceding tests took on this
+    // runner, which is why it presented as a runner-speed-dependent red. History is untouched,
+    // so the Notification Center's own coverage is unaffected.
+    SmatchetToastManager::Instance().DismissAllLive();
     g_ui.userInfoSourcePaneId = "main"; // the default focused pane id
     g_ui.userInfoDisplayName = "Test User";
     g_ui.userInfoEmail = "test.user@example.com";
@@ -286,6 +296,11 @@ void RegisterNarrowLayoutRenders(ImGuiTestEngine* engine) {
         if (win == nullptr) {
             return;
         }
+        // Re-clear the overlay immediately before the drag (#2199): opening the window launches
+        // the identity/VCS fetches, and a failing one raises a STICKY error toast that never
+        // expires — so the clear in OpenUserInfoLive alone is not enough to guarantee the resize
+        // grip is reachable. This is the one interaction in the file that drives a real drag.
+        SmatchetToastManager::Instance().DismissAllLive();
         // "//" absolute ref — the docked window name dangles under the current SetRef otherwise.
         ctx->WindowResize("//User Info", ImVec2(360.0f, 480.0f));
         // Tick several frames so every always-on section renders under the narrow branch. The
