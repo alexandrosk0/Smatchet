@@ -6,7 +6,7 @@
 // clang-format on
 #include "GridPane.h"
 #include "GridSearchInputClassifier.h"
-#include "SmatchetAutocompleteUi.h" // TrackerQueryAcp_QueryWithAccountIds (Jira name→accountId)
+#include "Tracker/JqlUserDisplayPure.h" // RenderQueryWithAccountIds (Jira name→accountId)
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -92,13 +92,20 @@ void SmatchetUI::applyGridSearchEnter(AppController& app, UiDrawSession& d, Grid
     default:
         break;
     }
-    // The editor buffer holds display names on Jira — apply the id-canonical form so the
-    // view of record and the backend both see accountIds. Gate on the PANE's backend (the
-    // search box is per-pane; d.cfg.TrackerType may describe a different pane's backend).
-    // The dashboard editor supplies the search-resolved user list the reverse map needs.
+    // The box holds display names on Jira — apply the id-canonical form so the view of record
+    // and the backend both see accountIds. Gate on the PANE's backend (the search box is
+    // per-pane; d.cfg.TrackerType may describe a different pane's backend).
+    //
+    // Resolve against the app-owned catalog ALONE, via the pure mapper rather than the
+    // TrackerQueryAcp_ wrapper: that wrapper folds in a JqlEditorState's retained
+    // search-resolved users, and the only editor left to borrow is the dashboard's, whose
+    // list is never cleared on a view load. Names it resolved for another pane's backend
+    // could map this pane's query to a stale account. The search box has no autocomplete and
+    // so resolves no users of its own, making that list pure contamination with nothing to
+    // gain — the catalog is exactly what this pane knows.
     const std::string query = backend == gs::GridSearchBackend::Jira
-                                  ? TrackerQueryAcp_QueryWithAccountIds(app.GetAvailableFields(),
-                                                                        app.GetAvailableUsers(), d.viewJqlEditor, input)
+                                  ? jql_user_display::RenderQueryWithAccountIds(input, app.GetAvailableFields(),
+                                                                                app.GetAvailableUsers(), nullptr)
                                   : input;
     switch (applyQueryToPaneView(app, d, target, query)) {
     case ApplyQueryResult::Ok:

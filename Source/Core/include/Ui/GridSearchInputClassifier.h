@@ -80,6 +80,25 @@ inline bool LooksLikeTicketKey(const std::string& input, GridSearchBackend backe
     }
 }
 
+/// True when `haystack` contains `phrase` as a whole-word span: matched
+/// case-SENSITIVELY, with a non-alphanumeric boundary (or the string edge) on
+/// both sides. The boundary check is what keeps "THIS EMPTY grid" from matching
+/// "IS EMPTY" on the "TH|IS EMPTY" split. Pure.
+inline bool ContainsKeywordSpan(const std::string& haystack, const std::string& phrase) {
+    if (phrase.empty() || haystack.size() < phrase.size()) {
+        return false;
+    }
+    for (std::size_t at = haystack.find(phrase); at != std::string::npos; at = haystack.find(phrase, at + 1)) {
+        const bool leftOk = at == 0 || std::isalnum(static_cast<unsigned char>(haystack[at - 1])) == 0;
+        const std::size_t after = at + phrase.size();
+        const bool rightOk = after >= haystack.size() || std::isalnum(static_cast<unsigned char>(haystack[after])) == 0;
+        if (leftOk && rightOk) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /// True when `input` looks like a structured filter query rather than a plain
 /// title phrase. Conservative heuristic (favours TitleSearch on ambiguity):
 ///   1. any comparison / grouping char — `= ~ < > ! ( )` — unambiguously marks a
@@ -88,10 +107,16 @@ inline bool LooksLikeTicketKey(const std::string& input, GridSearchBackend backe
 ///      a colon with an alnum immediately before and a non-space immediately
 ///      after — excludes free-text colons like "fix: crash on startup";
 ///   3. a case-insensitive "order by" ordering clause (no operator char of its
-///      own, but never appears in a real ticket title).
-/// A reserved-word-only query (e.g. bare "project IS EMPTY") carries no operator
-/// char and degrades to TitleSearch by design — accepted in v1; refine later.
-/// Pure.
+///      own, but never appears in a real ticket title);
+///   4. JQL's empty/null predicates — `IS EMPTY` / `IS NOT EMPTY` / `IS NULL` /
+///      `IS NOT NULL` — which carry no operator char of their own.
+/// Rule 4 is matched UPPERCASE-only, deliberately. Lowercase "is empty" is a
+/// perfectly ordinary ticket title ("cart is empty after reload"), and no
+/// heuristic can separate that from a lowercase `project is empty` without
+/// knowing which words are field names. Case is the one signal that does
+/// separate them — JQL keywords are written uppercase by convention and in
+/// every Jira example — so the uppercase form is caught and the lowercase form
+/// keeps this classifier's documented TitleSearch bias. Pure.
 inline bool LooksLikeStructuredQuery(const std::string& input) {
     for (char ch : input) {
         if (ch == '=' || ch == '~' || ch == '<' || ch == '>' || ch == '!' || ch == '(' || ch == ')') {
@@ -103,6 +128,10 @@ inline bool LooksLikeStructuredQuery(const std::string& input) {
             std::isspace(static_cast<unsigned char>(input[i + 1])) == 0) {
             return true;
         }
+    }
+    if (ContainsKeywordSpan(input, "IS EMPTY") || ContainsKeywordSpan(input, "IS NOT EMPTY") ||
+        ContainsKeywordSpan(input, "IS NULL") || ContainsKeywordSpan(input, "IS NOT NULL")) {
+        return true;
     }
     return ToLowerAsciiCopy(input).find("order by") != std::string::npos;
 }

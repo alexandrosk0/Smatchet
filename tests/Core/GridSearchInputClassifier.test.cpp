@@ -70,6 +70,30 @@ TEST_CASE("LooksLikeStructuredQuery: field:value colon token") {
     CHECK_FALSE(LooksLikeStructuredQuery("fix: crash on startup"));
 }
 
+TEST_CASE("LooksLikeStructuredQuery: JQL empty/null predicates (uppercase keywords)") {
+    // These carry no operator char of their own — without an explicit rule they classified as
+    // TitleSearch, so Enter was a no-op and the query stayed an active row filter that hid
+    // every loaded row.
+    CHECK(LooksLikeStructuredQuery("project IS EMPTY"));
+    CHECK(LooksLikeStructuredQuery("assignee IS NOT EMPTY"));
+    CHECK(LooksLikeStructuredQuery("fixVersion IS NULL"));
+    CHECK(LooksLikeStructuredQuery("resolution IS NOT NULL"));
+    // Whole-word span only: "TH|IS EMPTY" must not match on the substring split.
+    CHECK_FALSE(LooksLikeStructuredQuery("THIS EMPTY grid"));
+    CHECK_FALSE(LooksLikeStructuredQuery("WHATIS NULLABLE"));
+    // Uppercase-only by design: lowercase "is empty" is an ordinary ticket title, and no
+    // heuristic separates it from a lowercase query without knowing the field names.
+    CHECK_FALSE(LooksLikeStructuredQuery("cart is empty after reload"));
+    CHECK_FALSE(LooksLikeStructuredQuery("project is empty"));
+}
+
+TEST_CASE("ClassifyGridSearchInput: an empty/null predicate is a query, not a row filter") {
+    CHECK(ClassifyGridSearchInput("project IS EMPTY", GridSearchBackend::Jira) == GridSearchInputKind::Jql);
+    CHECK_FALSE(AppliesAsRowFilter(ClassifyGridSearchInput("project IS EMPTY", GridSearchBackend::Jira)));
+    // The prose counterpart still filters the loaded rows as typed.
+    CHECK(AppliesAsRowFilter(ClassifyGridSearchInput("cart is empty after reload", GridSearchBackend::Jira)));
+}
+
 TEST_CASE("LooksLikeStructuredQuery: order-by clause") {
     CHECK(LooksLikeStructuredQuery("ORDER BY created DESC"));
     CHECK(LooksLikeStructuredQuery("order by updated"));

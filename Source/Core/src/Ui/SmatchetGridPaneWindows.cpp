@@ -229,10 +229,21 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
 // mobile-latched action can never surface stale on a later desktop frame.
 void SmatchetUI::drainPaneDeferredActions(AppController& app, UiDrawSession& d) {
     if (!d.paneDeferredActionPaneId.empty()) {
-        if (d.paneDeferredActionPaneId == d.focusedPaneId) {
+        // A search commit also accepts THIS frame's focus report, not just the adopted
+        // focusedPaneId. Focus adoption is debounced across two frames (the cross-backend
+        // ping-pong guard), so on the first frame of a switch focusedPaneId still names the
+        // previous pane — and the guard would drop a commit the user typed into the pane
+        // that now holds focus, since the latch is cleared unconditionally below. The other
+        // kinds keep the stricter guard: they read the ACTIVE VIEW, which only the adopted
+        // switch updates, whereas a search commit is fully pane-scoped (it takes its target
+        // pane by reference, and the query path activates that pane's own view itself).
+        const bool isSearchCommit = d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::GridSearchCommit;
+        const bool paneHasFocus = d.paneDeferredActionPaneId == d.focusedPaneId ||
+                                  (isSearchCommit && d.paneDeferredActionPaneId == d.paneWindowFocusedThisFrame);
+        if (paneHasFocus) {
             // The search-box commit runs OUTSIDE the active-view guard below: a ticket-key jump
             // needs no view at all, and a query apply reports its own "no active view" toast.
-            if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::GridSearchCommit) {
+            if (isSearchCommit) {
                 if (GridPane* target = FindGridPaneById(d.gridPanes, d.paneDeferredActionPaneId)) {
                     applyGridSearchEnter(app, d, *target, d.paneDeferredSearchText);
                 }
