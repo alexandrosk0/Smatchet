@@ -830,6 +830,15 @@ const TranslationEntry kEntries[] = {
     {"worklog.no_templates", "No templates configured in Preferences.",
      u8"Aucun modèle configuré dans les Préférences."},
     {"worklog.saving", "Saving worklog...", u8"Enregistrement du travail..."},
+    {"worklog.click_hint", "Click to log work / edit estimates.",
+     u8"Cliquez pour saisir le travail / modifier les estimations."},
+    {"worklog.toast.saved_title", "Worklog saved", u8"Travail enregistré"},
+    {"worklog.toast.failed_title", "Worklog failed", u8"Échec de l'enregistrement du travail"},
+    {"worklog.cancel_inflight_tooltip",
+     "The worklog request was already sent — closing this dialog won't cancel it. The result will appear as a "
+     "notification.",
+     u8"La demande de saisie du travail a déjà été envoyée — fermer cette boîte de dialogue ne l'annulera pas. "
+     u8"Le résultat apparaîtra sous forme de notification."},
 
     {"date.edit_raw", "Edit raw ISO string:", u8"Modifier la chaîne ISO brute :"},
     {"date.apply_parsed", "Apply parsed value", u8"Appliquer la valeur analysée"},
