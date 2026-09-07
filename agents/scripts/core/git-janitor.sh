@@ -99,6 +99,7 @@ git fetch --all --prune
 # ts-OR-kill-0 shim that over-blocked on a just-exited sibling. If the lib is
 # somehow absent the script degrades to a conservative fresh-ts-only count
 # (never false-prunes a live session, never false-allows a HEAD-moving op).
+
 # Dual-root bootstrap (row 3a): a location-relative climb, correct pre- and
 # post-flip. Best-effort — git-janitor is a cleanup tool that must degrade
 # rather than abort, and PROJECT_ROOT falls back to the tree below.

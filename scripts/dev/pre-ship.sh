@@ -260,7 +260,9 @@ preship_script_dir="$(cd "$(dirname "$0")" && pwd)"
 # resolving the libs against that tree would break the selftest, not fix it.
 # shellcheck source=scripts/dev/project-config.sh
 . "$preship_script_dir/project-config.sh" 2>/dev/null || true
-preship_layer_root="${AGENT_LAYER_ROOT:-$preship_script_dir/../..}"
+# Normalised, so the "cannot read …" diagnostic below names a real path rather
+# than one threaded through `scripts/dev/../..`.
+preship_layer_root="${AGENT_LAYER_ROOT:-$(cd "$preship_script_dir/../.." && pwd)}"
 
 preship_review_lib="$preship_layer_root/agents/scripts/core/lib/review-ack.sh"
 if [ ! -r "$preship_review_lib" ]; then
