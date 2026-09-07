@@ -89,6 +89,17 @@ jobs:
           # monkey self-bounds by SMATCHET_UI_MONKEY_STEPS; --frames must exceed its frame use
           # (~2 frames/step). timeout is the hang backstop.
           #
+          # Output goes to a FILE — never a `$( )` capture. The --spawn grandchild inherits
+          # the parent's stdout, so a command substitution's pipe stays open until the
+          # GRANDCHILD closes it too, while `timeout` only ever kills its DIRECT child: the
+          # capture blocked straight past the 600s backstop and the job died on
+          # timeout-minutes instead, 57 nightlies in a row — each reported `cancelled`,
+          # with the evaluate and issue-filing steps below skipped, so a lane that has
+          # never once completed a real run also never filed a thing. (Runner cleanup
+          # logged the tell: `Terminate orphan process: pid (…) (Smatchet)`.) A file
+          # redirect has no writer-dependency — the shell resumes the moment `timeout`
+          # returns, whatever the grandchild is still doing.
+          #
           # Filter is 'UiMonkey' (the CATEGORY, substring-matched) — NOT 'UiMonkey/*'.
           # ImGuiTestEngine_PassFilter is substring/anchor-based ('^'/'$'), never glob:
           # 'UiMonkey/*' contains a literal '/*' that is a substring of neither the
@@ -96,25 +107,38 @@ jobs:
           # and this lane ran vacuously from its first nightly (Issue #1666 — the
           # "crash" it reported was actually this zero-match, mislabeled).
           echo "ui-monkey: ui_test.run --name=UiMonkey --frames=8000 --spawn --yes"
-          out="$(timeout 600 ./Smatchet.exe cmd ui_test.run --name='UiMonkey' --frames=8000 --spawn --yes 2>&1)"
-          rc=$?
-          printf '%s\n' "$out" | tee ../../ui-monkey.log
+          # errexit is on (`shell: bash` => `bash --noprofile --norc -eo pipefail {0}`) and
+          # `set -uo pipefail` does not clear it, so a bare invocation + `rc=$?` would exit
+          # the script the moment the hang backstop fires (rc 124) — skipping the taskkill
+          # reap, the log tee and the $GITHUB_OUTPUT writes, leaving Evaluate result with
+          # empty outputs on exactly the path this backstop exists to catch. `|| rc=$?`
+          # keeps the status in an errexit-exempt condition context.
+          rc=0
+          timeout -k 30 600 ./Smatchet.exe cmd ui_test.run --name='UiMonkey' \
+            --frames=8000 --spawn --yes > ui-monkey-run.out 2>&1 || rc=$?
+          # `timeout` has returned, so the parent is gone and any surviving Smatchet.exe is
+          # the orphaned --spawn grandchild. Reap it before reading the log so it cannot
+          # outlive the step (no-op on a clean run, hence the `|| true`).
+          taskkill //F //IM Smatchet.exe //T >/dev/null 2>&1 || true
+          tee ../../ui-monkey.log < ui-monkey-run.out
           # Surface the spawned child log (per-test detail / the logged seed / any crash).
-          childlog="$(printf '%s\n' "$out" | grep -a 'child stdout/stderr' | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//' || true)"
+          childlog="$(grep -a 'child stdout/stderr' ui-monkey-run.out | tail -1 | sed 's/.*child stdout\/stderr[^A-Za-z]*//' || true)"
           if [ -n "${childlog:-}" ] && [ -f "$childlog" ]; then
             echo "===== ui-monkey spawned-child log ====="; cat "$childlog" | tee -a ../../ui-monkey.log
           fi
-          tested="$(printf '%s\n' "$out" | grep -aoE '"tested"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
-          passed="$(printf '%s\n' "$out" | grep -aoE '"passed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
-          failed="$(printf '%s\n' "$out" | grep -aoE '"failed"[ :]+[0-9]+' | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          tested="$(grep -aoE '"tested"[ :]+[0-9]+' ui-monkey-run.out | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          passed="$(grep -aoE '"passed"[ :]+[0-9]+' ui-monkey-run.out | grep -oE '[0-9]+' | tail -1 || echo 0)"
+          failed="$(grep -aoE '"failed"[ :]+[0-9]+' ui-monkey-run.out | grep -oE '[0-9]+' | tail -1 || echo 0)"
           # The command envelope's own `ok` flag is the authoritative crash-vs-clean signal:
           # a genuine zero-match returns `"ok":true` with `"tested":0` (harness), while a
           # test that hung / crashed makes ui_test.run return `"ok":false` with an ERROR
           # envelope that has NO tested field (the CLI still exits rc==0 reporting the
           # scenario timeout, so rc alone can't distinguish the two — this is a REAL crash,
           # not a harness miss). Default true when no envelope is found (e.g. hard child
-          # death) — the tested==0 branch then classifies it as crash regardless.
-          okflag="$(printf '%s\n' "$out" | grep -aoE '"ok"[ :]+(true|false)' | grep -oE '(true|false)' | tail -1 || echo true)"
+          # death) — the tested==0 branch then classifies it as crash regardless. rc is
+          # now load-bearing in one more case: rc==124 (or 137) means the hang backstop
+          # above fired, which Evaluate result reads as a crash-kind finding, not harness.
+          okflag="$(grep -aoE '"ok"[ :]+(true|false)' ui-monkey-run.out | grep -oE '(true|false)' | tail -1 || echo true)"
           # The seed is logged by the SPAWNED CHILD (ui_monkey.test.cpp), not the parent —
           # grep the combined ui-monkey.log (parent output + child log tee'd above), not $out.
           seed="$(grep -aoE 'ui-monkey seed=[0-9]+' ../../ui-monkey.log | head -1 | sed 's/ui-monkey seed=//' || true)"
