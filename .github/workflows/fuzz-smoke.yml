@@ -117,13 +117,25 @@ jobs:
             echo "No fuzz_* binaries under tests/fuzz — build produced none." >&2
             exit 1
           fi
-          BUDGET=$(( TOTAL / ${#targets[@]} ))
+          # The backstop below adds wall clock ON TOP of BUDGET, so the split has to
+          # reserve it: `timeout -k KILL_GRACE $(( BUDGET + TIMEOUT_SLACK ))` lets a
+          # driver that ignores -max_total_time overrun by TIMEOUT_SLACK, then waits
+          # KILL_GRACE for the TERM to land before KILL. Worst case per driver is
+          # BUDGET+OVERHEAD, so dividing TOTAL by the driver count alone UNDERSTATES
+          # the step: the 16 nightly drivers project 1792s but can reach 2352s — 9
+          # minutes past the very step budget this time-box exists to hold.
+          TIMEOUT_SLACK=30
+          KILL_GRACE=5
+          OVERHEAD=$(( TIMEOUT_SLACK + KILL_GRACE ))
+          BUDGET=$(( TOTAL / ${#targets[@]} - OVERHEAD ))
           # Floor: -max_total_time=0 means UNLIMITED to libFuzzer, so a driver count above
-          # TOTAL must never round the budget down to zero.
+          # TOTAL must never round the budget down to zero — or, now that OVERHEAD
+          # comes out of it first, below zero.
           if [ "$BUDGET" -lt 10 ]; then BUDGET=10; fi
-          projected=$(( BUDGET * ${#targets[@]} ))
+          projected=$(( ( BUDGET + OVERHEAD ) * ${#targets[@]} ))
           echo "Fuzzing ${#targets[@]} target(s) at ${BUDGET}s each" \
-               "(~${projected}s projected of a ${TOTAL}s step budget)."
+               "(~${projected}s worst case incl. ${OVERHEAD}s/driver backstop overhead," \
+               "of a ${TOTAL}s step budget)."
           # Only reachable through the floor above — i.e. more drivers than TOTAL can give
           # 10s each. Say so loudly rather than let the box quietly outgrow the job again.
           if [ "$projected" -gt "$TOTAL" ]; then
@@ -149,7 +161,7 @@ jobs:
             # FUZZ FAILURE line, no later drivers, no coverage assertion. `|| rc=$?` keeps
             # the status while staying in a condition context, which errexit exempts.
             rc=0
-            timeout -k 5 "$(( BUDGET + 30 ))" \
+            timeout -k "$KILL_GRACE" "$(( BUDGET + TIMEOUT_SLACK ))" \
               "$bin" -max_total_time="$BUDGET" -timeout=25 -print_final_stats=1 \
                      -artifact_prefix="crashes/${name}-" "${seedargs[@]}" || rc=$?
             ran=$(( ran + 1 ))

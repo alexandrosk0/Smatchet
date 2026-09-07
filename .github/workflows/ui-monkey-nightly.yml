@@ -177,7 +177,7 @@ jobs:
           if [ "${TESTED:-0}" = "0" ] && [ "${OK:-true}" = "true" ] && [ "${RC:-1}" = "0" ]; then
             echo "finding=1" >> "$GITHUB_OUTPUT"
             echo "kind=harness" >> "$GITHUB_OUTPUT"
-          elif [ "${OK:-true}" = "false" ] || [ "${TESTED:-0}" = "0" ] || [ "${FAILED:-0}" != "0" ] || [ "${PASSED:-0}" = "0" ]; then
+          elif [ "${OK:-true}" = "false" ] || [ "${RC:-1}" != "0" ] || [ "${TESTED:-0}" = "0" ] || [ "${FAILED:-0}" != "0" ] || [ "${PASSED:-0}" = "0" ]; then
             echo "finding=1" >> "$GITHUB_OUTPUT"
             echo "kind=crash" >> "$GITHUB_OUTPUT"
           else
