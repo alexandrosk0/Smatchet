@@ -104,7 +104,14 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
     setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
 #endif
     if (changed) {
-        ConfigManager::Save(d.cfg);
+        // Pillar 2 (#2145) + the clobber-ordering rule: this runs on the per-frame draw path
+        // (drawEndOfFramePersistence), so it is both a frame-thread write and a co-frame writer
+        // against the enqueues added for #2145. A synchronous Save here could land BEFORE the
+        // worker drains an older `d.cfg` snapshot queued earlier in the same frame (the worker
+        // wakes into GetConfigRmwMutexRef and writes as soon as this Save releases it), reverting
+        // these window flags on disk. Both writers use the coalescing slot instead, so the newest
+        // snapshot — always a superset, since every one is taken from this same `d.cfg` — wins.
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     }
 }
 
