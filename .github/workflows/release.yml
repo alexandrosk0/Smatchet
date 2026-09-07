@@ -270,9 +270,9 @@ jobs:
             CodeSigningAccountName = $env:TRUSTED_SIGNING_ACCOUNT
             CertificateProfileName = $env:TRUSTED_SIGNING_PROFILE
           }
-          # -Encoding ascii: the dlib's JSON reader chokes on the UTF-8 BOM that
-          # Windows PowerShell's default encoding would prepend.
-          $metadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath -Encoding ascii
+          # utf8NoBOM, not the shell default: the dlib's JSON reader chokes on a
+          # leading UTF-8 BOM.
+          $metadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath -Encoding utf8NoBOM
           "SMATCHET_SIGN_TRUSTED_SIGNING_DLIB=$dlib" >> $env:GITHUB_ENV
           "SMATCHET_SIGN_TRUSTED_SIGNING_METADATA=$metadataPath" >> $env:GITHUB_ENV
           Write-Host "Trusted Signing ready: account=$($env:TRUSTED_SIGNING_ACCOUNT) profile=$($env:TRUSTED_SIGNING_PROFILE)"
