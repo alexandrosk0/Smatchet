@@ -11,9 +11,10 @@
 #include "AppController.h"
 // clang-format on
 
-#include "ConfigManager.h"    // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
-#include "EnvUtil.h"          // smatchet::env::ReadVar — portable getenv (SMATCHET_LUA_CONSENT kill-switch)
-#include "LuaScriptConsent.h" // consent decision core (path + sha-256 fingerprints)
+#include "ConfigManager.h"      // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
+#include "EnvUtil.h"            // smatchet::env::ReadVar — portable getenv (SMATCHET_LUA_CONSENT kill-switch)
+#include "LuaScriptConsent.h"   // consent decision core (path + sha-256 fingerprints)
+#include "LuaScriptsRootPure.h" // scripts-root derivation shared with the pre-Initialize path (#2144)
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
@@ -60,6 +61,14 @@ bool ConsentDisabledByEnv() {
 }
 } // namespace
 
+std::string AppController::LuaScriptsRootDirectory() const {
+
+    // The latched member wins once Initialize has assigned it; before that (plugin OnEarlyInit,
+    // #2144) the same root is derived from the runtime asset directory the host published during
+    // bootstrap. Still empty — never cwd-relative — when no asset directory is configured.
+    return smatchet::lua_scripts::ResolveScriptsRoot(luaScriptsDirectory_, ConfigManager::GetRuntimeAssetDirectory());
+}
+
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
 
     if (filename.empty() || filename.find("..") != std::string::npos || filename.find(':') != std::string::npos ||
@@ -71,9 +80,11 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
         return std::string();
     }
 
-    if (!luaScriptsDirectory_.empty()) {
+    const std::string root = LuaScriptsRootDirectory();
 
-        return luaScriptsDirectory_ + filename;
+    if (!root.empty()) {
+
+        return root + filename;
     }
 
     // Fail closed when the configured scripts root is unset (GetRuntimeAssetDirectory empty).
@@ -87,6 +98,8 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
     return std::string();
 }
 
+bool AppController::HasLuaScriptsDirectory() const { return !LuaScriptsRootDirectory().empty(); }
+
 std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
     namespace fs = ghc::filesystem;
@@ -97,7 +110,9 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
         std::error_code ec;
 
-        if (luaScriptsDirectory_.empty()) {
+        const std::string rootDir = LuaScriptsRootDirectory();
+
+        if (rootDir.empty()) {
 
             // Match ResolveLuaScriptPath: no configured scripts root -> no cwd-relative
             // enumeration (an untrusted working directory's .lua files must not appear in
@@ -105,7 +120,7 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
             return out;
         }
 
-        const fs::path root(luaScriptsDirectory_);
+        const fs::path root(rootDir);
 
         if (!fs::is_directory(root, ec)) {
 

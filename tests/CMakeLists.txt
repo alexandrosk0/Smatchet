@@ -128,6 +128,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # vs UI-thread retire-erase / emplace). Seam-level fixture mirroring the map-mutex
         # discipline; header-only (no product .cpp), highest-value being the TSan pass.
         Core/GridContextsMapRace1457.test.cpp
+        # issue #2144 — Lua scripts-root derivation (answerable before Initialize latches
+        # luaScriptsDirectory_; empty rather than cwd-relative when nothing is configured).
+        # Header-only pure decision, no threads — carried here so the Linux container runs it.
+        Core/LuaScriptsRootPure.test.cpp
         # MainThreadDispatcher: the keystone of the UI-thread-marshalling discipline. Every
         # cross-thread g_ui write (AiAssistant streaming MakeOnDelta, merge-watch notify, sync
         # toasts) is race-free ONLY because workers PostToMainThread and the UI thread runs the
@@ -755,6 +759,10 @@ add_executable(SmatchetTests
     Core/LuaAutomationHookPolicyPure.test.cpp
     # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
     Core/LuaImagePathPolicyPure.test.cpp
+    # issue #2144 — Lua scripts-root derivation: answerable before Initialize latches
+    # luaScriptsDirectory_ (plugin OnEarlyInit runs first), and empty rather than cwd-relative
+    # when nothing is configured. Header-only pure decision; no extra production .cpp to link.
+    Core/LuaScriptsRootPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
     # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
     # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.

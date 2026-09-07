@@ -106,6 +106,12 @@ class LuaConsolePlugin : public IPlugin {
     /// Set when the scripting editor tab needs focus on the next draw.
     bool pendingSelectScriptsTab_ = false;
 
+    /// Frames left to keep polling for a scripts root that OnEarlyInit could not resolve (#2144).
+    /// Zero means no retry is pending — either early init resolved, the retry already ran, or it
+    /// gave up. Bounded so an install with no runtime asset directory at all costs a handful of
+    /// cheap string checks rather than one every frame for the session.
+    int earlyScriptLoadRetryFramesLeft_ = 0;
+
     void EnsureLuaLanguageDef();
     void RefreshScriptList(const AppController& app, bool forceRescan = false);
     /// Reconcile `selectedScriptName_` with the current `scriptList_`. Keeps the
@@ -123,6 +129,12 @@ class LuaConsolePlugin : public IPlugin {
     /// the top of OnDraw, before the window-hidden early-out, so a read kicked from OnEarlyInit
     /// (or while the window was closed) still lands.
     void PollScriptLoad(const AppController& app);
+    /// Second chance for the OnEarlyInit resolve when the scripts root was not configured yet
+    /// (#2144). Runs from the top of OnDraw for a bounded number of frames after a failed early
+    /// init, and does its work on the first frame the root becomes available: re-scan the script
+    /// list and kick the editor read that early init could not start. No-op once the retry has
+    /// fired, expired, or the editor already holds a script.
+    void RetryEarlyScriptLoadIfNeeded(AppController& app);
     bool SaveCurrentScript(const AppController& app, std::string& outErr);
     void ApplyErrorMarkersFromMessage(const std::string& errMsg);
     void ClearErrorMarkers();
