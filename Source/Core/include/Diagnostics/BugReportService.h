@@ -105,7 +105,6 @@ nlohmann::json BuildRelayRequest(const std::string& title, const std::string& bo
 
 /// Decide, from a GitHub `GET /repos/{owner}/{repo}` response, whether the repo is
 /// PRIVATE. Pure, so the fail-closed rule is testable without network.
-///
 /// A minidump carries the crashing thread's stack memory, and a Release asset on a
 /// public repo is world-downloadable with no auth — so this is the gate that keeps a
 /// dump off the open internet. It answers true ONLY for a 200 whose body says
