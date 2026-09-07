@@ -10,18 +10,7 @@ namespace ParentHierarchyPure {
 
 namespace {
 
-using IndexById = std::unordered_map<std::string, std::size_t>;
-
-IndexById BuildIndexById(const std::vector<CachedTicket>& tickets) {
-    IndexById byId;
-    byId.reserve(tickets.size());
-    for (std::size_t i = 0; i < tickets.size(); ++i) {
-        if (!tickets[i].id.empty()) {
-            byId.emplace(tickets[i].id, i); // first occurrence wins on a duplicate id
-        }
-    }
-    return byId;
-}
+using IndexById = IdIndex;
 
 /// Index of the PRESENT parent of `tickets[index]`, or `tickets.size()` when none.
 std::size_t PresentParentIndex(const std::vector<CachedTicket>& tickets, const IndexById& byId, std::size_t index) {
@@ -51,6 +40,17 @@ void WalkAncestors(const std::vector<CachedTicket>& tickets, const IndexById& by
 }
 
 } // namespace
+
+IdIndex BuildIdIndex(const std::vector<CachedTicket>& tickets) {
+    IdIndex byId;
+    byId.reserve(tickets.size());
+    for (std::size_t i = 0; i < tickets.size(); ++i) {
+        if (!tickets[i].id.empty()) {
+            byId.emplace(tickets[i].id, i); // first occurrence wins on a duplicate id
+        }
+    }
+    return byId;
+}
 
 std::string ParentKeyFromFieldValue(const std::string& raw) {
     std::string key = TrimCopy(raw);
@@ -92,7 +92,7 @@ std::vector<std::string> MissingParentKeys(const std::vector<CachedTicket>& tick
 }
 
 std::unordered_set<std::string> PresentParentIds(const std::vector<CachedTicket>& tickets) {
-    const IndexById byId = BuildIndexById(tickets);
+    const IndexById byId = BuildIdIndex(tickets);
     std::unordered_set<std::string> parents;
     for (std::size_t i = 0; i < tickets.size(); ++i) {
         const std::size_t parentIndex = PresentParentIndex(tickets, byId, i);
@@ -103,18 +103,22 @@ std::unordered_set<std::string> PresentParentIds(const std::vector<CachedTicket>
     return parents;
 }
 
-std::vector<std::size_t> AncestorChain(const std::vector<CachedTicket>& tickets, std::size_t index) {
+std::vector<std::size_t> AncestorChain(const std::vector<CachedTicket>& tickets, std::size_t index,
+                                       const IdIndex& idIndex) {
     std::vector<std::size_t> chain;
     if (index >= tickets.size()) {
         return chain;
     }
-    const IndexById byId = BuildIndexById(tickets);
-    WalkAncestors(tickets, byId, index, [&chain](std::size_t parentIndex) { chain.push_back(parentIndex); });
+    WalkAncestors(tickets, idIndex, index, [&chain](std::size_t parentIndex) { chain.push_back(parentIndex); });
     return chain;
 }
 
+std::vector<std::size_t> AncestorChain(const std::vector<CachedTicket>& tickets, std::size_t index) {
+    return AncestorChain(tickets, index, BuildIdIndex(tickets));
+}
+
 std::vector<int> ComputeDepths(const std::vector<CachedTicket>& tickets) {
-    const IndexById byId = BuildIndexById(tickets);
+    const IndexById byId = BuildIdIndex(tickets);
     std::vector<int> depths(tickets.size(), 0);
     for (std::size_t i = 0; i < tickets.size(); ++i) {
         int depth = 0;
@@ -126,7 +130,7 @@ std::vector<int> ComputeDepths(const std::vector<CachedTicket>& tickets) {
 
 std::vector<std::size_t> StoryGroupOrder(const std::vector<CachedTicket>& tickets,
                                          const std::vector<std::size_t>& order) {
-    const IndexById byId = BuildIndexById(tickets);
+    const IndexById byId = BuildIdIndex(tickets);
     std::vector<char> inOrder(tickets.size(), 0);
     for (std::size_t index : order) {
         if (index < tickets.size()) {

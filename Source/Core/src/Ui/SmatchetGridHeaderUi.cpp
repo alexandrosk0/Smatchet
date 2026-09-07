@@ -95,13 +95,13 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
 
     // Parent-issue hierarchy toggles (per-view, persisted). Both re-run the sort/filter projection.
     bool storyGroup = activeViewForGrid->StoryGroupSort;
-    if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.story_group", "Story group"), &storyGroup)) {
+    if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.story_group", "Parent group"), &storyGroup)) {
         SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
         activeViewForGrid->StoryGroupSort = storyGroup;
         sortChanged = true;
     }
     ImGui::SetItemTooltip(
-        "%s", SmatchetLocalization::T("grid.sort.story_group.tip", "Group children under their parent story"));
+        "%s", SmatchetLocalization::T("grid.sort.story_group.tip", "Group children under their parent issue"));
     bool hideParents = activeViewForGrid->HideParents;
     if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.hide_parents", "Hide parent stories"), &hideParents)) {
         SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);

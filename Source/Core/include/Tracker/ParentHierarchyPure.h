@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -24,6 +25,16 @@ namespace ParentHierarchyPure {
 
 /// Hard bound on ancestor walks; a chain deeper than this is treated as a cycle.
 constexpr int kMaxHierarchyDepth = 64;
+
+/// Ticket id -> index into the `tickets` vector it was built from. Exposed so a caller that
+/// walks many ancestor chains against the same snapshot (e.g. the grid's ancestor-re-add
+/// filter step) can build it once via `BuildIdIndex` and pass it to the `AncestorChain`
+/// overload below, instead of paying the O(n) build inside every call.
+using IdIndex = std::unordered_map<std::string, std::size_t>;
+
+/// Build the id -> index lookup `AncestorChain` / `ComputeDepths` / `StoryGroupOrder` use
+/// internally. First occurrence wins on a duplicate id.
+IdIndex BuildIdIndex(const std::vector<CachedTicket>& tickets);
 
 /// `"PROJ-1 - Summary"` / `"PROJ-1"` -> `"PROJ-1"`; whitespace trimmed; empty input -> empty.
 /// Does NOT validate the key shape (see TrackerFieldPayloadPure::LooksLikeIssueKey for that).
@@ -57,6 +68,12 @@ std::vector<std::size_t> StoryGroupOrder(const std::vector<CachedTicket>& ticket
 /// Indices of the PRESENT ancestors of `tickets[index]`, nearest parent first. Empty for a
 /// root / out-of-range index. Bounded by `kMaxHierarchyDepth` and a visited set.
 std::vector<std::size_t> AncestorChain(const std::vector<CachedTicket>& tickets, std::size_t index);
+
+/// Same as `AncestorChain`, but reuses a caller-built `BuildIdIndex(tickets)` result instead
+/// of rebuilding it. Use this form when walking ancestor chains for many indices against the
+/// same `tickets` snapshot.
+std::vector<std::size_t> AncestorChain(const std::vector<CachedTicket>& tickets, std::size_t index,
+                                       const IdIndex& idIndex);
 
 } // namespace ParentHierarchyPure
 

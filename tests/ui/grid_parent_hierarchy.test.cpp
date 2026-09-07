@@ -148,7 +148,9 @@ static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(depthsCached);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
 
-        // 2. HIDE PARENTS ON — view flips dirty; no parents in the fixture → every row survives.
+        // 2. HIDE PARENTS ON (with Story group still on) — view flips dirty; no parents in the
+        //    fixture → every row survives, but hide-parents flattens the tree decorations: the
+        //    depth cache is cleared even though story-group order is kept (SmatchetActiveProjectGridTable.cpp).
         g_ui.viewsDirty = false;
         const bool hideParentsClicked = ClickSortByCheckbox(ctx, kHideParentsRef);
         IM_CHECK_NO_RET(hideParentsClicked);
@@ -157,9 +159,9 @@ static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
         }
         const bool hideParentsDirty = YieldUntil(ctx, [&] { return g_ui.viewsDirty; });
         IM_CHECK_NO_RET(hideParentsDirty);
-        ctx->Yield(3);
+        const bool depthsCleared = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
+        IM_CHECK_NO_RET(depthsCleared);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
-        IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().cachedDepths.size(), ticketCount);
 
         // 3. BOTH OFF — depth cache drains; projection still covers every row.
         g_ui.viewsDirty = false;

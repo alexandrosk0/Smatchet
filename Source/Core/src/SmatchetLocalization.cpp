@@ -1156,7 +1156,7 @@ const TranslationEntry kEntries[] = {
      u8"Abandonner le commentaire en cours de rédaction ?"},
     {"grid.sort.remove_key", "Remove this sort key", u8"Supprimer cette clé de tri"},
     {"grid.sort.story_group", "Parent group", u8"Grouper par parent"},
-    {"grid.sort.story_group.tip", "Group children under their parent story",
+    {"grid.sort.story_group.tip", "Group children under their parent issue",
      u8"Regrouper les enfants sous leur story parente"},
     {"grid.sort.hide_parents", "Hide parent stories", u8"Masquer les stories parentes"},
     {"grid.sort.hide_parents.tip", "Hide parent stories (show only leaf tasks/bugs)",

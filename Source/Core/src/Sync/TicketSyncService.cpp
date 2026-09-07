@@ -881,9 +881,13 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
     Result<std::vector<CachedTicket>, TrackerError> fetched =
         deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
     if (!fetched.has_value()) {
-        summary.Warning =
+        const std::string parentWarning =
             std::to_string(missing.size()) + " parent issue(s) could not be loaded: " + fetched.error().Detail;
-        LOG_WARN("TicketSyncService: %s", summary.Warning.c_str());
+        // Append rather than overwrite: the streamed fetch may already carry its own warning
+        // (e.g. GitHubIssueSearch's page-cap truncation notice) — losing it here would silently
+        // hide a real result-set problem behind the parent top-up's failure.
+        summary.Warning = summary.Warning.empty() ? parentWarning : (summary.Warning + "; " + parentWarning);
+        LOG_WARN("TicketSyncService: %s", parentWarning.c_str());
         return;
     }
 

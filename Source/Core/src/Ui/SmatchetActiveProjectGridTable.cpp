@@ -235,10 +235,14 @@ static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTi
     }
     if (filterActive && hierarchy.storyGroupSort && !hierarchy.hideParents) {
         // Ancestor re-add: walk the matched set, mark every ancestor so the tree keeps its spine.
+        // Build the id index ONCE outside the loop — AncestorChain's single-arg overload rebuilds
+        // it per call, which turned into an O(n^2) hash-map rebuild on every filter keystroke for
+        // a large matched set (found in review of this PR).
+        const ParentHierarchyPure::IdIndex idIndex = ParentHierarchyPure::BuildIdIndex(tickets);
         for (size_t idx = 0; idx < tickets.size(); ++idx) {
             if (!keep[idx])
                 continue;
-            for (size_t ancestor : ParentHierarchyPure::AncestorChain(tickets, idx)) {
+            for (size_t ancestor : ParentHierarchyPure::AncestorChain(tickets, idx, idIndex)) {
                 keep[ancestor] = 1;
             }
         }
