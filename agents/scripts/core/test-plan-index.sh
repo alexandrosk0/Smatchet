@@ -40,8 +40,14 @@ fi
 # Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
 # The climb is location-relative: pre-flip it lands on the repo root, post-flip
 # on agent-layer/, and project-config.sh resolves the HOST tree from there.
+# Best-effort, with an explicit fallback to what the paths below meant before:
+# the git-root cd above. test-archive-plan.sh runs this script inside a fixture
+# tree holding ONLY agents/scripts/core/ — no scripts/dev/ at all — so a hard
+# dependency on project-config.sh would make this gate unrunnable there. The
+# fallback keeps every reduced tree behaving exactly as it does today.
 # shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${PROJECT_ROOT:=$(pwd)}"
 
 # docs/plans/ is HOST content and stays host-side; this script moves into the
 # layer, so `git rev-parse --show-toplevel` above stops naming the tree that

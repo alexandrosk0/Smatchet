@@ -15,8 +15,15 @@ set -euo pipefail
 # The climb is location-relative so it is correct in both worlds: pre-flip it
 # lands on the repo root, post-flip on agent-layer/. project-config.sh resolves
 # the HOST tree from there (its superproject rung) and exports both roots.
+# Best-effort with explicit fallbacks to this script's own climb — exactly the
+# `cd "$(dirname "$0")/../../.."` it did before. A fresh or reduced checkout is
+# precisely when setup-harness is run, so it must not acquire a hard dependency
+# on a config load succeeding.
 # shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+_sh_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+. "$_sh_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${AGENT_LAYER_ROOT:=$_sh_self_root}"
+: "${PROJECT_ROOT:=$_sh_self_root}"
 
 # This script reads LAYER content (agents/, docs/harness/) and writes HOST-side
 # adapter dirs (.claude/, .codex/, .cursor/, .pi/). Pre-flip the two roots are the

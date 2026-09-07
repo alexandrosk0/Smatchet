@@ -291,8 +291,14 @@ PY="$(resolve_py)" || { echo "python required (no working interpreter on PATH)" 
 # post-flip. It replaces `cd "$(git rev-parse --show-toplevel)"`, which names the
 # SUBMODULE once this script lives in one — right for the layer checks by
 # accident, wrong for the host ones with no error.
+# Best-effort with explicit fallbacks to what this script used before (the git
+# toplevel for both roots), so a reduced tree carrying agents/ but no
+# scripts/dev/ keeps running the contract instead of failing to start.
 # shellcheck source=scripts/dev/project-config.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+_tac_top="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+: "${AGENT_LAYER_ROOT:=$_tac_top}"
+: "${PROJECT_ROOT:=$_tac_top}"
 
 # The bulk of this gate reads LAYER content (agents/, docs/agent-rules/), so cwd
 # is the layer root and those paths stay the bare relative literals they were.

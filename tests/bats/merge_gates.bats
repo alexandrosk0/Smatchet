@@ -2245,6 +2245,65 @@ CFG
     rm -f "$cfg"
 }
 
+@test "both config sites resolve to PC_CONFIG_FILE, outside the SCRIPT_DIR climb [P1]" {
+    # Row 5g of the agent-surface-extraction plan. Asserting that the resolved
+    # config equals "$PROJECT_ROOT/project.config.json" would be CIRCULAR
+    # pre-flip: the unfixed `$SCRIPT_DIR/../../../project.config.json` climb
+    # already lands exactly there, so such an assertion passes on the broken
+    # script and proves nothing.
+    #
+    # So point PC_CONFIG_FILE at a fixture in a temp dir that no climb from
+    # agents/scripts/core/ can reach. The fixed script resolves both sites to it;
+    # the unfixed one keeps climbing to the repo-root config and reads neither of
+    # the values below.
+    local dir cfg
+    dir="$(mktemp -d)"
+    cfg="$dir/project.config.json"
+    cat > "$cfg" <<'CFG'
+{
+  "branch_protection": {
+    "branch": "fixture-base-branch",
+    "required_contexts": ["Fixture-Only Required Context"]
+  }
+}
+CFG
+    # Re-source with the production default in play: PC_CONFIG_FILE is consumed
+    # by project-config.sh at source time, and MERGE_GATES_CONFIG_FILE must be
+    # unset so the default path — the one row 5g fixes — is what is exercised.
+    unset MERGE_GATES_REQUIRED_CONTEXTS MERGE_GATES_CONFIG_FILE
+    export PC_CONFIG_FILE="$cfg"
+    # shellcheck source=../../agents/scripts/core/merge-gates.sh
+    source "$SCRIPTS_DIR/merge-gates.sh"
+
+    [ "$MERGE_GATES_CONFIG_FILE" = "$cfg" ]
+
+    # Site 1 (~line 519), the required-context read: the fixture names a context
+    # absent from the all-green pass fixture, so a correct read BLOCKS. Reading
+    # the repo-root config instead would pass.
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"required-missing: Fixture-Only Required Context"* ]]
+
+    unset PC_CONFIG_FILE
+    rm -rf "$dir"
+}
+
+@test "a missing config keeps the required-absent detector's inert WARN reachable [P1]" {
+    # The detector's degraded path must stay observable after the rewire: with
+    # the config pointed at a file that does not exist, the read WARNs and goes
+    # inert rather than erroring or silently blocking. This is the branch that a
+    # post-flip mis-resolution would NEVER reach — the layer's own config exists,
+    # so the wrong file is found and no warning is ever printed. Keeping the WARN
+    # exercised is what makes that silence detectable.
+    unset MERGE_GATES_REQUIRED_CONTEXTS
+    export MERGE_GATES_CONFIG_FILE="/nonexistent/$$/project.config.json"
+    set_fixture "$FIXTURES_DIR/merge_gates_pass.json"
+    run poll_merge_gates org repo 1
+    [[ "$output" == *"required-context config not found"* ]]
+    [[ "$output" == *"required-absent detector inert this run"* ]]
+}
+
 # ---------- mergeStateStatus guard (P1 secondary: refuse GATES_PASSED on BLOCKED/BEHIND) ----------
 
 @test "mergeStateStatus=BLOCKED -> block even when all gates green [P1]" {

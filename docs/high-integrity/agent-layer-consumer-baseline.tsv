@@ -23,6 +23,7 @@ agents/scripts/core/historical-review-survivors.sh	-	-	self-locating
 agents/scripts/core/historical-review-worklist.sh	-	agents/	layer-only
 agents/scripts/core/is-pure-docs-diff.sh	Source/,backlog/,docs/plans/	agents/	dual
 agents/scripts/core/issue-sweep.sh	backlog/,docs/plans/,docs/self-improvement/	agents/,docs/agent-rules/	dual
+agents/scripts/core/lib/agents-dir-current.sh	-	agents/	layer-only
 agents/scripts/core/lib/ci-check-resolve.sh	-	-	self-locating
 agents/scripts/core/lib/plan-history-guard.sh	-	-	self-locating
 agents/scripts/core/lib/resolve-py.sh	-	-	self-locating
@@ -47,7 +48,7 @@ agents/scripts/core/merge-snapshot-append.sh	docs/self-improvement/,project.conf
 agents/scripts/core/merge-watcher-stuck-nudge.sh	docs/plans/	agents/	dual
 agents/scripts/core/plan-archival-owed.sh	docs/plans/	agents/,docs/agent-rules/	dual
 agents/scripts/core/plan-doc-table-probe.sh	docs/plans/	-	host-only
-agents/scripts/core/plan-lock-gate.sh	LTC_PROJ=	agents/	dual
+agents/scripts/core/plan-lock-gate.sh	docs/plans/,LTC_PROJ=	agents/	dual
 agents/scripts/core/postmortem-owed.sh	Source/,docs/plans/,docs/self-improvement/,project.config.json	agents/,docs/agent-rules/	dual
 agents/scripts/core/record-review-verdict.sh	-	-	self-locating
 agents/scripts/core/repo-health-facts-nudge.sh	-	-	self-locating

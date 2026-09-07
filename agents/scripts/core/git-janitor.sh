@@ -99,7 +99,17 @@ git fetch --all --prune
 # ts-OR-kill-0 shim that over-blocked on a just-exited sibling. If the lib is
 # somehow absent the script degrades to a conservative fresh-ts-only count
 # (never false-prunes a live session, never false-allows a HEAD-moving op).
+# Dual-root bootstrap (row 3a): a location-relative climb, correct pre- and
+# post-flip. Best-effort — git-janitor is a cleanup tool that must degrade
+# rather than abort, and PROJECT_ROOT falls back to the tree below.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+
 JANITOR_TREE="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+# JANITOR_TREE is the CWD's worktree and stays host-side: .claude/ and the
+# session registry live there. Distinct from PROJECT_ROOT on purpose — see
+# backfill_merge_snapshot's ledger comment.
+PROJECT_ROOT="${PROJECT_ROOT:-$JANITOR_TREE}"
 SELF_SESSION="${SMATCHET_JANITOR_SELF_SESSION:-${CLAUDE_SESSION_ID:-}}"
 NOW_TS="$(date -u +%s)"
 
@@ -200,12 +210,21 @@ backfill_merge_snapshot() {
     local jdir view mc merged_at head_sha ledger red_csv override_csv ma age_cap
     command -v jq >/dev/null 2>&1 || { echo "[git-janitor] ledger backfill skipped (jq not on PATH; live fallback covers)."; return 0; }
     jdir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
-    # Ledger path: anchored to the SCRIPT's repo root (jdir/../../..), the same
-    # anchor merge-snapshot-append.sh uses — NOT $JANITOR_TREE (the cwd's
-    # toplevel), which can be a different worktree; the dedup check and the
-    # append must always target the same file, so the resolved path is also
-    # passed to the helper explicitly.
-    ledger="${MERGE_SNAPSHOT_LEDGER:-$(cd "$jdir/../../.." && pwd)/docs/self-improvement/merge-snapshots.jsonl}"
+    # Ledger path: $PROJECT_ROOT, the same anchor merge-snapshot-append.sh uses
+    # — NOT $JANITOR_TREE (the cwd's toplevel), which can be a different
+    # worktree; the dedup check and the append must always target the same file,
+    # so the resolved path is also passed to the helper explicitly below.
+    #
+    # DUAL-ROOT (plan agent-surface-extraction-repo, Phase A row 5h). This was a
+    # bare `jdir/../../..` climb to the SCRIPT's own repo root, which is exactly
+    # right while there is one repo. Post-flip this script lives in the layer and
+    # the climb lands there, but the ledger is HOST content — entries stay
+    # host-side (grill decision 4). It would resolve to a path that does not
+    # exist, so the `[ -f "$ledger" ]` dedup grep below silently finds nothing
+    # and every run backfills a duplicate row. $PROJECT_ROOT names the tree that
+    # actually holds the ledger, in both worlds; MERGE_SNAPSHOT_LEDGER keeps its
+    # meaning as the explicit override.
+    ledger="${MERGE_SNAPSHOT_LEDGER:-$PROJECT_ROOT/docs/self-improvement/merge-snapshots.jsonl}"
     # Fast path BEFORE any network call: a GitHub PR merges at most once, so a
     # pr-number match alone proves a row exists (fixed-string grep; the
     # helper's pr+mergeCommit idempotency guard stays the authoritative dedup).
