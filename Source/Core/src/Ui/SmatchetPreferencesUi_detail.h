@@ -206,6 +206,18 @@ inline bool AssistantAiFieldsDiffer(const TrackerConfig& a, const TrackerConfig&
            a.AgentsMdAutoDiscoverProject != b.AgentsMdAutoDiscoverProject;
 }
 
+/// True when any MCP field the Connections › MCP section stages in the UI buffers differs from
+/// the saved config (#2133). The section normally commits itself as soon as a typed field is
+/// no longer being edited (#2110), so this only reads true for an edit the section never got
+/// to commit — the field still held focus while the section was collapsed or filtered out, so
+/// its body did not draw on the closing frame. Drives the close gate so that edit routes through
+/// the guard modal instead of being dropped. Pure — bucket-A testable.
+inline bool McpPrefsFieldsDiffer(bool enabled, int port, bool allowRemote, bool allowLuaExecution,
+                                 const std::string& authToken, const TrackerConfig& cfg) {
+    return enabled != cfg.McpEnabled || port != cfg.McpPort || allowRemote != cfg.McpAllowRemote ||
+           allowLuaExecution != cfg.McpAllowLuaExecution || authToken != cfg.McpAuthToken;
+}
+
 /// #1706 — reset the Assistant-tab seed latches when the Preferences window
 /// closes (Discard-on-close). Clearing `workingSeeded` makes the working COPY
 /// re-seed from cfg on reopen; setting `forceReseed` makes SeedAssistantBuffers

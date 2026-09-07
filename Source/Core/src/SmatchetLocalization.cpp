@@ -1171,6 +1171,15 @@ const TranslationEntry kEntries[] = {
      "The Tracker tab has unsaved edits. Save & Sync applies them; closing without saving discards them.",
      u8"L'onglet Suivi contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "
      u8"enregistrer les abandonne."},
+    {"prefs.mcp.close_guard.body",
+     "The MCP section has unsaved edits. Save & Sync applies them; closing without saving discards them.",
+     u8"La section MCP contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "
+     u8"enregistrer les abandonne."},
+    {"prefs.close_guard.body",
+     "The Tracker tab and the MCP section have unsaved edits. Save & Sync applies them; closing without saving "
+     "discards them.",
+     u8"L'onglet Suivi et la section MCP contiennent des modifications non enregistrées. Save & Sync les "
+     u8"applique ; fermer sans enregistrer les abandonne."},
     {"prefs.tracker.test.ok", "Connected - credentials verified.", u8"Connecté - identifiants vérifiés."},
     {"prefs.tracker.test.auth",
      "Reached the server, but sign-in failed: ", u8"Serveur atteint, mais l'authentification a échoué : "},

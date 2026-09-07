@@ -805,6 +805,27 @@ bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
            d.cfg.LinearWorkspaceUrl != d.linearWorkspaceUrlBuf;
 }
 
+// Per-domain dirtiness for the close gate (#2133). The Tracker tab is buffer-staged by design.
+// The MCP section autosaves, but a typed field that still holds focus when its section stops
+// drawing (collapsed, or filtered out by the settings search) never reaches its commit block,
+// so its prefix sits only in the UI buffer. Any domain with an uncommitted buffer must route
+// the close through the guard modal — a collapsed section is exactly the one that cannot commit
+// itself on the closing frame. Save & Sync in the modal writes every domain, so one gate serves
+// them all.
+bool McpPrefsDirty(const UiDrawSession& d) {
+#if defined(SMATCHET_WITH_MCP)
+    return SmatchetPreferencesUiDetail::McpPrefsFieldsDiffer(
+        d.mcpEnabled, d.mcpPort, d.mcpAllowRemote, d.mcpAllowLuaExecution, std::string(d.mcpAuthTokenBuf), d.cfg);
+#else
+    (void)d;
+    return false;
+#endif
+}
+
+bool PrefsHaveUncommittedEdits(const UiDrawSession& d) {
+    return d.preferencesBuffersLoaded && (TrackerPrefsFieldsDiffer(d) || McpPrefsDirty(d));
+}
+
 // First-run explainer for the Tracker tab (dev-onboarding-first-run-quickstart, slice 2).
 // Shown while TrackerSetupPure::NeedsSetup reads true — i.e. the backend has never been
 // confirmed reachable, or a required credential field is still blank. The menu bar and the
@@ -1203,8 +1224,9 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         if (!d.showPreferences) {
             // P2-H3: the Tracker tab is buffer-staged (unlike the mostly-autosaving
             // sibling tabs), so closing with unsaved credential edits would silently
-            // discard them. Reopen and route the decision through the guard modal.
-            if (d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d)) {
+            // discard them. Reopen and route the decision through the guard modal. The
+            // same gate covers an MCP field the section could not commit (#2133).
+            if (PrefsHaveUncommittedEdits(d)) {
                 d.showPreferences = true;
                 d.prefsTrackerCloseGuardOpen = true;
             } else {
@@ -1298,14 +1320,29 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
     // with the dirty state resolved (resetPreferencesWindowState drops the buffers, so
     // the gate's re-check short-circuits instead of reopening the modal forever).
     if (d.prefsTrackerCloseGuardOpen) {
-        ImGui::OpenPopup("Unsaved tracker changes###PrefsTrackerCloseGuard");
+        ImGui::OpenPopup("Unsaved changes###PrefsTrackerCloseGuard");
         d.prefsTrackerCloseGuardOpen = false;
     }
-    if (ImGui::BeginPopupModal("Unsaved tracker changes###PrefsTrackerCloseGuard", nullptr,
+    if (ImGui::BeginPopupModal("Unsaved changes###PrefsTrackerCloseGuard", nullptr,
                                ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.tracker.close_guard.body",
-                                                         "The Tracker tab has unsaved edits. Save & Sync applies them; "
-                                                         "closing without saving discards them."));
+        // Name the domain that is actually dirty: the Tracker wording is kept verbatim for the
+        // Tracker-only case; an uncommitted MCP field (#2133) gets its own sentence.
+        const bool mcpDirty = McpPrefsDirty(d);
+        const bool trackerDirty = d.preferencesBuffersLoaded && TrackerPrefsFieldsDiffer(d);
+        if (mcpDirty && !trackerDirty) {
+            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.mcp.close_guard.body",
+                                                             "The MCP section has unsaved edits. Save & Sync applies "
+                                                             "them; closing without saving discards them."));
+        } else if (mcpDirty) {
+            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.close_guard.body",
+                                                             "The Tracker tab and the MCP section have unsaved edits. "
+                                                             "Save & Sync applies them; closing without saving "
+                                                             "discards them."));
+        } else {
+            ImGui::TextWrapped("%s", SmatchetLocalization::T("prefs.tracker.close_guard.body",
+                                                             "The Tracker tab has unsaved edits. Save & Sync applies "
+                                                             "them; closing without saving discards them."));
+        }
         ImGui::Spacing();
         if (ImGui::Button("Save & Sync")) {
             onPreferencesSaveAndSync(app, d);

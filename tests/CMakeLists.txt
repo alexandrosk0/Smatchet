@@ -514,6 +514,9 @@ add_executable(SmatchetTests
     # SmatchetPreferencesUi_detail.h defines them `inline` and only forward-declares
     # UI classes — no ImGui, no AppController — so the rig needs no extra .cpp link.
     Core/PreferencesDateFormatIndex.test.cpp
+    # #2133 — MCP half of the Preferences close gate; same header-inline predicate family
+    # (McpPrefsFieldsDiffer next to AssistantAiFieldsDiffer), no extra .cpp link.
+    Core/PreferencesMcpCloseGuard.test.cpp
     # dual-ui-mode batch — pure inline string/scale converters for the UI
     # layout-mode + mobile-shell enums (SmatchetUiModeIds.h). Header + the already-linked
     # SmatchetLocalization.cpp (mobileNavPageLabel localizes); otherwise
