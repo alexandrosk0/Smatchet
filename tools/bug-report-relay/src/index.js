@@ -7,8 +7,10 @@
 // BugReportService::SubmitViaRelay expects.
 //
 // Deploy + secrets: see README.md. Required binding: secret GITHUB_TOKEN. Vars:
-// REPO ("owner/repo"), optional ASSETS_REPO ("owner/repo"), optional RELAY_KEY
+// REPO ("owner/repo"), optional ASSETS_REPO ("owner/repo"), optional DUMPS_REPO
+// ("owner/repo", must be PRIVATE — see isDumpRepoPrivate), optional RELAY_KEY
 // (shared access key — when set, requests must send a matching x-relay-key header).
+// Optional ratelimit bindings REPORT_RATE_LIMITER / GLOBAL_RATE_LIMITER.
 //
 // The token here needs, on REPO/ASSETS_REPO: Issues:write (+ Contents:write only
 // if screenshots are enabled). It is NEVER exposed to clients.
@@ -65,10 +67,15 @@ async function rateLimitReport(request, env) {
   return "";
 }
 
-// Repo visibility, cached for the life of the isolate. A repo's public/private
-// state changes ~never, and this sits on the crash-report path, so re-asking
-// GitHub per request buys nothing and spends rate-limit budget.
-const repoPrivateCache = new Map();
+// Repos confirmed private, remembered for the life of the isolate. A repo's
+// visibility changes ~never, so re-asking GitHub per request buys nothing and
+// spends rate-limit budget.
+//
+// Only POSITIVE answers are cached. Caching "not private" would pin an operator's
+// fix — flipping the repo to private, or correcting DUMPS_REPO — behind an isolate
+// recycle, and re-checking is cheap: it costs one request per crash report, and
+// only on reports that actually carry a dump.
+const knownPrivateRepos = new Set();
 
 // A minidump carries the crashing thread's STACK MEMORY and the loaded-module
 // list — file paths under the user's home directory, and whatever strings the
@@ -79,9 +86,8 @@ const repoPrivateCache = new Map();
 // Fails CLOSED: an unreadable/ambiguous visibility answer drops the dump. The
 // issue itself still files (the caller degrades to a note in the body) — losing a
 // dump costs a debugging session, publishing one cannot be undone.
-async function assertDumpRepoPrivate(token, repo) {
-  const cached = repoPrivateCache.get(repo);
-  if (cached !== undefined) return cached;
+async function isDumpRepoPrivate(token, repo) {
+  if (knownPrivateRepos.has(repo)) return true;
   let isPrivate = false;
   try {
     const resp = await fetch(`${GH_API}/repos/${repo}`, { headers: ghHeaders(token) });
@@ -89,7 +95,7 @@ async function assertDumpRepoPrivate(token, repo) {
   } catch {
     isPrivate = false;
   }
-  repoPrivateCache.set(repo, isPrivate);
+  if (isPrivate) knownPrivateRepos.add(repo);
   return isPrivate;
 }
 
@@ -272,10 +278,10 @@ async function handleReport(request, env) {
   }
 
   // Crash minidump → Release asset (binaries off the git tree), link in the body.
-  // Only ever into a PRIVATE repo: see assertDumpRepoPrivate.
+  // Only ever into a PRIVATE repo: see isDumpRepoPrivate.
   if (payload.dumpBase64) {
     const dumpsRepo = env.DUMPS_REPO && splitRepo(env.DUMPS_REPO) ? env.DUMPS_REPO : assetsRepo;
-    if (!(await assertDumpRepoPrivate(env.GITHUB_TOKEN, dumpsRepo))) {
+    if (!(await isDumpRepoPrivate(env.GITHUB_TOKEN, dumpsRepo))) {
       body +=
         `\n\n_Crash minidump received but **discarded**: the configured dump repo (\`${dumpsRepo}\`) is ` +
         `not private, and a minidump carries process stack memory. Set \`DUMPS_REPO\` to a private repo and redeploy._`;

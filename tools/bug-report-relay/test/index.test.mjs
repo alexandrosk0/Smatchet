@@ -5,7 +5,7 @@
 // that records calls and replies from a per-test route table. Nothing here touches the
 // network or GitHub.
 //
-// NOTE: `repoPrivateCache` in src/index.js is module-level and survives across tests in
+// NOTE: `knownPrivateRepos` in src/index.js is module-level and survives across tests in
 // one import, so every test uses a DISTINCT repo slug — otherwise a later case would read
 // an earlier one's cached visibility.
 
@@ -159,4 +159,34 @@ test("a PRIVATE repo takes the dump, and DUMPS_REPO wins over ASSETS_REPO", asyn
   assert.equal(resp.status, 200);
   assert.ok(calls.some((c) => c.url === "https://uploads.test/assets?name=c.dmp"), "the dump must be uploaded");
   assert.ok(!calls.some((c) => c.url.includes("pub/assets")), "ASSETS_REPO must not receive the dump");
+});
+
+test("a 'not private' answer is NOT cached — the operator's fix takes effect immediately", async () => {
+  // First report sees a public repo; the operator then flips it private. Without
+  // re-checking, the isolate would keep dropping dumps until it recycled.
+  let isPrivate = false;
+  const uploaded = [];
+  globalThis.fetch = async (url, init = {}) => {
+    const href = String(url);
+    if (href.endsWith("/repos/flip/dumps")) return Response.json({ private: isPrivate });
+    if (href.includes("/releases/tags/crash-dumps")) {
+      return Response.json({ upload_url: "https://uploads.test/assets{?name,label}" });
+    }
+    if (href.startsWith("https://uploads.test/assets")) {
+      uploaded.push(href);
+      return Response.json({ browser_download_url: "https://dl.test/c.dmp" }, { status: 201 });
+    }
+    if (href.endsWith("/issues")) return Response.json(ISSUE, { status: 201 });
+    throw new Error(`unstubbed fetch: ${init.method || "GET"} ${href}`);
+  };
+
+  const env = { REPO: "flip/dumps", GITHUB_TOKEN: "x" };
+  const send = () => worker.fetch(reportRequest({ title: "t", body: "b", dumpBase64: "AAAA" }), env);
+
+  await send();
+  assert.deepEqual(uploaded, [], "public repo: dump dropped");
+
+  isPrivate = true;
+  await send();
+  assert.equal(uploaded.length, 1, "once private, the very next report uploads the dump");
 });

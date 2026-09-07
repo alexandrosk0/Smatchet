@@ -18,7 +18,7 @@ ASSETS_REPO = ""
 # Optional separate repo for crash minidumps ("owner/repo"). Empty/unset falls
 # back to ASSETS_REPO, then REPO. A minidump carries the crashing thread's stack
 # memory and the loaded-module list, so the Worker REFUSES to upload one unless
-# the destination repo is private (see `assertDumpRepoPrivate` in src/index.js).
+# the destination repo is private (see `isDumpRepoPrivate` in src/index.js).
 DUMPS_REPO = ""
 
 # --- Abuse protection -------------------------------------------------------
