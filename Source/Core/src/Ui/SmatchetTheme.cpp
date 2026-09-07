@@ -54,9 +54,11 @@ void SetAiColors(const SmatchetThemeAiColors& a) { gAiColors = a; }
 // Active semantic status-text palette (P2-H9). Seeded with the dark-family values so a
 // read before the first ApplyStyle still yields usable colors.
 SmatchetThemeSemanticColors gSemanticColors = {
-    ImVec4(0.95f, 0.35f, 0.35f, 1.0f), // ErrorText
-    ImVec4(1.00f, 0.85f, 0.30f, 1.0f), // WarningText
-    ImVec4(0.45f, 0.95f, 0.55f, 1.0f), // SuccessText
+    ImVec4(0.95f, 0.35f, 0.35f, 1.0f),  // ErrorText
+    ImVec4(1.00f, 0.85f, 0.30f, 1.0f),  // WarningText
+    ImVec4(0.45f, 0.95f, 0.55f, 1.0f),  // SuccessText
+    ImVec4(0.50f, 0.30f, 0.60f, 0.40f), // ParentRowBg
+    ImVec4(0.50f, 0.30f, 0.60f, 0.20f), // ParentRowNestedBg
 };
 void SetSemanticColors(const SmatchetThemeSemanticColors& c) { gSemanticColors = c; }
 

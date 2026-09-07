@@ -14,7 +14,7 @@
  * The tracker parsers emit the `parent` field as `"KEY - summary"` (or a bare `"KEY"`);
  * everything here keys off that one contract, so any backend whose parser fills
  * `parent` gets missing-parent fetch, story-group ordering, depth indent and the
- * hide-parents filter for free (design: docs/plans/active/parent-issue-hierarchy.md).
+ * hide-parents filter for free (design: docs/plans/shipped/parent-issue-hierarchy.md).
  *
  * No HTTP, no SQLite, no ImGui — unit-testable under the doctest rig. Every walk is
  * cycle-safe: a visited set plus `kMaxHierarchyDepth` bound the recursion so a parent

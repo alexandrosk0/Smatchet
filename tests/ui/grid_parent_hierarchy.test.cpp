@@ -1,5 +1,5 @@
 // grid_parent_hierarchy.test.cpp — bucket-E smoke for the parent-issue hierarchy toggles
-// (docs/plans/active/parent-issue-hierarchy.md, Slice 3).
+// (docs/plans/shipped/parent-issue-hierarchy.md, Slice 3).
 //
 // Drives the "Sort By" popup's two per-view checkboxes on the primary grid pane and asserts
 // the observable session effects:
