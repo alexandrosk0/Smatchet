@@ -14,6 +14,12 @@ name: Release
 # those manually per scripts/publish/INSTALL_UNREAL_PLUGIN.md until UE tooling
 # lands in CI.
 #
+# Signing credential: Azure Trusted Signing when the SMATCHET_TRUSTED_SIGNING_*
+# repository variables are configured, otherwise the SMATCHET_SIGN_PFX_BASE64
+# secret — `signing_method` forces either on a manual dispatch. Setup for both,
+# and why Trusted Signing is the SmartScreen-reputation path, are in
+# scripts/publish/SIGNING.md.
+#
 # release-github.sh refuses to --publish a tag that doesn't match the
 # CMakeLists.txt SmatchetApp VERSION (smatchet_version_tag) — bump the
 # version with scripts/publish/sync-release-version.sh and commit it BEFORE
@@ -43,6 +49,15 @@ on:
         type: boolean
         required: false
         default: true
+      signing_method:
+        description: "Which credential signs. auto = Azure Trusted Signing when the SMATCHET_TRUSTED_SIGNING_* repository variables are configured, else the PFX secret."
+        type: choice
+        required: false
+        default: auto
+        options:
+          - auto
+          - trusted-signing
+          - pfx
       draft:
         description: "Create the GitHub release as a draft"
         type: boolean
@@ -91,6 +106,8 @@ jobs:
           INPUT_DRAFT: ${{ github.event.inputs.draft }}
           INPUT_PRERELEASE: ${{ github.event.inputs.prerelease }}
           INPUT_ALLOW_UNSIGNED: ${{ github.event.inputs.allow_unsigned_publish }}
+          INPUT_SIGNING_METHOD: ${{ github.event.inputs.signing_method }}
+          TRUSTED_SIGNING_ENDPOINT: ${{ vars.SMATCHET_TRUSTED_SIGNING_ENDPOINT }}
         run: |
           $tag = $env:INPUT_TAG
           if ([string]::IsNullOrWhiteSpace($tag)) { $tag = $env:REF_NAME }
@@ -122,7 +139,31 @@ jobs:
           "draft=$($draft.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "prerelease=$($prerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
           "allow_unsigned=$($allowUnsigned.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
-          Write-Host "tag=$tag publish=$publish sign=$sign draft=$draft prerelease=$prerelease"
+          # Which credential signs. 'auto' (and a tag push, which carries no
+          # inputs context) prefers Azure Trusted Signing whenever the account
+          # endpoint variable is configured: it is the SmartScreen-reputation
+          # path and keeps no certificate material in a repository secret. With
+          # no endpoint configured the pipeline stays on the PFX secret exactly
+          # as before, so an existing repo needs no change to keep working.
+          $signingMethod = $env:INPUT_SIGNING_METHOD
+          if ([string]::IsNullOrWhiteSpace($signingMethod)) { $signingMethod = 'auto' }
+          if ($signingMethod -eq 'auto') {
+            if (-not [string]::IsNullOrWhiteSpace($env:TRUSTED_SIGNING_ENDPOINT)) {
+              $signingMethod = 'trusted-signing'
+            } else {
+              $signingMethod = 'pfx'
+            }
+          }
+          if ($signingMethod -notin @('trusted-signing', 'pfx')) {
+            Write-Error "Unknown signing_method '$signingMethod' — expected auto, trusted-signing or pfx."
+            exit 1
+          }
+          if ($sign -and $signingMethod -eq 'trusted-signing' -and [string]::IsNullOrWhiteSpace($env:TRUSTED_SIGNING_ENDPOINT)) {
+            Write-Error "signing_method=trusted-signing but the SMATCHET_TRUSTED_SIGNING_ENDPOINT repository variable is not set. See scripts/publish/SIGNING.md."
+            exit 1
+          }
+          "signing_method=$signingMethod" >> $env:GITHUB_OUTPUT
+          Write-Host "tag=$tag publish=$publish sign=$sign signing_method=$signingMethod draft=$draft prerelease=$prerelease"
 
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,8 +206,79 @@ jobs:
           if ($iscc) { Write-Host "iscc: $($iscc.Source)" }
           else { Write-Host "::warning::ISCC.exe not on PATH after choco; release-github.sh also searches fixed install dirs + the uninstall registry." }
 
+      - name: Set up Azure Trusted Signing
+        if: ${{ steps.params.outputs.sign == 'true' && steps.params.outputs.signing_method == 'trusted-signing' }}
+        shell: pwsh
+        env:
+          TRUSTED_SIGNING_ENDPOINT: ${{ vars.SMATCHET_TRUSTED_SIGNING_ENDPOINT }}
+          TRUSTED_SIGNING_ACCOUNT: ${{ vars.SMATCHET_TRUSTED_SIGNING_ACCOUNT }}
+          TRUSTED_SIGNING_PROFILE: ${{ vars.SMATCHET_TRUSTED_SIGNING_PROFILE }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # Fail on configuration, not on a bare signtool HRESULT 45 minutes into
+          # the build: every one of these is required before the first signature.
+          $required = @{
+            'SMATCHET_TRUSTED_SIGNING_ENDPOINT (variable)' = $env:TRUSTED_SIGNING_ENDPOINT
+            'SMATCHET_TRUSTED_SIGNING_ACCOUNT (variable)'  = $env:TRUSTED_SIGNING_ACCOUNT
+            'SMATCHET_TRUSTED_SIGNING_PROFILE (variable)'  = $env:TRUSTED_SIGNING_PROFILE
+            'AZURE_TENANT_ID (secret)'                     = $env:AZURE_TENANT_ID
+            'AZURE_CLIENT_ID (secret)'                     = $env:AZURE_CLIENT_ID
+            'AZURE_CLIENT_SECRET (secret)'                 = $env:AZURE_CLIENT_SECRET
+          }
+          $missing = @($required.GetEnumerator() | Where-Object { [string]::IsNullOrWhiteSpace($_.Value) } | ForEach-Object { $_.Key } | Sort-Object)
+          if ($missing.Count -gt 0) {
+            Write-Error "Azure Trusted Signing is not fully configured — missing: $($missing -join ', '). See scripts/publish/SIGNING.md § Azure Trusted Signing."
+            exit 1
+          }
+
+          # The signing provider ships as a NuGet package. Fetched by exact
+          # version + SHA-256 rather than through `nuget install`, so the bytes
+          # that gain code-signing authority over a Smatchet release are pinned
+          # the same way the Font Awesome asset is — a moved or republished
+          # package fails the build instead of silently signing with new code.
+          $version = '1.0.95'
+          $sha256 = '3BFCF1E0A3CB42AF1692F0A8ED45C15DE070C2DE86F28A59B2795D904D8A920F'
+          $pkgUrl = "https://api.nuget.org/v3-flatcontainer/microsoft.trusted.signing.client/$version/microsoft.trusted.signing.client.$version.nupkg"
+          $pkgPath = Join-Path $env:RUNNER_TEMP 'trusted-signing-client.zip'
+          $clientDir = Join-Path $env:RUNNER_TEMP 'trusted-signing-client'
+          Write-Host "Fetching Microsoft.Trusted.Signing.Client $version"
+          Invoke-WebRequest -Uri $pkgUrl -OutFile $pkgPath -UseBasicParsing
+          $actual = (Get-FileHash -LiteralPath $pkgPath -Algorithm SHA256).Hash
+          if ($actual -ne $sha256) {
+            Write-Error "Trusted Signing client checksum mismatch: expected $sha256, got $actual."
+            exit 1
+          }
+          if (Test-Path -LiteralPath $clientDir) { Remove-Item -LiteralPath $clientDir -Recurse -Force }
+          Expand-Archive -LiteralPath $pkgPath -DestinationPath $clientDir -Force
+          # signtool.exe is x64 here (the release runner is x64 even for an
+          # arm64 target build), so it can only load the x64 provider.
+          $dlib = Join-Path $clientDir 'bin\x64\Azure.CodeSigning.Dlib.dll'
+          if (-not (Test-Path -LiteralPath $dlib)) {
+            Write-Error "Azure.CodeSigning.Dlib.dll not found in the package at $dlib — the package layout changed."
+            exit 1
+          }
+
+          # Names the signing account + certificate profile signtool asks the
+          # service to mint a certificate from. No secret lives in this file:
+          # the credential comes from the AZURE_* environment below.
+          $metadataPath = Join-Path $env:RUNNER_TEMP 'trusted-signing-metadata.json'
+          $metadata = [ordered]@{
+            Endpoint = $env:TRUSTED_SIGNING_ENDPOINT
+            CodeSigningAccountName = $env:TRUSTED_SIGNING_ACCOUNT
+            CertificateProfileName = $env:TRUSTED_SIGNING_PROFILE
+          }
+          # utf8NoBOM, not the shell default: the dlib's JSON reader chokes on a
+          # leading UTF-8 BOM.
+          $metadata | ConvertTo-Json | Set-Content -LiteralPath $metadataPath -Encoding utf8NoBOM
+          "SMATCHET_SIGN_TRUSTED_SIGNING_DLIB=$dlib" >> $env:GITHUB_ENV
+          "SMATCHET_SIGN_TRUSTED_SIGNING_METADATA=$metadataPath" >> $env:GITHUB_ENV
+          Write-Host "Trusted Signing ready: account=$($env:TRUSTED_SIGNING_ACCOUNT) profile=$($env:TRUSTED_SIGNING_PROFILE)"
+
       - name: Decode signing certificate
-        if: ${{ steps.params.outputs.sign == 'true' }}
+        if: ${{ steps.params.outputs.sign == 'true' && steps.params.outputs.signing_method == 'pfx' }}
         shell: pwsh
         env:
           SMATCHET_SIGN_PFX_BASE64: ${{ secrets.SMATCHET_SIGN_PFX_BASE64 }}
@@ -183,6 +295,13 @@ jobs:
         shell: bash
         env:
           SMATCHET_SIGN_PFX_PASSWORD: ${{ secrets.SMATCHET_SIGN_PFX_PASSWORD }}
+          # Read by the Trusted Signing provider DLL (Azure.Identity's
+          # DefaultAzureCredential) at each signature. Scoped to this step
+          # rather than exported through GITHUB_ENV so the client secret never
+          # outlives the one step that needs it.
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           GH_TOKEN: ${{ github.token }}
           PARAM_TAG: ${{ steps.params.outputs.tag }}
           PARAM_SIGN: ${{ steps.params.outputs.sign }}
@@ -285,6 +404,11 @@ jobs:
         run: |
           if ($env:SMATCHET_SIGN_PFX_PATH -and (Test-Path -LiteralPath $env:SMATCHET_SIGN_PFX_PATH)) {
             Remove-Item -LiteralPath $env:SMATCHET_SIGN_PFX_PATH -Force
+          }
+          # Carries no secret, only the account/profile names — removed anyway so
+          # a self-hosted runner never leaves signing configuration behind.
+          if ($env:SMATCHET_SIGN_TRUSTED_SIGNING_METADATA -and (Test-Path -LiteralPath $env:SMATCHET_SIGN_TRUSTED_SIGNING_METADATA)) {
+            Remove-Item -LiteralPath $env:SMATCHET_SIGN_TRUSTED_SIGNING_METADATA -Force
           }
 
       - name: Upload release assets (for inspection)
