@@ -117,6 +117,7 @@ const CfgKey* ConfigSetKeyTable() {
         {"enableFieldOverflowTooltips", "field_overflow_tooltips", ""},
         {"vsync", "vsync_enabled", "applies immediately"},
         {"singleClickToEditGridCells", "single_click_to_edit_grid_cells", ""},
+        {"loadParentIssues", "load_parent_issues", "takes effect on next sync"},
         {"defaultLongTextEditorPreview", "default_long_text_editor_preview", ""},
         {"jqlQuery", "jql", "takes effect on next sync"},
         {"domain", "domain", "restart required to reconnect"},
@@ -294,10 +295,9 @@ CommandResult RunTicketsMonitor(const nlohmann::json& args, const CommandContext
 
 void RegisterTicketsMonitorCommand(CommandRegistry& reg) {
     {
-        Command c = MakeCommand(
-            "tickets.monitor",
-            "Toggle or query the ticket-change monitor (on|off|status). Persists the enabled pref.",
-            &RunTicketsMonitor);
+        Command c = MakeCommand("tickets.monitor",
+                                "Toggle or query the ticket-change monitor (on|off|status). Persists the enabled pref.",
+                                &RunTicketsMonitor);
         c.Destructive = false;
         c.Idempotent = false;
         c.DryRunSupported = true;

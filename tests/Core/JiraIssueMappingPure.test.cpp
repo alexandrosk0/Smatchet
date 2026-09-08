@@ -685,3 +685,44 @@ TEST_CASE("FindJiraTransitionId — no candidate returns empty, integer ids stri
     const JiraTransitionMatch m = FindJiraTransitionId(none, "10005", "");
     CHECK(m.id == "41");
 }
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — parent mapped even when NOT a selected field "
+          "(the production shape) [regression]") {
+    // REGRESSION PIN: BuildFetchFieldListsFromView always puts "parent" on the wire, but almost no
+    // view carries it as a column, so keying the mapping off selectedFields dropped it on every
+    // sync. With no parent value cached, the story-group / hide-parents toggles and the
+    // missing-parent fetch had nothing to key on and looked like a no-op in the running app.
+    nlohmann::json parentObj;
+    parentObj["key"] = "SMAT-1";
+    parentObj["fields"]["summary"] = "Epic story";
+
+    nlohmann::json fields;
+    fields["summary"] = "Child task";
+    fields["parent"] = parentObj;
+
+    const nlohmann::json issue = MakeIssue("SMAT-41", fields);
+    const std::vector<std::string> selected = {"summary", "status"}; // realistic: no "parent"
+    std::vector<CachedTicket> results;
+    REQUIRE(AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results));
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "parent") == "SMAT-1 - Epic story");
+}
+
+TEST_CASE("AppendCachedTicketFromJiraSearchIssue — parent absent on the wire stays unmapped so the "
+          "issuelinks fallback can fill it") {
+    nlohmann::json link;
+    link["type"]["inward"] = "is part of";
+    link["inwardIssue"]["key"] = "SMAT-2";
+    link["inwardIssue"]["fields"]["summary"] = "Linked story";
+
+    nlohmann::json fields;
+    fields["summary"] = "Linked child";
+    fields["issuelinks"] = nlohmann::json::array({link});
+
+    const nlohmann::json issue = MakeIssue("SMAT-42", fields);
+    const std::vector<std::string> selected = {"summary"};
+    std::vector<CachedTicket> results;
+    REQUIRE(AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results));
+    REQUIRE(results.size() == 1);
+    CHECK(GetField(results[0], "parent") == "SMAT-2 - Linked story");
+}

@@ -457,6 +457,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.JqlQuery = "project = RT";
     c.EnableFieldOverflowTooltips = false;
     c.SingleClickToEditGridCells = false;
+    c.LoadParentIssues = false;
     c.DefaultLongTextEditorPreview = true;
     c.ReadOnlyMode = true;
     c.BackendHasBeenReachable = true;
@@ -625,6 +626,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.BugReportScreenshotDefault == in.BugReportScreenshotDefault);
     CHECK(out.EnableFieldOverflowTooltips == in.EnableFieldOverflowTooltips);
     CHECK(out.SingleClickToEditGridCells == in.SingleClickToEditGridCells);
+    CHECK(out.LoadParentIssues == in.LoadParentIssues);
     CHECK(out.DefaultLongTextEditorPreview == in.DefaultLongTextEditorPreview);
     CHECK(out.ReadOnlyMode == in.ReadOnlyMode);
     CHECK(out.BackendHasBeenReachable == in.BackendHasBeenReachable);
@@ -719,6 +721,8 @@ TEST_CASE("ConfigManager Load of an empty config yields documented struct defaul
     CHECK(cfg.JqlQuery == def.JqlQuery);
     CHECK(cfg.EnableFieldOverflowTooltips == def.EnableFieldOverflowTooltips);
     CHECK(cfg.SingleClickToEditGridCells == def.SingleClickToEditGridCells);
+    CHECK(cfg.LoadParentIssues == def.LoadParentIssues);
+    CHECK(def.LoadParentIssues == true);
     CHECK(cfg.WindowWidth == def.WindowWidth);
     CHECK(cfg.WindowHeight == def.WindowHeight);
     CHECK(cfg.FieldCatalogCacheMaxProjects == def.FieldCatalogCacheMaxProjects);

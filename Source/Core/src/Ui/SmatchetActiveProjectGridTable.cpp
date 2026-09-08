@@ -23,6 +23,7 @@
 #include "TicketFieldEditor.h"
 #include "TicketGridFilterPure.h"
 #include "TicketGridModel.h"
+#include "Tracker/ParentHierarchyPure.h"
 #include "Ui/SmatchetTooltipWheelRouter.h"
 #include "UiPerfMonitor.h"
 
@@ -163,6 +164,96 @@ static void RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGuiTable* table,
     ImGui::SetScrollX(inner, targetX);
 }
 
+// Per-view parent-issue hierarchy switches feeding the projection (ViewDefinition::StoryGroupSort /
+// HideParents). Value-snapshotted by the caller so the projection never dereferences the view.
+struct GridHierarchyOptions {
+    bool storyGroupSort = false;
+    bool hideParents = false;
+};
+
+// Snapshot the rendered view's hierarchy switches (nullptr view → both off).
+static GridHierarchyOptions HierarchyOptionsForView(const ViewDefinition* view) {
+    GridHierarchyOptions hierarchy;
+    if (view) {
+        hierarchy.storyGroupSort = view->StoryGroupSort;
+        hierarchy.hideParents = view->HideParents;
+    }
+    return hierarchy;
+}
+
+// Projection identity key: every persistable column sort spec (`col:dir:order|`) plus the
+// parent-hierarchy switches (`H` hide-parents, `G` story-group). Toggling either switch must
+// rebuild the sorted/filtered indices even when the column sort specs did not move.
+static std::string BuildGridSortFingerprint(const ImGuiTableSortSpecs* sortSpecs,
+                                            const GridHierarchyOptions& hierarchy) {
+    std::string fingerprint;
+    if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
+        fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
+        for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
+            const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
+            if (!IsPersistableSortDirection(spec.SortDirection))
+                continue;
+            fingerprint += std::to_string(spec.ColumnIndex);
+            fingerprint.push_back(':');
+            fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
+            fingerprint.push_back(':');
+            fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
+            fingerprint.push_back('|');
+        }
+    }
+    if (hierarchy.hideParents)
+        fingerprint.push_back('H');
+    if (hierarchy.storyGroupSort)
+        fingerprint.push_back('G');
+    return fingerprint;
+}
+
+// Step 2 of RebuildGridSortAndFilterProjection: `pane.cachedSortedIndices` → `pane.filteredIndices`.
+// Quick-filter is the full-text match (TicketMatchesGridFilter). Parent-hierarchy rules (FS parity):
+//  - hideParents: a row that is a present parent of another row is dropped (leaf-only view).
+//  - storyGroupSort + non-empty filter: a matched child pulls its ancestor chain back in so the
+//    tree stays readable; ancestors are re-inserted at their sorted position (never hidden ones).
+static void ApplyGridFilterProjection(GridPane& pane, const std::vector<CachedTicket>& tickets,
+                                      const GridHierarchyOptions& hierarchy) {
+    pane.filteredIndices.clear();
+    const std::string filter(pane.gridFilterBuf);
+    const bool filterActive = !filter.empty();
+    auto checkMatch = [&](size_t idx) {
+        if (idx >= tickets.size())
+            return false;
+        return TicketMatchesGridFilter(tickets[idx], filter);
+    };
+    auto isPresentParent = [&](size_t idx) {
+        return hierarchy.hideParents && idx < tickets.size() && pane.cachedParentIds.count(tickets[idx].id) != 0;
+    };
+
+    std::vector<char> keep(tickets.size(), 0);
+    for (size_t idx : pane.cachedSortedIndices) {
+        if (idx < tickets.size() && checkMatch(idx) && !isPresentParent(idx)) {
+            keep[idx] = 1;
+        }
+    }
+    if (filterActive && hierarchy.storyGroupSort && !hierarchy.hideParents) {
+        // Ancestor re-add: walk the matched set, mark every ancestor so the tree keeps its spine.
+        // Build the id index ONCE outside the loop — AncestorChain's single-arg overload rebuilds
+        // it per call, which turned into an O(n^2) hash-map rebuild on every filter keystroke for
+        // a large matched set (found in review of this PR).
+        const ParentHierarchyPure::IdIndex idIndex = ParentHierarchyPure::BuildIdIndex(tickets);
+        for (size_t idx = 0; idx < tickets.size(); ++idx) {
+            if (!keep[idx])
+                continue;
+            for (size_t ancestor : ParentHierarchyPure::AncestorChain(tickets, idx, idIndex)) {
+                keep[ancestor] = 1;
+            }
+        }
+    }
+    for (size_t idx : pane.cachedSortedIndices) {
+        if (idx < tickets.size() && keep[idx]) {
+            pane.filteredIndices.push_back(idx);
+        }
+    }
+}
+
 // Rebuild ONE PANE's cached sort-order + filter projection (`pane.cachedSortedIndices` →
 // `pane.filteredIndices`). Extracted from drawActiveProjectGridSort so that helper stays
 // under the function-size cap; runs only when the projection is dirty AND the streaming
@@ -172,7 +263,8 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
                                                const std::vector<TicketGridColumn>& columns,
                                                const TrackerFieldCatalogIndex& catalogIndex,
                                                const std::string& fingerprint, std::uint64_t activeTicketsRevision,
-                                               std::uint64_t catalogRevision, char* lastFilter, size_t lastFilterCap) {
+                                               std::uint64_t catalogRevision, char* lastFilter, size_t lastFilterCap,
+                                               const GridHierarchyOptions& hierarchy) {
     pane.lastGridSortAt = std::chrono::steady_clock::now();
 
     // 1. Run Sort Spec / Order Indices
@@ -229,24 +321,38 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
                          });
     }
 
+    // 1b. Parent-issue hierarchy (FS parity): regroup children directly under their parent
+    // story, keeping the user's sort inside each sibling group, and cache depth + parent-id
+    // sets for the row draw. Off → caches stay empty so the common path is branch-free.
+    if (hierarchy.storyGroupSort) {
+        pane.cachedSortedIndices = ParentHierarchyPure::StoryGroupOrder(tickets, pane.cachedSortedIndices);
+        pane.cachedParentIds = ParentHierarchyPure::PresentParentIds(tickets);
+        // Leaf-only view: nothing to indent against once the parents are gone, so the rows read
+        // as a flat (still story-grouped) list. Depth stays empty; the tint is dropped below.
+        if (hierarchy.hideParents) {
+            pane.cachedDepths.clear();
+        } else {
+            pane.cachedDepths = ParentHierarchyPure::ComputeDepths(tickets);
+        }
+    } else if (hierarchy.hideParents) {
+        pane.cachedDepths.clear();
+        pane.cachedParentIds = ParentHierarchyPure::PresentParentIds(tickets);
+    } else {
+        pane.cachedDepths.clear();
+        pane.cachedParentIds.clear();
+    }
+
     pane.cachedSortFingerprint = fingerprint;
     pane.cachedSortValid = true;
     pane.cachedSortTicketsRevision = activeTicketsRevision;
     pane.cachedSortCatalogRevision = catalogRevision;
 
     // 2. Run Filter and rebuild pane.filteredIndices
-    pane.filteredIndices.clear();
-    const std::string filter(pane.gridFilterBuf);
-    auto checkMatch = [&](size_t idx) {
-        if (idx >= tickets.size())
-            return false;
-        return TicketMatchesGridFilter(tickets[idx], filter);
-    };
-
-    for (size_t idx : pane.cachedSortedIndices) {
-        if (checkMatch(idx)) {
-            pane.filteredIndices.push_back(idx);
-        }
+    ApplyGridFilterProjection(pane, tickets, hierarchy);
+    if (hierarchy.hideParents) {
+        // The parent-id set has done its job (dropping the parent rows); the row draw reads it
+        // only for the tint, and a leaf-only grid must not carry parent colouring.
+        pane.cachedParentIds.clear();
     }
 
     // snprintf guarantees null-termination and avoids the strncpy
@@ -765,21 +871,8 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
         pane.cachedSortValid = false;
     }
 
-    std::string fingerprint;
-    if (sortSpecs && sortSpecs->SpecsCount > 0 && sortSpecs->Specs != nullptr) {
-        fingerprint.reserve(static_cast<size_t>(sortSpecs->SpecsCount) * 48);
-        for (int s = 0; s < sortSpecs->SpecsCount; ++s) {
-            const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[s];
-            if (!IsPersistableSortDirection(spec.SortDirection))
-                continue;
-            fingerprint += std::to_string(spec.ColumnIndex);
-            fingerprint.push_back(':');
-            fingerprint += std::to_string(static_cast<int>(spec.SortDirection));
-            fingerprint.push_back(':');
-            fingerprint += std::to_string(static_cast<int>(spec.SortOrder));
-            fingerprint.push_back('|');
-        }
-    }
+    const GridHierarchyOptions hierarchy = HierarchyOptionsForView(activeViewForGrid);
+    const std::string fingerprint = BuildGridSortFingerprint(sortSpecs, hierarchy);
 
     bool filterChanged = (std::strcmp(lastFilter, pane.gridFilterBuf) != 0);
     if (filterChanged) {
@@ -811,7 +904,7 @@ void SmatchetUI::drawActiveProjectGridSort(ActiveProjectDrawCtx& ctx) {
     if (needsProjectionRefresh && okToRefreshProjection) {
         RebuildGridSortAndFilterProjection(pane, sortSpecs, tickets, columns, catalogIndex, fingerprint,
                                            activeTicketsRevision, catalogRevision, lastFilter,
-                                           sizeof(pane.lastFilterBuf));
+                                           sizeof(pane.lastFilterBuf), hierarchy);
     }
 }
 
@@ -914,9 +1007,18 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
             // ToLowerAsciiCopy + 4 string::find are paid once per unique status value,
             // not once per visible row. Cache is a lambda-captured unordered_map.
             const ImVec4 statusColor = StatusRowColor(ticket.GetFieldValue("status"));
+            // Parent-hierarchy depth for this row (Id-cell indent); 0 unless StoryGroupSort is on
+            // with parents shown (HideParents flattens the indent and drops the tint).
+            ctx.currentRowDepth = (ticketIndex < pane.cachedDepths.size()) ? pane.cachedDepths[ticketIndex] : 0;
             if (statusColor.w > 0.0f) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0,
                                        ImGui::GetColorU32(ImVec4(statusColor.x, statusColor.y, statusColor.z, 0.12f)));
+            } else if (!pane.cachedParentIds.empty() && pane.cachedParentIds.count(ticket.id) != 0) {
+                // Parent-row tint (FS parity): status colour wins; a parent that is itself nested
+                // gets the half-strength tint so the tree reads top-down.
+                const SmatchetThemeSemanticColors& semantic = SmatchetTheme::GetActiveSemanticColors();
+                const ImVec4& tint = ctx.currentRowDepth > 0 ? semantic.ParentRowNestedBg : semantic.ParentRowBg;
+                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(tint));
             }
 
             for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
