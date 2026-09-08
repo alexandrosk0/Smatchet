@@ -38,6 +38,18 @@ void DrawGridSectionBody(UiDrawSession& d) {
         }
         ImGui::SetItemTooltip("When off, double-click is required to begin editing any cell. Default: on.");
     }
+    if (d.prefsFilter.ShowSetting("editing.grid.load_parent_issues")) {
+        if (ImGui::Checkbox("Load parent issues", &d.cfg.LoadParentIssues)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Fetch parents the view's query did not return. Takes effect on next sync. Default: on.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.grid.load_parent_issues.help",
+                                   "After each sync, parent issues referenced by the fetched rows but missing "
+                                   "from the result are fetched in one extra request so the Parent group tree "
+                                   "has its roots. Turn off to skip that request; children of a missing parent "
+                                   "then show as top-level rows.");
+    }
     if (d.prefsFilter.ShowSetting("editing.grid.long_text_preview")) {
         if (ImGui::Checkbox("Open long-text editor in preview mode", &d.cfg.DefaultLongTextEditorPreview)) {
             MarkPrefsDirty(d);

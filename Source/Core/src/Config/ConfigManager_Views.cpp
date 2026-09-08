@@ -70,6 +70,8 @@ ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
             }
         }
     }
+    view.HideParents = viewJson.value("hide_parents", false);
+    view.StoryGroupSort = viewJson.value("story_group_sort", false);
     if (view.Id.empty()) {
         view.Id = view.Name;
     }
@@ -124,6 +126,8 @@ nlohmann::json SerializeView(const ViewDefinition& view) {
             viewJson["sort_specs"].push_back(nlohmann::json{{"column", spec.ColumnKey}, {"direction", spec.Direction}});
         }
     }
+    viewJson["hide_parents"] = view.HideParents;
+    viewJson["story_group_sort"] = view.StoryGroupSort;
     return viewJson;
 }
 
@@ -380,6 +384,16 @@ ViewsStore ConfigManager::ViewWorkspaceToViewsStore(const ViewWorkspaceState& ws
 
 void ConfigManager::ViewsStoreToViewWorkspace(const ViewsStore& slice, ViewWorkspaceState& ws) {
     ViewsStoreToViewWorkspaceImpl(slice, ws);
+}
+
+const ViewDefinition* ConfigManager::FindActiveViewOrFirst(const std::vector<ViewDefinition>& views,
+                                                           const std::string& activeViewId) {
+    for (const ViewDefinition& view : views) {
+        if (view.Id == activeViewId) {
+            return &view;
+        }
+    }
+    return views.empty() ? nullptr : &views.front();
 }
 
 ViewsStore ConfigManager::LoadViewsOrBootstrap(const TrackerConfig& cfg) {

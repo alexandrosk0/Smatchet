@@ -17,6 +17,7 @@
 #include "StringUtil.h"
 #include "TicketFieldEditor.h"
 #include "TicketGridModel.h"
+#include "Tracker/ParentHierarchyPure.h"
 
 #include "imgui.h"
 #include "SmatchetLocalizedImGui.h"
@@ -47,11 +48,7 @@ void PrepareNewIssueDraftForSubmit(UiDrawSession& d) {
     // Sync ParentKey from parent cell after flush; empty cell clears inherited ParentKey.
     auto parentIt = d.newIssueDraft.FieldValues.find("parent");
     if (parentIt != d.newIssueDraft.FieldValues.end() && !parentIt->second.empty()) {
-        std::string parentKey = parentIt->second;
-        const size_t sep = parentKey.find(" - ");
-        if (sep != std::string::npos)
-            parentKey.resize(sep);
-        d.newIssueDraft.ParentKey = parentKey;
+        d.newIssueDraft.ParentKey = ParentHierarchyPure::ParentKeyFromFieldValue(parentIt->second);
         d.newIssueDraft.FieldValues.erase(parentIt);
     } else {
         if (parentIt != d.newIssueDraft.FieldValues.end()) {

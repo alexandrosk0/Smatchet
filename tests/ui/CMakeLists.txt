@@ -53,6 +53,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_main_ui_smoke.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/funcsize_grid_render.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_pane_windows.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/grid_parent_hierarchy.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_wheel_route_ownership.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/reset_layout_docking.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/dock_slot_liveness.test.cpp"
