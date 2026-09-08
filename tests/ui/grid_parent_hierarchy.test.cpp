@@ -171,8 +171,8 @@ static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(hideParentsOff);
         const bool offDirty = YieldUntil(ctx, [&] { return g_ui.viewsDirty; });
         IM_CHECK_NO_RET(offDirty);
-        const bool depthsCleared = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
-        IM_CHECK_NO_RET(depthsCleared);
+        const bool depthsClearedAgain = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
+        IM_CHECK_NO_RET(depthsClearedAgain);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
     };
 }
