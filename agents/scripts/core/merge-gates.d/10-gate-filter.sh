@@ -183,7 +183,17 @@ _MG_GATE_FILTER_TEMPLATE='
       ($tests and .__typename == "CheckRun" and .name == "Test-delta gate" and ((.completedAt // .startedAt // "") >= $testsAt)) or
       ($perf  and .__typename == "CheckRun" and ((.name // "") | startswith("Perf PR-fast")) and ((.completedAt // .startedAt // "") >= $perfAt)) or
       ($intent and .__typename == "CheckRun" and .name == "Intent section") or
-      ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate"))]) as $downgraded
+      ($planlock and .__typename == "CheckRun" and .name == "Plan-lock gate") or
+      # cr-out-of-band + disposition also discounts the CR finding gate
+      # StatusContext / CheckRun ("CR findings..." / "CR finding gate") —
+      # otherwise the waiver that exists to clear a stuck CR check leaves
+      # ci_pend/ci_fail non-zero forever (tooling 2026-08-18: label inert
+      # until re-run; merge-gates must be self-consistent even before the
+      # labeled re-run posts success).
+      ($cr and $crdisposition and .__typename == "StatusContext"
+        and ((.context // "") | test("^CR findings"; "i"))) or
+      ($cr and $crdisposition and .__typename == "CheckRun"
+        and ((.name // "") | test("^CR finding"; "i"))))]) as $downgraded
 # $staleOverride — the label-reactive reds whose downgrade the freshness
 # conjunct REFUSED (label applied after the run completed). Surfaced as fields
 # 33/34 so the poll loop can print an actionable WARN instead of a silent
@@ -321,12 +331,24 @@ _MG_GATE_FILTER_TEMPLATE='
     ($tests | tostring),
     ($perf | tostring),
     ($req | length),
-    ([$failing[] | select(. as $f | ($downgraded | any(.name == $f.name and .__typename == $f.__typename)) | not)] | length),
+    ([$failing[] | select(. as $f | ($downgraded | any(
+          .__typename == $f.__typename
+          and (if $f.__typename == "CheckRun"
+               then (.name // "") == ($f.name // "")
+               else (.context // "") == ($f.context // "") end))) | not)] | length),
     ([$blocking[] | select(
-        (.__typename == "CheckRun" and .status != "COMPLETED") or
-        (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED"))))] | length),
+        (
+          (.__typename == "CheckRun" and .status != "COMPLETED") or
+          (.__typename == "StatusContext" and ((.state // "") | IN("PENDING","EXPECTED")))
+        )
+        # When cr-out-of-band + disposition is live, the CR findings context is
+        # the same signal as gate 2 — do not let it hold ci_pend (tooling 2026-08-18).
+        and (($cr and $crdisposition and (
+               (.__typename == "StatusContext" and ((.context // "") | test("^CR findings"; "i")))
+               or (.__typename == "CheckRun" and ((.name // "") | test("^CR finding"; "i")))
+             )) | not))] | length),
     ($downgraded | length),
-    ([$downgraded[].name] | join(", ")),
+    ([$downgraded[] | if .__typename == "CheckRun" then (.name // "") else (.context // "") end] | join(", ")),
     $crstate,
     (($crbody | split("\n"))[0] // ""),
     ([$pr.reviewThreads.nodes[] | select(.isResolved == false and .isOutdated == false

@@ -1634,6 +1634,28 @@ set_fixture() {
     unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
 }
 
+@test "cr-out-of-band + disposition discounts pending CR findings StatusContext (tooling 2026-08-18)" {
+    # The waiver that clears gate 2 must also clear THIS gate's own pending
+    # StatusContext from ci_pend — otherwise the documented OSS/rate-limit escape
+    # reports as applied and still blocks (PRs #2070/#2124/#2131).
+    local f f2
+    f="$(fixture_override "$FIXTURES_DIR/merge_gates_pass.json" \
+        "data.repository.pullRequest.labels" \
+        '{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"cr-out-of-band"},{"name":"cr-disposition:cr-auto-review-disabled"}]}')"
+    f2="$(fixture_override "$f" \
+        "data.repository.pullRequest.commits.nodes.0.commit.statusCheckRollup.contexts.nodes" \
+        '[{"__typename":"CheckRun","name":"build","conclusion":"SUCCESS","status":"COMPLETED","isRequired":true},{"__typename":"StatusContext","context":"ci/standalone","state":"SUCCESS","isRequired":true},{"__typename":"StatusContext","context":"CodeRabbit","state":"SUCCESS","description":"Review skipped: manual review required for this OSS repository","isRequired":false},{"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"PENDING","isRequired":false}]')"
+    export MERGE_GATES_CR_INSTALLED=true
+    export MERGE_GATES_STALE_REREVIEW_POLLS=0
+    set_fixture "$f2"
+    run poll_merge_gates org repo 1
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"GATES_PASSED"* ]]
+    [[ "$output" == *"0 pending"* ]]
+    rm -f "$f" "$f2"
+    unset MERGE_GATES_CR_INSTALLED MERGE_GATES_STALE_REREVIEW_POLLS
+}
+
 @test "cr-out-of-band does NOT bypass a failing CI check (CR gate only)" {
     # Add the label to a fixture whose Test-delta gate FAILS and which has NO
     # tests-out-of-band label. cr-out-of-band must NOT touch CI → still blocks.

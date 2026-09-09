@@ -1088,6 +1088,12 @@ poll_merge_gates() {
                     # often lands a poll or two after the placeholder. Distinct
                     # from NONE+pending so the operator can see the placeholder.
                     cr_state_print="NONE+status-SUCCESS-waiting-for-inline (poll $((p+1))/$CR_GRACE_POLLS)"
+                    # First-poll tip for the permanent OSS <10-star shape (this
+                    # repo): CR's SUCCESS means "Review skipped: manual review
+                    # required", not "reviewed clean". Bot nudges are ignored.
+                    if [ "$p" -eq 0 ]; then
+                        echo "INFO: CodeRabbit status=SUCCESS with no inline review yet. On repos <10 stars CR waits for a HUMAN '@coderabbitai review' (bot/app comments ignored) — run: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber} — or waive with cr-out-of-band + cr-disposition:cr-auto-review-disabled. See merge-gates.md § CodeRabbit OSS manual-trigger." >&2
+                    fi
                 elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
                     # Grace window elapsed; CR never started. Log + fall through to pass
                     # so the loop is never wedged by a stuck integration.

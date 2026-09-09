@@ -4,7 +4,7 @@
 - **Priority**: P2
 - **Date**: 2026-08-30
 - **Observed on**: PR #2176 (both heads: the initial review head and `b335714be` after the CR-Major fix)
-- **Status**: open
+- **Status**: applied — 2026-09-09 (OSS manual-trigger playbook: labeled trigger + terminal failure + merge-gates discount + scripts/dev/trigger-coderabbit-review.sh)
 
 ## What happened
 

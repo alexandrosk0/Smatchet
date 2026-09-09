@@ -4,7 +4,7 @@
 - **Priority**: P1
 - **Date**: 2026-08-19
 - **Observed on**: PR #2127 (merged past it under an explicit user authorisation) — and #2130, #2122, #2121, #2119, #2118, #2117 before it, all merged with the same context `pending` and **no** override label
-- **Status**: open
+- **Status**: applied — 2026-09-09 (OSS manual-trigger playbook: labeled trigger + terminal failure + merge-gates discount + scripts/dev/trigger-coderabbit-review.sh)
 
 ## What happened
 

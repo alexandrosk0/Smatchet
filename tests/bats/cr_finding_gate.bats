@@ -144,6 +144,13 @@ step_timeout() {
     [ "$status" -ne 0 ]
 }
 
+@test "workflow re-runs on labeled/unlabeled so cr-out-of-band is not inert" {
+    # tooling 2026-08-18: without these types the waiver sat live in the API
+    # and inert in CI until a manual `gh run rerun` (#2070/#2124/#2131).
+    grep -q 'labeled' "$WF"
+    grep -q 'unlabeled' "$WF"
+}
+
 @test "workflow posts PENDING when the evaluation could not conclude" {
     grep -q 'always() && steps.eval.outcome != .success.' "$WF"
     grep -q "state=pending" "$WF"
@@ -234,7 +241,7 @@ verdict() {
         # (i.e. PASS) here while the action correctly held it unsettled, so no
         # test could catch a regression of the fail-open (CodeRabbit, #2036).
         if [ "$state" = "SUCCESS" ] && printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"; then
-            printf 'unsettled'; return
+            printf 'oss-manual-trigger-fail'; return
         fi
         case "$state" in
             SUCCESS)       printf 'not-reviewed' ;;
@@ -663,13 +670,13 @@ run_nudge() {
     state=$(jq -r -f "$BATS_TEST_TMPDIR/ctx.jq" "$f")
     desc=$(jq -r -f "$BATS_TEST_TMPDIR/desc.jq" "$f")
     [ "$state" = "SUCCESS" ]                                    # old code: -> pass
-    printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"         # new code: -> unsettled
+    printf '%s' "$desc" | grep -qiE "$MANUAL_REVIEW_RE"         # new code: -> terminal fail
     # And it must NOT be mistaken for the rate-limit marker — they are distinct
     # states needing distinct recoveries (full review vs a first review).
     ! printf '%s' "$desc" | grep -qiE "$RATE_LIMIT_RE"
     # Exercise the CLASSIFICATION, not just the fields: inspecting state/desc
-    # cannot tell whether the verdict actually holds unsettled.
-    [ "$(verdict "$f")" = "unsettled" ]
+    # cannot tell whether the verdict actually holds the terminal OSS arm.
+    [ "$(verdict "$f")" = "oss-manual-trigger-fail" ]
 }
 
 # The fail-shut risk of over-matching. CR's PATH-FILTER skip is terminal — there
@@ -690,8 +697,11 @@ run_nudge() {
 }
 
 @test "the manual-review guard is wired into decide(), not just defined" {
-    grep -qE "maybe_nudge_review never-reviewed; *$" "$ACTION" \
-        || grep -qE 'maybe_nudge_review never-reviewed' "$ACTION"
+    # Terminal arm: OSS manual-review posts failure (bot nudge retired — process 2026-08-30).
+    grep -q "cr-auto-review-disabled (OSS <10 stars)" "$ACTION"
+    grep -q "post failure" "$ACTION"
+    # Must still refuse to treat the status as a clean skip/pass.
+    grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"
 }
 
 # --- never-reviewed nudge -------------------------------------------------

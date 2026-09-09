@@ -27,8 +27,15 @@ name: CR finding gate
 # post for them (would need pull_request_target with head-SHA pinning).
 
 on:
+  # `labeled` / `unlabeled` are load-bearing for the cr-out-of-band override:
+  # the action reads labels live and posts success when the waiver is present,
+  # but without these types the label is inert until a manual `gh run rerun`
+  # (tooling 2026-08-18 — PRs #2070 / #2124 / #2131 burned hours on that gap).
+  # `synchronize` / `opened` / `reopened` / `ready_for_review` keep the default
+  # pull_request coverage so every head still reports.
   pull_request:
     branches: [develop]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   pull_request_review:
   pull_request_review_comment:
   issue_comment:
