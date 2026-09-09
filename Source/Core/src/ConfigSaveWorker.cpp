@@ -1,5 +1,6 @@
 #include "ConfigSaveWorker.h"
 
+#include "Config/TrackerConfigSaveQueue.h"  // pending-snapshot take-one hook (#2191)
 #include "Config/TrackerConfigSaveRepair.h" // persisted-field repair hooks (#2047)
 #include "Logger.h"
 // Pure `MergePersistentViewsToolbarAppend` (no ImGui, no UI state) — the views read-modify-write
@@ -47,6 +48,25 @@ WorkerState& State() {
 
 bool HasPendingLocked(const WorkerState& s) { return s.trackerDirty || s.annotateDirty || s.viewsDirty; }
 
+/// The `config_save_queue` take-one hook (#2191). Installed for the worker's whole lifetime and
+/// called by `ConfigManager` with the config write lock HELD, so it only ever touches `s.mtx` —
+/// never the other way round, which is what keeps the lock order (RMW -> slot) acyclic.
+/// The worker deliberately does NOT empty the tracker slot itself. If it did, a snapshot could sit
+/// in a worker local while a synchronous `ConfigManager::Save` ran to completion, and the worker's
+/// later write of that older image would revert it — the exact race #2191 reports. Emptying the
+/// slot only from inside the write lock makes "queued" and "written" the same instant.
+bool TakePendingTracker(TrackerConfig& out) {
+    auto& s = State();
+    std::lock_guard<std::mutex> lk(s.mtx);
+    if (!s.trackerDirty) {
+        return false;
+    }
+    out = s.trackerPending;
+    s.trackerPending = TrackerConfig();
+    s.trackerDirty = false;
+    return true;
+}
+
 /// The read-modify-write `Views::Save` used to run inline on the UI thread (#2026). Kept in one
 /// place so the worker path and the worker-not-running fallback below cannot drift.
 void WritePersistentViews(PersistentViewsFile disk) {
@@ -60,19 +80,12 @@ void WritePersistentViews(PersistentViewsFile disk) {
 // Snapshot whatever is dirty (under lock, clearing the dirty flags), then write outside the lock so
 // file I/O never blocks an Enqueue. Both writes go through the atomic-RMW ConfigManager seam.
 void DrainOnce(WorkerState& s) {
-    bool doTracker = false;
     bool doAnnotate = false;
     bool doViews = false;
-    TrackerConfig tcfg;
     AnnotateAnalysisConfig acfg;
     PersistentViewsFile vfile;
     {
         std::lock_guard<std::mutex> lk(s.mtx);
-        if (s.trackerDirty) {
-            doTracker = true;
-            tcfg = s.trackerPending;
-            s.trackerDirty = false;
-        }
         if (s.annotateDirty) {
             doAnnotate = true;
             acfg = s.annotatePending;
@@ -84,12 +97,13 @@ void DrainOnce(WorkerState& s) {
             s.viewsDirty = false;
         }
     }
-    if (doTracker) {
-        try {
-            ConfigManager::Save(tcfg);
-        } catch (...) { // catch-all-ok: Save logs its own diagnostics; a worker-thread throw must not
-                        // terminate the process.
-        }
+    // Tracker: ask the Config layer to drain the slot from inside its write lock (see
+    // TakePendingTracker). Unconditional — cheap when the slot is already empty because a
+    // synchronous save drained it, which is a normal outcome now, not a lost write.
+    try {
+        ConfigManager::FlushPendingTrackerSave();
+    } catch (...) { // catch-all-ok: Save logs its own diagnostics; a worker-thread throw must not
+                    // terminate the process.
     }
     if (doAnnotate) {
         try {
@@ -130,6 +144,7 @@ void Start() {
     }
     s.shouldStop.store(false, std::memory_order_release);
     s.running = true;
+    smatchet::config_save_queue::SetTakePendingHook(&TakePendingTracker);
     s.thread = std::thread(WorkerLoop);
 }
 
@@ -175,6 +190,9 @@ void Stop() {
     if (workerToJoin.joinable()) {
         workerToJoin.join();
     }
+    // Uninstall last: while the thread was still joining, a concurrent ConfigManager::Save draining
+    // the slot was the one thing that could still rescue a queued snapshot.
+    smatchet::config_save_queue::SetTakePendingHook(nullptr);
 }
 
 void EnqueueTrackerConfig(const TrackerConfig& cfg) {

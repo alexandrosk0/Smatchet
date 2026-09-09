@@ -143,9 +143,10 @@ void RegisterAppCommands(CommandRegistry& reg, IAppMeta& app) {
                                     if (ctx.DryRun) {
                                         return CommandResult::Success({{"wouldDo", {{"readOnlyMode", on}}}});
                                     }
-                                    TrackerConfig cfg = ConfigManager::Load();
-                                    cfg.ReadOnlyMode = on;
-                                    ConfigManager::Save(cfg);
+                                    // Update re-reads under the config write lock, so this
+                                    // single-field command cannot revert a concurrent UI save
+                                    // (#2191).
+                                    ConfigManager::Update([on](TrackerConfig& cfg) { cfg.ReadOnlyMode = on; });
                                     ConfigManager::InvalidateCache();
                                     return CommandResult::Success({{"readOnlyMode", on}});
                                 });

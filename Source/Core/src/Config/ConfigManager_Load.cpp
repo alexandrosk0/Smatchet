@@ -756,8 +756,21 @@ AnnotateAnalysisConfig ConfigManager::LoadAnnotateAnalysis() {
 
 // ConfigManager — Load(CliOverrides).
 
-TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
-    const bool canUseCache = !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
+namespace {
+
+/// The in-process Load cache holds a plain `Load()` image, so it is only usable when no ephemeral
+/// env/CLI override has been folded into the config being returned.
+bool CliOverridesAllowCache(const ConfigManager::CliOverrides& cli) {
+    return !cli.HasDbPath && !cli.HasBackendType && !cli.HasMcpPort && !cli.HasMcpAllowRemote;
+}
+
+/// The shared Load body. `forWriteLock` is set only by `LoadTrackerConfigForUpdate` (#2191), and
+/// turns off the two behaviors that are wrong for a read taken INSIDE the config write lock: the
+/// Load cache (stale by construction there) and the legacy-secret migration re-`Save` (a re-entry
+/// of the non-recursive RMW mutex, i.e. a deadlock). See ConfigManager_Internal.h for why dropping
+/// that re-save loses nothing.
+TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock) {
+    const bool canUseCache = !forWriteLock && CliOverridesAllowCache(cli);
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());
         // cppcheck-suppress knownConditionTrueFalse ; cache flag is set by Invalidate/Store paths cppcheck does not
@@ -767,8 +780,8 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
         }
     }
 
-    nlohmann::json j = LoadMergedConfigJson();
-    const bool hasSetupConfig = !LoadJsonFile(GetConfigPath()).empty();
+    nlohmann::json j = ConfigManager::LoadMergedConfigJson();
+    const bool hasSetupConfig = !ConfigManager::LoadJsonFile(ConfigManager::GetConfigPath()).empty();
     TrackerConfig cfg;
     cfg.DbPath = SmatchetDefaults::kDefaultDbPath;
     cfg.TrackerType = SmatchetDefaults::kDefaultBackendType;
@@ -811,7 +824,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     // "user has not picked a path"; only here do we know the platform shared dir. Resolving at
     // construct time would lose the ability to distinguish blank-by-default from blank-by-user.
     if (cfg.AgentsMdGlobalPath.empty()) {
-        const std::string shared = GetPlatformSharedUserDataDirectory();
+        const std::string shared = ConfigManager::GetPlatformSharedUserDataDirectory();
         if (!shared.empty()) {
             cfg.AgentsMdGlobalPath = shared + "agents.md";
         }
@@ -832,7 +845,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
     //   override-applied values while disk holds pre-override values. That divergence is intentional and matches
     //   pre-split behavior. The standing limitation that any subsequent re-save with this cfg would write
     //   override values to disk is a pre-existing concern outside the scope of this migration.
-    if (migrate.Any()) {
+    if (migrate.Any() && !forWriteLock) {
 #if defined(__ANDROID__)
         LOG_INFO("ConfigManager: migrating legacy plaintext secret(s) to Keystore-protected storage "
                  "(audit H2 fail-closed re-save: unseal-able secrets re-sealed, the rest dropped).");
@@ -847,7 +860,7 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
                  migrate.McpAuthToken ? 1 : 0, migrate.AiApiKey ? 1 : 0, migrate.AiAnthropicApiKey ? 1 : 0,
                  migrate.AiDeepSeekApiKey ? 1 : 0);
 #endif
-        Save(cfg);
+        ConfigManager::Save(cfg);
     }
 #endif
 
@@ -862,3 +875,15 @@ TrackerConfig ConfigManager::Load(const CliOverrides& cli) {
 
     return cfg;
 }
+
+} // namespace
+
+TrackerConfig ConfigManager::Load(const CliOverrides& cli) { return LoadImpl(cli, /*forWriteLock=*/false); }
+
+namespace smatchet {
+namespace config_detail {
+
+TrackerConfig LoadTrackerConfigForUpdate() { return LoadImpl(ConfigManager::CliOverrides(), /*forWriteLock=*/true); }
+
+} // namespace config_detail
+} // namespace smatchet
