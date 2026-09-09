@@ -20,6 +20,7 @@
 #include "TicketGridModel.h"
 
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -37,6 +38,10 @@ struct PaneAddRequest {
     std::string targetBackendKey; ///< Backend for the new pane; empty = same as source.
     std::string targetViewId;     ///< View for the new pane; empty = backend default.
 };
+
+/// Search-box capacity; matches JqlEditorState::buf so a typed query is never truncated.
+/// Plain `constexpr` — the posix/Android portability gate compiles this header at C++14.
+constexpr std::size_t kGridSearchBufSize = 512;
 
 struct GridPane {
     // ---- Identity (persisted, ordered, in smatchet_panes.json) ----
@@ -58,10 +63,12 @@ struct GridPane {
     bool titleOverridden = false;
 
     SpreadsheetState gridState; ///< Active issue, cell edit state, rectangular selection.
-    char gridFilterBuf[128] = {};
-    char lastFilterBuf[128] = {}; ///< Last filter applied to the cached projection (change detector).
-    std::string omnibarText;      ///< This tab's omnibar search text — restored when the pane regains focus
-                                  ///< (drawOmnibar swaps it into the shared d.omniJqlEditor on focus change).
+    /// Grid-header search box: words/keys filter the loaded rows as typed, a structured query
+    /// commits on Enter (GridSearchInputClassifier routes it; see GridSearchFiltersRows).
+    char gridSearchBuf[kGridSearchBufSize] = {};
+    /// RAW box text the cached projection was built from — raw, not the effective filter, so
+    /// a classification flip alone still invalidates it.
+    char lastSearchBuf[kGridSearchBufSize] = {};
 
     // Sort + filter projection cache (per-pane so N panes don't thrash one cache).
     std::vector<size_t> cachedSortedIndices;

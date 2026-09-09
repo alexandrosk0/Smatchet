@@ -871,7 +871,7 @@ void SmatchetUI::drawMenuBarInlinePalette(MainMenuDrawCtx& ctx) {
         ImGui::SetNextItemWidth(inputW);
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(6.0f, 2.0f));
         // Placeholder says COMMANDS explicitly so this box is not mistaken for the top
-        // omnibar (issue search) — each search entry point states what it searches (M7).
+        // grid header search box (issue search) — each search entry point states what it searches (M7).
         const bool committed = ImGui::InputTextWithHint(
             "##cmd-palette-input", "Search commands, not issues (Ctrl+Shift+P)", d.paletteInlineBuf,
             IM_ARRAYSIZE(d.paletteInlineBuf), ImGuiInputTextFlags_EnterReturnsTrue);

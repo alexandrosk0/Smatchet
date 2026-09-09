@@ -199,26 +199,8 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
     // Deferred toolbar actions ({paneId, kind} latch — review MEDIUM-2, extended to
     // "+ New Issue" by plan item 19): a click in a not-yet-focused pane is applied
     // HERE, after the focus/view switch above landed, so the action targets the
-    // clicked pane's view/context — not the previously focused pane's. Consume-once:
-    // a request whose pane did not gain focus is dropped, never replayed.
-    if (!d.paneDeferredActionPaneId.empty()) {
-        if (d.paneDeferredActionPaneId == d.focusedPaneId) {
-            if (const ViewDefinition* active = ViewState.GetActiveView()) {
-                if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView) {
-                    d.cfg.JqlQuery = active->Jql;
-                    d.cfg.SelectedFields = active->Fields;
-                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-                } else if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::NewIssueDraft) {
-                    static const std::vector<CachedTicket> kNoTickets;
-                    const GridPane& focusedPane = d.focusedPane();
-                    StartNewIssueDraft(app, d, ViewState.GetActiveViewMutable(),
-                                       focusedPane.ticketsSnapshot ? *focusedPane.ticketsSnapshot : kNoTickets);
-                }
-            }
-        }
-        d.paneDeferredActionPaneId.clear();
-        d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::None;
-    }
+    // clicked pane's view/context — not the previously focused pane's.
+    drainPaneDeferredActions(app, d);
 
     // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
     // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
@@ -238,6 +220,50 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
         SmatchetGridPaneWindows::MarkPanesDirty(d);
     }
     SmatchetGridPaneWindows::DrainPanesSaveIfDue(d);
+}
+
+// Consume-once drain of the {paneId, kind} deferred pane-action latch. Both hosts call this
+// after their draw: the desktop pane loop (once the focus/view switch has landed, so the
+// action targets the clicked pane's context) and the mobile embedded grid. A request whose
+// pane did not gain focus is dropped, never replayed — and the latch is always cleared, so a
+// mobile-latched action can never surface stale on a later desktop frame.
+void SmatchetUI::drainPaneDeferredActions(AppController& app, UiDrawSession& d) {
+    if (!d.paneDeferredActionPaneId.empty()) {
+        // A search commit also accepts THIS frame's focus report, not just the adopted
+        // focusedPaneId. Focus adoption is debounced across two frames (the cross-backend
+        // ping-pong guard), so on the first frame of a switch focusedPaneId still names the
+        // previous pane — and the guard would drop a commit the user typed into the pane
+        // that now holds focus, since the latch is cleared unconditionally below. The other
+        // kinds keep the stricter guard: they read the ACTIVE VIEW, which only the adopted
+        // switch updates, whereas a search commit is fully pane-scoped (it takes its target
+        // pane by reference, and the query path activates that pane's own view itself).
+        const bool isSearchCommit = d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::GridSearchCommit;
+        const bool paneHasFocus = d.paneDeferredActionPaneId == d.focusedPaneId ||
+                                  (isSearchCommit && d.paneDeferredActionPaneId == d.paneWindowFocusedThisFrame);
+        if (paneHasFocus) {
+            // The search-box commit runs OUTSIDE the active-view guard below: a ticket-key jump
+            // needs no view at all, and a query apply reports its own "no active view" toast.
+            if (isSearchCommit) {
+                if (GridPane* target = FindGridPaneById(d.gridPanes, d.paneDeferredActionPaneId)) {
+                    applyGridSearchEnter(app, d, *target, d.paneDeferredSearchText);
+                }
+            } else if (const ViewDefinition* active = ViewState.GetActiveView()) {
+                if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::RefreshView) {
+                    d.cfg.JqlQuery = active->Jql;
+                    d.cfg.SelectedFields = active->Fields;
+                    SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+                } else if (d.paneDeferredActionKind == UiDrawSession::PaneDeferredActionKind::NewIssueDraft) {
+                    static const std::vector<CachedTicket> kNoTickets;
+                    const GridPane& focusedPane = d.focusedPane();
+                    StartNewIssueDraft(app, d, ViewState.GetActiveViewMutable(),
+                                       focusedPane.ticketsSnapshot ? *focusedPane.ticketsSnapshot : kNoTickets);
+                }
+            }
+        }
+        d.paneDeferredActionPaneId.clear();
+        d.paneDeferredActionKind = UiDrawSession::PaneDeferredActionKind::None;
+        d.paneDeferredSearchText.clear();
+    }
 }
 
 // Focused-pane <-> active-view reconciliation. Two directions:

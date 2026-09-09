@@ -179,7 +179,7 @@ TEST_CASE("GridPane: per-pane sort/filter caches are fully isolated (two panes, 
     a.cachedSortValid = true;
     a.cachedSortedIndices = {2, 0, 1};
     a.filteredIndices = {2, 0};
-    std::snprintf(a.gridFilterBuf, sizeof(a.gridFilterBuf), "%s", "alpha");
+    std::snprintf(a.gridSearchBuf, sizeof(a.gridSearchBuf), "%s", "alpha");
 
     b.cachedSortFingerprint = "1:2:0|";
     b.cachedSortTicketsRevision = 9;
@@ -200,7 +200,7 @@ TEST_CASE("GridPane: per-pane sort/filter caches are fully isolated (two panes, 
     CHECK(b.filteredIndices.size() == 3);
     CHECK(b.gridState.ActiveIssueId.empty());
     CHECK(b.gridState.RectSel.Rows.empty());
-    CHECK(b.gridFilterBuf[0] == '\0');
+    CHECK(b.gridSearchBuf[0] == '\0');
 
     // Lookup helper resolves by id (and misses cleanly).
     std::vector<GridPane> panes;

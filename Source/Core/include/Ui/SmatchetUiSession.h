@@ -202,7 +202,7 @@ struct CellWriteFeedback {
 };
 
 /// Reusable JQL/filter editor state — buffer + autocomplete bookkeeping for one
-/// query-input surface. The dashboard Views editor and the global omnibar each own
+/// query-input surface. The dashboard Views editor owns
 /// an independent instance so their in-flight async user-search request-ids never
 /// collide (a shared id let one surface's stale completion clobber the other's).
 struct JqlEditorState {
@@ -736,14 +736,10 @@ struct UiDrawSession {
     std::string storageSnapshotMarkerPath;
 
     char viewNameBuf[128]{};
-    /// Dashboard Views JQL editor (buffer + autocomplete state). Extracted into a reusable
-    /// JqlEditorState so the omnibar can own a second independent instance (request-id isolation).
+    /// Dashboard Views JQL editor (buffer + autocomplete state), held in a reusable
+    /// JqlEditorState. The grid header's per-pane search box keeps its text in
+    /// GridPane::gridSearchBuf instead — a plain input, so no second editor instance.
     JqlEditorState viewJqlEditor;
-    /// Global omnibar JQL/search editor — independent instance (own async request-ids).
-    JqlEditorState omniJqlEditor;
-    /// Pane id whose saved omnibar text is currently loaded into omniJqlEditor.buf. drawOmnibar
-    /// restores the focused pane's text on a change so each tab keeps its own omnibar input.
-    std::string omnibarSyncedPaneId;
 
     // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
     // The toggle handlers / select-all / clear mutate THIS directly; it is seeded
@@ -837,7 +833,7 @@ struct UiDrawSession {
 
     // ---- Grid panes (multi-grid-tabs Slice 2, ADR-0018) ----
     // The per-pane grid runtime that used to live here as singleton fields
-    // (gridState / gridFilterBuf / sort+filter caches / lastGridActiveViewId /
+    // (gridState / gridSearchBuf / sort+filter caches / lastGridActiveViewId /
     // lastGridContextSignature / wheel hysteresis / forceApplySortSpecs) migrated
     // into GridPane. Bootstrapped from smatchet_panes.json by the pane-window host
     // (SmatchetGridPaneWindows).
@@ -870,13 +866,17 @@ struct UiDrawSession {
     bool gridPaneFocusReassigned = false;
     /// Kinds for the one-frame deferred pane action latch below (multi-grid Slice 3,
     /// plan item 19 — extends Slice 2's refresh-only latch, review MEDIUM-2).
-    enum class PaneDeferredActionKind { None, RefreshView, NewIssueDraft };
+    enum class PaneDeferredActionKind { None, RefreshView, NewIssueDraft, GridSearchCommit };
     /// One-frame deferred toolbar action from a not-yet-focused pane ({paneId, kind}):
     /// acting on the click frame would target the still-focused pane's live context /
     /// active view. The host consumes this AFTER applying the focus/view switch;
     /// consume-once (a request whose pane didn't gain focus drops).
     std::string paneDeferredActionPaneId;
     PaneDeferredActionKind paneDeferredActionKind = PaneDeferredActionKind::None;
+    /// Payload for GridSearchCommit: the search-box text as it read when Enter was pressed.
+    /// Carried rather than re-read from the pane at consume time so a keystroke landing in
+    /// the same frame cannot alter what the user committed.
+    std::string paneDeferredSearchText;
     std::string focusedPaneId;
     /// ticket-change-monitor: one-shot "scroll this ticket into view" latch. Set by
     /// FocusTicketInGrid (a Notification Center row click) alongside a focus reassignment to the

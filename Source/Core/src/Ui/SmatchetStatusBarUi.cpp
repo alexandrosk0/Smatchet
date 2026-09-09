@@ -89,7 +89,7 @@ static const char* ConnectivityTooltip(AppController& app) {
 } // namespace
 
 void DrawStatusBar(AppController& app, const UiDrawSession& d) {
-    // One frame-line of content plus the window padding above/below it (the omnibar's
+    // One frame-line of content plus the window padding above/below it (the side-bar
     // sizing). A bare GetFrameHeight() under-reserves by the padding, so the single
     // line overflowed the bar and could be wheel-scrolled half out of view
     // (NoScrollbar only hides the bar — NoScrollWithMouse is what disables the wheel).
