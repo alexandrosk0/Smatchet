@@ -147,8 +147,9 @@ step_timeout() {
 @test "workflow re-runs on labeled/unlabeled so cr-out-of-band is not inert" {
     # tooling 2026-08-18: without these types the waiver sat live in the API
     # and inert in CI until a manual `gh run rerun` (#2070/#2124/#2131).
-    grep -q 'labeled' "$WF"
-    grep -q 'unlabeled' "$WF"
+    # Match the pull_request types: line — comments already contain both words.
+    grep -E '^[[:space:]]*types:.*\blabeled\b' "$WF"
+    grep -E '^[[:space:]]*types:.*\bunlabeled\b' "$WF"
 }
 
 @test "workflow re-runs on human @coderabbitai review comments (OSS trigger)" {
@@ -704,8 +705,9 @@ run_nudge() {
 
 @test "the manual-review guard is wired into decide(), not just defined" {
     # Terminal arm: OSS manual-review posts failure (bot nudge retired — process 2026-08-30).
-    grep -q "OSS <10 stars" "$ACTION"
-    grep -q "post failure" "$ACTION"
+    # Pin the exact post-failure call — bare "OSS <10 stars" / "post failure" also
+    # match unrelated action.yml prose and other post failure sites.
+    grep -qF 'post failure "OSS <10 stars' "$ACTION"
     # Must still refuse to treat the status as a clean skip/pass.
     grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"
 }

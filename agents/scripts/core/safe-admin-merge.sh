@@ -89,12 +89,15 @@
 #                        refuses. A red Test-delta / Perf PR-fast blocks until
 #                        the post-label re-run reports green server-side.
 #   cr-out-of-band     → waives the CodeRabbit-completion wait above, AND
-#                        (with a cr-disposition:* label) discounts the CR
-#                        finding-gate StatusContext/CheckRun (`CR findings*` /
-#                        `CR finding gate`) from the rollup — same CI discount
-#                        merge-gates.sh $downgraded applies (tooling 2026-08-18:
-#                        otherwise the waiver that clears gate 2 leaves the
-#                        finding-gate context red/pending forever).
+#                        (with a cr-disposition:* attestation — label OR a
+#                        nonempty `cr-disposition:<reason>` PR-body marker,
+#                        same predicate as merge-gates.d/10-gate-filter.sh)
+#                        discounts the CR finding-gate StatusContext/CheckRun
+#                        (`CR findings*` / `CR finding gate`) from the rollup —
+#                        same CI discount merge-gates.sh $downgraded applies
+#                        (tooling 2026-08-18: otherwise the waiver that clears
+#                        gate 2 leaves the finding-gate context red/pending
+#                        forever).
 #
 # Usage:
 #   agents/scripts/core/safe-admin-merge.sh <pr>
@@ -231,7 +234,7 @@ def sam_red: (if .__typename == "CheckRun"
 
 # ----------------------------------------------------------------------------
 # evaluate_rollup <rollup-json> — the PURE core, fully testable with no `gh`.
-# Reads a `gh pr view --json statusCheckRollup,state,labels` object on stdin-arg
+# Reads a `gh pr view --json statusCheckRollup,state,labels,body` object on stdin-arg
 # and the required-context list on $2 (newline-separated). Emits the list of
 # BLOCKING check names on stdout, one per line — a name blocks when it is a
 # gating row that is non-green, OR a required context that is ABSENT from the
@@ -275,7 +278,11 @@ evaluate_rollup() {
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         | ($labels | any(. == "cr-out-of-band")) as $crOob
-        | ($labels | any(startswith("cr-disposition:"))) as $crDisp
+        # Label OR PR-body marker — same predicate as merge-gates.d/10-gate-filter.sh
+        # ($crdisposition). Body-only waivers (documented in merge-gates.md) must
+        # not leave safe-admin-merge blocking CR findings* forever.
+        | (($labels | any(startswith("cr-disposition:")))
+           or ((.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crDisp
         | (sam_latest) as $latest
         # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
         # the absent-required cross-check below can see which names are present.
@@ -453,7 +460,8 @@ downgraded_red_checks() {
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
         | ($labels | any(. == "cr-out-of-band")) as $crOob
-        | ($labels | any(startswith("cr-disposition:"))) as $crDisp
+        | (($labels | any(startswith("cr-disposition:")))
+           or ((.body // "") | test("cr-disposition:[[:space:]]*[^[:space:]]"; "i"))) as $crDisp
         | (sam_latest) as $latest
         | $latest[]
         | sam_name as $name
@@ -676,6 +684,17 @@ run_selftest() {
         echo "selftest CASE4d2 FAIL — bare cr-out-of-band must still block on CR findings" >&2
         fails=$((fails + 1))
     fi
+    # Body marker counts as disposition (parity with merge-gates $crdisposition).
+    local cr_body_disp_rollup
+    cr_body_disp_rollup='{"state":"OPEN","body":"cr-disposition: cr-auto-review-disabled\n","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$cr_body_disp_rollup" "")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE4d3 PASS — cr-disposition PR-body marker discounts RED CR findings"
+    else
+        echo "selftest CASE4d3 FAIL — body disposition should discount CR findings, got: '$blockers'" >&2
+        fails=$((fails + 1))
+    fi
 
     # CASE 5 — a REQUIRED context ABSENT from the rollup blocks (fail-closed).
     # "Windows + MSVC" is required but no row reports it -> must not read green.
@@ -865,7 +884,7 @@ run_selftest() {
     fi
 
     if [ "$fails" -eq 0 ]; then
-        echo "PASS — safe-admin-merge --selftest (19/19)"
+        echo "PASS — safe-admin-merge --selftest (23/23)"
         return 0
     fi
     echo "FAIL — safe-admin-merge --selftest ($fails failing case(s))" >&2
@@ -894,7 +913,9 @@ main() {
         view_json="$SAFE_ADMIN_MERGE_STUB_ROLLUP"
     else
         command -v gh >/dev/null 2>&1 || { echo "safe-admin-merge: gh required" >&2; exit 2; }
-        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,commits,headRefOid 2>&1); then
+        # body is load-bearing for the cr-disposition trail (label OR PR-body
+        # marker — parity with merge-gates.d/10-gate-filter.sh).
+        if ! view_json=$(gh pr view "$pr" --json statusCheckRollup,state,labels,body,commits,headRefOid 2>&1); then
             echo "safe-admin-merge: gh pr view failed: $view_json" >&2
             exit 2
         fi
