@@ -66,6 +66,10 @@ struct GridPane {
     // Sort + filter projection cache (per-pane so N panes don't thrash one cache).
     std::vector<size_t> cachedSortedIndices;
     std::vector<size_t> filteredIndices;
+    /// Parent-issue hierarchy projection (populated only when the view's StoryGroupSort is on;
+    /// empty otherwise so the row draw stays branch-free on the common path).
+    std::vector<int> cachedDepths;                   ///< indexed by ticket index → nesting depth
+    std::unordered_set<std::string> cachedParentIds; ///< ids of rows that are a present parent
     std::string cachedSortFingerprint;
     std::uint64_t cachedSortTicketsRevision = 0;
     std::uint64_t cachedSortCatalogRevision = 0;

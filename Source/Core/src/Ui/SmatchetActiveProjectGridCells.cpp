@@ -206,6 +206,11 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
     if (column.ColumnKind == TicketGridColumn::Kind::Id) {
         ImVec2 cellGroupMin(0.0f, 0.0f);
         ImVec2 cellGroupMax(0.0f, 0.0f);
+        // Parent-hierarchy nesting: indent the key by depth (FS parity: 20 px per level).
+        const float hierarchyIndent = static_cast<float>(ctx.currentRowDepth) * 20.0f;
+        if (hierarchyIndent > 0.0f) {
+            ImGui::Indent(hierarchyIndent);
+        }
         ImGui::BeginGroup();
         if (ImGui::Selectable(ticket.id.c_str(), idKeySelectableSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
             if (!ImGuiEffectiveKeyCtrl()) {
@@ -217,6 +222,9 @@ void SmatchetUI::drawActiveProjectGridCell(ActiveProjectDrawCtx& ctx, const Cach
             }
         }
         ImGui::EndGroup();
+        if (hierarchyIndent > 0.0f) {
+            ImGui::Unindent(hierarchyIndent);
+        }
         cellGroupMin = ImGui::GetItemRectMin();
         cellGroupMax = ImGui::GetItemRectMax();
         DrawGridCellRightClickPopups(BuildCellKey(ticket.id, "id"), ticket.id, std::string(), column.Label, ticket.id,

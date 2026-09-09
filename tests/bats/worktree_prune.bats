@@ -130,3 +130,36 @@ resync_branch_of() { sed -n 's/^branch=//p' "$1/.claude/.active-sessions/$2" | h
     [ "$(resync_branch_of "$MAIN" dead-sib)" = "develop" ]
     [[ "$output" == *"overwriting sibling entry"* ]]
 }
+
+# --- cmd_sync + the `new` slug cap (submodule provisioning) -----------------
+# `sync` exists because a long-lived worktree only ever gets `git pull`, which
+# never advances a submodule: once the agent surface lives in one, an established
+# session would keep running yesterday's agent definitions. The re-wire is the
+# half that must not be skippable — on Windows the adapter is hardlinked, so a
+# submodule update alone leaves the OLD content visible through the link.
+
+@test "sync <slug> refuses a slug with no worktree" {
+    local sc; sc="$(resync_script "$MAIN")"
+    run env SMATCHET_TREES_ROOT="$MAIN/trees" bash "$sc" sync no-such-tree
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"No worktree at"* ]]
+}
+
+@test "sync fails loudly when the harness re-wire cannot run" {
+    local sc; sc="$(resync_script "$MAIN")"
+    # resync_script installs worktree.sh but no setup-harness.sh, so the re-wire
+    # step has nothing to invoke. A silent skip here is the stale-definitions bug.
+    run bash "$sc" sync
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"Refreshing submodules"* ]]   # submodules first, always
+    [[ "$output" == *"setup-harness failed"* ]]
+}
+
+@test "new rejects an over-long slug before creating anything" {
+    local sc long; sc="$(resync_script "$MAIN")"
+    long="$(printf 'a%.0s' $(seq 41))"
+    run env SMATCHET_TREES_ROOT="$MAIN/trees" bash "$sc" new "$long"
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"41 characters"* ]]
+    [ ! -d "$MAIN/trees/$long" ]
+}

@@ -78,6 +78,36 @@ else
 fi
 REPO_ROOT="$(pwd)"
 
+# DUAL-ROOT (plan agent-surface-extraction-repo, Phase A row 3b). One variable
+# was doing two jobs here: REPO_ROOT anchored both the Source/ scan (HOST) and
+# the agents/scripts/core/*.py audit tools (LAYER). Post-flip the `cd` above
+# lands in the layer, so Source/ scanning would silently scan NOTHING — the
+# scanner reports zero violations instead of failing, a green that means nothing.
+#
+# REPO_ROOT keeps its name and its meaning: the tree being SCANNED. That is what
+# --root selects, so --root sets PROJECT_ROOT, and every scan site is unchanged.
+# The audit tools move to AGENT_LAYER_ROOT, resolved from THIS SCRIPT'S location
+# rather than the scanned root — the same distinction the module loader below
+# already makes for lint-rules.d/ ("not the scanned root — the --diff base scan
+# re-invokes this scanner against a base worktree and must use the current
+# modules"). That was AGENT_LAYER_ROOT semantics by another name; this makes it
+# explicit so the file stops carrying two conventions.
+#
+# Bootstrap is the location-relative climb (row 3a): this script lives in the
+# layer and must never reach for a host path it does not yet know.
+#
+# It climbs from $SELF, not ${BASH_SOURCE[0]}. The `cd` above has ALREADY moved
+# us — to --root's target or to the script's own tree — and BASH_SOURCE keeps
+# whatever (possibly relative) path the caller typed, so climbing from it after
+# the cd resolves against the wrong directory or fails outright. $SELF is
+# absolutised at the top of the file, before any cd, precisely for this.
+_tlr_layer_root="$(cd "$(dirname "$SELF")/../../.." && pwd)"
+# shellcheck source=scripts/dev/project-config.sh
+. "$_tlr_layer_root/scripts/dev/project-config.sh" 2>/dev/null || true
+PROJECT_ROOT="$REPO_ROOT"
+export PROJECT_ROOT
+LAYER_ROOT="${AGENT_LAYER_ROOT:-$_tlr_layer_root}"
+
 BASELINE_FILE="docs/high-integrity/baseline.md"
 
 # Load the per-rule-family modules from the directory of THIS script (not the
@@ -440,12 +470,12 @@ case "$MODE" in
         echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --selftest; then miss=1; fi
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py" --selftest; then miss=1; fi
-        if ! "$st_py" "$REPO_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/dup_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/agent_size_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/include_cycle_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py" --selftest; then miss=1; fi
+        if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py" --selftest; then miss=1; fi
     else
         echo "test-lint-rules: WARN: no python interpreter; skipped function_size_audit.py / dup_audit.py / agent_size_audit.py / include_cycle_audit.py / appcontroller_fan_in_audit.py / daemon_subprocess_timeout_audit.py --selftest" >&2
     fi
@@ -573,7 +603,7 @@ case "$MODE" in
     [ -n "$fs_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --funcsize-baseline" >&2; exit 2; }
     FUNCSIZE_BASELINE_FILE="docs/high-integrity/function-size-baseline.md"
     mkdir -p "$(dirname "$FUNCSIZE_BASELINE_FILE")"
-    "$fs_py" "$REPO_ROOT/agents/scripts/core/function_size_audit.py" --baseline-md > "$FUNCSIZE_BASELINE_FILE"
+    "$fs_py" "$LAYER_ROOT/agents/scripts/core/function_size_audit.py" --baseline-md > "$FUNCSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $FUNCSIZE_BASELINE_FILE"
     ;;
 
@@ -585,7 +615,7 @@ case "$MODE" in
     [ -n "$as_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --agentsize-baseline" >&2; exit 2; }
     AGENTSIZE_BASELINE_FILE="docs/high-integrity/agent-size-baseline.md"
     mkdir -p "$(dirname "$AGENTSIZE_BASELINE_FILE")"
-    "$as_py" "$REPO_ROOT/agents/scripts/core/agent_size_audit.py" --baseline-md > "$AGENTSIZE_BASELINE_FILE"
+    "$as_py" "$LAYER_ROOT/agents/scripts/core/agent_size_audit.py" --baseline-md > "$AGENTSIZE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $AGENTSIZE_BASELINE_FILE"
     ;;
 
@@ -596,7 +626,7 @@ case "$MODE" in
     [ -n "$dup_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --dup-baseline" >&2; exit 2; }
     DUP_BASELINE_FILE="docs/high-integrity/dup-baseline.md"
     mkdir -p "$(dirname "$DUP_BASELINE_FILE")"
-    "$dup_py" "$REPO_ROOT/agents/scripts/core/dup_audit.py" --baseline-md > "$DUP_BASELINE_FILE"
+    "$dup_py" "$LAYER_ROOT/agents/scripts/core/dup_audit.py" --baseline-md > "$DUP_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $DUP_BASELINE_FILE"
     ;;
 
@@ -609,7 +639,7 @@ case "$MODE" in
     [ -n "$ic_py" ] || { echo "test-lint-rules: ERROR: no python interpreter for --include-cycle-baseline" >&2; exit 2; }
     INCLUDECYCLE_BASELINE_FILE="docs/high-integrity/include-cycle-baseline.md"
     mkdir -p "$(dirname "$INCLUDECYCLE_BASELINE_FILE")"
-    "$ic_py" "$REPO_ROOT/agents/scripts/core/include_cycle_audit.py" --baseline-md > "$INCLUDECYCLE_BASELINE_FILE"
+    "$ic_py" "$LAYER_ROOT/agents/scripts/core/include_cycle_audit.py" --baseline-md > "$INCLUDECYCLE_BASELINE_FILE"
     echo "[test-lint-rules] refreshed $INCLUDECYCLE_BASELINE_FILE"
     ;;
 
@@ -662,7 +692,7 @@ case "$MODE" in
     # (on stdout), >=2=infra error. resolve_python validates the interpreter actually
     # runs (skips the Windows python3 Store-alias stub that exits 49).
     cr_out=""
-    cr_aud="$REPO_ROOT/agents/scripts/core/comment_audit.py"
+    cr_aud="$LAYER_ROOT/agents/scripts/core/comment_audit.py"
     cr_py="$(resolve_python || true)"
     if [ -z "$cr_py" ]; then
         echo "test-lint-rules: ERROR: no python interpreter; cannot enforce comment-regrowth gate" >&2
@@ -1009,7 +1039,7 @@ case "$MODE" in
     # suppresses one. The advisory soft-warning tier (>100 lines / >20 branches) is printed to
     # STDERR by the audit script, so it surfaces to the user but never enters $fs_out / the exit
     # code. $cr_py is the validated interpreter from above.
-    fs_aud="$REPO_ROOT/agents/scripts/core/function_size_audit.py"
+    fs_aud="$LAYER_ROOT/agents/scripts/core/function_size_audit.py"
     if [ ! -f "$fs_aud" ]; then
         echo "test-lint-rules: ERROR: missing $fs_aud; cannot enforce function-size gate" >&2
         exit 2
@@ -1042,7 +1072,7 @@ case "$MODE" in
     # `// SMATCHET_DEVIATION(rule=include-cycle; ...)` on the nearest non-blank line above the offending
     # #include suppresses it. Fail CLOSED on infra error too, identical contract to the function-size
     # gate (0 clean / 1 violations / >=2 infra). $cr_py is the validated interpreter from above.
-    ic_aud="$REPO_ROOT/agents/scripts/core/include_cycle_audit.py"
+    ic_aud="$LAYER_ROOT/agents/scripts/core/include_cycle_audit.py"
     if [ ! -f "$ic_aud" ]; then
         echo "test-lint-rules: ERROR: missing $ic_aud; cannot enforce include-cycle gate" >&2
         exit 2
@@ -1066,7 +1096,7 @@ case "$MODE" in
     # and hard-FAILs (exit 1) on a regression; a `// SMATCHET_DEVIATION(rule=app-controller-fan-in; ...)`
     # above the offending #include escapes a genuinely-needed new includer. Fails CLOSED on infra error
     # (0 clean / 1 new includer / >=2 infra), same contract as the include-cycle gate above.
-    fi_aud="$REPO_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py"
+    fi_aud="$LAYER_ROOT/agents/scripts/core/appcontroller_fan_in_audit.py"
     if [ ! -f "$fi_aud" ]; then
         echo "test-lint-rules: ERROR: missing $fi_aud; cannot enforce app-controller-fan-in gate" >&2
         exit 2
@@ -1089,7 +1119,7 @@ case "$MODE" in
     # hung child. daemon_subprocess_timeout_audit.py --check is WARN-first (calibration;
     # exit 0 on findings, >=2 only on infra error) — same fail-closed infra contract as
     # the delta gates above.
-    dt_aud="$REPO_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py"
+    dt_aud="$LAYER_ROOT/agents/scripts/core/daemon_subprocess_timeout_audit.py"
     if [ ! -f "$dt_aud" ]; then
         echo "test-lint-rules: ERROR: missing $dt_aud; cannot run daemon-timeout audit" >&2
         exit 2
@@ -1110,7 +1140,7 @@ case "$MODE" in
     # prints [dup] FAIL lines to stderr for NEW cross-file copy-paste clones and exits 1, which now
     # FAILS the gate ($rc=1). An infra error (>=2) also fails CLOSED. Exempt a genuine NEW clone with
     # a // SMATCHET_DEVIATION(rule=duplication; ...) marker on/above either occurrence.
-    dup_aud="$REPO_ROOT/agents/scripts/core/dup_audit.py"
+    dup_aud="$LAYER_ROOT/agents/scripts/core/dup_audit.py"
     if [ -f "$dup_aud" ] && [ -n "$cr_py" ]; then
         if ! "$cr_py" "$dup_aud" --diff "$BASE"; then
             echo "test-lint-rules: FAIL: NEW copy-paste clone(s) (rule=duplication, DRY Pillar 5) — de-duplicate or exempt with SMATCHET_DEVIATION(rule=duplication)" >&2
@@ -1138,7 +1168,7 @@ case "$MODE" in
     # NB: this gate ALSO runs as its own required-check step in doc-validation.yml, which (unlike the
     # Windows build job that hosts this script) fires on docs-only PRs — the exact agent-regrowth
     # vector. Keeping it here too covers code PRs + local test-all.sh. $cr_py is the validated interp.
-    as_aud="$REPO_ROOT/agents/scripts/core/agent_size_audit.py"
+    as_aud="$LAYER_ROOT/agents/scripts/core/agent_size_audit.py"
     if [ ! -f "$as_aud" ]; then
         echo "test-lint-rules: ERROR: missing $as_aud; cannot enforce agent-size gate" >&2
         exit 2

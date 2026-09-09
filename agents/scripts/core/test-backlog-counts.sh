@@ -25,7 +25,21 @@
 #   2 — missing index / category file
 
 set -euo pipefail
-cd "$(dirname "$0")/../../.."
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
+# The climb is location-relative: pre-flip it lands on the repo root, post-flip
+# on agent-layer/, and project-config.sh resolves the HOST tree from there.
+# Best-effort, with an explicit fallback to the climb this script used before,
+# so a reduced tree that carries agents/ without scripts/dev/ behaves as today.
+# shellcheck source=scripts/dev/project-config.sh
+_tbc_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+. "$_tbc_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${PROJECT_ROOT:=$_tbc_self_root}"
+
+# The self-improvement index, its category files and their entries stay HOST-side
+# permanently (grill decision 4 / ADR-0025) while this script moves into the
+# layer — so its own location stops being the right anchor at the flip. Both were
+# bare literals with no override; they gain the standard env-override shape the
+# rest of the gate family uses, defaulted through $PROJECT_ROOT.
 
 if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     echo "test-backlog-counts: SMATCHET_SKIP_BACKLOG_COUNTS=1 — skipping" >&2
@@ -33,8 +47,8 @@ if [ "${SMATCHET_SKIP_BACKLOG_COUNTS:-0}" = "1" ]; then
     exit 0
 fi
 
-INDEX="docs/self-improvement/AGENT_SELF_IMPROVEMENT.md"
-DIR="docs/self-improvement/categories"
+INDEX="${SMATCHET_SELF_IMPROVEMENT_INDEX:-$PROJECT_ROOT/docs/self-improvement/AGENT_SELF_IMPROVEMENT.md}"
+DIR="${SMATCHET_SELF_IMPROVEMENT_DIR:-$PROJECT_ROOT/docs/self-improvement/categories}"
 [ -f "$INDEX" ] || { echo "missing index: $INDEX" >&2; exit 2; }
 
 # label -> category file basename.

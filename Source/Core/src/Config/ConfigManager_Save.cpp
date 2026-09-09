@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "ConfigManager_Internal.h"
 
+#include "Config/TrackerConfigSaveQueue.h"
 #include "Config/TrackerConfigSaveRepair.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
@@ -20,6 +21,7 @@
 // clang-format on
 
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
@@ -191,6 +193,35 @@ void ApplyTrackerConfigRepairs(TrackerConfig& cfg) {
 } // namespace config_repair
 } // namespace smatchet
 
+// The coalescing worker's pending-snapshot slot, seen from the Config layer (#2191). Defined in
+// this TU because the only consumer is the drain below, inside `ConfigManager::Save`'s
+// read-modify-write critical section. See Config/TrackerConfigSaveQueue.h for why the queued
+// snapshot may only ever be written from there.
+namespace smatchet {
+namespace config_save_queue {
+namespace {
+
+// A plain atomic function pointer, not a std::function: the hook is installed once per worker
+// lifetime and read under the RMW lock on every save, so a lock-free load is both sufficient and
+// the cheapest correct thing. Relaxed would do; acquire/release costs nothing here and keeps the
+// installing thread's writes ordered before the first call.
+std::atomic<TakePendingFn>& HookRef() {
+    static std::atomic<TakePendingFn> hook{nullptr};
+    return hook;
+}
+
+} // namespace
+
+void SetTakePendingHook(TakePendingFn fn) { HookRef().store(fn, std::memory_order_release); }
+
+bool TakePending(TrackerConfig& out) {
+    const TakePendingFn fn = HookRef().load(std::memory_order_acquire);
+    return fn != nullptr && fn(out);
+}
+
+} // namespace config_save_queue
+} // namespace smatchet
+
 namespace {
 
 // THE chokepoint for persisted-field repairs (#2047). Every TrackerConfig write in the process
@@ -208,17 +239,14 @@ TrackerConfig RepairedForSave(const TrackerConfig& configIn) {
     return repaired;
 }
 
-} // namespace
-
-void ConfigManager::Save(const TrackerConfig& configIn) {
-    // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
-    // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
-    // WriteConfigJson holds internally — no recursive-lock deadlock.
-    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+// Whole-image tracker write. The caller must already hold GetConfigRmwMutexRef(): every entry
+// point below takes it once and then sequences its writes inside that one critical section, which
+// is what totally orders a queued snapshot against the caller's own image (#2191).
+void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
     // Put back any field a capture scenario has temporarily pinned — see RepairedForSave (#2047).
     const TrackerConfig config = RepairedForSave(configIn);
 
-    nlohmann::json j = LoadMergedConfigJson();
+    nlohmann::json j = ConfigManager::LoadMergedConfigJson();
 
     // Table-driven plain scalar fields (string / bool / int / float). One source-of-truth row
     // per field in kStringFields / kBoolFields / kIntFields / kFloatFields — see LoadScalarFields.
@@ -293,7 +321,7 @@ void ConfigManager::Save(const TrackerConfig& configIn) {
 
     SaveInheritFieldIds(j, config);
     SaveSecretsAndPurgeLegacy(j, config);
-    WriteConfigJson(j);
+    ConfigManager::WriteConfigJson(j);
 
     // Invalidate the cache only after the new file has been written, still under the
     // read-modify-write lock. Clearing the flag before the write left a window in which a racing
@@ -301,6 +329,48 @@ void ConfigManager::Save(const TrackerConfig& configIn) {
     // valid after the new file landed, so every later Load returned old data.
     std::lock_guard<std::mutex> cacheLock(GetCacheMutexRef());
     GetHasCachedConfigRef() = false;
+}
+
+// Write the worker's queued snapshot, if one is waiting, as the FIRST write of the enclosing RMW
+// critical section. Exactly one take per drain, never a loop: a snapshot enqueued after this point
+// is by definition newer than the caller's image, so leaving it for the worker is correct — and a
+// loop could be starved indefinitely by a busy enqueuer while holding the write lock.
+void DrainPendingTrackerLocked() {
+    TrackerConfig pending;
+    if (smatchet::config_save_queue::TakePending(pending)) {
+        WriteTrackerConfigLocked(pending);
+    }
+}
+
+} // namespace
+
+void ConfigManager::Save(const TrackerConfig& configIn) {
+    // Serialize the whole read-modify-write so a concurrent writer (the config-save worker, or
+    // SaveAnnotateAnalysis on another thread) can't lose-update. Distinct from GetIoMutexRef that
+    // WriteConfigJson holds internally — no recursive-lock deadlock.
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    DrainPendingTrackerLocked();
+    WriteTrackerConfigLocked(configIn);
+}
+
+void ConfigManager::FlushPendingTrackerSave() {
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    DrainPendingTrackerLocked();
+}
+
+TrackerConfig ConfigManager::Update(const std::function<void(TrackerConfig&)>& mutate) {
+    if (!mutate) {
+        return Load();
+    }
+    std::lock_guard<std::mutex> rmwLock(GetConfigRmwMutexRef());
+    // Order matters: flush the queued snapshot FIRST, then read, so the image we mutate already
+    // contains it. Reading before the flush would mutate a pre-snapshot image and write it back on
+    // top — the same revert #2191 is about, with the two writers swapped.
+    DrainPendingTrackerLocked();
+    TrackerConfig cfg = smatchet::config_detail::LoadTrackerConfigForUpdate();
+    mutate(cfg);
+    WriteTrackerConfigLocked(cfg);
+    return cfg;
 }
 
 void ConfigManager::SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b) {

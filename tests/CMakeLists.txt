@@ -128,6 +128,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # vs UI-thread retire-erase / emplace). Seam-level fixture mirroring the map-mutex
         # discipline; header-only (no product .cpp), highest-value being the TSan pass.
         Core/GridContextsMapRace1457.test.cpp
+        # issue #2144 — Lua scripts-root derivation (answerable before Initialize latches
+        # luaScriptsDirectory_; empty rather than cwd-relative when nothing is configured).
+        # Header-only pure decision, no threads — carried here so the Linux container runs it.
+        Core/LuaScriptsRootPure.test.cpp
         # MainThreadDispatcher: the keystone of the UI-thread-marshalling discipline. Every
         # cross-thread g_ui write (AiAssistant streaming MakeOnDelta, merge-watch notify, sync
         # toasts) is race-free ONLY because workers PostToMainThread and the UI thread runs the
@@ -169,6 +173,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
+        # parent-issue-hierarchy: TicketSyncService.cpp + IssueDraft.cpp resolve
+        # ParentHierarchyPure::ParentKeyOf (missing-parent fetch) — pure, ImGui-free.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ParentHierarchyPure.cpp"
         # RedactHttpBodyForLog (TrackerHttpPure.cpp, above) delegates to the cpr-free AI-side
         # redactor — link its TU so the connectivity-banner scrub resolves in this target.
         "${CMAKE_SOURCE_DIR}/Source/Core/src/AiErrorRedact.cpp"
@@ -758,6 +765,10 @@ add_executable(SmatchetTests
     Core/LuaAutomationHookPolicyPure.test.cpp
     # SSRF guard — Lua imgui.image http(s)-URL refusal allowlist. Header-only pure predicate.
     Core/LuaImagePathPolicyPure.test.cpp
+    # issue #2144 — Lua scripts-root derivation: answerable before Initialize latches
+    # luaScriptsDirectory_ (plugin OnEarlyInit runs first), and empty rather than cwd-relative
+    # when nothing is configured. Header-only pure decision; no extra production .cpp to link.
+    Core/LuaScriptsRootPure.test.cpp
     Core/TicketFieldEditorDurationPopupPure.test.cpp
     # Time-tracking sort comparator lifted from TicketGridModel.cpp (TEST_COVERAGE_GAP_MAP.md
     # Tier 1 #1) — dependency-light, so tests link it without the grid model's heavy deps.
@@ -1131,6 +1142,10 @@ add_executable(SmatchetTests
     # Plane and GitHub splits above.
     Core/JiraIssueMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraIssueMappingPure.cpp"
+    # parent-issue-hierarchy — pure parent-key / depth / story-group-order / ancestor
+    # helpers shared by the grid projection + the sync-time missing-parent fetch.
+    Core/ParentHierarchyPure.test.cpp
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/ParentHierarchyPure.cpp"
     # PR A6 (function-size-compliance) — pure editmeta field-editability decision
     # extracted from JiraUserAndMeta.cpp::FetchIssueEditMeta (which pulls cpr), to
     # bring that fn under the 30-branch cap. Same pure-seam shape as the mappers.

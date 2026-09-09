@@ -37,8 +37,26 @@ if [ -n "$_GIT_ROOT" ]; then
   cd "$_GIT_ROOT" || { echo "test-plan-index: cannot cd to git root '$_GIT_ROOT'" >&2; exit 2; }
 fi
 
-ARCHIVE_DIR="${PLAN_INDEX_ARCHIVE_DIR:-docs/plans/shipped}"
-INDEX_FILE="${PLAN_INDEX_FILE:-docs/plans/INDEX.md}"
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
+# The climb is location-relative: pre-flip it lands on the repo root, post-flip
+# on agent-layer/, and project-config.sh resolves the HOST tree from there.
+# Best-effort, with an explicit fallback to what the paths below meant before:
+# the git-root cd above. test-archive-plan.sh runs this script inside a fixture
+# tree holding ONLY agents/scripts/core/ — no scripts/dev/ at all — so a hard
+# dependency on project-config.sh would make this gate unrunnable there. The
+# fallback keeps every reduced tree behaving exactly as it does today.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${PROJECT_ROOT:=$(pwd)}"
+
+# docs/plans/ is HOST content and stays host-side; this script moves into the
+# layer, so `git rev-parse --show-toplevel` above stops naming the tree that
+# holds the plans (inside a submodule it names the submodule). Only the DEFAULTS
+# change — both overrides keep their existing meaning, and a caller passing one
+# now supplies an absolute path, which is why the negative-path selftest below
+# was made absolute in the same edit.
+ARCHIVE_DIR="${PLAN_INDEX_ARCHIVE_DIR:-$PROJECT_ROOT/docs/plans/shipped}"
+INDEX_FILE="${PLAN_INDEX_FILE:-$PROJECT_ROOT/docs/plans/INDEX.md}"
 BEGIN_MARK="<!-- BEGIN auto-plan-index -->"
 END_MARK="<!-- END auto-plan-index -->"
 
@@ -103,7 +121,12 @@ if [ "$MODE" = "selftest" ]; then
   # Both verified by deleting the guard and re-running: green before, red after.
   # An `asserts-failure` marker only means a negative exists; it cannot tell that
   # the negative is reachable for the stated reason.
-  _st_neg="$(PLAN_INDEX_ARCHIVE_DIR="docs/plans/__no_such_archive_dir__$$" \
+  # ABSOLUTE, deliberately: the override is now used verbatim against
+  # $PROJECT_ROOT-anchored defaults, so a relative bogus dir would resolve
+  # against cwd and could accidentally name a real directory post-flip — the
+  # negative would stop being negative and this assertion would go silently
+  # green for the wrong reason.
+  _st_neg="$(PLAN_INDEX_ARCHIVE_DIR="$PROJECT_ROOT/docs/plans/__no_such_archive_dir__$$" \
        bash "$_SCRIPT_PATH" --check 2>&1)"
   _st_neg_rc=$?
   if [ "$_st_neg_rc" -eq 0 ]; then
@@ -136,6 +159,12 @@ if [ "$MODE" = "selftest" ]; then
   else
   (
     cd "$_st_tmp" || exit 90
+    # The fixture is a self-contained HOST tree, so it must BE $PROJECT_ROOT for
+    # the re-invocations below. Without this the defaults anchor on the real
+    # repo's root (they no longer follow `git rev-parse --show-toplevel`, which
+    # is the whole point of row 5b) and every assertion here would silently read
+    # the real docs/plans/ instead of the fixture it just built.
+    export PROJECT_ROOT="$_st_tmp"
     git init -q || exit 90
     git config user.email t@t.t || exit 90
     git config user.name t || exit 90

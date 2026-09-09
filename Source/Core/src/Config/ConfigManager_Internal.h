@@ -163,6 +163,14 @@ struct SecretMigrationFlags {
     }
 };
 
+// The disk read behind ConfigManager::Update (#2191): ConfigManager::Load() minus the two things
+// that are wrong for a read INSIDE the config write lock — the in-process Load cache (which would
+// hand back an image older than the file we are about to rewrite) and the legacy-secret migration
+// re-Save (which would re-enter the non-recursive RMW mutex and deadlock). Nothing is lost by
+// skipping that re-save: Update writes the whole image immediately afterwards, re-sealing exactly
+// the secrets the migration would have. Defined in ConfigManager_Load.cpp beside Load itself.
+TrackerConfig LoadTrackerConfigForUpdate();
+
 void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config);
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg);
 void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config);

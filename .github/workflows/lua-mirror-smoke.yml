@@ -65,6 +65,7 @@ jobs:
         with:
           # No history needed; no later step uses the token.
           persist-credentials: false
+          submodules: recursive
 
       - name: test-lua-mirror-smoke — reachability + sha256 vs CMakeLists pin
         run: bash scripts/dev/test-lua-mirror-smoke.sh

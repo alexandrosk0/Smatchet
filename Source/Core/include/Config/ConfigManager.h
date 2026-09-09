@@ -137,6 +137,11 @@ struct TrackerConfig {
     // When true (default), single click on a grid cell starts editing. False requires double-click.
     // Exposed in Settings -> Preferences -> Appearance.
     bool SingleClickToEditGridCells = true;
+    // When true (default), each sync also fetches the parent issues that the streamed rows
+    // reference but the view's query did not return, so the story-group tree has its roots.
+    // Off skips that keyed top-up entirely: missing parents stay absent and their children
+    // render as top-level rows. Exposed in Settings -> Preferences -> Editing -> Grid behaviour.
+    bool LoadParentIssues = true;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.
@@ -580,6 +585,12 @@ struct ViewDefinition {
     std::vector<std::string> ColumnOrder;
     std::unordered_map<std::string, float> ColumnWidths;
     std::vector<ViewSortSpec> SortSpecs;
+    /// Parent-issue hierarchy (per-view, persisted as `hide_parents` / `story_group_sort`).
+    /// HideParents: drop rows that are a present parent of another row (leaf tasks/bugs only); also
+    /// skips the sync-side missing-parent top-up. StoryGroupSort: after the column sort, re-nest each
+    /// child directly under its present parent and indent by depth.
+    bool HideParents = false;
+    bool StoryGroupSort = false;
 };
 
 struct ViewsStore {
@@ -810,7 +821,29 @@ class ConfigManager {
     /// Call after WriteConfigJson() to ensure the change is visible without restarting.
     static void InvalidateCache();
 
+    /// Whole-image write of `config` over the on-disk tracker keys. Serialized against every other
+    /// config writer, and — since #2191 — correctly SEQUENCED against the coalescing config-save
+    /// worker: a snapshot still queued when this is called is written FIRST, inside the same
+    /// critical section, so it can never land afterwards and revert this write.
+    /// Correct only for a caller whose `config` derives from the same live object the worker's
+    /// snapshots do (the UI's `d.cfg`). A caller that builds its image from a fresh `Load()` must
+    /// use `Update()` instead, or it will clobber concurrent edits it never read.
     static void Save(const TrackerConfig& config);
+
+    /// Read-modify-write the persisted `TrackerConfig` under the config write lock: flush any
+    /// queued worker snapshot, re-read from disk, apply `mutate`, write the result back. Returns
+    /// the image that was written. This is the seam for every writer that does NOT own the live
+    /// config object — it reads inside the critical section, so it cannot revert an edit made
+    /// between its read and its write, which the `Load()`-modify-`Save()` shape it replaces could
+    /// (#2191). `mutate` runs with the write lock held: keep it to plain field assignment, and
+    /// never call back into `ConfigManager` from it or it will deadlock. An empty `mutate` writes
+    /// nothing and just returns the current config.
+    static TrackerConfig Update(const std::function<void(TrackerConfig&)>& mutate);
+
+    /// Write the config-save worker's queued `TrackerConfig` snapshot, if any, right now. Used by
+    /// the worker's own drain — the snapshot may only ever be written from inside the write lock,
+    /// which is what keeps it ordered against synchronous saves (#2191).
+    static void FlushPendingTrackerSave();
     static AnnotateAnalysisConfig LoadAnnotateAnalysis();
     static void SaveAnnotateAnalysis(const AnnotateAnalysisConfig& b);
 
@@ -851,6 +884,11 @@ class ConfigManager {
 
     /** Load+bootstrap active backend slice (used when no in-memory Views wrapper is available). */
     static ViewsStore LoadViewsOrBootstrap(const TrackerConfig& cfg);
+
+    /** The view whose Id equals `activeViewId`, else the first view, else nullptr (empty bucket).
+     *  Shared resolver for both `ViewsStore` and `ViewWorkspaceState` (same Views/ActiveViewId shape). */
+    static const ViewDefinition* FindActiveViewOrFirst(const std::vector<ViewDefinition>& views,
+                                                       const std::string& activeViewId);
 
     // --- Grid panes (smatchet_panes.json — multi-grid-tabs Slice 2, ADR-0018) ---
     static std::string GetPanesPath();

@@ -23,6 +23,8 @@
 #include "Config/ConfigManager.h" // For TrackerConfig + ViewsStore (formerly via AppController.h).
 #include "CachedTicketTypes.h"    // For CachedTicket inside StreamingSyncState (SQLite-free; ADR-0020).
 
+struct TrackerIssueFetchSummary; // ITrackerIssueReader.h — by-reference only (parent top-up seam)
+
 class ITicketSyncDeps;
 
 /// Lifetime contract mirrors `OfflineQueueService`: AppController owns the service via
@@ -124,6 +126,16 @@ class TicketSyncService {
     /// + `QueueMutex`.
     void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
 
+    /// Worker-side parent top-up (parent-issue-hierarchy plan, Slice 1): fetch every parent key
+    /// the streamed batches referenced but did not contain, and queue them as one extra batch.
+    /// Runs only after a clean streamed fetch, never when cancelled, never when the active view
+    /// hides parents, and never when `TrackerConfig::LoadParentIssues` is off. A failed keyed
+    /// fetch is a `summary.Warning`, not a FetchError — the streamed tickets still apply.
+    void FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                      const std::vector<std::string>& parentRefs,
+                                      std::unordered_set<std::string>& workerKeepIds,
+                                      TrackerIssueFetchSummary& summary);
+
     // --- TickStreamingApply phase helpers ------------------------------------------------
     // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the
     // member FSM state in place (no copies of the batch queue / ActiveTickets are introduced)
@@ -199,9 +211,7 @@ class TicketSyncService {
     /// the `std::chrono::duration` converting constructor's `const&` parameter ODR-uses it — which
     /// then links only with an out-of-line definition. `kEmptyFullSyncWipeThreshold` escapes that
     /// because an `int` passed by value is never ODR-used. Returning by value sidesteps it.
-    static constexpr std::chrono::milliseconds EmptyFullSyncMinStreakElapsed() {
-        return std::chrono::seconds(60);
-    }
+    static constexpr std::chrono::milliseconds EmptyFullSyncMinStreakElapsed() { return std::chrono::seconds(60); }
 
     /// Fold one completed fetch into the empty-streak counter + its stamp. Single seam so
     /// `TickStreamingApply` and `ApplyIssueFetchPack` cannot drift on how the streak is kept.

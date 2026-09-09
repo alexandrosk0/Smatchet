@@ -73,7 +73,8 @@ A submitted report may include:
   regions before sending)
 - a short summary of your environment (OS and application version)
 - a recent tail of application logs and audit events
-- a crash minidump, if the report follows a crash
+- a crash minidump, if the report follows a crash **and you leave the "Attach
+  crash minidump" box ticked** in the report dialog
 
 Smatchet runs an automatic redaction pass over logs, audit events, and
 environment data to strip credentials and tokens before sending. **This
@@ -81,13 +82,22 @@ redaction is best-effort and cannot be guaranteed to catch everything** —
 please review a report's contents before submitting it, and use the screenshot
 censoring tool for anything sensitive on screen.
 
-**Crash minidumps are uploaded as-is and are not redacted.** A minidump is a
-snapshot of the application's state at the moment it crashed and may contain
-fragments of whatever was in memory at that time, including issue content or
-credentials. Omit the minidump if that concerns you.
+**Crash minidumps are not redacted.** A minidump is a snapshot of the
+application's state at the moment it crashed. Smatchet narrows what goes into
+one — it captures the crashing thread's stack, CPU state, and the list of loaded
+modules, but no heap memory (so credentials held in memory are not swept in) and
+no module file paths (which would carry your account name). Stack memory is still
+included, and stack memory can hold fragments of whatever the application was
+working on. Untick "Attach crash minidump" in the report dialog to file the report
+without it.
+
+Minidumps are only ever uploaded to a **private** repository. If the configured
+destination is public, Smatchet and the relay both discard the dump and file the
+issue without it, rather than publishing your process state.
 
 **Bug reports become public GitHub issues.** Do not include information you are
-not willing to publish.
+not willing to publish. The minidump is the one attachment that does not — see
+above.
 
 ## Updates
 

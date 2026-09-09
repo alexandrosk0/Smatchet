@@ -331,3 +331,57 @@ TEST_CASE("jql_user_display::RenderQueryWithUserNames keeps an id whose display 
     CHECK(out == "assignee = \"Jane Doe\"");
     CHECK(replaced == 1);
 }
+
+TEST_CASE("jql_user_display::RenderQueryWithUserNames quotes a keyword-shaped display name") {
+    // A bare `Empty` / `And` would be classified as a JQL keyword by the shared walk before
+    // it could map back, so the display pass must emit these names quoted.
+    const std::vector<TrackerField> fields = Fields();
+    const std::string canonical = "assignee = 5b10ac8d82e05b22cc7d4ef5";
+
+    const char* const keywords[] = {"Empty", "Null", "And", "Or", "In", "Not", "Is", "Was", "Changed", "Order"};
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); ++i) {
+        const std::string name = keywords[i];
+        std::vector<TrackerUser> users;
+        users.push_back(MakeUser("5b10ac8d82e05b22cc7d4ef5", name));
+
+        int replaced = -1;
+        const std::string display = jql_user_display::RenderQueryWithUserNames(canonical, fields, users, &replaced);
+        CHECK(display == "assignee = \"" + name + "\"");
+        CHECK(replaced == 1);
+
+        // Round-trip: the quoted name maps back to exactly the id we started from.
+        CHECK(jql_user_display::RenderQueryWithAccountIds(display, fields, users, &replaced) == canonical);
+        CHECK(replaced == 1);
+    }
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithUserNames keeps the keyword name mappable mid-query") {
+    // `assignee = And AND project = X` would be a syntax error on the wire; quoted, the name
+    // maps back and the following AND still reads as the clause break.
+    std::vector<TrackerUser> users;
+    users.push_back(MakeUser("5b10ac8d82e05b22cc7d4ef5", "And"));
+    const std::string canonical = "assignee = 5b10ac8d82e05b22cc7d4ef5 AND status = Open";
+
+    int replaced = -1;
+    const std::string display = jql_user_display::RenderQueryWithUserNames(canonical, Fields(), users, &replaced);
+    CHECK(display == "assignee = \"And\" AND status = Open");
+    CHECK(replaced == 1);
+    CHECK(jql_user_display::RenderQueryWithAccountIds(display, Fields(), users, &replaced) == canonical);
+    CHECK(replaced == 1);
+}
+
+TEST_CASE("jql_user_display::RenderQueryWithUserNames keeps an id whose display name is id-shaped") {
+    // The name->id walk refuses any id-shaped token, quoted or bare, so showing such a name
+    // would strand the account id. Both id shapes stay as the id on screen.
+    const std::string canonical = "assignee = 5b10ac8d82e05b22cc7d4ef5";
+    const char* const idShaped[] = {"00aa4ab4-9acf-4b2e-bc03-efbb1215ef93", "9b10ac8d82e05b22cc7d4ef5",
+                                    "712020:00aa4ab4-9acf-4b2e-bc03-efbb1215ef93"};
+    for (size_t i = 0; i < sizeof(idShaped) / sizeof(idShaped[0]); ++i) {
+        std::vector<TrackerUser> users;
+        users.push_back(MakeUser("5b10ac8d82e05b22cc7d4ef5", idShaped[i]));
+
+        int replaced = -1;
+        CHECK(jql_user_display::RenderQueryWithUserNames(canonical, Fields(), users, &replaced) == canonical);
+        CHECK(replaced == 0);
+    }
+}

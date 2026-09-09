@@ -61,6 +61,10 @@ PROTECT_RE = [
 DECORATIVE_RE = re.compile(r"^\s*(//|/\*|\*)[\s/*=#~_>-]*$")  # divider/blank: only punctuation
 SHOUT_BANNER_RE = re.compile(r"^\s*//\s*\d*\.?\s*[A-Z][A-Z0-9 _]{6,}\s*$")  # // 3. THE REST OF YOUR INCLUDES
 BLANK_COMMENT_RE = re.compile(r"^\s*(//|\*)\s*$")
+# A bare `///` line: the Doxygen paragraph break inside a `///` doc block — the doc-comment
+# twin of a bare `//`, never a divider. Exactly three slashes (a `////`+ run stays a
+# decorative banner, mirroring the `/**` vs `/***` rule below).
+BARE_DOC_SEPARATOR_RE = re.compile(r"^\s*///\s*$")
 DOC_OPEN_RE = re.compile(r"^\s*(///|/\*\*|//!)")  # doc-comment markers
 # commented-out code heuristic: comment whose body looks like code (ends with ; or { or }, or
 # matches a call/decl shape). Wave-1 FLAGS only.
@@ -175,7 +179,12 @@ def classify_comment(stripped, raw_line):
     # today; closed pre-emptively alongside the `/**` fix so the class can't recur.
     if stripped == "/*":
         return "judge-rationale"
-    if BLANK_COMMENT_RE.match(raw_line):
+    if BLANK_COMMENT_RE.match(raw_line) or BARE_DOC_SEPARATOR_RE.match(raw_line):
+        # A bare `///` is a doc-block paragraph break, not a banner: DECORATIVE_RE would
+        # otherwise eat it (`//` + the third `/`) and force authors to reflow a doc comment
+        # into one wall of text. Bucketed with the bare `//` so a LONE one between two textual
+        # comment lines is an allowed separator (is_allowed_blank_separator) while a run of
+        # 2+ still flags as comment-blank-run.
         return "cut-blank"
     if DECORATIVE_RE.match(raw_line):
         return "cut-decorative"
@@ -204,14 +213,16 @@ def _is_textual_comment_line(raw_line):
     if not kinds or kinds[0] != "full_comment":
         return False
     stripped = raw_line.strip()
-    if BLANK_COMMENT_RE.match(raw_line) or DECORATIVE_RE.match(raw_line):
+    if BLANK_COMMENT_RE.match(raw_line) or BARE_DOC_SEPARATOR_RE.match(raw_line) \
+            or DECORATIVE_RE.match(raw_line):
         return False
     return bool(stripped)
 
 
 def is_allowed_blank_separator(lines, line_no):
     """True when the bare-comment (`cut-blank`) line at 1-based `line_no` is a SINGLE intra-block
-    paragraph separator — a lone bare `//` between two textual comment lines of the same block.
+    paragraph separator — a lone bare `//` (or bare `///`, its doc-block twin) between two textual
+    comment lines of the same block.
     A run of 2+ bare `//` is NOT allowed (each such line has a bare neighbor, so this returns
     False for every line in the run), and a bare `//` not flanked by comment text on BOTH sides
     (e.g. against code or a blank line, or at file edge) is NOT allowed either. `lines` is the
@@ -586,6 +597,11 @@ def run_selftest():
         # A 2+ bare run: BOTH bare lines must still flag (neither is an allowed separator).
         (["// text above", "//", "//", "// text below"], 2, False),
         (["// text above", "//", "//", "// text below"], 3, False),
+        # Bare `///` — the doc-block paragraph break — follows the same rule as a bare `//`.
+        (["/// doc paragraph one", "///", "/// doc paragraph two"], 2, True),
+        (["/// doc line", "///", "///", "/// doc line"], 2, False),
+        (["/// doc line", "///", "///", "/// doc line"], 3, False),
+        (["int x = 0;", "///", "int y = 1;"], 2, False),
         # Not inside a block: bare `//` against code / blank / file edge still flags.
         (["int x = 0;", "//", "int y = 1;"], 2, False),
         (["// only comment above", "//", ""], 2, False),
