@@ -210,12 +210,35 @@ std::string UploadScreenshotAsset(const std::string& baseUrl, const std::string&
     return "";
 }
 
+// True only when the repo is confirmed PRIVATE. The decision itself lives in the pure
+// layer (RepoResponseSaysPrivate, BugReportBody.cpp) so the fail-closed rule is
+// unit-tested; this wrapper only supplies the HTTP response. A throw from the client
+// is caught here and answers "not private" — same fail-closed direction.
+bool IsRepoPrivate(const std::string& baseUrl, const std::string& pat, const std::string& owner,
+                   const std::string& repo) {
+    try {
+        const cpr::Response resp =
+            TrackerGetLogged("BugReport", baseUrl + "/repos/" + owner + "/" + repo, BugReportGitHubHeaders(pat));
+        return RepoResponseSaysPrivate(resp.status_code, resp.text);
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 // Upload a minidump as a GitHub Release asset (binaries off the git tree).
 // Ensures a `crash-dumps` prerelease exists, then uploads the .dmp. Returns the
 // browser download URL, or "" on any failure. cloud + Enterprise both work — the
 // upload host comes from the release JSON's `upload_url`.
+//
+// Refuses outright when the destination repo is public: a Release asset there is
+// world-downloadable with no auth, and a minidump carries the crashing thread's stack
+// memory. The relay enforces the same rule server-side (tools/bug-report-relay).
 std::string UploadCrashDumpRelease(const std::string& baseUrl, const std::string& pat, const std::string& owner,
                                    const std::string& repo, const std::string& dumpPath, const std::string& dumpName) {
+    if (!IsRepoPrivate(baseUrl, pat, owner, repo)) {
+        LOG_WARN("BugReport: refusing to upload crash dump — %s/%s is not a private repo", owner.c_str(), repo.c_str());
+        return "";
+    }
     std::vector<unsigned char> bytes;
     if (!ReadFileBytes(dumpPath, bytes)) {
         LOG_WARN("BugReport: cannot read crash dump for upload: %s", dumpPath.c_str());
@@ -510,8 +533,9 @@ SubmitResult SubmitBugReport(IAppMeta& app, const BugReportOptions& opts) {
         const std::string dumpName = fs::path(opts.DumpAbsPath).filename().string();
         const std::string url = UploadCrashDumpRelease(target.BaseUrl, target.Pat, target.AssetsOwner,
                                                        target.AssetsRepo, opts.DumpAbsPath, dumpName);
-        dumpMarkdown = url.empty() ? ("_Crash minidump at `" + opts.DumpAbsPath + "` (upload failed)._")
-                                   : ("[Crash minidump](" + url + ")");
+        // BuildCrashDumpMarkdown names only the FILE, never opts.DumpAbsPath — see its
+        // contract in the header for why the absolute path must not reach the body.
+        dumpMarkdown = BuildCrashDumpMarkdown(dumpName, url);
     }
 
     // WYSIWYG: when the user edited the egress preview, that text IS the body; we

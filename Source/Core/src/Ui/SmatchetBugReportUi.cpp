@@ -60,7 +60,10 @@ void LaunchSubmit(IAppThreading& app, IAppMeta& meta, UiDrawSession& d, const st
     opts.IncludeScreenshot = !shotPath.empty();
     opts.Censored = !shotPath.empty(); // every attached screenshot is font-redacted
     opts.ScreenshotAbsPath = shotPath;
-    opts.DumpAbsPath = d.bugReportCrashDumpPath; // crash mode: upload the minidump as a Release asset
+    // Crash mode: upload the minidump as a Release asset — but only with consent. Clearing the
+    // path (rather than passing a flag) keeps the gate at the single point every submit path
+    // reads, so neither the relay nor the direct uploader can attach a dump the user declined.
+    opts.DumpAbsPath = d.bugReportInclCrashDump ? d.bugReportCrashDumpPath : std::string();
     // WYSIWYG consent: if the user opened (and possibly edited) the egress preview,
     // that exact text is the issue body.
     if (d.bugReportPreviewSeeded && !d.bugReportPreviewBuf.empty()) {
@@ -167,6 +170,46 @@ void DrawDestination(UiDrawSession& d) {
     ImGui::Separator();
 }
 
+// Crash-mode consent gate for the minidump. Before this existed the dump was attached
+// silently — the egress preview shows only the issue BODY, and the dump is appended to it
+// afterwards (BugReportService), so nothing in the dialog disclosed the largest piece of
+// egress in the whole report. No-op outside crash mode (no dump path → nothing to consent to).
+//
+// bugReportInclCrashDump is deliberately NOT re-seeded by SeedOnOpen: an opt-out made once
+// survives a reopen, which is the fail-safe direction for an attachment the user can't inspect.
+void DrawCrashDumpConsent(UiDrawSession& d) {
+    if (d.bugReportCrashDumpPath.empty()) {
+        return;
+    }
+    // Basename by hand: <filesystem> is banned in this TU (see the header note) and this
+    // is pure string work on an already-resolved path — no disk access.
+    const std::size_t slash = d.bugReportCrashDumpPath.find_last_of("/\\");
+    const std::string name =
+        (slash == std::string::npos) ? d.bugReportCrashDumpPath : d.bugReportCrashDumpPath.substr(slash + 1);
+
+    if (ImGui::Checkbox("Attach crash minidump", &d.bugReportInclCrashDump)) {
+        d.bugReportPreviewDirty = true; // the preview carries an "attached on submit" note
+    }
+    ImGui::SameLine();
+    SmatchetHelpMarker::Render(
+        "bugreport.crash_dump.help",
+        "The minidump is what makes the crash diagnosable: it carries the faulting thread's call "
+        "stack and CPU state. Module file paths are stripped, and no heap memory is captured, so "
+        "in-memory secrets (API tokens, PATs) are not swept in — but the thread's own stack memory "
+        "is included, and stack memory can hold fragments of whatever the app was working on. "
+        "Untick to file the report without it.");
+    if (d.bugReportInclCrashDump) {
+        ImGui::PushStyleColor(ImGuiCol_Text, SmatchetTheme::GetActiveSemanticColors().WarningText);
+        ImGui::TextWrapped("%s", SmatchetLocalization::Format(
+                                     "bugreport.crash_dump_warning",
+                                     "%s is uploaded with this report. It contains the crash stack — including "
+                                     "stack memory, which may hold fragments of what you had open. The preview "
+                                     "below shows the report text only, never the dump's contents.",
+                                     name.c_str()));
+        ImGui::PopStyleColor();
+    }
+}
+
 // Egress preview shows exactly what will be sent and stays EDITABLE, so the user can remove
 // anything they don't want to share. Regenerated from current inputs on a worker until edit.
 void DrawEgressPreview(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
@@ -181,10 +224,18 @@ void DrawEgressPreview(IAppThreading& app, IAppMeta& meta, UiDrawSession& d) {
         opts.UserDescription = DescriptionText(d);
         opts.IncludeScreenshot = d.bugReportInclScreenshot;
         const bool inclShot = d.bugReportInclScreenshot;
-        app.LaunchBackgroundTask([&app, &meta, &d, opts, inclShot]() {
+        const bool inclDump = d.bugReportInclCrashDump && !d.bugReportCrashDumpPath.empty();
+        app.LaunchBackgroundTask([&app, &meta, &d, opts, inclShot, inclDump]() {
             const smatchet::diagnostics::ContextBundle bundle = smatchet::diagnostics::GatherContext(meta, opts);
-            const std::string shotNote = inclShot ? "_(screenshot attached on submit)_" : std::string();
-            auto text = std::make_shared<std::string>(smatchet::diagnostics::BuildMarkdownBody(opts, bundle, shotNote));
+            std::string attachNote = inclShot ? "_(screenshot attached on submit)_" : std::string();
+            if (inclDump) {
+                if (!attachNote.empty()) {
+                    attachNote += "\n\n";
+                }
+                attachNote += "_(crash minidump attached on submit)_";
+            }
+            auto text =
+                std::make_shared<std::string>(smatchet::diagnostics::BuildMarkdownBody(opts, bundle, attachNote));
             app.PostToMainThread([&d, text]() {
                 // Don't clobber if the user started editing while we generated.
                 if (!d.bugReportPreviewUserEdited) {
@@ -350,6 +401,8 @@ void SmatchetBugReportUi_Draw(IAppThreading& app, IAppMeta& meta, UiDrawSession&
                                "The screenshot is captured with all text rendered as blocks (██) — sharp, "
                                "layout-preserving, no readable text. Icons + colour stay intact.");
 #endif
+
+    DrawCrashDumpConsent(d);
 
     DrawEgressPreview(app, meta, d);
     DrawActions(app, meta, d);
