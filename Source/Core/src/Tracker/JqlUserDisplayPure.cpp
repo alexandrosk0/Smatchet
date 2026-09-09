@@ -165,6 +165,24 @@ bool IsValuePositionKeyword(const std::string& tokenLowered) {
            tokenLowered == "changed" || tokenLowered == "empty" || tokenLowered == "null";
 }
 
+/// Emit `name` as the value token the DISPLAY pass writes into the buffer, in a form the
+/// reverse walk (RenderQueryWithAccountIds) will map back. `InsertForValueToken` quotes only
+/// a name carrying a non-identifier character, so a single-word name is emitted BARE — and a
+/// bare token is claimed by `IsClauseBreakKeyword` / `IsValuePositionKeyword` before it ever
+/// reaches the name→id mapping, stranding a user called `Empty` or `And` as a keyword the
+/// inverse never undoes. Both keyword checks are skipped for a quoted token, so force-quote
+/// such a name. `nameLowered` is `AsciiLowered(name)`, already computed by the caller.
+std::string InsertForUserDisplayName(const std::string& name, const std::string& nameLowered) {
+    const std::string insert = tracker_query_suggest::InsertForValueToken(name);
+    if (!insert.empty() && insert[0] == '"') {
+        return insert; // already quoted: bypasses the keyword classification
+    }
+    if (IsClauseBreakKeyword(nameLowered) || IsValuePositionKeyword(nameLowered)) {
+        return tracker_query_suggest::QueryQuotedValue(name);
+    }
+    return insert;
+}
+
 /// Resolve a display name to its account id — but only when the match is UNIQUE across
 /// `users` (the same account listed twice, e.g. catalog + search-resolved, still counts as
 /// one). Two different accounts sharing the name return "" so an ambiguous name is left as
@@ -317,17 +335,21 @@ std::string RenderQueryWithUserNames(const std::string& query, const std::vector
                                           return std::string();
                                       }
                                       const std::string name = LookupDisplayName(token, users);
-                                      if (name.empty()) {
+                                      if (name.empty() || LooksLikeAccountId(name)) {
+                                          // An id-shaped display name is refused by the name→id
+                                          // lambda whether quoted or not, so showing it would
+                                          // strand the real id. Keep the id on screen instead.
                                           return std::string();
                                       }
                                       // Round-trip guard: rewrite only when the name maps back to
                                       // exactly this id across `users` — a display name shared by
                                       // two accounts would strand the precise id as an ambiguous
                                       // literal name the inverse refuses at apply.
-                                      if (UniqueAccountIdForName(AsciiLowered(name), users) != token) {
+                                      const std::string nameLowered = AsciiLowered(name);
+                                      if (UniqueAccountIdForName(nameLowered, users) != token) {
                                           return std::string();
                                       }
-                                      return tracker_query_suggest::InsertForValueToken(name);
+                                      return InsertForUserDisplayName(name, nameLowered);
                                   });
 }
 
