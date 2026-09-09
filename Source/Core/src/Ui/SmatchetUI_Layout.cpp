@@ -85,6 +85,7 @@ bool WindowNeedsRepair(const ImVec2& pos, const ImVec2& size, float minW, float 
 namespace smatchet {
 namespace ui_detail {
 
+// Persist the open/closed state of all UI windows to configuration with deferred write semantics.
 void PersistWindowOpenPreferences(UiDrawSession& d) {
     bool changed = false;
     auto setBool = [&changed](bool& dst, bool src) {
@@ -390,6 +391,7 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
 
 } // namespace
 
+// Flush pending UI state changes to disk before application shutdown, including outstanding preference changes.
 void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     (void)app;
     UiDrawSession& d = g_ui;

@@ -1405,6 +1405,8 @@ void SmatchetUI::drawAiAssistantPanel(AppController& app, UiDrawSession& d, bool
 }
 #endif
 
+// Fetch field catalog on first draw and trigger initial backend sync with configuration persistence.
+// Handles grid pane initialization and connectivity recovery sync attempts.
 void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSession& d) {
     const auto startCatalogFetch = [&](const TrackerConfig& fetchCfg) {
         if (d.fieldCatalogLoading) {

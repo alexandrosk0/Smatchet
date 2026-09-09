@@ -28,6 +28,7 @@
 
 namespace SmatchetViewsDashboardUiDetail {
 
+// Capture the active view state on first access to enable detecting user changes.
 void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view) {
     if (d.viewsHasOriginalSnapshot) {
         return;
@@ -36,6 +37,8 @@ void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view) {
     d.viewsHasOriginalSnapshot = true;
 }
 
+// Persist the current view's JQL query to history and trigger a backend sync with deferred config write.
+// The configuration is persisted through the coalescing config-save worker to avoid blocking the UI thread.
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory) {
     // Pillar 2 (#2145): `ConfigManager::Save` funnels into `WriteConfigJson` (io mutex +
     // ScopedFileLock + atomic whole-file replace). This helper sits on the view/sync path and ran
