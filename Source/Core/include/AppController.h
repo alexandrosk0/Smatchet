@@ -482,6 +482,10 @@ class AppController : public IAppThreading,
     /** Basenames of `*.lua` files in the configured scripts directory (non-recursive; empty when
      * no scripts directory is configured — no cwd-relative fallback). */
     std::vector<std::string> ListLuaScriptFiles() const;
+    /// True once a scripts root is known, i.e. `ResolveLuaScriptPath` will produce a path rather
+    /// than fail closed. Pure string work and silent, so a caller that ran before the root was
+    /// configured (plugin `OnEarlyInit`, #2144) can poll it without logging a warning per frame.
+    bool HasLuaScriptsDirectory() const;
 
     // --- First-run Lua script consent gate ---------------------------------------------------
     // A Scripts/*.lua file may only be executed once the user has approved its exact content
@@ -1500,8 +1504,18 @@ class AppController : public IAppThreading,
     /// NotifyLuaTicketDataChanged is a no-op in the stub build.
     bool pendingLuaWindowBump_ = false;
 
-    /** Absolute path to the `Scripts` folder (trailing slash), or empty to use `Scripts/` relative to cwd. */
+    /** Absolute path to the `Scripts` folder (trailing slash). Latched by `InitFieldCatalog`;
+     * empty until then (and whenever no runtime asset directory is configured at all). */
     std::string luaScriptsDirectory_;
+
+    /// The scripts root every Lua-script path resolution goes through: `luaScriptsDirectory_`
+    /// once `Initialize` has latched it, otherwise the same value derived from
+    /// `ConfigManager::GetRuntimeAssetDirectory()` on the spot. The fallback exists because
+    /// plugin `OnEarlyInit` runs BEFORE `Initialize` (#2144): hosts configure the runtime asset
+    /// directory during bootstrap, so the root is knowable there even though the member is not
+    /// assigned yet. Returns empty — never a cwd-relative path — when no asset directory is
+    /// configured, keeping resolution and enumeration fail-closed.
+    std::string LuaScriptsRootDirectory() const;
 
     /// Background-task body of PrefetchIssueTicketsForKeys: fetch the keys off the UI thread, clear
     /// their in-flight markers, persist results to cache, and refresh local data. Runs off-thread.

@@ -5,9 +5,11 @@
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ISyncCache.h"
+#include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
 #include "Sync/TicketRosterFilterPure.h" // shared keep-set roster filter (also used by the local-data refresh)
+#include "Tracker/ParentHierarchyPure.h" // ParentKeyOf — the one parent-field contract
 #include "Views.h"
 
 #include <algorithm>
@@ -66,7 +68,7 @@ std::chrono::milliseconds TicketSyncService::EmptyStreakElapsed() const {
         return std::chrono::milliseconds::zero();
     }
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() -
-                                                                firstEmptyFullSyncAt_);
+                                                                 firstEmptyFullSyncAt_);
 }
 
 std::vector<std::string>
@@ -545,9 +547,8 @@ void TicketSyncService::SeedStaleDeletionForSession(bool fullSyncCompleted, std:
                  "(cached=%zu, consecutive_empty=%d, streak_held=%llds, required=%llds).",
                  activeStreamingSync_.BackgroundStaleIds.size(), consecutiveEmptyFullSyncs_,
                  static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(streakElapsed).count()),
-                 static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(
-                                            EmptyFullSyncMinStreakElapsed())
-                                            .count()));
+                 static_cast<long long>(
+                     std::chrono::duration_cast<std::chrono::seconds>(EmptyFullSyncMinStreakElapsed()).count()));
         activeStreamingSync_.BackgroundStaleIds.clear();
         return;
     }
@@ -767,10 +768,15 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
                                                const ViewsStore& viewsCopy) {
     try {
         std::unordered_set<std::string> workerKeepIds;
-        auto onBatch = [this, reqId, &workerKeepIds](std::vector<CachedTicket>&& batch) {
+        std::vector<std::string> workerParentRefs; // parent keys referenced by streamed rows (may repeat)
+        auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs](std::vector<CachedTicket>&& batch) {
             for (const auto& ticket : batch) {
                 if (!ticket.id.empty()) {
                     workerKeepIds.insert(ticket.id);
+                }
+                std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
+                if (!parentKey.empty()) {
+                    workerParentRefs.push_back(std::move(parentKey));
                 }
             }
             std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
@@ -784,6 +790,10 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
 
         TrackerIssueFetchSummary summary =
             deps_.Backend()->FetchIssuesStreamed(onBatch, shouldCancel, &cfgCopy, &viewsCopy);
+
+        if (summary.FetchError.empty() && !shouldCancel()) {
+            FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, workerParentRefs, workerKeepIds, summary);
+        }
 
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
             std::vector<std::string> localStaleIds;
@@ -833,4 +843,63 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
     }
 
     activeStreamingSync_.Active = false;
+}
+
+void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
+                                                     const ViewsStore& viewsCopy,
+                                                     const std::vector<std::string>& parentRefs,
+                                                     std::unordered_set<std::string>& workerKeepIds,
+                                                     TrackerIssueFetchSummary& summary) {
+    if (parentRefs.empty()) {
+        return;
+    }
+    // Global opt-out (Preferences -> Editing -> Grid behaviour -> Load parent issues).
+    if (!cfgCopy.LoadParentIssues) {
+        return;
+    }
+    // Per-view opt-out: a view that hides parents never pays for the keyed fetch (FS parity).
+    const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(viewsCopy.Views, viewsCopy.ActiveViewId);
+    if (activeView != nullptr && activeView->HideParents) {
+        return;
+    }
+
+    // Single level, like FS: referenced − present, deduped in first-seen order so the keyed
+    // request is deterministic. Grandparents surface on the next sync once the parents are rows.
+    std::vector<std::string> missing;
+    std::unordered_set<std::string> seen;
+    for (const std::string& key : parentRefs) {
+        if (workerKeepIds.count(key) == 0 && seen.insert(key).second) {
+            missing.push_back(key);
+        }
+    }
+    if (missing.empty()) {
+        return;
+    }
+
+    LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) for request ID=%llu", missing.size(),
+             static_cast<unsigned long long>(reqId));
+    Result<std::vector<CachedTicket>, TrackerError> fetched =
+        deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
+    if (!fetched.has_value()) {
+        const std::string parentWarning =
+            std::to_string(missing.size()) + " parent issue(s) could not be loaded: " + fetched.error().Detail;
+        // Append rather than overwrite: the streamed fetch may already carry its own warning
+        // (e.g. GitHubIssueSearch's page-cap truncation notice) — losing it here would silently
+        // hide a real result-set problem behind the parent top-up's failure.
+        summary.Warning = summary.Warning.empty() ? parentWarning : (summary.Warning + "; " + parentWarning);
+        LOG_WARN("TicketSyncService: %s", parentWarning.c_str());
+        return;
+    }
+
+    std::vector<CachedTicket> parents = std::move(fetched.value());
+    for (const CachedTicket& parent : parents) {
+        if (!parent.id.empty()) {
+            workerKeepIds.insert(parent.id);
+        }
+    }
+    summary.FetchedCount += parents.size();
+    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+    if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
+        activeStreamingSync_.PendingBatches.push_back(std::move(parents));
+    }
 }

@@ -188,7 +188,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
 
 template <typename T> struct FieldDesc {
     const char* key;
-    T TrackerConfig::*member;
+    T TrackerConfig::* member;
 };
 
 // Plain string / bool / int fields: `cfg.member = j.value(key, cfg.member)` on Load,
@@ -251,6 +251,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"bugreport_screenshot_default", &TrackerConfig::BugReportScreenshotDefault},
     {"field_overflow_tooltips", &TrackerConfig::EnableFieldOverflowTooltips},
     {"single_click_to_edit_grid_cells", &TrackerConfig::SingleClickToEditGridCells},
+    {"load_parent_issues", &TrackerConfig::LoadParentIssues},
     {"default_long_text_editor_preview", &TrackerConfig::DefaultLongTextEditorPreview},
     {"read_only_mode", &TrackerConfig::ReadOnlyMode},
     {"backend_has_been_reachable", &TrackerConfig::BackendHasBeenReachable},

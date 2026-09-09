@@ -35,6 +35,11 @@ namespace {
 
 constexpr const char* kRunLua = "RunLua.lua";
 
+// Frames OnDraw keeps checking for a scripts root that was missing at OnEarlyInit (#2144). Every
+// host publishes its runtime asset directory during bootstrap, so in practice the very first
+// frame already succeeds; the budget only bounds the pathological case where it never arrives.
+constexpr int kEarlyScriptLoadRetryFrames = 300;
+
 void SaveLuaLayoutDebounced(float scriptPaneHeightPx) {
     static std::chrono::steady_clock::time_point s_lastWrite{};
     static float s_lastSaved = -1.0f;
@@ -563,6 +568,37 @@ LuaConsolePlugin::~LuaConsolePlugin() {
     }
 }
 
+void LuaConsolePlugin::RetryEarlyScriptLoadIfNeeded(AppController& app) {
+    if (earlyScriptLoadRetryFramesLeft_ <= 0) {
+        return;
+    }
+    if (!app.HasLuaScriptsDirectory()) {
+        if (--earlyScriptLoadRetryFramesLeft_ == 0) {
+            LOG_WARN("LuaConsole: no Lua scripts directory was configured; the script list and "
+                     "editor stay empty for this session");
+        }
+        return;
+    }
+    earlyScriptLoadRetryFramesLeft_ = 0;
+    LOG_INFO("LuaConsole: scripts directory became available after early init; re-scanning scripts");
+
+    RefreshScriptList(app, true);
+
+    // Only take over the editor while it is still the untouched blank buffer early init left
+    // behind: a read that already landed, one in flight, or anything the user has typed owns the
+    // pane from here on, and the refreshed list above is all this retry may do.
+    if (scriptLoadInFlight_ || !editorContentName_.empty() || luaEditor_.GetText() != diskSnapshot_) {
+        return;
+    }
+    if (selectedScriptName_.empty()) {
+        selectedScriptName_ = "Automation.lua";
+        SyncSelectionToList();
+    }
+    std::string err;
+    // Kick only — PollScriptLoad, called straight after this, lands the text on a later frame.
+    (void)StartLoadSelectedScriptIntoEditor(app, err);
+}
+
 void LuaConsolePlugin::OnEarlyInit(AppController& app) {
     EnsureLuaLanguageDef();
     app.AddAutomationLogSink([this](const std::string& msg) { console_.AddLog(std::string("[LUA] ") + msg); });
@@ -590,6 +626,12 @@ void LuaConsolePlugin::OnEarlyInit(AppController& app) {
     std::string err;
     // Kick only — the read lands on a later frame via PollScriptLoad at the top of OnDraw.
     (void)StartLoadSelectedScriptIntoEditor(app, err);
+    if (!app.HasLuaScriptsDirectory()) {
+        // The host has not published its runtime asset directory yet, so everything above
+        // resolved to nothing: the list holds only the synthetic placeholders and no read was
+        // kicked. Poll from OnDraw instead of caching that empty result for the session (#2144).
+        earlyScriptLoadRetryFramesLeft_ = kEarlyScriptLoadRetryFrames;
+    }
     {
         const nlohmann::json j = ConfigManager::LoadMergedConfigJson();
         const float loadedHeight = static_cast<float>(j.value("lua_scripts_panel_height_px", 0.0));
@@ -990,7 +1032,9 @@ void LuaConsolePlugin::DrawSplitterAndConsole(DrawCtx& ctx) {
 
 void LuaConsolePlugin::OnDraw(AppController& app) {
     // Ahead of the window-hidden early-out below: a read kicked from OnEarlyInit (or while the
-    // Scripting window was closed) must still be able to land.
+    // Scripting window was closed) must still be able to land — as must the retry of an early
+    // init that ran before the scripts directory existed (#2144).
+    RetryEarlyScriptLoadIfNeeded(app);
     PollScriptLoad(app);
 
     // Auto-open + focus the Scripting window when the background automation worker signals

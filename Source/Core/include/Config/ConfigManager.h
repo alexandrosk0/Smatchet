@@ -137,6 +137,11 @@ struct TrackerConfig {
     // When true (default), single click on a grid cell starts editing. False requires double-click.
     // Exposed in Settings -> Preferences -> Appearance.
     bool SingleClickToEditGridCells = true;
+    // When true (default), each sync also fetches the parent issues that the streamed rows
+    // reference but the view's query did not return, so the story-group tree has its roots.
+    // Off skips that keyed top-up entirely: missing parents stay absent and their children
+    // render as top-level rows. Exposed in Settings -> Preferences -> Editing -> Grid behaviour.
+    bool LoadParentIssues = true;
     // When true, the long-text edit modal opens in Preview mode; when false (default) it opens in
     // Edit mode. Either way Ctrl+P still cycles Edit/Split/Preview at runtime.
     // Exposed in Settings -> Preferences -> Grid.
@@ -580,6 +585,12 @@ struct ViewDefinition {
     std::vector<std::string> ColumnOrder;
     std::unordered_map<std::string, float> ColumnWidths;
     std::vector<ViewSortSpec> SortSpecs;
+    /// Parent-issue hierarchy (per-view, persisted as `hide_parents` / `story_group_sort`).
+    /// HideParents: drop rows that are a present parent of another row (leaf tasks/bugs only); also
+    /// skips the sync-side missing-parent top-up. StoryGroupSort: after the column sort, re-nest each
+    /// child directly under its present parent and indent by depth.
+    bool HideParents = false;
+    bool StoryGroupSort = false;
 };
 
 struct ViewsStore {
@@ -851,6 +862,11 @@ class ConfigManager {
 
     /** Load+bootstrap active backend slice (used when no in-memory Views wrapper is available). */
     static ViewsStore LoadViewsOrBootstrap(const TrackerConfig& cfg);
+
+    /** The view whose Id equals `activeViewId`, else the first view, else nullptr (empty bucket).
+     *  Shared resolver for both `ViewsStore` and `ViewWorkspaceState` (same Views/ActiveViewId shape). */
+    static const ViewDefinition* FindActiveViewOrFirst(const std::vector<ViewDefinition>& views,
+                                                       const std::string& activeViewId);
 
     // --- Grid panes (smatchet_panes.json — multi-grid-tabs Slice 2, ADR-0018) ---
     static std::string GetPanesPath();

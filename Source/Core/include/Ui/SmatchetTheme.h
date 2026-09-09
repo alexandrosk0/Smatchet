@@ -58,11 +58,16 @@ struct SmatchetThemeAiColors {
  *  most. These slots are set per theme by ApplyStyle so a theme switch keeps status text
  *  readable; consumers use these instead of literal ImVec4 colors for any user-facing
  *  error/warning/success text. (The fixed STATUS-FIELD colors in SmatchetTheme::Colors —
- *  StatusDone etc. — color data values, not chrome text, and stay as-is.) */
+ *  StatusDone etc. — color data values, not chrome text, and stay as-is.)
+ *  ParentRowBg / ParentRowNestedBg: row-background tint for a grid row that is a present
+ *  parent of another row (parent-issue hierarchy, view StoryGroupSort). Nested = the parent
+ *  itself sits under a parent (depth > 0) — half-strength so the tree reads top-down. */
 struct SmatchetThemeSemanticColors {
     ImVec4 ErrorText;
     ImVec4 WarningText;
     ImVec4 SuccessText;
+    ImVec4 ParentRowBg;
+    ImVec4 ParentRowNestedBg;
 };
 
 namespace SmatchetTheme {

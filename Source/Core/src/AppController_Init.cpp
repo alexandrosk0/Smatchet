@@ -541,16 +541,14 @@ void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType)
 }
 
 void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {
-    const std::string& fileBase = ConfigManager::GetRuntimeAssetDirectory();
+    const std::string fileBase = ConfigManager::GetRuntimeAssetDirectory();
 
-    if (!fileBase.empty()) {
-
-        luaScriptsDirectory_ = fileBase + "Scripts/";
-
-    } else {
-
-        luaScriptsDirectory_.clear();
-    }
+    // Latch the scripts root through the same helper the pre-Initialize path resolves against, so
+    // the member and the OnEarlyInit fallback can never disagree (#2144). Cleared first because
+    // the helper returns the member when it is already set: a re-Initialize must re-derive from
+    // the current asset directory rather than keep the previous run's root.
+    luaScriptsDirectory_.clear();
+    luaScriptsDirectory_ = LuaScriptsRootDirectory();
 
     LOG_INFO("AppController: ConfigManager files base %s (len=%zu); luaScriptsDirectory=\"%s\"",
 
@@ -616,16 +614,7 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
         const auto bucketIt = disk.Backends.find(backendKey);
         if (bucketIt != disk.Backends.end()) {
             const ViewWorkspaceState& bucket = bucketIt->second;
-            const ViewDefinition* activeView = nullptr;
-            for (const ViewDefinition& view : bucket.Views) {
-                if (view.Id == bucket.ActiveViewId) {
-                    activeView = &view;
-                    break;
-                }
-            }
-            if (activeView == nullptr && !bucket.Views.empty()) {
-                activeView = &bucket.Views.front();
-            }
+            const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(bucket.Views, bucket.ActiveViewId);
             if (activeView != nullptr) {
                 projectKeyForCache = focusedContext().Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
             }

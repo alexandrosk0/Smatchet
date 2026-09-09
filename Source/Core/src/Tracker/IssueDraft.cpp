@@ -2,6 +2,7 @@
 
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
+#include "Tracker/ParentHierarchyPure.h"
 
 #include <nlohmann/json.hpp>
 
@@ -152,13 +153,8 @@ IssueDraft FromCachedTicket(const CachedTicket& ticket, const std::vector<Tracke
             }
         }
         if (useRowParent) {
-            const std::string parentRaw = ticket.GetFieldValue("parent");
-            if (!parentRaw.empty()) {
-                std::string parentKey = parentRaw;
-                const size_t sep = parentKey.find(" - ");
-                if (sep != std::string::npos) {
-                    parentKey.resize(sep);
-                }
+            const std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
+            if (!parentKey.empty()) {
                 draft.ParentKey = parentKey;
             }
         }

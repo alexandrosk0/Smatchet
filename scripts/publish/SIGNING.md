@@ -19,10 +19,15 @@ What gets signed:
 ## Prerequisites
 
 - Windows SDK `signtool.exe`
-- one code-signing certificate, selected in exactly one of these ways:
+- one signing identity, selected in exactly one of these ways:
+  - **Azure Trusted Signing** (recommended — see below): the provider DLL + its
+    metadata JSON; no certificate material on disk
   - PFX file
   - certificate thumbprint from the Windows certificate store
   - certificate subject/common name from the Windows certificate store
+
+Passing more than one selector is an error, and so is passing none while
+`--sign` is set.
 
 ## Environment Variables
 
@@ -51,6 +56,63 @@ Supported variables:
 - `SMATCHET_SIGN_CERT_SUBJECT`
 - `SMATCHET_SIGN_USE_MACHINE_STORE`
 - `SMATCHET_SIGN_TIMESTAMP_URL`
+- `SMATCHET_SIGN_TRUSTED_SIGNING_DLIB`
+- `SMATCHET_SIGN_TRUSTED_SIGNING_METADATA`
+
+## Azure Trusted Signing
+
+Trusted Signing is Microsoft's managed signing service. It is the preferred
+identity for published releases:
+
+- the certificate is issued by a Microsoft CA whose **SmartScreen reputation is
+  inherited**, so a fresh release does not have to earn its own reputation the
+  way a new OV certificate does — this is the fastest route out of the
+  "Windows protected your PC" screen short of an EV certificate
+- no private key ever exists on a build machine or in a repository secret; the
+  signing key lives in the service and access is an Azure RBAC role
+  (`Trusted Signing Certificate Profile Signer`) on the certificate profile
+
+Mechanically it is still `signtool.exe`. Instead of `/f cert.pfx`, signtool
+loads a provider DLL that mints a short-lived certificate per signature:
+
+```bash
+export SMATCHET_SIGN_TRUSTED_SIGNING_DLIB='C:/ts/bin/x64/Azure.CodeSigning.Dlib.dll'
+export SMATCHET_SIGN_TRUSTED_SIGNING_METADATA='C:/ts/metadata.json'
+bash scripts/publish/release-github.sh --tag v0.6.7 --sign --publish
+```
+
+`metadata.json` names the account and certificate profile — no secrets:
+
+```json
+{
+  "Endpoint": "https://eus.codesigning.azure.net",
+  "CodeSigningAccountName": "smatchet-signing",
+  "CertificateProfileName": "smatchet-public"
+}
+```
+
+The DLL ships in the `Microsoft.Trusted.Signing.Client` NuGet package
+(`bin/x64/Azure.CodeSigning.Dlib.dll` — it must match signtool's architecture).
+
+Credentials come from the environment, via `DefaultAzureCredential`. A service
+principal with a client secret is the shape CI uses:
+
+```bash
+export AZURE_TENANT_ID='...'
+export AZURE_CLIENT_ID='...'
+export AZURE_CLIENT_SECRET='...'
+```
+
+Two things the script handles for you:
+
+- **Timestamping.** A Trusted Signing certificate is valid for days, so an
+  untimestamped signature stops verifying almost immediately — and the in-app
+  updater then refuses the installer. When Trusted Signing is selected the
+  default timestamp server changes to `http://timestamp.acs.microsoft.com`
+  (the ACS chain requires it); `--timestamp-url` still overrides.
+- **The uninstaller.** The same `/dlib` + `/dmdf` pair is passed to Inno Setup's
+  `SignTool` hook, so `unins000.exe` is signed by the same identity as everything
+  else in the release.
 
 ## Release Usage
 
@@ -80,8 +142,62 @@ bash scripts/publish/release-github.sh \
 ## CI (GitHub Actions)
 
 `.github/workflows/release.yml` runs `release-github.sh --sign --publish` on
-every `v*.*.*` tag push. It reads the certificate from two repository
-secrets instead of a file on disk:
+every `v*.*.*` tag push.
+
+It picks the signing identity itself: **Azure Trusted Signing** when the
+`SMATCHET_TRUSTED_SIGNING_*` repository *variables* are configured, otherwise the
+PFX secret. A manual dispatch can force either with the `signing_method` input
+(`auto` / `trusted-signing` / `pfx`). A repo with only the PFX secret set keeps
+behaving exactly as before.
+
+### Trusted Signing in CI
+
+Repository **variables** (Settings → Secrets and variables → Actions →
+Variables) — these are not secrets:
+
+- `SMATCHET_TRUSTED_SIGNING_ENDPOINT` — e.g. `https://eus.codesigning.azure.net`
+  (its presence is also what switches `signing_method: auto` over)
+- `SMATCHET_TRUSTED_SIGNING_ACCOUNT` — code signing account name
+- `SMATCHET_TRUSTED_SIGNING_PROFILE` — certificate profile name
+
+Repository **secrets** — an Entra service principal holding the
+`Trusted Signing Certificate Profile Signer` role on that profile:
+
+- `AZURE_TENANT_ID`
+- `AZURE_CLIENT_ID`
+- `AZURE_CLIENT_SECRET`
+
+[`setup-trusted-signing-sp.sh`](setup-trusted-signing-sp.sh) creates that
+service principal and both role assignments, then prints all six values (and
+the `gh variable set` / `gh secret set` lines for them):
+
+```bash
+az login
+bash scripts/publish/setup-trusted-signing-sp.sh \
+  --resource-group <rg> --account <signing-account> --profile <certificate-profile>
+```
+
+It refuses to touch anything if the account or profile name doesn't resolve, so
+a typo can't strand an app registration with a live secret. The client secret is
+printed once and cannot be retrieved again — run it in a terminal you're
+watching, not into a shared log. Two role scopes matter and the script gets them
+right: **Signer on the certificate profile**, **Reader on the account**. Reader
+scoped to the profile alone authenticates and then fails at profile lookup with
+an opaque signtool error.
+
+The workflow downloads the provider package by pinned version and SHA-256,
+writes `metadata.json` into `RUNNER_TEMP`, and exposes the `AZURE_*` credentials
+only to the step that builds and signs. Missing configuration fails the run
+before the build starts, not at the first signature.
+
+A client secret rather than federated OIDC is deliberate: the release job builds
+for up to an hour before it signs anything, and a GitHub OIDC token minted at the
+start of the job has long expired by then.
+
+### PFX in CI
+
+The PFX path reads the certificate from two repository secrets instead of a file
+on disk:
 
 - `SMATCHET_SIGN_PFX_BASE64` — the signing PFX, base64-encoded:
 
@@ -118,9 +234,9 @@ the release as a prerelease. Sign every subsequent release.
 
 ## Notes
 
-- The release script requires exactly one certificate selector: `--signing-certificate-path`, `--signing-certificate-thumbprint`, or `--signing-certificate-subject`.
+- The release script requires exactly one certificate selector: `--signing-certificate-path`, `--signing-certificate-thumbprint`, `--signing-certificate-subject`, or `--signing-trusted-signing-dlib` (which additionally requires `--signing-trusted-signing-metadata`).
 - ZIP files are not Authenticode-signed; the signed binaries live inside the portable ZIP and installer.
-- For production distribution, use a real OV/EV code-signing certificate. A self-signed certificate is fine only for local pipeline validation.
+- For production distribution, use Azure Trusted Signing or a real OV/EV code-signing certificate. A self-signed certificate is fine only for local pipeline validation.
 - The in-app updater (`AttachmentAppUpdateService::DownloadAndLaunchInstallerUpdate`) runs
   `WinVerifyTrust` on the downloaded installer and refuses to launch it unless the signature
   chains to a trusted root. When validating the update pipeline with a self-signed certificate,
