@@ -20,6 +20,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
   # incl. third-party actions with no Node 24 release yet.
@@ -34,6 +38,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Set up Python
@@ -47,7 +52,7 @@ jobs:
         run: |
           set -euo pipefail
           echo "Issue janitor — advisory sweep (dry-run; no mutations)."
-          bash agents/scripts/core/issue-sweep.sh 2>&1 | tee /tmp/sweep.out
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/issue-sweep.sh" 2>&1 | tee /tmp/sweep.out
           if grep -q '\[issue-propose\]' /tmp/sweep.out; then
             line="$(grep '\[issue-propose\]' /tmp/sweep.out | head -1)"
             echo "::notice::$line"

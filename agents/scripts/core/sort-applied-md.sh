@@ -27,9 +27,25 @@ set -euo pipefail
 . "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/resolve-py.sh"
 PY="$(resolve_py)" || { echo "python3 required (no working interpreter on PATH)" >&2; exit 2; }
 
-cd "$(dirname "$0")/../../.."
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
+# The climb is location-relative: pre-flip it lands on the repo root, post-flip
+# on agent-layer/, and project-config.sh resolves the HOST tree from there.
+# Best-effort, with an explicit fallback to the climb this script used before,
+# so a reduced tree that carries agents/ without scripts/dev/ behaves as today.
+# shellcheck source=scripts/dev/project-config.sh
+_sam_self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+. "$_sam_self_root/scripts/dev/project-config.sh" 2>/dev/null || true
+: "${PROJECT_ROOT:=$_sam_self_root}"
 
-APPLIED="docs/self-improvement/categories/applied.md"
+# applied.md is HOST content and stays host-side permanently — it is the
+# merge=union entries file (grill decision 4), and this script is its repair
+# tool: a LAYER script reading a HOST path (plan row 7b names the pair). The
+# `cd` climb that used to anchor it lands in the layer post-flip, where the file
+# does not exist, so the path is anchored on $PROJECT_ROOT instead. cwd is now
+# the host tree for the same reason.
+cd "$PROJECT_ROOT"
+
+APPLIED="${SMATCHET_APPLIED_MD:-$PROJECT_ROOT/docs/self-improvement/categories/applied.md}"
 CHECK_ONLY=0
 if [ "${1:-}" = "--check" ]; then
     CHECK_ONLY=1
@@ -52,7 +68,12 @@ import re
 import sys
 
 src, dst = sys.argv[1], sys.argv[2]
-with open(src, encoding="utf-8") as f:
+# newline="" on both ends: text mode would otherwise translate every newline
+# to the platform separator on write, so on Windows the rewritten copy differs
+# from the source in line endings alone and the `cmp -s` below never matches:
+# --check reports a sorted file as unsorted, and a real run rewrites the whole
+# file to CRLF.
+with open(src, encoding="utf-8", newline="") as f:
     lines = f.readlines()
 
 # Split: header (everything up to first entry) + list of entries.
@@ -65,7 +86,7 @@ for i, line in enumerate(lines):
         break
 else:
     # No entries — nothing to sort.
-    with open(dst, "w", encoding="utf-8") as f:
+    with open(dst, "w", encoding="utf-8", newline="") as f:
         f.writelines(lines)
     sys.exit(0)
 
@@ -91,7 +112,7 @@ if current:
 # Sort descending by date prefix. Stable sort preserves intra-date order.
 entries.sort(key=lambda e: e[0], reverse=True)
 
-with open(dst, "w", encoding="utf-8") as f:
+with open(dst, "w", encoding="utf-8", newline="") as f:
     f.writelines(header)
     for _, block in entries:
         f.writelines(block)

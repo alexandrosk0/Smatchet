@@ -246,7 +246,25 @@ cd "$repo_root"
 # Sourced from THIS script's directory, never "$repo_root": --selftest runs the script
 # against a throwaway work tree that has no agents/ tree of its own.
 preship_script_dir="$(cd "$(dirname "$0")" && pwd)"
-preship_review_lib="$preship_script_dir/../../agents/scripts/core/lib/review-ack.sh"
+
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a). This
+# is a HOST script that invokes LAYER scripts, so it is the sibling-path form
+# (matching with-msvc-env.sh), not the layer climb. Best-effort: pre-ship must
+# degrade rather than abort, and AGENT_LAYER_ROOT falls back to the same repo
+# root the bare `agents/...` literals already meant.
+#
+# It also PRESERVES the property the comment above states — the libs come from
+# THIS script's tree, never "$repo_root" — because AGENT_LAYER_ROOT is derived
+# from project-config.sh's own location, not from cwd. That matters: --selftest
+# runs this script against a throwaway work tree with no agents/ of its own, and
+# resolving the libs against that tree would break the selftest, not fix it.
+# shellcheck source=scripts/dev/project-config.sh
+. "$preship_script_dir/project-config.sh" 2>/dev/null || true
+# Normalised, so the "cannot read …" diagnostic below names a real path rather
+# than one threaded through `scripts/dev/../..`.
+preship_layer_root="${AGENT_LAYER_ROOT:-$(cd "$preship_script_dir/../.." && pwd)}"
+
+preship_review_lib="$preship_layer_root/agents/scripts/core/lib/review-ack.sh"
 if [ ! -r "$preship_review_lib" ]; then
     # rc 2 is this script's "required tool unavailable" code — not rc 1, which
     # means "a gate found a real violation".
@@ -265,7 +283,7 @@ fi
 # and nobody re-examines a green. Advisory only; a freshness note must never be the
 # reason a lint gate fails. Missing lib → skip (an incomplete checkout already trips
 # the review-ack guard above; this must not become a second hard dependency).
-preship_freshness_lib="$preship_script_dir/../../agents/scripts/core/lib/script-freshness.sh"
+preship_freshness_lib="$preship_layer_root/agents/scripts/core/lib/script-freshness.sh"
 if [ -r "$preship_freshness_lib" ]; then
     # shellcheck source=agents/scripts/core/lib/script-freshness.sh
     . "$preship_freshness_lib"
@@ -436,7 +454,7 @@ fi
 # (postmortem: 6 PRs in one session re-tripped it on bare `//` header-doc separators).
 echo "pre-ship: auto-stripping new blank-run/decorative comment-noise vs $base_ref"
 if [ -n "$PRESHIP_PY" ]; then
-    "$PRESHIP_PY" agents/scripts/core/comment_audit.py --fix "$base_ref" \
+    "$PRESHIP_PY" "$preship_layer_root/agents/scripts/core/comment_audit.py" --fix "$base_ref" \
         || echo "pre-ship: WARN — comment-noise auto-strip errored; the gate below still enforces." >&2
 else
     echo "pre-ship: WARN — no working python; comment-noise auto-strip skipped (the gate below still enforces)." >&2
@@ -473,7 +491,7 @@ fi
 if [ "$gate_only" != "1" ]; then
 
 echo "pre-ship: running delta lint gate vs $base_ref"
-if ! bash agents/scripts/project/test-lint-rules.sh --diff "$base_ref"; then
+if ! bash "$preship_layer_root/agents/scripts/project/test-lint-rules.sh" --diff "$base_ref"; then
     echo "pre-ship: FAIL — fix the delta lint findings above before pushing." >&2
     exit 1
 fi
@@ -483,7 +501,7 @@ fi
 echo "pre-ship: running markdown lint (md_lint.py --all)"
 if [ -z "$PRESHIP_PY" ]; then
     echo "pre-ship: WARN — no working python; markdown lint skipped (CI still enforces it)." >&2
-elif ! "$PRESHIP_PY" agents/scripts/core/md_lint.py --all; then
+elif ! "$PRESHIP_PY" "$preship_layer_root/agents/scripts/core/md_lint.py" --all; then
     echo "pre-ship: FAIL — fix the markdown findings above before pushing." >&2
     exit 1
 fi
@@ -493,7 +511,7 @@ fi
 # (false green). The configure-time assert in tests/CMakeLists.txt catches it in
 # CI; run the same check here so it surfaces before push, not at configure time.
 echo "pre-ship: running test-list consistency check"
-if ! bash agents/scripts/core/check-test-list.sh --check; then
+if ! bash "$preship_layer_root/agents/scripts/core/check-test-list.sh" --check; then
     echo "pre-ship: FAIL — add the unreferenced test(s) to tests/CMakeLists.txt before pushing." >&2
     exit 1
 fi
@@ -506,7 +524,7 @@ fi
 # Near-instant (a glob + grep over wrappers, no build) — run it here so the gap
 # is caught before push.
 echo "pre-ship: running orphan-bats check (every tests/bats/*.bats needs a wrapper)"
-if ! bash agents/scripts/core/test-orphan-bats.sh; then
+if ! bash "$preship_layer_root/agents/scripts/core/test-orphan-bats.sh"; then
     echo "pre-ship: FAIL — add a test-*.sh wrapper that runs the bats suite(s) above before pushing." >&2
     exit 1
 fi
@@ -700,6 +718,12 @@ fi
 # repo root. Unquoted, the shell expands it against the invoking CWD, and from
 # any subdirectory it matches nothing, passes the literal pattern through, and
 # silently degrades the whole check to `unverifiable` — which prints nothing.
+# The four agents/ entries below are LAYER paths compared against origin/develop.
+# Post-flip that comparison must select the LAYER repo's origin/develop — the
+# host's does not contain them, and fingerprinting against a branch that lacks
+# the files blanks the detector fail-closed. Same repo-selection requirement as
+# merge-gates.sh's staleness set (row 5g); implemented in Phase C, where both
+# repos exist. Nothing to do pre-flip: one repo, one origin/develop.
 if command -v warn_if_script_stale >/dev/null 2>&1; then
     warn_if_script_stale "pre-ship gate logic" \
         "scripts/dev/pre-ship.sh" \

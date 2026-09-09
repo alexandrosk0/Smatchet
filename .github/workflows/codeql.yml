@@ -56,6 +56,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Repo
   # convention -- every workflow sets this.
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -81,6 +85,7 @@ jobs:
         # defeating the PR trigger.
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           persist-credentials: false
 
       - name: Setup MSVC dev environment

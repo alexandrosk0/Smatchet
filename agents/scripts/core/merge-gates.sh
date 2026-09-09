@@ -83,7 +83,11 @@
 #                                  inert. Used by tests to inject a fixture-matching
 #                                  set; operationally rarely needed.
 #   MERGE_GATES_CONFIG_FILE      — override path to project.config.json for the
-#                                  required-context read (default: repo-root config).
+#                                  required-context read AND the conversation-
+#                                  resolution base read (both sites share it).
+#                                  Default: the HOST config as resolved by
+#                                  scripts/dev/project-config.sh, falling back to
+#                                  the three-levels-up climb if that cannot load.
 #   MERGE_GATES_IGNORE_MERGESTATE — when "true", skip the mergeStateStatus guard so
 #                                  GATES_PASSED is NOT refused on BLOCKED/BEHIND.
 #                                  Default unset/false → enforce the block. Set true
@@ -182,6 +186,27 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_QUERY_FILE="$SCRIPT_DIR/merge-gates.graphql"
+
+# DUAL-ROOT (plan agent-surface-extraction-repo, Phase A row 5g). This script is
+# LAYER content that reads a HOST file: project.config.json stays with the
+# product. It was resolved by a three-levels-up climb from agents/scripts/core/,
+# written out TWICE (the required-context read and the conversation-resolution
+# base read). Post-flip that climb lands on agent-layer/, where a
+# project.config.json also exists — the LAYER's own. So the file is found, no
+# error is printed, and while gating a SMATCHET PR the script reads the layer's
+# branch_protection.required_contexts: the required-absent detector silently
+# degrades on every host PR. A missing file at least WARNs; this failure is
+# completely silent, which is what makes it the dangerous half of this row.
+#
+# $PC_CONFIG_FILE is project-config.sh's resolved host config, so both sites now
+# share one answer instead of two copies of a climb. Sourcing is best-effort:
+# merge-gates.sh runs in CI contexts where a hard exit on a config-load failure
+# would take down the gate itself, and the "config not found" WARN branch below
+# is the documented inert path for exactly that. MERGE_GATES_CONFIG_FILE keeps
+# its meaning as the explicit override and still wins.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+MERGE_GATES_CONFIG_FILE="${MERGE_GATES_CONFIG_FILE:-${PC_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}}"
 
 # ----------------------------------------------------------------------------
 # Sourced gate-condition modules — resolved relative to THIS script (SCRIPT_DIR
@@ -293,6 +318,13 @@ poll_merge_gates() {
         # one: it IS the detector, so a stale copy of it is the single blind spot
         # that could hide every other file's staleness. Self-fingerprinting closes
         # that — a behind-develop detector reports itself behind.
+        # POST-FLIP REPO SELECTION (row 5g, second half — recorded here,
+        # implemented in Phase C where both repos exist). Every path in this set
+        # is LAYER content, so once the layer is a submodule the freshness
+        # comparison must run against the LAYER repo's origin/develop, not the
+        # host's. Comparing layer files to host history would fingerprint against
+        # a branch that does not contain them and blank the detector fail-closed
+        # on every run. Nothing to do pre-flip: one repo, one origin/develop.
         local _self_relpath="agents/scripts/core/merge-gates.sh (+ merge-gates.d/ modules, lib/script-freshness.sh)"
         local _fresh_relpaths=(
             "agents/scripts/core/merge-gates.sh"
@@ -516,7 +548,7 @@ poll_merge_gates() {
         # Set (possibly empty) — honour the override, skip the file read.
         req_ctx_raw="${MERGE_GATES_REQUIRED_CONTEXTS//,/$'\n'}"
     else
-        local config_file="${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}"
+        local config_file="$MERGE_GATES_CONFIG_FILE"
         if [ -f "$config_file" ] && command -v jq >/dev/null 2>&1; then
             req_ctx_raw=$(jq -r '.branch_protection.required_contexts[]? // empty' "$config_file" 2>/dev/null) || req_ctx_raw=""
         elif [ ! -f "$config_file" ]; then
@@ -1619,7 +1651,7 @@ poll_merge_gates() {
                             --jq '.base.ref' 2>/dev/null) || conv_base=""
                         if [ -z "$conv_base" ] && command -v jq >/dev/null 2>&1; then
                             conv_base=$(jq -r '.branch_protection.branch // "develop"' \
-                                "${MERGE_GATES_CONFIG_FILE:-$SCRIPT_DIR/../../../project.config.json}" 2>/dev/null) || conv_base=""
+                                "$MERGE_GATES_CONFIG_FILE" 2>/dev/null) || conv_base=""
                         fi
                         [ -n "$conv_base" ] || conv_base="develop"
                         conv_res_cache=$(gh api "repos/${owner}/${repo}/branches/${conv_base}/protection" \
