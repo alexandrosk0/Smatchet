@@ -88,8 +88,13 @@
 #                        would re-open the pre-label-run race the poller now
 #                        refuses. A red Test-delta / Perf PR-fast blocks until
 #                        the post-label re-run reports green server-side.
-#   cr-out-of-band     → waives the CodeRabbit-completion wait above (it still does
-#                        NOT downgrade any CI check — CR is its only scope).
+#   cr-out-of-band     → waives the CodeRabbit-completion wait above, AND
+#                        (with a cr-disposition:* label) discounts the CR
+#                        finding-gate StatusContext/CheckRun (`CR findings*` /
+#                        `CR finding gate`) from the rollup — same CI discount
+#                        merge-gates.sh $downgraded applies (tooling 2026-08-18:
+#                        otherwise the waiver that clears gate 2 leaves the
+#                        finding-gate context red/pending forever).
 #
 # Usage:
 #   agents/scripts/core/safe-admin-merge.sh <pr>
@@ -269,6 +274,8 @@ evaluate_rollup() {
         ([.labels[]?.name] // []) as $labels
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
+        | ($labels | any(. == "cr-out-of-band")) as $crOob
+        | ($labels | any(startswith("cr-disposition:"))) as $crDisp
         | (sam_latest) as $latest
         # Resolve each deduped rollup row to a (name, green?) pair; bind as $rows so
         # the absent-required cross-check below can see which names are present.
@@ -286,7 +293,8 @@ evaluate_rollup() {
              | ($g + {gating:
                  ($g.gating
                   and (($intentOob and $g.name == "Intent section") | not)
-                  and (($planlockOob and $g.name == "Plan-lock gate") | not))})
+                  and (($planlockOob and $g.name == "Plan-lock gate") | not)
+                  and (($crOob and $crDisp and ($g.name | test("^CR finding"; "i"))) | not))})
              | select(.gating and (.green | not))
              | .name ]) as $rowBlockers
         # Absent-required cross-check (fail-closed): a required context missing
@@ -295,7 +303,8 @@ evaluate_rollup() {
         | ([ $req[]
              | select(. as $rn | ($present | any(. == $rn)) | not)
              | select(($intentOob and . == "Intent section") | not)
-             | select(($planlockOob and . == "Plan-lock gate") | not) ]) as $absentReq
+             | select(($planlockOob and . == "Plan-lock gate") | not)
+             | select(($crOob and $crDisp and test("^CR finding"; "i")) | not) ]) as $absentReq
         | ($rowBlockers + $absentReq)
         | unique
         | .[]
@@ -443,6 +452,8 @@ downgraded_red_checks() {
         | ($labels | any(. == "perf-out-of-band")) as $perfOob
         | ($labels | any(. == "intent-out-of-band")) as $intentOob
         | ($labels | any(. == "plan-lock-out-of-band")) as $planlockOob
+        | ($labels | any(. == "cr-out-of-band")) as $crOob
+        | ($labels | any(startswith("cr-disposition:"))) as $crDisp
         | (sam_latest) as $latest
         | $latest[]
         | sam_name as $name
@@ -450,7 +461,8 @@ downgraded_red_checks() {
                  and (($testsOob and $name == "Test-delta gate")
                       or ($perfOob and ($name | startswith("Perf PR-fast")))
                       or ($intentOob and $name == "Intent section")
-                      or ($planlockOob and $name == "Plan-lock gate")))
+                      or ($planlockOob and $name == "Plan-lock gate")
+                      or ($crOob and $crDisp and ($name | test("^CR finding"; "i")))))
         | $name
     '
 }
@@ -637,6 +649,31 @@ run_selftest() {
         echo "selftest CASE4c PASS — plan-lock-out-of-band downgrades RED Plan-lock gate"
     else
         echo "selftest CASE4c FAIL — plan-lock-out-of-band check should not block (got: '$blockers')" >&2
+        fails=$((fails + 1))
+    fi
+
+    # CASE 4d — cr-out-of-band + cr-disposition discounts RED CR findings
+    # StatusContext (tooling 2026-08-18 parity with merge-gates $downgraded).
+    local cr_findings_oob_rollup
+    cr_findings_oob_rollup='{"state":"OPEN","labels":[{"name":"cr-out-of-band"},{"name":"cr-disposition:cr-auto-review-disabled"}],"statusCheckRollup":[
+      {"__typename":"CheckRun","name":"build","status":"COMPLETED","conclusion":"SUCCESS"},
+      {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$cr_findings_oob_rollup" "")
+    if [ -z "$blockers" ]; then
+        echo "selftest CASE4d PASS — cr-out-of-band + disposition discounts RED CR findings"
+    else
+        echo "selftest CASE4d FAIL — expected empty, got: '$blockers'" >&2
+        fails=$((fails + 1))
+    fi
+    # Disposition required: cr-out-of-band alone must NOT discount.
+    local cr_oob_alone_rollup
+    cr_oob_alone_rollup='{"state":"OPEN","labels":[{"name":"cr-out-of-band"}],"statusCheckRollup":[
+      {"__typename":"StatusContext","context":"CR findings (0 actionable)","state":"FAILURE"}]}'
+    blockers=$(evaluate_rollup "$cr_oob_alone_rollup" "")
+    if [ -n "$blockers" ]; then
+        echo "selftest CASE4d2 PASS — cr-out-of-band alone does not discount CR findings"
+    else
+        echo "selftest CASE4d2 FAIL — bare cr-out-of-band must still block on CR findings" >&2
         fails=$((fails + 1))
     fi
 
