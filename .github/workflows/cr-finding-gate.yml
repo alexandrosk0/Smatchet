@@ -97,15 +97,20 @@ jobs:
     # checkout — congestion killed the step mid-poll and wedged the PR (#1954).
     timeout-minutes: 12
     # PR events carry a pull_request payload (scope to develop). issue_comment
-    # has only an issue payload — accept it ONLY when it's a CodeRabbit-authored
-    # comment on a PR (that's exactly when CR signals "0 actionable" with no
-    # review node); base-branch is re-checked after PR resolution below.
+    # has only an issue payload — accept when:
+    #   (a) CodeRabbit-authored (CR signals "0 actionable" with no review node), OR
+    #   (b) the body asks `@coderabbitai review` / `full review` — the human
+    #       OSS manual-trigger (process 2026-08-30); re-running lets decide()
+    #       see human_asked and wait instead of sitting on the terminal failure.
+    # Base-branch is re-checked after PR resolution below.
     if: >-
       github.event.pull_request.base.ref == 'develop' ||
       (github.event_name == 'issue_comment' &&
        github.event.issue.pull_request != null &&
        (github.event.comment.user.login == 'coderabbitai[bot]' ||
-        github.event.comment.user.login == 'coderabbitai'))
+        github.event.comment.user.login == 'coderabbitai' ||
+        contains(github.event.comment.body, '@coderabbitai review') ||
+        contains(github.event.comment.body, '@coderabbitai full review')))
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

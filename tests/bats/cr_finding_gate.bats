@@ -151,6 +151,12 @@ step_timeout() {
     grep -q 'unlabeled' "$WF"
 }
 
+@test "workflow re-runs on human @coderabbitai review comments (OSS trigger)" {
+    # Human ask must re-enter decide() so human_asked can wait instead of
+    # sitting on the terminal OSS failure (process 2026-08-30).
+    grep -qF "contains(github.event.comment.body, '@coderabbitai review')" "$WF"
+}
+
 @test "workflow posts PENDING when the evaluation could not conclude" {
     grep -q 'always() && steps.eval.outcome != .success.' "$WF"
     grep -q "state=pending" "$WF"
@@ -698,7 +704,7 @@ run_nudge() {
 
 @test "the manual-review guard is wired into decide(), not just defined" {
     # Terminal arm: OSS manual-review posts failure (bot nudge retired — process 2026-08-30).
-    grep -q "cr-auto-review-disabled (OSS <10 stars)" "$ACTION"
+    grep -q "OSS <10 stars" "$ACTION"
     grep -q "post failure" "$ACTION"
     # Must still refuse to treat the status as a clean skip/pass.
     grep -qE "grep -qi '${MANUAL_REVIEW_RE}'" "$ACTION"

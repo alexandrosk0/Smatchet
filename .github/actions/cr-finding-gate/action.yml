@@ -253,8 +253,11 @@ runs:
         labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
         pr_body=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.body // ""' 2>/dev/null || true)
         if printf '%s\n' "$labels" | grep -qx 'cr-out-of-band'; then
+          # Body match mirrors merge-gates jq (unanchored cr-disposition:<reason>)
+          # so the two layers honour the same attestation forms. Label form is
+          # the playbook default.
           if printf '%s\n' "$labels" | grep -qE '^cr-disposition:.+' \
-             || printf '%s\n' "$pr_body" | grep -qiE '^[[:space:]]*[-*]?[[:space:]]*cr-disposition:[[:space:]]*[^[:space:]<]'; then
+             || printf '%s' "$pr_body" | grep -qiE 'cr-disposition:[[:space:]]*[^[:space:]<]'; then
             post success "cr-out-of-band + cr-disposition set — gate overridden"
             exit 0
           fi
@@ -519,11 +522,13 @@ runs:
             # which exhausted the poll window into an unbounded `pending` —
             # and CodeRabbit IGNORES bot-authored `@coderabbitai review`, so the
             # nudge could never heal. Post a TERMINAL failure naming the two
-            # sanctioned moves; a later human comment / labeled waiver re-runs
-            # this workflow to a real verdict.
+            # sanctioned moves. Re-run triggers: CR review/comment (workflow
+            # issue_comment filter), labeled/unlabeled waiver, or a human
+            # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
-              # If a human already asked, keep waiting — CR may still be working.
+              # If a human already asked, keep waiting — CR may still be working
+              # (synchronize / human-trigger comment re-runs land here).
               human_asked=false
               while IFS=$'\t' read -r login utype cmt; do
                 case "$utype" in Bot) continue ;; esac
@@ -538,7 +543,8 @@ runs:
                 echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
                 return 1
               fi
-              post failure "cr-auto-review-disabled (OSS <10 stars) — human must comment '@coderabbitai review' (bot nudges ignored) OR apply cr-out-of-band + cr-disposition:cr-auto-review-disabled (see scripts/dev/trigger-coderabbit-review.sh)"
+              # Keep <=140 chars (GitHub status description limit).
+              post failure "OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled"
               exit 0
             fi
 
