@@ -625,7 +625,7 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             d.viewsHasOriginalSnapshot = false;
             d.pendingViewStateSave = false;
             ViewState.BumpRevision(); // force grid to redraw columns in the stored order
-            // If the unsaved edit included the QUERY (the omnibar / User-Info add-to-query
+            // If the unsaved edit included the QUERY (the grid search box / User-Info add-to-query
             // path — P2-H1), restoring the definition must also restore the visible rows:
             // re-adopt the saved JQL and re-run it, or the grid keeps showing the search.
             if (d.cfg.JqlQuery != restoreSource->Jql) {

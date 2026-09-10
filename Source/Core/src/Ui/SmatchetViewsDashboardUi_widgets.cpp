@@ -304,7 +304,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float inputW = ImGui::GetContentRegionAvail().x - clearBtnW - spacing;
     ImGui::SetNextItemWidth((std::max)(120.0f, inputW));
-    // Optional placeholder (omnibar passes one) so each of the app's search entry points
+    // Optional placeholder (callers that share the widget pass one) so each of the app's search entry points
     // states what it searches; the dashboard editor keeps its surrounding label chrome.
     if (hint != nullptr) {
         ImGui::InputTextWithHint("##JQLEmbedded", hint, st.buf, sizeof(st.buf),
@@ -331,7 +331,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
         ++st.jqlAcpUserSearchRequestId;
         st.jqlAcpListDismissed = false;
         st.jqlAcpCaretSnapFramesRemaining = 0;
-        // Only the dashboard/views editor tracks saved-view dirtiness; the omnibar
+        // Only the dashboard/views editor tracks saved-view dirtiness; a transient-search caller
         // (drawProjectPill=false) clears a transient search and must not flag the saved view (#4).
         if (drawProjectPill) {
             d.viewsDirty = true;
@@ -378,7 +378,7 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
     }
 
     // Project pill beneath the query bar — pick a single project scope for the active view.
-    // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so the omnibar opts out.
+    // Dashboard-only: the pill is hard-bound to d.viewJqlEditor, so other callers opt out.
     if (drawProjectPill) {
         DrawJqlProjectPill(app, d);
     }

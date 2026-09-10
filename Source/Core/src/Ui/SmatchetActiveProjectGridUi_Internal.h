@@ -54,6 +54,9 @@ struct ActiveProjectDrawCtx {
     bool& rectCellClickedThisFrame;
     bool& ticketGridLeftClickInsideTableHit;
     std::uint64_t& gridSortSig;
+    // Parent-hierarchy nesting depth of the row currently being drawn (set per row by
+    // drawActiveProjectGridRows, read by the Id cell for its indent). 0 = root / feature off.
+    int currentRowDepth = 0;
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

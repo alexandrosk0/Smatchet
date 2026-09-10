@@ -43,7 +43,10 @@ def strip_file_text(text):
         drop = False
         if kind == "full_comment":
             stripped = line.strip()
-            if stripped.startswith("//"):  # line-comment only — never block bodies
+            # A bare `///` classifies as cut-blank (a doc-block paragraph break), but it is doc
+            # structure, not removable noise: deleting it here would silently reflow a `///`
+            # block into one wall of text. The audit gate still flags a RUN of them.
+            if stripped.startswith("//") and not audit.BARE_DOC_SEPARATOR_RE.match(line):
                 bucket = audit.classify_comment(stripped, line)
                 if bucket in STRIP_BUCKETS:
                     drop = True

@@ -7,8 +7,10 @@
 // BugReportService::SubmitViaRelay expects.
 //
 // Deploy + secrets: see README.md. Required binding: secret GITHUB_TOKEN. Vars:
-// REPO ("owner/repo"), optional ASSETS_REPO ("owner/repo"), optional RELAY_KEY
+// REPO ("owner/repo"), optional ASSETS_REPO ("owner/repo"), optional DUMPS_REPO
+// ("owner/repo", must be PRIVATE — see isDumpRepoPrivate), optional RELAY_KEY
 // (shared access key — when set, requests must send a matching x-relay-key header).
+// Optional ratelimit bindings REPORT_RATE_LIMITER / GLOBAL_RATE_LIMITER.
 //
 // The token here needs, on REPO/ASSETS_REPO: Issues:write (+ Contents:write only
 // if screenshots are enabled). It is NEVER exposed to clients.
@@ -17,6 +19,7 @@ const GH_API = "https://api.github.com";
 const ASSETS_BRANCH = "bug-report-assets";
 const MAX_BODY_BYTES = 2 * 1024 * 1024; // hard cap on the whole request payload (base64 screenshot inflates ~4/3)
 const UA = "Smatchet-BugReportRelay";
+const RATE_LIMIT_RETRY_AFTER = "60"; // seconds; matches the bindings' `simple.period` in wrangler.toml
 
 function ghHeaders(token) {
   return {
@@ -33,6 +36,67 @@ function json(status, obj) {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// One rate-limit bucket. `limiter` is a Cloudflare ratelimit binding (see the
+// [[unsafe.bindings]] blocks in wrangler.toml); it is absent under `wrangler dev`
+// on older versions and on a Worker deployed before those bindings existed, in
+// which case there is nothing to enforce and the request passes.
+//
+// Fail-OPEN on a limiter error: the binding is abuse protection, not correctness,
+// and a limiter outage must not take the bug reporter down with it. (The dump
+// privacy check below is the opposite — it fails closed.)
+async function withinRateLimit(limiter, key) {
+  if (!limiter || typeof limiter.limit !== "function") return true;
+  try {
+    const { success } = await limiter.limit({ key });
+    return success !== false;
+  } catch {
+    return true;
+  }
+}
+
+// Per-IP + whole-relay budget on /report. Runs BEFORE the relay-key check so a
+// key-guessing flood is throttled too. `CF-Connecting-IP` is set by Cloudflare's
+// edge and cannot be spoofed by the client; the "unknown" fallback shares one
+// bucket, which is the conservative side to err on.
+async function rateLimitReport(request, env) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  if (!(await withinRateLimit(env.REPORT_RATE_LIMITER, ip))) return "per-IP";
+  if (!(await withinRateLimit(env.GLOBAL_RATE_LIMITER, "global"))) return "global";
+  return "";
+}
+
+// Repos confirmed private, remembered for the life of the isolate. A repo's
+// visibility changes ~never, so re-asking GitHub per request buys nothing and
+// spends rate-limit budget.
+//
+// Only POSITIVE answers are cached. Caching "not private" would pin an operator's
+// fix — flipping the repo to private, or correcting DUMPS_REPO — behind an isolate
+// recycle, and re-checking is cheap: it costs one request per crash report, and
+// only on reports that actually carry a dump.
+const knownPrivateRepos = new Set();
+
+// A minidump carries the crashing thread's STACK MEMORY and the loaded-module
+// list — file paths under the user's home directory, and whatever strings the
+// crashing frames happened to be holding. A GitHub Release asset on a PUBLIC repo
+// is world-downloadable with no auth, so uploading one there publishes a stranger's
+// process state. Refuse unless the destination repo is private.
+//
+// Fails CLOSED: an unreadable/ambiguous visibility answer drops the dump. The
+// issue itself still files (the caller degrades to a note in the body) — losing a
+// dump costs a debugging session, publishing one cannot be undone.
+async function isDumpRepoPrivate(token, repo) {
+  if (knownPrivateRepos.has(repo)) return true;
+  let isPrivate = false;
+  try {
+    const resp = await fetch(`${GH_API}/repos/${repo}`, { headers: ghHeaders(token) });
+    if (resp.status === 200) isPrivate = (await resp.json()).private === true;
+  } catch {
+    isPrivate = false;
+  }
+  if (isPrivate) knownPrivateRepos.add(repo);
+  return isPrivate;
 }
 
 // Ensure a `crash-dumps` prerelease exists; return its upload_url template, or "".
@@ -166,6 +230,14 @@ async function uploadScreenshot(token, assetsRepo, base64, stamp) {
 async function handleReport(request, env) {
   if (request.method !== "POST") return json(405, { ok: false, error: "POST only" });
 
+  const limited = await rateLimitReport(request, env);
+  if (limited) {
+    return new Response(JSON.stringify({ ok: false, error: `rate limited (${limited})` }), {
+      status: 429,
+      headers: { "Content-Type": "application/json", "Retry-After": RATE_LIMIT_RETRY_AFTER },
+    });
+  }
+
   if (env.RELAY_KEY && request.headers.get("x-relay-key") !== env.RELAY_KEY) {
     return json(401, { ok: false, error: "bad or missing relay key" });
   }
@@ -206,12 +278,20 @@ async function handleReport(request, env) {
   }
 
   // Crash minidump → Release asset (binaries off the git tree), link in the body.
+  // Only ever into a PRIVATE repo: see isDumpRepoPrivate.
   if (payload.dumpBase64) {
-    const dumpUrl = await uploadCrashDump(env.GITHUB_TOKEN, assetsRepo, payload.dumpBase64, payload.dumpName);
-    if (dumpUrl) {
-      body += `\n\n[Crash minidump](${dumpUrl})`;
+    const dumpsRepo = env.DUMPS_REPO && splitRepo(env.DUMPS_REPO) ? env.DUMPS_REPO : assetsRepo;
+    if (!(await isDumpRepoPrivate(env.GITHUB_TOKEN, dumpsRepo))) {
+      body +=
+        `\n\n_Crash minidump received but **discarded**: the configured dump repo (\`${dumpsRepo}\`) is ` +
+        `not private, and a minidump carries process stack memory. Set \`DUMPS_REPO\` to a private repo and redeploy._`;
     } else {
-      body += `\n\n_Crash minidump received but could not be uploaded (relay token lacks release perms or upload failed)._`;
+      const dumpUrl = await uploadCrashDump(env.GITHUB_TOKEN, dumpsRepo, payload.dumpBase64, payload.dumpName);
+      if (dumpUrl) {
+        body += `\n\n[Crash minidump](${dumpUrl})`;
+      } else {
+        body += `\n\n_Crash minidump received but could not be uploaded (relay token lacks release perms or upload failed)._`;
+      }
     }
   }
 

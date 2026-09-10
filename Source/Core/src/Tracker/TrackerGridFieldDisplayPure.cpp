@@ -412,23 +412,24 @@ WorklogCellModel BuildWorklogCellModel(const std::string& currentValue) {
             return cell;
         }
         cell.clickable = true;
+        cell.noWorkLogged = true;
         cell.label = "Log work";
-        cell.tooltip = "No work logged yet. Click to log work.";
         return cell;
     }
 
     cell.clickable = true;
     if (model.total <= 0) {
+        cell.noWorkLogged = true;
         cell.label = "Log work";
-        cell.tooltip = "No work logged yet. Click to log work.";
         return cell;
     }
     cell.label = model.line;
     cell.tooltip = model.tooltip;
+    // Trimmed so the renderer's blank line + click hint never grows a ragged gap as entries
+    // are added.
     while (!cell.tooltip.empty() && cell.tooltip.back() == '\n') {
         cell.tooltip.pop_back();
     }
-    cell.tooltip += "\n\nClick to log work / edit estimates.";
     return cell;
 }
 

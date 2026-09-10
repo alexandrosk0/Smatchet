@@ -201,7 +201,10 @@ TEST_CASE("BuildWorklogCellModel — clickability across empty / logged / hostil
             const auto cell = BuildWorklogCellModel(v);
             CHECK(cell.clickable);
             CHECK(cell.label == "Log work");
-            CHECK(cell.tooltip == "No work logged yet. Click to log work.");
+            // #2173: the sentence is NOT baked here — the renderer emits the localized
+            // "worklog.none" row for this flag, so the model carries no English tooltip.
+            CHECK(cell.noWorkLogged);
+            CHECK(cell.tooltip.empty());
         }
     }
     SUBCASE("parsed-but-empty worklog page offers the action, not the '-' read-out") {
@@ -209,6 +212,8 @@ TEST_CASE("BuildWorklogCellModel — clickability across empty / logged / hostil
         CHECK(cell.clickable);
         CHECK(cell.label == "Log work");
         CHECK(cell.label != "-");
+        CHECK(cell.noWorkLogged);
+        CHECK(cell.tooltip.empty());
     }
     SUBCASE("logged work keeps the summary line and gains the click hint") {
         const std::string value = R"({
@@ -221,18 +226,22 @@ TEST_CASE("BuildWorklogCellModel — clickability across empty / logged / hostil
         const auto cell = BuildWorklogCellModel(value);
         const auto model = BuildWorklogRenderModel(value);
         CHECK(cell.clickable);
+        CHECK_FALSE(cell.noWorkLogged);
         CHECK(cell.label == model.line);
         CHECK(cell.tooltip.find("Ann") != std::string::npos);
-        // Exactly one blank line before the hint — the summary's trailing newlines are trimmed
-        // first, so the tooltip never grows a ragged gap as entries are added.
-        CHECK(cell.tooltip.find("\n\n\nClick to log work") == std::string::npos);
-        CHECK(cell.tooltip.find("\n\nClick to log work / edit estimates.") != std::string::npos);
-        CHECK(cell.tooltip.back() == '.');
+        // The click hint is appended by the renderer through the localization table (#2173),
+        // so the model's tooltip is the summary alone, with its trailing newlines trimmed —
+        // otherwise the renderer's blank line + hint would grow a ragged gap as entries are
+        // added.
+        CHECK(cell.tooltip.find("Click to log work") == std::string::npos);
+        CHECK_FALSE(cell.tooltip.empty());
+        CHECK(cell.tooltip.back() != '\n');
     }
     SUBCASE("unparseable non-empty payloads stay read-only text") {
         for (const std::string& v : {std::string("not json"), std::string(R"({"total":3})"), DeepNestingBomb()}) {
             const auto cell = BuildWorklogCellModel(v);
             CHECK_FALSE(cell.clickable);
+            CHECK_FALSE(cell.noWorkLogged);
             CHECK(cell.label == v);
             CHECK(cell.tooltip.empty());
         }

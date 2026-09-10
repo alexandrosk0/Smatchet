@@ -39,6 +39,7 @@
 #include "SmatchetToast.h"                     // SmatchetToastManager — clear the overlay before interacting
 #include "SmatchetUiSession.h"                 // UiDrawSession, MarkPrefsDirty, g_ui
 #include "Ui/SmatchetLayoutBreakpoints.h"      // smatchet::ui::kNarrowLayoutWidthPx
+#include "Ui/SmatchetToast.h"                  // SmatchetToastManager — live-toast quiesce before a grip drag
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiWindow, FindWindowByName — the real-window probe
@@ -296,11 +297,18 @@ void RegisterNarrowLayoutRenders(ImGuiTestEngine* engine) {
         if (win == nullptr) {
             return;
         }
-        // Re-clear the overlay immediately before the drag (#2199): opening the window launches
-        // the identity/VCS fetches, and a failing one raises a STICKY error toast that never
-        // expires — so the clear in OpenUserInfoLive alone is not enough to guarantee the resize
-        // grip is reachable. This is the one interaction in the file that drives a real drag.
+        // Quiesce live toasts before the drag. Bucket-E runs every test in ONE live host
+        // process, and a sticky error toast raised earlier in the run is still up: each live
+        // toast paints an invisible hit window (`##toast_hit_N`, SmatchetToast.cpp) that is
+        // NoMove and BringWindowToDisplayFront-ed over the viewport's bottom-right — exactly
+        // where this window's resize grip sits. The engine then cannot hover the grip ("Failed
+        // to move window '##toast_hit_4'! While trying to make space to click at ...") and the
+        // drag errors before the narrow branch is ever exercised. Dismissing the LIVE toasts
+        // (the session history is untouched) and letting their windows retire is the same
+        // quiesce ScenarioCaptureQuiesce runs before a capture, and it is a no-op when nothing
+        // is on screen — so this test no longer depends on what the rest of the run raised.
         SmatchetToastManager::Instance().DismissAllLive();
+        ctx->Yield(2);
         // "//" absolute ref — the docked window name dangles under the current SetRef otherwise.
         ctx->WindowResize("//User Info", ImVec2(360.0f, 480.0f));
         // Tick several frames so every always-on section renders under the narrow branch. The

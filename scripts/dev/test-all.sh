@@ -23,6 +23,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../.."
 
+# Dual-root bootstrap (plan agent-surface-extraction-repo, Phase A row 3a).
+# Host script, sibling-path form. Best-effort: this is the aggregate test runner
+# and must degrade rather than abort. cwd stays the HOST tree — the discovered
+# test scripts are invoked from it and several read host content.
+# shellcheck source=scripts/dev/project-config.sh
+. "$(dirname "$0")/project-config.sh" 2>/dev/null || true
+AGENT_LAYER_ROOT="${AGENT_LAYER_ROOT:-$(pwd)}"
+
 # UTF-8 ctype locale for the bats runners. bats derives an internal function name
 # from each `@test` description; under a non-UTF-8 ctype (the default on the
 # Windows/MSYS dev box) bash can't parse a name containing non-ASCII (→, —) and
@@ -105,7 +113,27 @@ CI_SKIP_RE='(test-p4-dual-vcs|test-doctor|test-plan-index|test-docs|test-guard-h
 # ONLY if it exists, so the code repo still runs standalone when the agents/
 # tree is later extracted, and the agents repo can ship without a dangling
 # scripts/dev reference.
-TEST_ROOTS=(scripts/dev agents/scripts/core agents/scripts/project)
+# The two agents/ roots are LAYER content and are addressed through
+# $AGENT_LAYER_ROOT; scripts/dev stays cwd-relative (host). The "searched ONLY
+# if it exists" rule above is what already lets each tree ship standalone, and it
+# is doing double duty now: pre-flip the layer root IS the repo root, so all
+# three resolve exactly as before.
+#
+# The layer prefix is expressed RELATIVE TO CWD (the host root), not absolutised.
+# cwd is the host tree and the layer is either that same directory (pre-flip) or
+# a subdirectory of it (agent-layer/, post-flip), so a relative prefix is always
+# expressible — and it keeps every discovered path, and so every heading this
+# script prints and every path CI_SKIP_RE matches against, byte-identical to what
+# it printed before. An absolute prefix would work but would churn the output of
+# a runner whose whole job is a comparable log.
+_ta_layer_prefix=""
+if [ "$AGENT_LAYER_ROOT" != "$(pwd)" ]; then
+    # The strip is a no-op when the layer is NOT under cwd (an explicitly-set
+    # out-of-tree layer), which leaves the value absolute — correct as-is, and
+    # better than emitting a relative path that would resolve somewhere else.
+    _ta_layer_prefix="${AGENT_LAYER_ROOT#"$(pwd)"/}/"
+fi
+TEST_ROOTS=(scripts/dev "${_ta_layer_prefix}agents/scripts/core" "${_ta_layer_prefix}agents/scripts/project")
 SEARCH_ROOTS=()
 for root in "${TEST_ROOTS[@]}"; do
     [ -d "$root" ] && SEARCH_ROOTS+=("$root")

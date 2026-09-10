@@ -97,6 +97,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Agent-layer indirection: both roots are the checkout root pre-flip, so every
+  # "$AGENT_LAYER_ROOT/agents/..." command below expands exactly as it does today.
+  AGENT_LAYER_ROOT: .
+  PROJECT_ROOT: .
   # Force JS actions onto Node 24 (Node 20 deprecated 2026-06-16). Covers
   # actions/checkout, actions/cache, ilammy/msvc-dev-cmd, upload-artifact —
   # incl. third-party actions with no Node 24 release yet.
@@ -192,6 +196,7 @@ jobs:
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           ref: ${{ github.event.pull_request.head.ref }}
           fetch-depth: 0
           # Use the fine-grained PAT when configured so a later auto-commit is
@@ -234,7 +239,7 @@ jobs:
             echo "PR does not touch docs/plans/ — INDEX autosync skipped."
             exit 0
           fi
-          bash agents/scripts/core/test-plan-index.sh --fix
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-index.sh" --fix
           # Scope covers docs/plans/shipped/ as well as the INDEX, because --fix
           # now ALSO stamps `<!-- plan-date: … -->` into plans that lack one
           # (plan-index-date-derived-from-mutable-git-history). Two failure modes
@@ -285,6 +290,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          submodules: recursive
           fetch-depth: 0
 
       - name: Set up Python
@@ -339,15 +345,15 @@ jobs:
 
       - name: test-doc-anchors — every AGENTS.md § <section> resolves
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-doc-anchors.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-doc-anchors.sh"
 
       - name: test-agent-contract — required headings + frontmatter parity
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-agent-contract.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-agent-contract.sh"
 
       - name: test-agent-build-facts — agent prompts cite real presets + live toolchain
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-agent-build-facts.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-agent-build-facts.sh"
 
       - name: Validate project.config.json against schema
         if: steps.detect.outputs.docs == 'true'
@@ -363,13 +369,13 @@ jobs:
 
       - name: test-plan-index — shipped-plan index in sync with archive
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-plan-index.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-index.sh"
 
       - name: test-plan-ref-integrity — no dangling docs/plans refs
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-plan-ref-integrity.sh --selftest
-          bash agents/scripts/core/test-plan-ref-integrity.sh
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-ref-integrity.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-ref-integrity.sh"
 
       # --all, not the bare diff-scope its sibling test-markdown-links uses: it is
       # deterministic, needs no origin/develop fetch depth, and keeps the
@@ -378,8 +384,8 @@ jobs:
       - name: test-plan-claim-anchors — new plan-delivery claims cite their evidence
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-plan-claim-anchors.sh --selftest
-          bash agents/scripts/core/test-plan-claim-anchors.sh --all
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-claim-anchors.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-claim-anchors.sh" --all
 
       # The pr-intent-lint job below is checkout-free, so it carries a COPY of
       # check-pr-intent.sh's verdict regex. This step is the machine check
@@ -388,95 +394,95 @@ jobs:
       - name: check-pr-intent sync — CI verdict-regex copy matches the local mirror
         if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
         run: |
-          bash agents/scripts/core/check-pr-intent.sh --selftest
-          bash agents/scripts/core/check-pr-intent.sh --check-workflow-sync
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/check-pr-intent.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/check-pr-intent.sh" --check-workflow-sync
 
       - name: test-plan-naming — plan files are kebab-case
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-plan-naming.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-plan-naming.sh"
 
       - name: md_lint — markdown style (MD028 etc.)
         if: steps.detect.outputs.docs == 'true'
         run: |
-          python3 agents/scripts/core/md_lint.py --selftest
-          python3 agents/scripts/core/md_lint.py --all
+          python3 "$AGENT_LAYER_ROOT/agents/scripts/core/md_lint.py" --selftest
+          python3 "$AGENT_LAYER_ROOT/agents/scripts/core/md_lint.py" --all
 
       - name: test-portable-purity — no NEW project literals in portable dirs
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-portable-purity.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-portable-purity.sh"
 
       - name: test-config-globs — project.config.json globs match >=1 tracked file
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-config-globs.sh --selftest
-          bash agents/scripts/core/test-config-globs.sh --check
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-config-globs.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-config-globs.sh" --check
 
       - name: test-required-context-parity — every required context emits unconditionally
         if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
         run: |
           python -m pip install --quiet pyyaml
-          bash agents/scripts/core/test-required-context-parity.sh --selftest
-          bash agents/scripts/core/test-required-context-parity.sh --check
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-required-context-parity.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-required-context-parity.sh" --check
 
       - name: test-workflow-job-mask — no job-level continue-on-error on a non-advisory job
         if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
         run: |
           python -m pip install --quiet pyyaml
-          bash agents/scripts/core/test-workflow-job-mask.sh --selftest
-          bash agents/scripts/core/test-workflow-job-mask.sh --check
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-workflow-job-mask.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-workflow-job-mask.sh" --check
 
       - name: test-required-context-adr-consistency — no ADR-rejected required-context addition
         if: steps.detect.outputs.docs == 'true' || steps.detect.outputs.workflows == 'true'
         run: |
-          bash agents/scripts/core/test-required-context-adr-consistency.sh --selftest
-          bash agents/scripts/core/test-required-context-adr-consistency.sh --check
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-required-context-adr-consistency.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-required-context-adr-consistency.sh" --check
 
       - name: test-gate-selftests — every --selftest-exposing gate asserts a failure case
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-gate-selftests.sh --selftest
-          bash agents/scripts/core/test-gate-selftests.sh --check
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-gate-selftests.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-gate-selftests.sh" --check
 
       - name: test-oob-label-impl — every documented *-out-of-band label has an impl
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-oob-label-impl.sh --selftest
-          bash agents/scripts/core/test-oob-label-impl.sh
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-oob-label-impl.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-oob-label-impl.sh"
 
       - name: test-portable-agent-vexp — no vexp literal re-injected into portable agent prompts
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-portable-agent-vexp.sh --selftest
-          bash agents/scripts/core/test-portable-agent-vexp.sh
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-portable-agent-vexp.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-portable-agent-vexp.sh"
 
       - name: test-markdown-links — no dangling [label](href) targets
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-markdown-links.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-markdown-links.sh"
 
       - name: test-orphan-bats — every tests/bats/*.bats has a runnable wrapper
         if: steps.detect.outputs.docs == 'true'
         run: |
-          bash agents/scripts/core/test-orphan-bats.sh --selftest
-          bash agents/scripts/core/test-orphan-bats.sh
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-orphan-bats.sh" --selftest
+          bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-orphan-bats.sh"
 
       - name: work_item_lint — work-item close shape + ledger-citation sweep
         if: steps.detect.outputs.docs == 'true'
         run: |
-          python3 agents/scripts/core/work_item_lint.py --selftest
-          python3 agents/scripts/core/work_item_lint.py --all
+          python3 "$AGENT_LAYER_ROOT/agents/scripts/core/work_item_lint.py" --selftest
+          python3 "$AGENT_LAYER_ROOT/agents/scripts/core/work_item_lint.py" --all
           bash scripts/dev/test-work-item-lint.sh
 
       - name: test-agent-discovery-fixture — Gate #1 flat discovery from subdirs
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/core/test-agent-discovery-fixture.sh
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/core/test-agent-discovery-fixture.sh"
 
       - name: test-subsystem-docs — leaf-doc registry parity + README staleness
         if: steps.detect.outputs.docs == 'true'
-        run: bash agents/scripts/project/test-subsystem-docs.sh --diff origin/develop
+        run: bash "$AGENT_LAYER_ROOT/agents/scripts/project/test-subsystem-docs.sh" --diff origin/develop
 
       - name: agent-size gate — agent prompt / AGENTS.md line budget (delta vs develop)
         if: steps.detect.outputs.docs == 'true'
-        run: python3 agents/scripts/core/agent_size_audit.py --diff origin/develop
+        run: python3 "$AGENT_LAYER_ROOT/agents/scripts/core/agent_size_audit.py" --diff origin/develop
 
   # PR-body lint: flag a PR whose body has no filled `## Intent` section (the
   # one-line redacted statement of the originating human ask — see

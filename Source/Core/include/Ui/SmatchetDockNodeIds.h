@@ -28,6 +28,12 @@ ImGuiID DefaultDockSlotForLayoutKey(const char* layoutKey);
 // leaves the window floating: visibly wrong, therefore fixable.
 ImGuiID EnsureDockSlotAlive(ImGuiID slot);
 
+// True when dock node `nodeId` is `slot` itself or sits anywhere below it (the user may have
+// split a side bar, so a window's own node is often a child of the slot constant). Walks the
+// parent chain with a hard bound; a 0 or unknown node is never inside any slot. Read-only —
+// no node is created on a miss.
+bool DockNodeIsWithinSlot(ImGuiID nodeId, ImGuiID slot);
+
 // The passive half of the pattern above: dock the next window into `slot` on FIRST USE only.
 // No-op when the slot is dead (EnsureDockSlotAlive) or while a mouse button is held, since a
 // dock write mid-drag fights the drag the user is performing.

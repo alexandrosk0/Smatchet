@@ -381,3 +381,61 @@ TEST_CASE("BuildIssueTitle — first line, 256-char GitHub cap, UTF-8-safe (issu
     CHECK(safe.find('\xC3') == std::string::npos);
     CHECK(safe.find(u8"…") != std::string::npos);
 }
+
+// --------------------------------------------------------------------------
+// Crash-minidump privacy gates
+//
+// A minidump carries the crashing thread's stack memory, so two decisions keep it
+// off the open internet: it uploads ONLY to a private repo, and its markdown never
+// names the local path. Both live in this pure layer precisely so they can be
+// pinned here without network.
+// --------------------------------------------------------------------------
+
+TEST_CASE("RepoResponseSaysPrivate — only a 200 saying private:true opens the gate") {
+    CHECK(RepoResponseSaysPrivate(200, R"({"private":true})"));
+    CHECK(RepoResponseSaysPrivate(200, R"({"name":"r","private":true,"fork":false})"));
+
+    // The one shape that must never be mistaken for private.
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"private":false})"));
+}
+
+TEST_CASE("RepoResponseSaysPrivate — every ambiguous answer fails CLOSED") {
+    // Non-200: 404 is what GitHub returns for a repo the token cannot see, so it
+    // must NOT be read as "probably fine".
+    CHECK_FALSE(RepoResponseSaysPrivate(404, R"({"private":true})"));
+    CHECK_FALSE(RepoResponseSaysPrivate(500, R"({"private":true})"));
+    CHECK_FALSE(RepoResponseSaysPrivate(0, R"({"private":true})")); // transport failure
+
+    // Unparseable / empty / truncated body.
+    CHECK_FALSE(RepoResponseSaysPrivate(200, ""));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, "not json at all"));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"private":tr)"));
+
+    // Well-formed JSON that is not an object, or lacks the key.
+    CHECK_FALSE(RepoResponseSaysPrivate(200, "[]"));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, "null"));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"name":"r"})"));
+
+    // Present but wrong-typed — a truthy-looking string or number must not pass.
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"private":"true"})"));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"private":1})"));
+    CHECK_FALSE(RepoResponseSaysPrivate(200, R"({"private":null})"));
+}
+
+TEST_CASE("BuildCrashDumpMarkdown — never names the local path") {
+    // Upload succeeded: a plain link, no file path.
+    const std::string ok = BuildCrashDumpMarkdown("crash-20260607-220001.dmp", "https://example.test/c.dmp");
+    CHECK(ok == "[Crash minidump](https://example.test/c.dmp)");
+
+    // Upload skipped/failed: names the FILE only. The absolute path runs through
+    // the user's home directory, and this markdown is appended after the egress
+    // preview, so the user never sees it to redact it.
+    const std::string failed = BuildCrashDumpMarkdown("crash-20260607-220001.dmp", "");
+    CHECK(failed.find("crash-20260607-220001.dmp") != std::string::npos);
+    CHECK(failed.find("C:\\Users") == std::string::npos);
+    CHECK(failed.find('/') == std::string::npos);
+    CHECK(failed.find('\\') == std::string::npos);
+
+    // Empty name still produces a body-safe note rather than empty backticks.
+    CHECK(BuildCrashDumpMarkdown("", "").find("crash.dmp") != std::string::npos);
+}

@@ -813,6 +813,11 @@ const TranslationEntry kEntries[] = {
     {"field.no_matching_labels", "(no matching labels)", u8"(aucune étiquette correspondante)"},
     {"field.required_tooltip", "Required field", u8"Champ obligatoire"},
     {"field.required_inline_hint", "(required)", u8"(obligatoire)"},
+    {"field.no_options.unscoped_hint",
+     "This view has no single project, so project-scoped options were not loaded. Add `project = KEY` to the "
+     "view's JQL to load them.",
+     u8"Cette vue ne cible pas un projet unique : les options liées au projet n'ont pas été chargées. Ajoutez "
+     u8"`project = KEY` au JQL de la vue pour les charger."},
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",
@@ -830,6 +835,15 @@ const TranslationEntry kEntries[] = {
     {"worklog.no_templates", "No templates configured in Preferences.",
      u8"Aucun modèle configuré dans les Préférences."},
     {"worklog.saving", "Saving worklog...", u8"Enregistrement du travail..."},
+    {"worklog.click_hint", "Click to log work / edit estimates.",
+     u8"Cliquez pour saisir le travail / modifier les estimations."},
+    {"worklog.toast.saved_title", "Worklog saved", u8"Travail enregistré"},
+    {"worklog.toast.failed_title", "Worklog failed", u8"Échec de l'enregistrement du travail"},
+    {"worklog.cancel_inflight_tooltip",
+     "The worklog request was already sent — closing this dialog won't cancel it. The result will appear as a "
+     "notification.",
+     u8"La demande de saisie du travail a déjà été envoyée — fermer cette boîte de dialogue ne l'annulera pas. "
+     u8"Le résultat apparaîtra sous forme de notification."},
 
     {"date.edit_raw", "Edit raw ISO string:", u8"Modifier la chaîne ISO brute :"},
     {"date.apply_parsed", "Apply parsed value", u8"Appliquer la valeur analysée"},
@@ -1129,16 +1143,18 @@ const TranslationEntry kEntries[] = {
     {"toast.ai_prompt_from_lua_body", "A Lua script called ai.prompt — sending your AI context to %s.",
      u8"Un script Lua a appelé ai.prompt — envoi de votre contexte IA à %s."},
 
-    // Omnibar (global search bar).
+    // Grid header search box (one box per pane: key jump / query / title filter).
     {"toast.search", "Search", u8"Recherche"},
-    {"omnibar.no_active_view", "No active view to search — open a grid pane first.",
+    {"gridsearch.no_active_view", "No active view to search — open a grid pane first.",
      u8"Aucune vue active à rechercher — ouvrez d'abord un panneau de grille."},
-    {"omnibar.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
-    {"omnibar.mode.ticket_key", "Issue key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
-    {"omnibar.mode.jql", "Filter query — Enter replaces the focused view's query.",
-     u8"Requête de filtre — Entrée remplace la requête de la vue active."},
-    {"omnibar.mode.title_search", "Title search — Enter filters the focused grid.",
-     u8"Recherche par titre — Entrée filtre la grille active."},
+    {"gridsearch.apply_failed", "Could not apply the query.", u8"Impossible d'appliquer la requête."},
+    {"gridsearch.mode.ticket_key", "Issue key — Enter opens this issue.", u8"Clé de ticket — Entrée ouvre ce ticket."},
+    {"gridsearch.mode.jql", "Filter query — Enter replaces this view's query.",
+     u8"Requête de filtre — Entrée remplace la requête de cette vue."},
+    {"gridsearch.mode.title_search", "Title search — filters the loaded rows.",
+     u8"Recherche par titre — filtre les lignes chargées."},
+    {"gridsearch.hint", "Search issues: key, query, or title text",
+     u8"Rechercher des tickets : clé, requête ou texte du titre"},
 
     // UX critique pass 2 (UX_DESIGN_CRITIQUE.md §8) — confirmation guards, probe verdicts,
     // and feedback strings added by the pass-2 implementation.
@@ -1155,6 +1171,12 @@ const TranslationEntry kEntries[] = {
     {"comments.discard_confirm", "Discard the comment you're writing?",
      u8"Abandonner le commentaire en cours de rédaction ?"},
     {"grid.sort.remove_key", "Remove this sort key", u8"Supprimer cette clé de tri"},
+    {"grid.sort.story_group", "Parent group", u8"Grouper par parent"},
+    {"grid.sort.story_group.tip", "Group children under their parent issue",
+     u8"Regrouper les enfants sous leur story parente"},
+    {"grid.sort.hide_parents", "Hide parent stories", u8"Masquer les stories parentes"},
+    {"grid.sort.hide_parents.tip", "Hide parent stories (show only leaf tasks/bugs)",
+     u8"Masquer les stories parentes (afficher seulement les tâches/bugs feuilles)"},
     {"cmdpalette.scope", "Showing %s commands only", u8"Affichage des commandes %s uniquement"},
     {"prefs.search.showing", "showing", u8"affichage"},
     {"prefs.search.no_match", "No settings match.", u8"Aucun paramètre ne correspond."},
@@ -1162,6 +1184,15 @@ const TranslationEntry kEntries[] = {
      "The Tracker tab has unsaved edits. Save & Sync applies them; closing without saving discards them.",
      u8"L'onglet Suivi contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "
      u8"enregistrer les abandonne."},
+    {"prefs.mcp.close_guard.body",
+     "The MCP section has unsaved edits. Save & Sync applies them; closing without saving discards them.",
+     u8"La section MCP contient des modifications non enregistrées. Save & Sync les applique ; fermer sans "
+     u8"enregistrer les abandonne."},
+    {"prefs.close_guard.body",
+     "The Tracker tab and the MCP section have unsaved edits. Save & Sync applies them; closing without saving "
+     "discards them.",
+     u8"L'onglet Suivi et la section MCP contiennent des modifications non enregistrées. Save & Sync les "
+     u8"applique ; fermer sans enregistrer les abandonne."},
     {"prefs.tracker.test.ok", "Connected - credentials verified.", u8"Connecté - identifiants vérifiés."},
     {"prefs.tracker.test.auth",
      "Reached the server, but sign-in failed: ", u8"Serveur atteint, mais l'authentification a échoué : "},

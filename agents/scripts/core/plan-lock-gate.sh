@@ -58,11 +58,37 @@ _plan_lock_gate_main() {
   local base="${PLAN_LOCK_BASE_REF:-develop}" head="${PLAN_LOCK_HEAD_REF:-}" root lib changed
   root="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
   [ -n "$root" ] || { echo "::error::plan-lock-gate: not inside a git repo."; exit 1; }
-  lib="$root/agents/scripts/core/lock-table-cache.sh"
-  [ -f "$lib" ] || { echo "::error::plan-lock-gate: $lib missing."; exit 1; }
+
+  # DUAL-ROOT (plan agent-surface-extraction-repo, Phase A row 5f). This gate is
+  # the one blocking case in the lock subsystem: it reads BOTH trees in one
+  # function, and `$root` was standing in for both.
+  #
+  #   lock-table-cache.sh is LAYER content. Phase C's `git rm -r agents/` deletes
+  #   $root/agents/ from the host, so the `[ -f "$lib" ] || exit 1` below — this
+  #   script's own fail-CLOSED guard — hard-exits 1 on the FIRST post-flip PR,
+  #   wedging every PR in the repo with a message about a missing file.
+  #
+  #   LTC_PROJ means the tree that holds docs/plans/, which is the HOST. Left as
+  #   $root it would point at the layer post-flip, where there are no plans: the
+  #   lock table would come back empty and this fail-closed net would pass every
+  #   collision silently — the worse of the two failures, because it is green.
+  #
+  # A single substitution cannot fix both; each root goes to the tree it means.
+  # Pre-flip both resolve to $root exactly as before.
+  # Best-effort with explicit fallbacks to $root, the single value both sites
+  # used before. This gate is fail-CLOSED, so leaving a root unset would abort
+  # under `set -u` with an "unbound variable" — technically still red, but a
+  # cryptic red that reads like a bug in the gate rather than a lock verdict.
+  # shellcheck source=scripts/dev/project-config.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)/scripts/dev/project-config.sh" 2>/dev/null || true
+  : "${AGENT_LAYER_ROOT:=$root}"
+  : "${PROJECT_ROOT:=$root}"
+
+  lib="$AGENT_LAYER_ROOT/agents/scripts/core/lock-table-cache.sh"
+  [ -f "$lib" ] || { echo "::error::plan-lock-gate: $lib missing. If the agent layer is a submodule, run: git submodule update --init --recursive"; exit 1; }
   # shellcheck source=agents/scripts/core/lock-table-cache.sh
   . "$lib"
-  export LTC_PROJ="$root"
+  export LTC_PROJ="$PROJECT_ROOT"
 
   # Fail-CLOSED on an unresolvable base: a hard net that can't compute its
   # changed set must red LOUD, never silently green on an empty set (the

@@ -6,6 +6,7 @@
 #include "BugReportService.h"
 
 #include "GitHubClientHelpers.h"
+#include "Json/BoundedJsonParse.h"
 #include "TextRedaction.h"
 
 #include <sstream>
@@ -147,6 +148,36 @@ nlohmann::json BuildRelayRequest(const std::string& title, const std::string& bo
         out["dumpName"] = dumpName.empty() ? std::string("crash.dmp") : dumpName;
     }
     return out;
+}
+
+bool RepoResponseSaysPrivate(long statusCode, const std::string& responseBody) {
+    if (statusCode != 200) {
+        return false;
+    }
+    std::string parseErr;
+    const nlohmann::json j = smatchet::json_safe::ParseBounded(responseBody, parseErr);
+    if (!parseErr.empty()) {
+        return false;
+    }
+    // Check the type explicitly instead of `j.value("private", false)`: `value` returns
+    // the fallback only for a MISSING key — for a present-but-wrong-typed one
+    // (`"private": "true"`, `1`, `null`) it THROWS type_error.302. Callers treat a throw
+    // as "not private", so the gate held either way, but by accident rather than by
+    // design. find + is_boolean answers false for every non-boolean shape without
+    // throwing, so the fail-closed rule is the code's own behaviour.
+    if (!j.is_object()) {
+        return false;
+    }
+    const auto it = j.find("private");
+    return it != j.end() && it->is_boolean() && it->get<bool>();
+}
+
+std::string BuildCrashDumpMarkdown(const std::string& dumpName, const std::string& url) {
+    const std::string name = dumpName.empty() ? std::string("crash.dmp") : dumpName;
+    if (url.empty()) {
+        return "_Crash minidump `" + name + "` kept locally (not uploaded)._";
+    }
+    return "[Crash minidump](" + url + ")";
 }
 
 std::string BuildMarkdownBody(const BugReportOptions& opts, const ContextBundle& bundle,

@@ -216,6 +216,11 @@ void SmatchetUI::drawEmbeddedFocusedGrid(AppController& app, UiDrawSession& d, G
     d.activePaneForDraw = &focused;
     drawActiveProjectWindow(app, d, focused, trackerBanner, /*embedded=*/true);
     d.activePaneForDraw = nullptr;
+    // The mobile shell never runs drawGridPaneWindows, so it owns this drain itself. Skipping
+    // it would not merely drop a search-box Enter: the latch is session state, so it would sit
+    // set until a later desktop frame applied it stale (the hazard DrawNewPaneMenu's
+    // embedded-suppression comment documents for paneAddRequest).
+    drainPaneDeferredActions(app, d);
 }
 
 // Page content (slice 4): single-panel fill. Each page draws one desktop helper with

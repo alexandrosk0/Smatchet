@@ -47,6 +47,8 @@ Commands:
   new <slug>      Create a worktree on feat/<slug> off origin/develop and wire .claude/
   resync [--all]  Re-baseline this tree's session entries to the current HEAD
                   (own entry only by default; --all includes siblings)
+  sync [<slug>]   Refresh a worktree's submodules, then re-wire its .claude/
+                  (no slug: the tree this script runs from)
   list            List worktrees with branch / dirty / live-session count
   rm <slug>       Remove a worktree
   prune           Prune stale admin entries; report merged worktrees
@@ -152,6 +154,15 @@ live_session_count() {
 cmd_new() {
     [ -n "$SLUG" ] || die "new requires a <slug>: worktree.sh new <slug>"
     assert_safe_slug "$SLUG"
+    # Windows MAX_PATH. git nests a worktree's submodule checkout at
+    # <main>/.git/worktrees/<slug>/modules/<name>/ — one level deeper than the
+    # ordinary .git/modules/<name>/ — so the slug is spent twice against the same
+    # 260-character budget and a long one fails the clone with "Filename too
+    # long". Capped on `new` only: `rm` must stay able to remove a worktree whose
+    # slug predates this rule.
+    if [ "${#SLUG}" -gt 40 ]; then
+        die "Slug '$SLUG' is ${#SLUG} characters; keep it to 40 or fewer (Windows MAX_PATH — see the comment in cmd_new)."
+    fi
     local branch_name path
     branch_name="${BRANCH:-feat/$SLUG}"
     path="$TREES_ROOT/$SLUG"
@@ -183,6 +194,15 @@ cmd_new() {
     else
         git -C "$REPO_ROOT" worktree add -b "$branch_name" "$path" "$base_ref" || die "worktree add failed"
     fi
+
+    # Bring the worktree's submodules up before anything reads from them. This
+    # must precede the setup-harness call below: once the agent surface lives in
+    # a submodule, that script only exists after this line has run, and getting
+    # the order wrong leaves the worktree with no hooks behind a warning that is
+    # easy to miss. git gives each worktree its own non-object-sharing submodule
+    # checkout, so this is a genuine clone rather than a link. A tree with no
+    # submodules — every tree today — makes this a silent no-op.
+    git -C "$path" submodule update --init --recursive         || echo "  WARNING: submodule update failed in $path — agent definitions may be missing there." >&2
 
     # Wire the worktree's OWN .claude/ adapter (hooks incl. the drift guard) by
     # running the worktree's copy of setup-harness — it resolves its root from
@@ -285,6 +305,37 @@ cmd_resync() {
     fi
 }
 
+# cmd_sync [<slug>]
+#
+# Refresh a worktree that already exists. A long-lived worktree only ever gets
+# `git pull`, which never advances a submodule, so once the agent surface lives
+# in one an established session keeps running yesterday's agent definitions with
+# nothing to catch the interim state. Order is submodule-then-harness and never
+# the reverse: on Windows the adapter is provisioned with hardlinks, which share
+# an inode, and `git submodule update` checks out NEW files — so an existing
+# .claude/agents/*.md link keeps the OLD content until setup-harness re-links it.
+#
+# With no slug this refreshes the tree the script runs from; with a slug it
+# refreshes $TREES_ROOT/<slug>.
+cmd_sync() {
+    local path
+    if [ -n "$SLUG" ]; then
+        assert_safe_slug "$SLUG"
+        path="$TREES_ROOT/$SLUG"
+        [ -d "$path" ] || die "No worktree at $path"
+    else
+        path="$REPO_ROOT"
+    fi
+
+    echo "Refreshing submodules in $path ..."
+    git -C "$path" submodule update --init --recursive         || die "submodule update failed in $path"
+
+    echo "Re-wiring .claude/ adapter in $path ..."
+    bash "$path/agents/scripts/core/setup-harness.sh" claude-code         || die "setup-harness failed in $path — the adapter may still hold stale agent definitions."
+
+    echo "Synced: $path"
+}
+
 # Walk `git worktree list --porcelain`, calling back with path + branch label.
 # Emits "<path>\t<branch-or-(detached)>" lines.
 worktree_pairs() {
@@ -366,6 +417,7 @@ cmd_prune() {
 case "$COMMAND" in
     new)    cmd_new ;;
     resync) cmd_resync ;;
+    sync)   cmd_sync ;;
     list)   cmd_list ;;
     rm)     cmd_rm ;;
     prune)  cmd_prune ;;

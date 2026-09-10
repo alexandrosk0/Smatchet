@@ -758,7 +758,7 @@ void DrawHistoryArea(AppController& app, UiDrawSession& d, float availY) {
     // immutable content — their parsed plan is computed once + cached. Only
     // the streaming tail re-parses every frame.
     // Honor BeginChild's contract: when the history scroll-child is fully
-    // collapsed/clipped (e.g. the omnibar shrinks the assistant panel below the
+    // collapsed/clipped (e.g. a viewport side-bar shrinks the assistant panel below the
     // child's reserved height at small window sizes), BeginChild returns false
     // and sets SkipItems — every turn would otherwise render into a zero-height
     // clip rect, defeating the off-screen cull and paying per-turn hash + plan
@@ -1166,7 +1166,7 @@ bool DrawInputAndButtons(AppController& app, UiDrawSession& d, const ViewDefinit
     // buffer actually differs — the panel redraws every frame, so an unconditional assign()
     // copies (and can reallocate) the std::string each frame even when nothing was typed. The
     // std::string vs const char* compare is allocation-free and skips the write in the steady
-    // state (same per-frame-alloc guard as the omnibar mirror).
+    // state (same per-frame-alloc guard as the grid search box's mirror).
     if (d.assistantInputBuf != s_inputCharBuf.data()) {
         d.assistantInputBuf.assign(s_inputCharBuf.data());
     }
@@ -1516,10 +1516,27 @@ void ApplyAssistantDocking(UiDrawSession& d, bool& needsReDock) {
                 smatchet::ai::AiAssistantSideFallbackAfterDock(wantSecondary, targetDockId == secondaryDockId);
         }
     } else if (targetDockId != 0 && !ImGui::IsMouseDown(0) && !ImGui::IsMouseReleased(0)) {
+        // Deliberately NOT recording the fallback here (#2171): FirstUseEver is a no-op for a
+        // window restored from imgui.ini, so `targetDockId` says nothing about where the panel
+        // is. RecordAssistantSideFromLiveDock reads the real dock node after Begin instead.
         ImGui::SetNextWindowDockID(targetDockId, ImGuiCond_FirstUseEver);
-        d.assistantSideFallback =
-            smatchet::ai::AiAssistantSideFallbackAfterDock(wantSecondary, targetDockId == secondaryDockId);
     }
+}
+
+// Called between the panel's Begin and End: derive the session-only side fallback from the
+// dock node the window is ACTUALLY in, so the swap button's label, its target and
+// AiAssistantEffectiveOnSecondary describe the panel's real side even when the FirstUseEver
+// write above did not apply (#2171). Floating / docked elsewhere: the previous value stands.
+void RecordAssistantSideFromLiveDock(UiDrawSession& d) {
+    if (!ImGui::IsWindowDocked()) {
+        return;
+    }
+    const ImGuiID dockId = ImGui::GetWindowDockID();
+    const bool inSecondary = SmatchetDockNodeIds::DockNodeIsWithinSlot(dockId, SmatchetDockNodeIds::kSecondarySideBar);
+    const bool inPrimary =
+        !inSecondary && SmatchetDockNodeIds::DockNodeIsWithinSlot(dockId, SmatchetDockNodeIds::kPrimarySideBar);
+    d.assistantSideFallback = smatchet::ai::AiAssistantSideFallbackFromLiveDock(
+        d.cfg.AssistantPanelOnSecondarySide, inPrimary, inSecondary, d.assistantSideFallback);
 }
 
 } // namespace
@@ -1564,6 +1581,8 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
 
         SmatchetWindowExpand::BeginWindow(d, "Smatchet Assistant");
         if (!ImGui::Begin("Smatchet Assistant", &d.assistantPanelOpen, kFlags)) {
+            // A collapsed / inactive-tab panel is still docked somewhere; keep the side truthful.
+            RecordAssistantSideFromLiveDock(d);
             ImGui::End();
             if (d.requestAssistantFocus) {
                 d.requestAssistantFocus = false;
@@ -1579,6 +1598,7 @@ void SmatchetDrawAiAssistantPanel(AppController& app, UiDrawSession& d, const Vi
             PersistOpenStateImmediate(d);
             return;
         }
+        RecordAssistantSideFromLiveDock(d);
         SmatchetWindowExpand::DrawToggle(d);
         if (d.requestAssistantFocus) {
             ImGui::SetWindowFocus();

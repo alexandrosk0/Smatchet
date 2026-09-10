@@ -10,6 +10,12 @@
 #     `gh issue create` invoked with the `plan-lock-stale` label.
 #   - a STALE lock WITH an existing Issue -> `gh issue edit` (update in place),
 #     never a second create.
+#   - an open `plan-lock-stale` Issue whose lock is fresh again, or whose ref is
+#     gone entirely -> `gh issue close` (the "closes automatically on the next
+#     sweep" promise in the Issue body).
+#   - an Issue whose lock is STILL stale, or whose title is not ours -> left open.
+#   - refs/locks/* unfetchable (no reachable origin) -> stale locks are still
+#     flagged, but NO Issue is closed: zero refs may just mean "never looked".
 #   - REPO unset and `gh repo view` cannot resolve it -> exit 1.
 #
 # Runs the REAL script (so its real _lock-json.py helper + python staleness math
@@ -44,22 +50,38 @@ setup() {
     git -C "$REPO_TMP" config user.email t@t
     git -C "$REPO_TMP" config user.name t
     git -C "$REPO_TMP" commit --quiet --allow-empty -m seed
+    # The sweep refreshes refs/locks/* from `origin` and only auto-closes
+    # Issues when that succeeds (a never-fetched namespace is indistinguishable
+    # from "all locks released"). Point origin at the repo itself so the
+    # self-fetch is a no-op that still proves the namespace authoritative.
+    git -C "$REPO_TMP" remote add origin "$REPO_TMP"
 
     export REPO="test/repo"
     export THRESHOLD_DAYS=14
-    export GH_EXISTING_ISSUE=""   # `gh issue list` returns this (empty => none)
+    export GH_EXISTING_ISSUE=""   # per-slug `gh issue list` returns this (empty => none)
+    # Reconcile listing: "<number>\t<title>" lines the label-scoped
+    # `gh issue list --label plan-lock-stale` returns (empty => no open Issues).
+    export GH_OPEN_ISSUES=""
 
-    # --- stub gh: auth ok; repo view -> $GH_REPO_SLUG; issue list -> existing;
-    #     issue create/edit -> logged. ------------------------------------------
+    # --- stub gh: auth ok; repo view -> $GH_REPO_SLUG; issue list -> either the
+    #     per-slug title lookup or the label-scoped reconcile listing (told apart
+    #     by --label); issue create/edit/close -> logged. ----------------------
     cat > "$STUB_BIN/gh" <<'STUB'
 #!/usr/bin/env bash
 case "$1 $2" in
     "auth status") exit 0 ;;
     "repo view")   printf '%s\n' "${GH_REPO_SLUG-test/repo}" ;;
-    "issue list")  printf '%s\n' "${GH_EXISTING_ISSUE-}" ;;
+    "issue list")
+        # The reconcile step is the only caller passing --label.
+        if printf '%s\n' "$@" | grep -qx -- '--label'; then
+            printf '%s' "${GH_OPEN_ISSUES-}"
+        else
+            printf '%s\n' "${GH_EXISTING_ISSUE-}"
+        fi
+        ;;
     "issue create") printf 'CREATE %s\n' "$*" >> "$GH_LOG" ;;
     "issue edit")   printf 'EDIT %s\n' "$*" >> "$GH_LOG" ;;
-    *) : ;;
+    "issue close")  printf 'CLOSE %s\n' "$*" >> "$GH_LOG" ;;
 esac
 exit 0
 STUB
@@ -150,4 +172,92 @@ sweep() {
     run bash -c 'cd "$1" && PATH="$2:$PATH" GH_REPO_SLUG="" bash -c "unset REPO; bash \"$3\""' _ "$REPO_TMP" "$STUB_BIN" "$SCRIPT"
     [ "$status" -eq 1 ]
     [[ "$output" == *"REPO unset"* ]]
+}
+
+@test "no refs at all + an open Issue -> the Issue is closed (ref was released)" {
+    GH_OPEN_ISSUES="$(printf '7\tStale plan-lock: gonelock\n')" sweep
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No refs/locks/* present"* ]]
+    [[ "$output" == *"Closing Issue #7"* ]]
+    [ -f "$GH_LOG" ]
+    grep -qE "^CLOSE issue close 7( |$)" "$GH_LOG"
+}
+
+@test "a lock bumped back to FRESH -> its open Issue is closed" {
+    make_lock revived 1
+    GH_OPEN_ISSUES="$(printf '11\tStale plan-lock: revived\n')" sweep
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"fresh: revived"* ]]
+    grep -qE "^CLOSE issue close 11( |$)" "$GH_LOG"
+}
+
+@test "a lock that is STILL stale -> its Issue is edited, never closed" {
+    make_lock stillstale 30
+    GH_EXISTING_ISSUE="12" \
+        GH_OPEN_ISSUES="$(printf '12\tStale plan-lock: stillstale\n')" sweep
+    [ "$status" -eq 0 ]
+    grep -q "^EDIT" "$GH_LOG"
+    ! grep -q "^CLOSE" "$GH_LOG"
+}
+
+@test "mixed: stale Issue stays open, resolved Issue closes" {
+    make_lock keeps 30
+    GH_OPEN_ISSUES="$(printf '20\tStale plan-lock: keeps\n21\tStale plan-lock: resolved\n')" sweep
+    [ "$status" -eq 0 ]
+    grep -qE "^CLOSE issue close 21( |$)" "$GH_LOG"
+    ! grep -qE "^CLOSE issue close 20( |$)" "$GH_LOG"
+}
+
+@test "a labelled Issue with a foreign title is left alone" {
+    GH_OPEN_ISSUES="$(printf '30\tPlease look at the plan locks\n')" sweep
+    [ "$status" -eq 0 ]
+    [ ! -f "$GH_LOG" ]
+}
+
+@test "a title whose slug breaks the grammar is left alone" {
+    GH_OPEN_ISSUES="$(printf '31\tStale plan-lock: Not A Slug\n')" sweep
+    [ "$status" -eq 0 ]
+    [ ! -f "$GH_LOG" ]
+}
+
+@test "close failure warns but the sweep still exits 0" {
+    cat > "$STUB_BIN/gh" <<'STUB'
+#!/usr/bin/env bash
+case "$1 $2" in
+    "auth status") exit 0 ;;
+    "repo view")   printf '%s\n' "${GH_REPO_SLUG-test/repo}" ;;
+    "issue list")
+        if printf '%s\n' "$@" | grep -qx -- '--label'; then
+            printf '%s' "${GH_OPEN_ISSUES-}"
+        else
+            printf '%s\n' "${GH_EXISTING_ISSUE-}"
+        fi
+        ;;
+    "issue close") exit 1 ;;
+esac
+exit 0
+STUB
+    chmod +x "$STUB_BIN/gh"
+    GH_OPEN_ISSUES="$(printf '40\tStale plan-lock: unclosable\n')" sweep
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Could not close Issue #40"* ]]
+}
+
+@test "an empty reconcile listing closes nothing" {
+    make_lock quiet 1
+    sweep
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"closed=0"* ]]
+    [ ! -f "$GH_LOG" ]
+}
+
+@test "unfetchable origin -> still flags, but closes nothing" {
+    git -C "$REPO_TMP" remote set-url origin "$REPO_TMP/does-not-exist"
+    make_lock orphan 30
+    GH_OPEN_ISSUES="$(printf '50\tStale plan-lock: resolved\n')" sweep
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"skip Issue auto-close"* ]]
+    [[ "$output" == *"STALE: orphan"* ]]
+    grep -q "^CREATE" "$GH_LOG"
+    ! grep -q "^CLOSE" "$GH_LOG"
 }

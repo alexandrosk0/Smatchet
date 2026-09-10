@@ -541,16 +541,14 @@ void AppController::RunLegacyStartupSweeps(const std::string& activeTrackerType)
 }
 
 void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string& activeTrackerType) {
-    const std::string& fileBase = ConfigManager::GetRuntimeAssetDirectory();
+    const std::string fileBase = ConfigManager::GetRuntimeAssetDirectory();
 
-    if (!fileBase.empty()) {
-
-        luaScriptsDirectory_ = fileBase + "Scripts/";
-
-    } else {
-
-        luaScriptsDirectory_.clear();
-    }
+    // Latch the scripts root through the same helper the pre-Initialize path resolves against, so
+    // the member and the OnEarlyInit fallback can never disagree (#2144). Cleared first because
+    // the helper returns the member when it is already set: a re-Initialize must re-derive from
+    // the current asset directory rather than keep the previous run's root.
+    luaScriptsDirectory_.clear();
+    luaScriptsDirectory_ = LuaScriptsRootDirectory();
 
     LOG_INFO("AppController: ConfigManager files base %s (len=%zu); luaScriptsDirectory=\"%s\"",
 
@@ -596,7 +594,7 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
                                                            snapErr)) {
             ApplyStartupFieldCatalogSnapshot(std::move(snapFields), std::move(snapComponents),
-                                             std::move(snapIssueTypeMeta), activeTrackerType);
+                                             std::move(snapIssueTypeMeta), activeTrackerType, projectKeyForCache);
         }
     }
 }
@@ -616,16 +614,7 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
         const auto bucketIt = disk.Backends.find(backendKey);
         if (bucketIt != disk.Backends.end()) {
             const ViewWorkspaceState& bucket = bucketIt->second;
-            const ViewDefinition* activeView = nullptr;
-            for (const ViewDefinition& view : bucket.Views) {
-                if (view.Id == bucket.ActiveViewId) {
-                    activeView = &view;
-                    break;
-                }
-            }
-            if (activeView == nullptr && !bucket.Views.empty()) {
-                activeView = &bucket.Views.front();
-            }
+            const ViewDefinition* activeView = ConfigManager::FindActiveViewOrFirst(bucket.Views, bucket.ActiveViewId);
             if (activeView != nullptr) {
                 projectKeyForCache = focusedContext().Backend->Connectivity().ExtractProjectFromQuery(activeView->Jql);
             }
@@ -640,10 +629,14 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
 void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
-                                                     const std::string& activeTrackerType) {
+                                                     const std::string& activeTrackerType,
+                                                     const std::string& projectKey) {
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would split this compound write across two contexts (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
+    // Record the scope the snapshot was saved under, so FieldCatalogLacksProjectScope (#2146)
+    // describes the catalog actually in memory until the grid's live fetch replaces it.
+    cat.currentCatalogProjectKey_ = projectKey;
     cat.AvailableFields = std::move(snapFields);
     cat.AvailableComponents = std::move(snapComponents);
     cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);

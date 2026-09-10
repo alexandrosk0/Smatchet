@@ -173,14 +173,18 @@ static ActiveWorklogDialogState s_ActiveWorklogState;
 /// the per-open reset (the #1713 lesson: a counter reset with the state makes the guard inert).
 static int s_WorklogGenCounter = 0;
 
-/// Issue id whose worklog POST is still outstanding; empty when none is. Also outside the dialog
-/// state, and for the same reason: `SubmitInFlight` is reset on every open, so tracking the POST
-/// there let Save → Cancel → re-open the SAME ticket enable Save again while the first request
-/// was still running — two worklogs for one intent. The POST cannot be cancelled (`AddWorklog`
-/// takes no cancel token), so Cancel closes the dialog while the request keeps running; this id
-/// is what keeps that fact visible. Cleared by the post-back UNCONDITIONALLY, before the
-/// stale-guard, so a cancelled dialog cannot strand it and lock the ticket out of Save forever.
-static std::string s_WorklogSubmitInFlightIssueId;
+/// Issue ids whose worklog POST is still outstanding; the set is empty when none is. Also outside
+/// the dialog state, and for the same reason: `SubmitInFlight` is reset on every open, so tracking
+/// the POST there let Save → Cancel → re-open the SAME ticket enable Save again while the first
+/// request was still running — two worklogs for one intent. The POST cannot be cancelled (`AddWorklog`
+/// takes no cancel token), so Cancel closes the dialog while the request keeps running; these ids
+/// are what keep that fact visible. A SET, not one slot (#2167): submits on different tickets
+/// overlap, and a single slot let Save on B overwrite A's latch so re-opening A re-enabled Save
+/// mid-POST — the same duplicate class, reached by a two-ticket interleaving. Each post-back
+/// erases its OWN id UNCONDITIONALLY, before the stale-guard, so a cancelled dialog cannot strand
+/// a latch and lock its ticket out of Save forever, and a late post-back cannot clear another
+/// ticket's still-outstanding latch.
+static smatchet::worklog::WorklogSubmitInFlightSet s_WorklogSubmitInFlightIssueIds;
 
 struct EditCbUser {
     SpreadsheetState* state;
@@ -693,12 +697,32 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
+// The "(no options)" line of an open select combo, plus — when the catalog was fetched without a
+// project scope (#2146) — the one sentence that tells the user WHY the list is empty and what to
+// change. Without it an unscoped default view ("assignee=currentUser()") produced silently empty
+// version / custom-option dropdowns while the log said the catalog had loaded fine.
+void RenderEmptyOptionsNotice(const std::string& filterLower, bool catalogUnscoped) {
+    if (!filterLower.empty()) {
+        ImGui::TextDisabled("(no matching options)");
+        return;
+    }
+    ImGui::TextDisabled("(no options)");
+    if (catalogUnscoped) {
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("field.no_options.unscoped_hint",
+                                                          "This view has no single project, so project-scoped "
+                                                          "options were not loaded. Add `project = KEY` to the "
+                                                          "view's JQL to load them."));
+        ImGui::PopTextWrapPos();
+    }
+}
+
 // Draws the open single-select combo body: clear option, auto-focused filter input, and the
 // filtered option list with typeahead enter-commit. Lifted from the single-select editor, whose
 // caller owns the begin / end combo pair. Behaviour byte-identical to the inlined block.
 void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                  SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
-                                 const std::string& editorKey) {
+                                 const std::string& editorKey, bool catalogUnscoped) {
     const bool justOpened = (state.SingleSelectActiveKey != editorKey);
     if (justOpened) {
         state.SingleSelectActiveKey = editorKey;
@@ -749,7 +773,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
         ImGui::PopID();
     }
     if (!drewAny) {
-        ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+        RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
     }
     // Pressing enter commits when the filter narrows to a single match. When several still match,
     // the top one is committed as a least-surprise default that mirrors typeahead pickers.
@@ -812,7 +836,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey);
+        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+                                    field.AllowedValueOptions.empty() && app.FieldCatalogLacksProjectScope());
         ImGui::EndCombo();
     }
 
@@ -837,7 +862,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
 void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& field, SpreadsheetState& state,
                                 std::vector<PendingFieldEdit>& pendingEdits, const std::string& editorKey,
                                 const std::vector<TrackerFieldOption>* opts, bool componentsLoaded,
-                                std::unordered_set<std::string>& selectedSet) {
+                                std::unordered_set<std::string>& selectedSet, bool catalogUnscoped) {
     if (state.MultiSelectActiveKey != editorKey) {
         state.MultiSelectActiveKey = editorKey;
         state.MultiSelectSearchBuf[0] = '\0';
@@ -899,7 +924,7 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
             // shows the no-options text rather than spinning here forever.
             ImGui::TextDisabled("Loading components\xE2\x80\xA6");
         } else {
-            ImGui::TextDisabled(filterLower.empty() ? "(no options)" : "(no matching options)");
+            RenderEmptyOptionsNotice(filterLower, catalogUnscoped);
         }
     }
 }
@@ -953,7 +978,11 @@ void RenderMultiSelectEditor(AppController& app, const CachedTicket& ticket, con
     const float comboAvailBefore = ImGui::GetContentRegionAvail().x;
     ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::BeginCombo("##multiselect", preview.c_str(), ImGuiComboFlags_NoArrowButton)) {
-        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet);
+        // Components have their own per-project lazy path, so the unscoped-catalog hint would
+        // mislead there; every other project-scoped multi-select (versions, custom options) gets it.
+        const bool catalogUnscoped = field.Id != "components" && opts->empty() && app.FieldCatalogLacksProjectScope();
+        RenderMultiSelectComboBody(ticket, field, state, pendingEdits, editorKey, opts, componentsLoaded, selectedSet,
+                                   catalogUnscoped);
         ImGui::EndCombo();
     }
     DrawClippedPreviewTooltip(tooltipsEnabled, preview.c_str(), comboAvailBefore);
@@ -1046,7 +1075,7 @@ void OpenWorklogDialog(const CachedTicket& ticket, const std::string& ownerField
     // duplicate worklog for one intent (#2085 review). Seeding it HERE rather than at the button
     // means the `worklog` cell entry point added by #2088 gets the same guard for free.
     s_ActiveWorklogState.SubmitInFlight =
-        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, ticket.id);
+        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, ticket.id);
     s_ActiveWorklogState.CloseRequested = false;
     // Burn a fresh generation on every open (#1713 contract). Without this, a post-back from a
     // submit whose dialog was cancelled mid-flight would still match `Gen` after the user
@@ -1108,10 +1137,10 @@ void ComputeWorklogProgressSeconds(long long& outDisplaySpentSec, long long& out
 // a post-back dropped at exit is harmless. Every other capture is a by-value copy; the lambda
 // touches only the file-static dialog state, which outlives the controller.
 void HandleWorklogSave(AppController& app) {
-    // Two gates, not one: the dialog's own flag AND the cross-instance in-flight id. The second
+    // Two gates, not one: the dialog's own flag AND the cross-instance in-flight id set. The second
     // is what stops Save → Cancel → re-open → Save creating two worklogs for one intent.
     if (!smatchet::worklog::CanSubmitWorklog(s_ActiveWorklogState.SubmitInFlight) ||
-        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueId, s_ActiveWorklogState.IssueId)) {
+        smatchet::worklog::WorklogSubmitOutstandingFor(s_WorklogSubmitInFlightIssueIds, s_ActiveWorklogState.IssueId)) {
         return; // a submit is already in flight — never queue a duplicate worklog
     }
     s_ActiveWorklogState.ErrorMsg.clear();
@@ -1133,7 +1162,7 @@ void HandleWorklogSave(AppController& app) {
     const int gen = SmatchetCommentsModalGen::AllocGen(s_WorklogGenCounter);
     s_ActiveWorklogState.Gen = gen;
     s_ActiveWorklogState.SubmitInFlight = true;
-    s_WorklogSubmitInFlightIssueId = issueId;
+    smatchet::worklog::MarkWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
 
     app.LaunchBackgroundTask([appPtr, gen, issueId, timeSpent, timeRemaining, adjEst, description, startedDate]() {
         const VoidResult worklogResult =
@@ -1141,13 +1170,11 @@ void HandleWorklogSave(AppController& app) {
         const bool ok = worklogResult.has_value();
         const std::string err = ok ? std::string() : worklogResult.error();
         appPtr->PostToMainThread([gen, issueId, ok, err]() {
-            // Release the cross-instance latch FIRST, before any early-out. If the stale-guard
-            // below returned with this still set, the ticket could never be Saved again for the
-            // rest of the session. Guarded on id equality so a newer submit's latch is not
-            // cleared by an older post-back landing late.
-            if (s_WorklogSubmitInFlightIssueId == issueId) {
-                s_WorklogSubmitInFlightIssueId.clear();
-            }
+            // Release this submit's own latch FIRST, before any early-out. If the stale-guard
+            // below returned with it still set, the ticket could never be Saved again for the
+            // rest of the session. Erasing only THIS id leaves any other ticket's outstanding
+            // submit latched.
+            smatchet::worklog::ClearWorklogSubmitInFlight(s_WorklogSubmitInFlightIssueIds, issueId);
             // Reuse of the comments-modal stale-guard (#1713): the dialog closed, moved to another
             // ticket, or a newer submit superseded this one — so nothing may be written into the
             // dialog state. The OUTCOME still has to reach the user: the request was sent and it
@@ -1156,6 +1183,13 @@ void HandleWorklogSave(AppController& app) {
             // success/failure the user never learns about.
             if (SmatchetCommentsModalGen::CallbackIsStale(s_ActiveWorklogState.Initialized, s_ActiveWorklogState.Gen,
                                                           gen, s_ActiveWorklogState.IssueId, issueId)) {
+                // Stale because the SAME ticket was re-opened mid-POST (#2168): that open seeded
+                // SubmitInFlight from the latch released above, so the re-opened dialog would
+                // otherwise keep Save disabled forever. The seed stood for exactly this POST.
+                if (smatchet::worklog::StalePostBackReleasesDialogSubmit(s_ActiveWorklogState.Initialized,
+                                                                         s_ActiveWorklogState.IssueId, issueId)) {
+                    s_ActiveWorklogState.SubmitInFlight = false;
+                }
                 if (ok) {
                     SmatchetToastManager::Instance().Push(
                         SmatchetLocalization::T("worklog.toast.saved_title", "Worklog saved"), issueId,

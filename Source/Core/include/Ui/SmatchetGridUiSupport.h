@@ -28,6 +28,17 @@ void DrawGridCellRightClickPopups(const std::string& imguiStackId, const std::st
 
 void DrawTicketGridHeaderContextMenu(const TicketGridColumn& col, const TrackerField* meta);
 
+/// True when `pane`'s search box currently filters the LOADED rows — i.e. its text reads as
+/// plain title words rather than a ticket key or a structured query, which commit on Enter
+/// instead (GridSearchInputClassifier decides). Cheap: an empty box short-circuits before the
+/// classifier runs. Defined in SmatchetGridSearchUi.cpp.
+bool GridSearchFiltersRows(const GridPane& pane);
+
+/// The text the row filter should match for `pane`: its search-box content when
+/// GridSearchFiltersRows holds, otherwise empty (which TicketMatchesGridFilter treats as
+/// "match everything"). Defined in SmatchetGridSearchUi.cpp.
+std::string GridSearchRowFilterText(const GridPane& pane);
+
 std::string GetCellRawForCopy(const CachedTicket& ticket, const TicketGridColumn& column,
                               const TrackerField* fieldMeta);
 

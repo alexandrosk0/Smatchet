@@ -4,6 +4,7 @@
 #include "Json/BoundedJsonParse.h"
 #include "MarkdownConvert.h"
 #include "StringUtil.h"
+#include "Tracker/ParentHierarchyPure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -353,11 +354,10 @@ std::string ExtractIssueKey(const std::string& value) {
     if (LooksLikeIssueKey(trimmed)) {
         return trimmed;
     }
-    const size_t sep = trimmed.find(" - ");
-    if (sep == std::string::npos) {
-        return std::string();
+    const std::string key = ParentHierarchyPure::ParentKeyFromFieldValue(trimmed);
+    if (key == trimmed) {
+        return std::string(); // no "KEY - Summary" separator present
     }
-    const std::string key = TrimCopy(trimmed.substr(0, sep));
     return LooksLikeIssueKey(key) ? key : std::string();
 }
 
@@ -708,16 +708,15 @@ nlohmann::json AdfCommentBodyFromMarkdown(const std::string& markdown) {
     // Same Markdown→ADF conversion as the grid long-text editor (BuildAdfScalar) so a Jira comment
     // keeps headings, lists, code, links, and inline emphasis instead of a flat plain paragraph.
     nlohmann::json doc = MarkdownConvert::MarkdownToAdf(markdown);
-    const bool hasContent = doc.is_object() && doc.contains("content") && doc["content"].is_array() &&
-                            !doc["content"].empty();
+    const bool hasContent =
+        doc.is_object() && doc.contains("content") && doc["content"].is_array() && !doc["content"].empty();
     if (hasContent) {
         return doc;
     }
     // Empty / whitespace-only input converts to an empty document; Jira rejects an ADF `doc` with
     // empty content, so emit a single empty paragraph — the minimal valid, non-empty body.
-    return nlohmann::json{{"type", "doc"},
-                          {"version", 1},
-                          {"content", nlohmann::json::array({nlohmann::json{{"type", "paragraph"}}})}};
+    return nlohmann::json{
+        {"type", "doc"}, {"version", 1}, {"content", nlohmann::json::array({nlohmann::json{{"type", "paragraph"}}})}};
 }
 
 } // namespace TrackerFieldPayloadPure

@@ -224,9 +224,9 @@ void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view);
 /// Embedded JQL editor for the Filter tab — input + clear + autocomplete
 /// popup. The surrounding tab provides its own label and "open in browser"
 /// chrome. The popup is drawn as part of this call. `drawProjectPill` appends
-/// the project-scope pill beneath the bar (dashboard only — the global omnibar
+/// the project-scope pill beneath the bar (dashboard only — a transient-search caller
 /// passes false; the pill is hard-bound to the dashboard's viewJqlEditor).
-/// `hint`: optional InputTextWithHint placeholder (the omnibar states what it
+/// `hint`: optional InputTextWithHint placeholder (a search surface states what it
 /// searches); null keeps the plain InputText used by the dashboard editor.
 void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorState& st, bool drawProjectPill = true,
                                 const char* hint = nullptr);

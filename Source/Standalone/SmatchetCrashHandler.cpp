@@ -50,7 +50,20 @@ enum class DumpExceptionOrigin { Real, Synthetic };
 // tokens, GitHub PAT, MCP auth token, AI keys held in std::string) into a .dmp that the
 // bug reporter auto-attaches to an off-host report. See the audit note at the
 // MiniDumpWriteDump call below.
-const MINIDUMP_TYPE kSmatchetDumpType = MiniDumpNormal;
+//
+// MiniDumpFilterModulePaths drops the on-disk PATH of every loaded module from the
+// module list, keeping the base name. Those paths embed the user's account name
+// (`C:\Users\<name>\...`) and their install/library layout — PII with no diagnostic
+// value, since triage matches modules by name + the CodeView build ID, which both
+// survive the filter.
+//
+// NOT MiniDumpFilterMemory: that reduces the captured stacks to the pointer values
+// needed to reconstruct a call stack, discarding locals and arguments — i.e. nearly
+// everything a minidump is read for. The remaining exposure (stack-resident strings)
+// is covered by consent instead: the dump only leaves the machine if the user ticks
+// the crash-dump box in the report dialog, and the relay refuses to upload it to
+// anything but a private repo (tools/bug-report-relay/src/index.js).
+const MINIDUMP_TYPE kSmatchetDumpType = static_cast<MINIDUMP_TYPE>(MiniDumpNormal | MiniDumpFilterModulePaths);
 
 // `realExPtrs` is the OS-supplied EXCEPTION_POINTERS (SEH path) or null. `origin` records whether
 // the record is OS-supplied or app-synthesized so the first-rich-dump-wins arbitration treats a
@@ -108,7 +121,8 @@ void WriteMiniDumpImpl(EXCEPTION_POINTERS* realExPtrs, DumpExceptionOrigin origi
         mei.ClientPointers = FALSE;
         meiPtr = &mei;
     }
-    // Audit 2026-06-13 synthesis #17: MiniDumpNormal (stack + thread context + module list only),
+    // Audit 2026-06-13 synthesis #17: MiniDumpNormal (stack + thread context + module list only,
+    // and since the crash-dump privacy pass, with module paths filtered out — see kSmatchetDumpType),
     // NOT MiniDumpWithIndirectlyReferencedMemory|MiniDumpScanMemory. The richer scopes walk the
     // stack for pointers and pull the referenced heap into the dump — which sweeps in-memory
     // secrets (config API tokens, GitHub PAT, MCP auth token, AI keys held in std::string on the

@@ -11,9 +11,10 @@
 #include "AppController.h"
 // clang-format on
 
-#include "ConfigManager.h"    // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
-#include "EnvUtil.h"          // smatchet::env::ReadVar — portable getenv (SMATCHET_LUA_CONSENT kill-switch)
-#include "LuaScriptConsent.h" // consent decision core (path + sha-256 fingerprints)
+#include "ConfigManager.h"      // ConfigManager::AtomicWriteTextFile — hardened temp-then-rename writer
+#include "EnvUtil.h"            // smatchet::env::ReadVar — portable getenv (SMATCHET_LUA_CONSENT kill-switch)
+#include "LuaScriptConsent.h"   // consent decision core (path + sha-256 fingerprints)
+#include "LuaScriptsRootPure.h" // scripts-root derivation shared with the pre-Initialize path (#2144)
 #include "Logger.h"
 
 #include <ghc/filesystem.hpp>
@@ -26,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <system_error>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -60,6 +62,14 @@ bool ConsentDisabledByEnv() {
 }
 } // namespace
 
+std::string AppController::LuaScriptsRootDirectory() const {
+
+    // The latched member wins once Initialize has assigned it; before that (plugin OnEarlyInit,
+    // #2144) the same root is derived from the runtime asset directory the host published during
+    // bootstrap. Still empty — never cwd-relative — when no asset directory is configured.
+    return smatchet::lua_scripts::ResolveScriptsRoot(luaScriptsDirectory_, ConfigManager::GetRuntimeAssetDirectory());
+}
+
 std::string AppController::ResolveLuaScriptPath(const std::string& filename) const {
 
     if (filename.empty() || filename.find("..") != std::string::npos || filename.find(':') != std::string::npos ||
@@ -71,9 +81,11 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
         return std::string();
     }
 
-    if (!luaScriptsDirectory_.empty()) {
+    const std::string root = LuaScriptsRootDirectory();
 
-        return luaScriptsDirectory_ + filename;
+    if (!root.empty()) {
+
+        return root + filename;
     }
 
     // Fail closed when the configured scripts root is unset (GetRuntimeAssetDirectory empty).
@@ -87,6 +99,8 @@ std::string AppController::ResolveLuaScriptPath(const std::string& filename) con
     return std::string();
 }
 
+bool AppController::HasLuaScriptsDirectory() const { return !LuaScriptsRootDirectory().empty(); }
+
 std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
     namespace fs = ghc::filesystem;
@@ -97,7 +111,9 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
 
         std::error_code ec;
 
-        if (luaScriptsDirectory_.empty()) {
+        const std::string rootDir = LuaScriptsRootDirectory();
+
+        if (rootDir.empty()) {
 
             // Match ResolveLuaScriptPath: no configured scripts root -> no cwd-relative
             // enumeration (an untrusted working directory's .lua files must not appear in
@@ -105,7 +121,7 @@ std::vector<std::string> AppController::ListLuaScriptFiles() const {
             return out;
         }
 
-        const fs::path root(luaScriptsDirectory_);
+        const fs::path root(rootDir);
 
         if (!fs::is_directory(root, ec)) {
 
@@ -287,12 +303,14 @@ VoidResult AppController::ApproveLuaScript(const std::string& scriptName) {
     }
     const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
 
-    TrackerConfig cfg = ConfigManager::Load();
-    cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, resolved, sha);
-    // Approving a specific script also settles the one-time seeding boundary — the user has
-    // now made an explicit decision, so don't later auto-trust the whole directory over them.
-    cfg.LuaScriptConsentInitialized = true;
-    ConfigManager::Save(cfg);
+    // Update, not Load-modify-Save: the read happens inside the config write lock, so a UI config
+    // change landing between the two can no longer be clobbered by this one-field edit (#2191).
+    ConfigManager::Update([&resolved, &sha](TrackerConfig& cfg) {
+        cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, resolved, sha);
+        // Approving a specific script also settles the one-time seeding boundary — the user has
+        // now made an explicit decision, so don't later auto-trust the whole directory over them.
+        cfg.LuaScriptConsentInitialized = true;
+    });
     LOG_INFO("Lua consent: approved script path=%s sha=%s", resolved.c_str(), sha.c_str());
     return VoidOk();
 }
@@ -302,9 +320,9 @@ VoidResult AppController::RevokeLuaScript(const std::string& scriptName) {
     if (resolved.empty()) {
         return VoidResult::Err("Invalid or unresolvable script name: " + scriptName);
     }
-    TrackerConfig cfg = ConfigManager::Load();
-    cfg.ApprovedLuaScripts = smatchet::lua_consent::WithoutApproval(cfg.ApprovedLuaScripts, resolved);
-    ConfigManager::Save(cfg);
+    ConfigManager::Update([&resolved](TrackerConfig& cfg) { // read-inside-the-write-lock (#2191)
+        cfg.ApprovedLuaScripts = smatchet::lua_consent::WithoutApproval(cfg.ApprovedLuaScripts, resolved);
+    });
     LOG_INFO("Lua consent: revoked approval for script path=%s", resolved.c_str());
     return VoidOk();
 }
@@ -320,16 +338,21 @@ std::vector<std::string> AppController::ListApprovedLuaScriptPaths() const {
 }
 
 void AppController::SeedLuaScriptConsentIfNeeded() {
-    TrackerConfig cfg = ConfigManager::Load();
-    if (cfg.LuaScriptConsentInitialized) {
+    if (ConfigManager::Load().LuaScriptConsentInitialized) {
         return;
     }
 
     // Trust-on-adoption: the scripts already present when the gate is first introduced were put
     // there by this user, so seed them as approved to avoid breaking existing setups. Everything
     // that arrives AFTER this boundary must be explicitly approved. This runs exactly once.
+    //
+    // Hash every script BEFORE opening the config write transaction: the mutation handed to
+    // ConfigManager::Update runs with the config write lock held (#2191), so it must stay a plain
+    // in-memory fold — reading and SHA-256-ing a directory of scripts under that lock would stall
+    // every other config writer in the process.
+    std::vector<std::pair<std::string, std::string>> approvals; // resolved path -> sha-256
     const std::vector<std::string> existing = ListLuaScriptFiles();
-    std::size_t seeded = 0;
+    approvals.reserve(existing.size());
     for (const std::string& name : existing) {
         const std::string resolved = ResolveLuaScriptPath(name);
         if (resolved.empty()) {
@@ -339,13 +362,21 @@ void AppController::SeedLuaScriptConsentIfNeeded() {
         if (!ReadLuaScriptBytesCapped(resolved, bytes)) {
             continue;
         }
-        const std::string sha = smatchet::lua_consent::FingerprintLuaScript(bytes);
-        cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, resolved, sha);
-        ++seeded;
+        approvals.emplace_back(resolved, smatchet::lua_consent::FingerprintLuaScript(bytes));
     }
-    cfg.LuaScriptConsentInitialized = true;
-    ConfigManager::Save(cfg);
+
+    ConfigManager::Update([&approvals](TrackerConfig& cfg) {
+        // Re-checked inside the write lock: a concurrent seed (or an explicit approval that
+        // settled the boundary) must not be re-seeded over.
+        if (cfg.LuaScriptConsentInitialized) {
+            return;
+        }
+        for (const auto& a : approvals) {
+            cfg.ApprovedLuaScripts = smatchet::lua_consent::WithApproval(cfg.ApprovedLuaScripts, a.first, a.second);
+        }
+        cfg.LuaScriptConsentInitialized = true;
+    });
     LOG_INFO("Lua consent: one-time seed — trusted %zu pre-existing script(s); new/changed scripts now require "
              "explicit approval.",
-             seeded);
+             approvals.size());
 }

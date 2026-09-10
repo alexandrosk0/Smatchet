@@ -25,6 +25,8 @@
 #   THRESHOLD_DAYS    — integer (default 14)
 #   GH_TOKEN          — gh CLI auth (default GITHUB_TOKEN under Actions); if
 #                       unset, falls back to gh's stored auth (`gh auth status`).
+#   LOCK_REMOTE       — git remote holding refs/locks/* (default: origin); same
+#                       knob the other lock-* scripts read.
 #
 # Exit codes:
 #   0 — sweep finished (with or without findings)
@@ -34,6 +36,10 @@
 # Side effects:
 #   - May open or edit GitHub Issues titled `Stale plan-lock: <slug>`
 #     with the `plan-lock-stale` label.
+#   - May CLOSE such an Issue once its lock is no longer stale — the ref was
+#     refreshed (bumped back under the threshold) or released. Without this the
+#     Issue body's "will close automatically on the next sweep" promise was
+#     false and every resolved lock left an Issue open forever.
 #   - Never deletes refs.
 
 set -euo pipefail
@@ -77,16 +83,38 @@ THRESHOLD_SECS=$((THRESHOLD_DAYS * 86400))
 
 echo "::notice::Sweep starting; threshold=${THRESHOLD_DAYS} days (${THRESHOLD_SECS} s); repo=${REPO}."
 
-# Enumerate the refs locally — workflow's earlier "Fetch refs/locks/*" step
-# populated refs/locks/* in the local repo.
+# Confirm the local refs/locks/* namespace mirrors the remote before trusting
+# it. The workflow's earlier "Fetch refs/locks/*" step already did this (and
+# fails loud, deliberately), so in CI this is a cheap idempotent no-op. It
+# matters on the LOCAL path (git-janitor's pre-flight): there, a never-fetched
+# namespace also enumerates as zero refs, and the reconcile below cannot tell
+# "every lock was released" from "I never looked" — it would close every open
+# Issue. Only a confirmed-authoritative namespace earns the right to close.
+# Non-fatal: flagging still runs against whatever refs are present, exactly as
+# before; only the destructive half is withheld.
+locks_authoritative=0
+if git fetch --quiet --prune "${LOCK_REMOTE:-origin}" '+refs/locks/*:refs/locks/*' 2>/dev/null; then
+    locks_authoritative=1
+else
+    echo "::warning::Could not refresh refs/locks/* from '${LOCK_REMOTE:-origin}'; will flag stale locks but skip Issue auto-close this run."
+fi
+
+# Enumerate the refs locally.
 refs=$(git for-each-ref --format='%(refname)' refs/locks/ 2>/dev/null || true)
 if [ -z "$refs" ]; then
+    # NOT an early exit: zero refs is exactly the state left behind when every
+    # lock has been released, and those releases are what the reconcile step at
+    # the bottom has to close Issues for. The loop below is a no-op on an empty
+    # `refs`, so just fall through.
     echo "::notice::No refs/locks/* present; nothing to sweep."
-    exit 0
 fi
 
 stale_count=0
 fresh_count=0
+# Newline-delimited set of slugs flagged stale on THIS run. Any open
+# `plan-lock-stale` Issue whose slug is absent from this set is resolved and
+# gets closed by the reconcile step below.
+stale_slugs=""
 
 for ref in $refs; do
     slug=${ref#refs/locks/}
@@ -122,6 +150,8 @@ for ref in $refs; do
     fi
 
     stale_count=$((stale_count + 1))
+    stale_slugs="${stale_slugs}${slug}
+"
     echo "::warning::STALE: ${slug} age=${age_days}d (latest=${latest_ts})"
 
     # Human-facing claim context.
@@ -173,8 +203,10 @@ except Exception:
         echo "Pick one:"
         echo
         echo "1. **Slice is still active** — bump the lock with \`bash agents/scripts/core/lock-claim-update.sh ${slug} <write-set-file>\` to refresh \`updated\`. This Issue will close automatically on the next sweep."
-        echo "2. **Slice is abandoned** — \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref. Close this Issue."
-        echo "3. **Slice has merged** — the PR was missing a \`lock-slug: ${slug}\` line in its body. \`bash agents/scripts/core/lock-release.sh ${slug}\` and close this Issue. Add the line to future PRs holding a lock."
+        echo "2. **Slice is abandoned** — \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref. This Issue will close automatically on the next sweep."
+        echo "3. **Slice has merged** — the PR was missing a \`lock-slug: ${slug}\` line in its body. \`bash agents/scripts/core/lock-release.sh ${slug}\` to delete the ref; this Issue will close automatically on the next sweep. Add the line to future PRs holding a lock."
+        echo
+        echo "No local ref-write access (e.g. a CI-scoped token)? Land a PR whose body carries a \`lock-slug: ${slug}\` line — \`.github/workflows/lock-cleanup.yml\` releases the ref when that PR closes."
         echo
         echo "Live ref state: \`bash agents/scripts/core/locks-show.sh\`."
         echo "Plan: [\`docs/plans/shipped/git-ref-plan-locks.md\`](../blob/develop/docs/plans/shipped/git-ref-plan-locks.md)."
@@ -199,4 +231,67 @@ except Exception:
     rm -f "$body_file"
 done
 
-echo "::notice::Sweep finished. stale=${stale_count}, fresh=${fresh_count}."
+# --- Reconcile: close Issues whose lock is no longer stale -------------------
+#
+# The three remedies the Issue body offers all converge here: a bumped lock is
+# fresh again, and a released lock has no ref at all. Either way the slug is
+# absent from `stale_slugs` and its Issue is obsolete, so close it.
+#
+# Best-effort by design: this is cleanup, not the sweep's primary job, so a gh
+# failure warns and the sweep still exits 0. Flagging stale locks (above) has
+# already happened and must not be undone by a listing hiccup.
+closed_count=0
+issue_listing=""
+if [ "$locks_authoritative" -eq 1 ]; then
+    # --limit well above the plausible number of concurrent locks; gh's default
+    # of 30 would silently leave the overflow open forever.
+    issue_listing=$(gh issue list \
+        --repo "$REPO" \
+        --state open \
+        --label "plan-lock-stale" \
+        --limit 200 \
+        --json number,title \
+        --jq '.[] | "\(.number)\t\(.title)"' 2>/dev/null || true)
+fi
+
+# Heredoc rather than a pipe so `closed_count` survives the loop (a pipeline
+# would run the body in a subshell).
+while IFS=$'\t' read -r issue_num issue_title; do
+    [ -n "$issue_num" ] || continue
+
+    # gh emits plain integers here, but this value becomes a `gh issue close`
+    # argument — validate rather than trust the field's shape.
+    case "$issue_num" in
+        ''|*[!0-9]*) continue ;;
+    esac
+
+    # Only touch Issues this sweep owns the title format of. A human-filed
+    # Issue that merely carries the label is left alone.
+    case "$issue_title" in
+        "Stale plan-lock: "*) ;;
+        *) continue ;;
+    esac
+    issue_slug=${issue_title#"Stale plan-lock: "}
+
+    # Same grammar lock-claim.sh enforces; anything else is not ours to close.
+    printf '%s' "$issue_slug" | grep -qE '^[a-z0-9][a-z0-9-]{0,63}$' || continue
+
+    # Still stale this run -> the Issue is current, leave it open.
+    if printf '%s' "$stale_slugs" | grep -qFx "$issue_slug"; then
+        continue
+    fi
+
+    echo "::notice::Closing Issue #${issue_num}: plan-lock '${issue_slug}' is no longer stale."
+    if gh issue close "$issue_num" \
+        --repo "$REPO" \
+        --comment "Plan-lock \`${issue_slug}\` is no longer stale — the ref was refreshed or released. Closed automatically by \`.github/workflows/lock-staleness.yml\`." \
+        >/dev/null 2>&1; then
+        closed_count=$((closed_count + 1))
+    else
+        echo "::warning::Could not close Issue #${issue_num} for '${issue_slug}'; leaving it open."
+    fi
+done <<EOF
+${issue_listing}
+EOF
+
+echo "::notice::Sweep finished. stale=${stale_count}, fresh=${fresh_count}, closed=${closed_count}."

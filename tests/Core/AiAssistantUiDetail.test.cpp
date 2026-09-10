@@ -146,6 +146,28 @@ TEST_CASE("AiAssistantSideFallbackAfterDock: records the side actually reached w
     CHECK(AiAssistantSideFallbackAfterDock(false, true) == 1);
 }
 
+TEST_CASE("AiAssistantSideFallbackFromLiveDock: the live dock node is the truth, not the write target (#2171)") {
+    // The #2048 recovery path: pref=secondary, the panel sits ini-docked on PRIMARY, and the
+    // secondary node is now live. The FirstUseEver write targets secondary but does not apply;
+    // recording from the target reset the fallback to -1 (label: "on the right") while the panel
+    // stayed left. From the live node the fallback stays 0 (primary) and the label is honest.
+    CHECK(AiAssistantSideFallbackFromLiveDock(true, /*inPrimary=*/true, /*inSecondary=*/false, -1) == 0);
+    CHECK_FALSE(AiAssistantEffectiveOnSecondary(true, 0));
+    // Panel really on the requested side: no override.
+    CHECK(AiAssistantSideFallbackFromLiveDock(true, false, true, 0) == -1);
+    CHECK(AiAssistantSideFallbackFromLiveDock(false, true, false, 1) == -1);
+    // Landed on the other side than preferred: override records it.
+    CHECK(AiAssistantSideFallbackFromLiveDock(false, false, true, -1) == 1);
+}
+
+TEST_CASE("AiAssistantSideFallbackFromLiveDock: floating or docked elsewhere keeps the previous value") {
+    // No side to report — the pending re-dock resolves it on a later frame. Whatever the
+    // previous frame established must not be wiped to "preference is the truth".
+    CHECK(AiAssistantSideFallbackFromLiveDock(true, false, false, 0) == 0);
+    CHECK(AiAssistantSideFallbackFromLiveDock(false, false, false, 1) == 1);
+    CHECK(AiAssistantSideFallbackFromLiveDock(true, false, false, -1) == -1);
+}
+
 TEST_CASE("AiAssistantEffectiveOnSecondary: the stored preference rules while no fallback is set") {
     CHECK_FALSE(AiAssistantEffectiveOnSecondary(false, -1));
     CHECK(AiAssistantEffectiveOnSecondary(true, -1));

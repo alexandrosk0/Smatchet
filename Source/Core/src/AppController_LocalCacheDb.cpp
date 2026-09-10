@@ -186,10 +186,9 @@ bool AppController::EnsureLocalCacheForUiTest() {
     // next ConfigManager::Load() inside the guard observes it. Throwaway profile only
     // (SMATCHET_USER_DATA tmpdir under the harness) — never the developer's real config.
     {
-        TrackerConfig cfg = ConfigManager::Load();
-        if (cfg.ReadOnlyMode) {
-            cfg.ReadOnlyMode = false;
-            ConfigManager::Save(cfg);
+        if (ConfigManager::Load().ReadOnlyMode) {
+            // Update re-reads under the write lock (#2191), so this cannot revert a concurrent edit.
+            ConfigManager::Update([](TrackerConfig& cfg) { cfg.ReadOnlyMode = false; });
             ConfigManager::InvalidateCache();
             LOG_INFO("EnsureLocalCacheForUiTest: cleared first-run ReadOnlyMode default so "
                      "offline-create populated path can activate");
