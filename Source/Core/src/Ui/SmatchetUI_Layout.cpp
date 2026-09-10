@@ -85,6 +85,7 @@ bool WindowNeedsRepair(const ImVec2& pos, const ImVec2& size, float minW, float 
 namespace smatchet {
 namespace ui_detail {
 
+// Persist the open/closed state of all UI windows to configuration with deferred write semantics.
 void PersistWindowOpenPreferences(UiDrawSession& d) {
     bool changed = false;
     auto setBool = [&changed](bool& dst, bool src) {
@@ -104,7 +105,14 @@ void PersistWindowOpenPreferences(UiDrawSession& d) {
     setBool(d.cfg.ShowMcpServerWindow, d.showMcpServerWindow);
 #endif
     if (changed) {
-        ConfigManager::Save(d.cfg);
+        // Pillar 2 (#2145) + the clobber-ordering rule: this runs on the per-frame draw path
+        // (drawEndOfFramePersistence), so it is both a frame-thread write and a co-frame writer
+        // against the enqueues added for #2145. A synchronous Save here could land BEFORE the
+        // worker drains an older `d.cfg` snapshot queued earlier in the same frame (the worker
+        // wakes into GetConfigRmwMutexRef and writes as soon as this Save releases it), reverting
+        // these window flags on disk. Both writers use the coalescing slot instead, so the newest
+        // snapshot — always a superset, since every one is taken from this same `d.cfg` — wins.
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
     }
 }
 
@@ -383,6 +391,7 @@ template <typename T> void DrainFutureJoinQuiet(std::future<T>& f) {
 
 } // namespace
 
+// Flush pending UI state changes to disk before application shutdown, including outstanding preference changes.
 void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     (void)app;
     UiDrawSession& d = g_ui;
@@ -391,7 +400,12 @@ void DrainUiDrawSessionFuturesBeforeAppTeardown(AppController& app) {
     // "user changed a setting + immediately quit before the 100 ms debounce fired"
     // case. See SmatchetUiSession.h MarkPrefsDirty + SmatchetUI.cpp Draw tail.
     if (d.cfgInitialized && d.prefsDirty) {
-        ConfigManager::Save(d.cfg);
+        // Enqueue rather than Save (#2145): the end-of-frame drain now fills the worker's
+        // coalescing slot, and a direct Save here could be overwritten by an older snapshot still
+        // pending in that slot. Enqueue replaces the slot with this newest snapshot instead, and
+        // falls back to a synchronous save when the worker is already stopped, so the final state
+        // reaches disk either way (config_save::Stop flushes pending writes before joining).
+        smatchet::config_save::EnqueueTrackerConfig(d.cfg);
         d.prefsDirty = false;
     }
 
