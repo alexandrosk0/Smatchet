@@ -68,5 +68,19 @@ inline void ClearWorklogSubmitInFlight(WorklogSubmitInFlightSet& inFlightIssueId
     inFlightIssueIds.erase(issueId);
 }
 
+/// Whether a post-back the stale-guard rejected must still release the OPEN dialog's own
+/// `SubmitInFlight` flag (#2168). The stale-guard fires on a generation mismatch, and one way
+/// to get that mismatch is re-opening the SAME ticket while its POST is running: the open
+/// seeds `SubmitInFlight = true` from the cross-instance latch and burns a fresh generation, so
+/// when the POST lands its generation no longer matches and the normal release never runs —
+/// Save stays disabled behind a perpetual "Saving worklog..." cue, which after a FAILED POST
+/// blocks the user's retry until the dialog is closed and re-opened. The seed represented
+/// exactly the POST that just completed, so releasing it is correct; a dialog on a different
+/// ticket (or no dialog at all) is left alone.
+inline bool StalePostBackReleasesDialogSubmit(bool dialogInitialized, const std::string& dialogIssueId,
+                                              const std::string& postBackIssueId) {
+    return dialogInitialized && !postBackIssueId.empty() && dialogIssueId == postBackIssueId;
+}
+
 } // namespace worklog
 } // namespace smatchet

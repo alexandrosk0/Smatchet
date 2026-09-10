@@ -365,9 +365,13 @@ namespace {
 /// non-null, receives the page bean's `isLast` (absent -> true) so a paged caller knows
 /// whether to continue; root-array endpoints have no page bean and leave it true.
 /// Returns false with `outErr` set on any failure.
+/// `outPageCount`, when non-null, receives the number of elements the server put on this page —
+/// BEFORE the inactive / duplicate / malformed filtering below. A paged caller advances `startAt`
+/// by that raw count, because the server's cursor indexes its own result rows, not the subset
+/// this client chose to keep.
 bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr::Header& headers, const char* valuesKey,
                         bool keepInactive, std::vector<TrackerUser>& outUsers, std::unordered_set<std::string>& seen,
-                        TrackerError& outErr, bool* outIsLast = nullptr) {
+                        TrackerError& outErr, bool* outIsLast = nullptr, size_t* outPageCount = nullptr) {
     // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing boilerplate / include-block clone surfaced by the ParseBounded security sweep touching this file; de-duping independent subsystems is DRY-CRITICAL; owner=security-audit; revisit=2026-09-30)
     auto resp = TrackerGetLogged("JiraClient", url, headers);
     std::string outError;
@@ -397,6 +401,9 @@ bool FetchJiraUserArray(const char* endpoint, const std::string& url, const cpr:
             LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(resp.text).c_str());
             outErr = TrackerErrorParse(outError);
             return false;
+        }
+        if (outPageCount != nullptr) {
+            *outPageCount = arr.size();
         }
         for (const auto& node : arr) {
             if (!node.is_object()) {
@@ -515,11 +522,13 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
     // Chunked so every id is asked for even past the cap (a query buffer holds ~a dozen
     // ids, so one chunk is the norm — the loop is for the interface contract, not the UI).
     // Each chunk's response is a PageBeanUser: pages are followed via `startAt` until
-    // `isLast`, so a server that clamps the page size below maxResults still yields every
-    // user. kMaxPagesPerChunk bounds a misbehaving server that never reports a last page
-    // (a chunk's total is <= the ids requested, so 8 pages is already unreachable).
+    // `isLast`. `startAt` advances by the number of rows the server ACTUALLY returned, not by
+    // the page size we asked for: a server that clamps user/bulk below maxResults (e.g. to 50)
+    // would otherwise be asked for row 128 next and silently skip rows 50-127 (#2169).
+    // kMaxPagesPerChunk bounds a misbehaving server that never reports a last page, and an
+    // empty non-last page ends the chunk too — re-requesting the same offset can only loop.
     constexpr size_t kMaxIdsPerCall = 128;
-    constexpr size_t kMaxPagesPerChunk = 8;
+    constexpr size_t kMaxPagesPerChunk = 128;
     std::unordered_set<std::string> seen;
     TrackerError err = TrackerError::Ok();
     for (size_t from = 0; from < accountIds.size(); from += kMaxIdsPerCall) {
@@ -529,13 +538,24 @@ JiraClient::FetchUsersByAccountIds(const TrackerConfig& cfg, const std::vector<s
             idParams += "&accountId=" + UrlEncode(accountIds[k]);
         }
         bool isLast = false;
+        size_t startAt = 0;
         for (size_t page = 0; !isLast && page < kMaxPagesPerChunk; ++page) {
             const std::string url = base + "/rest/api/3/user/bulk?maxResults=" + std::to_string(kMaxIdsPerCall) +
-                                    "&startAt=" + std::to_string(page * kMaxIdsPerCall) + idParams;
+                                    "&startAt=" + std::to_string(startAt) + idParams;
+            size_t pageCount = 0;
             if (!FetchJiraUserArray("user/bulk", url, headers, "values", /*keepInactive=*/true, outUsers, seen, err,
-                                    &isLast)) {
+                                    &isLast, &pageCount)) {
                 return UsersResult::Err(std::move(err));
             }
+            if (pageCount == 0) {
+                if (!isLast) {
+                    LOG_WARN("JiraClient: user/bulk returned an empty page at startAt=%zu without isLast; "
+                             "stopping this chunk.",
+                             startAt);
+                }
+                break;
+            }
+            startAt += pageCount;
         }
     }
     // SMATCHET_DEVIATION(rule=duplication; reason=pre-existing cross-backend FetchGroupMembers prologue similarity vs GitHubActivityFeed.cpp re-exposed by line shifts in this TU; de-duping independent backend clients is DRY-CRITICAL; owner=tracker-backend; revisit=2026-11-30)

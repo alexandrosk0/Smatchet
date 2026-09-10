@@ -102,8 +102,11 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
     }
 
     // "+" request — create a new pane from the source. Same-backend: duplicates
-    // backend/view/snapshot (cheap shared_ptr copy). Cross-backend: sets the target
-    // backend + resolves a view; NO snapshot inherit (different data).
+    // backend/view/snapshot (cheap shared_ptr copy) — unless the picker named a DIFFERENT
+    // saved view of that backend, in which case the new pane opens on that view and starts
+    // from an empty snapshot (a copy of the source's rows would be the wrong view's data,
+    // #2170). Cross-backend: sets the target backend + resolves a view; NO snapshot inherit
+    // (different data).
     if (!addRequest.sourceId.empty()) {
         const GridPane* src = FindGridPaneById(panes, addRequest.sourceId);
         if (src == nullptr) {
@@ -129,8 +132,19 @@ ApplyPaneAddAndCloseRequestsCore(std::vector<GridPane>& panes, std::string& focu
         } else {
             dup.backendKey = src->backendKey;
             dup.viewId = src->viewId;
-            dup.ticketsSnapshot = src->ticketsSnapshot;
-            dup.snapshotRevision = src->snapshotRevision;
+            if (!addRequest.targetViewId.empty() && addRequest.targetViewId != src->viewId) {
+                // Resolve through the bucket so an id the picker offered but which has since
+                // been deleted falls back the same way a cross-backend request does; an absent
+                // bucket (empty result) keeps the plain duplicate.
+                const std::string resolved = ResolveNewPaneView(src->backendKey, addRequest.targetViewId, viewBuckets);
+                if (!resolved.empty()) {
+                    dup.viewId = resolved;
+                }
+            }
+            if (dup.viewId == src->viewId) {
+                dup.ticketsSnapshot = src->ticketsSnapshot;
+                dup.snapshotRevision = src->snapshotRevision;
+            }
         }
         outcome.CreatedPaneId = dup.id;
         panes.push_back(dup); // invalidates `src` — done reading it above

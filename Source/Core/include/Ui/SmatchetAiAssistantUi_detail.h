@@ -154,6 +154,23 @@ inline int AiAssistantSideFallbackAfterDock(bool wantSecondary, bool landedSecon
     return landedSecondary ? 1 : 0;
 }
 
+/// Re-derive the session-only fallback from where the panel is ACTUALLY docked after Begin
+/// (#2171). A `SetNextWindowDockID(..., ImGuiCond_FirstUseEver)` write is a no-op for a window
+/// restored from imgui.ini (ImGui strips FirstUseEver from its dock-allow flags), so recording
+/// the fallback from the write's TARGET lied whenever the write did not land: the panel sat
+/// ini-docked on one side while the swap button described the other, and its first click
+/// re-docked the panel to where it already was. `dockedInPrimary` / `dockedInSecondary` are
+/// the live answer (the window's dock node is inside that side bar); when it is in neither —
+/// floating, or dragged into some other node — the previous value is kept, because there is no
+/// side to report and the pending re-dock will resolve it.
+inline int AiAssistantSideFallbackFromLiveDock(bool wantSecondary, bool dockedInPrimary, bool dockedInSecondary,
+                                               int current) {
+    if (!dockedInPrimary && !dockedInSecondary) {
+        return current;
+    }
+    return AiAssistantSideFallbackAfterDock(wantSecondary, dockedInSecondary);
+}
+
 /// Side the panel is EFFECTIVELY on this frame — what the swap button's label, its
 /// tooltip and any other side-dependent chrome must read. The session-only fallback
 /// above wins while it is set; otherwise the persisted preference does.

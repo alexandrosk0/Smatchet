@@ -440,7 +440,15 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     EnrichGlobalCatalogFields(base, headers, fieldIndexById, outFields);
 
     if (projectKey.empty()) {
-        LOG_INFO("JiraClient: skipping createmeta enrichment because project key is empty.");
+        // WARN, not INFO (#2146): this is a degraded catalog, not routine startup output. Every
+        // option only createmeta supplies (components, fix/affects versions, project-scoped
+        // custom-field option lists) stays empty, and nothing else in the log says so. The
+        // empty key is the documented fallback for a view whose JQL names zero or several
+        // projects (the bootstrap "assignee=currentUser()" default view included); the grid
+        // editors show the same hint on the resulting empty dropdowns.
+        LOG_WARN("JiraClient: field catalog fetched WITHOUT project scope — createmeta enrichment skipped, so "
+                 "project-scoped field options (components, versions, project custom-field options) will be "
+                 "empty. Give the active view a single `project = KEY` clause to load them.");
         return true;
     }
 

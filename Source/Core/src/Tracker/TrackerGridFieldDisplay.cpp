@@ -330,7 +330,20 @@ bool TrackerGridFieldDisplay::RenderWorklogField(const std::string& currentValue
 
     const bool clicked = DrawCellActionButton(model.label, availWidth);
     if (tooltipsEnabled && ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", model.tooltip.c_str());
+        // Localized at the sink, not in the model (#2173): SetTooltip("%s", buf) translates
+        // only the format string, so an English sentence baked into the model stayed English
+        // in every locale while the sibling timespent cell showed the same text translated.
+        // The fixed sentences go through the table; the per-entry summary is data.
+        ImGui::BeginTooltip();
+        if (model.noWorkLogged) {
+            ImGui::TextUnformatted(SmatchetLocalization::T("worklog.none", "No work logged yet. Click to log work."));
+        } else {
+            ImGui::TextUnformatted(model.tooltip.c_str());
+            ImGui::NewLine();
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("worklog.click_hint", "Click to log work / edit estimates."));
+        }
+        ImGui::EndTooltip();
     }
     return clicked;
 }

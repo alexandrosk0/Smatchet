@@ -594,7 +594,7 @@ void AppController::InitFieldCatalog(const TrackerConfig& cfg, const std::string
         if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(cacheKey, snapFields, snapComponents, snapIssueTypeMeta,
                                                            snapErr)) {
             ApplyStartupFieldCatalogSnapshot(std::move(snapFields), std::move(snapComponents),
-                                             std::move(snapIssueTypeMeta), activeTrackerType);
+                                             std::move(snapIssueTypeMeta), activeTrackerType, projectKeyForCache);
         }
     }
 }
@@ -629,10 +629,14 @@ std::string AppController::ResolveActiveViewProjectKeyForCatalog(const std::stri
 void AppController::ApplyStartupFieldCatalogSnapshot(std::vector<TrackerField> snapFields,
                                                      std::vector<TrackerComponent> snapComponents,
                                                      std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta,
-                                                     const std::string& activeTrackerType) {
+                                                     const std::string& activeTrackerType,
+                                                     const std::string& projectKey) {
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would split this compound write across two contexts (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
+    // Record the scope the snapshot was saved under, so FieldCatalogLacksProjectScope (#2146)
+    // describes the catalog actually in memory until the grid's live fetch replaces it.
+    cat.currentCatalogProjectKey_ = projectKey;
     cat.AvailableFields = std::move(snapFields);
     cat.AvailableComponents = std::move(snapComponents);
     cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);

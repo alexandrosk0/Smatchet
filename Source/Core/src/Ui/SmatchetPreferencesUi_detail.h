@@ -221,6 +221,20 @@ inline void ResetAssistantPrefsSeedLatchesOnClose(bool& workingSeeded, bool& for
 }
 #endif // SMATCHET_WITH_AI
 
+/// True when any MCP field the Connections › MCP section stages in the UI buffers differs from
+/// the saved config (#2133). The section normally commits itself as soon as a typed field is
+/// no longer being edited (#2110), so this only reads true for an edit the section never got
+/// to commit — the field still held focus while the section was collapsed or filtered out, so
+/// its body did not draw on the closing frame. Drives the close gate so that edit routes through
+/// the guard modal instead of being dropped. Pure — bucket-A testable. Deliberately NOT guarded by
+/// SMATCHET_WITH_AI (unlike its Assistant-tab sibling above): the caller gates it on
+/// SMATCHET_WITH_MCP alone, so a build with MCP on and AI off must still be able to call this.
+inline bool McpPrefsFieldsDiffer(bool enabled, int port, bool allowRemote, bool allowLuaExecution,
+                                 const std::string& authToken, const TrackerConfig& cfg) {
+    return enabled != cfg.McpEnabled || port != cfg.McpPort || allowRemote != cfg.McpAllowRemote ||
+           allowLuaExecution != cfg.McpAllowLuaExecution || authToken != cfg.McpAuthToken;
+}
+
 } // namespace SmatchetPreferencesUiDetail
 
 // Lazy-load flags for the template lists drawn by DrawEditingPreferencesTab.

@@ -59,10 +59,20 @@ struct WorklogRenderModel {
  * Draw model for the `worklog` ("Log Work") grid cell — the interactive wrapper around
  * WorklogRenderModel. `clickable` false means the payload was neither empty nor recognisable,
  * so the cell stays read-only clipped text rather than dressing an unknown shape up as an action.
+ *
+ * The tooltip is deliberately NOT composed here as one English string (#2173): the render sink
+ * translates literals, not a "%s"-forwarded buffer, so the pure model only carries the parts
+ * that exist in one language — the per-entry summary in `tooltip` — and flags the fixed
+ * sentences (`noWorkLogged`, and the "click to log work / edit estimates" hint every clickable
+ * cell with logged work gets) for the renderer to emit through the localization table.
  */
 struct WorklogCellModel {
     bool clickable = false;
+    /// True when the cell offers the action but no work is logged: the renderer shows the
+    /// localized "No work logged yet. Click to log work." sentence and `tooltip` is empty.
+    bool noWorkLogged = false;
     std::string label;
+    /// Worklog summary (entries, totals, paging) — trailing newlines trimmed, no click hint.
     std::string tooltip;
 };
 
