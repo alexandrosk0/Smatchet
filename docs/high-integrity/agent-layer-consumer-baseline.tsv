@@ -72,6 +72,7 @@ agents/scripts/core/test-agent-build-facts.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-agent-contract.sh	Source/	AGENTS.md,agents/,docs/agent-rules/	dual
 agents/scripts/core/test-agent-discovery-fixture.sh	-	agents/	layer-only
 agents/scripts/core/test-agent-size-bats.sh	-	AGENTS.md	layer-only
+agents/scripts/core/test-android-openssl-failfast-bats.sh	docs/plans/	AGENTS.md,agents/	dual
 agents/scripts/core/test-archive-backlog-entry-bats.sh	-	-	self-locating
 agents/scripts/core/test-archive-plan.sh	docs/plans/	agents/	dual
 agents/scripts/core/test-autonomous-debug-loop.sh	Source/	agents/	dual
@@ -161,6 +162,7 @@ agents/scripts/core/test-review-ack-gate-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-review-guard-bats.sh	-	AGENTS.md,agents/,docs/agent-rules/	layer-only
 agents/scripts/core/test-run-review-bats.sh	-	AGENTS.md,agents/,docs/agent-rules/	layer-only
 agents/scripts/core/test-safe-admin-merge-bats.sh	-	AGENTS.md,agents/	layer-only
+agents/scripts/core/test-safe-merge-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-script-freshness-bats.sh	-	AGENTS.md,agents/	layer-only
 agents/scripts/core/test-session-registry-bats.sh	-	AGENTS.md	layer-only
 agents/scripts/core/test-setup-branch-protection-bats.sh	-	AGENTS.md,agents/	layer-only

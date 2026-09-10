@@ -3,7 +3,9 @@
 # tests/bats/android_openssl_failfast.bats.
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
-# Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob. BEHAVIORAL
+# Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob. Lives under
+# agents/scripts/core/ so the Phase B seed (--path agents/) carries this wrapper
+# with tests/bats/android_openssl_failfast.bats (plan A1w / row 8e). BEHAVIORAL
 # companion to the static text gate agents/scripts/project/test-mobile-security.sh:
 # it drives the REAL Issue #1068 fail-fast (cmake/SmatchetThirdParty.cmake's
 # smatchet_prepare_cpr) in `cmake -P` script mode against committed fixture trees,

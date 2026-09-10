@@ -30,7 +30,7 @@ Path lists below are the known consumers (from `docs/PORTABILITY.md` § External
 | PR | Rows | Shape | Rollback |
 |---|---|---|---|
 | **A1** — seam + workflows | 1, 2a, 2b, 7 | exports the pair; mechanical workflow substitution + `submodules: recursive` | plain revert; every var still defaults to the repo root |
-| **A1w** — wrapper co-location | 8e-pre (specified in `phase-b-c.md` row 8e) | `git mv scripts/dev/test-android-openssl-failfast-bats.sh scripts/dev/test-safe-merge-bats.sh agents/scripts/core/` so `--path agents/` carries both wrappers with their suites | plain revert; `test-all.sh`'s `test-*.sh` glob finds them at either path pre-flip |
+| **A1w** — wrapper co-location | 8e-pre (specified in `phase-b-c.md` row 8e) | `git mv` `test-android-openssl-failfast-bats.sh` + `test-safe-merge-bats.sh` from `scripts/dev/` into `agents/scripts/core/` so `--path agents/` carries both wrappers with their suites. Landed as a follow-up PR after #2180. | plain revert; `test-all.sh`'s `test-*.sh` glob finds them at either path pre-flip |
 | **A2** — script rewire | 3, 4, 5a–5h | the 60-script classification + the dual-root fixes | plain revert **pre-flip only**; after Phase C lands, row 5f/5g literals are wrong again — never revert A2 alone post-flip |
 | **A3** — worktree provisioning | 6a–6d | `worktree.sh` + existing-worktree refresh | plain revert; the added `submodule update` is a no-op pre-flip |
 
