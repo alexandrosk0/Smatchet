@@ -170,6 +170,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     (FakeTicketSyncDeps / FakeTrackerClient / FakeSyncCache) — no SQLite, no HTTP.
         Core/GridLiveContext.test.cpp
         Core/TicketSyncService.test.cpp
+        Core/JiraBackendInstancesPure.test.cpp
+        Core/TrackerBackendFactoryConfig.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerHttpPure.cpp"
@@ -220,6 +222,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # across these companion TUs via config_detail (the spine holds the field tables).
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
         # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0
@@ -847,6 +850,7 @@ add_executable(SmatchetTests
     # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
+    Core/JiraBackendInstancesPure.test.cpp
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
     Core/ConfigSecretFilePerms.test.cpp
@@ -1307,6 +1311,7 @@ add_executable(SmatchetTests
     # ConfigManager god-file split (god-file-splits plan): companion Save/Load/Secret TUs.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Save.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Load.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/JiraBackendInstancesPure.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_Secrets.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Config/ConfigManager_PathUtils.cpp"
     # C5 — ScopedFileLock moved out of ConfigManager_PathUtils.cpp into the layer-0

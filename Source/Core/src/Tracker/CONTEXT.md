@@ -35,6 +35,12 @@ One of the six capability-sliced interfaces (`ITrackerIssueReader`, `ITrackerCon
 A per-tracker implementation of the roles it supports — `JiraClient`, `PlaneClient`, or `GitHubClient`.
 _Avoid_: "driver", "adapter"
 
+**Jira backend instance**:
+One Jira origin with optional per-instance email/token. Index 0 is the first site; extras inherit empty credentials from it. Not a separate tracker kind.
+
+**Active Jira domain**:
+The instance Views - Jira, the live `JiraClient`, and the ticket cache namespace currently talk to. Extra hosts use `Jira:<host>`; the first stays `"Jira"`.
+
 **Fixture backend**:
 A read-only backend (`GitHubFixtureBackend`, `PlaneFixtureBackend`) that loads canned JSON from disk instead of a live API; writes are logged no-ops.
 

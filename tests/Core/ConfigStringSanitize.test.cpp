@@ -121,6 +121,13 @@ TEST_CASE("SanitizeHeaderBoundConfigKeys: config.set-style write strips CR/LF/NU
     CHECK(j["plane_workspace_slug"].get<std::string>() == "my-workspaceX-Injected: 1");
     CHECK(j["ai_base_url"].get<std::string>() == "https://api.example.com/v1");
     CHECK(j["jql"].get<std::string>() == "project = FOO\r\nORDER BY created");
+
+    nlohmann::json extra = nlohmann::json::object();
+    extra["domain"] = "other.example.com\r\nX-Injected: 1";
+    j["jira_backends"] = nlohmann::json::array();
+    j["jira_backends"].push_back(std::move(extra));
+    SanitizeHeaderBoundConfigKeys(j);
+    CHECK(j["jira_backends"][0]["domain"].get<std::string>() == "other.example.comX-Injected: 1");
 }
 
 TEST_CASE("SanitizeHeaderBoundConfigKeys: absent keys not created, non-string/non-object untouched") {

@@ -480,6 +480,7 @@ class SmatchetUI {
     /// vector (same invalidation class). Defined in SmatchetViewsDashboardUi.cpp.
     void applyPendingViewDelete(AppController& app, UiDrawSession& d);
     void drawViewsConnectivityBanner(AppController& app, UiDrawSession& d);
+    void drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d);
     void handleViewsDashboardShortcuts(AppController& app, UiDrawSession& d, const ViewDefinition* activeView);
     // Pane-window host (multi-grid-tabs Slice 2): bootstraps d.gridPanes from
     // smatchet_panes.json, draws one dockable window per pane via the re-entrant

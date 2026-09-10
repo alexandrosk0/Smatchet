@@ -348,5 +348,75 @@ void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrati
 #endif
 }
 
+void LoadJiraBackendExtras(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrationFlags& migrate) {
+    (void)migrate;
+    cfg.JiraBackends.clear();
+    if (!j.contains("jira_backends") || !j["jira_backends"].is_array()) {
+        return;
+    }
+    for (const auto& item : j["jira_backends"]) {
+        if (!item.is_object()) {
+            continue;
+        }
+        JiraBackendInstance inst;
+        inst.Domain = item.value("domain", std::string{});
+        inst.Email = item.value("email", std::string{});
+        if (inst.Domain.empty()) {
+            continue;
+        }
+#if defined(_WIN32) || defined(__ANDROID__)
+        inst.ApiToken = UnprotectSecretFieldFromConfig("token_enc", item.value("token_enc", std::string{}));
+        if (inst.ApiToken.empty()) {
+            inst.ApiToken = item.value("token", std::string{});
+#if defined(__ANDROID__)
+            if (!inst.ApiToken.empty()) {
+                migrate.LegacyPlaintext = true;
+            }
+#endif
+        }
+#else
+        inst.ApiToken = item.value("token", std::string{});
+#endif
+        cfg.JiraBackends.push_back(std::move(inst));
+    }
+}
+
+void SaveJiraBackendExtras(nlohmann::json& j, const TrackerConfig& config) {
+    nlohmann::json arr = nlohmann::json::array();
+    for (std::size_t i = 1; i < config.JiraBackends.size(); ++i) {
+        const JiraBackendInstance& inst = config.JiraBackends[i];
+        if (inst.Domain.empty()) {
+            continue;
+        }
+        nlohmann::json one = nlohmann::json::object();
+        one["domain"] = inst.Domain;
+        if (!inst.Email.empty()) {
+            one["email"] = inst.Email;
+        }
+#if defined(_WIN32)
+        ApplySecretPersist(one, "token", "token_enc", inst.ApiToken, ProtectSecretForConfig(inst.ApiToken));
+#elif defined(__ANDROID__)
+        one.erase("token");
+        const std::string enc = ProtectSecretForConfig(inst.ApiToken);
+        if (!enc.empty()) {
+            one["token_enc"] = enc;
+        } else {
+            one.erase("token_enc");
+        }
+#else
+        one.erase("token_enc");
+        if (!inst.ApiToken.empty()) {
+            one["token"] = inst.ApiToken;
+        }
+#endif
+        arr.push_back(std::move(one));
+    }
+    if (arr.empty()) {
+        j.erase("jira_backends");
+    } else {
+        j["jira_backends"] = std::move(arr);
+    }
+}
+
 } // namespace config_detail
 } // namespace smatchet

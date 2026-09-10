@@ -43,6 +43,7 @@
 // clang-format on
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
+#include "JiraBackendInstancesPure.h"
 
 #include "Commands/BuiltinCommands.h"
 #include "Commands/CommandRegistry.h"
@@ -394,7 +395,7 @@ std::string AppController::InitBackends(TrackerConfig& cfgOut) {
     GridLiveContext& ctx = focusedContext();
     // Re-stamp the cache namespace with the RESOLVED tracker — an env fixture hook above may
     // have overridden the configured type (multi-grid Slice 1b).
-    ctx.SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(activeTracker));
+    ctx.SetCacheBackendKey(smatchet::jira_backends::TrackerCacheBackendKey(cfg));
     // One-time legacy migrations run HERE, against the authoritative resolved key (CR-948-1):
     // this is the same key every live read/write path queries (mirrors what
     // RecreateLocalCacheDatabase already does). Must stay BEFORE RunLegacyStartupSweeps (which

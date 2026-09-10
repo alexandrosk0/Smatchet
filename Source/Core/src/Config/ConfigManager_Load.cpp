@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "SmatchetDefaults.h"
+#include "JiraBackendInstancesPure.h"
 
 // Full nlohmann::json is needed here because we (a) define CommentTemplate's friend serializers
 // and (b) construct json values in the view-disk helpers and the per-method bodies below. The
@@ -39,6 +40,7 @@ using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 
 using smatchet::config_detail::LoadScalarFields;
 using smatchet::config_detail::LoadSecretFields;
+using smatchet::config_detail::LoadJiraBackendExtras;
 using smatchet::config_detail::SecretMigrationFlags;
 
 namespace {
@@ -811,6 +813,7 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
 #endif
         loadGroup("list fields", [&] { LoadListFields(j, cfg); });
         loadGroup("lua consent fields", [&] { LoadLuaConsentFields(j, cfg); });
+        loadGroup("jira backend extras", [&] { LoadJiraBackendExtras(j, cfg, migrate); });
     }
 
     if (!hasSetupConfig && !j.contains("read_only_mode")) {
@@ -866,6 +869,7 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
 
     // Env-var + CLI overrides (applied post-disk-read), then the final post-override clamps.
     ApplyOverridesAndClamps(cli, cfg);
+    smatchet::jira_backends::AdoptLoadedExtras(cfg);
 
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());

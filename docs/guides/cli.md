@@ -417,7 +417,7 @@ Keys that require a plugin or app restart to take effect are noted.
 | `showPerformance` | bool | `false` | Show Performance Monitor panel |
 | `showLogWindow` | bool | `false` | Show Runtime Log panel |
 | `jqlQuery` | string | `assignee=currentUser()` | JQL for next sync |
-| `domain` | string | — | Tracker domain/URL *(reconnect required)* |
+| `domain` | string | — | First Jira instance origin/URL *(reconnect required)*. Extra Jira sites live in `jira_backends`; `active_jira_domain` selects which origin Views - Jira talks to. |
 | `email` | string | — | Tracker email *(reconnect required)* |
 | `trackerType` | string | `Jira` | `Jira`, `Plane`, `GitHub`, or `Linear` *(restart required)* |
 | `planeUrl` | string | — | Plane API origin *(reconnect required)* |
@@ -453,7 +453,7 @@ Applied by the app at startup. All are stable API — renaming is a breaking cha
 | Variable | Maps to | Notes |
 |---|---|---|
 | `SMATCHET_TRACKER_TOKEN` | `cfg.ApiToken` (Jira) / `cfg.PlaneApiKey` (Plane) / `cfg.GitHubPat` (GitHub) / `cfg.LinearApiKey` (Linear) | Never pass as argv — always use env |
-| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) / `cfg.GitHubBaseUrl` (GitHub) / `cfg.LinearBaseUrl` (Linear) | Tracker origin URL, **except Linear** — that one is the full GraphQL POST endpoint (`https://api.linear.app/graphql`), used verbatim with no path appended, so an origin-only value fails. Routed by `trackerType` (case-insensitive) |
+| `SMATCHET_TRACKER_BASE_URL` | `cfg.Domain` (Jira) / `cfg.PlaneUrl` (Plane) / `cfg.GitHubBaseUrl` (GitHub) / `cfg.LinearBaseUrl` (Linear) | Tracker origin URL, **except Linear** — that one is the full GraphQL POST endpoint (`https://api.linear.app/graphql`), used verbatim with no path appended, so an origin-only value fails. Routed by `trackerType` (case-insensitive). For Jira this overrides the **first** instance only; extra `jira_backends` rows are unchanged. |
 | `SMATCHET_LOG_LEVEL` | `cfg.LogMinLevel` | `trace`/`debug`/`info`/`warn`/`error` |
 | `SMATCHET_USER_DATA` | `ConfigManager::GetUserDataDirectory()` | Applied before first `Load()`; redirects config, DB, views, recents |
 | `SMATCHET_MCP_PORT` | `cfg.McpPort` | Override MCP listen port |

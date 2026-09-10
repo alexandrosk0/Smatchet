@@ -7,6 +7,7 @@
 
 #include "Config/TrackerConfigSaveQueue.h"
 #include "Config/TrackerConfigSaveRepair.h"
+#include "JiraBackendInstancesPure.h"
 #include "Logger.h"
 #include "NewIssueInheritDefaults.h"
 #include "SmatchetDefaults.h"
@@ -46,6 +47,7 @@ using smatchet::config_detail::UnprotectSecretFieldFromConfig;
 
 using smatchet::config_detail::SaveScalarFields;
 using smatchet::config_detail::SaveSecretsAndPurgeLegacy;
+using smatchet::config_detail::SaveJiraBackendExtras;
 
 namespace {
 
@@ -244,7 +246,8 @@ TrackerConfig RepairedForSave(const TrackerConfig& configIn) {
 // is what totally orders a queued snapshot against the caller's own image (#2191).
 void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
     // Put back any field a capture scenario has temporarily pinned — see RepairedForSave (#2047).
-    const TrackerConfig config = RepairedForSave(configIn);
+    TrackerConfig config = RepairedForSave(configIn);
+    smatchet::jira_backends::PrepareForPersist(config);
 
     nlohmann::json j = ConfigManager::LoadMergedConfigJson();
 
@@ -321,6 +324,7 @@ void WriteTrackerConfigLocked(const TrackerConfig& configIn) {
 
     SaveInheritFieldIds(j, config);
     SaveSecretsAndPurgeLegacy(j, config);
+    SaveJiraBackendExtras(j, config);
     ConfigManager::WriteConfigJson(j);
 
     // Invalidate the cache only after the new file has been written, still under the

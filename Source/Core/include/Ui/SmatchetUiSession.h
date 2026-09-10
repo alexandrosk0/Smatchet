@@ -662,6 +662,15 @@ struct UiDrawSession {
     char domainBuf[128]{};
     char emailBuf[128]{};
     char tokenBuf[512]{};
+    /// Extra Jira origins edited in Preferences (JiraBackends[1+]). Empty email/token
+    /// inherit from the first site at resolve time.
+    struct JiraBackendEditRow {
+        char domain[128]{};
+        char email[128]{};
+        char token[512]{};
+    };
+    std::vector<JiraBackendEditRow> extraJiraRows;
+    char extraJiraAddDomainBuf[128]{};
     // No projectKeyBuf / planeProjectBuf — project is per-operation, not a saved
     // preference. The Preferences "Recently used projects" listbox reads
     // FieldCatalogCache::ListCachedProjects() directly (no edit buffer needed).

@@ -127,6 +127,9 @@ const PrefsSettingDesc kSettings[] = {
     {"tracker.backend.jira_domain", "tracker.backend", "Domain", "tracker jira credentials atlassian url", true},
     {"tracker.backend.jira_email", "tracker.backend", "Email", "tracker jira credentials atlassian", true},
     {"tracker.backend.jira_api_token", "tracker.backend", "API Token", "tracker jira credentials token", true},
+    {"tracker.backend.jira_extra_sites", "tracker.backend", "Additional Jira sites",
+     "tracker jira extra domain sites backends", true},
+    {"tracker.backend.jira_add_domain", "tracker.backend", "Add Jira site", "tracker jira extra add domain", true},
     {"tracker.backend.jira_inherit", "tracker.backend", "New issue: inherit fields from last row (Jira)",
      "tracker jira new issue inherit default", true},
     // Plane:

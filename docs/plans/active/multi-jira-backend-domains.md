@@ -100,15 +100,18 @@ N/A — new helper TU, no whale extraction.
 
 ## Implementation log
 
-*(populated post-ship)*
+- Pure helpers `jira_backends::*` + config load/save extras (`token_enc` on Win32/Android).
+- `TicketSyncService` recreates the Jira client on host change; cache key is `Jira:<host>` for extras.
+- Preferences Domain/Email/Token edit instance 0; extra-sites editor for `[1+]`.
+- Views - Jira domain combo (shown when extras exist) calls `SelectActive` + Save + Sync.
 
 ## Deviations from plan
 
-*(populated post-ship)*
+None.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+*(filled after `ninja-test-linux`)*
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
