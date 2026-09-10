@@ -43,7 +43,6 @@
 // clang-format on
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
-#include "JiraBackendInstancesPure.h"
 
 #include "Commands/BuiltinCommands.h"
 #include "Commands/CommandRegistry.h"
@@ -88,6 +87,7 @@
 #endif
 
 #include "AiTypes.h"
+#include "JiraBackendInstancesPure.h"
 #if defined(SMATCHET_WITH_AI)
 #include "AiAssistantController.h"
 #include "AiAssistantUiStateAdapter.h"

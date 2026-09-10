@@ -111,7 +111,9 @@ None.
 
 ## Verification (actual)
 
-*(filled after `ninja-test-linux`)*
+- `ninja-test-linux` configure + build + `ctest --preset ninja-test-linux` — **pass** (SmatchetTsanTests, 0.60s).
+- New doctest cases (host normalize, inherit, cache key, add/remove/select, persist-prepare, Save/Load extras, extras domain sanitize, same-kind host recreate) — **pass**.
+- Dual-target MSVC / bucket-E / `Smatchet.exe` Views combo — **manual residue** (linux-container).
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
