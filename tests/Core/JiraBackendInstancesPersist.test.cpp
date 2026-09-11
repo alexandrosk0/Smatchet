@@ -1,3 +1,9 @@
+// Jira extras persist tests — Save/Load round-trip under TestEnvGuard.
+//
+// Lives next to ConfigSaveConcurrency in both SmatchetTests and the Linux
+// TSan subset: TestEnvGuard points config at a private temp dir. Bucket-E is
+// the ImGui Test Engine, not a config-persist lane.
+
 #include "../support/TestEnvGuard.h"
 
 #include "ConfigManager.h"

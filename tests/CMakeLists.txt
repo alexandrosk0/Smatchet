@@ -171,6 +171,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/GridLiveContext.test.cpp
         Core/TicketSyncService.test.cpp
         Core/JiraBackendInstancesPure.test.cpp
+        # TestEnvGuard extras persist. Same lane as ConfigSaveConcurrency already
+        # in this subset. Bucket-E is UI-only; Linux ninja-test-linux needs this.
         Core/JiraBackendInstancesPersist.test.cpp
         Core/TrackerBackendFactoryConfig.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
@@ -852,6 +854,8 @@ add_executable(SmatchetTests
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
     Core/JiraBackendInstancesPure.test.cpp
+    # TestEnvGuard extras persist. Same contract as ConfigManager.test.cpp and
+    # ConfigSecretPersist.test.cpp in this target. Not a bucket-E UI case.
     Core/JiraBackendInstancesPersist.test.cpp
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.

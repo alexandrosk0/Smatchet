@@ -118,30 +118,41 @@ reviews:
         cost ~50–60× the C++ equivalent — flag per-frame sol2 bindings.
     - path: 'tests/**/*.{cpp,h,hpp}'
       instructions: |
-        Doctest rig (`SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset). No
-        UI / HTTP / ImGui / cpr / `p4` subprocess / on-disk-or-networked I/O
-        surfaces — those route to bucket-E (ImGui Test Engine) or stay
-        deferred. SERVICE tests (OfflineQueueService / TicketSyncService /
-        IssueCreatePipeline TUs + the deps fakes) are SQLite-free since the
-        ADR-0020 `ISyncCache` seam: they run on `tests/support/FakeSyncCache.h`
-        and must NOT construct `LocalCacheManager` or include
-        `LocalCacheManager.h`/`SqliteMemFixture.h` (configure-time purity guard
-        in tests/CMakeLists.txt enforces this). `:memory:` SQLite remains
-        legitimate ONLY for the cache-impl TUs (`LocalCacheManager*.test.cpp`,
+        Doctest rig (`SMATCHET_BUILD_TESTS`, `ninja-test-msvc` preset, and the
+        Linux `SmatchetTsanTests` subset). No UI / HTTP / ImGui / cpr / `p4`
+        subprocess / unsandboxed home-dir I/O. Bucket-E is ImGui Test Engine
+        (UI only) — do NOT route ConfigManager persist cases there or ask to
+        drop them from `SmatchetTests` / `SmatchetTsanTests`. TestEnvGuard-
+        isolated `ConfigManager` JSON Save/Load is sanctioned in doctest
+        (`ConfigManager*.test.cpp`, `ConfigMigration.test.cpp`,
+        `ConfigSecretPersist.test.cpp`, `ConfigSaveConcurrency.test.cpp`,
+        `JiraBackendInstancesPersist.test.cpp`); do not flag those. SERVICE
+        tests (OfflineQueueService / TicketSyncService / IssueCreatePipeline
+        TUs + the deps fakes) are SQLite-free since the ADR-0020 `ISyncCache`
+        seam: they run on `tests/support/FakeSyncCache.h` and must NOT
+        construct `LocalCacheManager` or include `LocalCacheManager.h`/
+        `SqliteMemFixture.h` (configure-time purity guard in tests/CMakeLists.txt
+        enforces this). `:memory:` SQLite remains legitimate ONLY for the
+        cache-impl TUs (`LocalCacheManager*.test.cpp`,
         `LocalCacheTicketsV2Migration.test.cpp`), the dual-impl
         `SyncCacheContract.test.cpp` real half, and the single
         `OfflineQueueServiceRealCacheSmoke.test.cpp` backstop — do not flag
-        those; DO flag on-disk / networked DB access anywhere. Scoped to C++
-        test sources: `tests/bats/**` are shell / python integration suites for
-        tooling (merge-watcher, merge-gates, lock primitives) that legitimately
+        those; DO flag on-disk / networked DB access anywhere, and config
+        writes that skip TestEnvGuard. Scoped to C++ test sources:
+        `tests/bats/**` are shell / python integration suites for tooling
+        (merge-watcher, merge-gates, lock primitives) that legitimately
         invoke scripts, so the rule does not apply to them.
-    - path: '{CMakeLists.txt,cmake/**,CMakePresets.json,Source/Core/CMakeLists.txt,Source/Plugins/**/CMakeLists.txt,Source/UnrealPlugins/**/CMakeLists.txt}'
+    - path: '{CMakeLists.txt,tests/CMakeLists.txt,cmake/**,CMakePresets.json,Source/Core/CMakeLists.txt,Source/Plugins/**/CMakeLists.txt,Source/UnrealPlugins/**/CMakeLists.txt}'
       instructions: |
         `*_DX12` targets are `EXCLUDE_FROM_ALL` (Unreal only) — do NOT
         suggest changes there unless the diff explicitly targets them.
         Available FetchContent libs: nlohmann/json, cpr, SQLiteCpp,
         cpp-httplib, md4c, ImGui (docking), GLFW, Lua + sol2,
         ghc::filesystem — do NOT propose adding new dependencies.
+        TestEnvGuard persist TUs (`JiraBackendInstancesPersist`,
+        `ConfigSaveConcurrency`, `ConfigManager.test`) belong in
+        `SmatchetTests` and the Linux `SmatchetTsanTests` subset; bucket-E
+        is UI-only — do NOT remove them from those lists.
     - path: 'agents/**/*.md'
       instructions: |
         Agent definitions (`agents/core/*.md`, `agents/project/*.md`) carry a
