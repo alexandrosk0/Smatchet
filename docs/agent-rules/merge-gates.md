@@ -83,6 +83,16 @@ The CR cell encodes the outcomes verbatim — examples: `APPROVED`, `COMMENTED (
 
 A rate-limited **code** PR that wedges past its window stays a deliberate BLOCK — auto-passing it would wave un-reviewed code through. The sanctioned escape is the `cr-out-of-band` label **plus** a `cr-disposition:` attestation (§ Per-PR overrides above); docs/self-improvement-only PRs never hit this (selfImpOnly terminal pass).
 
+**CodeRabbit OSS manual-trigger playbook (<10 stars) — the missing ship-loop step.** Repos below CodeRabbit's 10-star auto-review threshold get `Review available on request` / `Review skipped: manual review required for this OSS repository` on **every** PR. That is permanent policy, not a race. Two invariants:
+
+1. **Only a human-authored `@coderabbitai review` triggers review.** Comments from `github-actions[bot]`, GitHub App installation tokens (`ghs_*`), or other bots are ignored (process 2026-08-30). The old `cr-finding-gate` bot nudge is retired for this state; the action posts a **terminal failure** naming the condition instead of an unbounded `pending`.
+2. **Sanctioned moves** (pick one per PR):
+   - **Trigger:** `bash scripts/dev/trigger-coderabbit-review.sh <pr>` when `gh` is a user token — or paste `@coderabbitai review` yourself on the PR. Wait for CR + the gate re-run.
+   - **Waive:** apply `cr-out-of-band` **and** `cr-disposition:cr-auto-review-disabled` (label or PR-body marker). The `cr-finding-gate` workflow re-runs on `labeled` / `unlabeled` and posts success; `merge-gates.sh` also discounts the `CR findings*` context from `ci_pend`/`ci_fail` when both labels are present so the waiver is not inert (tooling 2026-08-18).
+   - **Durable fix (human account, not a gate):** star the repo to ≥10 or enable a paid CodeRabbit plan.
+
+Ship-loop: this is pause-exception (6) material when the helper exits 2 (cannot post as human) — `AskUserQuestion` with the three moves above. Under `governance.auto_merge: on`, treat it like silent/rate-limited CR and take the waive path (option 2) without asking.
+
 **Halt prompts (per return code)**:
 
 | Code | Meaning | `AskUserQuestion` options |

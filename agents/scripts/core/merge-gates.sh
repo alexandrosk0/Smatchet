@@ -1120,6 +1120,13 @@ poll_merge_gates() {
                     # often lands a poll or two after the placeholder. Distinct
                     # from NONE+pending so the operator can see the placeholder.
                     cr_state_print="NONE+status-SUCCESS-waiting-for-inline (poll $((p+1))/$CR_GRACE_POLLS)"
+                    # First-poll tip: if this SUCCESS is the OSS manual-trigger
+                    # skip (repos <10 stars), the operator needs a human ask —
+                    # bot nudges are ignored. Wording is conditional so a slow
+                    # auto-review on a starred repo is not mis-diagnosed.
+                    if [ "$p" -eq 0 ]; then
+                        echo "INFO: CodeRabbit status=SUCCESS with no inline review yet. If CR said 'manual review required' / 'Review available on request' (repos <10 stars), run: bash scripts/dev/trigger-coderabbit-review.sh ${prNumber} — or waive with cr-out-of-band + cr-disposition:cr-auto-review-disabled. See merge-gates.md § CodeRabbit OSS manual-trigger." >&2
+                    fi
                 elif [ "$p" -ge "$CR_GRACE_POLLS" ]; then
                     # Grace window elapsed; CR never started. Log + fall through to pass
                     # so the loop is never wedged by a stuck integration.
@@ -1488,10 +1495,13 @@ poll_merge_gates() {
         # scoped to the CR gate ONLY. Covers both CR-gate signals: the state
         # verdict (cr_pass=false: CHANGES_REQUESTED, COMMENTED+actionable>0,
         # DISMISSED, STALE_WITH_FINDINGS, STALE_UNKNOWN, NONE-after-grace) and
-        # unresolved CR-authored review threads (cr_open_blocks). CI
-        # (ci_fail / ci_pend) and the user-comment gate (user) are NOT touched —
-        # the label only waives CodeRabbit's own conditions. Like the other
-        # out-of-band labels, it MUST NOT stay on the PR post-merge.
+        # unresolved CR-authored review threads (cr_open_blocks). The
+        # user-comment gate is NOT touched. CI is untouched EXCEPT the
+        # CR-findings StatusContext/CheckRun (`CR findings*` / `CR finding
+        # gate`), which 10-gate-filter.sh discounts from ci_pend/ci_fail when
+        # oob+disposition are both present — same signal as gate 2 (tooling
+        # 2026-08-18). Like the other out-of-band labels, it MUST NOT stay on
+        # the PR post-merge.
         if [ "$has_cr_oob" = "true" ] && { [ "$cr_pass" != true ] || [ "$cr_open_blocks" = true ]; }; then
             # PR-3 cr-out-of-band-disposition-trail: a cr-out-of-band downgrade now
             # ALWAYS requires a paired `cr-disposition:<reason>` attestation (a

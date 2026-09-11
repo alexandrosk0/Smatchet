@@ -246,12 +246,22 @@ runs:
         }
 
         # --- Override label (mirrors merge-gates.sh out-of-band pattern) -------
-        # `cr-out-of-band` lets a maintainer force-pass this gate, consistent
-        # with the tests-out-of-band / perf-out-of-band downgrade mechanism.
+        # `cr-out-of-band` + a `cr-disposition:<reason>` attestation lets a
+        # maintainer force-pass this gate (PR-3 disposition trail). The workflow
+        # re-runs on `labeled` / `unlabeled` so applying the pair is enough —
+        # no manual `gh run rerun` (tooling 2026-08-18).
         labels=$(gh api "repos/${OWNER}/${REPO}/issues/${PR}/labels" --jq '.[].name' 2>/dev/null || true)
+        pr_body=$(gh api "repos/${OWNER}/${REPO}/pulls/${PR}" --jq '.body // ""' 2>/dev/null || true)
         if printf '%s\n' "$labels" | grep -qx 'cr-out-of-band'; then
-          post success "cr-out-of-band label set — gate overridden"
-          exit 0
+          # Body match mirrors merge-gates jq (unanchored cr-disposition:<reason>)
+          # so the two layers honour the same attestation forms. Label form is
+          # the playbook default.
+          if printf '%s\n' "$labels" | grep -qE '^cr-disposition:.+' \
+             || printf '%s' "$pr_body" | grep -qiE 'cr-disposition:[[:space:]]*[^[:space:]<]'; then
+            post success "cr-out-of-band + cr-disposition set — gate overridden"
+            exit 0
+          fi
+          echo "WARN: cr-out-of-band present but no cr-disposition:<reason> label/body marker — override not honoured (PR-3)." >&2
         fi
 
         # --- Dependabot github-actions SHA bumps (auto-pass) ------------------
@@ -506,10 +516,36 @@ runs:
             # and IS terminal (nothing to review), so a broad match would wedge
             # every legitimately path-excluded PR that is not caught by the
             # selfImpOnly check above — trading a fail-open for a fail-shut.
+            #
+            # Terminal arm (postmortems 2026-08-19 / process 2026-08-30): the
+            # previous path nudged via GITHUB_TOKEN then returned non-terminal,
+            # which exhausted the poll window into an unbounded `pending` —
+            # and CodeRabbit IGNORES bot-authored `@coderabbitai review`, so the
+            # nudge could never heal. Post a TERMINAL failure naming the two
+            # sanctioned moves. Re-run triggers: CR review/comment (workflow
+            # issue_comment filter), labeled/unlabeled waiver, or a human
+            # `@coderabbitai review` comment (workflow also matches that body).
             if [ "$cr_ctx" = "SUCCESS" ] \
                && printf '%s' "$cr_desc" | grep -qi 'manual review required'; then
-              maybe_nudge_review never-reviewed
-              return 1
+              # If a human already asked, keep waiting — CR may still be working
+              # (synchronize / human-trigger comment re-runs land here).
+              human_asked=false
+              while IFS=$'\t' read -r login utype cmt; do
+                case "$utype" in Bot) continue ;; esac
+                case "$login" in *\[bot\]|github-actions*|cursor) continue ;; esac
+                if printf '%s' "$cmt" | grep -qiE '@coderabbitai[[:space:]]+(full[[:space:]]+)?review'; then
+                  human_asked=true
+                  break
+                fi
+              done < <(gh api --paginate "repos/${OWNER}/${REPO}/issues/${PR}/comments?per_page=100" \
+                        --jq '.[] | ((.user.login // "") + "\t" + (.user.type // "") + "\t" + ((.body // "") | gsub("\t"; " ") | gsub("\n"; " ")))' 2>/dev/null || true)
+              if [ "$human_asked" = true ]; then
+                echo "CR finding gate: human @coderabbitai review present — waiting for CodeRabbit on ${SHA:0:12}"
+                return 1
+              fi
+              # Keep <=140 chars (GitHub status description limit).
+              post failure "OSS <10 stars: comment '@coderabbitai review' OR labels cr-out-of-band + cr-disposition:cr-auto-review-disabled"
+              exit 0
             fi
 
             case "$cr_ctx" in

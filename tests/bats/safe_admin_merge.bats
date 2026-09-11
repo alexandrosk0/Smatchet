@@ -74,10 +74,10 @@ JSON
 
 # ----------------------------------------------------------------------------
 
-@test "--selftest passes (19/19) and dogfoods the gate" {
+@test "--selftest passes (23/23) and dogfoods the gate" {
     run bash "$SCRIPT" --selftest
     [ "$status" -eq 0 ]
-    [[ "$output" == *"PASS — safe-admin-merge --selftest (19/19)"* ]]
+    [[ "$output" == *"PASS — safe-admin-merge --selftest (23/23)"* ]]
 }
 
 @test "dedup-to-latest: older CANCELLED run with a newer SUCCESS run reads GREEN (exit 0, merge fires)" {

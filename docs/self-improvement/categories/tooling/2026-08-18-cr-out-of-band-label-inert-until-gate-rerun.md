@@ -133,3 +133,15 @@ Sequence across the three incidents, for whoever picks up the fix:
 | [#2070](https://github.com/alexandrosk0/Smatchet/pull/2070) | CR review quota exhausted | 116 watcher cycles | label + `gh run rerun 32035340446` |
 | [#2124](https://github.com/alexandrosk0/Smatchet/pull/2124) | sub-10-star, nudge unanswered | 2h10m, `GATES_TIMEOUT` | label + `gh run rerun 32190691612` |
 | [#2131](https://github.com/alexandrosk0/Smatchet/pull/2131) | sub-10-star, nudge unanswered | 5h26m | label + `gh run rerun 32221202456` (bare re-run first: no effect) |
+
+## Resolution — 2026-09-09
+
+**Status: applied.** All three proposed fixes shipped together with the OSS
+manual-trigger playbook:
+
+1. `cr-finding-gate.yml` now triggers on `labeled` / `unlabeled`.
+2. `merge-gates.d/10-gate-filter.sh` discounts `CR findings*` from `ci_pend` /
+   `ci_fail` when `cr-out-of-band` + `cr-disposition` are present.
+3. `scripts/dev/trigger-coderabbit-review.sh` + `merge-gates.md` § CodeRabbit OSS
+   manual-trigger name the human-trigger / waive moves (bot nudges retired for
+   the never-reviewed arm; terminal failure instead of unbounded pending).
