@@ -816,6 +816,11 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
         loadGroup("jira backend extras", [&] { LoadJiraBackendExtras(j, cfg, migrate); });
     }
 
+    // Hydrate extras into [0]+[1+] before the legacy-secret migration Save. LoadJiraBackendExtras
+    // leaves JSON extras in JiraBackends; Save's PrepareForPersist would otherwise treat extras[0]
+    // as the first instance and drop that site from jira_backends.
+    smatchet::jira_backends::AdoptLoadedExtras(cfg);
+
     if (!hasSetupConfig && !j.contains("read_only_mode")) {
         cfg.ReadOnlyMode = true;
     }
@@ -869,7 +874,12 @@ TrackerConfig LoadImpl(const ConfigManager::CliOverrides& cli, bool forWriteLock
 
     // Env-var + CLI overrides (applied post-disk-read), then the final post-override clamps.
     ApplyOverridesAndClamps(cli, cfg);
-    smatchet::jira_backends::AdoptLoadedExtras(cfg);
+    if (!cfg.JiraBackends.empty()) {
+        cfg.JiraBackends[0].Domain = cfg.Domain;
+        cfg.JiraBackends[0].Email = cfg.Email;
+        cfg.JiraBackends[0].ApiToken = cfg.ApiToken;
+    }
+    smatchet::jira_backends::ApplyActiveLiveFields(cfg);
 
     if (canUseCache) {
         std::lock_guard<std::mutex> lock(GetCacheMutexRef());

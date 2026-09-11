@@ -762,14 +762,16 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.JiraBackends[0].Domain = cfg.Domain;
     cfg.JiraBackends[0].Email = cfg.Email;
     cfg.JiraBackends[0].ApiToken = cfg.ApiToken;
-    cfg.JiraBackends.resize(1);
+    std::vector<JiraBackendInstance> extras;
+    extras.reserve(d.extraJiraRows.size());
     for (std::size_t i = 0; i < d.extraJiraRows.size(); ++i) {
         JiraBackendInstance inst;
         inst.Domain = d.extraJiraRows[i].domain;
         inst.Email = d.extraJiraRows[i].email;
         inst.ApiToken = d.extraJiraRows[i].token;
-        smatchet::jira_backends::AddExtra(cfg, inst);
+        extras.push_back(std::move(inst));
     }
+    smatchet::jira_backends::ReplaceExtras(cfg, extras);
     if (cfg.GitHubBaseUrl.empty()) {
         cfg.GitHubBaseUrl = "https://api.github.com";
     }
@@ -1113,8 +1115,31 @@ template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<
 } // namespace
 
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
+    const std::size_t submittedExtras = d.extraJiraRows.size();
     CopyTrackerBuffersToConfig(d, d.cfg);
     smatchet::jira_backends::ApplyActiveLiveFields(d.cfg);
+    const std::size_t acceptedExtras = d.cfg.JiraBackends.size() > 0 ? d.cfg.JiraBackends.size() - 1 : 0;
+    const std::string firstDomain = d.cfg.JiraBackends.empty() ? d.cfg.Domain : d.cfg.JiraBackends[0].Domain;
+    const std::string firstEmail = d.cfg.JiraBackends.empty() ? d.cfg.Email : d.cfg.JiraBackends[0].Email;
+    const std::string firstToken = d.cfg.JiraBackends.empty() ? d.cfg.ApiToken : d.cfg.JiraBackends[0].ApiToken;
+    CopyStringToBuffer(d.domainBuf, firstDomain);
+    CopyStringToBuffer(d.emailBuf, firstEmail);
+    CopyStringToBuffer(d.tokenBuf, firstToken);
+    d.extraJiraRows.clear();
+    for (std::size_t i = 1; i < d.cfg.JiraBackends.size(); ++i) {
+        UiDrawSession::JiraBackendEditRow row;
+        CopyStringToBuffer(row.domain, d.cfg.JiraBackends[i].Domain);
+        CopyStringToBuffer(row.email, d.cfg.JiraBackends[i].Email);
+        CopyStringToBuffer(row.token, d.cfg.JiraBackends[i].ApiToken);
+        d.extraJiraRows.push_back(row);
+    }
+    if (acceptedExtras < submittedExtras) {
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.jira_extra_rejected", "Jira site not saved"),
+            SmatchetLocalization::T("toast.jira_extra_rejected.body",
+                                    "Empty or duplicate extra Jira domains were dropped."),
+            ToastType::Warning, 2500);
+    }
     // First-run unlock: clear read-only AND latch reachability ONLY when the credentials being
     // saved are byte-for-byte the ones a "Test connection" probe returned AuthenticatedReachable
     // for this session. An empty pin means nothing was verified (or the window was reopened), so

@@ -108,6 +108,8 @@ N/A — new helper TU, no whale extraction.
 ## Deviations from plan
 
 - `PrepareForPersist` copies live Domain/Email/ApiToken onto `JiraBackends[0]` when the first instance is active, then writes `[0]` to the top-level keys. Without that, Load-mutate-Save of `Domain` (the cfg-less Jira mutation HTTP tests, and any other caller that does not touch `JiraBackends`) persisted the stale first-instance row and mutations classified as Auth. Extra-active configs still leave `[0]` unchanged so the extra overlay does not leak into the first-instance keys.
+- `AdoptLoadedExtras` runs before the Win32/Android legacy-secret migration Save, and defers `ApplyActiveLiveFields` until after env/CLI overrides. Migration Save otherwise treated JSON extras as `[0]` and dropped the first extra from `jira_backends`.
+- Views - Jira domain combo keeps blocking `ConfigManager::Save` (not `EnqueueTrackerConfig`): `JiraClient` cfg-less paths re-read `ConfigManager::Load()`, and a queued write would leave the Load cache on the previous origin through `SyncWithBackend`.
 
 ## Verification (actual)
 

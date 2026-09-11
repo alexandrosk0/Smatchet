@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <string>
+#include <vector>
 
 namespace smatchet {
 namespace jira_backends {
@@ -17,8 +18,8 @@ bool HostsMatch(const std::string& a, const std::string& b);
 void EnsureHydrated(TrackerConfig& cfg);
 
 /// After Load: `JiraBackends` currently holds JSON extras only. Prepend the first
-/// instance from live Domain/Email/ApiToken (env overrides already applied), then
-/// overlay the active instance onto those live fields.
+/// instance from live Domain/Email/ApiToken. Does not overlay the active instance
+/// onto live fields — call `ApplyActiveLiveFields` after env/CLI overrides.
 void AdoptLoadedExtras(TrackerConfig& cfg);
 
 /// When the first instance is active, copy live Domain/Email/ApiToken onto
@@ -41,6 +42,12 @@ bool AddExtra(TrackerConfig& cfg, const JiraBackendInstance& inst);
 /// Remove JiraBackends[1 + extraIndex]. Falls back to instance 0 when the removed
 /// row was active. extraIndex is 0-based among extras only.
 bool RemoveExtraAt(TrackerConfig& cfg, std::size_t extraIndex);
+
+/// Replace extras ([1+]) from `extras`. Remaps `ActiveJiraDomain` when the active
+/// extra is renamed; falls back to instance 0 if that row was removed. Returns
+/// false if any extra was rejected (empty or duplicate host). Does not overlay
+/// live Domain (Preferences Test connection probes instance 0).
+bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras);
 
 /// `"Jira"` for the first instance; `"Jira:<host>"` for an extra. Other tracker
 /// kinds use NormalizeViewsBackendKey.

@@ -364,15 +364,23 @@ void LoadJiraBackendExtras(const nlohmann::json& j, TrackerConfig& cfg, SecretMi
         if (inst.Domain.empty()) {
             continue;
         }
-#if defined(_WIN32) || defined(__ANDROID__)
+#if defined(_WIN32)
         inst.ApiToken = UnprotectSecretFieldFromConfig("token_enc", item.value("token_enc", std::string{}));
         if (inst.ApiToken.empty()) {
             inst.ApiToken = item.value("token", std::string{});
-#if defined(__ANDROID__)
+        }
+#elif defined(__ANDROID__)
+        const std::string sealed = item.value("token_enc", std::string{});
+        if (!sealed.empty()) {
+            inst.ApiToken = UnprotectSecretFieldFromConfig("token_enc", sealed);
+            if (inst.ApiToken.empty() && !item.value("token", std::string{}).empty()) {
+                migrate.LegacyPlaintext = true;
+            }
+        } else {
+            inst.ApiToken = item.value("token", std::string{});
             if (!inst.ApiToken.empty()) {
                 migrate.LegacyPlaintext = true;
             }
-#endif
         }
 #else
         inst.ApiToken = item.value("token", std::string{});

@@ -27,6 +27,13 @@ std::string NormalizeJiraHost(const std::string& domain) {
     if (slash != std::string::npos) {
         s.resize(slash);
     }
+    if (!s.empty() && s.front() == '[') {
+        const std::string::size_type close = s.find(']');
+        if (close != std::string::npos) {
+            s.resize(close + 1);
+            return ToLowerAsciiCopy(s);
+        }
+    }
     const std::string::size_type colon = s.find(':');
     if (colon != std::string::npos) {
         s.resize(colon);
@@ -64,7 +71,6 @@ void AdoptLoadedExtras(TrackerConfig& cfg) {
     for (std::size_t i = 0; i < extras.size(); ++i) {
         AddExtra(cfg, extras[i]);
     }
-    ApplyActiveLiveFields(cfg);
 }
 
 void PrepareForPersist(TrackerConfig& cfg) {
@@ -134,6 +140,38 @@ bool AddExtra(TrackerConfig& cfg, const JiraBackendInstance& inst) {
     copy.ApiToken = TrimCopyAsciiWhitespace(inst.ApiToken);
     cfg.JiraBackends.push_back(std::move(copy));
     return true;
+}
+
+bool ReplaceExtras(TrackerConfig& cfg, const std::vector<JiraBackendInstance>& extras) {
+    EnsureHydrated(cfg);
+    int activeExtra = -1;
+    if (!cfg.ActiveJiraDomain.empty() && !HostsMatch(cfg.ActiveJiraDomain, cfg.JiraBackends[0].Domain)) {
+        for (std::size_t i = 1; i < cfg.JiraBackends.size(); ++i) {
+            if (HostsMatch(cfg.JiraBackends[i].Domain, cfg.ActiveJiraDomain)) {
+                activeExtra = static_cast<int>(i - 1);
+                break;
+            }
+        }
+    }
+    cfg.JiraBackends.resize(1);
+    bool allAccepted = true;
+    for (std::size_t i = 0; i < extras.size(); ++i) {
+        if (!AddExtra(cfg, extras[i])) {
+            allAccepted = false;
+        }
+    }
+    if (activeExtra < 0) {
+        return allAccepted;
+    }
+    if (static_cast<std::size_t>(activeExtra) < extras.size()) {
+        const JiraBackendInstance* inst = FindByHost(cfg, extras[static_cast<std::size_t>(activeExtra)].Domain);
+        if (inst != nullptr) {
+            cfg.ActiveJiraDomain = inst->Domain;
+            return allAccepted;
+        }
+    }
+    cfg.ActiveJiraDomain = cfg.JiraBackends[0].Domain;
+    return allAccepted;
 }
 
 bool RemoveExtraAt(TrackerConfig& cfg, std::size_t extraIndex) {

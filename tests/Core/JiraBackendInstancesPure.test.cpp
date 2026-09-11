@@ -9,15 +9,18 @@
 #include <nlohmann/json.hpp>
 
 #include <string>
+#include <vector>
 
 using smatchet::config_detail::SanitizeHeaderBoundConfigKeys;
 using smatchet::jira_backends::AddExtra;
+using smatchet::jira_backends::AdoptLoadedExtras;
 using smatchet::jira_backends::ApplyActiveLiveFields;
 using smatchet::jira_backends::EnsureHydrated;
 using smatchet::jira_backends::HostsMatch;
 using smatchet::jira_backends::NormalizeJiraHost;
 using smatchet::jira_backends::PrepareForPersist;
 using smatchet::jira_backends::RemoveExtraAt;
+using smatchet::jira_backends::ReplaceExtras;
 using smatchet::jira_backends::SelectActive;
 using smatchet::jira_backends::TrackerCacheBackendKey;
 
@@ -29,6 +32,13 @@ TEST_CASE("NormalizeJiraHost strips scheme, path, port, and case") {
     CHECK(HostsMatch("https://a.atlassian.net/x", "A.Atlassian.Net"));
     CHECK_FALSE(HostsMatch("a.atlassian.net", "b.atlassian.net"));
     CHECK_FALSE(HostsMatch("", ""));
+}
+
+TEST_CASE("NormalizeJiraHost keeps bracketed IPv6 authority") {
+    CHECK(NormalizeJiraHost("https://[2001:db8::1]:8443/jira") == "[2001:db8::1]");
+    CHECK(NormalizeJiraHost("http://[::1]/jira") == "[::1]");
+    CHECK(HostsMatch("https://[2001:DB8::1]:443", "[2001:db8::1]"));
+    CHECK_FALSE(HostsMatch("https://[2001:db8::1]", "https://[2001:db8::2]"));
 }
 
 TEST_CASE("empty extra email/token inherit from the first instance") {
@@ -102,6 +112,57 @@ TEST_CASE("SelectActive unknown host fails; remove of active extra falls back to
     CHECK_FALSE(RemoveExtraAt(cfg, 0));
 }
 
+TEST_CASE("AdoptLoadedExtras prepends first instance so persist keeps extras") {
+    TrackerConfig cfg;
+    cfg.Domain = "first.atlassian.net";
+    cfg.Email = "a@example.com";
+    cfg.ApiToken = "tok-a";
+    JiraBackendInstance extra;
+    extra.Domain = "second.atlassian.net";
+    cfg.JiraBackends.push_back(extra);
+    AdoptLoadedExtras(cfg);
+    REQUIRE(cfg.JiraBackends.size() == 2);
+    CHECK(cfg.JiraBackends[0].Domain == "first.atlassian.net");
+    CHECK(cfg.JiraBackends[1].Domain == "second.atlassian.net");
+    CHECK(cfg.Domain == "first.atlassian.net");
+    PrepareForPersist(cfg);
+    CHECK(cfg.Domain == "first.atlassian.net");
+    REQUIRE(cfg.JiraBackends.size() == 2);
+    CHECK(cfg.JiraBackends[1].Domain == "second.atlassian.net");
+}
+
+TEST_CASE("ReplaceExtras remaps ActiveJiraDomain onto the renamed extra") {
+    TrackerConfig cfg;
+    cfg.Domain = "first.atlassian.net";
+    EnsureHydrated(cfg);
+    JiraBackendInstance extra;
+    extra.Domain = "second.atlassian.net";
+    REQUIRE(AddExtra(cfg, extra));
+    REQUIRE(SelectActive(cfg, "second.atlassian.net"));
+    JiraBackendInstance renamed;
+    renamed.Domain = "third.atlassian.net";
+    std::vector<JiraBackendInstance> extras;
+    extras.push_back(renamed);
+    REQUIRE(ReplaceExtras(cfg, extras));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "third.atlassian.net"));
+    CHECK(cfg.Domain == "second.atlassian.net");
+    extras.clear();
+    REQUIRE(ReplaceExtras(cfg, extras));
+    CHECK(HostsMatch(cfg.ActiveJiraDomain, "first.atlassian.net"));
+}
+
+TEST_CASE("ReplaceExtras rejects a duplicate extra host") {
+    TrackerConfig cfg;
+    cfg.Domain = "first.atlassian.net";
+    EnsureHydrated(cfg);
+    JiraBackendInstance dup;
+    dup.Domain = "first.atlassian.net";
+    std::vector<JiraBackendInstance> extras;
+    extras.push_back(dup);
+    CHECK_FALSE(ReplaceExtras(cfg, extras));
+    CHECK(cfg.JiraBackends.size() == 1);
+}
+
 TEST_CASE("PrepareForPersist copies live first-instance Domain onto JiraBackends 0") {
     TrackerConfig cfg;
     cfg.Domain = "old.atlassian.net";
@@ -149,6 +210,12 @@ TEST_CASE("TrackerCacheBackendKey is Jira for first and Jira:<host> for extras")
     REQUIRE(AddExtra(cfg, extra));
     REQUIRE(SelectActive(cfg, "second.atlassian.net"));
     CHECK(TrackerCacheBackendKey(cfg) == "Jira:second.atlassian.net");
+    extra.Domain = "[2001:db8::2]";
+    cfg.ActiveJiraDomain = cfg.JiraBackends[0].Domain;
+    ApplyActiveLiveFields(cfg);
+    REQUIRE(AddExtra(cfg, extra));
+    REQUIRE(SelectActive(cfg, "[2001:db8::2]"));
+    CHECK(TrackerCacheBackendKey(cfg) == "Jira:[2001:db8::2]");
     cfg.TrackerType = "Plane";
     CHECK(TrackerCacheBackendKey(cfg) == "Plane");
 }

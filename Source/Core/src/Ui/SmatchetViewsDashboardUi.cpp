@@ -1090,6 +1090,9 @@ void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d)
             const char* label = d.cfg.JiraBackends[i].Domain.c_str();
             if (ImGui::Selectable(label, selected) && !selected) {
                 if (smatchet::jira_backends::SelectActive(d.cfg, d.cfg.JiraBackends[i].Domain)) {
+                    // JiraClient cfg-less paths re-read the Load cache. A queued tracker write
+                    // leaves that cache on the previous origin until the worker drains, so sync
+                    // would talk to the old host. Blocking Save matches persist-before-sync.
                     ConfigManager::Save(d.cfg);
                     d.triggerCatalogRefetch = true;
                     app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
