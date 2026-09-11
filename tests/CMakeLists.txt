@@ -171,6 +171,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/GridLiveContext.test.cpp
         Core/TicketSyncService.test.cpp
         Core/JiraBackendInstancesPure.test.cpp
+        Core/JiraBackendInstancesPersist.test.cpp
         Core/TrackerBackendFactoryConfig.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/GridLiveContext.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/TicketSyncService.cpp"
@@ -851,6 +852,7 @@ add_executable(SmatchetTests
     Core/OfflineFieldConflictPolicy.test.cpp
     Core/ConfigManager.test.cpp
     Core/JiraBackendInstancesPure.test.cpp
+    Core/JiraBackendInstancesPersist.test.cpp
     # audit H2 — pure POSIX secret-at-rest loose-permission decision (IsLooseConfigFileMode,
     # defined in ConfigManager_PathUtils.cpp which is already linked below). No extra .cpp.
     Core/ConfigSecretFilePerms.test.cpp
