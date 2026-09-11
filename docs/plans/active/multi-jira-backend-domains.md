@@ -107,7 +107,7 @@ N/A — new helper TU, no whale extraction.
 
 ## Deviations from plan
 
-None.
+- `PrepareForPersist` copies live Domain/Email/ApiToken onto `JiraBackends[0]` when the first instance is active, then writes `[0]` to the top-level keys. Without that, Load-mutate-Save of `Domain` (the cfg-less Jira mutation HTTP tests, and any other caller that does not touch `JiraBackends`) persisted the stale first-instance row and mutations classified as Auth. Extra-active configs still leave `[0]` unchanged so the extra overlay does not leak into the first-instance keys.
 
 ## Verification (actual)
 

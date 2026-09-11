@@ -21,8 +21,11 @@ void EnsureHydrated(TrackerConfig& cfg);
 /// overlay the active instance onto those live fields.
 void AdoptLoadedExtras(TrackerConfig& cfg);
 
-/// Copy instance 0 onto Domain/Email/ApiToken so Save writes the first site at the
-/// legacy top-level keys.
+/// When the first instance is active, copy live Domain/Email/ApiToken onto
+/// JiraBackends[0] (Load-mutate-Save of those fields is the first site). Then
+/// copy instance 0 onto the live fields so Save writes the first site at the
+/// legacy top-level keys. Extra-active configs leave [0] unchanged so the extra
+/// overlay does not leak into the first-instance keys.
 void PrepareForPersist(TrackerConfig& cfg);
 
 /// Overlay Domain/Email/ApiToken with the active instance; empty extra email/token

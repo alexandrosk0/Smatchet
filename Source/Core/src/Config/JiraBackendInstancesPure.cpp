@@ -69,6 +69,13 @@ void AdoptLoadedExtras(TrackerConfig& cfg) {
 
 void PrepareForPersist(TrackerConfig& cfg) {
     EnsureHydrated(cfg);
+    const bool firstIsActive =
+        cfg.ActiveJiraDomain.empty() || HostsMatch(cfg.ActiveJiraDomain, cfg.JiraBackends[0].Domain);
+    if (firstIsActive) {
+        cfg.JiraBackends[0].Domain = cfg.Domain;
+        cfg.JiraBackends[0].Email = cfg.Email;
+        cfg.JiraBackends[0].ApiToken = cfg.ApiToken;
+    }
     cfg.Domain = cfg.JiraBackends[0].Domain;
     cfg.Email = cfg.JiraBackends[0].Email;
     cfg.ApiToken = cfg.JiraBackends[0].ApiToken;

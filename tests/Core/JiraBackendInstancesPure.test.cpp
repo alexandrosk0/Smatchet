@@ -102,6 +102,22 @@ TEST_CASE("SelectActive unknown host fails; remove of active extra falls back to
     CHECK_FALSE(RemoveExtraAt(cfg, 0));
 }
 
+TEST_CASE("PrepareForPersist copies live first-instance Domain onto JiraBackends 0") {
+    TrackerConfig cfg;
+    cfg.Domain = "old.atlassian.net";
+    cfg.Email = "old@example.com";
+    cfg.ApiToken = "tok-old";
+    EnsureHydrated(cfg);
+    cfg.Domain = "http://127.0.0.1:9";
+    cfg.Email = "loop@example.com";
+    cfg.ApiToken = "tok-loop";
+    PrepareForPersist(cfg);
+    CHECK(cfg.JiraBackends[0].Domain == "http://127.0.0.1:9");
+    CHECK(cfg.JiraBackends[0].Email == "loop@example.com");
+    CHECK(cfg.JiraBackends[0].ApiToken == "tok-loop");
+    CHECK(cfg.Domain == "http://127.0.0.1:9");
+}
+
 TEST_CASE("PrepareForPersist writes first instance onto live Domain, not the extra") {
     TrackerConfig cfg;
     cfg.Domain = "first.atlassian.net";
@@ -135,6 +151,23 @@ TEST_CASE("TrackerCacheBackendKey is Jira for first and Jira:<host> for extras")
     CHECK(TrackerCacheBackendKey(cfg) == "Jira:second.atlassian.net");
     cfg.TrackerType = "Plane";
     CHECK(TrackerCacheBackendKey(cfg) == "Plane");
+}
+
+TEST_CASE("ConfigManager Save persists live Domain when extras are absent") {
+    smatchet_tests::TestEnvGuard env;
+    TrackerConfig cfg = ConfigManager::Load();
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "http://127.0.0.1:9";
+    cfg.Email = "loop@example.com";
+    cfg.ApiToken = "tok-loop";
+    ConfigManager::Save(cfg);
+    ConfigManager::InvalidateCache();
+    const TrackerConfig out = ConfigManager::Load();
+    CHECK(out.Domain == "http://127.0.0.1:9");
+    CHECK(out.Email == "loop@example.com");
+    CHECK(out.ApiToken == "tok-loop");
+    REQUIRE_FALSE(out.JiraBackends.empty());
+    CHECK(out.JiraBackends[0].Domain == "http://127.0.0.1:9");
 }
 
 TEST_CASE("ConfigManager Save/Load extras inherit empty credentials and keep first at top-level keys") {
