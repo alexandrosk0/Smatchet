@@ -166,13 +166,23 @@ run_check() {
         # mode comes from the GIT INDEX (the 126 premise is about the tracked
         # mode; the fs bit diverges under core.fileMode=false or exec-bit-less
         # filesystems), falling back to the fs bit for untracked files — the
-        # synth selftest fixtures go through that fallback.
+        # synth selftest fixtures go through that fallback. On MSYS/Cygwin
+        # NTFS the fs bit is a shebang HEURISTIC (`[ -x ]` is true for ANY
+        # `#!` file, `chmod -x` cannot clear it), so run_selftest pins its
+        # fixtures' intended mode via SMATCHET_GATE_SELFTEST_FORCE_NONEXEC
+        # (1 = treat untracked as 100644, 0 = as 100755, unset = fs bit) —
+        # without the pin every 100644 fixture probes executable there and
+        # the raw-self-exec negatives never fire (Windows-only false red).
         # Cheap prefilter first; the awk lexer only runs on files that match.
         _mode="$(git -C "$root" ls-files --stage -- "${f#"$root"/}" 2>/dev/null | awk '{print $1; exit}')"
         case "$_mode" in
             100755) _nonexec=0 ;;
             100644) _nonexec=1 ;;
-            *) if [ -x "$f" ]; then _nonexec=0; else _nonexec=1; fi ;;
+            *) case "${SMATCHET_GATE_SELFTEST_FORCE_NONEXEC:-}" in
+                   1) _nonexec=1 ;;
+                   0) _nonexec=0 ;;
+                   *) if [ -x "$f" ]; then _nonexec=0; else _nonexec=1; fi ;;
+               esac ;;
         esac
         if [ "$_nonexec" -eq 1 ] && grep -qE -- "$SELF_EXEC_RE" "$f" && [ -n "$(_selfexec_hits "$f")" ]; then
             selfexec+=("$f")
@@ -213,6 +223,13 @@ EOF
 # adding the marker must PASS. Asserts a failure case (the marker-less branch).
 run_selftest() {
     local tmp rc=0
+    # Pin the untracked-fixture mode probe to the 100644 path — a `local` is
+    # dynamically scoped, so every run_check call below sees it and it dies
+    # with this function. On MSYS/NTFS `[ -x ]` would otherwise report every
+    # shebang fixture executable and skip the raw-self-exec rule entirely;
+    # on Linux the pin matches what the fs bit already says (byte-identical).
+    # The one 100755 fixture flips it to 0 around its check.
+    local SMATCHET_GATE_SELFTEST_FORCE_NONEXEC=1
     tmp="$(mktemp -d)" || { echo "test-gate-selftests selftest: mktemp failed" >&2; return 2; }
     trap 'rm -rf "$tmp"' RETURN
     mkdir -p "$tmp/agents/scripts/core"
@@ -380,10 +397,12 @@ SH
         printf '    --selftest) "%s" --check; exit 0 ;;\nesac\n' '$_SCRIPT_PATH'
     } > "$synth"
     chmod +x "$synth"
+    SMATCHET_GATE_SELFTEST_FORCE_NONEXEC=0
     if ! run_check "$tmp" >/dev/null 2>&1; then
         echo "test-gate-selftests selftest: FAIL — raw self-exec in an EXECUTABLE script was wrongly flagged" >&2
         rc=1
     fi
+    SMATCHET_GATE_SELFTEST_FORCE_NONEXEC=1
     chmod -x "$synth"
 
     # A SPACED redirection operand (2> /dev/null — valid shell) must also be
