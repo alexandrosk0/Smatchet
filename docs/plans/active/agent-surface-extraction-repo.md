@@ -155,10 +155,12 @@ N/A — pure docs / agentic-shell / CI-config restructure; no `Source/Core/` fil
 - **Layer release tagging / semver policy** — start with SHA pins; a tagging convention can follow once the two-repo loop has run for a while.
 
 ## Implementation log
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation — bullet per shipped commit: `<sha> · <one-line summary>`)*
+- `4f4b443d` · Phase A A1+A2+A3 squash-merged as [#2180](https://github.com/alexandrosk0/Smatchet/pull/2180) (A2 folded in from #2205). Dual-root seam, workflow indirection, worktree provisioning, consumer rewire. A1w wrappers were **not** in that squash.
+- *(this PR)* · A1w: `git mv` `test-android-openssl-failfast-bats.sh` + `test-safe-merge-bats.sh` into `agents/scripts/core/` so the Phase B seed carries them with their bats.
 
 ## Deviations from plan
-*(populated post-ship — what changed, removed, or deferred relative to the original plan, with one-line rationale per item)*
+- **3-PR → 1-PR collapse.** Planned A1 / A1w / A2 / A3 split folded: A3 rode A1, A2 squash-merged into A1 via #2205, then #2180 merged as one Phase-A PR. A1w missed that squash and ships as a follow-up so the seed still co-locates the two wrappers with their bats.
+- **A1w layer skip is android-only.** Row 8e said put both suites on the layer `CI_SKIP_RE` as "subject-under-test is host-side". `safe_merge.bats` SUT is `agents/scripts/core/safe-merge.sh` (layer); skipping it in layer CI would drop coverage. Only `test-android-openssl-failfast-bats` skips when `Source/` is absent. Host `--ci` still runs both.
 
 ## Verification (actual)
 *(populated post-ship — what was actually tested + result, passed / failed / not-run)*

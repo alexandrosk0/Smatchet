@@ -105,6 +105,12 @@ if [ "${1:-}" = "--ci" ]; then TESTALL_CI=1; shift; fi
 # block-on-any-red rework), lint-rules-bats (fixture made a genuine blank-run),
 # bucket-lane-launch-smoke-bats (stub emits a real decodable PNG).
 CI_SKIP_RE='(test-p4-dual-vcs|test-doctor|test-plan-index|test-docs|test-guard-head-drift-bats|test-guard-plan-lock-bats|test-session-registry-bats)'
+# A1w host-SUT wrapper: lives under agents/scripts/core so the layer seed carries
+# it with its bats, but the SUT is host cmake/SmatchetThirdParty.cmake. Skip only
+# when Source/ is absent (standalone layer CI). Host --ci keeps running it.
+# test-safe-merge-bats is NOT in this list: its SUT is agents/scripts/core/safe-merge.sh
+# (layer content) so it stays enrolled in both trees.
+LAYER_HOST_SUT_RE='^(test-android-openssl-failfast-bats)$'
 
 # Collect test scripts across all roots that hold them. Product/build tests
 # stay under scripts/dev/; the agentic test-* suites live under
@@ -186,6 +192,16 @@ for script in "${TESTS[@]}"; do
     # pure-logic bats that was wrongly skipped and now runs). Fail-open closed (#1774).
     script_base="${script##*/}"
     script_base="${script_base%.sh}"
+    _host_tree="${PROJECT_ROOT:-$(pwd)}"
+    if [[ "$script_base" =~ $LAYER_HOST_SUT_RE ]] && [ ! -d "$_host_tree/Source" ]; then
+        echo
+        echo "##################################################"
+        echo "# $script"
+        echo "##################################################"
+        echo "SKIPPED (layer): subject-under-test is host-side (no Source/ at $_host_tree)"
+        echo "Passed: 0  Failed: 0  Skipped: 1"
+        continue
+    fi
     if [ "$TESTALL_CI" -eq 1 ] && [[ "$script_base" =~ ^$CI_SKIP_RE$ ]]; then
         echo
         echo "##################################################"

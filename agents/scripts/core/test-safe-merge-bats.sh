@@ -2,10 +2,12 @@
 # test-safe-merge-bats.sh — bats wrapper for tests/bats/safe_merge.bats.
 #
 # Bucket A (CLI) per AGENTS.md § Verification automation. Zero manual steps.
-# Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob. Required by the
+# Auto-enrolled by scripts/dev/test-all.sh via the test-*.sh glob. Lives under
+# agents/scripts/core/ so the Phase B seed (--path agents/) carries this wrapper
+# with tests/bats/safe_merge.bats (plan A1w / row 8e). Required by the
 # orphan-bats gate (agents/scripts/core/test-orphan-bats.sh): a .bats with no
 # wrapper naming it never runs. See that bats file's header for the system under
-# test (safe-merge.sh, the non-admin merge wrapper — PR-1).
+# test (safe-merge.sh, the non-admin merge wrapper).
 #
 # Exit codes:
 #   0 — every bats test passed
