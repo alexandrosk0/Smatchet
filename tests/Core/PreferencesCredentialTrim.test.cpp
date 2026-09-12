@@ -40,6 +40,19 @@ TEST_CASE("TrimTrackerCredentialFields — strips leading + trailing whitespace 
     CHECK(cfg.GitHubRepo == "repo");
 }
 
+TEST_CASE("TrimTrackerCredentialFields — trims extra Jira backend rows") {
+    TrackerConfig cfg;
+    JiraBackendInstance extra;
+    extra.Domain = "  other.atlassian.net ";
+    extra.Email = " extra@example.com ";
+    extra.ApiToken = " tok-extra ";
+    cfg.JiraBackends.push_back(extra);
+    TrimTrackerCredentialFields(cfg);
+    CHECK(cfg.JiraBackends[0].Domain == "other.atlassian.net");
+    CHECK(cfg.JiraBackends[0].Email == "extra@example.com");
+    CHECK(cfg.JiraBackends[0].ApiToken == "tok-extra");
+}
+
 TEST_CASE("TrimTrackerCredentialFields — interior whitespace and clean values are untouched") {
     TrackerConfig cfg;
     cfg.Domain = "company.atlassian.net";

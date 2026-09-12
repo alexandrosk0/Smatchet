@@ -106,6 +106,17 @@ void SanitizeHeaderBoundConfigKeys(nlohmann::json& j) {
             *it = SanitizeConfigStringValue(it->get<std::string>());
         }
     }
+    if (j.contains("jira_backends") && j["jira_backends"].is_array()) {
+        for (auto& item : j["jira_backends"]) {
+            if (!item.is_object()) {
+                continue;
+            }
+            nlohmann::json::iterator it = item.find("domain");
+            if (it != item.end() && it->is_string()) {
+                *it = SanitizeConfigStringValue(it->get<std::string>());
+            }
+        }
+    }
 }
 
 bool EnsureDirectoryExists(const std::string& path) {

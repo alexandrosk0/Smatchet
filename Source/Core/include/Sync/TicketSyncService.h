@@ -219,4 +219,8 @@ class TicketSyncService {
 
     /// Wall-clock the current empty streak has persisted, or zero when no streak is open.
     std::chrono::milliseconds EmptyStreakElapsed() const;
+
+    /// Last Jira host stamped into the live client (empty until the first Jira sync).
+    /// Same-kind Jira→Jira domain switches recreate the client when this differs.
+    std::string lastAppliedJiraHost_;
 };

@@ -556,6 +556,17 @@ TrackerConfig MakeNonDefaultConfig() {
     c.QuickCreateCtxSelectedActors = false;
     c.QuickCreateCtxLogTail = false;
     c.QuickCreateCtxLogLines = 120; // inside the [1, 300] clamp band
+    JiraBackendInstance first;
+    first.Domain = c.Domain;
+    first.Email = c.Email;
+    first.ApiToken = c.ApiToken;
+    c.JiraBackends.push_back(first);
+    JiraBackendInstance extra;
+    extra.Domain = "other.example.atlassian.net";
+    extra.Email = "other@example.com";
+    extra.ApiToken = "rt-jira-extra-token-zzz";
+    c.JiraBackends.push_back(extra);
+    c.ActiveJiraDomain = c.Domain;
     return c;
 }
 
@@ -573,6 +584,12 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.Domain == in.Domain);
     CHECK(out.Email == in.Email);
     CHECK(out.ApiToken == in.ApiToken);
+    REQUIRE(out.JiraBackends.size() == in.JiraBackends.size());
+    CHECK(out.JiraBackends[0].Domain == in.JiraBackends[0].Domain);
+    CHECK(out.JiraBackends[1].Domain == in.JiraBackends[1].Domain);
+    CHECK(out.JiraBackends[1].Email == in.JiraBackends[1].Email);
+    CHECK(out.JiraBackends[1].ApiToken == in.JiraBackends[1].ApiToken);
+    CHECK(out.ActiveJiraDomain == in.ActiveJiraDomain);
     CHECK(out.TrackerType == in.TrackerType);
     CHECK(out.PlaneUrl == in.PlaneUrl);
     CHECK(out.PlaneWorkspaceSlug == in.PlaneWorkspaceSlug);

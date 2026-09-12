@@ -3,6 +3,7 @@
 #include "ConfigManager.h"
 #include "StringUtil.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -162,6 +163,11 @@ inline void TrimTrackerCredentialFields(TrackerConfig& cfg) {
     cfg.LinearTeamKey = TrimCopyAsciiWhitespace(cfg.LinearTeamKey);
     cfg.LinearTeamId = TrimCopyAsciiWhitespace(cfg.LinearTeamId);
     cfg.LinearWorkspaceUrl = TrimCopyAsciiWhitespace(cfg.LinearWorkspaceUrl);
+    for (std::size_t i = 0; i < cfg.JiraBackends.size(); ++i) {
+        cfg.JiraBackends[i].Domain = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].Domain);
+        cfg.JiraBackends[i].Email = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].Email);
+        cfg.JiraBackends[i].ApiToken = TrimCopyAsciiWhitespace(cfg.JiraBackends[i].ApiToken);
+    }
 }
 
 #if defined(SMATCHET_WITH_AI)

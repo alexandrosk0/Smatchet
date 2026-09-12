@@ -61,11 +61,24 @@ inline std::vector<CommentTemplate> GetDefaultAnnotateCommentTemplates() {
          "{cl}"}};
 }
 
+struct JiraBackendInstance {
+    std::string Domain;
+    std::string Email;
+    std::string ApiToken;
+};
+
 struct TrackerConfig {
     std::string DbPath = SmatchetDefaults::kDefaultDbPath;
-    std::string Domain;   // e.g., "yourcompany.atlassian.net"
-    std::string Email;    // e.g., "dev@company.com"
-    std::string ApiToken; // Your Atlassian API Token
+    std::string Domain;   // e.g., "yourcompany.atlassian.net" — live resolved origin
+    std::string Email;    // e.g., "dev@company.com" — live resolved (inherit from first if extra)
+    std::string ApiToken; // Your Atlassian API Token — live resolved (inherit from first if extra)
+
+    // Extra Jira Cloud/Server origins. Index 0 is the first instance (persisted as the
+    // top-level domain/email/token keys). [1+] are additional sites; empty Email/ApiToken
+    // inherit from [0] at resolve time. ActiveJiraDomain selects which origin Views - Jira
+    // and the live JiraClient talk to (empty = [0]).
+    std::vector<JiraBackendInstance> JiraBackends;
+    std::string ActiveJiraDomain;
 
     // Tracker Type: "Jira" or "Plane"
     std::string TrackerType = SmatchetDefaults::kDefaultBackendType;

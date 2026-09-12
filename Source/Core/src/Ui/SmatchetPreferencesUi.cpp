@@ -27,6 +27,7 @@
 // SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "JiraBackendInstancesPure.h"
 #include "EmailMaskForLog.h"
 #include "IssueDraft.h"
 #include "Logger.h"
@@ -231,9 +232,22 @@ void SmatchetUI::loadPreferencesBuffers(UiDrawSession& d) {
     if (d.preferencesBuffersLoaded) {
         return;
     }
-    CopyStringToBuffer(d.domainBuf, d.cfg.Domain);
-    CopyStringToBuffer(d.emailBuf, d.cfg.Email);
-    CopyStringToBuffer(d.tokenBuf, d.cfg.ApiToken);
+    // Prefs Domain/Email/Token always edit instance 0, not the live extra overlay.
+    const std::string firstDomain = d.cfg.JiraBackends.empty() ? d.cfg.Domain : d.cfg.JiraBackends[0].Domain;
+    const std::string firstEmail = d.cfg.JiraBackends.empty() ? d.cfg.Email : d.cfg.JiraBackends[0].Email;
+    const std::string firstToken = d.cfg.JiraBackends.empty() ? d.cfg.ApiToken : d.cfg.JiraBackends[0].ApiToken;
+    CopyStringToBuffer(d.domainBuf, firstDomain);
+    CopyStringToBuffer(d.emailBuf, firstEmail);
+    CopyStringToBuffer(d.tokenBuf, firstToken);
+    d.extraJiraRows.clear();
+    for (std::size_t i = 1; i < d.cfg.JiraBackends.size(); ++i) {
+        UiDrawSession::JiraBackendEditRow row;
+        CopyStringToBuffer(row.domain, d.cfg.JiraBackends[i].Domain);
+        CopyStringToBuffer(row.email, d.cfg.JiraBackends[i].Email);
+        CopyStringToBuffer(row.token, d.cfg.JiraBackends[i].ApiToken);
+        d.extraJiraRows.push_back(row);
+    }
+    d.extraJiraAddDomainBuf[0] = '\0';
     // No projectKeyBuf / planeProjectBuf — see SmatchetUiSession.h.
     CopyStringToBuffer(d.trackerTypeBuf, d.cfg.TrackerType);
     CopyStringToBuffer(d.planeUrlBuf, d.cfg.PlaneUrl);
@@ -346,6 +360,55 @@ int DrawTrackerBackendSelection(UiDrawSession& d) {
     return currentItem;
 }
 
+void DrawTrackerJiraExtraBackends(UiDrawSession& d) {
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_extra_sites")) {
+        ImGui::Spacing();
+        ImGui::TextUnformatted(
+            SmatchetLocalization::T("prefs.tracker.jira_extras.heading", "Additional Jira sites"));
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.tracker.jira_extras.help",
+                                   "Empty email or token inherit from the first Jira site.");
+        for (std::size_t i = 0; i < d.extraJiraRows.size(); ++i) {
+            UiDrawSession::JiraBackendEditRow& row = d.extraJiraRows[i];
+            ImGui::PushID(static_cast<int>(i));
+            ImGui::InputText("Domain", row.domain, sizeof(row.domain), ImGuiInputTextFlags_CharsNoBlank);
+            ImGui::InputTextWithHint(
+                "Email",
+                SmatchetLocalization::T("prefs.tracker.jira_extras.email_hint", "optional — defaults to first site"),
+                row.email, sizeof(row.email));
+            SmatchetSecretInputText("API Token", row.token, sizeof(row.token));
+            ImGui::SetItemTooltip("%s", SmatchetLocalization::T("prefs.tracker.jira_extras.token_hint",
+                                                                "optional — defaults to first site"));
+            if (ImGui::SmallButton(SmatchetLocalization::T("prefs.tracker.jira_extras.remove", "Remove"))) {
+                d.extraJiraRows.erase(d.extraJiraRows.begin() + static_cast<std::ptrdiff_t>(i));
+                ImGui::PopID();
+                break;
+            }
+            ImGui::PopID();
+        }
+    }
+    if (d.prefsFilter.ShowSetting("tracker.backend.jira_add_domain")) {
+        ImGui::InputTextWithHint("##JiraAddDomain", "other.atlassian.net", d.extraJiraAddDomainBuf,
+                                 sizeof(d.extraJiraAddDomainBuf), ImGuiInputTextFlags_CharsNoBlank);
+        ImGui::SameLine();
+        if (ImGui::Button(SmatchetLocalization::T("prefs.tracker.jira_extras.add", "Add Jira site"))) {
+            const std::string host = smatchet::jira_backends::NormalizeJiraHost(d.extraJiraAddDomainBuf);
+            bool dup = host.empty() || smatchet::jira_backends::HostsMatch(d.extraJiraAddDomainBuf, d.domainBuf);
+            for (std::size_t i = 0; !dup && i < d.extraJiraRows.size(); ++i) {
+                if (smatchet::jira_backends::HostsMatch(d.extraJiraAddDomainBuf, d.extraJiraRows[i].domain)) {
+                    dup = true;
+                }
+            }
+            if (!dup) {
+                UiDrawSession::JiraBackendEditRow row;
+                CopyStringToBuffer(row.domain, std::string(d.extraJiraAddDomainBuf));
+                d.extraJiraRows.push_back(row);
+                d.extraJiraAddDomainBuf[0] = '\0';
+            }
+        }
+    }
+}
+
 // One function per backend below. Every row is a ConditionalDraw descriptor: only the selected
 // backend's block draws, so the drift guard tolerates the other three never being observed. The
 // `chrome` flag suppresses headings/spacers while a search query is active — chrome has no
@@ -364,6 +427,7 @@ void DrawTrackerJiraConfig(UiDrawSession& d, bool chrome) {
     if (d.prefsFilter.ShowSetting("tracker.backend.jira_api_token")) {
         SmatchetSecretInputText("API Token", d.tokenBuf, sizeof(d.tokenBuf));
     }
+    DrawTrackerJiraExtraBackends(d);
     // No "Project Key" preference row. Project is per-operation — picked
     // via the new-issue draft picker, derived from the active view's JQL, or supplied
     // on ticket.create. The "Recently used projects" section below surfaces cached
@@ -694,6 +758,20 @@ void CopyTrackerBuffersToConfig(const UiDrawSession& d, TrackerConfig& cfg) {
     cfg.LinearTeamId = d.linearTeamIdBuf;
     cfg.LinearWorkspaceUrl = d.linearWorkspaceUrlBuf;
     SmatchetPreferencesUiDetail::TrimTrackerCredentialFields(cfg);
+    smatchet::jira_backends::EnsureHydrated(cfg);
+    cfg.JiraBackends[0].Domain = cfg.Domain;
+    cfg.JiraBackends[0].Email = cfg.Email;
+    cfg.JiraBackends[0].ApiToken = cfg.ApiToken;
+    std::vector<JiraBackendInstance> extras;
+    extras.reserve(d.extraJiraRows.size());
+    for (std::size_t i = 0; i < d.extraJiraRows.size(); ++i) {
+        JiraBackendInstance inst;
+        inst.Domain = d.extraJiraRows[i].domain;
+        inst.Email = d.extraJiraRows[i].email;
+        inst.ApiToken = d.extraJiraRows[i].token;
+        extras.push_back(std::move(inst));
+    }
+    smatchet::jira_backends::ReplaceExtras(cfg, extras);
     if (cfg.GitHubBaseUrl.empty()) {
         cfg.GitHubBaseUrl = "https://api.github.com";
     }
@@ -794,8 +872,24 @@ bool TrackerPrefsFieldsDiffer(const UiDrawSession& d) {
         d.cfg.GitHubBaseUrl.empty() ? std::string("https://api.github.com") : d.cfg.GitHubBaseUrl;
     const std::string linearBaseSaved =
         d.cfg.LinearBaseUrl.empty() ? std::string("https://api.linear.app/graphql") : d.cfg.LinearBaseUrl;
-    return d.cfg.Domain != d.domainBuf || d.cfg.Email != d.emailBuf || d.cfg.ApiToken != d.tokenBuf ||
-           ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf)) != d.cfg.TrackerType ||
+    const std::string firstDomain = d.cfg.JiraBackends.empty() ? d.cfg.Domain : d.cfg.JiraBackends[0].Domain;
+    const std::string firstEmail = d.cfg.JiraBackends.empty() ? d.cfg.Email : d.cfg.JiraBackends[0].Email;
+    const std::string firstToken = d.cfg.JiraBackends.empty() ? d.cfg.ApiToken : d.cfg.JiraBackends[0].ApiToken;
+    if (firstDomain != d.domainBuf || firstEmail != d.emailBuf || firstToken != d.tokenBuf) {
+        return true;
+    }
+    const std::size_t extraCount = d.cfg.JiraBackends.size() > 0 ? d.cfg.JiraBackends.size() - 1 : 0;
+    if (d.extraJiraRows.size() != extraCount) {
+        return true;
+    }
+    for (std::size_t i = 0; i < extraCount; ++i) {
+        const JiraBackendInstance& saved = d.cfg.JiraBackends[i + 1];
+        const UiDrawSession::JiraBackendEditRow& row = d.extraJiraRows[i];
+        if (saved.Domain != row.domain || saved.Email != row.email || saved.ApiToken != row.token) {
+            return true;
+        }
+    }
+    return ConfigManager::NormalizeViewsBackendKey(std::string(d.trackerTypeBuf)) != d.cfg.TrackerType ||
            d.cfg.PlaneUrl != d.planeUrlBuf || d.cfg.PlaneWorkspaceSlug != d.planeWorkspaceBuf ||
            d.cfg.PlaneApiKey != d.planeApiKeyBuf || githubBaseSaved != d.githubBaseUrlBuf ||
            d.cfg.GitHubPat != d.githubPatBuf || d.cfg.GitHubOwner != d.githubOwnerBuf ||
@@ -1021,7 +1115,31 @@ template <std::size_t N> void ApplyInheritFieldsBuf(char (&buf)[N], std::vector<
 } // namespace
 
 void SmatchetUI::onPreferencesSaveAndSync(AppController& app, UiDrawSession& d) {
+    const std::size_t submittedExtras = d.extraJiraRows.size();
     CopyTrackerBuffersToConfig(d, d.cfg);
+    smatchet::jira_backends::ApplyActiveLiveFields(d.cfg);
+    const std::size_t acceptedExtras = d.cfg.JiraBackends.size() > 0 ? d.cfg.JiraBackends.size() - 1 : 0;
+    const std::string firstDomain = d.cfg.JiraBackends.empty() ? d.cfg.Domain : d.cfg.JiraBackends[0].Domain;
+    const std::string firstEmail = d.cfg.JiraBackends.empty() ? d.cfg.Email : d.cfg.JiraBackends[0].Email;
+    const std::string firstToken = d.cfg.JiraBackends.empty() ? d.cfg.ApiToken : d.cfg.JiraBackends[0].ApiToken;
+    CopyStringToBuffer(d.domainBuf, firstDomain);
+    CopyStringToBuffer(d.emailBuf, firstEmail);
+    CopyStringToBuffer(d.tokenBuf, firstToken);
+    d.extraJiraRows.clear();
+    for (std::size_t i = 1; i < d.cfg.JiraBackends.size(); ++i) {
+        UiDrawSession::JiraBackendEditRow row;
+        CopyStringToBuffer(row.domain, d.cfg.JiraBackends[i].Domain);
+        CopyStringToBuffer(row.email, d.cfg.JiraBackends[i].Email);
+        CopyStringToBuffer(row.token, d.cfg.JiraBackends[i].ApiToken);
+        d.extraJiraRows.push_back(row);
+    }
+    if (acceptedExtras < submittedExtras) {
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.jira_extra_rejected", "Jira site not saved"),
+            SmatchetLocalization::T("toast.jira_extra_rejected.body",
+                                    "Empty or duplicate extra Jira domains were dropped."),
+            ToastType::Warning, 2500);
+    }
     // First-run unlock: clear read-only AND latch reachability ONLY when the credentials being
     // saved are byte-for-byte the ones a "Test connection" probe returned AuthenticatedReachable
     // for this session. An empty pin means nothing was verified (or the window was reopened), so

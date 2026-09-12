@@ -175,6 +175,8 @@ void SaveScalarFields(nlohmann::json& j, const TrackerConfig& config);
 void LoadScalarFields(const nlohmann::json& j, TrackerConfig& cfg);
 void SaveSecretsAndPurgeLegacy(nlohmann::json& j, const TrackerConfig& config);
 void LoadSecretFields(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrationFlags& migrate);
+void LoadJiraBackendExtras(const nlohmann::json& j, TrackerConfig& cfg, SecretMigrationFlags& migrate);
+void SaveJiraBackendExtras(nlohmann::json& j, const TrackerConfig& config);
 
 } // namespace config_detail
 } // namespace smatchet

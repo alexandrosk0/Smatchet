@@ -202,6 +202,7 @@ template <typename T> struct FieldDesc {
 const FieldDesc<std::string> kStringFields[] = {
     {"domain", &TrackerConfig::Domain},
     {"email", &TrackerConfig::Email},
+    {"active_jira_domain", &TrackerConfig::ActiveJiraDomain},
     {"tracker_type", &TrackerConfig::TrackerType},
     {"plane_url", &TrackerConfig::PlaneUrl},
     {"plane_workspace_slug", &TrackerConfig::PlaneWorkspaceSlug},

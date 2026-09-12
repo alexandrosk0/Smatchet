@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "JiraBackendInstancesPure.h"
 #include "ITicketSyncDeps.h"
 #include "ITrackerBackendFactory.h"
 #include "ISyncCache.h"
@@ -693,12 +694,22 @@ void TicketSyncService::SwapBackendIfTrackerChanged(const TrackerConfig& cfgCopy
         deps_.SetBackend(deps_.BackendFactory()->Create("Linear", cfgCopy));
         LOG_INFO("TicketSyncService: Switched backend to Linear.");
         backendSwapped = true;
+    } else if (trackerLower == "jira" && isCurrentlyJira) {
+        const std::string jiraHost = smatchet::jira_backends::NormalizeJiraHost(cfgCopy.Domain);
+        if (!lastAppliedJiraHost_.empty() && jiraHost != lastAppliedJiraHost_) {
+            deps_.SetBackend(deps_.BackendFactory()->Create("Jira", cfgCopy));
+            LOG_INFO("TicketSyncService: Recreated Jira client for domain '%s'.", jiraHost.c_str());
+            backendSwapped = true;
+        }
     }
+
+    lastAppliedJiraHost_ =
+        (trackerLower == "jira") ? smatchet::jira_backends::NormalizeJiraHost(cfgCopy.Domain) : std::string();
 
     // Re-stamp the cache namespace to match the requested tracker (multi-grid Slice 1b).
     // Unconditional + idempotent: also covers a context whose key was never wired (e.g. a
     // test fixture) so the first sync writes under the right namespace, not under "".
-    deps_.SetCacheBackendKey(ConfigManager::NormalizeViewsBackendKey(newTracker));
+    deps_.SetCacheBackendKey(smatchet::jira_backends::TrackerCacheBackendKey(cfgCopy));
 
     // Backend-kind switch: clear in-memory tickets so the old backend's items don't
     // linger in the grid while the new backend's first fetch is in flight. Without this,

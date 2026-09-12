@@ -7,9 +7,11 @@
 #include "Views.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
+#include "JiraBackendInstancesPure.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetToast.h"
+#include "SmatchetLocalization.h"
 #include "Ui/SmatchetDestructiveButton.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
@@ -25,6 +27,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <cstring>
 #include <cstdio>
 #include <functional>
@@ -958,6 +961,7 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
     const ViewsStore& store = ViewState.GetStoreMutable();
 
     drawViewsConnectivityBanner(app, d);
+    drawViewsJiraDomainPicker(app, d);
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
@@ -1056,6 +1060,54 @@ void SmatchetUI::drawViewsConnectivityBanner(AppController& app, UiDrawSession& 
     }
     if (jiraBanner.Kind != TrackerConnectivityBannerForUi::Level::None) {
         ImGui::Separator();
+    }
+}
+
+void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d) {
+    if (ConfigManager::NormalizeViewsBackendKey(d.cfg.TrackerType) != "Jira") {
+        return;
+    }
+    smatchet::jira_backends::EnsureHydrated(d.cfg);
+    if (d.cfg.JiraBackends.size() < 2) {
+        return;
+    }
+    int current = 0;
+    const std::string live = d.cfg.ActiveJiraDomain.empty() ? d.cfg.Domain : d.cfg.ActiveJiraDomain;
+    for (std::size_t i = 0; i < d.cfg.JiraBackends.size(); ++i) {
+        if (smatchet::jira_backends::HostsMatch(d.cfg.JiraBackends[i].Domain, live)) {
+            current = static_cast<int>(i);
+            break;
+        }
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted(SmatchetLocalization::T("views.jira_domain", "Domain"));
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(280.0f);
+    const std::string& preview = d.cfg.JiraBackends[static_cast<std::size_t>(current)].Domain;
+    if (ImGui::BeginCombo("##ViewsJiraDomain", preview.c_str())) {
+        for (std::size_t i = 0; i < d.cfg.JiraBackends.size(); ++i) {
+            const bool selected = static_cast<int>(i) == current;
+            const char* label = d.cfg.JiraBackends[i].Domain.c_str();
+            if (ImGui::Selectable(label, selected) && !selected) {
+                if (smatchet::jira_backends::SelectActive(d.cfg, d.cfg.JiraBackends[i].Domain)) {
+                    // JiraClient cfg-less paths re-read the Load cache. A queued tracker write
+                    // leaves that cache on the previous origin until the worker drains, so sync
+                    // would talk to the old host. Blocking Save matches persist-before-sync.
+                    ConfigManager::Save(d.cfg);
+                    d.triggerCatalogRefetch = true;
+                    app.SyncWithBackend(&d.cfg, &ViewState.GetStore());
+                }
+            }
+            if (selected) {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", SmatchetLocalization::T(
+                                    "views.jira_domain.help",
+                                    "Which Jira site this view talks to. Extra sites are added in Preferences → Tracker."));
     }
 }
 

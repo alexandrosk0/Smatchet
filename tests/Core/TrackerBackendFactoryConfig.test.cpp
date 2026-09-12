@@ -19,6 +19,7 @@
 
 #include "ConfigManager.h"
 #include "ITrackerBackendFactory.h"
+#include "JiraBackendInstancesPure.h"
 #include "TicketSyncService.h"
 
 #include <doctest/doctest.h>
@@ -133,6 +134,41 @@ TEST_CASE("issue #979: factory Create carries live Jira + Plane + Linear credent
     CHECK(factory->LastTrackerType == "Linear");
     CHECK(factory->LastCfg.LinearApiKey == "lin_api_xyz");
     CHECK(factory->LastCfg.LinearTeamKey == "ENG");
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("Jira same-kind host change recreates the client and stamps Jira:<host>") {
+    smatchet_tests::TestEnvGuard env;
+
+    FakeTicketSyncDeps deps;
+    auto ownedFactory = std::make_unique<RecordingTrackerBackendFactory>();
+    RecordingTrackerBackendFactory* factory = ownedFactory.get();
+    deps.Factory = std::move(ownedFactory);
+    TicketSyncService svc(deps);
+
+    ViewsStore views;
+    TrackerConfig cfg;
+    cfg.TrackerType = "Jira";
+    cfg.Domain = "first.atlassian.net";
+    cfg.Email = "a@example.com";
+    cfg.ApiToken = "tok-a";
+    smatchet::jira_backends::EnsureHydrated(cfg);
+    JiraBackendInstance extra;
+    extra.Domain = "second.atlassian.net";
+    REQUIRE(smatchet::jira_backends::AddExtra(cfg, extra));
+
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(factory->CreateCalls == 1);
+    CHECK(deps.CacheBackendKeyImpl == "Jira");
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive(); }));
+
+    REQUIRE(smatchet::jira_backends::SelectActive(cfg, "second.atlassian.net"));
+    svc.SyncWithBackend(&cfg, &views);
+    REQUIRE(factory->CreateCalls == 2);
+    CHECK(factory->LastTrackerType == "Jira");
+    CHECK(factory->LastCfg.Domain == "second.atlassian.net");
+    CHECK(deps.CacheBackendKeyImpl == "Jira:second.atlassian.net");
 
     svc.CancelAndJoinActiveStreamingSync();
 }
