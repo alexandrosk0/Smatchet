@@ -224,6 +224,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`drag-drop-md-viewer`](shipped/drag-drop-md-viewer.md) | 2026-08-21 | Plan — Open any .md file in the Plan Docs viewer (drag-and-drop + Open… dialog) |
 | [`jql-username-in-input`](shipped/jql-username-in-input.md) | 2026-08-30 | jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical |
 | [`parent-issue-hierarchy`](shipped/parent-issue-hierarchy.md) | 2026-09-06 | Plan — Parent issue hierarchy (FS parity) |
+| [`multi-jira-backend-domains`](shipped/multi-jira-backend-domains.md) | 2026-09-11 | Multiple Jira origins with inherited credentials and a Views domain picker. |
 <!-- END auto-plan-index -->
 
 ### Notes
