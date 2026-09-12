@@ -105,4 +105,37 @@ Related: [`docs/adr/0017-merge-time-snapshot-ledger.md`](../../../adr/0017-merge
 (the losslessness argument + the writer set), [`docs/agent-rules/ship-loops.md`](../../../agent-rules/ship-loops.md)
 § step 3 (the prose fourth-writer rule this entry proposes to turn into code).
 
-Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=check whether safe-merge.sh appends its own snapshot row, and re-measure the share of merged PRs with a ledger row; baseline=1 permanent hole (#2115) and 1 hand-closed hole (#2134) across 5 session merges on 2026-08-18/19; fired=never
+## Follow-up measurement — 2026-09-12 (PR #2184)
+
+Re-measured. **The entry's prediction held completely, and the hole is no longer occasional — it is
+total.**
+
+- **`safe-merge.sh` still `exec`s away.** `exec gh pr merge "$pr" --squash --auto` is still the last
+  statement (line 555, unchanged), and `grep -n 'append_merge_snapshot' agents/scripts/core/safe-merge.sh`
+  still returns nothing. Action 1 is untouched.
+- **Ledger coverage since this entry: 0%.** The newest row in
+  `docs/self-improvement/merge-snapshots.jsonl` is **#2137, 2026-08-19T13:13:10Z** — this entry's own
+  PR, hand-appended. Since that timestamp **58 PRs have merged into `develop` and 0 carry a row**
+  (152 rows total, none newer). The baseline was 1 permanent + 1 hand-closed hole across 5 session
+  merges; the measured reality is 58 for 58.
+- **Fresh instance, observed live.** PR #2184 merged 2026-09-12T12:30:00Z as `0685b5f0bbd6`, armed
+  through `safe-merge.sh` on a clean `GATES_PASSED` poll (CI 22/22, `GATE_SNAPSHOT cr_override=0
+  downgraded=`). No row was written. That snapshot line is exactly the data the ledger wants and it
+  was discarded at `exec`.
+- **The hand-append terminator is now decisively disproven.** This entry predicted that landing row N
+  opens hole N+1 and that only action 1 converges. Over 58 merges nobody hand-appended even once, so
+  the practice did not merely regress — it stopped entirely. Any future backfill is also blocked:
+  all 58 are far past `SMATCHET_JANITOR_SNAPSHOT_MAX_AGE_HOURS` (6 h), and the retro-compose
+  prohibition forbids reconstructing them. **The ledger has a permanent 58-PR hole**, an order of
+  magnitude past the 28-PR hole that
+  [`2026-08-18-merge-snapshot-ledger-28-pr-hole.md`](../process/2026-08-18-merge-snapshot-ledger-28-pr-hole.md)
+  was raised for.
+- **Consequence now visible in practice:** the #2160 gate-escape postmortem filed 2026-09-12 could
+  not recover *why* `plan-lock-out-of-band` was applied, precisely because the ledger row that would
+  have captured the override does not exist and GitHub had stripped the label 43 s after the merge.
+  That is ADR-0017's losslessness argument failing in the exact way it predicted.
+
+Suggested priority bump: **P1 → P0**. The permanent-loss rate is 100% of merges and each day adds
+irrecoverable rows.
+
+Triggered-follow-up: when=pr-count:base=develop;since=2026-08-19;n=15; action=check whether safe-merge.sh appends its own snapshot row, and re-measure the share of merged PRs with a ledger row; baseline=1 permanent hole (#2115) and 1 hand-closed hole (#2134) across 5 session merges on 2026-08-18/19; fired=2026-09-12

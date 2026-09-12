@@ -34,6 +34,50 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-09-12 · PR #2160 · `plan-lock-out-of-band` waived a red `Plan-lock gate` with no recorded reason
+
+### What escaped
+`wip(plan): agent-surface-extraction-repo` (#2160) merged 2026-09-06T04:57:59Z as `6a1a28115146`
+while `Plan-lock gate` was **failure** on head `0ec21c3a98dd` (failed 03:59:35Z). The gate is
+fail-closed and, by its own header, "unbypassable except the `plan-lock-out-of-band` label"
+(`agents/scripts/core/plan-lock-gate.sh:18`); that label was applied 2026-09-05T17:58:08Z and
+removed 2026-09-06T04:58:42Z — 43 seconds after the merge.
+
+Not an escape, recorded to close it out: `Intent section` also shows a failure on that head
+(04:41:45Z), but a newer check suite re-ran it **success** at 04:55:28Z, 2.5 minutes before the
+merge. The poller's duplicate collapse follows the newest suite, which is what GitHub evaluates, so
+the merge did not cross it.
+
+### Root cause
+The plan-lock hatch is a bare boolean: `merge-gates.d/10-gate-filter.sh:36` reads
+`($labels | any(. == "plan-lock-out-of-band")) as $planlock`, so label presence alone downgrades the
+red to WARN with no record of which lock was crossed or why that was safe. The repo already solved
+this for the sibling hatch — `cr-out-of-band` alone is explicitly NOT honoured, requiring a
+`cr-disposition:<reason>` label or body marker (`10-gate-filter.sh:76-77`) that `merge-gates.sh:1486`
+refuses to proceed without (PR-3 `cr-out-of-band-disposition-trail`). Plan-lock never got the same
+treatment. Compounding it, the same label clears three unrelated conditions (a real write-set
+overlap `:50`, an *unverifiable* lock state `:44`, an unresolvable base ref `:73`), and both places
+that could have preserved the reason fail: GitHub strips override labels post-merge, and ADR-0017's
+merge-snapshot ledger has no row for #2160 because the default merge path never writes one. The
+decision is therefore unreconstructible — this entry can say the gate was waived, but not what was
+waived or whether it was right.
+
+### Preventing gate
+Require a disposition trail for the plan-lock hatch, mirroring the shipped CR pattern: stop honouring
+`plan-lock-out-of-band` alone, and require a `plan-lock-disposition:`-prefixed label or a
+`plan-lock-disposition:<reason>` body marker naming the lock slug and the justification, with the
+`merge-gates.sh:1486` refusal as the template. Separately, split the unverifiable-lock-state
+condition onto its own token so an infra failure cannot be cleared by an operator's "I coordinated
+this" attestation. Regression case in `tests/bats/merge_gates.bats`: a bare `plan-lock-out-of-band`
+must NOT downgrade a red `Plan-lock gate`.
+
+### Eval case
+none — not agent-reviewable (a merge-gate label-contract gap in CI policy, not a defect in a diff a
+review agent could score).
+
+### Filed as
+[`categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md`](categories/process/2026-09-12-plan-lock-out-of-band-waives-the-whole-gate-with-no-disposition-trail.md)
+
 ## 2026-08-20 · PR #2148 · `reads as` user-name echo shipped non-functional in its headline flow (resolved names only from a user catalog that is empty in a supported state)
 
 ### What escaped
