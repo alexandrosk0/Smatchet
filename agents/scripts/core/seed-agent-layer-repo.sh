@@ -90,6 +90,11 @@ TARGET=""
 WORK_DIR=""
 SCANNER=""
 FAILED=0
+# PASSED counts assertions that actually ran and held. FAILED alone only proves
+# nothing failed — a phase whose loops iterate zero times would also leave it 0 —
+# so each gating phase also demands a floor of PASSED assertions before it may
+# report success (the shape-Z zero-run class test-fail-open-authoring.sh guards).
+PASSED=0
 PUBLISH_CLEARED=0
 
 usage() {
@@ -150,7 +155,15 @@ die() {
 
 say()   { printf '%s\n' "$*"; }
 head1()  { printf '\n=== %s ===\n' "$*"; }
-pass()  { printf '  PASS  %s\n' "$*"; }
+pass()  { printf '  PASS  %s\n' "$*"; PASSED=$((PASSED + 1)); }
+
+# Refuse to call a phase clean unless at least $2 assertions passed since $1.
+require_floor() {
+    local since="$1" min="$2" phase="$3"
+    if [ "$PASSED" -lt "$((since + min))" ]; then
+        die 1 "$phase ran only $((PASSED - since)) passing assertion(s), expected at least $min — refusing to report it clean"
+    fi
+}
 warn()  { printf '  WARN  %s\n' "$*"; }
 fail()  { printf '  FAIL  %s\n' "$*" >&2; FAILED=1; }
 
@@ -282,6 +295,7 @@ wrappers_for_suite() {
 
 phase2_manifest() {
     head1 "phase 2 — manifest"
+    local p0="$PASSED"
 
     local repo_root
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" \
@@ -385,6 +399,8 @@ phase2_manifest() {
     if [ "$FAILED" -ne 0 ]; then
         die 1 "manifest assertions failed — nothing was cloned, rewritten or pushed"
     fi
+    # Source tree, bats tripwire, block match, 8e, forbidden paths, pathspecs exist.
+    require_floor "$p0" 6 "phase 2"
 
     if [ "$DRY_RUN" -eq 1 ]; then
         head1 "--dry-run: stopping after phase 2"
@@ -492,6 +508,7 @@ phase4_scaffold() {
 # ---------------------------------------------------------------- phase 4b audit
 phase4b_audit() {
     head1 "phase 4b — publication audit (hard gate on the phase 5 push)"
+    local p0="$PASSED"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -576,6 +593,9 @@ phase4b_audit() {
     fi
     pass "every manifest path carries a non-PENDING verdict in docs/seed-audit.md"
 
+    # Secret scan, manifest subset, AGENTS.md prefix, verdicts. The push is
+    # irreversible, so a vacuous pass here must not unlock it.
+    require_floor "$p0" 4 "phase 4b"
     PUBLISH_CLEARED=1
     pass "publication audit CLEAR — phase 5 unlocked"
 }
@@ -628,6 +648,7 @@ phase5_publish() {
 # ---------------------------------------------------------------- phase 6 report
 phase6_report() {
     head1 "phase 6 — row-8 Accept checks"
+    local p0="$PASSED"
 
     cd "$WORK_DIR" || die 1 "cannot cd to $WORK_DIR"
 
@@ -663,6 +684,7 @@ phase6_report() {
     if [ "$FAILED" -ne 0 ]; then
         die 1 "one or more row-8 Accept checks FAILED"
     fi
+    require_floor "$p0" 3 "phase 6"
     say "Seed complete: https://github.com/$TARGET"
 }
 
