@@ -284,6 +284,31 @@ manifest_pathspecs() {
     grep -vE '^[[:space:]]*(#|$)' "$MANIFEST_SRC"
 }
 
+# The publication audit is pinned to the develop commit it swept, recorded in
+# seed-audit.md as **Audited through:** `<sha>`. Print that sha (empty if absent).
+audit_pin() {
+    # shellcheck disable=SC2016  # the backticks are literal Markdown, not a substitution
+    sed -n 's/^\*\*Audited through:\*\* `\([0-9a-f]\{7,40\}\)`.*$/\1/p' "$AUDIT_SRC"
+}
+
+# Commits in <repo> after the audit pin that touch a manifest path, one per line.
+# seed-audit.md itself is excluded: it is the audit record, and every re-audit
+# edits it, so counting it would make the audit stale by construction.
+audit_delta() {
+    local repo="$1" pin="$2"
+    local -a specs
+    mapfile -t specs < <(manifest_pathspecs)
+    git -C "$repo" log --oneline "$pin..HEAD" -- "${specs[@]}" \
+        ':(exclude)agents/scripts/core/seed-agent-layer-repo.d/docs/seed-audit.md'
+}
+
+audit_stale_help() {
+    fail "  Re-audit the delta, then move the pin:"
+    fail "    python3 agents/scripts/core/seed-audit-sweep.py --since $1"
+    fail "  Triage every new value, update the affected verdicts in seed-audit.md, and set"
+    fail "  **Audited through:** to the develop commit you swept."
+}
+
 # Wrappers under $2.. that really RUN tests/bats/$1. Mirrors test-orphan-bats.sh's
 # _is_wrapped: a bare-basename or comment-only mention must not count.
 wrappers_for_suite() {
@@ -415,6 +440,23 @@ phase2_manifest() {
         warn "no non-root AGENTS.md in the tree — the prefix claim cannot be proven by this seed"
     fi
 
+    # --- audit freshness, advisory here (phase 3 enforces it on the real clone) ---
+    local pin delta_n
+    pin="$(audit_pin)"
+    if [ -z "$pin" ]; then
+        warn "seed-audit.md has no **Audited through:** pin — phase 3 will refuse"
+    elif ! git merge-base --is-ancestor "$pin" HEAD 2>/dev/null; then
+        warn "audit pin $pin is not an ancestor of this tree's HEAD — freshness not checked here"
+    else
+        delta_n="$(audit_delta . "$pin" | wc -l)"
+        delta_n="${delta_n//[[:space:]]/}"
+        if [ "$delta_n" -eq 0 ]; then
+            pass "publication audit is current (pinned at $pin)"
+        else
+            warn "$delta_n commit(s) touched manifest paths after the audit pin $pin — phase 3 will refuse until re-audited"
+        fi
+    fi
+
     local nspec
     nspec="$(manifest_pathspecs | wc -l)"
     nspec="${nspec//[[:space:]]/}"
@@ -454,6 +496,22 @@ phase3_rewrite() {
         die 1 "clone does not match the validated revision — nothing rewritten or pushed"
     fi
     pass "clone matches the validated revision $SOURCE_SHA"
+
+    # Audit freshness, enforced on exactly what will be rewritten and published.
+    # Read-only git in the clone, so filter-repo still sees a fresh clone.
+    local pin delta
+    pin="$(audit_pin)"
+    [ -n "$pin" ] || die 1 "seed-audit.md has no **Audited through:** \`<sha>\` pin — the audit cannot be proven current"
+    git -C "$WORK_DIR" merge-base --is-ancestor "$pin" HEAD \
+        || die 1 "audit pin $pin is not an ancestor of the cloned $LAYER_BRANCH — re-audit against a develop commit"
+    delta="$(audit_delta "$WORK_DIR" "$pin")"
+    if [ -n "$delta" ]; then
+        fail "commits touched manifest paths after the publication audit (pin $pin):"
+        printf '%s\n' "$delta" | sed 's/^/          /' >&2
+        audit_stale_help "$pin"
+        die 1 "publication audit is stale — nothing rewritten or pushed"
+    fi
+    pass "publication audit is current for the cloned $LAYER_BRANCH (pin $pin)"
 
     cp "$MANIFEST_SRC" "$WORK_DIR/seed-paths.txt" || die 1 "cannot stage the manifest"
 
