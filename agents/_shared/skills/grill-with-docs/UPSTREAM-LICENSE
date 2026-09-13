@@ -1,7 +1,8 @@
 Upstream licence for the three files in this directory that are copied verbatim from
 https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs
 (SKILL.md, ADR-FORMAT.md, CONTEXT-FORMAT.md). The MIT licence requires this notice to
-accompany those copies. SMATCHET-NOTES.md is first-party and is not covered by it.
+accompany those copies. The integration-notes file beside them is first-party and is not
+covered by it.
 
 MIT License
 
