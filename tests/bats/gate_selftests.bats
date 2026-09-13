@@ -8,7 +8,10 @@
 # Covers: (1) --check passes on the real tree, (2) its own --selftest dogfoods,
 # (3) it FAILS on a synthetic pass-only exposer, (4) it PASSES once the marker is
 # added, (5) the `: n/a — <reason>` form satisfies the rule, (6) a mere mention
-# (comment / manifest string) is NOT required to carry the marker.
+# (comment / manifest string) is NOT required to carry the marker, (7) the
+# SMATCHET_GATE_SELFTEST_FORCE_NONEXEC knob overrides the fs exec bit for
+# untracked files in both directions — the mechanism the Windows (MSYS/NTFS)
+# --selftest run relies on, where `[ -x ]` is a shebang heuristic.
 
 setup() {
     REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -90,4 +93,28 @@ write_exposer() {
     run bash -c "cd '$TMPREPO' && bash '$SCRIPT' --check"
     [ "$status" -eq 2 ]
     [[ "$output" == *"zero"* ]]
+}
+
+@test "FORCE_NONEXEC=1 overrides an executable fs bit: untracked raw self-exec is flagged" {
+    # The knob run_selftest uses to pin fixture modes on MSYS/NTFS, where
+    # `[ -x ]` reports ANY shebang file executable. On Linux this asserts the
+    # override beats a REAL +x bit — same code path Windows depends on.
+    write_exposer "agents/scripts/core/raw-exec-gate.sh" \
+        "# selftest: asserts-failure" \
+        '"$_SCRIPT_PATH" --check'
+    chmod +x "$TMPREPO/agents/scripts/core/raw-exec-gate.sh"
+    run bash -c "cd '$TMPREPO' && SMATCHET_GATE_SELFTEST_FORCE_NONEXEC=1 bash '$SCRIPT' --check"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"raw self-exec"* ]]
+    [[ "$output" == *"raw-exec-gate.sh"* ]]
+}
+
+@test "FORCE_NONEXEC=0 overrides a non-executable fs bit: same untracked raw self-exec passes" {
+    write_exposer "agents/scripts/core/raw-exec-gate.sh" \
+        "# selftest: asserts-failure" \
+        '"$_SCRIPT_PATH" --check'
+    chmod -x "$TMPREPO/agents/scripts/core/raw-exec-gate.sh"
+    run bash -c "cd '$TMPREPO' && SMATCHET_GATE_SELFTEST_FORCE_NONEXEC=0 bash '$SCRIPT' --check"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PASS"* ]]
 }

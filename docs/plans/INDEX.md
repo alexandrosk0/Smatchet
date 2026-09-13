@@ -222,6 +222,7 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`fix-2110-mcp-keystroke-restart`](shipped/fix-2110-mcp-keystroke-restart.md) | 2026-08-18 | Plan — stop the MCP plugin restarting on every keystroke in Preferences (#2110) |
 | [`pre-push-refspec-scope`](shipped/pre-push-refspec-scope.md) | 2026-08-19 | Plan — pre-push stage (B) refspec scoping |
 | [`drag-drop-md-viewer`](shipped/drag-drop-md-viewer.md) | 2026-08-21 | Plan — Open any .md file in the Plan Docs viewer (drag-and-drop + Open… dialog) |
+| [`gate-selftest-msys-execbit`](shipped/gate-selftest-msys-execbit.md) | 2026-08-29 | Plan — gate-selftest MSYS exec-bit heuristic fix |
 | [`jql-username-in-input`](shipped/jql-username-in-input.md) | 2026-08-30 | jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical |
 | [`parent-issue-hierarchy`](shipped/parent-issue-hierarchy.md) | 2026-09-06 | Plan — Parent issue hierarchy (FS parity) |
 <!-- END auto-plan-index -->
