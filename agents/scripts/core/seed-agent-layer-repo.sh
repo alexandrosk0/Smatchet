@@ -96,6 +96,10 @@ FAILED=0
 # report success (the shape-Z zero-run class test-fail-open-authoring.sh guards).
 PASSED=0
 PUBLISH_CLEARED=0
+# The exact commit phase 2 validated. Phase 3 refuses a clone that resolves to
+# anything else, so the tree that is rewritten and published is the tree that was
+# checked — not whatever the remote branch happens to point at by then.
+SOURCE_SHA=""
 
 usage() {
     cat <<'USAGE'
@@ -124,20 +128,23 @@ Exit: 0 seeded (or dry-run review passed) | 1 assertion failed
 Phases:
   1 preflight   tooling on PATH, gh auth, secret scanner, target exists and is
                 empty, work-dir absent
-  2 manifest    regenerate seed-paths.txt; assert the bats-count tripwire, the 8e
+  2 manifest    pin the validated commit (manifest paths must be clean); regenerate
+                seed-paths.txt; assert the bats-count tripwire, the 8e
                 suite/wrapper co-location invariant, and that no forbidden path
                 slipped in; print the manifest.  --dry-run STOPS HERE.
-  3 rewrite     fresh clone (--no-local --no-tags --single-branch --branch develop)
-                plus git filter-repo --paths-from-file, then the paired
+  3 rewrite     fresh clone (--no-local --no-tags --single-branch --branch develop),
+                refused unless it resolves to the commit phase 2 validated; then
+                git filter-repo --paths-from-file, then the paired
                 --invert-paths scrub pass if seed-scrub-paths.txt is non-empty
   4 scaffold    write the row 9 CI files, row 10 root files, .coderabbit.yaml,
                 docs/seed-paths.txt and docs/seed-audit.md; commit
   4b audit      history-wide secret scan of the REWRITTEN history, plus assert the
                 rewritten `git ls-files` is a SUBSET of the manifest and that every
-                seeded path carries a verdict in docs/seed-audit.md. Any hit is a
-                hard stop; nothing is pushed until this is clean.
+                manifest path has exactly one CLEAR (or enforced SCRUB) verdict in
+                docs/seed-audit.md. Any hit is a hard stop; nothing is pushed until
+                this is clean.
   5 publish     hard-refuses unless 4b cleared; remote add plus push develop;
-                gh label create; setup-branch-protection.sh
+                gh label create; setup-branch-protection.sh (failure = failed seed)
   6 report      the row-8 Accept checks with PASS/FAIL and the seed SHA
 
 Human preconditions (pause exception 3 — this script does none of them):
@@ -303,6 +310,24 @@ phase2_manifest() {
     cd "$repo_root" || die 2 "cannot cd to repo root: $repo_root"
     pass "source tree: $repo_root"
 
+    # --- pin the validated revision (phase 3 binds the clone to it) ------------
+    # Everything below reads the WORKING TREE, so uncommitted edits under a
+    # manifest path (or tests/bats/, which feeds the regenerated block) would
+    # validate a tree that no commit — and therefore no clone — contains.
+    SOURCE_SHA="$(git rev-parse HEAD)" || die 2 "cannot resolve HEAD in $repo_root"
+    local -a pin_specs
+    mapfile -t pin_specs < <(manifest_pathspecs)
+    local dirty
+    dirty="$(git status --porcelain --untracked-files=all -- "${pin_specs[@]}" tests/bats/)"
+    if [ -z "$dirty" ]; then
+        pass "validating committed revision $SOURCE_SHA (manifest paths clean)"
+    elif [ "$DRY_RUN" -eq 1 ]; then
+        warn "uncommitted changes under manifest paths — this dry run validates the working tree, not $SOURCE_SHA"
+    else
+        printf '%s\n' "$dirty" | sed 's/^/          /' >&2
+        die 1 "uncommitted changes under manifest paths — commit or discard them; the seed publishes a commit, not a working tree"
+    fi
+
     # --- regenerate the bats block and diff it against the committed manifest ---
     local regen committed
     regen="$(mktemp)" || die 2 "mktemp failed"
@@ -419,6 +444,16 @@ phase3_rewrite() {
         "$SOURCE_URL" "$WORK_DIR" \
         || die 1 "clone failed"
     pass "fresh clone of $LAYER_BRANCH (--no-local --no-tags --single-branch)"
+
+    local clone_sha
+    clone_sha="$(git -C "$WORK_DIR" rev-parse HEAD)" || die 1 "cannot resolve the clone's HEAD"
+    if [ "$clone_sha" != "$SOURCE_SHA" ]; then
+        fail "remote $LAYER_BRANCH is at $clone_sha, but phase 2 validated $SOURCE_SHA."
+        fail "  Run the seed from a checkout of the exact origin/$LAYER_BRANCH tip (git pull --ff-only),"
+        fail "  so the tree that gets published is the tree that was checked."
+        die 1 "clone does not match the validated revision — nothing rewritten or pushed"
+    fi
+    pass "clone matches the validated revision $SOURCE_SHA"
 
     cp "$MANIFEST_SRC" "$WORK_DIR/seed-paths.txt" || die 1 "cannot stage the manifest"
 
@@ -572,26 +607,63 @@ phase4b_audit() {
         die 1 "prefix assertion failed — nothing pushed"
     fi
 
-    # 4. every seeded path carries a CLEARED verdict in docs/seed-audit.md.
-    #    Presence alone is too weak: the generated table starts every row PENDING,
-    #    so a presence-only check would wave through a completely un-audited seed.
-    local unverdicted=0 row
+    # 4. every manifest path has EXACTLY ONE manifest-row verdict, and it is one
+    #    this script can honour. Rejecting only PENDING was too weak: a SCRUB row
+    #    nobody applied, an EXCLUDE row for a path still being seeded, a typo, or
+    #    duplicate rows would all have unlocked the push.
+    #      CLEAR   publishes as-is
+    #      SCRUB   must be listed in seed-scrub-paths.txt AND gone from the rewrite
+    #      EXCLUDE contradicts the path being in the manifest -> refuse
+    #      PENDING not audited -> refuse; anything else is malformed -> refuse
+    local bad_verdict=0 cells nrows verdict
+    local scrub_list="$SCAFFOLD_DIR/seed-scrub-paths.txt"
     while IFS= read -r spec; do
-        row="$(grep -F "| \`$spec\` |" docs/seed-audit.md)"
-        if [ -z "$row" ]; then
-            fail "no row in docs/seed-audit.md for: $spec"
-            unverdicted=1
-        elif printf '%s' "$row" | grep -q 'PENDING'; then
-            fail "publication verdict still PENDING for: $spec"
-            unverdicted=1
+        # Manifest rows only: first cell numeric, second cell the backticked path.
+        cells="$(awk -F'|' -v want="\`$spec\`" '
+            {
+                n = $2; p = $3; v = $4
+                gsub(/^[ \t]+|[ \t]+$/, "", n); gsub(/^[ \t]+|[ \t]+$/, "", p)
+                gsub(/^[ \t]+|[ \t]+$/, "", v)
+                if (n ~ /^[0-9]+$/ && p == want) print v
+            }' docs/seed-audit.md)"
+        nrows="$(printf '%s' "$cells" | grep -c .)"
+        if [ "$nrows" -ne 1 ]; then
+            fail "docs/seed-audit.md has $nrows manifest row(s) for $spec — need exactly 1"
+            bad_verdict=1
+            continue
         fi
+        verdict="${cells//\`/}"
+        case "$verdict" in
+            CLEAR) ;;
+            SCRUB)
+                if [ ! -f "$scrub_list" ] || ! grep -qxF "$spec" "$scrub_list"; then
+                    fail "$spec is SCRUB in the audit but not listed in seed-scrub-paths.txt"
+                    bad_verdict=1
+                elif [ -n "$(git log --all --oneline -- "$spec")" ]; then
+                    fail "$spec is SCRUB in the audit but still has history in the rewrite"
+                    bad_verdict=1
+                fi
+                ;;
+            EXCLUDE)
+                fail "$spec is EXCLUDE in the audit but still in seed-paths.txt — remove it from the manifest"
+                bad_verdict=1
+                ;;
+            PENDING)
+                fail "publication verdict still PENDING for: $spec"
+                bad_verdict=1
+                ;;
+            *)
+                fail "malformed verdict '$verdict' for $spec (expected CLEAR, SCRUB, EXCLUDE or PENDING)"
+                bad_verdict=1
+                ;;
+        esac
     done < <(manifest_pathspecs)
-    if [ "$unverdicted" -ne 0 ]; then
-        fail "Read each path AND its history (git log -p --follow <path>) and record"
-        fail "CLEAR / SCRUB / EXCLUDE in docs/seed-audit.md. Publishing is one-way."
+    if [ "$bad_verdict" -ne 0 ]; then
+        fail "Every manifest path needs exactly one CLEAR or enforced SCRUB verdict in"
+        fail "docs/seed-audit.md, from a read of the path AND its history. Publishing is one-way."
         die 1 "publication audit incomplete — nothing pushed"
     fi
-    pass "every manifest path carries a non-PENDING verdict in docs/seed-audit.md"
+    pass "every manifest path has exactly one CLEAR or enforced SCRUB verdict"
 
     # Secret scan, manifest subset, AGENTS.md prefix, verdicts. The push is
     # irreversible, so a vacuous pass here must not unlock it.
@@ -635,13 +707,20 @@ phase5_publish() {
         warn "layer project.config.json not resolvable — labels not created"
     fi
 
-    if [ -f "$WORK_DIR/agents/scripts/core/setup-branch-protection.sh" ]; then
-        PC_CONFIG_FILE="$layer_cfg" \
-            bash "$WORK_DIR/agents/scripts/core/setup-branch-protection.sh" --repo "$TARGET" \
-            || warn "setup-branch-protection.sh returned non-zero — apply protection by hand"
-        pass "branch protection attempted from the layer's required_contexts"
+    # Branch protection is part of the seed contract, so failing to apply it is a
+    # failed seed, not a warning: the push has already happened, and "Seed complete"
+    # over an unprotected branch would be a lie. setup-branch-protection.sh takes
+    # its target from $REPO and its config from $SMATCHET_BP_CONFIG — it has no
+    # --repo flag and does not read PC_CONFIG_FILE, so both are passed explicitly.
+    local bp="$WORK_DIR/agents/scripts/core/setup-branch-protection.sh"
+    if [ ! -f "$bp" ]; then
+        fail "setup-branch-protection.sh is missing from the seed — $TARGET/$LAYER_BRANCH is pushed but UNPROTECTED"
+    elif REPO="$TARGET" SMATCHET_BP_CONFIG="$layer_cfg" bash "$bp"; then
+        pass "branch protection applied to $TARGET/$LAYER_BRANCH from the layer's required_contexts"
     else
-        warn "setup-branch-protection.sh not present in the seed — apply protection by hand"
+        fail "branch protection NOT applied — $TARGET/$LAYER_BRANCH is pushed but UNPROTECTED."
+        fail "  Fix the cause, then from the seeded clone:"
+        fail "    REPO=$TARGET bash agents/scripts/core/setup-branch-protection.sh"
     fi
 }
 
@@ -682,7 +761,7 @@ phase6_report() {
     head1 "seed SHA: $sha"
 
     if [ "$FAILED" -ne 0 ]; then
-        die 1 "one or more row-8 Accept checks FAILED"
+        die 1 "seed NOT complete — one or more checks FAILED above (publish or row-8 Accept)"
     fi
     require_floor "$p0" 3 "phase 6"
     say "Seed complete: https://github.com/$TARGET"

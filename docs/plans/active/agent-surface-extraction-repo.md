@@ -159,8 +159,8 @@ N/A — pure docs / agentic-shell / CI-config restructure; no `Source/Core/` fil
 - `78ff9130` · **A1w** shipped as [#2210](https://github.com/alexandrosk0/Smatchet/pull/2210): `git mv` `test-android-openssl-failfast-bats.sh` + `test-safe-merge-bats.sh` into `agents/scripts/core/` so the Phase B seed carries them with their bats.
 - *(this PR)* · **Phase B rows 8–10d, authoring only** — everything that does not require the layer repo to exist. Rows 9 (layer CI) and 11–16 (Phase C flip) untouched; the human preconditions (repo creation, `git-filter-repo`, CodeRabbit install, bump PAT) are outstanding and are pause-exception-3 actions.
   - `agents/scripts/core/seed-agent-layer-repo.sh` — the row-8f six-phase seed script. Deliberately **not** `test-*.sh` (`test-all.sh`'s glob would auto-enrol a destructive cross-repo seed into CI).
-  - `agents/scripts/core/seed-agent-layer-repo.d/seed-paths.txt` — the committed allowlist manifest / audit trail. 75 pathspecs: 13 structural + a **generated** 62-line bats block (`grep -l 'agents/' tests/bats/*.bats | sort`).
-  - `agents/scripts/core/seed-agent-layer-repo.d/seed-audit.md` — generated per-path publication-verdict table, all rows `PENDING`.
+  - `agents/scripts/core/seed-agent-layer-repo.d/docs/seed-paths.txt` — the committed allowlist manifest / audit trail. 75 pathspecs: 13 structural + a **generated** 62-line bats block (`grep -l 'agents/' tests/bats/*.bats | sort`).
+  - `agents/scripts/core/seed-agent-layer-repo.d/docs/seed-audit.md` — generated per-path publication-verdict table, all rows `PENDING`.
   - `agents/scripts/core/seed-agent-layer-repo.d/{README.md,LICENSE,project.config.json}` — the row 10c/10d layer root files.
   - `project.config.schema.json` — the row-10a loosening (host-side, as the plan specifies).
 
