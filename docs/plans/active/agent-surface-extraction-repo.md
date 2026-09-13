@@ -155,15 +155,53 @@ N/A — pure docs / agentic-shell / CI-config restructure; no `Source/Core/` fil
 - **Layer release tagging / semver policy** — start with SHA pins; a tagging convention can follow once the two-repo loop has run for a while.
 
 ## Implementation log
-- `4f4b443d` · Phase A A1+A2+A3 squash-merged as [#2180](https://github.com/alexandrosk0/Smatchet/pull/2180) (A2 folded in from #2205). Dual-root seam, workflow indirection, worktree provisioning, consumer rewire. A1w wrappers were **not** in that squash.
-- *(this PR)* · A1w: `git mv` `test-android-openssl-failfast-bats.sh` + `test-safe-merge-bats.sh` into `agents/scripts/core/` so the Phase B seed carries them with their bats.
+- `4f4b443d` · **Phase A** A1+A2+A3 squash-merged as [#2180](https://github.com/alexandrosk0/Smatchet/pull/2180) (A2 folded in from #2205). Dual-root seam, workflow indirection, worktree provisioning, consumer rewire. A1w wrappers were **not** in that squash.
+- `78ff9130` · **A1w** shipped as [#2210](https://github.com/alexandrosk0/Smatchet/pull/2210): `git mv` `test-android-openssl-failfast-bats.sh` + `test-safe-merge-bats.sh` into `agents/scripts/core/` so the Phase B seed carries them with their bats.
+- *(this PR)* · **Phase B rows 8–10d, authoring only** — everything that does not require the layer repo to exist. Rows 9 (layer CI) and 11–16 (Phase C flip) untouched; the human preconditions (repo creation, `git-filter-repo`, CodeRabbit install, bump PAT) are outstanding and are pause-exception-3 actions.
+  - `agents/scripts/core/seed-agent-layer-repo.sh` — the row-8f six-phase seed script. Deliberately **not** `test-*.sh` (`test-all.sh`'s glob would auto-enrol a destructive cross-repo seed into CI).
+  - `agents/scripts/core/seed-agent-layer-repo.d/seed-paths.txt` — the committed allowlist manifest / audit trail. 75 pathspecs: 13 structural + a **generated** 62-line bats block (`grep -l 'agents/' tests/bats/*.bats | sort`).
+  - `agents/scripts/core/seed-agent-layer-repo.d/seed-audit.md` — generated per-path publication-verdict table, all rows `PENDING`.
+  - `agents/scripts/core/seed-agent-layer-repo.d/{README.md,LICENSE,project.config.json}` — the row 10c/10d layer root files.
+  - `project.config.schema.json` — the row-10a loosening (host-side, as the plan specifies).
 
 ## Deviations from plan
-- **3-PR → 1-PR collapse.** Planned A1 / A1w / A2 / A3 split folded: A3 rode A1, A2 squash-merged into A1 via #2205, then #2180 merged as one Phase-A PR. A1w missed that squash and ships as a follow-up so the seed still co-locates the two wrappers with their bats.
-- **A1w layer skip is android-only.** Row 8e said put both suites on the layer `CI_SKIP_RE` as "subject-under-test is host-side". `safe_merge.bats` SUT is `agents/scripts/core/safe-merge.sh` (layer); skipping it in layer CI would drop coverage. Only `test-android-openssl-failfast-bats` skips when `Source/` is absent. Host `--ci` still runs both.
+- **Phase A: 3 PRs → 1.** Planned as A1 / A2 / A3. A3's write set was already bound to A1's branch **plan-lock**, so A3 rode A1 rather than opening its own PR; A2 was then merged **into that same branch** as [#2205](https://github.com/alexandrosk0/Smatchet/pull/2205); the combined branch squash-merged as the single Phase-A PR [#2180](https://github.com/alexandrosk0/Smatchet/pull/2180).
+- **A1w deferred out of A1.** Row 8e specified the two wrapper `git mv`s as part of Phase A, but they missed #2180's squash. Shipped separately as [#2210](https://github.com/alexandrosk0/Smatchet/pull/2210) so the Phase B seed still co-locates both wrappers with their bats. **Closed** — verified live: the row-8e invariant now holds for all 62 moved suites (seed script phase 2, dry run below).
+- **A1w layer skip is android-only.** Row 8e said put both suites on the layer `CI_SKIP_RE` as "subject-under-test is host-side". `safe_merge.bats`'s SUT is `agents/scripts/core/safe-merge.sh` (layer); skipping it in layer CI would drop coverage. Only `test-android-openssl-failfast-bats` skips when `Source/` is absent. Host `--ci` still runs both.
+- **Bats count is 62, not 61.** Rows 8/8c/8f say "expect 61 lines" — a measurement taken 2026-08-29. The layer-coupled set is **62** today and will keep drifting. The seed script therefore treats the count as a **tripwire constant** (`EXPECTED_BATS_COUNT`), not a hardcoded truth: a mismatch fails phase 2 with "do NOT just bump the constant — re-audit the new suite's wrapper co-location (8e) first", which is exactly the hole row 8e asks to keep shut. Manifest and constant are both 62.
+- **The `historical-review-sweep.js` scrub pass is unnecessary.** Row 8 names `agents/scripts/core/historical-review-sweep.js` as a path needing a paired `--invert-paths` pass. The file actually lives at `agents/project/workflows/historical-review-sweep.js`, and `agents/project/` is already excluded wholesale by the allowlist — so it never enters the rewrite. The scrub machinery is kept wired (driven by an optional `seed-scrub-paths.txt`, empty today) so a future audit verdict needs a manifest line rather than a code change; the decision is recorded as an `EXCLUDE` row in `seed-audit.md` so it is not re-proposed.
+- **`agents/README.md` is excluded.** It sits directly under `agents/`, inside none of the four allowed subtrees, and its prose is host-specific. Recorded as an explicit `EXCLUDE` decision in `seed-audit.md` rather than left as a silent omission.
+- **`--dry-run` preflight is report-only.** Row 8f's phase table implies the phase-1 probes hard-exit (2 tooling missing / 3 target not empty). Under `--dry-run` they print `WARN` and continue instead, because a dry run's job is to validate the manifest *before* the human preconditions are met — which is the only window it is useful in. A real run keeps the exact 2/3 semantics.
+- **Phase 4b rejects `PENDING`, not just absence.** Row 8f asks phase 4b to check "every seeded path carries a verdict in `docs/seed-audit.md`". A presence-only check would pass the generated table, whose rows all start `PENDING` — i.e. it would wave through a completely un-audited seed. The check reads the verdict cell and fails on `PENDING`.
+- **Row 9 assets gate phase 4, by design.** Rows 9/11–16 are out of this PR's scope, so the row-9 CI files and `.coderabbit.yaml` do not exist yet. Phase 4 enumerates them and hard-fails naming row 9, rather than scaffolding a public repo with no gates. The script is complete in shape and its phases 1–2 are proven; phases 3–6 cannot run until row 9 lands **and** the repo exists.
+- **Schema loosening adds one property, not two.** Row 10a's rationale prose is attached as a `description` on the new `allOf` entry rather than as a sibling `_doc_profile` key, so the top-level `additionalProperties: false` surface grows by exactly `profile`.
 
 ## Verification (actual)
-*(populated post-ship — what was actually tested + result, passed / failed / not-run)*
+Phase A is shipped; Phase B is **authored only** — nothing in Phase B has been executed against a real repo, and the rows below say so explicitly rather than implying coverage that does not exist.
+
+| # | Check | Command | Result |
+|---|---|---|---|
+| 1 | Seed script shellcheck-clean | `shellcheck -S style agents/scripts/core/seed-agent-layer-repo.sh` | **PASS** — clean at `style` severity |
+| 2 | `--help` exits 0 | `bash …/seed-agent-layer-repo.sh --help` | **PASS** — rc 0 |
+| 3 | Usage contract → exit 2 | no `--target`; `--target bogus`; unknown flag | **PASS** — rc 2 on all three |
+| 4 | Flag parity | `--target X` and `--target=X` both accepted | **PASS** |
+| 5 | Live `--dry-run` (phases 1–2) | `bash …/seed-agent-layer-repo.sh --target alexandrosk0/the-unwilling-agentic-bunch --dry-run` | **PASS** — rc 0; preflight correctly WARNs on the four unmet human preconditions |
+| 6 | Bats-count tripwire | phase 2 | **PASS** — 62 = 62 |
+| 7 | Manifest ↔ regenerated bats block | phase 2 `diff` | **PASS** — identical |
+| 8 | **Row 8e wrapper co-location** | phase 2, over all 62 moved suites | **PASS** — every suite's wrapper is layer-side; A1w's two ex-offenders confirmed closed |
+| 9 | No forbidden host-only path in manifest | phase 2 | **PASS** — 0 hits across 8 forbidden prefixes |
+| 10 | Every manifest pathspec exists | phase 2 | **PASS** — 75/75 |
+| 11 | `AGENTS.md` prefix claim is *testable* | phase 2 | **PASS** — 5 non-root leaf `AGENTS.md` present that the prefix must leave host-side. The claim itself is asserted post-rewrite in phase 4b — **NOT-RUN** (needs the rewrite) |
+| 12 | Host config still validates, unchanged | `jsonschema` Draft7 vs the loosened schema | **PASS** |
+| 13 | Layer config validates | same | **PASS** |
+| 14 | Loosening is **additive** (4 negatives) | product-implicit w/o `build`; `profile:product` w/o `perf`; agent-layer w/ malformed `build`; unknown `profile` enum | **PASS** — all four correctly REJECTED |
+| 15 | Row-10 Accept: no-deps gate | `PC_CONFIG_FILE=<layer>/project.config.json bash scripts/dev/project-config.sh` | **PASS** — rc 0, `PC_BUILD_PRESETS=''` |
+| 16 | 10b: loosening is load-bearing, not schema-absence | same, with `PC_SCHEMA_FILE` pinned to the **pre-change** schema | **PASS** — old schema rejects with `missing required key(s): build, perf`; loosened schema passes |
+| 17 | Shell-lint 9-rule gate | `bash agents/scripts/core/test-shell-lint.sh` | **PASS** |
+| 18 | Lint / doc / plan gates | `test-lint-rules.sh --diff origin/develop`, `test-docs.sh`, `plan-lock-gate.sh` | **PASS** |
+| 19 | Seed phases 3–6 (clone, rewrite, scaffold, audit, push, Accept checks) | — | **NOT-RUN** — blocked on the four human preconditions **and** on row 9 |
+| 20 | Layer CI lanes green on the seed commit (row 9 Accept) | — | **NOT-RUN** — row 9 not started |
+| 21 | Per-path publication audit | `docs/seed-audit.md` | **NOT-RUN** — 0 of 75 rows cleared; all `PENDING`. Phase 4b blocks the push until they are read |
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

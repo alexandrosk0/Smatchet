@@ -1,0 +1,109 @@
+{
+  "$schema": "./project.config.schema.json",
+  "_doc": "the-unwilling-agentic-bunch — the agent layer's OWN project.config.json. The repo is its own first consumer: standalone CI runs the framework's gates on the framework itself with PROJECT_ROOT=$AGENT_LAYER_ROOT. This file is the reference example for a NO-PRODUCT-CODE consumer; a consumer with product code additionally fills `build` and `perf` and drops `profile` (or sets it to \"product\"). || SCHEMA: no project.config.schema.json ships beside this file, so project-config.sh's no-deps required-key gate is inert here by construction (it catches FileNotFoundError and passes). That is NOT the layer's escape hatch — schema validation for this file is a HOST-side responsibility, run in the host's doc-validation.yml and agent-layer-integration.yml, the only lanes where both trees coexist. Do not set PC_SCHEMA_FILE here. || project.literals DELIBERATELY OMITS the host product name. test-portable-purity.sh reads exactly this list as its denylist; seeding it with the host's literals would fail the layer's own purity gate on prose that has not been de-Smatchet-ified yet, which is an explicit plan non-goal. This is a DEFERRAL, NOT AN EXEMPTION: with the host name off this denylist the layer-side gate can never see residual host literals in public prose, so the compensating check lives host-side in agent-layer-integration.yml (plan row 12b) — the only lane with both trees checked out — re-running the same scan over agent-layer/'s tracked files against the HOST's project.literals, WARN-only against a committed layer-side baseline that ratchets down. Until row 12b lands, the hole is open and tracked. || lint.zones are scoped to the moved tree: no product source exists here, so the strict zone is the gate scripts and the light zone is the prose surface. || merge_gates.override_labels deliberately omits plan-lock-out-of-band: there is no docs/plans/ in the layer, so there is no plan-lock gate to override.",
+
+  "profile": "agent-layer",
+
+  "project": {
+    "name": "the-unwilling-agentic-bunch",
+    "env_prefix": "AGENTLAYER",
+    "literals": [
+      "AGENTLAYER",
+      "the-unwilling-agentic-bunch"
+    ]
+  },
+
+  "lint": {
+    "zones": {
+      "strict": [
+        "agents/scripts/core/",
+        "agents/scripts/project/"
+      ],
+      "light": [
+        "agents/core/",
+        "agents/_shared/",
+        "docs/agent-rules/",
+        "docs/harness/"
+      ],
+      "exempt": [
+        "tests/bats/"
+      ]
+    },
+    "rules": [
+      "deviation-overdue"
+    ],
+    "deviation_keyword": "AGENTLAYER_DEVIATION",
+    "baseline": "docs/high-integrity/baseline.md"
+  },
+
+  "vcs": {
+    "primary": "git",
+    "protected_branches": []
+  },
+
+  "branch_protection": {
+    "_doc": "required_contexts must name EXACTLY the job names the row-9 lanes emit UNCONDITIONALLY. test-required-context-parity.sh asserts that; a context named here that a lane emits behind an `if:` wedges every layer PR forever.",
+    "branch": "develop",
+    "required_contexts": [
+      "Agentic self-tests (bats)",
+      "Shell lint (shellcheck)",
+      "Doc anchors + agent contract"
+    ],
+    "required_checks_app_id": null,
+    "required_review_count": 0,
+    "enforce_admins": false,
+    "strict": false,
+    "required_conversation_resolution": true,
+    "dismiss_stale_reviews": false,
+    "require_code_owner_reviews": false,
+    "require_last_push_approval": false,
+    "required_linear_history": false,
+    "allow_force_pushes": false,
+    "allow_deletions": false,
+    "block_creations": false,
+    "lock_branch": false,
+    "allow_fork_syncing": true
+  },
+
+  "ci": {
+    "path_filters": {
+      "code_globs": [
+        "agents/scripts/**",
+        "scripts/dev/**",
+        "tests/bats/**"
+      ],
+      "docs_ignore": [
+        "**/*.md",
+        "LICENSE"
+      ]
+    }
+  },
+
+  "merge_gates": {
+    "cr_bot_logins": [
+      "coderabbitai[bot]",
+      "coderabbitai"
+    ],
+    "override_labels": [
+      "tests-out-of-band",
+      "cr-out-of-band",
+      "bugbot-out-of-band",
+      "intent-out-of-band"
+    ]
+  },
+
+  "harness": {
+    "discovery_mode": "flat-symlink",
+    "supported": [
+      "claude-code",
+      "codex",
+      "cursor",
+      "pi"
+    ]
+  },
+
+  "agents": {
+    "_doc": "enabled_project is empty: agents/project/** is project-scoped by construction and is NOT seeded into the public layer (seed-paths.txt enumerates the four portable subtrees rather than a bare agents/ prefix, precisely so agents/project/ cannot ride along).",
+    "enabled_project": []
+  }
+}
