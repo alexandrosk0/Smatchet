@@ -1,8 +1,9 @@
 # `seed-audit.md` — per-path publication verdict
 
 > Companion to [`seed-paths.txt`](seed-paths.txt). `seed-agent-layer-repo.sh` phase 4b refuses the
-> phase-5 push unless **every** manifest pathspec has a row here whose verdict is not `PENDING`, and
-> phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
+> phase-5 push unless **every** manifest pathspec has **exactly one** row in § Manifest rows whose
+> verdict is `CLEAR`, or `SCRUB` that is both listed in `seed-scrub-paths.txt` and gone from the
+> rewrite. Phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
 
 **Audited through:** `2246ffeee52dc514e9f11c477f79c24f6c5c13bc` — every commit reachable from this develop commit that touches a
 manifest path. Anything later is unaudited until re-swept (`seed-audit-sweep.py --since <pin>`).
@@ -18,9 +19,9 @@ the leak.
 | Verdict | Meaning |
 |---|---|
 | `CLEAR` | Head **and** history checked; nothing project-internal, nothing secret, nothing un-republishable. Publishes as-is. |
-| `SCRUB` | Publishes only after a paired `git filter-repo --invert-paths` / `--replace-text` pass. Add the path to `seed-scrub-paths.txt`; phase 3 applies it. |
-| `EXCLUDE` | Never publishes. Must not appear in `seed-paths.txt` at all — an `EXCLUDE` row here is a **design note**, recording a decision so it is not re-proposed. |
-| `PENDING` | Not cleared. **Blocks the push** — phase 4b treats `PENDING` as no verdict. A `PENDING` row that names a decision (**D1**) is audited but waiting on the owner. |
+| `SCRUB` | Publishes only after a paired `git filter-repo --invert-paths` pass. Add the path to `seed-scrub-paths.txt`; phase 3 applies it, and phase 4b refuses unless the path is then absent from the rewritten history. |
+| `EXCLUDE` | Never publishes, so it must not appear in `seed-paths.txt`. Phase 4b refuses an `EXCLUDE` verdict on a manifest row as a contradiction. Here it appears only in § Decisions already taken, as a **design note** recording a decision so it is not re-proposed. |
+| `PENDING` | Not cleared. **Blocks the push.** A `PENDING` row that names a decision (**D1**) is audited but waiting on the owner. Any other verdict text, a missing row, or a duplicate row also blocks. |
 
 ## Method
 
