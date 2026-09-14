@@ -221,6 +221,8 @@ Phase A is shipped; Phase B is **authored only** — nothing in Phase B has been
 | 28 | `PASSED` floors (#2217) | `require_floor` extracted; `test-fail-open-authoring.sh` | **PASS** — a 2-of-6 phase refuses (rc 1), a 6-of-6 phase passes; fail-open gate PASS over 351 scripts |
 | 29 | Validated-revision pin (#2217) | `--dry-run` with the script itself uncommitted | **PASS** — WARNs that the dry run validates the working tree, not `HEAD`. The phase-3 clone-SHA refusal needs a real clone — **NOT-RUN** |
 | 30 | Branch-protection fatality + argument fix (#2217) | — | **NOT-RUN** — needs the pushed repo. Verified by reading `setup-branch-protection.sh`: target from `$REPO`, config from `$SMATCHET_BP_CONFIG`, exit 0 only when applied |
+| 31 | The audit document doesn't trip its own gate | gitleaks `--no-git` over the scaffold dir, before and after truncating the quoted fixture values | **PASS** — before: 1 leak (the first draft quoted the fixtures verbatim, which would have made phase 4b refuse the push *on the audit table*); after: 0 across the scaffold and `seed-audit-sweep.py` |
+| 32 | Audit re-pinned after #2217 merged | `seed-audit-sweep.py --since 2246ffee` → pin moved to `8f8e1ef8` | **PASS** — 4 commits / 1,763 added lines swept; every new value traced to #2217's scaffold or the audit table itself, all benign |
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 *The `git mv` is the step that reliably gets dropped (empirically ~62% of post-ship plans drifted stale-in-place). Bind it to the impl-log write: in the SAME PR that populates the three sections above —*

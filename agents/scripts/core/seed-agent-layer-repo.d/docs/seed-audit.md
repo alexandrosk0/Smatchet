@@ -5,7 +5,7 @@
 > verdict is `CLEAR`, or `SCRUB` that is both listed in `seed-scrub-paths.txt` and gone from the
 > rewrite. Phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
 
-**Audited through:** `2246ffeee52dc514e9f11c477f79c24f6c5c13bc` — every commit reachable from this develop commit that touches a
+**Audited through:** `8f8e1ef8239e6516fe0e2df7c5730734e7ed8c30` — every commit reachable from this develop commit that touches a
 manifest path. Anything later is unaudited until re-swept (`seed-audit-sweep.py --since <pin>`).
 
 The seed is an **allowlist, not a subtraction**: nothing reaches the public repo that this table has not
@@ -55,16 +55,19 @@ Every secret-shaped string in the seeded history is a synthetic fixture in the r
 (`agents/scripts/core/redact-intent.py`, `agents/scripts/core/redaction-escape-oracle.py`,
 `tests/bats/capture_intent.bats`), each checked by hand:
 
-| Shape | Value(s) | Why it is not a credential |
+Values below are **deliberately truncated** so this document does not itself match the patterns it
+reports on — otherwise phase 4b's own secret scan would flag the audit table.
+
+| Shape | Value (truncated) | Why it is not a credential |
 |---|---|---|
-| GitHub | `ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789`, `github_pat_11ABCDEFG0abcdef…` | Sequential alphabet + digits |
-| AWS | `AKIAIOSFODNN7EXAMPLE` | AWS's own documented example key |
-| Stripe | `sk_live_abcdEFGH1234` | Sequential placeholder (all 5 in-manifest gitleaks findings) |
-| Slack | `xoxb-1234567890-abcdefghijkl` | Sequential placeholder |
-| OpenAI / Google | `sk-proj-abcdEFGHijklMNOPqrstUVWX`, `AIzaabcdefghijklmnopqrstuvwxyz012345678` | Sequential placeholders |
-| JWT | `eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.…` | Decodes to `{"alg":"HS256"}.{"sub":"1"}` |
-| Private keys | RSA header + `MIIEowIBAAKCAQEAabcdef`; OpenSSH header + `b3BlbnNzaC1rZXktdjE…` | RSA-2048 DER prefix + `abcdef`; the OpenSSH `openssh-key-v1…none…ssh-ed` preamble. No key material |
-| URL credentials | `https://user:s3cr3ttoken@…`, `postgres://admin:{s}@db.internal…` | Literal placeholders / template slots |
+| GitHub | `ghp_ABCDEF…`, `github_pat_11ABCDEF…` | Sequential alphabet + digits |
+| AWS | `AKIAIOSFODNN7…` | AWS's own documented example key |
+| Stripe | `sk_live_abcd…` | Sequential placeholder (all 5 in-manifest gitleaks findings) |
+| Slack | `xoxb-12345…` | Sequential placeholder |
+| OpenAI / Google | `sk-proj-abcd…`, `AIzaabcd…` | Sequential placeholders |
+| JWT | `eyJhbGciOiJIUzI1NiJ9…` | Decodes to `{"alg":"HS256"}.{"sub":"1"}` |
+| Private keys | RSA header + `MIIEowIBAAKCAQEA…`; OpenSSH header + `b3BlbnNzaC1rZXktdjE…` | RSA-2048 DER prefix + `abcdef`; the OpenSSH `openssh-key-v1…none…ssh-ed` preamble. No key material |
+| URL credentials | `https://user:<placeholder>@…`, `postgres://admin:<template slot>@…` | Literal placeholders / template slots |
 
 The 11 remaining gitleaks findings are all host-side (`Source/`, `tests/Core/`, `tests/fuzz/`) and are
 not seeded.
@@ -84,8 +87,8 @@ CWE-78 / OSV ids and the repo's own work-item codes. P4: only generic `//depot/p
   **MIT**. MIT requires its notice to travel with copies and none did; **resolved** by adding
   `UPSTREAM-LICENSE` beside them.
 - **Whip-Process** — see **D1**. Absorbed into Smatchet in August 2026 (plan
-  `docs/plans/absorb-whip-process.md`, host-side). The local source (`C:\Dev\AndrewsProcess`) has **no
-  licence file and no git remote**, and its README describes it as "extracted from the project that grew
+  `docs/plans/absorb-whip-process.md`, host-side). The only copy of the source found is a local folder with
+  **no licence file and no git remote**, and its README describes it as "extracted from the project that grew
   it", so neither authorship nor licence can be established from the repository. The overlap scan found
   substantial upstream text in exactly the nine files that already say so, and nothing unattributed:
 
@@ -105,10 +108,11 @@ CWE-78 / OSV ids and the repo's own work-item codes. P4: only generic `//depot/p
 
 ### Personal data
 
-Commit identities on the seeded history: `Alexandros Konstantonis <alexkonstantonis@gmail.com>` (631
+Commit identities on the seeded history: the owner's name with their **personal e-mail address** (631
 author/committer lines), `GitHub <noreply@github.com>` (531, squash-merge committer), `Claude
-<noreply@anthropic.com>` (10), `claude[bot]` (4). The owner's personal address also appears as a
-redaction fixture in `redact-intent.py` and `capture_intent.bats`. See **D2**. Local user paths are the
+<noreply@anthropic.com>` (10), `claude[bot]` (4). The same personal address also appears as a
+redaction fixture in `redact-intent.py` and `capture_intent.bats`. See **D2**. (This document names
+the address only by description, so it does not add one more copy.) Local user paths are the
 owner's `alexk` handle, only inside redaction fixtures.
 
 ## Decisions for the owner
