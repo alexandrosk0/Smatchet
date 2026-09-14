@@ -856,6 +856,16 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
     activeStreamingSync_.Active = false;
 }
 
+namespace {
+/// Ceiling on ancestor hops chased within a single sync. Independent of
+/// `ParentHierarchyPure::kMaxHierarchyDepth` (which bounds *display* depth over whatever is
+/// already cached): this bounds *network round-trips*, so a pathological or cyclic parent
+/// chain in backend data can't turn one sync into unbounded sequential fetches. A chain deeper
+/// than this still resolves — the remainder surfaces on the next sync, same as before this cap
+/// existed for hop 1.
+constexpr int kMaxParentFetchHops = 16;
+} // namespace
+
 void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
                                                      const ViewsStore& viewsCopy,
                                                      const std::vector<std::string>& parentRefs,
@@ -874,43 +884,62 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
         return;
     }
 
-    // Single level, like FS: referenced − present, deduped in first-seen order so the keyed
-    // request is deterministic. Grandparents surface on the next sync once the parents are rows.
-    std::vector<std::string> missing;
-    std::unordered_set<std::string> seen;
-    for (const std::string& key : parentRefs) {
-        if (workerKeepIds.count(key) == 0 && seen.insert(key).second) {
-            missing.push_back(key);
+    // Chase the ancestor chain hop by hop within this sync: referenced − present at each hop,
+    // deduped in first-seen order so every keyed request is deterministic. Each hop's fetch
+    // yields the next hop's candidate refs (the parents' OWN `parent` field), so an
+    // epic -> story -> task -> subtask chain resolves in one sync instead of one level per sync.
+    // Stops when a hop finds nothing new, a fetch fails, or `kMaxParentFetchHops` is hit.
+    std::vector<std::string> currentRefs = parentRefs;
+    for (int hop = 0; hop < kMaxParentFetchHops; ++hop) {
+        std::vector<std::string> missing;
+        std::unordered_set<std::string> seen;
+        for (const std::string& key : currentRefs) {
+            if (workerKeepIds.count(key) == 0 && seen.insert(key).second) {
+                missing.push_back(key);
+            }
         }
-    }
-    if (missing.empty()) {
-        return;
-    }
-
-    LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) for request ID=%llu", missing.size(),
-             static_cast<unsigned long long>(reqId));
-    Result<std::vector<CachedTicket>, TrackerError> fetched =
-        deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
-    if (!fetched.has_value()) {
-        const std::string parentWarning =
-            std::to_string(missing.size()) + " parent issue(s) could not be loaded: " + fetched.error().Detail;
-        // Append rather than overwrite: the streamed fetch may already carry its own warning
-        // (e.g. GitHubIssueSearch's page-cap truncation notice) — losing it here would silently
-        // hide a real result-set problem behind the parent top-up's failure.
-        summary.Warning = summary.Warning.empty() ? parentWarning : (summary.Warning + "; " + parentWarning);
-        LOG_WARN("TicketSyncService: %s", parentWarning.c_str());
-        return;
-    }
-
-    std::vector<CachedTicket> parents = std::move(fetched.value());
-    for (const CachedTicket& parent : parents) {
-        if (!parent.id.empty()) {
-            workerKeepIds.insert(parent.id);
+        if (missing.empty()) {
+            return;
         }
-    }
-    summary.FetchedCount += parents.size();
-    std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
-    if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
-        activeStreamingSync_.PendingBatches.push_back(std::move(parents));
+
+        LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu",
+                 missing.size(), hop, static_cast<unsigned long long>(reqId));
+        Result<std::vector<CachedTicket>, TrackerError> fetched =
+            deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
+        if (!fetched.has_value()) {
+            const std::string parentWarning =
+                std::to_string(missing.size()) + " parent issue(s) could not be loaded: " + fetched.error().Detail;
+            // Append rather than overwrite: the streamed fetch (or an earlier hop) may already
+            // carry its own warning — losing it here would silently hide a real result-set
+            // problem behind this hop's failure.
+            summary.Warning = summary.Warning.empty() ? parentWarning : (summary.Warning + "; " + parentWarning);
+            LOG_WARN("TicketSyncService: %s", parentWarning.c_str());
+            return;
+        }
+
+        std::vector<CachedTicket> parents = std::move(fetched.value());
+        std::vector<std::string> nextRefs;
+        for (const CachedTicket& parent : parents) {
+            if (!parent.id.empty()) {
+                workerKeepIds.insert(parent.id);
+            }
+            std::string grandparentKey = ParentHierarchyPure::ParentKeyOf(parent);
+            if (!grandparentKey.empty()) {
+                nextRefs.push_back(std::move(grandparentKey));
+            }
+        }
+        summary.FetchedCount += parents.size();
+        {
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
+                return;
+            }
+            activeStreamingSync_.PendingBatches.push_back(std::move(parents));
+        }
+
+        if (nextRefs.empty()) {
+            return;
+        }
+        currentRefs = std::move(nextRefs);
     }
 }
