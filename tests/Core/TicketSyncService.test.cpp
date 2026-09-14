@@ -821,6 +821,42 @@ TEST_CASE("TicketSyncService fetches parents referenced by streamed rows but abs
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+TEST_CASE("TicketSyncService chases a multi-level ancestor chain within one sync") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    // Only the leaf is streamed; its parent, grandparent and great-grandparent are all absent.
+    scripted.push_back(MakeChildTicket("SUBTASK-1", "TASK-1"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    // One scripted set covering every hop: the fake filters it down to whatever keys each
+    // hop actually requests (TASK-1, then STORY-1, then EPIC-1).
+    std::vector<CachedTicket> ancestors;
+    ancestors.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    ancestors.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    ancestors.push_back(MakeTicket("EPIC-1", "Root epic")); // no parent: chain ends here
+    fake->SetFetchIssuesForKeysResult(true, ancestors);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 4; }));
+    // Three hops: TASK-1, then STORY-1, then EPIC-1 — one round-trip per level, all in this sync.
+    CHECK(fake->FetchIssuesForKeysCallCount() == 3);
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "TASK-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "EPIC-1", got));
+    CHECK(got.fieldValues["summary"] == "Root epic");
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService surfaces a soft warning when the parent fetch fails; streamed rows still land") {
     FakeTicketSyncDeps deps;
     auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());

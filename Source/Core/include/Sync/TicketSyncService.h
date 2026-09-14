@@ -126,11 +126,14 @@ class TicketSyncService {
     /// + `QueueMutex`.
     void RunStreamingWorkerBody(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy);
 
-    /// Worker-side parent top-up (parent-issue-hierarchy plan, Slice 1): fetch every parent key
-    /// the streamed batches referenced but did not contain, and queue them as one extra batch.
-    /// Runs only after a clean streamed fetch, never when cancelled, never when the active view
-    /// hides parents, and never when `TrackerConfig::LoadParentIssues` is off. A failed keyed
-    /// fetch is a `summary.Warning`, not a FetchError — the streamed tickets still apply.
+    /// Worker-side parent top-up (parent-issue-hierarchy plan): fetch every parent key the
+    /// streamed batches referenced but did not contain, then chase THEIR parents too, one hop
+    /// per round-trip, until a hop finds nothing new or the fetch-hop cap is hit — so a multi-
+    /// level chain (epic -> story -> task -> subtask) resolves in this sync rather than one
+    /// level per sync. Each hop is queued as its own extra batch. Runs only after a clean
+    /// streamed fetch, never when cancelled, never when the active view hides parents, and
+    /// never when `TrackerConfig::LoadParentIssues` is off. A failed keyed fetch is a
+    /// `summary.Warning`, not a FetchError — the tickets fetched so far still apply.
     void FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
                                       const std::vector<std::string>& parentRefs,
                                       std::unordered_set<std::string>& workerKeepIds,

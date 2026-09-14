@@ -45,10 +45,12 @@ are stored as `story_group_sort` and `hide_parents` on the view.
 A view's query usually returns children without their parents (for example a
 JQL filter on `assignee = currentUser()`). After every sync batch Smatchet
 collects the parent keys referenced by the fetched issues, subtracts the ones
-already present, and asks the tracker for the rest in one request through the
-backend-agnostic issue reader interface. Only one level is fetched per sync
-(FS parity): grandparents appear on the next batch if the newly fetched
-parents reference them.
+already present, and asks the tracker for the rest through the backend-agnostic
+issue reader interface. If those parents reference parents of their own,
+Smatchet chases them too — one request per hop, in the same sync — until a
+hop turns up nothing new or 16 hops have run. A chain deeper than that
+(unusual outside cyclic or malformed data) resolves the remaining levels on
+the next sync instead of stalling this one.
 
 - Fetched parents are cached in SQLite like any other issue and take part in
   the tree, the tint and the indent.

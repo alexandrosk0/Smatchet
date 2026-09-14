@@ -158,7 +158,17 @@ class FakeTrackerClient : public ITrackerBackend,
             return Result<std::vector<CachedTicket>, TrackerError>::Err(
                 TrackerErrorInvalidRequest(fetchIssuesForKeysError_));
         }
-        return Result<std::vector<CachedTicket>, TrackerError>::Ok(fetchIssuesForKeysTickets_);
+        // Filter the scripted ticket set down to the requested keys, like a real backend would.
+        // This lets one SetFetchIssuesForKeysResult() call script a whole multi-hop ancestor
+        // chain (e.g. epic + story + task) and have each hop's request come back with only the
+        // tickets it actually asked for, instead of the full scripted set every time.
+        std::vector<CachedTicket> matched;
+        for (const CachedTicket& ticket : fetchIssuesForKeysTickets_) {
+            if (std::find(issueKeys.begin(), issueKeys.end(), ticket.id) != issueKeys.end()) {
+                matched.push_back(ticket);
+            }
+        }
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(matched));
     }
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {
