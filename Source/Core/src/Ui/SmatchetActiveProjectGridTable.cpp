@@ -651,7 +651,9 @@ static void ApplyRowHoverHighlight(float rowHeight) {
     }
     const ImVec2 rowMin(curTable->InnerClipRect.Min.x, ImGui::GetCursorScreenPos().y);
     const ImVec2 rowMax(curTable->InnerClipRect.Max.x, rowMin.y + rowHeight);
-    if (ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) {
+    // IsWindowHovered() (default flags) is false while a popup/floating window covers the grid, so a
+    // row under an open dropdown or tooltip doesn't stay lit — IsMouseHoveringRect alone is geometry-only.
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) {
         ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_HeaderHovered, 0.35f));
     }
 }
