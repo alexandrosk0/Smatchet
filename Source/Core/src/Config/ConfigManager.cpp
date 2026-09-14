@@ -252,6 +252,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"bugreport_screenshot_default", &TrackerConfig::BugReportScreenshotDefault},
     {"field_overflow_tooltips", &TrackerConfig::EnableFieldOverflowTooltips},
     {"single_click_to_edit_grid_cells", &TrackerConfig::SingleClickToEditGridCells},
+    {"highlight_grid_row_on_hover", &TrackerConfig::HighlightGridRowOnHover},
     {"load_parent_issues", &TrackerConfig::LoadParentIssues},
     {"default_long_text_editor_preview", &TrackerConfig::DefaultLongTextEditorPreview},
     {"read_only_mode", &TrackerConfig::ReadOnlyMode},

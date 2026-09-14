@@ -639,6 +639,25 @@ void DrawGridZeroResultsStrip(ActiveProjectDrawCtx& ctx, bool viewIsEmpty) {
     }
 }
 
+// Whole-row hover highlight (default on, gated by HighlightGridRowOnHover): without it, only the
+// hovered cell (e.g. the Id Selectable) tints, making it hard to tell which row a field belongs to
+// at a glance. Blended on top of any status/parent tint the caller already set for RowBg0 rather
+// than replacing it, so a hovered status row still reads its status colour, just brighter. Split
+// out of the row loop to keep drawActiveProjectGridRows under the function-size/branch caps.
+static void ApplyRowHoverHighlight(float rowHeight) {
+    ImGuiTable* curTable = ImGui::GetCurrentTable();
+    if (!curTable) {
+        return;
+    }
+    const ImVec2 rowMin(curTable->InnerClipRect.Min.x, ImGui::GetCursorScreenPos().y);
+    const ImVec2 rowMax(curTable->InnerClipRect.Max.x, rowMin.y + rowHeight);
+    // IsWindowHovered() (default flags) is false while a popup/floating window covers the grid, so a
+    // row under an open dropdown or tooltip doesn't stay lit — IsMouseHoveringRect alone is geometry-only.
+    if (ImGui::IsWindowHovered() && ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) {
+        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1, ImGui::GetColorU32(ImGuiCol_HeaderHovered, 0.35f));
+    }
+}
+
 } // namespace
 
 // The TicketGrid BeginTable block: the five grid section helpers plus the post-layout inside-table
@@ -1026,6 +1045,10 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
                 const SmatchetThemeSemanticColors& semantic = SmatchetTheme::GetActiveSemanticColors();
                 const ImVec4& tint = ctx.currentRowDepth > 0 ? semantic.ParentRowNestedBg : semantic.ParentRowBg;
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(tint));
+            }
+
+            if (ctx.d.cfg.HighlightGridRowOnHover) {
+                ApplyRowHoverHighlight(kTicketGridRowH);
             }
 
             for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
