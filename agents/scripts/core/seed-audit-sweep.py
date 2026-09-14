@@ -126,8 +126,15 @@ def main():
     seen, commits, added, binaries = set(), 0, 0, set()
 
     sha, path = "", ""
+    # The parser depends on git's DEFAULT output shape, so pin it against user and
+    # repo config: explicit a/ b/ prefixes (diff.noprefix / diff.mnemonicPrefix
+    # would otherwise leave "b/" out of the headers and fake a coverage gap), and
+    # --no-textconv (a textconv driver would render a binary as text, hiding the
+    # "Binary files" marker). --src/--dst-prefix work on every git version, unlike
+    # --default-prefix (git >= 2.41).
     for line in git_lines(args.repo, ["log", "-p", "--cc", "--full-history", "--no-renames", "--no-color",
-                                      "--no-ext-diff", "--format=@@COMMIT@@%H", rng, "--"] + specs):
+                                      "--no-ext-diff", "--no-textconv", "--src-prefix=a/", "--dst-prefix=b/",
+                                      "--format=@@COMMIT@@%H", rng, "--"] + specs):
         if line.startswith("@@COMMIT@@"):
             sha, commits = line[10:], commits + 1
         elif line.startswith("diff --git ") or line.startswith("diff --cc "):
