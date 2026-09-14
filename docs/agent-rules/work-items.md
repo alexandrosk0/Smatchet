@@ -2,7 +2,8 @@
 
 The human-gated work loop for product features — how an item moves from idea to close. Ported from
 Whip-Process (`Process.md` + `Conventions.md`); where the source wording encodes a contract it is
-carried across verbatim rather than paraphrased. Panel-review mechanics live in
+carried across verbatim rather than paraphrased. Used with its author's permission under this
+repository's MIT licence. Panel-review mechanics live in
 [review-panels.md](review-panels.md); the work-item-vs-plan boundary and location rules live in
 [process-rules.md](process-rules.md); how the ship-loop behaves inside an item is
 [ship-loops.md](ship-loops.md) exception 7.

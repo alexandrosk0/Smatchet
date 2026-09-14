@@ -1,5 +1,6 @@
 # review-guard.sh — the review panel's write guard, as two pure functions.
-# Port of Whip-Process Tools/review-guard.ps1; contract comments carried verbatim
+# Port of Whip-Process Tools/review-guard.ps1, used with its author's permission
+# under this repository's MIT licence; contract comments carried verbatim
 # (docs/agent-rules/review-panels.md § Write-guard contracts binds this port).
 #
 # A review is a READ-ONLY pass that writes exactly one file (the leg's own

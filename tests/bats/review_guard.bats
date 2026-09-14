@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # review_guard.bats — regression suite for the review panel's write guard:
 # agents/scripts/core/lib/review-guard.sh (port of Whip-Process
-# Tools/review-guard.ps1; test semantics ported from Tools/test-run-review.ps1).
+# Tools/review-guard.ps1; test semantics ported from Tools/test-run-review.ps1;
+# used with its author's permission under this repository's MIT licence).
 #
 # Contract under test (docs/agent-rules/review-panels.md § Write-guard contracts):
 #   get_dirty_state <root>

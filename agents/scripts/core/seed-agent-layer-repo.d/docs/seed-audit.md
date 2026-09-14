@@ -5,7 +5,7 @@
 > verdict is `CLEAR`, or `SCRUB` that is both listed in `seed-scrub-paths.txt` and gone from the
 > rewrite. Phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
 
-**Audited through:** `8f8e1ef8239e6516fe0e2df7c5730734e7ed8c30` — every commit reachable from this develop commit that touches a
+**Audited through:** `53c4f1e26a1a65f0213ce338bc36a0a54a21bf2d` — every commit reachable from this develop commit that touches a
 manifest path. Anything later is unaudited until re-swept (`seed-audit-sweep.py --since <pin>`).
 
 The seed is an **allowlist, not a subtraction**: nothing reaches the public repo that this table has not
@@ -21,7 +21,7 @@ the leak.
 | `CLEAR` | Head **and** history checked; nothing project-internal, nothing secret, nothing un-republishable. Publishes as-is. |
 | `SCRUB` | Publishes only after a paired `git filter-repo --invert-paths` pass. Add the path to `seed-scrub-paths.txt`; phase 3 applies it, and phase 4b refuses unless the path is then absent from the rewritten history. |
 | `EXCLUDE` | Never publishes, so it must not appear in `seed-paths.txt`. Phase 4b refuses an `EXCLUDE` verdict on a manifest row as a contradiction. Here it appears only in § Decisions already taken, as a **design note** recording a decision so it is not re-proposed. |
-| `PENDING` | Not cleared. **Blocks the push.** A `PENDING` row that names a decision (**D1**) is audited but waiting on the owner. Any other verdict text, a missing row, or a duplicate row also blocks. |
+| `PENDING` | Not cleared. **Blocks the push.** A `PENDING` row that names an owner decision is audited but waiting on that decision. Any other verdict text, a missing row, or a duplicate row also blocks. |
 
 ## Method
 
@@ -117,11 +117,19 @@ owner's `alexk` handle, only inside redaction fixtures.
 
 ## Decisions for the owner
 
-### D1 — Whip-Process-derived content · **BLOCKING**
+### D1 — Whip-Process-derived content · **RESOLVED (a), 2026-09-14**
 
-Five rows stay `PENDING` until this is answered, because re-publishing text of unknown licence inside a
-repository whose `LICENSE` says MIT would grant rights nobody has shown they hold. The answer applies to
-**Smatchet as well** — it already carries the same text publicly.
+**Decision:** option (a). The owner confirmed that the Whip-Process author gave permission to use the
+text under this repository's MIT licence. The author is not named here: none was provided for
+publication, and naming a private person is the author's or owner's call, not the audit's. The record of
+that permission is held by the owner, not by this repository.
+
+**Applied:** the nine ported files and the two ported test suites each carry
+"used with its author's permission under this repository's MIT licence" beside their existing provenance
+note, so the attribution travels with every copy — in the layer and in the host alike. The five rows
+below were flipped to `CLEAR` on that basis.
+
+The options as they were weighed, kept for the record:
 
 - **(a) Rights confirmed.** The owner authored Whip-Process or holds permission under an MIT-compatible
   licence. Record the licence and attribution beside the ported files (as `grill-with-docs` now does) and
@@ -156,10 +164,10 @@ decision rather than an oversight:
 | # | Path | Verdict | Reviewer | Date | Notes |
 |---|---|---|---|---|---|
 | 1 | `agents/core/` | `CLEAR` | Claude (agent) | 2026-09-13 | No secrets, internal hosts or tickets in head or history. `p4-janitor.md` shows `P4USER=alexk` (the owner's handle, already public). Host-literal prose is the de-Smatchet-ification follow-up, not a publication blocker. |
-| 2 | `agents/_shared/` | `PENDING` | Claude (agent) | 2026-09-13 | BLOCKED on **D1**: `skills/address-review-feedback`, `skills/close-work-item`, `skills/pre-implementation-review` (14–24% verbatim) and the post-implementation section of `skills/adversarial-code-review` (3%) carry Whip-Process text. Everything else clear; `skills/grill-with-docs` is MIT upstream and now ships its notice (`UPSTREAM-LICENSE`). |
-| 3 | `agents/scripts/core/` | `PENDING` | Claude (agent) | 2026-09-13 | BLOCKED on **D1**: `lib/review-guard.sh`, `run-review.sh`, `work_item_lint.py` are ports of Whip-Process PowerShell tools (17–18% textual overlap). Every secret-shaped string in this subtree is a synthetic redaction fixture (see § Findings, Secrets). |
+| 2 | `agents/_shared/` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: `skills/address-review-feedback`, `skills/close-work-item`, `skills/pre-implementation-review` (14–24% verbatim) and the post-implementation section of `skills/adversarial-code-review` (3%) carry Whip-Process text. Everything else clear; `skills/grill-with-docs` is MIT upstream and now ships its notice (`UPSTREAM-LICENSE`). **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
+| 3 | `agents/scripts/core/` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: `lib/review-guard.sh`, `run-review.sh`, `work_item_lint.py` are ports of Whip-Process PowerShell tools (17–18% textual overlap). Every secret-shaped string in this subtree is a synthetic redaction fixture (see § Findings, Secrets). **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
 | 4 | `agents/scripts/project/` | `CLEAR` | Claude (agent) | 2026-09-13 | Generic `//depot/path` examples, `localhost:1666`, the public gradle.org checksum page. No findings. |
-| 5 | `docs/agent-rules/` | `PENDING` | Claude (agent) | 2026-09-13 | BLOCKED on **D1**: `work-items.md` is **62% verbatim** from Whip-Process `Process.md` + `Conventions.md`; `review-panels.md` 22% from `Procedures/ReviewBasics.md`. Rest clear: public hosts only (`msdl.microsoft.com`, `api.deepseek.com`), the owner's `C:/Dev/Smatchet` checkout layout in `process-rules.md`. |
+| 5 | `docs/agent-rules/` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: `work-items.md` is **62% verbatim** from Whip-Process `Process.md` + `Conventions.md`; `review-panels.md` 22% from `Procedures/ReviewBasics.md`. Rest clear: public hosts only (`msdl.microsoft.com`, `api.deepseek.com`), the owner's `C:/Dev/Smatchet` checkout layout in `process-rules.md`. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
 | 6 | `docs/harness/` | `CLEAR` | Claude (agent) | 2026-09-13 | `SETUP.md` names the owner's `C:/Dev/Smatchet` checkout (machine layout, not sensitive). The pi subagent example is copied at setup time into gitignored `.pi/` and is never tracked, so nothing third-party ships from here. |
 | 7 | `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` | `CLEAR` | Claude (agent) | 2026-09-13 | Framework spec only — no entry text. Its `## Index` links to host-side category files, which will dangle layer-side: a link-checker concern, not a publication one. |
 | 8 | `docs/high-integrity/portable-purity-baseline.txt` | `CLEAR` | Claude (agent) | 2026-09-13 | Path + literal lists only. |
@@ -212,8 +220,8 @@ decision rather than an oversight:
 | 55 | `tests/bats/resolve_py.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
 | 56 | `tests/bats/resolve_repo.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
 | 57 | `tests/bats/review_ack_gate.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
-| 58 | `tests/bats/review_guard.bats` | `PENDING` | Claude (agent) | 2026-09-13 | BLOCKED on **D1**: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap below the scan floor — a translation, so D1 may reasonably clear it along with the tool it tests. |
-| 59 | `tests/bats/run_review.bats` | `PENDING` | Claude (agent) | 2026-09-13 | BLOCKED on **D1**: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap is low (0.5%) — a translation, so D1 may reasonably clear it along with the tool it tests. |
+| 58 | `tests/bats/review_guard.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap below the scan floor — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
+| 59 | `tests/bats/run_review.bats` | `CLEAR` | Claude (agent) | 2026-09-14 | Whip-Process-derived: self-declares "test semantics ported from Tools/test-run-review.ps1". Textual overlap is low (0.5%) — a translation, cleared together with the tool it tests. **D1 resolved (a), 2026-09-14:** the owner confirmed the Whip-Process author gave permission to use it under this repository's MIT licence; each ported file now says so beside its provenance note. |
 | 60 | `tests/bats/safe_admin_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
 | 61 | `tests/bats/safe_merge.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
 | 62 | `tests/bats/script_freshness.bats` | `CLEAR` | Claude (agent) | 2026-09-13 | No findings in head or history. |
@@ -233,8 +241,8 @@ decision rather than an oversight:
 
 ## Status
 
-**70 of 75 rows cleared.** 5 rows are `PENDING`, all blocked on **D1** and nothing else. The push stays
-refused until D1 is answered and those rows carry a non-`PENDING` verdict.
+**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved. The audit no longer blocks the push; what still
+does is the human preconditions, row 9, and a `--since` re-sweep of anything that landed after the pin.
 
 When the tree moves past the pin (it will — the surface takes several commits a day), re-sweep only the
 delta, triage the new values, update the affected rows, and move **Audited through:**:

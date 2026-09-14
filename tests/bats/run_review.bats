@@ -1,7 +1,8 @@
 #!/usr/bin/env bats
 # run_review.bats — regression suite for the review-panel launcher:
 # agents/scripts/core/run-review.sh (port of Whip-Process Tools/run-review.ps1;
-# test semantics ported from Tools/test-run-review.ps1).
+# test semantics ported from Tools/test-run-review.ps1; used with its author's
+# permission under this repository's MIT licence).
 #
 # Strategy: a throwaway git repo carries a minimal roster + one work item; the
 # harness CLIs are STUBS in a PATH-prepended fake bin dir that parse the

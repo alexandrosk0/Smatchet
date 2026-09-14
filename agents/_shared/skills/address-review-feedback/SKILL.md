@@ -9,7 +9,8 @@ description: Resolve a review panel's findings as the single addresser — dedup
 A review panel produces findings; one **addresser** resolves them. The panel is deliberately many
 *independent* passes that don't consolidate — dedup, reconciling conflicts, and the **binding**
 disposition are the addresser's job (a reviewer's disposition is a *suggestion*). Ported from
-Whip-Process `Procedures/AddressReviewFeedback.md`; contract wording carried verbatim. Policy
+Whip-Process `Procedures/AddressReviewFeedback.md`; contract wording carried verbatim. Used with its
+author's permission under this repository's MIT licence. Policy
 (problems only, verify then stop, dispositions):
 [work-items.md § Addressing feedback](../../../../docs/agent-rules/work-items.md).
 
