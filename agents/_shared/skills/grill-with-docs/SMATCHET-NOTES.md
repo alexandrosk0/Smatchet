@@ -2,7 +2,8 @@
 
 `SKILL.md`, `ADR-FORMAT.md`, and `CONTEXT-FORMAT.md` in this directory are pulled verbatim from
 [mattpocock/skills · main · skills/engineering/grill-with-docs](https://github.com/mattpocock/skills/tree/main/skills/engineering/grill-with-docs).
-Do not edit those three. To refresh from upstream:
+Do not edit those three. They are MIT-licensed upstream; the required notice ships beside them as
+[`UPSTREAM-LICENSE`](UPSTREAM-LICENSE) and must stay with them. To refresh from upstream:
 
 ```bash
 for f in SKILL.md ADR-FORMAT.md CONTEXT-FORMAT.md; do
