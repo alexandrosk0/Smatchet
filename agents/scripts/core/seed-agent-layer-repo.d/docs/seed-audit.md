@@ -241,11 +241,18 @@ decision rather than an oversight:
 
 ## Status
 
-**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved. The audit no longer blocks the push; what still
-does is the human preconditions, row 9, and a `--since` re-sweep of anything that landed after the pin.
+**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved, so the **verdict** gate (phase 4b) is satisfied.
+That is not the same as the audit being current. The **freshness** guard (phase 3) refuses the seed while
+any commit after the pin touches a manifest path — and the commit that resolved D1 is one of them.
 
-When the tree moves past the pin (it will — the surface takes several commits a day), re-sweep only the
-delta, triage the new values, update the affected rows, and move **Audited through:**:
+**A pin can only name a commit that already exists on develop.** A change to manifest paths therefore
+always lands after the pin it sets. Its content can be swept before merge (the D1 change was), but the pin
+cannot name its squash until that squash exists. The step that closes this gap is a follow-up change touching
+**only this file**, which the freshness guard ignores: re-sweep `--since` the current pin, then move
+**Audited through:** to the new develop tip. After that the audit is current and phase 3 passes.
+
+The same applies whenever the tree moves past the pin (it will — the surface takes several commits a day):
+re-sweep only the delta, triage the new values, update the affected rows, and move **Audited through:**:
 
 ```bash
 python3 agents/scripts/core/seed-audit-sweep.py --since <pin>
