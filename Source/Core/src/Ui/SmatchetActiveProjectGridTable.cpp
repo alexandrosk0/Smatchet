@@ -1028,6 +1028,21 @@ void SmatchetUI::drawActiveProjectGridRows(ActiveProjectDrawCtx& ctx) {
                 ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, ImGui::GetColorU32(tint));
             }
 
+            // Whole-row hover highlight (default on): without it, only the hovered cell (e.g. the
+            // Id Selectable) tints, making it hard to tell which row a field belongs to at a glance.
+            // Blended on top of any status/parent tint above rather than replacing it, so a hovered
+            // status row still reads its status colour, just brighter.
+            if (ctx.d.cfg.HighlightGridRowOnHover) {
+                if (ImGuiTable* curTable = ImGui::GetCurrentTable()) {
+                    const ImVec2 rowMin(curTable->InnerClipRect.Min.x, ImGui::GetCursorScreenPos().y);
+                    const ImVec2 rowMax(curTable->InnerClipRect.Max.x, rowMin.y + kTicketGridRowH);
+                    if (ImGui::IsMouseHoveringRect(rowMin, rowMax, false)) {
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg1,
+                                               ImGui::GetColorU32(ImGuiCol_HeaderHovered, 0.35f));
+                    }
+                }
+            }
+
             for (int colIndex = 0; colIndex < static_cast<int>(columns.size()); ++colIndex) {
                 drawActiveProjectGridCell(ctx, ticket, columns[static_cast<size_t>(colIndex)], clippedRow, colIndex,
                                           idKeySelectableSelected, activeIssueWasThisRow, kTicketGridRowH);

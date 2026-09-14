@@ -61,6 +61,17 @@ void DrawGridSectionBody(UiDrawSession& d) {
                                    "textarea fields) opens showing the rendered preview. When off (default) "
                                    "it opens in edit mode. Ctrl+P cycles Edit/Split/Preview either way.");
     }
+    if (d.prefsFilter.ShowSetting("editing.grid.row_hover_highlight")) {
+        if (ImGui::Checkbox("Highlight whole row on hover", &d.cfg.HighlightGridRowOnHover)) {
+            MarkPrefsDirty(d);
+        }
+        ImGui::SetItemTooltip("Tint the entire row under the cursor, not just the cell. Default: on.");
+        ImGui::SameLine();
+        SmatchetHelpMarker::Render("prefs.grid.row_hover_highlight.help",
+                                   "When on (default), hovering any cell in a grid row lightly tints the whole "
+                                   "row so it's easy to see which row a field — such as the Id — belongs to. "
+                                   "When off, only the hovered cell itself is highlighted.");
+    }
     if (d.prefsFilter.ShowSetting("editing.grid.overflow_tooltips")) {
         if (ImGui::Checkbox("Show tooltips when text overflows", &d.cfg.EnableFieldOverflowTooltips)) {
             MarkPrefsDirty(d);

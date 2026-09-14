@@ -150,6 +150,10 @@ struct TrackerConfig {
     // When true (default), single click on a grid cell starts editing. False requires double-click.
     // Exposed in Settings -> Preferences -> Appearance.
     bool SingleClickToEditGridCells = true;
+    // When true (default), hovering any cell in a grid row tints the whole row so it's easy to
+    // tell which row an ID/field belongs to. False restores the old per-cell hover highlight only.
+    // Exposed in Settings -> Preferences -> Appearance.
+    bool HighlightGridRowOnHover = true;
     // When true (default), each sync also fetches the parent issues that the streamed rows
     // reference but the view's query did not return, so the story-group tree has its roots.
     // Off skips that keyed top-up entirely: missing parents stay absent and their children

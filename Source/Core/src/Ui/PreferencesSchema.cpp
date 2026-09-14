@@ -292,6 +292,8 @@ const PrefsSettingDesc kSettings[] = {
 
     // -- editing.grid (was: Grid + Appearance tabs) --------------------------
     {"editing.grid.single_click", "editing.grid", "Single-click to edit grid cells", "grid rows editing click"},
+    {"editing.grid.row_hover_highlight", "editing.grid", "Highlight whole row on hover",
+     "grid rows hover highlight id tooltip"},
     {"editing.grid.load_parent_issues", "editing.grid", "Load parent issues",
      "grid hierarchy parent story epic tree sync"},
     {"editing.grid.long_text_preview", "editing.grid", "Open long-text editor in preview mode",
