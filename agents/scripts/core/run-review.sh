@@ -2,7 +2,8 @@
 # run-review.sh — review-panel launcher: fan a gate review across the roster,
 # one leg per (harness, model).
 #
-# Port of Whip-Process Tools/run-review.ps1. Differences from the original,
+# Port of Whip-Process Tools/run-review.ps1, used with its author's permission
+# under this repository's MIT licence. Differences from the original,
 # each deliberate (docs/plans/absorb-whip-process.md Phase 2):
 #   - Headless by default: each leg runs its harness CLI non-interactively in
 #     the background and completion is the process exiting — the original's

@@ -9,7 +9,8 @@ description: Gate review of a work item's 1-specification.md + 2-design.md + 3-p
 Reviews a work item's `1-specification.md` + `2-design.md` + `3-plan.md` **as a coherent set** —
 coherence & readiness, not re-litigation. No implementation begins before this review passes and the
 user signs off ([work-items.md](../../../../docs/agent-rules/work-items.md) § Gates). Ported from
-Whip-Process `Procedures/PreImplementationReview.md`; contract wording carried verbatim. Shared
+Whip-Process `Procedures/PreImplementationReview.md`; contract wording carried verbatim. Used with its
+author's permission under this repository's MIT licence. Shared
 panel mechanics (reviewer identity, rounds, independence, output template):
 [review-panels.md](../../../../docs/agent-rules/review-panels.md).
 

@@ -2,7 +2,8 @@
 """work_item_lint.py - work-item close + ledger-citation linter.
 
 Port of Whip-Process Tools/check-docs.ps1 (-Item / -Citations; the -Audit mode
-was consumer-specific and is not ported). Layout mapping is this repo's
+was consumer-specific and is not ported), used with its author's permission under
+this repository's MIT licence. Layout mapping is this repo's
 docs/agent-rules/work-items.md:
 
     items            docs/work/items/NN-slug/

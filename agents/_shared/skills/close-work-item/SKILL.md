@@ -12,7 +12,8 @@ At close (after the retro), the item's `docs/work/items/NN-slug/` folder collaps
 where the item had one) and their folder are deleted; git keeps the full history, so nothing is
 lost. The summary is the durable record, frozen like the staged artifacts were. Ported from
 Whip-Process `Procedures/ClosingItem.md` + the judgment half of `Procedures/ClosingReview.md`
-(contract wording carried verbatim); the mechanical half is `work_item_lint.py`. Ledger lifecycle:
+(contract wording carried verbatim; used with its author's permission under this repository's MIT
+licence); the mechanical half is `work_item_lint.py`. Ledger lifecycle:
 [work-items.md § Tracking](../../../../docs/agent-rules/work-items.md).
 
 The summary opens with `> Status: Closed (YYYY-MM-DD)` and has exactly three lean sections:

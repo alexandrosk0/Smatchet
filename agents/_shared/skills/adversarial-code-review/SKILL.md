@@ -125,7 +125,7 @@ Verification
 
 ## Panel Leg: Post-Implementation Review Of A Work Item
 
-When launched as a review-panel leg (`agents/scripts/core/run-review.sh --gate post --subject <NN|slug> --round N`) — or asked to post-implementation-review an open item under `docs/work/items/NN-slug/` — the steps above run with these deltas (ported from Whip-Process `Procedures/PostImplementationReview.md`; mechanics: `docs/agent-rules/review-panels.md`):
+When launched as a review-panel leg (`agents/scripts/core/run-review.sh --gate post --subject <NN|slug> --round N`) — or asked to post-implementation-review an open item under `docs/work/items/NN-slug/` — the steps above run with these deltas (ported from Whip-Process `Procedures/PostImplementationReview.md`, used with its author's permission under this repository's MIT licence; mechanics: `docs/agent-rules/review-panels.md`):
 
 - **The intent is the artifact set.** Step 1's intent source is the item's `1-specification.md` + `2-design.md` + `3-plan.md`; the review judges the implementation diff against them. Start from `git show HEAD` and read the changed files **in full**, not just the hunks — judge the code as it now stands, in context. If the diff doesn't point to a single `docs/work/items/NN-slug/`, ask rather than guess.
 - **Read-only pass.** No builds, no test runs — judge test coverage by reading the tests, verify findings by reading the code.

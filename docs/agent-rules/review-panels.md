@@ -3,6 +3,7 @@
 Shared mechanics for the multi-model panel reviews that gate work items — the pre-implementation and
 post-implementation reviews of [work-items.md](work-items.md), plus the addresser that resolves
 them. Ported from Whip-Process (`Procedures/ReviewBasics.md`); contract wording carried verbatim.
+Used with its author's permission under this repository's MIT licence.
 Review *policy* (problems only, verify then stop, dispositions) lives in
 [work-items.md → Review](work-items.md#review). The launcher is
 `agents/scripts/core/run-review.sh` (Phase 2 of docs/plans/absorb-whip-process.md); the contracts
