@@ -24,7 +24,7 @@ Usage:
 
 Exit: 0 sweep completed (triage is human) · 1 coverage gap in full mode (a file in
 the manifest at HEAD never appeared in the scanned history — the sweep missed it)
-· 2 usage / git error.
+· 2 usage / git error, or a shallow clone (its history is incomplete).
 """
 import argparse
 import collections
@@ -121,6 +121,23 @@ def main():
         sys.stderr.write("seed-audit-sweep: manifest not found: %s\n" % args.manifest)
         return 2
     specs = read_pathspecs(args.manifest)
+
+    # A shallow clone truncates `git log` at the depth boundary, and the boundary
+    # commit then shows every file as a fresh add, so even the coverage assertion
+    # passes. The audit would report clean over history it never read. Refuse in
+    # both modes: a --since range can cross the boundary too.
+    probe = subprocess.run(["git", "-C", args.repo, "rev-parse", "--is-shallow-repository"],
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if probe.returncode != 0:
+        sys.stderr.write("seed-audit-sweep: not a git repository: %s\n" % args.repo)
+        return 2
+    if probe.stdout.decode("utf-8", "replace").strip() == "true":
+        sys.stderr.write("seed-audit-sweep: %s is a SHALLOW clone, so history before the shallow boundary "
+                         "is missing and an audit here would report clean over commits it never saw. "
+                         "Run `git fetch --unshallow` (a plain `git fetch` stays shallow) and re-run.\n"
+                         % args.repo)
+        return 2
+
     rng = ("%s..HEAD" % args.since) if args.since else "HEAD"
     inv = Inventory(specs)
     seen, commits, added, binaries = set(), 0, 0, set()
