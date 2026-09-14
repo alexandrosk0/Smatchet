@@ -5,7 +5,7 @@
 > verdict is `CLEAR`, or `SCRUB` that is both listed in `seed-scrub-paths.txt` and gone from the
 > rewrite. Phase 3 refuses to rewrite at all if any commit touched a manifest path after the pin below.
 
-**Audited through:** `53c4f1e26a1a65f0213ce338bc36a0a54a21bf2d` — every commit reachable from this develop commit that touches a
+**Audited through:** `3e6c0c7587478d1f10fdd05f648365f96a5d730e` — every commit reachable from this develop commit that touches a
 manifest path. Anything later is unaudited until re-swept (`seed-audit-sweep.py --since <pin>`).
 
 The seed is an **allowlist, not a subtraction**: nothing reaches the public repo that this table has not
@@ -241,15 +241,15 @@ decision rather than an oversight:
 
 ## Status
 
-**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved, so the **verdict** gate (phase 4b) is satisfied.
-That is not the same as the audit being current. The **freshness** guard (phase 3) refuses the seed while
-any commit after the pin touches a manifest path — and the commit that resolved D1 is one of them.
+**75 of 75 rows cleared** (0 `PENDING`). D1 is resolved, so the **verdict** gate (phase 4b) is satisfied,
+and as of the pin above the audit is **current**: the **freshness** guard (phase 3) passes until a later
+commit touches a manifest path.
 
 **A pin can only name a commit that already exists on develop.** A change to manifest paths therefore
-always lands after the pin it sets. Its content can be swept before merge (the D1 change was), but the pin
-cannot name its squash until that squash exists. The step that closes this gap is a follow-up change touching
-**only this file**, which the freshness guard ignores: re-sweep `--since` the current pin, then move
-**Audited through:** to the new develop tip. After that the audit is current and phase 3 passes.
+always lands after the pin it sets. Its content can be swept before merge, but the pin cannot name its
+squash until that squash exists. The gap is closed by a follow-up change touching **only this file**, which
+the freshness guard ignores: re-sweep `--since` the current pin, then move **Audited through:** to the new
+develop tip. That is how the pin reached its current value, after the D1 change merged as #2220.
 
 The same applies whenever the tree moves past the pin (it will — the surface takes several commits a day):
 re-sweep only the delta, triage the new values, update the affected rows, and move **Audited through:**:
