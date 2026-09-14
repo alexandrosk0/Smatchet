@@ -1,0 +1,108 @@
+# seed-paths.txt — the allowlist `git filter-repo --paths-from-file` keeps when
+# seeding `the-unwilling-agentic-bunch` from a fresh Smatchet clone.
+# Authored for plan `docs/plans/agent-surface-extraction-repo.md` rows 8/8c.
+#
+# CONTRACT (read before editing):
+#   * Every non-`#` line is a filter-repo pathspec. There is NO inline-comment
+#     form — a trailing `# why` becomes part of the path. Per-path rationale and
+#     the publication verdict live in docs/seed-audit.md, never here.
+#   * Matching is a PATH PREFIX rooted at the repo root, not a basename glob.
+#     That is why the bare `AGENTS.md` line below takes only the root rulebook
+#     and leaves every Source/Core/src/<ctx>/AGENTS.md host-side. The seed script
+#     asserts that post-rewrite (`git ls-files '*AGENTS.md'` == `AGENTS.md`)
+#     rather than trusting it.
+#   * This is an ALLOWLIST, not a subtraction. `agents/` is deliberately NOT
+#     listed as one prefix: that would sweep the project-scoped `agents/project/**`
+#     straight into public history. The four portable subtrees are enumerated.
+#   * The tests/bats block is GENERATED, never hand-edited:
+#       grep -l 'agents/' tests/bats/*.bats | sort
+#     seed-agent-layer-repo.sh phase 2 regenerates it and diffs against this file.
+
+# --- portable agent surface (four explicit subtrees; NOT a bare `agents/`) ---
+agents/core/
+agents/_shared/
+agents/scripts/core/
+agents/scripts/project/
+
+# --- portable rule-docs + harness adapters ---
+docs/agent-rules/
+docs/harness/
+
+# --- self-improvement FRAMEWORK spec only; entries/ledgers stay host-side ---
+docs/self-improvement/AGENT_SELF_IMPROVEMENT.md
+
+# --- delta-gate baselines that key on layer paths (plan row 16) ---
+docs/high-integrity/portable-purity-baseline.txt
+docs/high-integrity/agent-size-baseline.md
+
+# --- the root rulebook (prefix match: root only, see CONTRACT above) ---
+AGENTS.md
+
+# --- deliberately dual-homed runners (host keeps a byte-identical mirror; row 8g) ---
+scripts/dev/project-config.sh
+scripts/dev/test-all.sh
+scripts/dev/test-docs.sh
+
+# --- layer-coupled bats suites (GENERATED — see CONTRACT above) ---
+tests/bats/agent_size.bats
+tests/bats/android_openssl_failfast.bats
+tests/bats/archive_backlog_entry.bats
+tests/bats/capture_intent.bats
+tests/bats/coderabbit_triage.bats
+tests/bats/cr_oob_review_backfill.bats
+tests/bats/dead_export_audit.bats
+tests/bats/dup_audit.bats
+tests/bats/fail_open_authoring.bats
+tests/bats/fleet_preflight.bats
+tests/bats/fleet_rescope.bats
+tests/bats/followup_due_nudge.bats
+tests/bats/function_size.bats
+tests/bats/fuzz_closure_audit.bats
+tests/bats/gate_selftests.bats
+tests/bats/git_janitor.bats
+tests/bats/harness_provisioned_doctor.bats
+tests/bats/historical_review_ledger_reconcile.bats
+tests/bats/historical_review_survivors.bats
+tests/bats/include_cycle_audit.bats
+tests/bats/is_pure_docs_diff.bats
+tests/bats/issue_sweep.bats
+tests/bats/lint_rules.bats
+tests/bats/lock_claim.bats
+tests/bats/lock_staleness_sweep.bats
+tests/bats/markdown_links.bats
+tests/bats/merge_gates.bats
+tests/bats/merge_watcher.bats
+tests/bats/merge_watcher_integration.bats
+tests/bats/migrate_bugs_to_issues.bats
+tests/bats/oob_label_impl.bats
+tests/bats/panel_verdicts.bats
+tests/bats/plan_archival_owed.bats
+tests/bats/plan_index_robustness.bats
+tests/bats/plan_lock_gate.bats
+tests/bats/postmortem_owed.bats
+tests/bats/pre_push_guard.bats
+tests/bats/preship_review_artifact.bats
+tests/bats/repo_health_facts_nudge.bats
+tests/bats/required_context_adr_consistency.bats
+tests/bats/required_context_parity.bats
+tests/bats/resolve_py.bats
+tests/bats/resolve_repo.bats
+tests/bats/review_ack_gate.bats
+tests/bats/review_guard.bats
+tests/bats/run_review.bats
+tests/bats/safe_admin_merge.bats
+tests/bats/safe_merge.bats
+tests/bats/script_freshness.bats
+tests/bats/session_registry.bats
+tests/bats/setup_branch_protection.bats
+tests/bats/shell_lint.bats
+tests/bats/small_helper_audit.bats
+tests/bats/subsystem_docs.bats
+tests/bats/sync_issue_labels.bats
+tests/bats/unwatched_pr_nudge.bats
+tests/bats/verifier_preship_wiring.bats
+tests/bats/verifier_review_gate.bats
+tests/bats/work_item_owed.bats
+tests/bats/workflow_job_mask.bats
+tests/bats/workflow_watchdog.bats
+tests/bats/worktree_prune.bats

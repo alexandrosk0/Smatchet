@@ -5,10 +5,27 @@
   "description": "Validated in CI. The portable layer (agents/core, agents/_shared, docs/agent-rules, docs/harness, generic scripts) reads ONLY from here; reuse in another project = rewrite project.config.json against this schema. See docs/PORTABILITY.md.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["project", "build", "perf", "lint", "vcs", "ci", "merge_gates", "harness", "agents"],
+  "required": ["project", "lint", "vcs", "ci", "merge_gates", "harness", "agents"],
+  "allOf": [
+    {
+      "description": "`build` and `perf` left the unconditional top-level `required` list and moved here, so a consumer with NO product code (no CMake presets, no build targets, no frame budget) can satisfy this schema honestly instead of inventing values. They stay REQUIRED for a product consumer: `profile` absent or \"product\" re-requires both. Their own inner `required` + `minItems` are untouched, so a consumer that DECLARES either block still has to fill it. Consequence for scripts/dev/project-config.sh: its no-deps gate reads only the top-level `required` array, so it no longer hard-fails an agent-layer config; the conditional requirement is enforced by the real jsonschema step in doc-validation.yml and agent-layer-integration.yml.",
+      "if": {
+        "anyOf": [
+          { "not": { "required": ["profile"] } },
+          { "properties": { "profile": { "const": "product" } }, "required": ["profile"] }
+        ]
+      },
+      "then": { "required": ["build", "perf"] }
+    }
+  ],
   "properties": {
     "$schema": { "type": "string" },
     "_doc": { "type": "string" },
+    "profile": {
+      "description": "Consumer class. \"product\" (the default when absent) is a repo with product code: `build` and `perf` are required. \"agent-layer\" is a repo that hosts only the agent surface — no CMake presets, no build targets, no frame budget — so those two blocks are omitted rather than faked. Top level is additionalProperties:false, so this key must be declared here to be usable at all.",
+      "enum": ["product", "agent-layer"],
+      "default": "product"
+    },
     "project": {
       "type": "object",
       "additionalProperties": false,
