@@ -19,6 +19,7 @@
 #include "ITrackerFieldCatalog.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
+#include "Tracker/ParentHierarchyPure.h" // ParentKeyOf — FetchChildrenOfKeys filters by it
 
 #include <nlohmann/json.hpp>
 
@@ -165,6 +166,33 @@ class FakeTrackerClient : public ITrackerBackend,
         std::vector<CachedTicket> matched;
         for (const CachedTicket& ticket : fetchIssuesForKeysTickets_) {
             if (std::find(issueKeys.begin(), issueKeys.end(), ticket.id) != issueKeys.end()) {
+                matched.push_back(ticket);
+            }
+        }
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok(std::move(matched));
+    }
+
+    Result<std::vector<CachedTicket>, TrackerError> FetchChildrenOfKeys(const TrackerConfig& /*cfg*/,
+                                                                        const std::vector<std::string>& parentKeys,
+                                                                        const ViewsStore& /*views*/) override {
+        ++fetchChildrenOfKeysCalls_;
+        fetchChildrenOfKeysLastParentKeys_ = parentKeys;
+        if (!fetchChildrenOfKeysOk_) {
+            if (!fetchChildrenOfKeysStructuredError_.IsOk()) {
+                return Result<std::vector<CachedTicket>, TrackerError>::Err(fetchChildrenOfKeysStructuredError_);
+            }
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(
+                TrackerErrorInvalidRequest(fetchChildrenOfKeysError_));
+        }
+        // Filter the scripted ticket set down to tickets whose OWN parent is one of the
+        // requested keys — the downward mirror of FetchIssuesForKeys' by-id filter, so one
+        // SetFetchChildrenOfKeysResult() call can script a whole descendant tree (epic + story +
+        // task + subtask) and have each hop's request come back with only that hop's children.
+        std::vector<CachedTicket> matched;
+        for (const CachedTicket& ticket : fetchChildrenOfKeysTickets_) {
+            const std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
+            if (!parentKey.empty() &&
+                std::find(parentKeys.begin(), parentKeys.end(), parentKey) != parentKeys.end()) {
                 matched.push_back(ticket);
             }
         }
@@ -342,6 +370,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::size_t ProbeReachabilityCallCount() const { return probeReachabilityCalls_; }
     std::size_t FetchIssuesCallCount() const { return fetchIssuesCalls_; }
     std::size_t FetchIssuesForKeysCallCount() const { return fetchIssuesForKeysCalls_; }
+    std::size_t FetchChildrenOfKeysCallCount() const { return fetchChildrenOfKeysCalls_; }
     std::size_t BuildCreatePayloadCallCount() const { return buildCreatePayloadCalls_; }
     std::size_t BuildUpdatePayloadCallCount() const { return buildUpdatePayloadCalls_; }
     std::size_t BuildFieldPayloadCallCount() const { return buildFieldPayloadCalls_; }
@@ -513,6 +542,23 @@ class FakeTrackerClient : public ITrackerBackend,
     }
     const std::vector<std::string>& FetchIssuesForKeysLastKeys() const { return fetchIssuesForKeysLastKeys_; }
 
+    void SetFetchChildrenOfKeysResult(bool ok, std::vector<CachedTicket> tickets,
+                                      const std::string& error = std::string()) {
+        fetchChildrenOfKeysOk_ = ok;
+        fetchChildrenOfKeysTickets_ = std::move(tickets);
+        fetchChildrenOfKeysError_ = error;
+        fetchChildrenOfKeysStructuredError_ = TrackerError::Ok();
+    }
+    /// Script the failure with a realistic kind (mirrors SetFetchIssuesForKeysError).
+    void SetFetchChildrenOfKeysError(TrackerError error) {
+        fetchChildrenOfKeysOk_ = false;
+        fetchChildrenOfKeysError_ = error.Detail;
+        fetchChildrenOfKeysStructuredError_ = std::move(error);
+    }
+    const std::vector<std::string>& FetchChildrenOfKeysLastParentKeys() const {
+        return fetchChildrenOfKeysLastParentKeys_;
+    }
+
     // EditMetaCacheService scripting: per-issue + default editmeta (field id -> can-edit map).
     void SetIssueEditMetaSuccess(const std::string& issueId, std::unordered_map<std::string, bool> fieldCanEdit) {
         ScriptedEditMeta s;
@@ -570,6 +616,7 @@ class FakeTrackerClient : public ITrackerBackend,
         probeReachabilityCalls_ = 0;
         fetchIssuesCalls_ = 0;
         fetchIssuesForKeysCalls_ = 0;
+        fetchChildrenOfKeysCalls_ = 0;
         buildCreatePayloadCalls_ = 0;
         buildUpdatePayloadCalls_ = 0;
         buildFieldPayloadCalls_ = 0;
@@ -606,6 +653,14 @@ class FakeTrackerClient : public ITrackerBackend,
     TrackerError fetchErrorStructured_;
     std::vector<std::string> fetchIssuesForKeysLastKeys_;
     std::size_t fetchIssuesForKeysCalls_ = 0;
+
+    // FetchChildrenOfKeys — the downward mirror of FetchIssuesForKeys above.
+    bool fetchChildrenOfKeysOk_ = true;
+    std::vector<CachedTicket> fetchChildrenOfKeysTickets_;
+    std::string fetchChildrenOfKeysError_;
+    TrackerError fetchChildrenOfKeysStructuredError_;
+    std::vector<std::string> fetchChildrenOfKeysLastParentKeys_;
+    std::size_t fetchChildrenOfKeysCalls_ = 0;
 
     // CreateIssue
     std::deque<ScriptedReply> createIssueQueue_;

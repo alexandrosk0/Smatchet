@@ -857,6 +857,132 @@ TEST_CASE("TicketSyncService chases a multi-level ancestor chain within one sync
     svc.CancelAndJoinActiveStreamingSync();
 }
 
+// --- parent-issue-hierarchy: missing-CHILDREN fetch after the streamed fetch --------------------
+// The downward mirror of the tests above: a view like `key = EPIC-1` streams only the epic
+// itself, but the tree should still show its descendants without a separate sync per level.
+
+TEST_CASE("TicketSyncService chases a full descendant tree within one sync") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    // Only the epic is streamed — as if the view's JQL were `key = EPIC-1`.
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    // One scripted set covering the whole descendant tree: the fake filters it down to
+    // whatever parent keys each hop actually requests.
+    std::vector<CachedTicket> descendants;
+    descendants.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    descendants.push_back(MakeChildTicket("TASK-1", "STORY-1"));
+    descendants.push_back(MakeChildTicket("SUBTASK-1", "TASK-1")); // leaf: no children of its own
+    fake->SetFetchChildrenOfKeysResult(true, descendants);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 4; }));
+    // Four hops: children-of-EPIC-1, -STORY-1, -TASK-1 each find one descendant; the fourth
+    // (children-of-SUBTASK-1) comes back empty. Unlike the ancestor direction — which can tell
+    // "nothing new" from parent fields already in hand, with no network call — there is no
+    // local signal for "does this ticket have children", so confirming a leaf always costs one
+    // more (empty) round-trip.
+    CHECK(fake->FetchChildrenOfKeysCallCount() == 4);
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "TASK-1", got));
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "SUBTASK-1", got));
+    CHECK(got.fieldValues["summary"] == "child of TASK-1");
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService surfaces a soft warning when the children fetch fails; streamed rows still land") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    fake->SetFetchChildrenOfKeysError(TrackerErrorTransport("timeout"));
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK(fake->FetchChildrenOfKeysCallCount() == 1);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("children of") != std::string::npos);
+    CHECK(deps.LastTrackerTicketSyncWarning.find("timeout") != std::string::npos);
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "EPIC-1", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService fetches children even when the active view hides parents") {
+    // Deliberately the OPPOSITE gating from the ancestor fetch (see
+    // "TicketSyncService skips the parent fetch when the active view hides parents" below):
+    // hide-parents keeps exactly the leaf descendants this fetch supplies, so skipping the
+    // fetch here would defeat the toggle instead of saving work it made pointless.
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> children;
+    children.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    fake->SetFetchChildrenOfKeysResult(true, children);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    ViewDefinition leafOnly;
+    leafOnly.Id = "leaf-only";
+    leafOnly.Name = "Leaf only";
+    leafOnly.HideParents = true;
+    views.Views.push_back(leafOnly);
+    views.ActiveViewId = leafOnly.Id;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 2; }));
+    CHECK(fake->FetchChildrenOfKeysCallCount() >= 1);
+    CachedTicket got;
+    CHECK(deps.CacheImpl->TryGetTicket("Jira", "STORY-1", got));
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
+TEST_CASE("TicketSyncService skips the children fetch when LoadParentIssues is off") {
+    FakeTicketSyncDeps deps;
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(MakeTicket("EPIC-1", "Root epic"));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+    std::vector<CachedTicket> children;
+    children.push_back(MakeChildTicket("STORY-1", "EPIC-1"));
+    fake->SetFetchChildrenOfKeysResult(true, children);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    cfg.LoadParentIssues = false;
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+
+    REQUIRE(SpinUntil(svc, [&]() { return !svc.IsActive() && deps.ActiveTicketsImpl.size() == 1; }));
+    CHECK(fake->FetchChildrenOfKeysCallCount() == 0);
+    CHECK(deps.LastTrackerTicketSyncWarning.empty());
+
+    svc.CancelAndJoinActiveStreamingSync();
+}
+
 TEST_CASE("TicketSyncService surfaces a soft warning when the parent fetch fails; streamed rows still land") {
     FakeTicketSyncDeps deps;
     auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());

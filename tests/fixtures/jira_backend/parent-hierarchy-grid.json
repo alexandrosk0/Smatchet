@@ -1,0 +1,82 @@
+{
+  "name": "parent-hierarchy-grid",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "catalog": {
+    "fields": [],
+    "components": [],
+    "issueTypeMeta": [],
+    "users": []
+  },
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status", "priority", "assignee", "parent"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {
+              "key": "PH-EPIC-1",
+              "fields": {
+                "summary": "Root epic",
+                "status": {"name": "In Progress", "id": "3"},
+                "priority": {"name": "Medium", "id": "3"},
+                "assignee": {"displayName": "Alice Tester"},
+                "issuetype": {"name": "Epic"}
+              }
+            },
+            {
+              "key": "PH-STORY-1",
+              "fields": {
+                "summary": "Story under the root epic",
+                "status": {"name": "In Progress", "id": "3"},
+                "priority": {"name": "Medium", "id": "3"},
+                "assignee": {"displayName": "Alice Tester"},
+                "issuetype": {"name": "Story"},
+                "parent": {"key": "PH-EPIC-1", "fields": {"summary": "Root epic"}}
+              }
+            },
+            {
+              "key": "PH-TASK-1",
+              "fields": {
+                "summary": "Task under the story",
+                "status": {"name": "Open", "id": "1"},
+                "priority": {"name": "Medium", "id": "3"},
+                "assignee": {"displayName": "Bob Reviewer"},
+                "issuetype": {"name": "Task"},
+                "parent": {"key": "PH-STORY-1", "fields": {"summary": "Story under the root epic"}}
+              }
+            },
+            {
+              "key": "PH-SUBTASK-1",
+              "fields": {
+                "summary": "Subtask under the task",
+                "status": {"name": "Open", "id": "1"},
+                "priority": {"name": "Low", "id": "4"},
+                "assignee": {"displayName": "Bob Reviewer"},
+                "issuetype": {"name": "Subtask"},
+                "parent": {"key": "PH-TASK-1", "fields": {"summary": "Task under the story"}}
+              }
+            },
+            {
+              "key": "PH-LEAF-1",
+              "fields": {
+                "summary": "Unrelated top-level issue",
+                "status": {"name": "Open", "id": "1"},
+                "priority": {"name": "Low", "id": "4"},
+                "assignee": {"displayName": "Alice Tester"},
+                "issuetype": {"name": "Task"}
+              }
+            }
+          ],
+          "isLast": true
+        }
+      ]
+    }
+  ],
+  "mutations": {
+    "updateIssueFields": [{"ok": true}],
+    "createIssue": [{"ok": true, "issueKey": "PH-FIXTURE-99"}]
+  }
+}

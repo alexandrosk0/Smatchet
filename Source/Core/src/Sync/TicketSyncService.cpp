@@ -780,10 +780,13 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
     try {
         std::unordered_set<std::string> workerKeepIds;
         std::vector<std::string> workerParentRefs; // parent keys referenced by streamed rows (may repeat)
-        auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs](std::vector<CachedTicket>&& batch) {
+        std::vector<std::string> workerStreamedIds; // ids the view's own JQL/filter actually matched
+        auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs,
+                        &workerStreamedIds](std::vector<CachedTicket>&& batch) {
             for (const auto& ticket : batch) {
                 if (!ticket.id.empty()) {
                     workerKeepIds.insert(ticket.id);
+                    workerStreamedIds.push_back(ticket.id);
                 }
                 std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
                 if (!parentKey.empty()) {
@@ -804,6 +807,9 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
 
         if (summary.FetchError.empty() && !shouldCancel()) {
             FetchMissingParentsIntoQueue(reqId, cfgCopy, viewsCopy, workerParentRefs, workerKeepIds, summary);
+        }
+        if (summary.FetchError.empty() && !shouldCancel()) {
+            FetchChildrenIntoQueue(reqId, cfgCopy, viewsCopy, workerStreamedIds, workerKeepIds, summary);
         }
 
         if (activeStreamingSync_.RequestId == reqId && !activeStreamingSync_.Cancelled) {
@@ -864,6 +870,13 @@ namespace {
 /// than this still resolves — the remainder surfaces on the next sync, same as before this cap
 /// existed for hop 1.
 constexpr int kMaxParentFetchHops = 16;
+
+/// Ceiling on descendant hops chased within a single sync (the downward mirror of
+/// kMaxParentFetchHops). Bounds network round-trips for a pathologically wide/deep tree (a
+/// view showing one Epic that fans out into hundreds of stories/tasks/subtasks) without
+/// truncating any real-world hierarchy silently forever — hitting the cap just means the
+/// remaining descendants surface on the next sync.
+constexpr int kMaxChildFetchHops = 16;
 } // namespace
 
 void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
@@ -941,5 +954,91 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
             return;
         }
         currentRefs = std::move(nextRefs);
+    }
+}
+
+void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
+                                               const ViewsStore& viewsCopy,
+                                               const std::vector<std::string>& streamedIds,
+                                               std::unordered_set<std::string>& workerKeepIds,
+                                               TrackerIssueFetchSummary& summary) {
+    if (streamedIds.empty()) {
+        return;
+    }
+    // Global opt-out (Preferences -> Editing -> Grid behaviour -> Load parent issues) — reused
+    // here for the downward direction too: one switch controls both extra-fetch shapes.
+    if (!cfgCopy.LoadParentIssues) {
+        return;
+    }
+    // Deliberately NOT gated on the active view's HideParents, unlike FetchMissingParentsIntoQueue.
+    // That toggle drops rows that are themselves a parent of another visible row — exactly the
+    // leaf descendants this fetch supplies are what survive the filter, so skipping the fetch
+    // here would defeat the toggle (an epic-only view with hide-parents on would show nothing)
+    // rather than save work the toggle made pointless.
+
+    // Chase the descendant tree hop by hop within this sync: every ticket streamed by the
+    // view's own JQL/filter is a candidate parent. Each hop's fetched children become the next
+    // hop's candidate parents (deduped), so an epic -> story -> task -> subtask tree resolves
+    // in one sync from a view that only matched the epic. Stops when a hop finds no children,
+    // a fetch fails, or `kMaxChildFetchHops` is hit.
+    std::vector<std::string> currentParentKeys = streamedIds;
+    for (int hop = 0; hop < kMaxChildFetchHops; ++hop) {
+        std::vector<std::string> keys;
+        std::unordered_set<std::string> seen;
+        for (const std::string& key : currentParentKeys) {
+            if (seen.insert(key).second) {
+                keys.push_back(key);
+            }
+        }
+        if (keys.empty()) {
+            return;
+        }
+
+        LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(),
+                 hop, static_cast<unsigned long long>(reqId));
+        Result<std::vector<CachedTicket>, TrackerError> fetched =
+            deps_.Backend()->FetchChildrenOfKeys(cfgCopy, keys, viewsCopy);
+        if (!fetched.has_value()) {
+            const std::string childWarning =
+                "children of " + std::to_string(keys.size()) + " issue(s) could not be loaded: " +
+                fetched.error().Detail;
+            // Append rather than overwrite: an earlier hop (or the ancestor fetch above it) may
+            // already carry its own warning — losing it here would silently hide a real
+            // result-set problem behind this hop's failure.
+            summary.Warning = summary.Warning.empty() ? childWarning : (summary.Warning + "; " + childWarning);
+            LOG_WARN("TicketSyncService: %s", childWarning.c_str());
+            return;
+        }
+
+        std::vector<CachedTicket> children = std::move(fetched.value());
+        std::vector<CachedTicket> newChildren;
+        std::vector<std::string> nextParentKeys;
+        newChildren.reserve(children.size());
+        nextParentKeys.reserve(children.size());
+        for (CachedTicket& child : children) {
+            if (child.id.empty()) {
+                continue;
+            }
+            // Every fetched child is a candidate parent for the NEXT hop regardless of whether
+            // it was already cached — a ticket cached by an earlier sync may still have children
+            // this sync hasn't chased yet. Only genuinely new tickets get queued as a batch.
+            nextParentKeys.push_back(child.id);
+            if (workerKeepIds.insert(child.id).second) {
+                newChildren.push_back(std::move(child));
+            }
+        }
+        if (!newChildren.empty()) {
+            summary.FetchedCount += newChildren.size();
+            std::lock_guard<std::mutex> qLock(activeStreamingSync_.QueueMutex);
+            if (activeStreamingSync_.RequestId != reqId || activeStreamingSync_.Cancelled) {
+                return;
+            }
+            activeStreamingSync_.PendingBatches.push_back(std::move(newChildren));
+        }
+
+        if (nextParentKeys.empty()) {
+            return;
+        }
+        currentParentKeys = std::move(nextParentKeys);
     }
 }
