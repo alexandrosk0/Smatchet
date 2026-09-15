@@ -112,6 +112,11 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     }
 
     if (!reachedEnd) {
+        // Discard the partial roster accumulated so far: FetchFieldCatalog uses outUsers to
+        // populate user-type field options whenever it's non-empty, regardless of the false
+        // return, so a truncated-but-nonempty list would silently publish an incomplete catalog
+        // instead of the degraded-but-honest empty one the caller expects on failure.
+        outUsers.clear();
         outError = "Failed to fetch users: exceeded " + std::to_string(kMaxPages) +
                    " pages (" + std::to_string(kMaxPages * kPageSize) +
                    " users) without reaching the end of the roster.";

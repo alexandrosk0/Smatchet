@@ -183,6 +183,9 @@ TEST_CASE("JiraClient::FetchUsers — exhausting the page-count safety bound is 
     std::string err;
     CHECK_FALSE(client.FetchUsers(fx.Config(), out, err));
     CHECK_FALSE(err.empty());
+    // The accumulated 50,000-row partial roster must be discarded on failure, not left for a
+    // caller that only checks the bool to silently publish a truncated catalog (#2226 CR finding).
+    CHECK(out.empty());
     // 50 pages (kMaxPages) of 1000 rows each, all unique accountIds this time.
     CHECK(fx.RequestCount("/rest/api/3/users/search") == 50);
 }
