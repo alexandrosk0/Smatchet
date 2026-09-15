@@ -8,7 +8,18 @@
 >
 > **When was this last regenerated?** Run `git log -1 --format=%cI docs/plans/active/_plan-locks.generated.md`.
 
-## No active plan-locks
+## In-flight locks (1 active)
 
-_Empty — no slices currently claim a write set. New claims arrive via
-`bash agents/scripts/core/lock-claim.sh <slug> <write-set-file>`._
+### `gate-selftest-msys-execbit`
+
+- **Owner**: `orchestrator`
+- **Branch**: `claude/stoic-mccarthy-082155`
+- **Started**: 2026-08-29T16:46:48Z
+- **Updated**: 2026-08-29T17:22:38Z
+- **Write set** (5 paths):
+  - `docs/plans/active/gate-selftest-msys-execbit.md`
+  - `docs/plans/shipped/gate-selftest-msys-execbit.md`
+  - `docs/plans/INDEX.md`
+  - `agents/scripts/core/test-gate-selftests.sh`
+  - `tests/bats/gate_selftests.bats`
+
