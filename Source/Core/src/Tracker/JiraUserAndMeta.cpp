@@ -37,59 +37,94 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
-    const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
-    auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
-    if (usersResponse.status_code != 200) {
-        outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return false;
-    }
-
-    try {
-        std::string parseErr;
-        auto usersJson = smatchet::json_safe::ParseBounded(usersResponse.text, parseErr);
-        if (!parseErr.empty()) {
-            outError = std::string("Failed to parse users response: ") + parseErr;
+    // GET /rest/api/3/users/search — paginated. This endpoint returns a bare array (no
+    // `isLast`/`total` wrapper), and Jira's own docs say `maxResults` is only a hint the
+    // server is free to clamp lower (the same caveat FetchUsersByAccountIds' user/bulk
+    // paging above already documents) — so a page shorter than requested does NOT mean
+    // "last page". Advance `startAt` by the count each page actually returned and stop
+    // only on a genuinely empty page. A single unpaginated call silently truncated any
+    // org with more members than one page — see the "not all users loaded" report this
+    // fixed.
+    constexpr int kPageSize = 1000;
+    constexpr int kMaxPages = 50; // 50,000 users — sanity bound for a UI roster
+    std::set<std::string> seenAccountIds;
+    std::set<std::string> seenDisplayNames;
+    size_t startAt = 0;
+    bool reachedEnd = false;
+    for (int page = 0; page < kMaxPages; ++page) {
+        const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=" + std::to_string(kPageSize) +
+                                     "&startAt=" + std::to_string(startAt);
+        auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
+        if (usersResponse.status_code != 200) {
+            outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
             return false;
         }
-        if (!usersJson.is_array()) {
-            outError = "Invalid users response format.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
+
+        size_t pageCount = 0;
+        try {
+            std::string parseErr;
+            auto usersJson = smatchet::json_safe::ParseBounded(usersResponse.text, parseErr);
+            if (!parseErr.empty()) {
+                outError = std::string("Failed to parse users response: ") + parseErr;
+                LOG_ERROR("JiraClient: %s", outError.c_str());
+                return false;
+            }
+            if (!usersJson.is_array()) {
+                outError = "Invalid users response format.";
+                LOG_ERROR("JiraClient: %s body=%s", outError.c_str(),
+                          RedactHttpBodyForLog(usersResponse.text).c_str());
+                return false;
+            }
+
+            pageCount = usersJson.size();
+            for (const auto& user : usersJson) {
+                TrackerUser TrackerUser;
+                ParseTrackerUserObject(user, TrackerUser);
+
+                if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
+                    !seenAccountIds.insert(TrackerUser.AccountId).second) {
+                    continue;
+                }
+
+                if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
+                    const std::string suffix =
+                        TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
+                    TrackerUser.DisplayName += "_" + suffix;
+                }
+
+                outUsers.push_back(std::move(TrackerUser));
+            }
+        } catch (const std::exception& ex) {
+            outError = std::string("Failed to parse users response: ") + ex.what();
+            LOG_ERROR("JiraClient: %s", outError.c_str());
             return false;
         }
 
-        std::set<std::string> seenAccountIds;
-        std::set<std::string> seenDisplayNames;
-        for (const auto& user : usersJson) {
-            TrackerUser TrackerUser;
-            TrackerUser.AccountId = user.value("accountId", std::string());
-            TrackerUser.DisplayName = user.value("displayName", std::string());
-            TrackerUser.EmailAddress = user.value("emailAddress", std::string());
-            TrackerUser.AccountType = user.value("accountType", std::string());
-            TrackerUser.Active = user.value("active", true);
-
-            if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
-                !seenAccountIds.insert(TrackerUser.AccountId).second) {
-                continue;
-            }
-
-            if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
-                const std::string suffix =
-                    TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
-                TrackerUser.DisplayName += "_" + suffix;
-            }
-
-            outUsers.push_back(std::move(TrackerUser));
+        // An empty page means we've reached the end. A page shorter than requested is NOT
+        // itself a terminator — the server may have clamped maxResults — so advance startAt
+        // by what it actually sent and keep going.
+        if (pageCount == 0) {
+            reachedEnd = true;
+            break;
         }
+        startAt += pageCount;
+    }
 
-        SortTrackerUsersForDisplay(outUsers);
-    } catch (const std::exception& ex) {
-        outError = std::string("Failed to parse users response: ") + ex.what();
+    if (!reachedEnd) {
+        // Discard the partial roster accumulated so far: FetchFieldCatalog uses outUsers to
+        // populate user-type field options whenever it's non-empty, regardless of the false
+        // return, so a truncated-but-nonempty list would silently publish an incomplete catalog
+        // instead of the degraded-but-honest empty one the caller expects on failure.
+        outUsers.clear();
+        outError = "Failed to fetch users: exceeded " + std::to_string(kMaxPages) +
+                   " pages (" + std::to_string(kMaxPages * kPageSize) +
+                   " users) without reaching the end of the roster.";
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
 
+    SortTrackerUsersForDisplay(outUsers);
     return true;
 }
 
