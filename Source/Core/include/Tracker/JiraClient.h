@@ -133,6 +133,15 @@ class JiraClient : public ITrackerBackend,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& viewStore) override;
 
+    /**
+     * Search for issues whose `parent` is one of `parentKeys` (JQL `parent in (...)`) — the
+     * downward mirror of FetchIssuesForKeys, used to hydrate a visible ticket's children (e.g.
+     * an epic's stories, a story's subtasks) into the local cache.
+     */
+    Result<std::vector<CachedTicket>, TrackerError> FetchChildrenOfKeys(const TrackerConfig& cfg,
+                                                                        const std::vector<std::string>& parentKeys,
+                                                                        const ViewsStore& viewStore) override;
+
     // ---- ticket-change-monitor concrete overrides (ticket-change-monitor plan, deferred slice) ----
     // Server-side change probe + keys-only membership + existence GET, replacing the heavy
     // full-fetch defaults on ITrackerIssueReader with native Jira queries.

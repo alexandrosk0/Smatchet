@@ -139,6 +139,19 @@ class TicketSyncService {
                                       std::unordered_set<std::string>& workerKeepIds,
                                       TrackerIssueFetchSummary& summary);
 
+    /// Downward mirror of FetchMissingParentsIntoQueue: given the keys the view's own JQL/filter
+    /// actually streamed this sync, fetch their children (and their children's children, hop by
+    /// hop) so a view like `key = EPIC-1` shows the epic's full descendant tree even though the
+    /// filter itself only matched the epic. Runs only after a clean streamed fetch, never when
+    /// cancelled, never when `TrackerConfig::LoadParentIssues` is off. Deliberately NOT gated on
+    /// the active view's `HideParents` (unlike the ancestor fetch): hide-parents keeps exactly
+    /// the leaf descendants this fetch supplies, so skipping it there would defeat the toggle
+    /// rather than save work. A failed keyed fetch is a `summary.Warning`, not a FetchError — the
+    /// tickets fetched so far still apply.
+    void FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy, const ViewsStore& viewsCopy,
+                                const std::vector<std::string>& streamedIds,
+                                std::unordered_set<std::string>& workerKeepIds, TrackerIssueFetchSummary& summary);
+
     // --- TickStreamingApply phase helpers ------------------------------------------------
     // TickStreamingApply is a thin dispatcher over these per-phase steps. Each operates on the
     // member FSM state in place (no copies of the batch queue / ActiveTickets are introduced)

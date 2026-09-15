@@ -65,16 +65,47 @@ the next sync instead of stalling this one.
   the sync summary carries a warning such as
   `3 parent issue(s) could not be loaded: <detail>`.
 
+## How missing children are loaded
+
+The parent fetch above only reaches upward: a view like `assignee =
+currentUser()` gets ancestors of what it already matched, never a ticket's
+descendants. A narrow view — `key = EPIC-1`, say — streams only the epic
+itself, so without a separate fetch the tree would show a single row no
+matter how large the epic's story/task/subtask tree really is.
+
+Smatchet closes that gap the same way, mirrored: after the parent fetch,
+every ticket the view's own query actually streamed becomes a candidate
+parent, and Smatchet asks the tracker for its children. Each fetched child
+becomes the next hop's candidate parent in turn — child, grandchild,
+great-grandchild — until a hop comes back empty or 16 hops have run. Unlike
+the upward direction, confirming "no more children" always costs one request
+per branch: there is no local field that says a ticket has no children the
+way a ticket's own `parent` field says who its ancestor is, so a leaf ticket
+still needs one (empty) round-trip to rule out further descendants.
+
+- Fetched children are cached in SQLite like any other issue and take part in
+  the tree, the tint and the indent, same as a fetched parent.
+- **Not gated on Hide parent stories** — unlike the parent fetch. That toggle
+  drops rows that are themselves a parent of a visible row; the descendants
+  this fetch supplies are exactly what *survives* the filter, so skipping the
+  fetch there would defeat the toggle (an epic-only view with Hide parent
+  stories on would show nothing) rather than save pointless work.
+- Governed by the same **Load parent issues** preference as the parent fetch
+  — turning it off skips both directions.
+- A failed children fetch never fails the sync, same as a failed parent
+  fetch: a warning such as `children of 2 issue(s) could not be loaded:
+  <detail>` is appended to the sync summary and the streamed rows still land.
+
 ## Backend support
 
 The hierarchy works for any backend whose issue mapping emits a `parent`
 field:
 
-| Backend | Parent source |
-|---|---|
-| Jira | The `parent` field. When it is absent (classic projects, some issue types) the inward **is part of** issue link is used as a fallback. |
-| Plane | The `parent` field. |
-| GitHub Issues, Linear | No parent field is mapped today, so the toggles have no effect on those backends. |
+| Backend | Parent source | Children query |
+|---|---|---|
+| Jira | The `parent` field. When it is absent (classic projects, some issue types) the inward **is part of** issue link is used as a fallback. | JQL `parent in (...)`. |
+| Plane | The `parent` field. | Not implemented — a Plane view only ever gets ancestors, never descendants, today. |
+| GitHub Issues, Linear | No parent field is mapped today, so the toggles have no effect on those backends. | Not implemented. |
 
 ## Related
 

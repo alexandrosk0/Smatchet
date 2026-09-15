@@ -245,6 +245,26 @@ std::string BuildKeyInJql(const std::vector<std::string>& keys, std::size_t offs
     return jql;
 }
 
+// Build the JQL `parent` clause for the requested parent keys — the downward mirror of
+// BuildKeyInJql. Same escaping contract (E1): every key is JQL-escaped through
+// tracker_jql::QuoteLiteral before being wrapped in quotes.
+std::string BuildParentInJql(const std::vector<std::string>& keys, std::size_t offset, std::size_t count) {
+    if (count == 1) {
+        return "parent = \"" + tracker_jql::QuoteLiteral(keys[offset]) + "\"";
+    }
+    std::string jql = "parent in (";
+    for (std::size_t i = 0; i < count; ++i) {
+        if (i) {
+            jql += ',';
+        }
+        jql += '"';
+        jql += tracker_jql::QuoteLiteral(keys[offset + i]);
+        jql += '"';
+    }
+    jql += ')';
+    return jql;
+}
+
 // Log a non-200 page response and return the summary fetch-error string.
 std::string LogAndBuildPageFetchError(int page, const cpr::Response& response) {
     LOG_ERROR("JiraClient: failed to fetch issues page %d. HTTP %d, error code %d.", page, response.status_code,
@@ -546,6 +566,117 @@ JiraClient::FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::
             LOG_ERROR("JiraClient: fetch-by-key parse failed: %s", ex.what());
             outError = "The Tracker returned an unreadable response for this issue — try again.";
             return FetchResult::Err(TrackerErrorParse(outError));
+        }
+    }
+    return FetchResult::Ok(std::move(outTickets));
+}
+
+Result<std::vector<CachedTicket>, TrackerError>
+JiraClient::FetchChildrenOfKeys(const TrackerConfig& cfg, const std::vector<std::string>& parentKeys,
+                                const ViewsStore& viewStore) {
+    using FetchResult = Result<std::vector<CachedTicket>, TrackerError>;
+    std::vector<CachedTicket> outTickets;
+    std::string outError;
+    if (parentKeys.empty()) {
+        return FetchResult::Ok(std::move(outTickets));
+    }
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return FetchResult::Err(TrackerErrorAuth(outError));
+    }
+
+    const std::vector<std::string> keys = DedupeIssueKeys(parentKeys);
+    if (keys.empty()) {
+        return FetchResult::Ok(std::move(outTickets));
+    }
+
+    std::vector<std::string> fieldsList;
+    std::vector<std::string> selectedFields;
+    smatchet::jira::BuildFetchFieldListsFromView(viewStore, fieldsList, selectedFields);
+    const std::string fields = JoinStrings(fieldsList, ",");
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    auto fetchIssueComments = [&](const std::string& issueKey, nlohmann::json& outComments) -> bool {
+        return JiraFetchIssueCommentsPages(base, headers, issueKey, outComments);
+    };
+
+    // Unlike FetchIssuesForKeys (`key = X` matches at most one issue per requested key, so
+    // maxResults == key count is a safe upper bound), a single parent can have arbitrarily many
+    // children — an epic with 50 stories, say. So each parent-key batch's result set is paged
+    // properly via nextPageToken, independent of how many keys are in the `parent in (...)`
+    // clause. kMaxPagesPerBatch bounds worst-case pathological data (a parent with thousands of
+    // children) without truncating any real-world hierarchy silently forever — hitting the cap
+    // just means the remaining children surface on a later sync, same fail-open shape as the
+    // ancestor-fetch hop cap in TicketSyncService::FetchMissingParentsIntoQueue.
+    constexpr std::size_t kMaxKeysPerRequest = 40;
+    constexpr int kMaxPagesPerBatch = 50;
+    constexpr int kPageSize = 100;
+    for (size_t offset = 0; offset < keys.size(); offset += kMaxKeysPerRequest) {
+        const size_t n = (std::min)(kMaxKeysPerRequest, keys.size() - offset);
+        const std::string jql = BuildParentInJql(keys, offset, n);
+        const std::string jqlEncoded = UrlEncode(jql);
+
+        std::string nextPageToken;
+        for (int page = 0; page < kMaxPagesPerBatch; ++page) {
+            std::string pageUrl = base + "/rest/api/3/search/jql?jql=" + jqlEncoded +
+                                  "&maxResults=" + std::to_string(kPageSize) + "&fields=" + fields +
+                                  "&expand=changelog";
+            if (!nextPageToken.empty()) {
+                pageUrl += "&nextPageToken=" + UrlEncode(nextPageToken);
+            }
+
+            auto response = TrackerGetLogged("JiraClient", pageUrl, headers);
+            if (response.status_code != 200) {
+                outError = "Fetch children failed: " +
+                           smatchet::jira::ExtractJiraErrorMessage(response.status_code, response.text);
+                LOG_WARN("JiraClient::FetchChildrenOfKeys: %s", outError.c_str());
+                if (response.status_code >= 200 && response.status_code < 300) {
+                    return FetchResult::Err(TrackerErrorUnknown(outError, response.status_code));
+                }
+                return FetchResult::Err(TrackerErrorFromHttpStatus(response.status_code, outError));
+            }
+            try {
+                std::string parseErr;
+                auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+                if (!parseErr.empty()) {
+                    LOG_ERROR("JiraClient: fetch-children parse failed: %s", parseErr.c_str());
+                    outError = "The Tracker returned an unreadable response for these children — try again.";
+                    return FetchResult::Err(TrackerErrorParse(outError));
+                }
+                if (!json.contains("issues") || !json["issues"].is_array()) {
+                    outError = "Fetch children: response missing issues array.";
+                    return FetchResult::Err(TrackerErrorParse(outError));
+                }
+                for (const auto& issue : json["issues"]) {
+                    if (!smatchet::jira::AppendCachedTicketFromJiraSearchIssue(issue, selectedFields,
+                                                                               fetchIssueComments, outTickets)) {
+                        const std::string issueKey =
+                            issue.is_object() ? JsonGetStringIfString(issue, "key") : std::string();
+                        LOG_WARN("JiraClient::FetchChildrenOfKeys: failed to parse issue %s",
+                                 issueKey.empty() ? "(unknown)" : issueKey.c_str());
+                    }
+                }
+                const bool isLast = json.value("isLast", true);
+                if (isLast) {
+                    break;
+                }
+                std::string newToken = JsonGetStringIfString(json, "nextPageToken");
+                if (newToken.empty()) {
+                    LOG_WARN("JiraClient::FetchChildrenOfKeys: page indicates more results but nextPageToken is "
+                             "empty. Stopping pagination for this parent-key batch.");
+                    break;
+                }
+                nextPageToken = std::move(newToken);
+                if (page == kMaxPagesPerBatch - 1) {
+                    LOG_WARN("JiraClient::FetchChildrenOfKeys: hit the %d-page cap for one parent-key batch; "
+                             "remaining children will surface on a later sync.",
+                             kMaxPagesPerBatch);
+                }
+            } catch (const std::exception& ex) {
+                LOG_ERROR("JiraClient: fetch-children parse failed: %s", ex.what());
+                outError = "The Tracker returned an unreadable response for these children — try again.";
+                return FetchResult::Err(TrackerErrorParse(outError));
+            }
         }
     }
     return FetchResult::Ok(std::move(outTickets));

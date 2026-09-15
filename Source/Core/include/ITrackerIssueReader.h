@@ -70,6 +70,18 @@ class ITrackerIssueReader {
     FetchIssuesForKeys(const TrackerConfig& cfg, const std::vector<std::string>& issueKeys,
                        const ViewsStore& views) = 0;
 
+    /// Issues whose `parent` is one of `parentKeys` — the downward mirror of FetchIssuesForKeys.
+    /// Used to pull a visible ticket's children into the cache when the active view's own
+    /// filter doesn't independently return them (e.g. a `key = EPIC-1` view showing just the
+    /// epic itself). The default is the safe no-op (empty result, Ok) — matches the existing
+    /// missing-parent-fetch precedent for backends (GitHub Issues, Linear) that don't map a
+    /// `parent` field at all; a concrete backend overrides with a native "children of" query.
+    virtual Result<std::vector<CachedTicket>, TrackerError>
+    FetchChildrenOfKeys(const TrackerConfig& /*cfg*/, const std::vector<std::string>& /*parentKeys*/,
+                        const ViewsStore& /*views*/) {
+        return Result<std::vector<CachedTicket>, TrackerError>::Ok({});
+    }
+
     // ---- ticket-change-monitor reader surface (ticket-change-monitor plan, S1b) ----
     // Three optional capabilities the per-pane change monitor leans on. Each ships with a
     // backend-agnostic DEFAULT here so an unsupporting backend keeps working (heavier, but
