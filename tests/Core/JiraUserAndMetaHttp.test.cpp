@@ -89,6 +89,40 @@ TEST_CASE("JiraClient::FetchUsers — empty credentials short-circuit before any
     CHECK_FALSE(err.empty());
 }
 
+TEST_CASE("JiraClient::FetchUsers — a full first page is followed via startAt until a short page ends it") {
+    // /users/search returns a bare array with no isLast marker, so a page exactly as long as
+    // the requested maxResults (1000) must trigger another request at the advanced startAt.
+    // Regression for the single unpaginated call that silently truncated orgs with more than
+    // one page of members ("I don't see all the users loaded").
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        const std::string startAt = req.get_param_value("startAt");
+        if (startAt == "0") {
+            nlohmann::json page = nlohmann::json::array();
+            for (int i = 0; i < 1000; ++i) {
+                const std::string id = "a" + std::to_string(i);
+                page.push_back(nlohmann::json{{"accountId", id}, {"displayName", "User " + id}, {"active", true}});
+            }
+            return page;
+        }
+        if (startAt == "1000") {
+            return nlohmann::json::array({
+                nlohmann::json{{"accountId", "last"}, {"displayName", "Last User"}, {"active", true}},
+            });
+        }
+        return nlohmann::json::array();
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    const bool ok = client.FetchUsers(fx.Config(), out, err);
+    CHECK(ok);
+    CHECK(err.empty());
+    // 1000 from the full first page + 1 from the short second page that terminated the loop.
+    CHECK(out.size() == 1001);
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
+}
+
 TEST_CASE("JiraClient::FetchIssueWatchers — success parses the watchers array") {
     JiraCatalogHttpFixture fx;
     const nlohmann::json body = {

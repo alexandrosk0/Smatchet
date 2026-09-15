@@ -37,59 +37,74 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     const std::string base = NormalizeBaseUrl(cfg.Domain);
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
-    const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=1000";
-    auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
-    if (usersResponse.status_code != 200) {
-        outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return false;
-    }
-
-    try {
-        std::string parseErr;
-        auto usersJson = smatchet::json_safe::ParseBounded(usersResponse.text, parseErr);
-        if (!parseErr.empty()) {
-            outError = std::string("Failed to parse users response: ") + parseErr;
+    // GET /rest/api/3/users/search — paginated. This endpoint returns a bare array (no
+    // `isLast`/`total` wrapper), so termination is inferred the way Atlassian's own docs
+    // describe: keep advancing `startAt` by the page size actually requested until a page
+    // comes back short of that size (including empty). A single unpaginated call silently
+    // truncated any org with more members than the page size — see the "not all users
+    // loaded" report this fixed.
+    constexpr int kPageSize = 1000;
+    constexpr int kMaxPages = 50; // 50,000 users — sanity bound for a UI roster
+    std::set<std::string> seenAccountIds;
+    std::set<std::string> seenDisplayNames;
+    for (int page = 0; page < kMaxPages; ++page) {
+        const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=" + std::to_string(kPageSize) +
+                                     "&startAt=" + std::to_string(page * kPageSize);
+        auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
+        if (usersResponse.status_code != 200) {
+            outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
             LOG_ERROR("JiraClient: %s", outError.c_str());
             return false;
         }
-        if (!usersJson.is_array()) {
-            outError = "Invalid users response format.";
-            LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(usersResponse.text).c_str());
+
+        size_t pageCount = 0;
+        try {
+            std::string parseErr;
+            auto usersJson = smatchet::json_safe::ParseBounded(usersResponse.text, parseErr);
+            if (!parseErr.empty()) {
+                outError = std::string("Failed to parse users response: ") + parseErr;
+                LOG_ERROR("JiraClient: %s", outError.c_str());
+                return false;
+            }
+            if (!usersJson.is_array()) {
+                outError = "Invalid users response format.";
+                LOG_ERROR("JiraClient: %s body=%s", outError.c_str(),
+                          RedactHttpBodyForLog(usersResponse.text).c_str());
+                return false;
+            }
+
+            pageCount = usersJson.size();
+            for (const auto& user : usersJson) {
+                TrackerUser TrackerUser;
+                ParseTrackerUserObject(user, TrackerUser);
+
+                if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
+                    !seenAccountIds.insert(TrackerUser.AccountId).second) {
+                    continue;
+                }
+
+                if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
+                    const std::string suffix =
+                        TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
+                    TrackerUser.DisplayName += "_" + suffix;
+                }
+
+                outUsers.push_back(std::move(TrackerUser));
+            }
+        } catch (const std::exception& ex) {
+            outError = std::string("Failed to parse users response: ") + ex.what();
+            LOG_ERROR("JiraClient: %s", outError.c_str());
             return false;
         }
 
-        std::set<std::string> seenAccountIds;
-        std::set<std::string> seenDisplayNames;
-        for (const auto& user : usersJson) {
-            TrackerUser TrackerUser;
-            TrackerUser.AccountId = user.value("accountId", std::string());
-            TrackerUser.DisplayName = user.value("displayName", std::string());
-            TrackerUser.EmailAddress = user.value("emailAddress", std::string());
-            TrackerUser.AccountType = user.value("accountType", std::string());
-            TrackerUser.Active = user.value("active", true);
-
-            if (TrackerUser.DisplayName.empty() || TrackerUser.AccountId.empty() || !TrackerUser.Active ||
-                !seenAccountIds.insert(TrackerUser.AccountId).second) {
-                continue;
-            }
-
-            if (!seenDisplayNames.insert(TrackerUser.DisplayName).second) {
-                const std::string suffix =
-                    TrackerUser.AccountId.substr(0, std::min<size_t>(4, TrackerUser.AccountId.size()));
-                TrackerUser.DisplayName += "_" + suffix;
-            }
-
-            outUsers.push_back(std::move(TrackerUser));
+        // A page shorter than requested (including empty) means we've reached the end,
+        // regardless of whether the server honored our requested page size.
+        if (pageCount < static_cast<size_t>(kPageSize)) {
+            break;
         }
-
-        SortTrackerUsersForDisplay(outUsers);
-    } catch (const std::exception& ex) {
-        outError = std::string("Failed to parse users response: ") + ex.what();
-        LOG_ERROR("JiraClient: %s", outError.c_str());
-        return false;
     }
 
+    SortTrackerUsersForDisplay(outUsers);
     return true;
 }
 
