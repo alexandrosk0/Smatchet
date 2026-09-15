@@ -255,6 +255,9 @@ static void RegisterDeepChainDepthsAndOrderMatchAncestry(ImGuiTestEngine* engine
         const bool depthsCached =
             YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.size() == tickets.size(); });
         IM_CHECK_NO_RET(depthsCached);
+        if (!depthsCached) {
+            return; // timed out — cachedDepths may be empty/partial; indexing below would be UB.
+        }
 
         const std::vector<int>& depths = g_ui.gridPanes.front().cachedDepths;
         // The full ancestor chain resolves within the fixture's single streamed batch (every
