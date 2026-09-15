@@ -34,14 +34,21 @@ TEST_CASE("JiraClient::FetchUsers — success dedups, drops inactive, and append
     JiraCatalogHttpFixture fx;
     // /users/search returns an array. Two rows share a display name (suffix applied to the 2nd),
     // one is inactive (dropped), one is a duplicate accountId (dropped), one lacks accountId (dropped).
-    const nlohmann::json users = nlohmann::json::array({
-        nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
-        nlohmann::json{{"accountId", "a2"}, {"displayName", "Alice"}, {"active", true}},
-        nlohmann::json{{"accountId", "a3"}, {"displayName", "Bob"}, {"active", false}},
-        nlohmann::json{{"accountId", "a1"}, {"displayName", "AliceDup"}, {"active", true}},
-        nlohmann::json{{"displayName", "NoId"}, {"active", true}},
+    // A ScriptHandler (not a fixed ScriptJson body) so the page-2 request — now issued because
+    // FetchUsers no longer treats a short first page as terminal — sees an empty array and stops,
+    // rather than replaying the same 5 rows on every startAt up to the kMaxPages bound.
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        if (req.get_param_value("startAt") == "0") {
+            return nlohmann::json::array({
+                nlohmann::json{{"accountId", "a1"}, {"displayName", "Alice"}, {"active", true}},
+                nlohmann::json{{"accountId", "a2"}, {"displayName", "Alice"}, {"active", true}},
+                nlohmann::json{{"accountId", "a3"}, {"displayName", "Bob"}, {"active", false}},
+                nlohmann::json{{"accountId", "a1"}, {"displayName", "AliceDup"}, {"active", true}},
+                nlohmann::json{{"displayName", "NoId"}, {"active", true}},
+            });
+        }
+        return nlohmann::json::array();
     });
-    fx.ScriptJson("/rest/api/3/users/search", users, "GET");
 
     JiraClient client;
     std::vector<TrackerUser> out;
@@ -58,6 +65,7 @@ TEST_CASE("JiraClient::FetchUsers — success dedups, drops inactive, and append
         }
     }
     CHECK(sawSuffix);
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
 }
 
 TEST_CASE("JiraClient::FetchUsers — non-200 sets an HTTP error and returns false") {
@@ -89,7 +97,7 @@ TEST_CASE("JiraClient::FetchUsers — empty credentials short-circuit before any
     CHECK_FALSE(err.empty());
 }
 
-TEST_CASE("JiraClient::FetchUsers — a full first page is followed via startAt until a short page ends it") {
+TEST_CASE("JiraClient::FetchUsers — a full first page is followed via startAt until an empty page ends it") {
     // /users/search returns a bare array with no isLast marker, so a page exactly as long as
     // the requested maxResults (1000) must trigger another request at the advanced startAt.
     // Regression for the single unpaginated call that silently truncated orgs with more than
@@ -118,9 +126,65 @@ TEST_CASE("JiraClient::FetchUsers — a full first page is followed via startAt 
     const bool ok = client.FetchUsers(fx.Config(), out, err);
     CHECK(ok);
     CHECK(err.empty());
-    // 1000 from the full first page + 1 from the short second page that terminated the loop.
+    // 1000 from the full first page + 1 from the second page, then a third (empty) request
+    // at startAt=1001 ends the loop.
     CHECK(out.size() == 1001);
-    CHECK(fx.RequestCount("/rest/api/3/users/search") == 2);
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 3);
+}
+
+TEST_CASE("JiraClient::FetchUsers — a server-clamped non-final page is still followed, not mistaken for the last") {
+    // Jira's docs say maxResults is only a hint the server may clamp lower (the same caveat
+    // FetchUsersByAccountIds' user/bulk paging documents). A page shorter than requested must
+    // NOT be treated as the last page, or a clamping server silently truncates the roster.
+    // startAt must advance by what the server actually returned (25), not the requested 1000.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        const std::string startAt = req.get_param_value("startAt");
+        if (startAt == "0") {
+            nlohmann::json page = nlohmann::json::array();
+            for (int i = 0; i < 25; ++i) {
+                const std::string id = "a" + std::to_string(i);
+                page.push_back(nlohmann::json{{"accountId", id}, {"displayName", "User " + id}, {"active", true}});
+            }
+            return page;
+        }
+        if (startAt == "25") {
+            return nlohmann::json::array({
+                nlohmann::json{{"accountId", "last"}, {"displayName", "Last User"}, {"active", true}},
+            });
+        }
+        return nlohmann::json::array();
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    const bool ok = client.FetchUsers(fx.Config(), out, err);
+    CHECK(ok);
+    CHECK(err.empty());
+    CHECK(out.size() == 26);
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 3);
+}
+
+TEST_CASE("JiraClient::FetchUsers — exhausting the page-count safety bound is an error, not a silent truncation") {
+    // A server that always returns a full page (misbehaving, or an org genuinely over the
+    // 50,000-user sanity bound) must not be reported as a complete, successful fetch — that
+    // would silently drop the remainder from every user-type field dropdown.
+    JiraCatalogHttpFixture fx;
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request&) {
+        nlohmann::json page = nlohmann::json::array();
+        for (int i = 0; i < 1000; ++i) {
+            const std::string id = "a" + std::to_string(i);
+            page.push_back(nlohmann::json{{"accountId", id}, {"displayName", "User " + id}, {"active", true}});
+        }
+        return page;
+    });
+    JiraClient client;
+    std::vector<TrackerUser> out;
+    std::string err;
+    CHECK_FALSE(client.FetchUsers(fx.Config(), out, err));
+    CHECK_FALSE(err.empty());
+    // 50 pages (kMaxPages) of 1000 rows each, all unique accountIds this time.
+    CHECK(fx.RequestCount("/rest/api/3/users/search") == 50);
 }
 
 TEST_CASE("JiraClient::FetchIssueWatchers — success parses the watchers array") {

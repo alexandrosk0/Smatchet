@@ -38,18 +38,22 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
     const cpr::Header headers = BuildTrackerHeaders(cfg);
 
     // GET /rest/api/3/users/search — paginated. This endpoint returns a bare array (no
-    // `isLast`/`total` wrapper), so termination is inferred the way Atlassian's own docs
-    // describe: keep advancing `startAt` by the page size actually requested until a page
-    // comes back short of that size (including empty). A single unpaginated call silently
-    // truncated any org with more members than the page size — see the "not all users
-    // loaded" report this fixed.
+    // `isLast`/`total` wrapper), and Jira's own docs say `maxResults` is only a hint the
+    // server is free to clamp lower (the same caveat FetchUsersByAccountIds' user/bulk
+    // paging above already documents) — so a page shorter than requested does NOT mean
+    // "last page". Advance `startAt` by the count each page actually returned and stop
+    // only on a genuinely empty page. A single unpaginated call silently truncated any
+    // org with more members than one page — see the "not all users loaded" report this
+    // fixed.
     constexpr int kPageSize = 1000;
     constexpr int kMaxPages = 50; // 50,000 users — sanity bound for a UI roster
     std::set<std::string> seenAccountIds;
     std::set<std::string> seenDisplayNames;
+    size_t startAt = 0;
+    bool reachedEnd = false;
     for (int page = 0; page < kMaxPages; ++page) {
         const std::string usersUrl = base + "/rest/api/3/users/search?maxResults=" + std::to_string(kPageSize) +
-                                     "&startAt=" + std::to_string(page * kPageSize);
+                                     "&startAt=" + std::to_string(startAt);
         auto usersResponse = TrackerGetLogged("JiraClient", usersUrl, headers);
         if (usersResponse.status_code != 200) {
             outError = "Failed to fetch users: HTTP " + std::to_string(usersResponse.status_code);
@@ -97,11 +101,22 @@ bool JiraClient::FetchUsers(const TrackerConfig& cfg, std::vector<TrackerUser>& 
             return false;
         }
 
-        // A page shorter than requested (including empty) means we've reached the end,
-        // regardless of whether the server honored our requested page size.
-        if (pageCount < static_cast<size_t>(kPageSize)) {
+        // An empty page means we've reached the end. A page shorter than requested is NOT
+        // itself a terminator — the server may have clamped maxResults — so advance startAt
+        // by what it actually sent and keep going.
+        if (pageCount == 0) {
+            reachedEnd = true;
             break;
         }
+        startAt += pageCount;
+    }
+
+    if (!reachedEnd) {
+        outError = "Failed to fetch users: exceeded " + std::to_string(kMaxPages) +
+                   " pages (" + std::to_string(kMaxPages * kPageSize) +
+                   " users) without reaching the end of the roster.";
+        LOG_ERROR("JiraClient: %s", outError.c_str());
+        return false;
     }
 
     SortTrackerUsersForDisplay(outUsers);
