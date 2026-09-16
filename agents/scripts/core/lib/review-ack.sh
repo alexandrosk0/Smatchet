@@ -35,6 +35,8 @@
 #   ra_write_marker <mode> <sha> [verdict...] -> records <sha> (+ optional verdict)
 #   ra_read_verdict <mode>               -> prints the recorded verdict, or empty
 #   ra_verdict_from_json <aggregate.json> -> verdict fields from a sidecar result
+#   ra_findings_path                     -> absolute path of the .review-findings.json artifact
+#   ra_findings_fingerprint              -> the artifact's "fingerprint" field, or empty + rc 1
 #
 #   <mode> is `branch` (committed-on-branch + working tree, vs base_ref) or
 #   `staged` (the index only). base_ref defaults to origin/develop and is ignored
@@ -320,4 +322,34 @@ ra_verdict_from_json() {
             ((.veto_reasons // []) | if type == "array" and length > 0 then (.[0] | tostring) else "" end)
           ] | @tsv
     ' "$file" 2>/dev/null
+}
+
+# ra_findings_path — absolute path of the .review-findings.json review artifact
+# (empty when not inside a work tree). Per-worktree, same construction as
+# ra_marker_path.
+ra_findings_path() {
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$root" ] || return 0
+    printf '%s\n' "$root/.review-findings.json"
+}
+
+# ra_findings_fingerprint — echo the "fingerprint" field of .review-findings.json
+# (the code-review agent's stamp of the diff it actually read); rc 1 if the file
+# is absent or unparseable. Parsed with grep, not python/jq, deliberately — same
+# reasoning as ra_strict_hit's fail-closed budget (#1116): a 64-hex field needs no
+# JSON parser, and a second interpreter dependency would only widen the surface
+# this exists to close. Shared by scripts/dev/pre-ship.sh's push-gate artifact
+# check and agents/scripts/core/record-review-verdict.sh's verdict-recording
+# gate, so the two never drift on what "a matching artifact" means (the class of
+# bug check-pr-intent.sh's own --check-workflow-sync guards against elsewhere).
+ra_findings_fingerprint() {
+    local path
+    path="$(ra_findings_path)"
+    [ -n "$path" ] && [ -r "$path" ] || return 1
+    local fp
+    fp="$(grep -oE '"fingerprint"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' "$path" 2>/dev/null |
+        head -n 1 | grep -oE '[0-9a-f]{64}' || true)"
+    [ -n "$fp" ] || return 1
+    printf '%s\n' "$fp"
 }

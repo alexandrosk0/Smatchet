@@ -576,20 +576,16 @@ esac
 # Honest about the limit: this closes the "forgot / rubber-stamped" hole, not the
 # adversarial one. A hand-written JSON still passes, as does the logged bypass. The point
 # is that skipping the review now takes a deliberate forgery rather than an omission.
-review_findings_path="$repo_root/.review-findings.json"
 
 # preship_findings_fingerprint — echo the "fingerprint" field of the artifact; rc 1 if
-# absent/unparseable. Parsed with grep, NOT python or jq, deliberately: this gate already
-# has a documented fail-closed path for a missing python (#1116), and a second interpreter
-# dependency would either widen that surface or invite a WARN-degrade that re-opens the
-# very hole the artifact closes. A 64-hex field needs no JSON parser.
+# absent/unparseable. Thin wrapper: the parser lives in ra_findings_fingerprint
+# (agents/scripts/core/lib/review-ack.sh) so this script and
+# agents/scripts/core/record-review-verdict.sh's verdict-recording gate share
+# exactly one implementation of "what does the artifact's fingerprint say" —
+# the two-copies-drift class of bug check-pr-intent.sh's own
+# --check-workflow-sync guards against elsewhere.
 preship_findings_fingerprint() {
-    [ -r "$review_findings_path" ] || return 1
-    local fp
-    fp="$(grep -oE '"fingerprint"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' "$review_findings_path" 2>/dev/null |
-        head -n 1 | grep -oE '[0-9a-f]{64}' || true)"
-    [ -n "$fp" ] || return 1
-    printf '%s\n' "$fp"
+    ra_findings_fingerprint
 }
 
 # preship_require_findings <want-fingerprint> — rc 0 when a matching artifact exists,
