@@ -401,10 +401,18 @@ TEST_CASE("FetchFieldCatalog result overload — users fetched and injected into
     JiraCatalogHttpFixture fx;
     fx.ScriptJson("/rest/api/3/field", BaselineFieldList());
     ScriptGlobalEnrichmentEndpoints(fx);
-    fx.ScriptJson("/rest/api/3/users/search",
-                  nlohmann::json::array({{{"accountId", "u1"}, {"displayName", "Alice"}, {"active", true}},
-                                         {{"accountId", "u2"}, {"displayName", "Bob"}, {"active", true}},
-                                         {{"accountId", "u3"}, {"displayName", "Gone"}, {"active", false}}}));
+    // ScriptHandler, not a fixed ScriptJson body: FetchUsers now paginates via startAt (it no
+    // longer treats a short first page as terminal, since Jira may clamp maxResults below what
+    // was requested — see JiraUserAndMeta.cpp), so the page-2 request needs an empty array to
+    // stop the loop instead of replaying the same 3 rows until the page-count safety bound.
+    fx.ScriptHandler("/rest/api/3/users/search", [](const httplib::Request& req) {
+        if (req.get_param_value("startAt") == "0") {
+            return nlohmann::json::array({{{"accountId", "u1"}, {"displayName", "Alice"}, {"active", true}},
+                                          {{"accountId", "u2"}, {"displayName", "Bob"}, {"active", true}},
+                                          {{"accountId", "u3"}, {"displayName", "Gone"}, {"active", false}}});
+        }
+        return nlohmann::json::array();
+    });
 
     JiraClient client;
     auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
