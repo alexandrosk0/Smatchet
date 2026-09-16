@@ -302,9 +302,12 @@ std::vector<std::string> DedupeIssueKeys(const std::vector<std::string>& issueKe
 
 // Outcome of driving the /search/jql pagination loop for a prebuilt search URL.
 struct JiraPageLoopResult {
-    bool endedCleanly = false;  // every page consumed with a clean isLast (no abort / cap / error)
-    int fetchedPages = 0;       // pages that returned HTTP 200 and were mapped
-    bool tokenLeftover = false; // a next-page token remained when the loop stopped (cap hit)
+    bool endedCleanly = false;     // every page consumed with a clean isLast (no abort / cap / error)
+    int fetchedPages = 0;          // pages that returned HTTP 200 and were mapped
+    bool tokenLeftover = false;    // a next-page token remained when the loop stopped (cap hit)
+    size_t totalFetchedBytes = 0;  // cumulative response size (bytes) across all pages
+    bool totalSizeLimitHit = false; // true if total fetch size exceeded the cap
+    bool resultCountLimitHit = false; // true if result count exceeded the cap
 };
 
 // Drive the token-paginated /search/jql loop for `baseSearchUrl`, mapping each page through
@@ -321,6 +324,8 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
     JiraPageLoopResult result;
     std::string nextPageToken;
     const int kMaxPages = 50;
+    const size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
+    const size_t kMaxResultCount = 10000u;                    // hard cap on issue count
 
     for (int page = 1; page <= kMaxPages; ++page) {
         if (shouldCancel && shouldCancel()) {
@@ -349,6 +354,17 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
         }
 
         result.fetchedPages++;
+
+        // Track cumulative response size for total-fetch guard.
+        result.totalFetchedBytes += lastResponseBody.size();
+        if (result.totalFetchedBytes > kMaxTotalFetchBytes) {
+            LOG_WARN("JiraClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
+                     result.totalFetchedBytes, kMaxTotalFetchBytes);
+            result.totalSizeLimitHit = true;
+            result.endedCleanly = false;
+            break;
+        }
+
         JiraSearchPageOutcome outcome = ProcessJiraSearchPage(page, response.text, lastResponseBody, selectedFields,
                                                               fetchIssueComments, onBatch, shouldCancel, summary);
         if (outcome.HadFetchError) {
@@ -356,6 +372,16 @@ JiraRunSearchPageLoop(const std::string& baseSearchUrl, const cpr::Header& heade
             // Every ProcessJiraSearchPage error producer is body-shape/parse class.
             summary.Error = TrackerErrorParse(summary.FetchError);
         }
+
+        // Guard result count to prevent memory exhaustion from massive result sets.
+        if (summary.FetchedCount > kMaxResultCount) {
+            LOG_WARN("JiraClient: result count (%zu issues) exceeds limit (%zu). Stopping pagination.",
+                     summary.FetchedCount, kMaxResultCount);
+            result.resultCountLimitHit = true;
+            result.endedCleanly = false;
+            break;
+        }
+
         if (outcome.Stop) {
             result.endedCleanly = outcome.EndedCleanly;
             break;
