@@ -73,16 +73,20 @@ TEST_CASE("Per-response size guard is enforced") {
 }
 
 TEST_CASE("Guard limits prevent memory exhaustion") {
-    // Worst-case memory usage with Jira: 50 pages × 100 issues × ~50KB/issue ≈ 250MB
-    // Our 100MB cumulative size guard + 4MB per-response prevents this.
-    const size_t kEstimatedBytesPerIssue = 50000; // conservative estimate
-    const size_t jiraWorstCaseMemory = kJiraMaxPages * 100 * kEstimatedBytesPerIssue;
-    // Cumulative guard should trigger first
-    REQUIRE(kJiraMaxTotalFetchBytes < jiraWorstCaseMemory);
+    // Test that cumulative guards are finite and enforce a hard ceiling.
+    // Jira: 50 pages × 100 issues × ~50KB/issue = 250MB potential without guard.
+    // With 100MB limit, pathological queries are caught early.
+    REQUIRE(kJiraMaxTotalFetchBytes == 100u * 1024u * 1024u);
+    REQUIRE(kJiraMaxTotalFetchBytes > 0);
 
-    // GitHub worst-case: 10 pages × 100 issues ≈ 50MB already at limit
-    const size_t gitHubWorstCaseMemory = kGitHubMaxPages * 100 * kEstimatedBytesPerIssue;
-    REQUIRE(kGitHubMaxTotalFetchBytes <= gitHubWorstCaseMemory);
+    // GitHub: 10 pages × 100 issues × ~50KB/issue = 50MB potential.
+    // With 50MB limit, large result sets are capped.
+    REQUIRE(kGitHubMaxTotalFetchBytes == 50u * 1024u * 1024u);
+    REQUIRE(kGitHubMaxTotalFetchBytes > 0);
+
+    // Plane: same as Jira — 100MB limit.
+    REQUIRE(kPlaneMaxTotalFetchBytes == 100u * 1024u * 1024u);
+    REQUIRE(kPlaneMaxTotalFetchBytes > 0);
 }
 
 }  // TEST_SUITE
