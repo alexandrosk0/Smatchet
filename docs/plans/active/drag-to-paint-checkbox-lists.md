@@ -21,7 +21,8 @@ disabled row behave exactly as they do today.
 
 One widget, `SmatchetDragCheckbox(label, &value, flags)`, drop-in for `ImGui::Checkbox` (same
 `if (...) { }` call shape, same widget id, same localization of the label), backed by a pure
-state machine in `SmatchetDragCheckboxPure.h`.
+state machine in `SmatchetDragCheckboxPure.h`. It ships on the Views > Fields list; the two grid
+cell editors are a non-goal for the reason in § Risks / non-goals.
 
 The gesture inverts Dear ImGui's own timing, which is what makes it work: `ImGui::Checkbox` toggles
 on *release*, so a press-drag-release that ends on a different row would never toggle the row it
@@ -49,13 +50,10 @@ instance is a function-local static), so there is no new TU and no link edge fro
    disabled/scope probes, and the write-back that drives the pure decisions.
 3. `Source/Core/src/Ui/SmatchetViewsDashboardUi.cpp:514,565` — the Views > Fields System/Custom
    groups and the Basic-fields group (the list the request named).
-4. `Source/Core/src/TicketFieldEditor.cpp:901` — the multi-select / components option list.
-5. `Source/Core/src/Tracker/TrackerLabelsEditor.cpp:88` — the label-suggestion list. Its `queue`
-   is set-replace and the grid keeps only the latest edit per cell, so the row loop now composes
-   the frame's toggles into one running set: a drag that flips several rows in a single frame would
-   otherwise land only its last row.
-6. `tests/Core/SmatchetDragCheckboxPure.test.cpp` (new) + `tests/CMakeLists.txt` — bucket-A coverage,
+4. `tests/Core/SmatchetDragCheckboxPure.test.cpp` (new) + `tests/CMakeLists.txt` — bucket-A coverage,
    registered in both the full rig and the Linux/TSan curated subset.
+5. `tests/ui/drag_checkbox_paint.test.cpp` (new) + `tests/ui/CMakeLists.txt` +
+   `tests/ui/ui_tests_registry.cpp` — bucket-E coverage driving the real widget.
 
 ## Existing utilities reused
 
@@ -102,6 +100,16 @@ N/A — this plan adds a widget, it extracts nothing.
 - **Risk: the header included after a TU's `#define ImGui SmatchetLocalizedImGui`** would rewrite
   the header's own `ImGui::` calls and double-localize. A `#error` guard makes that a compile
   failure rather than a runtime oddity.
+- **Non-goal: the grid cell editors** — the multi-select / components list
+  (`TicketFieldEditor.cpp`) and the label-suggestion list (`TrackerLabelsEditor.cpp`). Both were
+  wired up first and then reverted: their commit pipeline is structurally hostile to a run. Each
+  toggle queues a set-REPLACE edit; `EnqueueGridFieldEdits` keeps only the latest queued edit per
+  cell; and `PumpGridFieldEdits` immediately marks the cell `CellWriteState::Saving`, which makes
+  `SmatchetActiveProjectGridCells.cpp` render the read-only cell instead of `RenderFieldCell` — so
+  the combo closes on the first queued edit and the gesture dies mid-drag. A run there would only
+  ever cover the rows swept in one frame, while still changing the press-to-commit semantics of
+  those editors. Making them work needs the commit deferred until the editor closes, which is the
+  tracker write path, not this feature. Backlogged.
 - **Non-goal: the mobile-nav hidden-pages list** (`SmatchetPreferencesUi_Local.cpp:205`). Its rows
   leave the list the moment they are ticked, so a drag has no stable run to paint and could add nav
   pages the user never aimed at. Left on plain `ImGui::Checkbox`.

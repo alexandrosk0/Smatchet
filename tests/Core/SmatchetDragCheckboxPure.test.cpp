@@ -147,16 +147,26 @@ TEST_CASE("A press elsewhere never hijacks a run already in flight") {
 
 TEST_CASE("GestureLapsed keeps the run through the release frame, then drops it") {
     const pure::PaintGesture gesture = ActiveGesture(kListA, kRowOne, true, 7);
-    CHECK_FALSE(pure::GestureLapsed(gesture, true, false, 7)); // serviced this frame
-    CHECK_FALSE(pure::GestureLapsed(gesture, true, false, 8)); // next frame, still drawing
+    CHECK_FALSE(pure::GestureLapsed(gesture, true, false, false, 7)); // serviced this frame
+    CHECK_FALSE(pure::GestureLapsed(gesture, true, false, false, 8)); // next frame, still drawing
     // The release frame reads button-up, and it is the frame ImGui reports its own toggle on.
     // Lapsing here would leave that toggle to undo what the press applied — every plain click
     // would be a no-op reported twice.
-    CHECK_FALSE(pure::GestureLapsed(gesture, false, true, 8));
-    CHECK(pure::GestureLapsed(gesture, false, false, 8));                   // button up, release already consumed
-    CHECK(pure::GestureLapsed(gesture, true, false, 9));                    // the list stopped drawing — stranded
-    CHECK(pure::GestureLapsed(gesture, false, true, 9));                    // a frame gap ends it either way
-    CHECK_FALSE(pure::GestureLapsed(pure::PaintGesture(), true, false, 9)); // nothing in flight
+    CHECK_FALSE(pure::GestureLapsed(gesture, false, true, false, 8));
+    CHECK(pure::GestureLapsed(gesture, false, false, false, 8));                   // button up, release consumed
+    CHECK(pure::GestureLapsed(gesture, true, false, false, 9));                    // the list stopped drawing
+    CHECK(pure::GestureLapsed(gesture, false, true, false, 9));                    // a frame gap ends it either way
+    CHECK_FALSE(pure::GestureLapsed(pure::PaintGesture(), true, false, false, 9)); // none in flight
+}
+
+TEST_CASE("A fresh press ends the previous run instead of being swallowed by it") {
+    // Click fast enough (or with queued input) and the next press lands on the frame right
+    // after the release, while the run is still alive to guard the origin's release-toggle.
+    const pure::PaintGesture gesture = ActiveGesture(kListA, kRowOne, true, 8);
+    CHECK(pure::GestureLapsed(gesture, true, false, true, 9));
+    // But the press that OPENED this run (same frame the wrapper stamped) must not end it —
+    // every later row in that frame still needs the run to paint with.
+    CHECK_FALSE(pure::GestureLapsed(gesture, true, false, true, 8));
 }
 
 TEST_CASE("A whole plain click nets exactly one toggle, reported once") {
@@ -181,7 +191,7 @@ TEST_CASE("A whole plain click nets exactly one toggle, reported once") {
 
     // Release frame: ImGui's Checkbox has already flipped the caller's bool back.
     row = !row;
-    CHECK_FALSE(pure::GestureLapsed(gesture, false, true, 8));
+    CHECK_FALSE(pure::GestureLapsed(gesture, false, true, false, 8));
     pure::ItemFrame release = Row(kRowOne, row);
     release.Clicked = true;
     decision = pure::DecideItem(gesture, release);

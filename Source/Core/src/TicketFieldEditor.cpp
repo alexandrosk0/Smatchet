@@ -25,7 +25,6 @@
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetWorklogSubmitPure.h"
 #include "TouchCellEditGesture.h"
-#include "SmatchetDragCheckbox.h"
 #include "TextEditor.h"
 #include "Logger.h"
 #include "JiraClient.h"
@@ -895,10 +894,7 @@ void RenderMultiSelectComboBody(const CachedTicket& ticket, const TrackerField& 
         if (option.Disabled) {
             ImGui::BeginDisabled();
         }
-        // Drag-to-paint: press one option and drag down the list to tick (or clear) a run of
-        // them in one gesture. Disabled options are skipped by the widget, so a run dragged
-        // across one leaves it untouched.
-        if (SmatchetDragCheckbox(option.Value.c_str(), &checked)) {
+        if (ImGui::Checkbox(option.Value.c_str(), &checked)) {
             if (checked) {
                 selectedSet.insert(optionId);
             } else {

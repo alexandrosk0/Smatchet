@@ -86,8 +86,11 @@ void DragPaintGuiFunc(ImGuiTestContext* ctx) {
 void ArmRows(ImGuiTestContext* ctx) {
     ResetDragPaintState();
     ctx->SetRef(kWindowRef);
-    ctx->WindowFocus(kWindowRef);
+    // Two frames before touching it: GuiFunc has to have created the window (and captured the
+    // row geometry the drag aims at) before WindowFocus/MouseMove can resolve it.
     ctx->Yield();
+    ctx->Yield();
+    ctx->WindowFocus(kWindowRef);
     ctx->Yield();
     ctx->MouseMove("##row0");
 }
@@ -108,11 +111,11 @@ void RegisterDragPaintsCrossedRows(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(s->values[0], true);
         IM_CHECK_EQ(s->changes[0], 1);
 
-        // Drag down through rows 1..4. Row 3 is disabled and must come out untouched.
-        for (int row = 1; row <= 4; ++row) {
-            ctx->MouseMoveToPos(s->centers[row]);
-            ctx->Yield();
-        }
+        // One move straight from row 0 to row 4 — not a stop at each row. That is what puts
+        // the SWEPT path under test: rows 1, 2 and 4 are only ever crossed, never landed on,
+        // so a widget that sampled the instantaneous pointer would leave them unpainted.
+        ctx->MouseMoveToPos(s->centers[4]);
+        ctx->Yield();
         ctx->MouseUp(0);
         ctx->Yield();
         ctx->Yield();
@@ -184,10 +187,17 @@ void RegisterPlainClickTogglesOnce(ImGuiTestEngine* engine) {
         IM_CHECK_EQ(s->values[0], false);
         IM_CHECK_EQ(s->changes[0], 2);
 
-        // A run never starts without a press: hovering the other rows changed nothing.
-        for (int i = 1; i < DragPaintState::kRows; ++i) {
+        // A run never starts without a press: take the pointer across every other row with
+        // the button UP, then assert nothing moved. Reading the values without travelling
+        // would pass even if hover alone painted.
+        for (int row = 1; row < DragPaintState::kRows; ++row) {
+            ctx->MouseMoveToPos(s->centers[row]);
+            ctx->Yield();
+        }
+        for (int i = 0; i < DragPaintState::kRows; ++i) {
             IM_CHECK_EQ(s->values[i], false);
         }
+        IM_CHECK_EQ(s->changes[0], 2); // still just the two clicks
     };
 }
 

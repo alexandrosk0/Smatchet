@@ -130,8 +130,9 @@ inline bool SmatchetDragCheckbox(const char* label, bool* value, int flags = Sma
     // The release frame reads button-up but is exactly the frame ImGui::Checkbox reports its
     // own toggle on, so the gesture has to survive it (SmatchetDragCheckboxPure::GestureLapsed).
     const bool mouseReleased = ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    const bool mousePressed = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     pure::PaintGesture& gesture = detail::Gesture();
-    if (pure::GestureLapsed(gesture, mouseDown, mouseReleased, frame)) {
+    if (pure::GestureLapsed(gesture, mouseDown, mouseReleased, mousePressed, frame)) {
         gesture = pure::PaintGesture();
     }
 
@@ -141,7 +142,7 @@ inline bool SmatchetDragCheckbox(const char* label, bool* value, int flags = Sma
     item.Id = g.LastItemData.ID;
     item.Scope = ImGui::GetCurrentWindow()->ID;
     item.Disabled = (g.LastItemData.ItemFlags & ImGuiItemFlags_Disabled) != 0;
-    item.Pressed = ImGui::IsItemActivated() && ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    item.Pressed = ImGui::IsItemActivated() && mousePressed;
     item.DraggedOver = gesture.Active && gesture.Scope == item.Scope && mouseDown &&
                        detail::PointerCrossedRow(detail::HitBandForLastItem(flags));
 

@@ -3,7 +3,6 @@
 #include "StringUtil.h"
 #include "TrackerLabelsPure.h"
 #include "TouchCellEditGesture.h"
-#include "SmatchetDragCheckbox.h"
 #include "imgui.h"
 #include "imgui_internal.h"
 #include "SmatchetLocalizedImGui.h"
@@ -82,28 +81,22 @@ void DrawLabelsComboBody(const std::string& editorKey, const CachedTicket& ticke
         }
     }
 
-    // The running set this frame's toggles compose into. `queue` is set-REPLACE and the grid
-    // keeps only the latest queued edit per cell, so rebuilding each toggle from the immutable
-    // `selectedLabels` snapshot would make the last row of a drag-paint run the only one that
-    // survives — a single drag can flip several rows in one frame.
-    std::vector<std::string> working = selectedLabels;
     for (const auto& suggestion : visibleSuggestions) {
-        bool checked = ContainsLabelCaseInsensitive(working, suggestion);
+        bool checked = ContainsLabelCaseInsensitive(selectedLabels, suggestion);
         const std::string optionWidget = suggestion + "##Label_" + ticket.id + "_" + field.Id + "_" + suggestion;
-        // Drag-to-paint: press one suggestion and drag down the list to add (or remove) a run
-        // of labels in one gesture instead of one click each.
-        if (SmatchetDragCheckbox(optionWidget.c_str(), &checked)) {
-            if (checked && !ContainsLabelCaseInsensitive(working, suggestion)) {
-                working.push_back(suggestion);
+        if (ImGui::Checkbox(optionWidget.c_str(), &checked)) {
+            std::vector<std::string> updated = selectedLabels;
+            if (checked && !ContainsLabelCaseInsensitive(updated, suggestion)) {
+                updated.push_back(suggestion);
             } else {
-                working.erase(std::remove_if(working.begin(), working.end(),
+                updated.erase(std::remove_if(updated.begin(), updated.end(),
                                              [&](const std::string& label) {
                                                  return LabelsEqualCaseInsensitive(label, suggestion);
                                              }),
-                              working.end());
+                              updated.end());
             }
-            working = SortAndUniqueLabels(std::move(working));
-            queue(working);
+            updated = SortAndUniqueLabels(std::move(updated));
+            queue(updated);
         }
     }
 

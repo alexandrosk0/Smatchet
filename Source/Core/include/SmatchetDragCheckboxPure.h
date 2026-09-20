@@ -52,11 +52,20 @@ struct ItemDecision {
 // A frame gap ends it regardless: the list stopped rendering under the pointer (tab switched,
 // popup closed, window hidden) and the gesture is stranded, so resuming a paint into a list
 // the user has since left is never right. `frame` is the current frame counter.
-inline bool GestureLapsed(const PaintGesture& gesture, bool mouseDown, bool mouseReleased, int frame) {
+inline bool GestureLapsed(const PaintGesture& gesture, bool mouseDown, bool mouseReleased, bool mousePressed,
+                          int frame) {
     if (!gesture.Active) {
         return false;
     }
     if (frame > gesture.Frame + 1) {
+        return true;
+    }
+    if (mousePressed && gesture.Frame != frame) {
+        // A fresh press while the previous run is still in its release frame (a fast
+        // double-click, or queued input delivered a frame apart) starts a NEW run — without
+        // this the stale run owns the pointer and swallows that press entirely. The
+        // frame guard keeps the press that OPENED this run from ending it: the wrapper
+        // stamps Frame on the opening frame, so `Frame == frame` means "started right here".
         return true;
     }
     return !mouseDown && !mouseReleased;
