@@ -21,7 +21,12 @@
 
 namespace {
 
-const char* const kWindowRef = "SmatchetTest::DragCheckboxPaint";
+const char* const kWindowName = "SmatchetTest::DragCheckboxPaint";
+// Leading "//" is the engine's absolute-ref prefix (it ignores the current SetRef). Without
+// it, a WindowFocus after SetRef(window) resolves as a CHILD of that window and fails its
+// `window != nullptr` check — leaving the app's own windows in front, where the press never
+// reaches these rows.
+const char* const kWindowRef = "//SmatchetTest::DragCheckboxPaint";
 
 // Per-test state. TU-local — the engine runs GuiFunc and TestFunc on the same (UI) thread in
 // alternating frames, so no synchronisation is needed (same model as ai_assistant_enter_send).
@@ -74,7 +79,7 @@ void DragPaintGuiFunc(ImGuiTestContext* ctx) {
     DragPaintState* s = static_cast<DragPaintState*>(ctx->Test->UserData);
     ImGui::SetNextWindowSize(ImVec2(320.0f, 260.0f), ImGuiCond_Always);
     ImGui::SetNextWindowPos(ImVec2(60.0f, 60.0f), ImGuiCond_Always);
-    if (ImGui::Begin(kWindowRef, nullptr,
+    if (ImGui::Begin(kWindowName, nullptr,
                      ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize)) {
         DrawDragPaintRows(*s);
     }
