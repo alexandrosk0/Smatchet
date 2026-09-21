@@ -62,6 +62,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_views_confirm_modal.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/mobile_view_quick_switcher.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/views_field_selection.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/drag_checkbox_paint.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/user_info_window.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/ai_chat_panel.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/keybindings_editor_rebind.test.cpp"

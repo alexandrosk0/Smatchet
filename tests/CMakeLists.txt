@@ -84,6 +84,11 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # ImGui-free, no threads (SmatchetBottomPanelDragPure.h), so the P4V-style
         # gesture contract is covered on the Linux subset too.
         Core/SmatchetBottomPanelDragPure.test.cpp
+        # Drag-to-paint checkbox gesture (click a checkbox and drag across its neighbours to
+        # set the whole run) — header-only, ImGui-free, no threads
+        # (SmatchetDragCheckboxPure.h); the ImGui wrapper SmatchetDragCheckbox.h feeds live
+        # hit-testing into these decisions.
+        Core/SmatchetDragCheckboxPure.test.cpp
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
@@ -605,6 +610,11 @@ add_executable(SmatchetTests
     # collapse) — SmatchetBottomPanelDragPure.h is header-only + ImGui-free; the impure
     # driver (SmatchetBottomPanelDrag.cpp) feeds live dock geometry into these decisions.
     Core/SmatchetBottomPanelDragPure.test.cpp
+    # Drag-to-paint checkbox gesture behind the checkbox LISTS (Views > Fields, the
+    # multi-select / Labels cell editors): press a row and drag across its neighbours to set
+    # the whole run to one value. SmatchetDragCheckboxPure.h is header-only + ImGui-free; the
+    # impure wrapper (SmatchetDragCheckbox.h) feeds live hit-testing into these decisions.
+    Core/SmatchetDragCheckboxPure.test.cpp
     # jql-omnibox-search Stream A — pure icon/text fallback-selection predicate
     # behind SmatchetIconButton (the icon-only Refresh + icon-leading Save&Sync
     # helpers). SmatchetIconButtonLabel.h is header-only + ImGui-free; the ImGui
