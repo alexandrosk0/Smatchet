@@ -19,8 +19,8 @@
 
 // The include block + namespace-open + first-JSON-builder-function shape below matches
 // PaneCommands.cpp's own opening token-for-token — every Commands/*.cpp command-group file
-// follows this identical prologue by the registered idiom (Commands/AGENTS.md § Before you
-// edit).
+// follows this identical prologue by the registered idiom (see the "Before you edit" section
+// of the Commands subsystem's own AGENTS.md).
 // SMATCHET_DEVIATION(rule=duplication; reason=command-group-file prologue idiom; owner=orchestrator; revisit=if a shared prologue header is introduced)
 namespace smatchet {
 namespace cmd {

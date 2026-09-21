@@ -20,10 +20,10 @@
 #include <unordered_set>
 #include <vector>
 
-// ViewColumn itself is declared in Config/ConfigManager.h (so ViewDefinition can hold a
-// std::vector<ViewColumn> member without every TU that touches ViewDefinition pulling this
-// header) — Width == 0.0f there means "unset, fall back to DefaultColumnWidthPx below";
-// NormalizeViewDefinition always fills it, so a normalized view never carries a zero width.
+// ViewColumn itself is declared in Config/ConfigManager.h, so ViewDefinition can hold a
+// column vector without every TU that touches ViewDefinition pulling in this header. A zero
+// Width there means unset, falling back to DefaultColumnWidthPx below. NormalizeViewDefinition
+// always fills it, so a normalized view never carries a zero width.
 
 /// The one width every column falls back to when it has no explicit stored value: 90px for
 /// the synthetic "id" column, 180px for everything else. Single definition shared by the grid
