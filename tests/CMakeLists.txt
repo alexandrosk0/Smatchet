@@ -88,6 +88,14 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
         Core/TrackerGridFieldDisplayPure.test.cpp
+        # column-view-save-simplification: ViewColumnsPure.h is header-only (inline
+        # functions over ViewDefinition/ViewColumn + StringUtil.h's canonicalizers), no
+        # threads, no .cpp to link — belongs in the portable subset so the launch-phantom-
+        # dirty / Save-reshuffles-columns regression coverage actually runs somewhere in a
+        # linux-container session instead of only compiling (SmatchetTests, which does run
+        # it, links ImGuiLib → GLFW/X11/OpenGL and is Windows-only — a bug in this file
+        # silently passed a "397/397" Linux run and was only caught by CI on Windows).
+        Core/ViewColumnsPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
         # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
         # seams (keystroke-frequency untrusted-input parsers), + their shared-helper closure

@@ -38,7 +38,7 @@ TEST_CASE("ShouldCaptureColumnWidth") {
     CHECK_FALSE(ShouldCaptureColumnWidth(180.0f, 180.0f, 0.5f));
     CHECK_FALSE(ShouldCaptureColumnWidth(180.0f, 180.3f, 0.5f));
     CHECK(ShouldCaptureColumnWidth(180.0f, 240.0f, 0.5f));
-    CHECK(ShouldCaptureColumnWidth(90.0f, 90.0f, 0.5f));
+    CHECK_FALSE(ShouldCaptureColumnWidth(90.0f, 90.0f, 0.5f));
 }
 
 TEST_CASE("FieldIdsFromColumns strips the field: prefix, in order, id excluded") {
