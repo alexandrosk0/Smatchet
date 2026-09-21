@@ -1369,9 +1369,19 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // Save() (not after) so a fresh edit arriving inside Save()'s own I/O can re-arm rather
     // than being clobbered by this drain resetting it back to disarmed afterward.
     if (std::chrono::steady_clock::now() >= g_ui.viewLayoutSaveAt) {
-        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
-        SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
-        ViewState.Save();
+        if (g_ui.viewsDirty) {
+            // An unconfirmed query edit (the grid's unsaved-query strip) sits in the same
+            // live ViewDefinition Save() would serialize whole-view — persisting it now would
+            // silently commit a change the user hasn't confirmed via Save/Discard yet (Cursor
+            // Bugbot finding). Re-check next frame instead of dropping the layout autosave
+            // outright; Save/Discard/Save-as-new on the strip all clear viewsDirty, so this
+            // fires on the very next frame once the query is resolved.
+            g_ui.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+        } else {
+            g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
+            SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
+            ViewState.Save();
+        }
     }
     smatchet::ui_detail::PersistWindowOpenPreferences(g_ui);
     if (g_ui.layoutForceDefaultsFrames > 0) {

@@ -584,11 +584,17 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard")) {
-            // Restore the active view from the pre-dirty snapshot taken when the query-apply
-            // first dirtied it (SnapshotActiveViewIfNeeded, in applyQueryToPaneView).
+            // Restore only the Jql this strip actually gates, from the pre-dirty snapshot
+            // taken when the query-apply first dirtied it (SnapshotActiveViewIfNeeded, in
+            // applyQueryToPaneView). A wholesale `*mutableActiveForDiscard = snapshot`
+            // clobbers any layout (column width/order, sort, hide-parents, story-group) that
+            // autosaved into this same live ViewDefinition after the snapshot was taken —
+            // the snapshot is a point-in-time full copy, but layout keeps writing after it's
+            // taken (Cursor Bugbot finding). Narrowing the restore to Jql keeps Discard
+            // meaning exactly "undo the query edit", matching what the strip displays.
             ViewDefinition* mutableActiveForDiscard = ViewState.GetActiveViewMutable();
             if (mutableActiveForDiscard && d.viewsHasOriginalSnapshot) {
-                *mutableActiveForDiscard = d.viewsOriginalSnapshot;
+                mutableActiveForDiscard->Jql = d.viewsOriginalSnapshot.Jql;
             }
             const ViewDefinition* restoreSource = mutableActiveForDiscard ? mutableActiveForDiscard : activeViewForGrid;
             d.viewsDirty = false;

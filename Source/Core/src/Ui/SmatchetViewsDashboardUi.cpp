@@ -1141,7 +1141,26 @@ void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const V
     if (!activeView) {
         return;
     }
-    if (ViewState.UpdateActive(d.viewDraft)) {
+    // Apply only what the editor's own tabs actually edit (Name/Jql via the Filter tab,
+    // column order + membership via the Fields/Columns tabs) onto the CURRENT live view,
+    // not a wholesale draft overwrite. SortSpecs/HideParents/StoryGroupSort are owned by
+    // the grid header (DrawSortByPopupBody writes them straight to the live view and
+    // autosaves) and are never edited through d.viewDraft, so taking them from the draft
+    // here would silently revert whatever autosaved into the live view since the draft was
+    // last loaded — the draft only reloads on a view-id switch, not on every live layout
+    // write (Cursor Bugbot finding). Column widths get the same treatment: order/membership
+    // come from the draft, but each surviving key's width is re-read from the live view so a
+    // grid-driven resize made while the editor was open isn't clobbered by the draft's
+    // load-time width.
+    ViewDefinition merged = *activeView;
+    merged.Name = d.viewDraft.Name;
+    merged.Jql = d.viewDraft.Jql;
+    merged.Columns.clear();
+    merged.Columns.reserve(d.viewDraft.Columns.size());
+    for (const auto& col : d.viewDraft.Columns) {
+        merged.Columns.push_back({col.Key, EffectiveColumnWidth(*activeView, col.Key)});
+    }
+    if (ViewState.UpdateActive(merged)) {
         const ViewDefinition* saved = ViewState.GetActiveView();
         if (saved) {
             d.cfg.JqlQuery = saved->Jql;
