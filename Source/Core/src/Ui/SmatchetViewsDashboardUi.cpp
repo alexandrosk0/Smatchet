@@ -1,10 +1,16 @@
 // SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
+// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=column-view-save-simplification replaced the
+// editor's scattered dirty-flag/buffer fields with one ViewDraft, net negative on the functional
+// churn but the doc-comment expansion explaining the new invariants pushed the file ~15 lines
+// past the ceiling; a companion-TU split (action methods vs draw functions) is a reasonable
+// follow-up but out of scope for this change; owner=orchestrator; revisit=next touch of this file)
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"
 #include "SmatchetAutocompleteUi.h"
 #include "AppController.h"
 #include "Views.h"
+#include "ViewColumnsPure.h"
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h"
 #include "JiraBackendInstancesPure.h"
@@ -27,6 +33,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
@@ -49,7 +56,12 @@ enum ViewsEditorTab : int {
     Tab_Sort = 3,
 };
 
-// Load all edit buffers from a saved view. Resets dirty + autocomplete state.
+// Load the Views editor's draft from a saved view (column-view-save-simplification):
+// d.viewDraft becomes a full editable COPY of `view`, and the ImGui text buffers are
+// re-seeded as display mirrors of it. No separate selected-field set, column-order buffer,
+// or dirty flag — the Fields/Columns/Sort tabs edit the draft's Columns and SortSpecs
+// directly, and "dirty" is ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f),
+// computed fresh every frame in drawViewsEditorHeader. Resets autocomplete state too.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
     d.viewJqlEditor.jqlAcpApplyReplace = false;
@@ -73,62 +85,15 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpUserSearchQuery.clear();
     d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
     d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
+
+    d.viewDraft = view;
+    d.viewDraftId = view.Id;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
-    // Seed the authoritative selection set straight from the saved view
-    // (#views-field-uncheck) — never via a truncating CSV buffer.
-    d.selectedFieldSet.clear();
-    for (const auto& fieldId : view.Fields) {
-        d.selectedFieldSet.insert(fieldId);
-    }
-    d.editingColumnOrder = view.ColumnOrder;
-    if (d.editingColumnOrder.empty()) {
-        d.editingColumnOrder = {"id"};
-        for (const auto& fieldId : view.Fields) {
-            d.editingColumnOrder.push_back("field:" + fieldId);
-        }
-    }
     d.selectedColumnOrderIndex = -1;
-    d.editingViewId = view.Id;
-    d.lastSyncedColumnOrder = view.ColumnOrder;
-    d.viewsDirty = false;
-    d.viewsHasOriginalSnapshot = false;
+    d.viewsHasOriginalSnapshot = false; // grid-side-only field; unused by the editor, kept clean
     d.viewsKeyboardReorderRow = -1;
     d.viewsTitleEditing = false;
-}
-
-ViewDefinition BuildUpdatedView(AppController& app, const ViewDefinition& base, const UiDrawSession& d) {
-    ViewDefinition updated = base;
-    updated.Name = d.viewNameBuf;
-    // On Jira the editor buffer holds the readable name form written by the idle-time
-    // TrackerQueryAcp_ApplyUserNamesToBuffer rewrite. The view of record keeps the id-canonical
-    // query, so reverse-map names back to account ids here.
-    updated.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
-                                                         app.GetAvailableUsers(), d.viewJqlEditor,
-                                                         std::string(d.viewJqlEditor.buf));
-    // Read the authoritative set (#views-field-uncheck), not the truncating buffer, so a
-    // >1023-byte selection persists ALL fields on save instead of being clipped on disk.
-    updated.Fields = SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
-    updated.ColumnOrder = d.editingColumnOrder;
-    return updated;
-}
-
-// Reconcile editing column-order list against currently-selected fields. Drops
-// entries for removed fields; appends entries for newly-checked fields.
-void ReconcileEditingColumnOrder(UiDrawSession& d) {
-    std::unordered_set<std::string> validKeys = {"id"};
-    for (const auto& f : d.selectedFieldSet) {
-        validKeys.insert("field:" + f);
-    }
-    d.editingColumnOrder.erase(
-        std::remove_if(d.editingColumnOrder.begin(), d.editingColumnOrder.end(),
-                       [&](const std::string& key) { return validKeys.find(key) == validKeys.end(); }),
-        d.editingColumnOrder.end());
-    for (const auto& key : validKeys) {
-        if (std::find(d.editingColumnOrder.begin(), d.editingColumnOrder.end(), key) == d.editingColumnOrder.end()) {
-            d.editingColumnOrder.push_back(key);
-        }
-    }
 }
 
 } // namespace
@@ -281,9 +246,12 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
         ImGui::TextDisabled("No views available.");
         return;
     }
-    if (d.editingViewId != activeView->Id) {
-        LoadBuffersFromView(d, *activeView);
-    } else if (activeView->ColumnOrder != d.lastSyncedColumnOrder) {
+    // Reload the draft whenever the active view id changed underneath us (column-view-save-
+    // simplification: a mere layout drift — e.g. the grid autosaving a width/order change to
+    // the same view — no longer force-reloads a possibly-mid-edit draft here; only an actual
+    // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
+    // independently of the editor's draft, and the two resynchronize on the next activate).
+    if (d.viewDraftId != activeView->Id) {
         LoadBuffersFromView(d, *activeView);
     }
 
@@ -365,35 +333,38 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     const ViewsStore& store = ctx.store;
     const ViewDefinition* activeView = ctx.activeView;
 
-    // Title row.
+    // Dirty is DERIVED, never a stored flag (column-view-save-simplification): compared fresh
+    // every frame against the live saved view, so it can never go stale or false-positive.
+    const bool dirty = ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f);
+
+    // Title row. The buffer is a display mirror of d.viewDraft.Name (see its doc comment) —
+    // committing writes straight into the draft, no separate dirty flag to set.
     if (d.viewsTitleEditing) {
         ImGui::SetNextItemWidth(-260.0f);
         if (ImGui::InputText("##ViewTitle", d.viewNameBuf, sizeof(d.viewNameBuf),
                              ImGuiInputTextFlags_EnterReturnsTrue)) {
             d.viewsTitleEditing = false;
-            d.viewsDirty = true;
+            d.viewDraft.Name = d.viewNameBuf;
         }
         if (ImGui::IsItemDeactivated()) {
             d.viewsTitleEditing = false;
-            if (std::string(d.viewNameBuf) != activeView->Name) {
-                d.viewsDirty = true;
-            }
+            d.viewDraft.Name = d.viewNameBuf;
         }
     } else {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextUnformatted(activeView->Name.c_str());
+        ImGui::TextUnformatted(d.viewDraft.Name.c_str());
         ImGui::SameLine();
         if (ImGui::SmallButton("Rename")) {
             d.viewsTitleEditing = true;
         }
-        if (d.viewsDirty) {
+        if (dirty) {
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "  unsaved");
         }
     }
 
     // Action buttons on a separate row below the title for a more compact header.
-    const bool disableDiscard = !d.viewsDirty;
+    const bool disableDiscard = !dirty;
     if (disableDiscard) {
         ImGui::BeginDisabled();
     }
@@ -437,8 +408,10 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         ImGui::Spacing();
         ImGui::TextUnformatted("Name");
         ImGui::SetNextItemWidth(-FLT_MIN);
+        // Buffer is a display mirror of d.viewDraft.Name — every keystroke lands directly on
+        // the draft (column-view-save-simplification), no separate dirty flag to set.
         if (ImGui::InputText("##ViewNameInput", d.viewNameBuf, sizeof(d.viewNameBuf))) {
-            d.viewsDirty = true;
+            d.viewDraft.Name = d.viewNameBuf;
         }
 
         ImGui::Spacing();
@@ -468,13 +441,19 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
         char beforeJql[sizeof(d.viewJqlEditor.buf)];
         std::memcpy(beforeJql, d.viewJqlEditor.buf, sizeof(beforeJql));
         SmatchetViewsDashboardUiDetail::DrawJqlQueryEditorEmbedded(app, d, d.viewJqlEditor);
-        // Compare content, not just length — a same-length edit ("abc" -> "xyz") still dirties (#6).
-        // The cosmetic id->name rewrite consumes its flag here so it never marks the view dirty
+        // Compare content, not just length — a same-length edit ("abc" -> "xyz") still counts (#6).
+        // The cosmetic id->name rewrite consumes its flag here so it never touches the draft
         // (typing needs focus, the rewrite needs no focus — the two can't co-occur in a frame).
         const bool semanticRewrite = d.viewJqlEditor.jqlBufSemanticRewrite;
         d.viewJqlEditor.jqlBufSemanticRewrite = false;
         if (!semanticRewrite && std::strcmp(d.viewJqlEditor.buf, beforeJql) != 0) {
-            d.viewsDirty = true;
+            // The buffer holds display names on Jira — persist the id-canonical query of
+            // record (names reverse-mapped to account ids) into the draft, same conversion
+            // the editor's Save used to apply once at commit time (BuildUpdatedView, now
+            // gone — the draft IS what gets saved, so this must happen on every edit frame).
+            d.viewDraft.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
+                                                                     app.GetAvailableUsers(), d.viewJqlEditor,
+                                                                     std::string(d.viewJqlEditor.buf));
         }
         ImGui::TextDisabled(isPlane
                                 ? "field:value AND field:value  ·  Up/Down list  ·  Enter/Tab pick  ·  Esc close list"
@@ -493,7 +472,10 @@ namespace {
 
 // One collapsible field group (System / Custom) with a per-field selection checkbox. Extracted from
 // the renderFieldGroup lambda in drawViewsFieldsTab (over-100-line decomposition); behaviour-identical.
-void DrawViewsFieldGroup(UiDrawSession& d, const char* groupName, const std::vector<const TrackerField*>& fields,
+// `selectedFieldSet` is a per-frame LOCAL working set (drawViewsFieldsTab), not stored session
+// state — the caller applies the result onto d.viewDraft.Columns after all groups are drawn
+// (ApplyFieldSelectionToDraftColumns), so no dirty flag is set here; dirty is derived.
+void DrawViewsFieldGroup(const char* groupName, const std::vector<const TrackerField*>& fields,
                          std::unordered_set<std::string>& selectedFieldSet) {
     if (fields.empty()) {
         return;
@@ -514,7 +496,6 @@ void DrawViewsFieldGroup(UiDrawSession& d, const char* groupName, const std::vec
             } else {
                 selectedFieldSet.erase(field->Id);
             }
-            d.viewsDirty = true;
         }
         ImGui::SameLine();
         ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
@@ -523,7 +504,7 @@ void DrawViewsFieldGroup(UiDrawSession& d, const char* groupName, const std::vec
 
 // The "Basic fields" group: the locked ID row plus the six core Jira fields in fixed order. Extracted
 // from drawViewsFieldsTab during the over-100-line decomposition. Behaviour is identical.
-void DrawViewsBasicFieldsGroup(UiDrawSession& d, const std::vector<const TrackerField*>& basicFields,
+void DrawViewsBasicFieldsGroup(const UiDrawSession& d, const std::vector<const TrackerField*>& basicFields,
                                std::unordered_set<std::string>& selectedFieldSet) {
     // Basic group: ID (always selected, locked) + the six core Jira fields.
     const bool hasVisibleId = SmatchetViewsDashboardUiDetail::ContainsCaseInsensitive("id", d.fieldSearchBuf);
@@ -563,10 +544,41 @@ void DrawViewsBasicFieldsGroup(UiDrawSession& d, const std::vector<const Tracker
             } else {
                 selectedFieldSet.erase(field->Id);
             }
-            d.viewsDirty = true;
         }
         ImGui::SameLine();
         ImGui::Text("%s (%s)", field->Name.c_str(), field->Id.c_str());
+    }
+}
+
+// Apply a field-id selection back onto the draft's ordered Columns (column-view-save-
+// simplification — replaces ReconcileEditingColumnOrder's std::unordered_set-iteration
+// append, which produced hash-order, non-deterministic column placement for a newly checked
+// field). A field dropped from `selected` loses its column (its position is simply gone, not
+// reused); a field newly present in `selected` is appended at the END, deterministic for a
+// single toggle. "id" is never touched — it isn't a field selection at all. Multiple fields
+// added in the same frame (Select all visible) are still appended in whatever order
+// `selected` (an unordered_set) iterates them in this run — not a per-run coin flip, just not
+// alphabetical/insertion order; acceptable since the property this actually needs to hold is
+// "the EXISTING columns never reshuffle," which this preserves exactly.
+void ApplyFieldSelectionToDraftColumns(const std::unordered_set<std::string>& selected, ViewDefinition& draft) {
+    draft.Columns.erase(std::remove_if(draft.Columns.begin(), draft.Columns.end(),
+                                       [&](const ViewColumn& c) {
+                                           if (c.Key == "id" || c.Key.compare(0, 6, "field:") != 0) {
+                                               return false;
+                                           }
+                                           return selected.find(c.Key.substr(6)) == selected.end();
+                                       }),
+                        draft.Columns.end());
+    std::unordered_set<std::string> present;
+    present.reserve(draft.Columns.size());
+    for (const auto& col : draft.Columns) {
+        present.insert(col.Key);
+    }
+    for (const auto& fieldId : selected) {
+        const std::string key = "field:" + fieldId;
+        if (present.insert(key).second) {
+            draft.Columns.push_back({key, 0.0f});
+        }
     }
 }
 
@@ -584,10 +596,17 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
             ImGui::TextDisabled("Loading available fields...");
         }
 
-        // The authoritative selection set lives on the session (#views-field-uncheck): the toggle
-        // handlers, select-all and clear mutate it in place. It is seeded from view.Fields in
-        // LoadBuffersFromView, never re-derived from the truncating buffer per frame.
-        std::unordered_set<std::string>& selectedFieldSet = d.selectedFieldSet;
+        // Per-frame LOCAL working set, derived from d.viewDraft.Columns (the source of
+        // truth) — the toggle handlers / select-all / clear mutate it, and
+        // ApplyFieldSelectionToDraftColumns writes the result back onto the draft once, at
+        // the end of this function (column-view-save-simplification: no separately-stored
+        // #views-field-uncheck selection set to keep in sync with a second column-order list).
+        std::unordered_set<std::string> selectedFieldSet;
+        for (const auto& col : d.viewDraft.Columns) {
+            if (col.Key.compare(0, 6, "field:") == 0) {
+                selectedFieldSet.insert(col.Key.substr(6));
+            }
+        }
         const auto& availableFields = app.GetAvailableFields();
 
         // Single pane: the column-order list lives in the Columns tab.
@@ -621,7 +640,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                         selectedFieldSet.insert(field->Id);
                     }
                 }
-                d.viewsDirty = true;
             }
             ImGui::SameLine();
             if (ImGui::SmallButton("Clear visible")) {
@@ -630,7 +648,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                         selectedFieldSet.erase(field->Id);
                     }
                 }
-                d.viewsDirty = true;
             }
 
             ImGui::Spacing();
@@ -644,8 +661,8 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
                 ImGui::TextDisabled("No fields match current search.");
             } else {
                 DrawViewsBasicFieldsGroup(d, basicFields, selectedFieldSet);
-                DrawViewsFieldGroup(d, "System fields", systemFields, selectedFieldSet);
-                DrawViewsFieldGroup(d, "Custom fields", customFields, selectedFieldSet);
+                DrawViewsFieldGroup("System fields", systemFields, selectedFieldSet);
+                DrawViewsFieldGroup("Custom fields", customFields, selectedFieldSet);
             }
 
             ImGui::EndChild();
@@ -655,9 +672,10 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
         }
         ImGui::EndChild();
 
-        // Keep editingColumnOrder coherent with selection so the Columns tab is correct
-        // when the user switches tabs.
-        ReconcileEditingColumnOrder(d);
+        // Write the (possibly toggled) selection back onto the draft's Columns — the Columns
+        // tab reads d.viewDraft.Columns directly, so this is what keeps it correct when the
+        // user switches tabs, without a separate reconcile pass over two independent lists.
+        ApplyFieldSelectionToDraftColumns(selectedFieldSet, d.viewDraft);
 
         ImGui::EndTabItem();
     }
@@ -666,7 +684,6 @@ void SmatchetUI::drawViewsFieldsTab(ViewsDashboardDrawCtx& ctx) {
 void SmatchetUI::drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx) {
     AppController& app = ctx.app;
     UiDrawSession& d = ctx.d;
-    const ViewDefinition* activeView = ctx.activeView;
 
     if (ImGui::BeginTabItem("Columns")) {
         d.viewsActiveTab = Tab_Columns;
@@ -675,13 +692,21 @@ void SmatchetUI::drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx) {
         ImGui::SameLine();
         ImGui::TextDisabled("— drag the handle or use Alt+↑/↓ on a focused row");
 
-        ReconcileEditingColumnOrder(d);
+        // Per-frame LOCAL key-order view of d.viewDraft.Columns (the source of truth) — reuses
+        // HandleRowReorder unchanged (it operates on a vector<string>&); ReorderViewColumns
+        // writes the result back onto the draft, preserving each column's width.
+        std::vector<std::string> columnKeys;
+        columnKeys.reserve(d.viewDraft.Columns.size());
+        for (const auto& col : d.viewDraft.Columns) {
+            columnKeys.push_back(col.Key);
+        }
 
         const auto& availableFields = app.GetAvailableFields();
         const float listHeight = ImGui::GetContentRegionAvail().y - ImGui::GetFrameHeightWithSpacing();
         ImGui::BeginChild("##ColumnOrderScroll", ImVec2(0, listHeight), true);
-        for (int i = 0; i < static_cast<int>(d.editingColumnOrder.size()); ++i) {
-            const std::string key = d.editingColumnOrder[static_cast<size_t>(i)];
+        bool reordered = false;
+        for (int i = 0; i < static_cast<int>(columnKeys.size()); ++i) {
+            const std::string key = columnKeys[static_cast<size_t>(i)];
             ImGui::PushID(i);
             ImGui::BeginGroup();
             SmatchetViewsDashboardUiDetail::DrawDragHandle("##h", i, "VIEWS_COLUMNS_ROW");
@@ -694,23 +719,26 @@ void SmatchetUI::drawViewsColumnsTab(ViewsDashboardDrawCtx& ctx) {
             if (ImGui::Selectable(label.c_str(), selected, ImGuiSelectableFlags_AllowOverlap)) {
                 d.viewsKeyboardReorderRow = i;
             }
-            auto wit = activeView->ColumnWidths.find(key);
-            if (wit != activeView->ColumnWidths.end() && wit->second > 0.0f) {
+            const float width = EffectiveColumnWidth(d.viewDraft, key);
+            if (width > 0.0f) {
                 ImGui::SameLine();
-                ImGui::TextDisabled("  %.0fpx", wit->second);
+                ImGui::TextDisabled("  %.0fpx", width);
             }
             ImGui::EndGroup();
             // BeginDragDropTarget inside HandleRowReorder binds to the
             // group's full-row rect — entire row (handle + label + width
             // hint) accepts drops, including over another row's handle.
-            if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, d.editingColumnOrder, &d.viewsKeyboardReorderRow,
+            if (SmatchetViewsDashboardUiDetail::HandleRowReorder(i, columnKeys, &d.viewsKeyboardReorderRow,
                                                                  "VIEWS_COLUMNS_ROW")) {
-                d.viewsDirty = true;
+                reordered = true;
             }
             ImGui::PopID();
         }
         SmatchetViewsDashboardUiDetail::TickDragDropAutoScroll();
         ImGui::EndChild();
+        if (reordered) {
+            ReorderViewColumns(columnKeys, d.viewDraft);
+        }
 
         ImGui::TextDisabled("Tip: Add or remove columns from the Fields tab. Resize columns directly in the grid.");
 
@@ -776,20 +804,18 @@ void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* m
         int dir = mutableActive->SortSpecs[static_cast<size_t>(i)].Direction;
         const char* dirLabel = (dir == 1) ? "Asc" : (dir == 2 ? "Desc" : "—");
         if (ImGui::SmallButton(dirLabel)) {
-            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
             dir = (dir + 1) % 3; // cycle —, Asc, Desc
             mutableActive->SortSpecs[static_cast<size_t>(i)].Direction = dir;
             ViewState.BumpRevision();
-            d.viewsDirty = true;
+            d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
         }
         ImGui::SameLine();
         bool erased = false;
         if (ImGui::SmallButton("X")) {
-            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
             mutableActive->SortSpecs.erase(mutableActive->SortSpecs.begin() + i);
             keyOrder.erase(keyOrder.begin() + i);
             ViewState.BumpRevision();
-            d.viewsDirty = true;
+            d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
             erased = true;
         }
         ImGui::EndGroup();
@@ -808,7 +834,6 @@ void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* m
         ImGui::PopID();
     }
     if (reordered) {
-        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
         // Rebuild SortSpecs in the new order.
         std::vector<ViewSortSpec> rebuilt;
         rebuilt.reserve(keyOrder.size());
@@ -821,7 +846,7 @@ void SmatchetUI::drawViewsSortRows(ViewsDashboardDrawCtx& ctx, ViewDefinition* m
         }
         mutableActive->SortSpecs = std::move(rebuilt);
         ViewState.BumpRevision();
-        d.viewsDirty = true;
+        d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
     }
 }
 
@@ -837,7 +862,8 @@ void SmatchetUI::drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefini
     }
     if (ImGui::BeginPopup("##AddSortKeyPopup")) {
         if (mutableActive) {
-            for (const auto& key : d.editingColumnOrder) {
+            for (const auto& col : d.viewDraft.Columns) {
+                const std::string& key = col.Key;
                 const bool alreadyUsed = std::any_of(mutableActive->SortSpecs.begin(), mutableActive->SortSpecs.end(),
                                                      [&](const ViewSortSpec& s) { return s.ColumnKey == key; });
                 if (alreadyUsed) {
@@ -845,13 +871,12 @@ void SmatchetUI::drawViewsAddSortKeyPopup(ViewsDashboardDrawCtx& ctx, ViewDefini
                 }
                 const std::string label = PrettyColumnLabel(key, availableFields);
                 if (ImGui::Selectable(label.c_str())) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
                     ViewSortSpec spec;
                     spec.ColumnKey = key;
                     spec.Direction = 1; // Asc by default
                     mutableActive->SortSpecs.push_back(spec);
                     ViewState.BumpRevision();
-                    d.viewsDirty = true;
+                    d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
                     ImGui::CloseCurrentPopup();
                 }
             }
@@ -965,15 +990,10 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
-    // Re-load buffers whenever the active view changes underneath us OR when the
-    // saved column order drifts away from what we last synced (e.g. another window
-    // mutated it).
-    if (activeView) {
-        if (d.editingViewId != activeView->Id) {
-            LoadBuffersFromView(d, *activeView);
-        } else if (activeView->ColumnOrder != d.lastSyncedColumnOrder) {
-            LoadBuffersFromView(d, *activeView);
-        }
+    // Reload the draft whenever the active view id changed underneath us — see the matching
+    // comment in drawMobileDrawerViews for why a mere layout drift no longer force-reloads.
+    if (activeView && d.viewDraftId != activeView->Id) {
+        LoadBuffersFromView(d, *activeView);
     }
 
     if (!activeView) {
@@ -1112,38 +1132,35 @@ void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d)
 }
 
 // Apply the editing buffers onto the active view + sync the grid. Former applyAndSync closure body.
+// Commit the draft onto the store (column-view-save-simplification). ViewState.Update
+// normalizes it (regenerating Fields from Columns, filling default widths, pruning stale
+// SortSpecs) — reload the draft from what ACTUALLY landed rather than assume the pre-commit
+// draft matches, which is what let a prior version of this function forget to keep
+// d.lastSyncedColumnOrder in sync and cause a spurious buffer reload the very next frame.
 void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     if (!activeView) {
         return;
     }
-    ReconcileEditingColumnOrder(d);
-    ViewDefinition updated = BuildUpdatedView(app, *activeView, d);
-    if (ViewState.UpdateActive(updated)) {
-        d.cfg.JqlQuery = updated.Jql;
-        d.cfg.SelectedFields = updated.Fields;
-        SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
-        d.viewsDirty = false;
-        d.viewsHasOriginalSnapshot = false;
-        d.pendingViewStateSave = false;
-        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"), updated.Name,
-                                              ToastType::Success, 1800);
+    if (ViewState.UpdateActive(d.viewDraft)) {
+        const ViewDefinition* saved = ViewState.GetActiveView();
+        if (saved) {
+            d.cfg.JqlQuery = saved->Jql;
+            d.cfg.SelectedFields = saved->Fields;
+            SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
+            LoadBuffersFromView(d, *saved);
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"),
+                                                  saved->Name, ToastType::Success, 1800);
+        }
     }
 }
 
-// Restore the active view from its pre-dirty snapshot + reload buffers. Former discardChanges closure.
+// Reload the draft from the store, discarding any in-progress edit. Former discardChanges
+// closure. No snapshot to restore (column-view-save-simplification) — the draft never
+// touches the store until Apply & Sync, so there is nothing in the store to revert.
 void SmatchetUI::viewsDiscardChanges(UiDrawSession& d) {
-    // Restore the in-memory view from the pre-dirty snapshot (covers grid-side
-    // width / sort mutations that happened in-place) before reloading buffers.
-    ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
-    if (mutableActive && d.viewsHasOriginalSnapshot) {
-        *mutableActive = d.viewsOriginalSnapshot;
-        ViewState.BumpRevision();
-    }
     const ViewDefinition* a = ViewState.GetActiveView();
     if (a) {
         LoadBuffersFromView(d, *a);
-        d.viewsHasOriginalSnapshot = false;
-        d.pendingViewStateSave = false;
         SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.discarded_changes", "Discarded changes"),
                                               a->Name, ToastType::Info, 1500);
     }
@@ -1175,12 +1192,14 @@ void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const s
 }
 
 // Request activation, guarded by the unsaved-changes confirm. Former requestActivate closure body.
+// Dirty is derived (column-view-save-simplification), not d.viewsDirty — that field is the
+// GRID's own query-strip flag now, unrelated to this editor's draft.
 void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                       const std::string& id) {
     if (id == activeView->Id) {
         return;
     }
-    if (d.viewsDirty) {
+    if (ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f)) {
         d.viewsPendingActivateId = id;
         d.viewsShowDiscardConfirm = true;
     } else {
@@ -1194,8 +1213,9 @@ void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, cons
 // captured action lambdas, each pane's activeViewForGrid). The payload is copied while
 // *activeView is still valid; applyPendingViewCreate consumes the latch next frame.
 void SmatchetUI::viewsCreateNewView(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
-    ReconcileEditingColumnOrder(d);
-    ViewDefinition created = BuildUpdatedView(app, *activeView, d);
+    (void)app;
+    (void)activeView;
+    ViewDefinition created = d.viewDraft;
     created.Name = "New View";
     created.Id.clear();
     d.viewsPendingCreate = true;

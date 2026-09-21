@@ -167,11 +167,15 @@ static void RegisterGridPaneNewSplitFocusClose(ImGuiTestEngine* engine) {
             const bool primaryRefocused = YieldUntil(ctx, [&] { return g_ui.focusedPaneId == "main"; });
             IM_CHECK_NO_RET(primaryRefocused);
             if (primaryRefocused) {
-                g_ui.viewSortDirty = false;
-                g_ui.viewsDirty = false;
+                // column-view-save-simplification: sort autosaves straight onto the live view
+                // (no more viewSortDirty/viewsDirty flags) — the mirror having run is now
+                // observed via the debounced layout-autosave arm going from disarmed
+                // (time_point::max()) to a concrete due time.
+                g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
                 const std::string paneTwoTableRef = std::string("//") + paneTwoName + "/TicketGrid";
                 ctx->TableClickHeader(paneTwoTableRef.c_str(), "ID");
-                const bool sortMirrored = YieldUntil(ctx, [&] { return g_ui.viewSortDirty && g_ui.viewsDirty; });
+                const bool sortMirrored = YieldUntil(
+                    ctx, [&] { return g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max(); });
                 IM_CHECK_NO_RET(sortMirrored); // HIGH-3: mirror survives the focus-click frame
                 const bool focusFollowedClick = YieldUntil(ctx, [&] { return g_ui.focusedPaneId == paneTwoId; });
                 IM_CHECK_NO_RET(focusFollowedClick);

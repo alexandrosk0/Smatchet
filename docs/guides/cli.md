@@ -186,7 +186,9 @@ Smatchet.exe cmd commands.search --query=sync
 
 ### view
 
-Registered once `ViewState` is loaded (first render frame). Returns `{id, name, jql, fields}` objects.
+Registered once `ViewState` is loaded (first render frame). Returns `{id, name, jql, fields, columns}` objects
+— `columns` is the ordered `[{key, width}, …]` source of truth (`"id"` or `"field:<id>"` keys); `fields` is
+derived from it (same order, ids only) and kept for existing consumers.
 
 | Command | Params | Notes |
 |---|---|---|
@@ -195,9 +197,15 @@ Registered once `ViewState` is loaded (first render frame). Returns `{id, name, 
 | `view.current` | — | Currently active view |
 | `view.activate` | `id` *(required)* | Switch active view + trigger sync |
 | `view.refresh_active` | — | Re-sync active view from tracker |
-| `view.create` | `name` *(required)*, `jql?`, `fields?` *(JSON array)*, `triggerSync?` | Create a new view (auto-activated). Dry-run supported. |
-| `view.update` | `name?`, `jql?`, `fields?` *(JSON array)* | Edit the currently active view in place. Omitted keys preserve current value. Dry-run supported. |
+| `view.create` | `name` *(required)*, `jql?`, `fields?` *(JSON array)*, `columns?` *(JSON array, see below)*, `triggerSync?` | Create a new view (auto-activated). `columns` takes precedence over `fields` when both are given. Dry-run supported. |
+| `view.update` | `name?`, `jql?`, `fields?` *(JSON array)*, `columns?` *(JSON array, see below)* | Edit the currently active view in place. Omitted keys preserve current value. `columns` takes precedence over `fields` when both are given; `fields` alone keeps each surviving field's position/width and appends new ones. Dry-run supported. |
+| `view.set_column_order` | `order` *(required, JSON array of keys)*, `id?` | Reorder columns without touching which exist or their widths. A key not naming an existing column is reported in `ignored`, not dropped; a column omitted from `order` keeps its position, appended after the ordered ones. Defaults to the active view. Dry-run supported. |
+| `view.set_column_width` | `key` *(required)*, `width` *(required, number, `<=0` resets to default)*, `id?` | Set one column's width. Defaults to the active view. Dry-run supported. |
 | `view.delete` | `id` *(required)* | Destructive (`--yes`). Refuses to delete the last remaining view. Dry-run supported. |
+
+`columns` (on `view.create` / `view.update`) is a JSON array of either key strings
+(`["id","field:summary"]`) or `{"key":...}` objects — it is the full REPLACEMENT column set, in
+display order; widths default and `"id"` is added automatically if omitted.
 | `view.toggle.<id>` | `action?` | Toggle a side-bar / panel window. `action` is `show`, `hide`, or `toggle` (default), for any `<id>`. `<id>` is one of `views_dashboard`, `source_annotate`, `log`, `notifications`, `backend_audit`, `performance`, `bulk_import`, `bulk_export`, `preferences`, `mcp_server`, `scripts`. Returns `{open: bool}`. |
 | `view.toggle.notifications` | `action` | Open / toggle the Notification Center (the newest-first log of every toast the app has raised). `action` is `show`, `hide`, or `toggle` (default). Returns `{open: bool}`. The bare name `notifications` survives as an alias. |
 
@@ -219,6 +227,15 @@ Smatchet.exe cmd view.update --jql="priority in (High, Highest)"
 
 # Update fields (must pass as JSON array)
 Smatchet.exe cmd view.update --fields='["summary","status","priority","assignee"]'
+
+# Replace the column set + order in one call (columns wins over fields when both are given)
+Smatchet.exe cmd view.update --columns='["id","field:status","field:summary"]'
+
+# Reorder columns without changing which ones exist or their widths
+Smatchet.exe cmd view.set_column_order --order='["id","field:status","field:summary"]'
+
+# Resize one column (0 or negative resets it to the default)
+Smatchet.exe cmd view.set_column_width --key=field:summary --width=320
 
 # Delete a view (requires --yes)
 Smatchet.exe cmd view.delete --id=high_priority --yes

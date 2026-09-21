@@ -40,12 +40,43 @@ void WriteViewsFileRaw(const std::string& content) {
 }
 
 bool HasColumn(const ViewDefinition& v, const std::string& col) {
-    for (const auto& c : v.ColumnOrder) {
-        if (c == col) {
+    for (const auto& c : v.Columns) {
+        if (c.Key == col) {
             return true;
         }
     }
     return false;
+}
+
+/// Column keys in order — the v3 shape's equivalent of the old ColumnOrder vector.
+std::vector<std::string> ColumnKeys(const ViewDefinition& v) {
+    std::vector<std::string> keys;
+    keys.reserve(v.Columns.size());
+    for (const auto& c : v.Columns) {
+        keys.push_back(c.Key);
+    }
+    return keys;
+}
+
+/// Stored width for a key, or -1.0f if the key isn't present at all (distinct from an
+/// explicit 0, which NormalizeViewDefinition never leaves on disk — every column's Width
+/// is always > 0 after normalize).
+float ColumnWidthOf(const ViewDefinition& v, const std::string& key) {
+    for (const auto& c : v.Columns) {
+        if (c.Key == key) {
+            return c.Width;
+        }
+    }
+    return -1.0f;
+}
+
+void SetColumnWidth(ViewDefinition& v, const std::string& key, float width) {
+    for (auto& c : v.Columns) {
+        if (c.Key == key) {
+            c.Width = width;
+            return;
+        }
+    }
 }
 
 } // namespace
@@ -111,12 +142,11 @@ TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the Jira default field-set 
     const std::vector<std::string> expectedFields = {"summary",   "assignee",    "priority", "status",
                                                      "issuetype", "description", "created",  "updated"};
     CHECK(v.Fields == expectedFields);
-    REQUIRE(v.ColumnOrder.size() == expectedFields.size() + 1);
-    CHECK(v.ColumnOrder[0] == "id");
+    REQUIRE(ColumnKeys(v).size() == expectedFields.size() + 1);
+    CHECK(ColumnKeys(v)[0] == "id");
     CHECK(HasColumn(v, "field:summary"));
     CHECK(HasColumn(v, "field:issuetype"));
-    REQUIRE(v.ColumnWidths.count("id") == 1);
-    CHECK(v.ColumnWidths.at("id") == doctest::Approx(90.0f));
+    CHECK(ColumnWidthOf(v, "id") == doctest::Approx(90.0f));
 
     // A non-empty configured JQL is carried into the seeded view.
     SUBCASE("configured JqlQuery is adopted by the seeded Jira view") {
@@ -150,11 +180,10 @@ TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the Plane default field-set
     const std::vector<std::string> expectedFields = {"summary", "status",  "priority", "assignee",
                                                      "labels",  "created", "updated"};
     CHECK(v.Fields == expectedFields);
-    REQUIRE(v.ColumnOrder.size() == expectedFields.size() + 1);
-    CHECK(v.ColumnOrder[0] == "id");
+    REQUIRE(ColumnKeys(v).size() == expectedFields.size() + 1);
+    CHECK(ColumnKeys(v)[0] == "id");
     CHECK(HasColumn(v, "field:labels"));
-    REQUIRE(v.ColumnWidths.count("id") == 1);
-    CHECK(v.ColumnWidths.at("id") == doctest::Approx(90.0f));
+    CHECK(ColumnWidthOf(v, "id") == doctest::Approx(90.0f));
 }
 
 TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the GitHub default field-set") {
@@ -200,14 +229,13 @@ TEST_CASE("ConfigManager::LoadViewsOrBootstrap seeds the Linear default field-se
     const std::vector<std::string> expectedFields = {"summary",  "description", "status",  "assignee", "labels",
                                                      "priority", "project",     "created", "updated"};
     CHECK(v.Fields == expectedFields);
-    REQUIRE(v.ColumnOrder.size() == expectedFields.size() + 1);
-    CHECK(v.ColumnOrder[0] == "id");
+    REQUIRE(ColumnKeys(v).size() == expectedFields.size() + 1);
+    CHECK(ColumnKeys(v)[0] == "id");
     CHECK(HasColumn(v, "field:priority"));
     CHECK(HasColumn(v, "field:project"));
     // Linear has no GitHub-style `author` column or Jira-style `issuetype`.
     CHECK_FALSE(HasColumn(v, "field:issuetype"));
-    REQUIRE(v.ColumnWidths.count("id") == 1);
-    CHECK(v.ColumnWidths.at("id") == doctest::Approx(90.0f));
+    CHECK(ColumnWidthOf(v, "id") == doctest::Approx(90.0f));
 
     // Empty configured JQL falls back to the currentUser default.
     SUBCASE("empty JqlQuery falls back to assignee=currentUser()") {
@@ -234,10 +262,9 @@ TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {
     jv1.Id = "jv1";
     jv1.Name = "Jira One";
     jv1.Jql = "project = A";
-    jv1.Fields = {"summary", "status"};
-    jv1.ColumnOrder = {"id", "field:summary", "field:status"};
-    jv1.ColumnWidths["id"] = 75.0f;
-    jv1.ColumnWidths["field:summary"] = 320.5f;
+    // Fields is left unset here on purpose — it is derived from Columns on load (Normalize),
+    // never itself the persisted source of truth, so SavePersistentViewsToDisk doesn't read it.
+    jv1.Columns = {{"id", 75.0f}, {"field:summary", 320.5f}, {"field:status", 0.0f}};
     ViewSortSpec ascending;
     ascending.ColumnKey = "field:status";
     ascending.Direction = 1;
@@ -250,8 +277,7 @@ TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {
     jv2.Id = "jv2";
     jv2.Name = "Jira Two";
     jv2.Jql = "project = B";
-    jv2.Fields = {"summary"};
-    jv2.ColumnOrder = {"id", "field:summary"};
+    jv2.Columns = {{"id", 0.0f}, {"field:summary", 0.0f}};
     jiraWs.Views.push_back(jv1);
     jiraWs.Views.push_back(jv2);
     disk.Backends["Jira"] = jiraWs;
@@ -262,8 +288,7 @@ TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {
     pv1.Id = "pv1";
     pv1.Name = "Plane One";
     pv1.Jql = "";
-    pv1.Fields = {"summary", "labels"};
-    pv1.ColumnOrder = {"id", "field:summary", "field:labels"};
+    pv1.Columns = {{"id", 0.0f}, {"field:summary", 0.0f}, {"field:labels", 0.0f}};
     planeWs.Views.push_back(pv1);
     disk.Backends["Plane"] = planeWs;
 
@@ -281,10 +306,10 @@ TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {
     CHECK(jLoaded.Views[0].Id == "jv1");
     CHECK(jLoaded.Views[0].Name == "Jira One");
     CHECK(jLoaded.Views[0].Jql == "project = A");
-    CHECK(jLoaded.Views[0].Fields == jv1.Fields);
-    CHECK(jLoaded.Views[0].ColumnOrder == jv1.ColumnOrder);
-    REQUIRE(jLoaded.Views[0].ColumnWidths.count("field:summary") == 1);
-    CHECK(jLoaded.Views[0].ColumnWidths.at("field:summary") == doctest::Approx(320.5f));
+    // Fields is regenerated from Columns on load, in Columns order (Normalize).
+    CHECK(jLoaded.Views[0].Fields == std::vector<std::string>{"summary", "status"});
+    CHECK(ColumnKeys(jLoaded.Views[0]) == ColumnKeys(jv1));
+    CHECK(ColumnWidthOf(jLoaded.Views[0], "field:summary") == doctest::Approx(320.5f));
     // Direction==0 sort specs are dropped on serialize; only the ascending spec survives.
     REQUIRE(jLoaded.Views[0].SortSpecs.size() == 1);
     CHECK(jLoaded.Views[0].SortSpecs[0].ColumnKey == "field:status");
@@ -295,7 +320,7 @@ TEST_CASE("ConfigManager v2 backends map survives a save -> load round-trip") {
     CHECK(pLoaded.ActiveViewId == "pv1");
     REQUIRE(pLoaded.Views.size() == 1);
     CHECK(pLoaded.Views[0].Id == "pv1");
-    CHECK(pLoaded.Views[0].Fields == pv1.Fields);
+    CHECK(pLoaded.Views[0].Fields == std::vector<std::string>{"summary", "labels"});
 }
 
 // ---------------------------------------------------------------------------
@@ -319,7 +344,7 @@ TEST_CASE("MULTI-BUCKET COEXISTENCE: bootstrapping the Plane bucket must NOT clo
     PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
     REQUIRE(disk.Backends.count("Jira") == 1);
     disk.Backends["Jira"].Views[0].Name = "My Custom Jira View";
-    disk.Backends["Jira"].Views[0].ColumnWidths["field:summary"] = 250.0f;
+    SetColumnWidth(disk.Backends["Jira"].Views[0], "field:summary", 250.0f);
     ConfigManager::SavePersistentViewsToDisk(disk);
 
     // 2. Bootstrap the Plane bucket (dirty -> rewrites the whole file).
@@ -337,8 +362,7 @@ TEST_CASE("MULTI-BUCKET COEXISTENCE: bootstrapping the Plane bucket must NOT clo
     REQUIRE(jiraAfter.Views.size() == 1);
     CHECK(jiraAfter.Views[0].Name == "My Custom Jira View");
     CHECK(jiraAfter.Views[0].Jql == "project = CUST");
-    REQUIRE(jiraAfter.Views[0].ColumnWidths.count("field:summary") == 1);
-    CHECK(jiraAfter.Views[0].ColumnWidths.at("field:summary") == doctest::Approx(250.0f));
+    CHECK(ColumnWidthOf(jiraAfter.Views[0], "field:summary") == doctest::Approx(250.0f));
 
     // 4. Symmetric direction: re-loading Jira after Plane was bootstrapped
     //    must hand back the customized Jira slice, and must not dirty / mutate
@@ -376,7 +400,14 @@ TEST_CASE("ConfigManager legacy v1 views file migrates into the Jira bucket on l
     REQUIRE(ws.Views.size() == 2);
     CHECK(ws.Views[0].Id == "legacy_view");
     CHECK(ws.Views[0].Jql == "project = L");
+    // v2 (fields + column_order + column_widths) migrates into Columns via MigrateLegacyColumns,
+    // reproducing the pre-v3 TicketGridColumnsBuilder::Build order exactly — nothing moves.
+    CHECK(ColumnKeys(ws.Views[0]) == std::vector<std::string>{"id", "field:summary", "field:status"});
+    CHECK(ColumnWidthOf(ws.Views[0], "id") == doctest::Approx(80.0f));
+    CHECK(ws.Views[0].Fields == std::vector<std::string>{"summary", "status"});
     CHECK(ws.Views[1].Id == "second_view");
+    // second_view had no column_order at all — id + its one field, in Fields order.
+    CHECK(ColumnKeys(ws.Views[1]) == std::vector<std::string>{"id", "field:summary"});
 
     // LoadViewsOrBootstrap on a Jira config returns the migrated legacy views,
     // not a fresh bootstrap default.
@@ -399,6 +430,58 @@ TEST_CASE("ConfigManager legacy v1 views file migrates into the Jira bucket on l
         PersistentViewsFile d3 = ConfigManager::LoadPersistentViewsFromDisk();
         CHECK(d3.Backends.empty());
         CHECK(d3.Version == 2);
+    }
+}
+
+TEST_CASE("ConfigManager v3 'columns' shape round-trips exactly and takes precedence over any "
+          "legacy sibling keys present in the same JSON") {
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    WriteViewsFileRaw(R"({
+        "active_view_id": "v3",
+        "views": [
+            {"id": "v3", "name": "V3 View", "jql": "project = X",
+             "columns": [{"key": "field:status", "width": 140.0}, {"key": "id", "width": 90.0},
+                         {"key": "field:summary", "width": 0.0}],
+             "fields": ["stale_ignored_field"],
+             "column_order": ["stale", "ignored"],
+             "column_widths": {"stale": 5.0}}
+        ]
+    })");
+
+    PersistentViewsFile disk = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(disk.Backends.count("Jira") == 1);
+    REQUIRE(disk.Backends["Jira"].Views.size() == 1);
+    const ViewDefinition& v = disk.Backends["Jira"].Views[0];
+    // The explicit order in "columns" wins outright — legacy sibling keys are ignored entirely
+    // once "columns" is present, per ParseViewDefinition.
+    CHECK(ColumnKeys(v) == std::vector<std::string>{"field:status", "id", "field:summary"});
+    CHECK(ColumnWidthOf(v, "field:status") == doctest::Approx(140.0f));
+    CHECK(ColumnWidthOf(v, "id") == doctest::Approx(90.0f));
+    // A zero width in the v3 shape is filled from the kind default by Normalize.
+    CHECK(ColumnWidthOf(v, "field:summary") == doctest::Approx(180.0f));
+    CHECK(v.Fields == std::vector<std::string>{"status", "summary"});
+
+    // Save -> reload is exact (ViewDefinition::operator== covers every field).
+    PersistentViewsFile disk2;
+    disk2.Backends["Jira"] = disk.Backends["Jira"];
+    ConfigManager::SavePersistentViewsToDisk(disk2);
+    PersistentViewsFile reloaded = ConfigManager::LoadPersistentViewsFromDisk();
+    REQUIRE(reloaded.Backends.count("Jira") == 1);
+    REQUIRE(reloaded.Backends["Jira"].Views.size() == 1);
+    CHECK(reloaded.Backends["Jira"].Views[0] == v);
+
+    SUBCASE("legacy keys alone (no 'columns') still migrate — the v2 back-compat path") {
+        WriteViewsFileRaw(R"({
+            "active_view_id": "legacy",
+            "views": [{"id": "legacy", "name": "Legacy", "jql": "",
+                       "fields": ["summary"], "column_order": ["id", "field:summary"],
+                       "column_widths": {"id": 90.0}}]
+        })");
+        PersistentViewsFile d = ConfigManager::LoadPersistentViewsFromDisk();
+        REQUIRE(d.Backends["Jira"].Views.size() == 1);
+        CHECK(ColumnKeys(d.Backends["Jira"].Views[0]) == std::vector<std::string>{"id", "field:summary"});
     }
 }
 

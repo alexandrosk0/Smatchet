@@ -263,7 +263,10 @@ void DrawJqlProjectPill(AppController& app, UiDrawSession& d) {
                 const std::string newJql = isPlane ? PlaneProjectScope::SetProjectInQuery(currentJql, e.projectKey)
                                                    : JqlProjectScope::SetProjectClause(currentJql, e.projectKey);
                 CopyStringToBuffer(d.viewJqlEditor.buf, newJql);
-                d.viewsDirty = true;
+                // Only ever reached from the dashboard's Filter tab (drawProjectPill is
+                // hard-bound to it) — its own before/after buffer diff picks up this mutation
+                // and writes d.viewDraft.Jql; no flag to set here (column-view-save-
+                // simplification).
                 ImGui::CloseCurrentPopup();
             }
             ImGui::PopID();
@@ -331,11 +334,10 @@ void DrawJqlQueryEditorEmbedded(AppController& app, UiDrawSession& d, JqlEditorS
         ++st.jqlAcpUserSearchRequestId;
         st.jqlAcpListDismissed = false;
         st.jqlAcpCaretSnapFramesRemaining = 0;
-        // Only the dashboard/views editor tracks saved-view dirtiness; a transient-search caller
-        // (drawProjectPill=false) clears a transient search and must not flag the saved view (#4).
-        if (drawProjectPill) {
-            d.viewsDirty = true;
-        }
+        // Only the dashboard/views editor's caller (drawViewsFilterTab) does a before/after
+        // buffer diff and writes d.viewDraft.Jql from it — a transient-search caller
+        // (drawProjectPill=false) has no draft to write and must not touch one (#4). No flag
+        // to set here either way (column-view-save-simplification).
     }
     ImGui::SetItemTooltip("Clear query");
 

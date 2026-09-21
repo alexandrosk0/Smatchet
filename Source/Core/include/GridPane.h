@@ -124,6 +124,14 @@ struct GridPane {
     std::uint64_t cachedColumnsViewsRevision = 0;
     std::string cachedColumnsViewId;
     bool cachedColumnsValid = false;
+    /// Column KEY SEQUENCE this pane's ImGui table was last drawn with — compared against the
+    /// current frame's columns[] right after BeginTable so a change resets the table's
+    /// DisplayOrder to identity (the double-permutation fix; see
+    /// ResetTableDisplayOrderIfColumnsChanged in SmatchetActiveProjectGridTable.cpp). Distinct
+    /// from cachedColumnsViewsRevision: that invalidates on ANY views-store revision bump
+    /// (including a pure width or sort edit, or an unrelated catalog change), which must NOT
+    /// discard an in-progress or just-settled header drag.
+    std::vector<std::string> lastDrawnColumnKeys;
 
     /// Per-pane field-catalog index for read routing (per-pane-catalog-value-read-routing).
     /// A non-focused cross-backend pane resolves its cell option labels / display names

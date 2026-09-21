@@ -594,13 +594,34 @@ struct ViewSortSpec {
     bool operator!=(const ViewSortSpec& o) const { return !(*this == o); }
 };
 
+/// One ordered grid column: canonical key ("id" or "field:<id>") + width in pixels. Declared
+/// here (rather than only in ViewColumnsPure.h) so ViewDefinition can hold it directly without
+/// every TU that touches ViewDefinition pulling the pure-helpers header. See ViewColumnsPure.h
+/// for the normalize / migrate / compare helpers built on top of this shape.
+struct ViewColumn {
+    std::string Key;
+    float Width = 0.0f;
+
+    bool operator==(const ViewColumn& o) const { return Key == o.Key && Width == o.Width; }
+    bool operator!=(const ViewColumn& o) const { return !(*this == o); }
+};
+
 struct ViewDefinition {
     std::string Id;
     std::string Name;
     std::string Jql = "assignee=currentUser()";
+    /// DERIVED ONLY — regenerated from Columns by NormalizeViewDefinition (ViewColumnsPure.h).
+    /// Never assign this directly outside that function; it exists because the tracker sync
+    /// layer (TrackerConfig::SelectedFields) and the CLI/MCP `fields` param want a bare id
+    /// list. The visible column set, its order and its widths are Columns — the sole source
+    /// of truth (column-view-save-simplification: Fields used to be a second, independently
+    /// mutable copy of "which columns", and the two drifting is what reshuffled the grid on
+    /// every Save).
     std::vector<std::string> Fields;
-    std::vector<std::string> ColumnOrder;
-    std::unordered_map<std::string, float> ColumnWidths;
+    /// The ordered column list: what exists, in what order, and how wide. Always complete and
+    /// "id"-inclusive after NormalizeViewDefinition — never construct one by hand without
+    /// normalizing it first.
+    std::vector<ViewColumn> Columns;
     std::vector<ViewSortSpec> SortSpecs;
     /// Parent-issue hierarchy (per-view, persisted as `hide_parents` / `story_group_sort`).
     /// HideParents: drop rows that are a present parent of another row (leaf tasks/bugs only); also
@@ -608,6 +629,12 @@ struct ViewDefinition {
     /// child directly under its present parent and indent by depth.
     bool HideParents = false;
     bool StoryGroupSort = false;
+
+    bool operator==(const ViewDefinition& o) const {
+        return Id == o.Id && Name == o.Name && Jql == o.Jql && Fields == o.Fields && Columns == o.Columns &&
+               SortSpecs == o.SortSpecs && HideParents == o.HideParents && StoryGroupSort == o.StoryGroupSort;
+    }
+    bool operator!=(const ViewDefinition& o) const { return !(*this == o); }
 };
 
 struct ViewsStore {

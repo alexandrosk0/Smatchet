@@ -180,23 +180,34 @@ std::string TrackerFieldCatalogIndex::DisplayName(const std::string& fieldId) co
 
 std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefinition& view,
                                                               const TrackerFieldCatalogIndex& catalog) {
+    // view.Columns is the sole ordered source of truth (column-view-save-simplification):
+    // one grid column per entry, in exactly that order. There is no separate "which fields
+    // exist" pass to reconcile against a "what order" pass anymore — Normalize (run on every
+    // load/edit) already guarantees Columns is complete, deduped, canonical and "id"-present,
+    // so this is a straight walk, not a two-pass byKey/tail-append merge. The dedup guard
+    // below stays as defense against a caller that skipped normalizing.
     std::vector<TicketGridColumn> columns;
-    std::vector<TicketGridColumn> allColumns;
-    allColumns.push_back({TicketGridColumn::Kind::Id, "id", "ID", std::string()});
-
-    std::unordered_set<std::string> seenFieldIds;
-    for (const auto& rawFieldId : view.Fields) {
-        // issue-comments fix (#1291) — fold Jira's legacy `comment` column onto the unified `comments`
-        // cell so a view saved before the dedupe renders the count/modal (not the raw ADF blob) and
-        // dedups against an explicit `comments` column via seenFieldIds below. See CanonicalizeGridFieldId.
-        const std::string fieldId = CanonicalizeGridFieldId(TrimCopyAsciiWhitespace(rawFieldId));
-        if (fieldId.empty() || !seenFieldIds.insert(fieldId).second) {
+    columns.reserve(view.Columns.size());
+    std::unordered_set<std::string> seenKeys;
+    for (const auto& viewCol : view.Columns) {
+        const std::string key = CanonicalGridColumnKey(viewCol.Key);
+        if (key.empty() || !seenKeys.insert(key).second) {
             continue;
         }
-
+        if (key == "id") {
+            columns.push_back({TicketGridColumn::Kind::Id, "id", "ID", std::string()});
+            continue;
+        }
+        if (key.compare(0, 6, "field:") != 0) {
+            continue;
+        }
+        // issue-comments fix (#1291) — fold Jira's legacy `comment` key onto the unified
+        // `comments` cell so a view saved before the dedupe renders the count/modal (not the
+        // raw ADF blob). CanonicalGridColumnKey already applied this fold above.
+        const std::string fieldId = key.substr(6);
         TicketGridColumn column;
         column.ColumnKind = TicketGridColumn::Kind::FieldValue;
-        column.Key = "field:" + fieldId;
+        column.Key = key;
         column.FieldId = fieldId;
         column.Label = catalog.DisplayName(fieldId);
         const TrackerField* field = catalog.Find(fieldId);
@@ -204,30 +215,8 @@ std::vector<TicketGridColumn> TicketGridColumnsBuilder::Build(const ViewDefiniti
         column.IsDateLike = IsTrackerDateOrDateTimeField(fieldId, field);
         column.CatalogReadOnly = field != nullptr && field->ReadOnly;
         column.NeedsAllowEditsCheck = RequiresAllowEditsCheck(column.Plan);
-        allColumns.push_back(column);
+        columns.push_back(std::move(column));
     }
-
-    std::unordered_map<std::string, TicketGridColumn> byKey;
-    for (const auto& col : allColumns) {
-        byKey[col.Key] = col;
-    }
-
-    std::unordered_set<std::string> usedKeys;
-    for (const auto& rawKey : view.ColumnOrder) {
-        // Canonicalize the saved order key the same way the column Key was built from view.Fields
-        // above (ASCII-whitespace trim + legacy-alias fold, e.g. `field:comment` → `field:comments`,
-        // #1291). A pre-canonicalization view — or one carrying stray whitespace — then keeps each
-        // column's saved position instead of dropping it to the appended tail; the dedup guard drops
-        // a ColumnOrder that lists the same canonical key twice (ticketgrid-columnorder-canon).
-        const std::string key = CanonicalGridColumnKey(rawKey);
-        const auto it = byKey.find(key);
-        if (it == byKey.end() || !usedKeys.insert(key).second) {
-            continue;
-        }
-        columns.push_back(it->second);
-    }
-    std::copy_if(allColumns.begin(), allColumns.end(), std::back_inserter(columns),
-                 [&](const TicketGridColumn& col) { return usedKeys.find(col.Key) == usedKeys.end(); });
 
     return columns;
 }

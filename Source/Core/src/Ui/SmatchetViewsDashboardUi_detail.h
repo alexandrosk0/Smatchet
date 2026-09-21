@@ -214,11 +214,12 @@ inline std::string FindViewName(const ViewsStore& store, const std::string& id, 
 
 void SyncWithCurrentView(AppController& app, UiDrawSession& d, const ViewsStore& store, bool pushHistory);
 
-/// Snapshot the active view's full ViewDefinition into UiDrawSession on the
-/// first transition into dirty state. Used by the unsaved-layout strip's
-/// Discard button to revert widths / sort specs / column order / name / JQL /
-/// fields back to disk. Cheap to call every frame — bails fast if already
-/// snapshotted. The snapshot is cleared by Save / Discard / view switch.
+/// Snapshot the active view's full ViewDefinition into UiDrawSession on the first transition
+/// into dirty state. GRID-side only now (column-view-save-simplification): layout
+/// (widths/order/sort/hide-parents/story-group) autosaves and never snapshots; the sole
+/// remaining caller is applyQueryToPaneView (the unsaved-QUERY strip's Discard button
+/// reverts to this). The Views editor has no snapshot at all — its Discard just reloads the
+/// draft from the store. Cheap to call every frame — bails fast if already snapshotted.
 void SnapshotActiveViewIfNeeded(UiDrawSession& d, const ViewDefinition& view);
 
 /// Embedded JQL editor for the Filter tab — input + clear + autocomplete

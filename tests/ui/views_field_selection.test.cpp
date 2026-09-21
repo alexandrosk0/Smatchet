@@ -1,14 +1,16 @@
 // views_field_selection.test.cpp — bucket-E regression coverage for the Views-editor field-selection
-// reseed lifecycle (the #views-field-uncheck bug class). The authoritative selection set
-// (UiDrawSession::selectedFieldSet) is reseeded straight from the active view's Fields by
-// LoadBuffersFromView whenever the editing view changes (SmatchetViewsDashboardUi.cpp) — never
-// re-derived from the truncating CSV buffer. The bug this guards: a stale/leaked entry surviving a
-// view-switch (a checkbox staying checked when the newly-loaded view does not own that field). We
-// drive the reseed and assert it CLEARS a polluted entry and restores EXACTLY the view's Fields.
+// reseed lifecycle (the #views-field-uncheck bug class). column-view-save-simplification:
+// UiDrawSession::selectedFieldSet is gone — the authoritative column/field set is now
+// UiDrawSession::viewDraft.Columns, reseeded straight from the active view by LoadBuffersFromView
+// whenever the editing view changes (SmatchetViewsDashboardUi.cpp), keyed on viewDraftId (was
+// editingViewId) — never re-derived from a truncating CSV buffer. The bug this guards: a
+// stale/leaked entry surviving a view-switch (a checkbox staying checked when the newly-loaded
+// view does not own that field). We drive the reseed and assert it CLEARS a polluted entry and
+// restores EXACTLY the view's Columns.
 //
 // RENDER VEHICLE: UiMode::Mobile pins drawMobileShell; mobileDrawerOpen=true renders
 // drawMobileDrawer -> drawMobileDrawerViews (SmatchetMobileShellUi.cpp), which calls
-// LoadBuffersFromView when d.editingViewId != activeView->Id — the same reseed guard the desktop
+// LoadBuffersFromView when d.viewDraftId != activeView->Id — the same reseed guard the desktop
 // dashboard uses, reachable here through a single g_ui flag. A fresh backend key (cfg.TrackerType
 // flip) bootstraps a non-empty default workspace so GetActiveView() is non-null.
 //
@@ -51,6 +53,18 @@ bool WindowIsLive(const char* title) {
     return w != nullptr && w->Active;
 }
 
+// Field ids (the "field:<id>" part, "id" excluded) currently on the draft's Columns — the
+// v3-shape equivalent of the old selectedFieldSet.
+std::unordered_set<std::string> DraftFieldIds() {
+    std::unordered_set<std::string> ids;
+    for (const auto& col : g_ui.viewDraft.Columns) {
+        if (col.Key.compare(0, 6, "field:") == 0) {
+            ids.insert(col.Key.substr(6));
+        }
+    }
+    return ids;
+}
+
 // Restore the g_ui fields the test mutates so the run leaves state as it found it.
 struct ViewsDrawerStateGuard {
     UiMode uiMode = g_ui.cfg.UiMode;
@@ -58,10 +72,10 @@ struct ViewsDrawerStateGuard {
     bool reachable = g_ui.cfg.BackendHasBeenReachable;
     MobilePage page = g_ui.mobilePage;
     bool drawerOpen = g_ui.mobileDrawerOpen;
-    std::string editingViewId = g_ui.editingViewId;
+    std::string viewDraftId = g_ui.viewDraftId;
     ~ViewsDrawerStateGuard() {
         g_ui.mobileDrawerOpen = drawerOpen;
-        g_ui.editingViewId = editingViewId;
+        g_ui.viewDraftId = viewDraftId;
         g_ui.mobilePage = page;
         g_ui.cfg.UiMode = uiMode;
         g_ui.cfg.TrackerType = tracker;
@@ -91,28 +105,27 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         if (!drawerLive) {
             return;
         }
-        // Reach the editingViewId == activeView.Id steady state so selectedFieldSet holds exactly the
-        // active view's Fields (the authoritative seed), not a mid-reseed intermediate.
+        // Reach the viewDraftId == activeView.Id steady state so the draft's Columns hold exactly
+        // the active view's fields (the authoritative seed), not a mid-reseed intermediate.
         ctx->Yield();
         ctx->Yield();
-        const std::unordered_set<std::string> seeded = g_ui.selectedFieldSet; // S0 == view.Fields
+        const std::unordered_set<std::string> seeded = DraftFieldIds(); // S0 == view.Fields
 
-        // Pollute the authoritative set with a stale entry AND force a reseed by moving editingViewId
-        // off the active view id (the exact condition LoadBuffersFromView guards on). The next drawer
-        // frame must clear + refill selectedFieldSet from the view, dropping the stale marker.
+        // Pollute the draft with a stale field column AND force a reseed by moving viewDraftId off
+        // the active view id (the exact condition LoadBuffersFromView guards on). The next drawer
+        // frame must reload the draft from the view, dropping the stale marker.
         const std::string kMarker = "smatchet_stale_field_marker";
-        g_ui.selectedFieldSet.insert(kMarker);
-        g_ui.editingViewId = "smatchet_force_reseed_sentinel";
+        g_ui.viewDraft.Columns.push_back({"field:" + kMarker, 0.0f});
+        g_ui.viewDraftId = "smatchet_force_reseed_sentinel";
 
-        const bool droppedStale =
-            YieldUntil(ctx, [&] { return g_ui.selectedFieldSet.find(kMarker) == g_ui.selectedFieldSet.end(); });
+        const bool droppedStale = YieldUntil(ctx, [&] { return DraftFieldIds().find(kMarker) == DraftFieldIds().end(); });
         if (!droppedStale) {
-            ctx->LogError("selectedFieldSet still holds the stale marker after a forced reseed — "
-                          "LoadBuffersFromView did not clear + refill from the view's Fields");
+            ctx->LogError("viewDraft.Columns still holds the stale marker after a forced reseed — "
+                          "LoadBuffersFromView did not reload the draft from the view");
             IM_CHECK(false);
         }
-        // The reseed restored EXACTLY the view's authoritative Fields (not a subset/superset).
-        IM_CHECK_NO_RET(g_ui.selectedFieldSet == seeded);
+        // The reseed restored EXACTLY the view's authoritative field set (not a subset/superset).
+        IM_CHECK_NO_RET(DraftFieldIds() == seeded);
     };
 }
 

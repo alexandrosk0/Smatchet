@@ -1,6 +1,7 @@
 #include "Views.h"
 
 #include "ConfigSaveWorker.h"
+#include "ViewColumnsPure.h"
 
 #include <algorithm>
 #include <cctype>
@@ -36,6 +37,12 @@ ViewDefinition* Views::GetActiveViewMutable() {
     return it != Slice_.Views.end() ? &*it : nullptr;
 }
 
+const ViewDefinition* Views::Find(const std::string& id) const {
+    const auto it =
+        std::find_if(Slice_.Views.begin(), Slice_.Views.end(), [&](const ViewDefinition& v) { return v.Id == id; });
+    return it != Slice_.Views.end() ? &*it : nullptr;
+}
+
 bool Views::Activate(const std::string& viewId) {
     auto it = std::find_if(Slice_.Views.begin(), Slice_.Views.end(),
                            [&](const ViewDefinition& v) { return v.Id == viewId; });
@@ -59,12 +66,13 @@ bool Views::Create(const ViewDefinition& prototype) {
     if (Exists(created.Id)) {
         created.Id = BuildUniqueId(created.Id);
     }
-    if (created.ColumnOrder.empty()) {
-        created.ColumnOrder = {"id"};
-        for (const auto& fieldId : created.Fields) {
-            created.ColumnOrder.push_back("field:" + fieldId);
-        }
+    // Normalize builds Columns from Fields when the prototype didn't carry an explicit
+    // Columns list (the ad-hoc "if ColumnOrder is empty, build id + field keys" fill this
+    // replaces) and regenerates Fields from Columns either way, so the two can't drift.
+    if (created.Columns.empty()) {
+        created.Columns = MigrateLegacyColumns(created.Fields, {}, {});
     }
+    NormalizeViewDefinition(created);
     Slice_.Views.push_back(std::move(created));
     Slice_.ActiveViewId = Slice_.Views.back().Id;
     Revision_.fetch_add(1);
@@ -73,16 +81,22 @@ bool Views::Create(const ViewDefinition& prototype) {
 }
 
 bool Views::UpdateActive(const ViewDefinition& updated) {
-    ViewDefinition* active = GetActiveViewMutable();
-    if (!active) {
+    return Update(Slice_.ActiveViewId, updated);
+}
+
+bool Views::Update(const std::string& id, const ViewDefinition& updated) {
+    const auto it =
+        std::find_if(Slice_.Views.begin(), Slice_.Views.end(), [&](const ViewDefinition& v) { return v.Id == id; });
+    if (it == Slice_.Views.end()) {
         return false;
     }
-    const std::string preservedId = active->Id;
-    *active = updated;
-    active->Id = preservedId;
-    if (active->Name.empty()) {
-        active->Name = active->Id;
+    const std::string preservedId = it->Id;
+    *it = updated;
+    it->Id = preservedId;
+    if (it->Name.empty()) {
+        it->Name = it->Id;
     }
+    NormalizeViewDefinition(*it);
     Revision_.fetch_add(1);
     Save();
     return true;

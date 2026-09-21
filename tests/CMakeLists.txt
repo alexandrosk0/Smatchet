@@ -791,6 +791,10 @@ add_executable(SmatchetTests
     # lifted out of SmatchetActiveProjectGridTable.cpp. Header-only pure predicates over
     # plain vectors; no extra production .cpp to link.
     Core/GridColumnOrderPure.test.cpp
+    # ViewDefinition::Columns — the ordered-column-list model replacing ColumnOrder +
+    # ColumnWidths + an independently-mutable Fields (column-view-save-simplification).
+    # Header-only pure helpers over ViewDefinition; no extra production .cpp to link.
+    Core/ViewColumnsPure.test.cpp
     # Update-check release-tag parser lifted from AttachmentAppUpdateService.cpp (CPP_CODE_AUDIT.md
     # #17) — cpr-free pure seam so it links + fuzzes without the update service's HTTP deps.
     Core/SemanticVersionPure.test.cpp

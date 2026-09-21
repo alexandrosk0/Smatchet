@@ -474,7 +474,12 @@ std::string BuildGridContextSignature(const ViewDefinition* view, const std::str
         s.push_back('\x1e');
         s += JoinCsvLocal(view->Fields);
         s.push_back('\x1e');
-        s += JoinCsvLocal(view->ColumnOrder);
+        std::vector<std::string> columnKeys;
+        columnKeys.reserve(view->Columns.size());
+        for (const ViewColumn& col : view->Columns) {
+            columnKeys.push_back(col.Key);
+        }
+        s += JoinCsvLocal(columnKeys);
         s.push_back('\x1e');
     }
     s += jqlQuery;

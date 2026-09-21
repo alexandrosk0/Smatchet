@@ -9,23 +9,59 @@
 #include "Commands/CommandRegistry.h"
 #include "Commands/MainThreadDispatch.h"
 #include "ConfigManager.h"
+#include "ViewColumnsPure.h"
 #include "Views.h"
 
+#include <algorithm>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+// The include block + namespace-open + first-JSON-builder-function shape below matches
+// PaneCommands.cpp's own opening token-for-token — every Commands/*.cpp command-group file
+// follows this identical prologue by the registered idiom (Commands/AGENTS.md § Before you
+// edit).
+// SMATCHET_DEVIATION(rule=duplication; reason=command-group-file prologue idiom; owner=orchestrator; revisit=if a shared prologue header is introduced)
 namespace smatchet {
 namespace cmd {
 
 namespace {
 
+// nlohmann::json field-by-field builder idiom (j["k"]=v repeated), shared with the
+// serializers in ConfigManager_Save.cpp / ConfigManager_Views.cpp — the readable way to
+// build a JSON object field-by-field; de-duplicating it needs a reflection layer this
+// codebase doesn't have.
 nlohmann::json ViewDefToJson(const ViewDefinition& v) {
     nlohmann::json j;
+    // SMATCHET_DEVIATION(rule=duplication; reason=JSON field-builder idiom; owner=orchestrator; revisit=if a shared JSON-builder helper is introduced)
     j["id"]     = v.Id;
     j["name"]   = v.Name;
     j["jql"]    = v.Jql;
+    // Fields stays for existing consumers (derived, same order as Columns' field entries).
+    // Columns is the ordered source of truth: which columns exist, in what order, how wide.
     j["fields"] = v.Fields;
+    j["columns"] = nlohmann::json::array();
+    for (const auto& col : v.Columns) {
+        j["columns"].push_back(nlohmann::json{{"key", col.Key}, {"width", col.Width}});
+    }
     return j;
+}
+
+/// Read a JSON `columns` arg into an ordered key list. Accepts either a bare array of key
+/// strings (`["id","field:summary"]`) or an array of `{"key":...}` objects (a `"width"` in
+/// the object form is ignored here — width is set via view.set_column_width, not by naming
+/// the column set). Non-string / malformed entries are skipped rather than rejected, matching
+/// the existing `fields` param's tolerance.
+std::vector<std::string> ParseColumnKeysArg(const nlohmann::json& columnsArg) {
+    std::vector<std::string> keys;
+    for (const auto& entry : columnsArg) {
+        if (entry.is_string()) {
+            keys.push_back(entry.get<std::string>());
+        } else if (entry.is_object() && entry.contains("key") && entry["key"].is_string()) {
+            keys.push_back(entry["key"].get<std::string>());
+        }
+    }
+    return keys;
 }
 
 nlohmann::json PaginateViewDefs(const std::vector<ViewDefinition>& views,
@@ -164,7 +200,14 @@ void RegisterViewCreateCommand(AppController& app, Views& views, CommandRegistry
         []{ ParamSpec p; p.Name="jql"; p.Type=ParamType::String;
             p.Description="JQL filter (default: assignee=currentUser())."; return p; }(),
         []{ ParamSpec p; p.Name="fields"; p.Type=ParamType::Json;
-            p.Description="JSON array of field ids to display (default: empty)."; return p; }(),
+            p.Description="JSON array of field ids to display (default: empty). Superseded by "
+                          "'columns' when both are given."; return p; }(),
+        []{ ParamSpec p; p.Name="columns"; p.Type=ParamType::Json;
+            p.Description="Replacement ORDERED column list: a JSON array of key strings "
+                          "(\"id\", \"field:<id>\") or {\"key\":...} objects. Takes precedence "
+                          "over 'fields' when both are given — this is the full column set,"
+                          " in display order; widths default and \"id\" is added automatically"
+                          " if omitted."; return p; }(),
         []{ ParamSpec p; p.Name="triggerSync"; p.Type=ParamType::Bool; p.Default=std::make_shared<nlohmann::json>(false);
             p.Description="If true, also sync from tracker immediately after create."; return p; }(),
     };
@@ -176,22 +219,37 @@ void RegisterViewCreateCommand(AppController& app, Views& views, CommandRegistry
             const std::string name = args.value("name", std::string());
             const std::string jql  = args.value("jql",  std::string());
             const bool triggerSync = args.value("triggerSync", false);
+            const bool hasFields = args.contains("fields") && args["fields"].is_array();
+            const bool hasColumns = args.contains("columns") && args["columns"].is_array();
 
             ViewDefinition proto;
             proto.Name = name;
             if (!jql.empty()) proto.Jql = jql;
-            if (args.contains("fields") && args["fields"].is_array()) {
+            if (hasColumns) {
+                for (const auto& key : ParseColumnKeysArg(args["columns"])) {
+                    proto.Columns.push_back({key, 0.0f});
+                }
+            } else if (hasFields) {
                 for (const auto& f : args["fields"]) {
                     if (f.is_string()) proto.Fields.push_back(f.get<std::string>());
                 }
             }
+            const bool bothGiven = hasFields && hasColumns;
 
             if (dryRun) {
                 nlohmann::json wd;
-                wd["name"]   = proto.Name;
-                wd["jql"]    = proto.Jql;
-                wd["fields"] = proto.Fields;
-                return CommandResult::Success({{"wouldDo", std::move(wd)}});
+                wd["name"] = proto.Name;
+                wd["jql"]  = proto.Jql;
+                if (hasColumns) {
+                    wd["columns"] = args["columns"];
+                } else {
+                    wd["fields"] = proto.Fields;
+                }
+                nlohmann::json wdOut = {{"wouldDo", std::move(wd)}};
+                if (bothGiven) {
+                    wdOut["warning"] = "Both 'fields' and 'columns' were given; 'columns' takes precedence.";
+                }
+                return CommandResult::Success(std::move(wdOut));
             }
 
             if (!views.Create(proto)) {
@@ -206,6 +264,9 @@ void RegisterViewCreateCommand(AppController& app, Views& views, CommandRegistry
                 out["jql"]  = created->Jql;
             }
             out["created"] = true;
+            if (bothGiven) {
+                out["warning"] = "Both 'fields' and 'columns' were given; 'columns' took precedence.";
+            }
             if (triggerSync) {
                 app.SyncWithBackend(nullptr, &views.GetStore());
                 out["syncTriggered"] = true;
@@ -234,7 +295,15 @@ void RegisterViewUpdateCommand(AppController& app, Views& views, CommandRegistry
         []{ ParamSpec p; p.Name="jql"; p.Type=ParamType::String;
             p.Description="New JQL filter."; return p; }(),
         []{ ParamSpec p; p.Name="fields"; p.Type=ParamType::Json;
-            p.Description="Replacement JSON array of field ids."; return p; }(),
+            p.Description="Replacement JSON array of field ids. Superseded by 'columns' when "
+                          "both are given; a field kept from the current set retains its "
+                          "column position and width."; return p; }(),
+        []{ ParamSpec p; p.Name="columns"; p.Type=ParamType::Json;
+            p.Description="Replacement ORDERED column list: a JSON array of key strings "
+                          "(\"id\", \"field:<id>\") or {\"key\":...} objects. Takes precedence"
+                          " over 'fields' when both are given. To reorder or resize without "
+                          "replacing the set, prefer view.set_column_order / "
+                          "view.set_column_width."; return p; }(),
     };
     // view.update reads + writes the active ViewDefinition; UI thread only.
     c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
@@ -252,31 +321,188 @@ void RegisterViewUpdateCommand(AppController& app, Views& views, CommandRegistry
             if (args.contains("jql") && args["jql"].is_string()) {
                 updated.Jql = args["jql"].get<std::string>();
             }
-            if (args.contains("fields") && args["fields"].is_array()) {
-                updated.Fields.clear();
-                for (const auto& f : args["fields"]) {
-                    if (f.is_string()) updated.Fields.push_back(f.get<std::string>());
+            const bool hasFields = args.contains("fields") && args["fields"].is_array();
+            const bool hasColumns = args.contains("columns") && args["columns"].is_array();
+            const bool bothGiven = hasFields && hasColumns;
+            if (hasColumns) {
+                std::vector<ViewColumn> replacement;
+                for (const auto& key : ParseColumnKeysArg(args["columns"])) {
+                    replacement.push_back({key, 0.0f});
                 }
+                updated.Columns = std::move(replacement);
+            } else if (hasFields) {
+                // A bare field-id replacement, not an ordered key list: preserve position and
+                // width for any field that survives, by feeding the current Columns in as the
+                // legacy column-order input. MigrateLegacyColumns appends anything newly added,
+                // in the given order.
+                std::vector<std::string> newFields;
+                for (const auto& f : args["fields"]) {
+                    if (f.is_string()) newFields.push_back(f.get<std::string>());
+                }
+                std::vector<std::string> currentOrder;
+                std::unordered_map<std::string, float> currentWidths;
+                for (const auto& col : updated.Columns) {
+                    currentOrder.push_back(col.Key);
+                    currentWidths[col.Key] = col.Width;
+                }
+                updated.Columns = MigrateLegacyColumns(newFields, currentOrder, currentWidths);
             }
+            // NormalizeViewDefinition runs inside Views::Update — it regenerates Fields from
+            // Columns, so `updated.Fields` need not (and must not) be set by hand here: doing
+            // so would just be overwritten, and setting it without touching Columns is exactly
+            // the drift bug this command surface exists to not reintroduce.
 
             if (dryRun) {
                 nlohmann::json wd;
                 wd["from"] = {{"name", active->Name}, {"jql", active->Jql}};
-                wd["to"]   = {{"name", updated.Name}, {"jql", updated.Jql},
-                              {"fields", updated.Fields}};
-                return CommandResult::Success({{"wouldDo", std::move(wd)}});
+                wd["to"]   = {{"name", updated.Name}, {"jql", updated.Jql}};
+                if (hasColumns || hasFields) {
+                    nlohmann::json cols = nlohmann::json::array();
+                    for (const auto& col : updated.Columns) {
+                        cols.push_back(nlohmann::json{{"key", col.Key}, {"width", col.Width}});
+                    }
+                    wd["to"]["columns"] = std::move(cols);
+                }
+                nlohmann::json wdOut = {{"wouldDo", std::move(wd)}};
+                if (bothGiven) {
+                    wdOut["warning"] = "Both 'fields' and 'columns' were given; 'columns' takes precedence.";
+                }
+                return CommandResult::Success(std::move(wdOut));
             }
 
             if (!views.UpdateActive(updated)) {
                 return CommandResult::Failure(ErrorCode::HandlerError,
                     "Views::UpdateActive() failed.");
             }
-            return CommandResult::Success({
+            const ViewDefinition* saved = views.GetActiveView();
+            nlohmann::json out = {
                 {"updated", true},
                 {"id",      updated.Id},
                 {"name",    updated.Name},
                 {"jql",     updated.Jql},
-            });
+                {"fields",  saved ? saved->Fields : updated.Fields},
+            };
+            if (bothGiven) {
+                out["warning"] = "Both 'fields' and 'columns' were given; 'columns' took precedence.";
+            }
+            // The success-return-plus-register tail below is the fixed command-registration
+            // shape every command handler in this subsystem ends with.
+            // SMATCHET_DEVIATION(rule=duplication; reason=command-registration handler-tail idiom; owner=orchestrator; revisit=n/a, this is the contract)
+            return CommandResult::Success(std::move(out));
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+// Reorder the active (or a named) view's columns, preserving each column's width. A key not
+// naming an existing column is reported in `ignored` rather than silently dropped; a column
+// not named in `order` keeps its relative position, appended after the ordered ones —
+// reordering must never silently remove a column.
+void RegisterViewSetColumnOrderCommand(AppController& app, Views& views, CommandRegistry& reg) {
+    Command c;
+    c.Name = "view.set_column_order"; c.Category = "view";
+    c.Summary = "Reorder a view's columns without changing which columns exist or their widths.";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.DryRunSupported = true;
+    c.Params = {
+        []{ ParamSpec p; p.Name="order"; p.Type=ParamType::Json; p.Required=true;
+            p.Description="JSON array of column keys (\"id\", \"field:<id>\") in the desired "
+                          "display order."; return p; }(),
+        []{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
+            p.Description="View id to reorder (default: the currently active view)."; return p; }(),
+    };
+    // view.set_column_order reads + writes Views::Slice_; UI thread only (same race as every
+    // other view.* handler — see view.list above).
+    c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
+        const bool dryRun = ctx.DryRun;
+        return RunOnUiThreadAsCommandResult(app, [&views, args, dryRun]() {
+            const std::string id = args.value("id", std::string());
+            const ViewDefinition* target = id.empty() ? views.GetActiveView() : views.Find(id);
+            if (!target) {
+                return CommandResult::Failure(ErrorCode::NotFound,
+                    id.empty() ? "No active view." : ("View '" + id + "' not found."));
+            }
+            if (!args.contains("order") || !args["order"].is_array()) {
+                return CommandResult::Failure(ErrorCode::ValidationError, "'order' must be a JSON array.");
+            }
+            std::vector<std::string> order;
+            for (const auto& key : args["order"]) {
+                if (key.is_string()) order.push_back(key.get<std::string>());
+            }
+            ViewDefinition updated = *target;
+            const std::vector<std::string> ignored = ReorderViewColumns(order, updated);
+
+            if (dryRun) {
+                nlohmann::json cols = nlohmann::json::array();
+                for (const auto& col : updated.Columns) {
+                    cols.push_back(nlohmann::json{{"key", col.Key}, {"width", col.Width}});
+                }
+                return CommandResult::Success({{"wouldDo", {{"id", target->Id}, {"columns", std::move(cols)}}},
+                                               {"ignored", ignored}});
+            }
+            if (!views.Update(target->Id, updated)) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "Views::Update() failed.");
+            }
+            return CommandResult::Success({{"updated", true}, {"id", target->Id}, {"ignored", ignored}});
+        });
+    };
+    reg.Register(std::move(c));
+}
+
+// Set one column's width on the active (or a named) view. width <= 0 resets it to the kind
+// default (DefaultColumnWidthPx) instead of storing an explicit value.
+// The Command-field assignments and Params{[]{ParamSpec p; ...; return p;}()} lambda shape
+// below are the Command struct's own fixed construction idiom (Commands/Command.h), reused
+// identically by every Register*Command in this subsystem, PaneCommands.cpp's pane.focus included.
+void RegisterViewSetColumnWidthCommand(AppController& app, Views& views, CommandRegistry& reg) {
+    Command c;
+    c.Name = "view.set_column_width"; c.Category = "view";
+    c.Summary = "Set one column's width on a view (<=0 resets it to the default).";
+    c.Destructive = false;
+    c.Idempotent = true;
+    c.DryRunSupported = true;
+    c.Params = {
+        []{ ParamSpec p; p.Name="key"; p.Type=ParamType::String; p.Required=true;
+            p.Description="Column key (\"id\" or \"field:<id>\")."; return p; }(),
+        // SMATCHET_DEVIATION(rule=duplication; reason=ParamSpec-lambda construction idiom; owner=orchestrator; revisit=n/a, this is the contract)
+        []{ ParamSpec p; p.Name="width"; p.Type=ParamType::Number; p.Required=true;
+            p.Description="Width in pixels. <=0 resets to the kind default."; return p; }(),
+        []{ ParamSpec p; p.Name="id"; p.Type=ParamType::String;
+            p.Description="View id to edit (default: the currently active view)."; return p; }(),
+    };
+    // view.set_column_width reads + writes Views::Slice_; UI thread only.
+    c.Handler = [&app, &views](const nlohmann::json& args, const CommandContext& ctx) {
+        const bool dryRun = ctx.DryRun;
+        return RunOnUiThreadAsCommandResult(app, [&views, args, dryRun]() {
+            const std::string id = args.value("id", std::string());
+            const ViewDefinition* target = id.empty() ? views.GetActiveView() : views.Find(id);
+            if (!target) {
+                return CommandResult::Failure(ErrorCode::NotFound,
+                    id.empty() ? "No active view." : ("View '" + id + "' not found."));
+            }
+            const std::string key = CanonicalGridColumnKey(args.value("key", std::string()));
+            const float width = args.value("width", 0.0f);
+
+            ViewDefinition updated = *target;
+            auto it = std::find_if(updated.Columns.begin(), updated.Columns.end(),
+                                   [&](const ViewColumn& c) { return c.Key == key; });
+            if (it == updated.Columns.end()) {
+                return CommandResult::Failure(ErrorCode::NotFound,
+                    "Column '" + key + "' not found on view '" + target->Id + "'.");
+            }
+            it->Width = width > 0.0f ? width : 0.0f;
+            NormalizeViewDefinition(updated);
+
+            if (dryRun) {
+                return CommandResult::Success({{"wouldDo", {{"id", target->Id}, {"key", key},
+                                                            {"width", EffectiveColumnWidth(updated, key)}}}});
+            }
+            if (!views.Update(target->Id, updated)) {
+                return CommandResult::Failure(ErrorCode::HandlerError, "Views::Update() failed.");
+            }
+            return CommandResult::Success(
+                {{"updated", true}, {"id", target->Id}, {"key", key}, {"width", EffectiveColumnWidth(updated, key)}});
         });
     };
     reg.Register(std::move(c));
@@ -349,6 +575,8 @@ void RegisterViewCommands(AppController& app, Views& views) {
     RegisterViewCreateCommand(app, views, reg);
     RegisterViewUpdateCommand(app, views, reg);
     RegisterViewDeleteCommand(app, views, reg);
+    RegisterViewSetColumnOrderCommand(app, views, reg);
+    RegisterViewSetColumnWidthCommand(app, views, reg);
 }
 
 }  // namespace cmd

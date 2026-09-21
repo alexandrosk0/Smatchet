@@ -744,19 +744,39 @@ struct UiDrawSession {
     /// `ConfigManager::GetStoragePreferenceFlagPath(runtimeAssetDir)` as of the snapshot.
     std::string storageSnapshotMarkerPath;
 
+    /// ImGui text-input BACKING STORE for the Views editor title field — a display mirror
+    /// of viewDraft.Name, not itself the source of truth. Written on draft load/discard;
+    /// read back into viewDraft.Name on commit (Enter / deactivate). Same relationship as
+    /// viewJqlEditor.buf below.
     char viewNameBuf[128]{};
     /// Dashboard Views JQL editor (buffer + autocomplete state), held in a reusable
-    /// JqlEditorState. The grid header's per-pane search box keeps its text in
-    /// GridPane::gridSearchBuf instead — a plain input, so no second editor instance.
+    /// JqlEditorState. Its `.buf` is a display mirror of viewDraft.Jql — one write
+    /// direction: buffer -> viewDraft.Jql on an edit frame (via
+    /// TrackerQueryAcp_CanonicalQueryForApply), viewDraft.Jql -> buffer only on draft
+    /// load/discard (see Ui/AGENTS.md-style invariant note on LoadDraftFromView). The grid
+    /// header's per-pane search box keeps its text in GridPane::gridSearchBuf instead — a
+    /// plain input, so no second editor instance.
     JqlEditorState viewJqlEditor;
 
-    // Authoritative selected-field id set for the Views editor (#views-field-uncheck).
-    // The toggle handlers / select-all / clear mutate THIS directly; it is seeded
-    // from view.Fields on view activate/create/discard. Any code writing view.Fields
-    // from the editor selection must read this set. (A former 1024-byte CSV mirror
-    // buffer — the original truncation source of #views-field-uncheck — was removed
-    // once the set became authoritative.)
-    std::unordered_set<std::string> selectedFieldSet;
+    /// The Views editor's single editing draft (column-view-save-simplification): the full
+    /// editable copy of whatever view is open in the dashboard/mobile editor, keyed by
+    /// `viewDraftId`. Fields/Columns/SortSpecs/HideParents/StoryGroupSort/Jql/Name/HideParents
+    /// are all edited directly on this struct (Fields tab pushes/erases a ViewColumn in
+    /// viewDraft.Columns; Columns tab reorders it; Sort tab edits viewDraft.SortSpecs) — no
+    /// separate selected-field set, column-order buffer, or reconcile pass. "Dirty" is
+    /// NEVER a stored flag for this surface: it is computed each frame as
+    /// `ViewDraftDiffersFromSaved(viewDraft, *activeView, 0.5f)` against the live store
+    /// view. Save = ViewState.Update(viewDraftId, viewDraft) then reload the draft from
+    /// what actually landed; Discard = reload the draft from the store, unconditionally.
+    /// Distinct from the GRID's OWN write path (the table write-back / DrawSortByPopupBody),
+    /// which autosaves straight into the STORE's live ViewDefinition* and never touches this
+    /// draft — the two surfaces stay in sync because a CLEAN draft is reloaded from the store
+    /// whenever the view is (re)activated (LoadDraftFromView is called on every activate).
+    ViewDefinition viewDraft;
+    /// Id of the view `viewDraft` was loaded from — empty means "no draft loaded". Distinct
+    /// from `viewDraft.Id` (the SAME value once loaded) so a stale/missing draft is a single
+    /// empty-string check rather than a null-view special case.
+    std::string viewDraftId;
     char fieldSearchBuf[128]{};
     char auditSearchBuf[256]{};
     int auditActionFilter = 0; // 0 all, 1 creates, 2 updates/transitions, 3 comments, 4 attachments, 5 offline
@@ -776,25 +796,21 @@ struct UiDrawSession {
     bool auditReloadInFlight = false;
     bool auditReloadPending = false;
     std::future<AuditDisplayCachePayload> auditReloadFuture;
-    std::vector<std::string> editingColumnOrder;
+    /// Selection/scroll cursor into whatever the Columns tab is currently rendering — an
+    /// index into `viewDraft.Columns`, purely UI navigation state, no data of its own.
     int selectedColumnOrderIndex = -1;
     int scrollColumnOrderToIndex = -1;
-    std::string editingViewId;
-    std::vector<std::string> lastSyncedColumnOrder;
 
-    // Modern two-pane Views editor — sidebar + tab state, dirty tracking, drag/keyboard reorder cursor.
+    // Modern two-pane Views editor — sidebar + tab state, drag/keyboard reorder cursor.
     // 0 = Filter, 1 = Fields, 2 = Columns, 3 = Sort (matches ViewsEditorTab enum in the Views UI .cpp).
     int viewsActiveTab = 0;
+    /// Grid-side flag ONLY (column-view-save-simplification): true while the active view's
+    /// Jql was changed via applyQueryToPaneView (the grid search box / User-Info "add to
+    /// query" path) but not yet persisted. Layout (widths/order/sort/hide-parents/story-
+    /// group) autosaves and never sets this. The Views EDITOR has no dirty flag at all — its
+    /// "unsaved" state is the derived ViewDraftDiffersFromSaved(viewDraft, *activeView, …)
+    /// compare, computed fresh every frame, never stored.
     bool viewsDirty = false;
-    /// Frame fence that hides the unsaved-layout strip without touching viewsDirty.
-    /// Screenshot scenarios arm it (ScenarioCaptureQuiesce) because the grid's
-    /// startup width/sort write-back latches viewsDirty on a frame that varies with
-    /// pane-focus + data-arrival timing, so whether the ~33px strip — and the
-    /// downward shift of everything under it — made the captured frame flipped run
-    /// to run. Suppression is purely visual and auto-expires by frame number, so no
-    /// unwind is needed and a real user's pending layout edits keep their Save
-    /// affordance the moment the fence lapses.
-    int suppressUnsavedLayoutStripUntilFrame = -1;
     int viewsKeyboardReorderRow = -1;
     // Sidebar search filter for the saved-views list.
     char viewsSidebarSearchBuf[128]{};
@@ -804,9 +820,9 @@ struct UiDrawSession {
     std::string viewsPendingActivateId;
     bool viewsShowDeleteConfirm = false;
     bool viewsTitleEditing = false;
-    // Snapshot of the active view at the moment viewsDirty transitioned false -> true.
-    // Used by the unsaved-layout strip's Discard button to revert widths / sort specs /
-    // column order / name / JQL / fields back to the on-disk state. Captured lazily.
+    // Grid-side ONLY (paired with viewsDirty above): snapshot of the active view taken by
+    // applyQueryToPaneView right before it writes the new Jql, so the unsaved-QUERY strip's
+    // Discard button can restore it. Captured lazily, on the transition into dirty.
     bool viewsHasOriginalSnapshot = false;
     ViewDefinition viewsOriginalSnapshot;
     /// One-frame deferred view-create latch (Pillar 3 — crash fix). Views::Create
@@ -991,7 +1007,6 @@ struct UiDrawSession {
     std::unordered_map<std::string, CellWriteFeedback> cellFeedbackByKey;
 
     bool newIssueDiscardAsyncCreateResult = false;
-    bool viewSortDirty = false;
     bool logAutoScroll = true;
 
     /// True when this process was launched as a CLI-spawned ephemeral instance
@@ -1024,8 +1039,14 @@ struct UiDrawSession {
     std::uint64_t logScrollTailGiveUpFrame = 0;
     /** User scrolled up to read history; stay off tail until they scroll back to bottom or toggle auto-scroll. */
     bool logTailReleasedByUser = false;
-    bool pendingViewStateSave = false;
-    std::chrono::steady_clock::time_point pendingViewStateSaveAt{};
+    /// Debounced layout-autosave arm (column-view-save-simplification): the grid table
+    /// write-back / DrawSortByPopupBody set this ~400ms out whenever a width/order/sort/
+    /// hide-parents/story-group edit lands directly on the live active view; the
+    /// end-of-frame drain in SmatchetUI.cpp calls ViewState.Save() once it elapses, then
+    /// resets it back to `::max()`. `::max()` (never "due" — `now() >= max()` is never true
+    /// in practice) is the disarmed sentinel; a DEFAULT-CONSTRUCTED time_point is epoch,
+    /// which reads as "already due" on frame 1, so this must NOT be left default-initialized.
+    std::chrono::steady_clock::time_point viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
 
     TrackerGridFieldAsyncState trackerGridAsync;
 
