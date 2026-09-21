@@ -63,7 +63,7 @@ struct ActiveProjectDrawCtx {
     // actually diverges from what we requested, not from the stored/default value. On an
     // untouched column these are equal, which is the direct fix for the phantom "unsaved
     // layout" strip on every launch (column-view-save-simplification).
-    std::vector<float> requestedColumnWidths;
+    std::vector<float> requestedColumnWidths{};
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H
