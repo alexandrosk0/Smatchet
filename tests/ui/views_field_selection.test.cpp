@@ -65,7 +65,12 @@ std::unordered_set<std::string> DraftFieldIds() {
     return ids;
 }
 
-// Restore the g_ui fields the test mutates so the run leaves state as it found it.
+// Restore the g_ui fields the test mutates so the run leaves state as it found it. Must
+// restore viewDraft itself, not just viewDraftId: on a failed run (assertion abort, or the
+// ImGui Test Engine's verbose re-run of a just-failed test in the same process), leaving the
+// polluted g_ui.viewDraft.Columns behind while viewDraftId is restored to an id that may
+// already match the active view lets a LATER pass skip the id-mismatch reload guard entirely
+// and inherit the leaked stale-marker column as its own "seeded" baseline.
 struct ViewsDrawerStateGuard {
     UiMode uiMode = g_ui.cfg.UiMode;
     std::string tracker = g_ui.cfg.TrackerType;
@@ -73,9 +78,11 @@ struct ViewsDrawerStateGuard {
     MobilePage page = g_ui.mobilePage;
     bool drawerOpen = g_ui.mobileDrawerOpen;
     std::string viewDraftId = g_ui.viewDraftId;
+    ViewDefinition viewDraft = g_ui.viewDraft;
     ~ViewsDrawerStateGuard() {
         g_ui.mobileDrawerOpen = drawerOpen;
         g_ui.viewDraftId = viewDraftId;
+        g_ui.viewDraft = viewDraft;
         g_ui.mobilePage = page;
         g_ui.cfg.UiMode = uiMode;
         g_ui.cfg.TrackerType = tracker;

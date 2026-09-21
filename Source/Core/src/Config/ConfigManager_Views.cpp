@@ -246,6 +246,16 @@ ViewsStore ViewWorkspaceToViewsStoreImpl(const ViewWorkspaceState& ws) {
     s.Version = 2;
     s.ActiveViewId = ws.ActiveViewId;
     s.Views = ws.Views;
+    // A persisted ActiveViewId that no longer names an existing view (stale on-disk state,
+    // or a caller that mutated Views without going through Views::Delete's own repair) would
+    // otherwise make Views::GetActiveView() return nullptr forever for this backend until
+    // something explicitly Activate()s a valid id — self-heal to the first view instead of
+    // propagating a dangling reference every time this backend's workspace loads.
+    if (!s.Views.empty() &&
+        std::none_of(s.Views.begin(), s.Views.end(),
+                     [&](const ViewDefinition& v) { return v.Id == s.ActiveViewId; })) {
+        s.ActiveViewId = s.Views.front().Id;
+    }
     return s;
 }
 
