@@ -1,9 +1,9 @@
-// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 // SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=column-view-save-simplification replaced the
 // editor's scattered dirty-flag/buffer fields with one ViewDraft, net negative on the functional
 // churn but the doc-comment expansion explaining the new invariants pushed the file ~15 lines
 // past the ceiling; a companion-TU split (action methods vs draw functions) is a reasonable
 // follow-up but out of scope for this change; owner=orchestrator; revisit=next touch of this file)
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "SmatchetUI.h"
 
 #include "SmatchetViewsDashboardUi_detail.h"
