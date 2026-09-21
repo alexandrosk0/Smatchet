@@ -12,10 +12,12 @@ checkbox LIST in the app (the multi-select / components cell editor, the Labels 
 user asked for the gesture every file manager and spreadsheet has: press one checkbox and drag
 across its neighbours to set them all.
 
-After this lands: pressing a checkbox in any of those lists and dragging over the rows below (or
+After this lands, in **Views > Fields**: pressing a checkbox and dragging over the rows below (or
 above) sets every row the pointer crosses to the value the press produced — drag from a checked row
 to clear a run, from an unchecked row to set one — while a plain click, keyboard Space, and every
-disabled row behave exactly as they do today.
+disabled row behave exactly as they do today. The two grid cell editors keep their current
+one-click-per-row behaviour: their commit pipeline closes the editor on the first toggle, so a run
+cannot live there until that is changed (§ Risks / non-goals).
 
 ## Approach
 
