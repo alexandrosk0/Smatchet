@@ -125,7 +125,21 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         g_ui.viewDraft.Columns.push_back({"field:" + kMarker, 0.0f});
         g_ui.viewDraftId = "smatchet_force_reseed_sentinel";
 
-        const bool droppedStale = YieldUntil(ctx, [&] { return DraftFieldIds().find(kMarker) == DraftFieldIds().end(); });
+        // Re-pin mobileDrawerOpen/mobilePage every iteration rather than a plain YieldUntil: the
+        // reload this loop waits for only runs from drawMobileDrawerViews, which is gated on both
+        // — and ImGui Test Engine's simulated mouse cursor persists across tests in the same
+        // process, so a sibling "Plane"-backend test's trailing ItemClick (e.g.
+        // mobile_view_quick_switcher.test.cpp) can leave it positioned over the drawer's full-
+        // screen scrim, closing the drawer via the scrim's click-outside handler on the very next
+        // frame with no click of our own — silently starving drawMobileDrawerViews for the rest of
+        // the wait and making the reload this test exercises look like it never ran.
+        bool droppedStale = false;
+        for (int i = 0; i < 300 && !droppedStale; ++i) {
+            g_ui.mobileDrawerOpen = true;
+            g_ui.mobilePage = MobilePage::Views;
+            ctx->Yield();
+            droppedStale = DraftFieldIds().find(kMarker) == DraftFieldIds().end();
+        }
         if (!droppedStale) {
             ctx->LogError("viewDraft.Columns still holds the stale marker after a forced reseed — "
                           "LoadBuffersFromView did not reload the draft from the view");
