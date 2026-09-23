@@ -765,22 +765,21 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
             firstMatch = &option;
         }
         drewAny = true;
-        const bool isSelected = (option.Id == currentId);
+        const bool isSelected = (optionId == currentId);
         ImGui::PushID(optionId.c_str());
         if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
             // Guard against re-selecting the current value for status field — Jira's /transitions
             // response omits the current status, so resubmitting it would have no matching transition.
-            if (field.Id == "status" && option.Id == currentId) {
-                ImGui::CloseCurrentPopup();
-            } else {
+            // Compare using the same Id-or-Value fallback used for submission to handle id-less options.
+            if (!(field.Id == "status" && optionId == currentId && !currentId.empty())) {
                 // CPP_CODE_AUDIT.md #33 (single-select combo clears the field for id-less
                 // options): queue `optionId` (the same Id-or-Value fallback used for the
                 // widget's own ImGui id above), not the raw `option.Id` — an id-less option
                 // has `option.Id.empty()`, so queuing it directly sent {""} (a field clear)
                 // instead of the option the user actually clicked.
                 QueueEdit(ticket.id, field, {optionId}, pendingEdits, ticket.GetFieldValue(field.Id));
-                ImGui::CloseCurrentPopup();
             }
+            ImGui::CloseCurrentPopup();
         }
         ImGui::PopID();
     }
@@ -791,7 +790,12 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     // the top one is committed as a least-surprise default that mirrors typeahead pickers.
     if (submitOnEnter && firstMatch != nullptr) {
         const std::string firstMatchId = firstMatch->Id.empty() ? firstMatch->Value : firstMatch->Id;
-        QueueEdit(ticket.id, field, {firstMatchId}, pendingEdits, ticket.GetFieldValue(field.Id));
+        // Guard against re-selecting the current value for status field — Jira's /transitions
+        // response omits the current status, so resubmitting it would have no matching transition.
+        // Compare using the same Id-or-Value fallback used for submission to handle id-less options.
+        if (!(field.Id == "status" && firstMatchId == currentId && !currentId.empty())) {
+            QueueEdit(ticket.id, field, {firstMatchId}, pendingEdits, ticket.GetFieldValue(field.Id));
+        }
         ImGui::CloseCurrentPopup();
     }
 }
@@ -873,8 +877,7 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
                         if (current.Value.empty()) {
                             current.Value = currentId;
                         }
-                        allowedTransitions.push_back(std::move(current));
-                        std::swap(allowedTransitions.front(), allowedTransitions.back());
+                        allowedTransitions.insert(allowedTransitions.begin(), std::move(current));
                     }
                 }
                 opts = &allowedTransitions;

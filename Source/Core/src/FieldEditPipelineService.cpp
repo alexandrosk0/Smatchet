@@ -370,6 +370,11 @@ VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEdi
         return VoidResult::Err(outError);
     }
 
+    // Invalidate cached transitions if a status field was updated (must come before cache update).
+    if (field.Id == "status") {
+        transitions_.InvalidateIssueTransitions(issueId);
+    }
+
     // Keep local cache and in-memory model in sync with the successful backend update.
     if (ticketIt != tickets.end()) {
         CachedTicket updatedTicket = *ticketIt;

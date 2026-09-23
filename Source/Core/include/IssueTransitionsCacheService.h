@@ -10,6 +10,7 @@
 // `std::unique_ptr` and outlives it; background workers launched via `deps_.LaunchBackgroundTask`
 // are joined in `~AppController` before the deps adapter dies.
 
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -49,11 +50,14 @@ class IssueTransitionsCacheService {
   private:
     struct IssueTransitionsCache {
         bool applicable = false;
-        bool loaded = false;
+        bool loaded = false;   // true once fetch attempt completes (success or failure)
+        bool inFlight = false; // true while fetch is in progress
+        uint64_t gen = 0;      // generation counter to prevent stale-write races
         std::vector<TrackerFieldOption> options;
     };
 
     IEditMetaDeps& deps_;
     mutable std::mutex issueTransitionsMutex_;
     std::unordered_map<std::string, IssueTransitionsCache> issueTransitions_;
+    uint64_t nextGen_ = 0; // monotonic generation counter for cache entries
 };

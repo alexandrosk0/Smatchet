@@ -102,6 +102,7 @@ std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::
     if (!transitionsArray.is_array()) {
         return result;
     }
+    std::unordered_set<std::string> seenKeys; // dedup by option.Id, falling back to option.Value
     for (const auto& transition : transitionsArray) {
         if (!transition.is_object()) {
             continue;
@@ -118,6 +119,11 @@ std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::
         toStatusName = to.value("name", std::string());
         if (toStatusId.empty() && toStatusName.empty()) {
             continue;
+        }
+        // Dedup by Id-or-Value (same fallback as TicketFieldEditor::RenderSingleSelectComboBody)
+        const std::string key = toStatusId.empty() ? toStatusName : toStatusId;
+        if (!seenKeys.insert(key).second) {
+            continue; // already seen this option
         }
         TrackerFieldOption option;
         option.Id = toStatusId;
