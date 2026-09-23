@@ -872,7 +872,8 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
                         if (current.Value.empty()) {
                             current.Value = currentId;
                         }
-                        allowedTransitions.insert(allowedTransitions.begin(), current);
+                        allowedTransitions.push_back(std::move(current));
+                        std::swap(allowedTransitions.front(), allowedTransitions.back());
                     }
                 }
                 opts = &allowedTransitions;

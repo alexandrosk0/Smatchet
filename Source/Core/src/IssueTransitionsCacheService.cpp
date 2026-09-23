@@ -33,12 +33,18 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const std::strin
     if (issueId.empty()) {
         return;
     }
+    bool shouldFetch = false;
     {
         std::lock_guard<std::mutex> lock(issueTransitionsMutex_);
         const auto it = issueTransitions_.find(issueId);
-        if (it != issueTransitions_.end() && it->second.loaded) {
-            return; // already loaded
+        if (it == issueTransitions_.end() || !it->second.loaded) {
+            // Mark as loading to prevent concurrent fetches (TOCTOU guard).
+            issueTransitions_[issueId].loaded = false;
+            shouldFetch = true;
         }
+    }
+    if (!shouldFetch) {
+        return;
     }
     std::shared_ptr<ITrackerBackend> backend = deps_.BackendShared();
     if (!backend) {
