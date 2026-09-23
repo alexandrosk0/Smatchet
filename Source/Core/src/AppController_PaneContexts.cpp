@@ -707,21 +707,39 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         // pinning them against a sibling's stale sweep.
         DropPaneOwnedTicketIds(backendKey, paneId, plan.cacheDeleteKeys);
     }
-    if (!plan.residentRemovals.empty()) {
-        {
-            // Erase every resident removal + republish the immutable snapshot + bump the revision
-            // once under one lock (same contract as TicketSyncService::DrainStaleDeletionBudget) so
-            // readers see the shrunk roster atomically.
-            std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
-            for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
-                const std::string& key = plan.residentRemovals[i].issueKey;
-                ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
-                                                       [&key](const CachedTicket& t) { return t.id == key; }),
-                                        ctx.ActiveTickets.end());
+
+    // Merge fetched ticket data into ctx.ActiveTickets for tickets that still exist (Modified case).
+    // Pattern mirrors TicketSyncService::DrainPendingStreamingBatches: update-in-place for matching
+    // ids, then republish + bump revision once if any field changed.
+    bool anyFieldUpdated = false;
+    {
+        std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        for (const auto& t : fetched) {
+            auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                   [&](const CachedTicket& existing) { return existing.id == t.id; });
+            if (it != ctx.ActiveTickets.end()) {
+                *it = t;  // Update in place with fully-populated fetched data
+                anyFieldUpdated = true;
+            }
+        }
+        // Consolidate republish + revision bump: fire once per invocation when anything changed
+        // (membership removals OR field updates). Readers see atomically consistent state.
+        if (anyFieldUpdated || !plan.residentRemovals.empty()) {
+            // Handle membership removals first (within the same lock)
+            if (!plan.residentRemovals.empty()) {
+                for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+                    const std::string& key = plan.residentRemovals[i].issueKey;
+                    ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                                           [&key](const CachedTicket& t) { return t.id == key; }),
+                                            ctx.ActiveTickets.end());
+                }
             }
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
             ctx.ActiveTicketsRevision.fetch_add(1);
         }
+    }
+
+    if (!plan.residentRemovals.empty()) {
         for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
             const smatchet::MembershipRemovalVerdict& v = plan.residentRemovals[i];
             smatchet::TicketChangeSummary s;
@@ -729,8 +747,11 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
             s.issueId = v.issueKey;
             changes.push_back(s);
         }
-        // Mark Lua cells for re-record (the visible roster shrank) — same one-shot signal the
-        // stale-delete prune uses; no-op in the stub build. UI thread, cheap.
+    }
+    // Mark Lua cells for re-record whenever ActiveTickets mutates (field updates OR removals).
+    // This matches the convention used in TicketSyncService paths: every mutation of ActiveTickets
+    // fires the Lua notify signal. UI thread, cheap.
+    if (anyFieldUpdated || !plan.residentRemovals.empty()) {
         NotifyLuaTicketDataChanged();
     }
     if (!changes.empty()) {
