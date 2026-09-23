@@ -63,9 +63,11 @@ enum ViewsEditorTab : int {
 // directly, and "dirty" is ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f),
 // computed fresh every frame in drawViewsEditorHeader. Resets autocomplete state too.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
-    // [temp-debug] Instrument the reseed for UI test debugging
-    LOG_INFO("[LoadBuffersFromView] called with view.Id='%s', current d.viewDraftId='%s'", view.Id.c_str(),
-             d.viewDraftId.c_str());
+    // [temp-debug] Instrument the reseed for UI test debugging. fprintf(stderr, ...) rather
+    // than LOG_INFO: Logger writes to an in-memory ring + an opt-in file sink, never to
+    // stdout/stderr, so it never reaches the bucket-E CI harness's captured child log.
+    std::fprintf(stderr, "[LoadBuffersFromView] called with view.Id='%s', current d.viewDraftId='%s'\n",
+                 view.Id.c_str(), d.viewDraftId.c_str());
 
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
     d.viewJqlEditor.jqlAcpApplyReplace = false;
@@ -90,11 +92,12 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
     d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
 
-    LOG_INFO("[LoadBuffersFromView] about to assign d.viewDraft = view");
+    std::fprintf(stderr, "[LoadBuffersFromView] about to assign d.viewDraft = view\n");
     d.viewDraft = view;
-    LOG_INFO("[LoadBuffersFromView] assigned d.viewDraft; now d.Columns has %zu entries", d.viewDraft.Columns.size());
+    std::fprintf(stderr, "[LoadBuffersFromView] assigned d.viewDraft; now d.Columns has %zu entries\n",
+                 d.viewDraft.Columns.size());
     d.viewDraftId = view.Id;
-    LOG_INFO("[LoadBuffersFromView] complete; d.viewDraftId='%s'", d.viewDraftId.c_str());
+    std::fprintf(stderr, "[LoadBuffersFromView] complete; d.viewDraftId='%s'\n", d.viewDraftId.c_str());
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     d.selectedColumnOrderIndex = -1;
@@ -250,12 +253,12 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     // [temp-debug] Log every frame to ensure function is called
     static int callCount = 0;
     ++callCount;
-    LOG_INFO("[drawMobileDrawerViews] frame %d: called", callCount);
+    std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: called\n", callCount);
 
     ViewState.EnsureLoaded(d.cfg);
     const ViewDefinition* activeView = ViewState.GetActiveView();
     if (!activeView) {
-        LOG_INFO("[drawMobileDrawerViews] frame %d: activeView is nullptr", callCount);
+        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: activeView is nullptr\n", callCount);
         ImGui::TextDisabled("No views available.");
         return;
     }
@@ -264,13 +267,15 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     // the same view — no longer force-reloads a possibly-mid-edit draft here; only an actual
     // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
     // independently of the editor's draft, and the two resynchronize on the next activate).
-    LOG_INFO("[drawMobileDrawerViews] frame %d: d.viewDraftId='%s', activeView->Id='%s'", callCount,
-             d.viewDraftId.c_str(), activeView->Id.c_str());
+    std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: d.viewDraftId='%s', activeView->Id='%s'\n", callCount,
+                 d.viewDraftId.c_str(), activeView->Id.c_str());
     if (d.viewDraftId != activeView->Id) {
-        LOG_INFO("[drawMobileDrawerViews] frame %d: IDs DO NOT MATCH — calling LoadBuffersFromView", callCount);
+        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: IDs DO NOT MATCH — calling LoadBuffersFromView\n",
+                     callCount);
         LoadBuffersFromView(d, *activeView);
     } else {
-        LOG_INFO("[drawMobileDrawerViews] frame %d: IDs match — skipping LoadBuffersFromView", callCount);
+        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: IDs match — skipping LoadBuffersFromView\n",
+                     callCount);
     }
 
     ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView, ImGui::GetContentRegionAvail().x);
