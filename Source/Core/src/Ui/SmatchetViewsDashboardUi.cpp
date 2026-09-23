@@ -63,6 +63,10 @@ enum ViewsEditorTab : int {
 // directly, and "dirty" is ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f),
 // computed fresh every frame in drawViewsEditorHeader. Resets autocomplete state too.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
+    // [temp-debug] Instrument the reseed for UI test debugging
+    LOG_DEBUG("[LoadBuffersFromView] called with view.Id='%s', current d.viewDraftId='%s'", view.Id.c_str(),
+              d.viewDraftId.c_str());
+
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
     d.viewJqlEditor.jqlAcpApplyReplace = false;
     d.viewJqlEditor.jqlAcpReplaceStart = -1;
@@ -86,8 +90,11 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
     d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
 
+    LOG_DEBUG("[LoadBuffersFromView] about to assign d.viewDraft = view");
     d.viewDraft = view;
+    LOG_DEBUG("[LoadBuffersFromView] assigned d.viewDraft; now d.Columns has %zu entries", d.viewDraft.Columns.size());
     d.viewDraftId = view.Id;
+    LOG_DEBUG("[LoadBuffersFromView] complete; d.viewDraftId='%s'", d.viewDraftId.c_str());
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     d.selectedColumnOrderIndex = -1;
@@ -240,9 +247,15 @@ ViewsDashboardDrawCtx SmatchetUI::buildMobileViewsCtx(AppController& app, UiDraw
 }
 
 void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
+    // [temp-debug] Log every frame to ensure function is called
+    static int callCount = 0;
+    ++callCount;
+    LOG_DEBUG("[drawMobileDrawerViews] frame %d: called", callCount);
+
     ViewState.EnsureLoaded(d.cfg);
     const ViewDefinition* activeView = ViewState.GetActiveView();
     if (!activeView) {
+        LOG_DEBUG("[drawMobileDrawerViews] frame %d: activeView is nullptr", callCount);
         ImGui::TextDisabled("No views available.");
         return;
     }
@@ -251,8 +264,13 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     // the same view — no longer force-reloads a possibly-mid-edit draft here; only an actual
     // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
     // independently of the editor's draft, and the two resynchronize on the next activate).
+    LOG_DEBUG("[drawMobileDrawerViews] frame %d: d.viewDraftId='%s', activeView->Id='%s'", callCount,
+              d.viewDraftId.c_str(), activeView->Id.c_str());
     if (d.viewDraftId != activeView->Id) {
+        LOG_DEBUG("[drawMobileDrawerViews] frame %d: IDs DO NOT MATCH — calling LoadBuffersFromView", callCount);
         LoadBuffersFromView(d, *activeView);
+    } else {
+        LOG_DEBUG("[drawMobileDrawerViews] frame %d: IDs match — skipping LoadBuffersFromView", callCount);
     }
 
     ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView, ImGui::GetContentRegionAvail().x);
@@ -428,10 +446,9 @@ void SmatchetUI::drawViewsFilterTab(ViewsDashboardDrawCtx& ctx) {
             if (!isPlane) {
                 // The buffer holds display names on Jira — hand the browser the id-canonical
                 // query (names reverse-mapped) so the search matches what the view runs.
-                app.OpenUrl(app.BuildJqlSearchUrl(
-                    d.cfg, TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
-                                                                  app.GetAvailableUsers(), d.viewJqlEditor,
-                                                                  currentJql)));
+                app.OpenUrl(app.BuildJqlSearchUrl(d.cfg, TrackerQueryAcp_CanonicalQueryForApply(
+                                                             d.cfg.TrackerType, app.GetAvailableFields(),
+                                                             app.GetAvailableUsers(), d.viewJqlEditor, currentJql)));
             }
         }
         if (disableOpenJql) {
@@ -1125,9 +1142,10 @@ void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d)
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", SmatchetLocalization::T(
-                                    "views.jira_domain.help",
-                                    "Which Jira site this view talks to. Extra sites are added in Preferences → Tracker."));
+        ImGui::SetTooltip("%s",
+                          SmatchetLocalization::T(
+                              "views.jira_domain.help",
+                              "Which Jira site this view talks to. Extra sites are added in Preferences → Tracker."));
     }
 }
 
