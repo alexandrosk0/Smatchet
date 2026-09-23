@@ -1352,8 +1352,11 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     }
 }
 
-// End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
-// forced layout-defaults ini flush, and the debounced prefs ConfigManager::Save.
+/// End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
+/// forced layout-defaults ini flush, and debounced prefs ConfigManager::Save.
+/// Called after all windows and overlays have ended to safely apply deferred layout resets,
+/// window expand self-heals, and periodic saves without mid-frame state mutations.
+/// @param d UI session context
 void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // Drain a latched layout reset HERE, at end-of-frame. SmatchetUI_ResetLayoutToDefault is
     // always invoked mid-frame (menu / command) and only sets the latch; applying the heavy
