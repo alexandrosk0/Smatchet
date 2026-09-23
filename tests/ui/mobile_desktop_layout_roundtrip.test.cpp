@@ -42,30 +42,38 @@ extern UiDrawSession g_ui;
 
 namespace {
 
-/// Snapshot of a canonical window's docked state, keyed by DockId.
+/// Snapshot of a canonical window's docked state, keyed by DockId and root node.
 struct DockedWindowSnapshot {
     std::string WindowTitle; ///< Localized window title
     ImGuiID DockId;          ///< Dock node ID if docked, 0 if undocked or window not found
+    ImGuiID RootNodeId;      ///< Root dock node ID, 0 if not docked
 };
 
 /// Fetch the docked state of one canonical window by its runtime title (localized).
 /// @param windowTitle Localized window name to look up
-/// @return {title, DockId} if the window is currently live and docked with a valid non-orphan node,
-///         {title, 0} if undocked or window not found
+/// @return {title, DockId, RootNodeId} if the window is currently live and docked with a valid non-orphan node,
+///         {title, 0, 0} if undocked or window not found
 DockedWindowSnapshot SnapshotWindowDockState(const char* windowTitle) {
     const ImGuiWindow* win = ::ImGui::FindWindowByName(windowTitle);
     if (win == nullptr) {
-        return {windowTitle, 0};
+        return {windowTitle, 0, 0};
     }
     // DockId != 0 and a valid (non-orphan) node means the window is docked and reachable.
     if (win->DockId == 0) {
-        return {windowTitle, 0};
+        return {windowTitle, 0, 0};
     }
     const ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(win->DockId);
     if (node == nullptr || node->ParentNode == nullptr || node->HostWindow == nullptr) {
-        return {windowTitle, 0};
+        return {windowTitle, 0, 0};
     }
-    return {windowTitle, win->DockId};
+    // Walk up to find the root node (the one with no parent).
+    ImGuiID rootNodeId = win->DockId;
+    ImGuiDockNode* currentNode = const_cast<ImGuiDockNode*>(node);
+    while (currentNode->ParentNode != nullptr) {
+        rootNodeId = currentNode->ParentNode->ID;
+        currentNode = currentNode->ParentNode;
+    }
+    return {windowTitle, win->DockId, rootNodeId};
 }
 
 /// Poll a predicate over multiple frames, yielding the UI loop between checks.
@@ -117,12 +125,12 @@ void RegisterMobileDesktopLayoutRoundTripTest(ImGuiTestEngine* engine) {
         // Snapshot which canonical windows are docked BEFORE the flip. Only assert
         // windows that were docked before — in Mesa-headless HostWindow is nullptr
         // even when healthy, so we gate on pre-state to skip cleanly instead of
-        // false-failing. The localized window titles match the real render path.
-        const DockedWindowSnapshot issuesDocked = SnapshotWindowDockState("Issues");
-        const bool preIssuesDocked = (issuesDocked.DockId != 0);
+        // false-failing. Use the desktop main-pane identity to verify the fix.
+        const DockedWindowSnapshot mainPaneBefore = SnapshotWindowDockState("Smatchet - Active Project");
+        const bool preMainPaneDocked = (mainPaneBefore.DockId != 0);
 
-        if (!preIssuesDocked) {
-            ctx->LogInfo("skip: Issues window not docked pre-flip — headless/non-default host layout");
+        if (!preMainPaneDocked) {
+            ctx->LogInfo("skip: Smatchet - Active Project window not docked pre-flip — headless/non-default host layout");
             return;
         }
 
@@ -151,20 +159,22 @@ void RegisterMobileDesktopLayoutRoundTripTest(ImGuiTestEngine* engine) {
         // non-orphan, so they stay docked.
         g_ui.cfg.UiMode = origUiMode;
 
-        // Poll until the desktop Issues window is back and docked with the same root node.
+        // Poll until the desktop main pane is back and docked with the same root node.
         // The dock tree rebuilds lazily on the next NewFrame after the ini swap, then
         // BeginDocked applies the restored DockIds on that frame. A generous frame cap
-        // handles slow Mesa settle.
-        const ImGuiID preDockId = issuesDocked.DockId;
+        // handles slow Mesa settle. Compare both DockId and RootNodeId to catch reparenting.
+        const ImGuiID preRootNodeId = mainPaneBefore.RootNodeId;
+        const ImGuiID preDockId = mainPaneBefore.DockId;
         bool restored = false;
         for (int i = 0; i < 120 && !restored; ++i) {
             ctx->Yield();
-            const DockedWindowSnapshot postIssues = SnapshotWindowDockState("Issues");
-            restored = (postIssues.DockId != 0 && postIssues.DockId == preDockId);
+            const DockedWindowSnapshot postMainPane = SnapshotWindowDockState("Smatchet - Active Project");
+            restored = (postMainPane.DockId != 0 && postMainPane.DockId == preDockId &&
+                       postMainPane.RootNodeId == preRootNodeId);
         }
 
-        // The exact inverse of the undock bug: the Issues window that was docked
-        // before the round-trip is STILL docked with the same root node after it.
+        // The exact inverse of the undock bug: the main pane that was docked
+        // before the round-trip is STILL docked with the same DockId and RootNodeId after it.
         IM_CHECK_NO_RET(restored);
 
         // Restore every mutated field.

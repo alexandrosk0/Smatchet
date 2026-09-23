@@ -316,6 +316,10 @@ struct UiDrawSession {
     // The swap must defer to end-of-frame after all windows have ended to avoid mid-frame dock
     // node rebuilds that BeginDocked would immediately undock. See slice 5.
     bool mobileDockSeeded = false;
+    // Set true on the Mobile->Desktop edge to defer desktop ini restoration by one frame,
+    // avoiding interference from layoutForceDefaultsFrames countdown saving the mobile tree
+    // to the desktop path. Cleared at end-of-frame once the restoration completes.
+    bool deferDesktopIniRestore = false;
     // True between mobile entry and the first MobileContentDock submit when no imgui_mobile.ini
     // existed — triggers the one-shot DockBuilder seed (grid list / detail vertical split).
     bool mobileDockNeedsSeed = false;

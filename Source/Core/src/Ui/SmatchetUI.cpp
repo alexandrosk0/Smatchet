@@ -378,8 +378,13 @@ void SmatchetUI::Draw(AppController& app) {
         drawMobileShell(app, d);
         drawGlobalOverlays(app, d);
         drawEndOfFramePersistence(d);
-        if (d.effectiveUiMode == EffectiveUiMode::Desktop) {
+        // Defer desktop ini restoration by one frame to avoid layoutForceDefaultsFrames
+        // countdown saving the mobile tree to the desktop path on the transition frame.
+        if (d.deferDesktopIniRestore) {
             drawMobileRestoreDesktopIni(d);
+            d.deferDesktopIniRestore = false;
+        } else if (d.effectiveUiMode == EffectiveUiMode::Desktop && d.mobileDockSeeded) {
+            d.deferDesktopIniRestore = true;
         }
         return;
     }
