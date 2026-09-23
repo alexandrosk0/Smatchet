@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 #include <algorithm>
 #include <cctype>
@@ -94,6 +95,36 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
         }
     }
     return fallback;
+}
+
+std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray) {
+    std::vector<TrackerFieldOption> result;
+    if (!transitionsArray.is_array()) {
+        return result;
+    }
+    for (const auto& transition : transitionsArray) {
+        if (!transition.is_object()) {
+            continue;
+        }
+        if (!transition.contains("to") || !transition["to"].is_object()) {
+            continue;
+        }
+        const auto& to = transition["to"];
+        std::string toStatusId;
+        std::string toStatusName;
+        if (to.contains("id")) {
+            toStatusId = TransitionFieldToString(to["id"]);
+        }
+        toStatusName = to.value("name", std::string());
+        if (toStatusId.empty() && toStatusName.empty()) {
+            continue;
+        }
+        TrackerFieldOption option;
+        option.Id = toStatusId;
+        option.Value = toStatusName;
+        result.push_back(std::move(option));
+    }
+    return result;
 }
 
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,

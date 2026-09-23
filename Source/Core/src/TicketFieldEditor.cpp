@@ -722,11 +722,16 @@ void RenderEmptyOptionsNotice(const std::string& filterLower, bool catalogUnscop
 // caller owns the begin / end combo pair. Behaviour byte-identical to the inlined block.
 void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField& field, const std::string& currentValue,
                                  SpreadsheetState& state, std::vector<PendingFieldEdit>& pendingEdits,
-                                 const std::string& editorKey, bool catalogUnscoped) {
+                                 const std::string& editorKey, bool catalogUnscoped,
+                                 const std::vector<TrackerFieldOption>* opts = nullptr) {
     const bool justOpened = (state.SingleSelectActiveKey != editorKey);
     if (justOpened) {
         state.SingleSelectActiveKey = editorKey;
         state.SingleSelectSearchBuf[0] = '\0';
+    }
+
+    if (!opts) {
+        opts = &field.AllowedValueOptions;
     }
 
     const std::string currentId = ResolveOptionId(field, currentValue);
@@ -750,7 +755,7 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     const std::string filterLower = ToLowerAsciiCopy(TrimCopy(state.SingleSelectSearchBuf));
     const TrackerFieldOption* firstMatch = nullptr;
     bool drewAny = false;
-    for (const auto& option : field.AllowedValueOptions) {
+    for (const auto& option : *opts) {
         if (!OptionMatchesFilter(option, filterLower)) {
             continue;
         }
@@ -762,13 +767,19 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
         const bool isSelected = (option.Id == currentId);
         ImGui::PushID(optionId.c_str());
         if (ImGui::Selectable(option.Value.c_str(), isSelected)) {
-            // CPP_CODE_AUDIT.md #33 (single-select combo clears the field for id-less
-            // options): queue `optionId` (the same Id-or-Value fallback used for the
-            // widget's own ImGui id above), not the raw `option.Id` — an id-less option
-            // has `option.Id.empty()`, so queuing it directly sent {""} (a field clear)
-            // instead of the option the user actually clicked.
-            QueueEdit(ticket.id, field, {optionId}, pendingEdits, ticket.GetFieldValue(field.Id));
-            ImGui::CloseCurrentPopup();
+            // Guard against re-selecting the current value for status field — Jira's /transitions
+            // response omits the current status, so resubmitting it would have no matching transition.
+            if (field.Id == "status" && option.Id == currentId) {
+                ImGui::CloseCurrentPopup();
+            } else {
+                // CPP_CODE_AUDIT.md #33 (single-select combo clears the field for id-less
+                // options): queue `optionId` (the same Id-or-Value fallback used for the
+                // widget's own ImGui id above), not the raw `option.Id` — an id-less option
+                // has `option.Id.empty()`, so queuing it directly sent {""} (a field clear)
+                // instead of the option the user actually clicked.
+                QueueEdit(ticket.id, field, {optionId}, pendingEdits, ticket.GetFieldValue(field.Id));
+                ImGui::CloseCurrentPopup();
+            }
         }
         ImGui::PopID();
     }
@@ -836,8 +847,45 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
-                                    field.AllowedValueOptions.empty() && app.FieldCatalogLacksProjectScope());
+        // For status field on Jira, filter to valid transitions + current status.
+        const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
+        std::vector<TrackerFieldOption> allowedTransitions;
+        bool transitionsLoaded = true;
+        if (field.Id == "status") {
+            auto lookup = app.GetAvailableTransitionsForIssue(ticket.id);
+            if (lookup.applicable) {
+                if (lookup.loaded) {
+                    allowedTransitions = lookup.options;
+                    // Prepend current status if missing (transitions are outgoing only).
+                    const std::string currentId = ResolveOptionId(field, currentValue);
+                    if (!currentId.empty()) {
+                        const auto it = std::find_if(
+                            allowedTransitions.begin(), allowedTransitions.end(),
+                            [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
+                        if (it == allowedTransitions.end()) {
+                            TrackerFieldOption current;
+                            current.Id = currentId;
+                            current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                            if (current.Value.empty()) {
+                                current.Value = currentId;
+                            }
+                            allowedTransitions.insert(allowedTransitions.begin(), current);
+                        }
+                    }
+                    opts = &allowedTransitions;
+                } else {
+                    transitionsLoaded = false;
+                    app.EnsureIssueTransitionsLoaded(ticket.id);
+                }
+            }
+        }
+
+        if (field.Id == "status" && !transitionsLoaded) {
+            ImGui::TextDisabled("Loading transitions\xE2\x80\xA6");
+        } else {
+            RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+                                        opts->empty() && app.FieldCatalogLacksProjectScope(), opts);
+        }
         ImGui::EndCombo();
     }
 

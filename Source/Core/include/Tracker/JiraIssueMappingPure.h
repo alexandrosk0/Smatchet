@@ -50,6 +50,12 @@ struct JiraTransitionMatch {
 JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
                                          const std::string& targetStatusName);
 
+/// Parse a Jira /transitions response into the list of statuses (id, name)
+/// reachable from the issue's current state. Returns empty vector if transitionsArray
+/// is not valid or contains no transitions.
+struct TrackerFieldOption;
+std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray);
+
 /// Fills `outFieldsList` (all fields to request from Jira) and `outSelectedFields`
 /// (the subset to populate on CachedTicket) from the active view in `viewStore`.
 /// Falls back to a sensible default set when no active view or no fields are configured.

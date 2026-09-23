@@ -31,13 +31,15 @@
 
 class IFieldEditDeps;
 class EditMetaCacheService;
+class IssueTransitionsCacheService;
 class ITrackerBackend;
 class ITrackerIssueMutations;
 struct TrackerField;
 
 class FieldEditPipelineService {
   public:
-    FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta);
+    FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta,
+                             IssueTransitionsCacheService& transitions);
 
     /** Safe field families for offline-queued field edits (transport failures only). */
     static bool FieldEditSupportsOfflineQueue(const TrackerField& field);
@@ -127,4 +129,5 @@ class FieldEditPipelineService {
 
     IFieldEditDeps& deps_;
     EditMetaCacheService& editMeta_;
+    IssueTransitionsCacheService& transitions_;
 };

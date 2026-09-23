@@ -138,9 +138,11 @@ class EditMetaCacheService;
 class FieldEditPipelineService;
 class ConnectivityMonitorService;
 class AttachmentAppUpdateService;
+class IssueTransitionsCacheService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
+struct TransitionsLookup;
 
 namespace smatchet {
 namespace cmd {
@@ -1010,6 +1012,11 @@ class AppController : public IAppThreading,
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
+    /// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
+    struct TransitionsLookup GetAvailableTransitionsForIssue(const std::string& issueId) const;
+    void EnsureIssueTransitionsLoaded(const std::string& issueId);
+    void InvalidateIssueTransitions(const std::string& issueId);
+
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
 
     // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
@@ -1151,6 +1158,13 @@ class AppController : public IAppThreading,
     /// eagerly in `Initialize` after `depsAdapter_`. Public AppController methods are thin delegators
     /// forwarding here. See the AppController god-object decomposition plan (Phase 4).
     std::unique_ptr<AttachmentAppUpdateService> attachmentAppUpdate_;
+    /// Owns the per-issue transitions cache (issueTransitionsMutex_ + its containers) and the
+    /// load/invalidate/query methods. Constructed eagerly in `Initialize` after `editMeta_` and
+    /// `fieldEdit_` (FieldEditPipelineService calls InvalidateIssueTransitions after a field edit).
+    /// Public AppController methods (GetAvailableTransitionsForIssue, EnsureIssueTransitionsLoaded,
+    /// InvalidateIssueTransitions) are thin delegators forwarding to this service. Mirrors the
+    /// EditMetaCacheService decomposition pattern.
+    std::unique_ptr<IssueTransitionsCacheService> transitions_;
     /// Default pane id ("main" — matches ConfigManager_Panes bootstrap). The default
     /// context is PERMANENT: created in the constructor, never retired (offlineQueue_
     /// holds a deps-adapter reference chain into it), so focusedContext() fallback and

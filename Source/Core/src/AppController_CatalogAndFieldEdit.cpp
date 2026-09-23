@@ -1,6 +1,7 @@
 #include "AppController.h"
 #include "EditMetaCacheService.h"     // editmeta delegators forward to editMeta_ (god-object decomposition Phase 1).
 #include "FieldEditPipelineService.h" // field-edit delegators forward to fieldEdit_ (decomposition Phase 2).
+#include "IssueTransitionsCacheService.h" // transitions delegators forward to transitions_.
 #include "ITrackerIssueMutations.h" // fan-in Phase 2: AppController.h fwd-decls it now; this TU calls Mutations() methods.
 #include "LocalCacheManager.h" // direct: AppController.h now fwd-decls LocalCacheManager (fan-in Phase 1); this TU calls Cache-> methods.
 
@@ -701,6 +702,22 @@ void AppController::WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgFo
 }
 
 void AppController::WarmIssueEditMetaAsync(const std::string& issueId) { editMeta_->WarmIssueEditMetaAsync(issueId); }
+
+// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
+// The service owns the per-issue transitions cache and load/invalidate methods.
+// `transitions_` is constructed eagerly in Initialize, so it is non-null for every call after startup.
+
+struct TransitionsLookup AppController::GetAvailableTransitionsForIssue(const std::string& issueId) const {
+    return transitions_->GetAvailableTransitions(issueId);
+}
+
+void AppController::EnsureIssueTransitionsLoaded(const std::string& issueId) {
+    transitions_->EnsureIssueTransitionsLoaded(issueId);
+}
+
+void AppController::InvalidateIssueTransitions(const std::string& issueId) {
+    transitions_->InvalidateIssueTransitions(issueId);
+}
 
 // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
 // decomposition Phase 2). The service owns the SubmitFieldEditCtx struct + the branch helpers +

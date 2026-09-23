@@ -563,3 +563,45 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
     });
     return Result<TrackerProjectComponents, TrackerError>::Ok(std::move(out));
 }
+
+Result<std::vector<TrackerFieldOption>, TrackerError> JiraClient::FetchIssueTransitions(const TrackerConfig& cfg,
+                                                                                         const std::string& issueKeyOrId) {
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest(std::move(outError)));
+    }
+    if (issueKeyOrId.empty()) {
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchIssueTransitions called with an empty issue key/id."));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    const std::string transitionsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKeyOrId) + "/transitions";
+
+    auto response = TrackerGetLogged("JiraClient", transitionsUrl, headers);
+    if (response.status_code != 200) {
+        std::string detail = "Failed to fetch issue transitions (HTTP " + std::to_string(response.status_code) + ").";
+        LOG_WARN("JiraClient: %s", detail.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorFromHttpStatus(response.status_code, std::move(detail)));
+    }
+
+    std::string parseErr;
+    auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+    if (!parseErr.empty() || !json.is_object()) {
+        LOG_WARN("JiraClient: transitions response parse failed for %s: %s", issueKeyOrId.c_str(), parseErr.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorParse("Transitions response parse failed."));
+    }
+
+    if (!json.contains("transitions") || !json["transitions"].is_array()) {
+        LOG_WARN("JiraClient: transitions response missing transitions array for %s.", issueKeyOrId.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorParse("Transitions response missing transitions array."));
+    }
+
+    const auto options = smatchet::jira::ParseAvailableTransitionTargets(json["transitions"]);
+    return Result<std::vector<TrackerFieldOption>, TrackerError>::Ok(options);
+}
