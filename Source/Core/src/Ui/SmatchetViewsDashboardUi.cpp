@@ -250,15 +250,15 @@ ViewsDashboardDrawCtx SmatchetUI::buildMobileViewsCtx(AppController& app, UiDraw
 }
 
 void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
-    // [temp-debug] Log every frame to ensure function is called
+    // [temp-debug] Edge-triggered only (log volume from a per-frame print across a 300-frame
+    // wait loop exceeded what CI log fetching could return) — revert alongside the other
+    // [temp-debug] lines below.
     static int callCount = 0;
     ++callCount;
-    std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: called\n", callCount);
 
     ViewState.EnsureLoaded(d.cfg);
     const ViewDefinition* activeView = ViewState.GetActiveView();
     if (!activeView) {
-        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: activeView is nullptr\n", callCount);
         ImGui::TextDisabled("No views available.");
         return;
     }
@@ -267,15 +267,10 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     // the same view — no longer force-reloads a possibly-mid-edit draft here; only an actual
     // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
     // independently of the editor's draft, and the two resynchronize on the next activate).
-    std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: d.viewDraftId='%s', activeView->Id='%s'\n", callCount,
-                 d.viewDraftId.c_str(), activeView->Id.c_str());
     if (d.viewDraftId != activeView->Id) {
         std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: IDs DO NOT MATCH — calling LoadBuffersFromView\n",
                      callCount);
         LoadBuffersFromView(d, *activeView);
-    } else {
-        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: IDs match — skipping LoadBuffersFromView\n",
-                     callCount);
     }
 
     ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView, ImGui::GetContentRegionAvail().x);
@@ -1012,15 +1007,11 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
-    // [temp-debug] Instrument this second reload guard — the suspected "stealer" call site
-    // reached via drawMobilePageContent(embedded=true) ahead of drawMobileDrawerViews each frame.
-    std::fprintf(stderr, "[drawViewsDashboardWindow] embedded=%s activeView=%s d.viewDraftId='%s'\n",
-                 embedded ? "true" : "false", activeView ? activeView->Id.c_str() : "<null>",
-                 d.viewDraftId.c_str());
-
     // Reload the draft whenever the active view id changed underneath us — see the matching
     // comment in drawMobileDrawerViews for why a mere layout drift no longer force-reloads.
     if (activeView && d.viewDraftId != activeView->Id) {
+        // [temp-debug] Edge-triggered (fires only on an actual reload, already low-volume) —
+        // revert alongside the other [temp-debug] lines below.
         std::fprintf(stderr, "[drawViewsDashboardWindow] embedded=%s IDs DO NOT MATCH — calling LoadBuffersFromView\n",
                      embedded ? "true" : "false");
         LoadBuffersFromView(d, *activeView);
@@ -1078,20 +1069,30 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     // [temp-debug] Bisect where within this function's tab bar the draft's Columns count
     // changes — pinpointing whether drawViewsFieldsTab/ColumnsTab reintroduce a column the
-    // reload guard just dropped.
-    std::fprintf(stderr, "[drawViewsDashboardWindow] pre-tabbar embedded=%s activeTab=%d Columns=%zu\n",
-                 embedded ? "true" : "false", static_cast<int>(d.viewsActiveTab), d.viewDraft.Columns.size());
+    // reload guard just dropped. Edge-triggered on the previous checkpoint's value (a plain
+    // per-frame print across a 300-frame wait loop produced more log volume than CI log
+    // fetching could return) — revert alongside the other [temp-debug] lines below.
+    static size_t s_lastColumnsCheckpoint = static_cast<size_t>(-1);
+    auto logColumnsCheckpoint = [&](const char* where) {
+        if (d.viewDraft.Columns.size() != s_lastColumnsCheckpoint) {
+            std::fprintf(stderr, "[drawViewsDashboardWindow] %s embedded=%s activeTab=%d Columns=%zu (was %zu)\n",
+                         where, embedded ? "true" : "false", static_cast<int>(d.viewsActiveTab),
+                         d.viewDraft.Columns.size(), s_lastColumnsCheckpoint);
+            s_lastColumnsCheckpoint = d.viewDraft.Columns.size();
+        }
+    };
+    logColumnsCheckpoint("pre-tabbar");
 
     // Tab bar.
     if (ImGui::BeginTabBar("##ViewsEditorTabs", ImGuiTabBarFlags_None)) {
         drawViewsFilterTab(ctx);
-        std::fprintf(stderr, "[drawViewsDashboardWindow] post-filter Columns=%zu\n", d.viewDraft.Columns.size());
+        logColumnsCheckpoint("post-filter");
         drawViewsFieldsTab(ctx);
-        std::fprintf(stderr, "[drawViewsDashboardWindow] post-fields Columns=%zu\n", d.viewDraft.Columns.size());
+        logColumnsCheckpoint("post-fields");
         drawViewsColumnsTab(ctx);
-        std::fprintf(stderr, "[drawViewsDashboardWindow] post-columns Columns=%zu\n", d.viewDraft.Columns.size());
+        logColumnsCheckpoint("post-columns");
         drawViewsSortTab(ctx);
-        std::fprintf(stderr, "[drawViewsDashboardWindow] post-sort Columns=%zu\n", d.viewDraft.Columns.size());
+        logColumnsCheckpoint("post-sort");
         ImGui::EndTabBar();
     }
 

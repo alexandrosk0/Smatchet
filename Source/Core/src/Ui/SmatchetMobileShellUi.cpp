@@ -330,12 +330,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     const ImGuiWindowFlags kPanelFlags =
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
-    // [temp-debug] Instrument panel visibility
-    static int panelFrameCount = 0;
-    ++panelFrameCount;
     const bool panelBegin = ::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags);
-    std::fprintf(stderr, "[drawMobileDrawer] ##MobileDrawerPanel frame %d: ImGui::Begin returned %s\n",
-                 panelFrameCount, panelBegin ? "true" : "false");
     if (panelBegin) {
         ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.drawer.pages", "Pages"));
         ::ImGui::Separator();
@@ -354,7 +349,6 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         ::ImGui::Separator();
         // Slice 6 — reuse the desktop Views sidebar (search / activate / rename /
         // duplicate / delete) inside the drawer; picking a view closes the drawer.
-        std::fprintf(stderr, "[drawMobileDrawer] calling drawMobileDrawerViews on frame %d\n", panelFrameCount);
         drawMobileDrawerViews(app, d);
     }
     ::ImGui::End();
