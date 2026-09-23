@@ -1012,9 +1012,17 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
+    // [temp-debug] Instrument this second reload guard — the suspected "stealer" call site
+    // reached via drawMobilePageContent(embedded=true) ahead of drawMobileDrawerViews each frame.
+    std::fprintf(stderr, "[drawViewsDashboardWindow] embedded=%s activeView=%s d.viewDraftId='%s'\n",
+                 embedded ? "true" : "false", activeView ? activeView->Id.c_str() : "<null>",
+                 d.viewDraftId.c_str());
+
     // Reload the draft whenever the active view id changed underneath us — see the matching
     // comment in drawMobileDrawerViews for why a mere layout drift no longer force-reloads.
     if (activeView && d.viewDraftId != activeView->Id) {
+        std::fprintf(stderr, "[drawViewsDashboardWindow] embedded=%s IDs DO NOT MATCH — calling LoadBuffersFromView\n",
+                     embedded ? "true" : "false");
         LoadBuffersFromView(d, *activeView);
     }
 
