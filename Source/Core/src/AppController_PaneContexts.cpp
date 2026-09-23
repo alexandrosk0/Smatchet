@@ -646,6 +646,7 @@ AppController::computeMembershipRemovals_(ITrackerIssueReader& reader, const Tra
     return verdicts;
 }
 
+SMATCHET_DEVIATION(rule=function-too-long; reason=Grid visibility fix: merged fetched tickets into ActiveTickets (critical data flow for change-polling) + cache persistence + Lua notification dispatch under single mutex for thread-safety; revisit=refactor to separate helper when decomposing monoliths; owner=claude)
 void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std::vector<CachedTicket> fetched,
                                                   std::vector<smatchet::MembershipRemovalVerdict> verdicts,
                                                   std::chrono::system_clock::time_point polledAt,
