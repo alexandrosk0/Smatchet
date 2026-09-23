@@ -254,17 +254,18 @@ void DrawTrackerNotificationsSectionBody(UiDrawSession& d) {
         if (ImGui::Checkbox("Notify me when tracked issues change", &d.cfg.TicketChangeMonitorEnabled)) {
             MarkPrefsDirty(d);
         }
-        ImGui::SetItemTooltip("Periodically poll the backend for changes to the open panes' tickets "
-                              "and raise an in-app toast.");
+        ImGui::SetItemTooltip("Periodically poll the backend for changes to the open panes' tickets. "
+                              "When enabled, this also gates the grid's refresh interval below.");
     }
     if (d.prefsFilter.ShowSetting("tracker.notifications.interval")) {
         ImGui::BeginDisabled(!d.cfg.TicketChangeMonitorEnabled);
         int interval = d.cfg.TicketChangeMonitorIntervalSec;
-        if (ImGui::SliderInt("Check interval (seconds)", &interval, 30, 3600, "%d s")) {
+        if (ImGui::SliderInt("Grid refresh & notify interval (seconds)", &interval, 30, 3600, "%d s")) {
             d.cfg.TicketChangeMonitorIntervalSec = interval;
             MarkPrefsDirty(d);
         }
-        ImGui::SetItemTooltip("How often to poll for changes. Lower = faster notice, more requests.");
+        ImGui::SetItemTooltip("How often to check tracked issues for updates. This refreshes the grid's data and "
+                              "(if enabled above) raises a toast. Lower = faster updates, more requests.");
         ImGui::EndDisabled();
     }
 }

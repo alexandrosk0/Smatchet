@@ -176,7 +176,7 @@ const PrefsSettingDesc kSettings[] = {
      "appearance ticket monitor notify watch"},
     // Wrapped in BeginDisabled while the toggle above is off — still drawn, so
     // NOT ConditionalDraw.
-    {"tracker.notifications.interval", "tracker.notifications", "Check interval (seconds)",
+    {"tracker.notifications.interval", "tracker.notifications", "Grid refresh & notify interval (seconds)",
      "appearance ticket monitor poll interval"},
 
 #if defined(SMATCHET_WITH_MCP)

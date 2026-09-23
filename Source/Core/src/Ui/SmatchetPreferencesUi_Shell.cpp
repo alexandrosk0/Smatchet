@@ -7,15 +7,18 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 
+#include "SmatchetUI.h"
 #include "ConfigManager.h"
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetIconButtons.h"
 
 #include <cfloat>
 #include <cstdio>
 #include <string>
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 
 #include "SmatchetLocalizedImGui.h"
@@ -156,7 +159,7 @@ void PrefsSectionEnd(UiDrawSession& d, const char* sectionId) {
     ImGui::PopID();
 }
 
-void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
+void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
     (void)assistantDirty; // only read when the AI feature is compiled in
     // Order mirrors SmatchetPrefsSchema::Categories(); AI & Voice is compiled
     // out entirely when neither feature is built, matching the schema's guard.
@@ -201,7 +204,11 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
         // the visible part only.
         char preview[96];
         std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn, current->Dirty ? " *" : "");
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        // Leave room for the Save & Sync button beside the combo in narrow-width mode.
+        // Button width (140px) + spacing (4px) gives us the reserved width.
+        const float buttonSpaceNeeded = 140.0f + ImGui::GetStyle().ItemSpacing.x;
+        const float comboWidth = ImGui::GetContentRegionAvail().x - buttonSpaceNeeded;
+        ImGui::SetNextItemWidth(comboWidth);
         if (ImGui::BeginCombo("###prefsNavCombo", preview)) {
             for (const PrefsNavEntry& e : entries) {
                 const bool selected = e.Category == d.preferencesCategory;
@@ -221,6 +228,11 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
             }
             ImGui::EndCombo();
         }
+        // In narrow-width combo mode, place the Save & Sync button to the right of the combo
+        ImGui::SameLine();
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
+            ui.OnPreferencesSaveAndSyncForwarded(app, d);
+        }
         return;
     }
     const float railWidth = 11.0f * ImGui::GetFontSize();
@@ -237,6 +249,13 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
             if (empty) {
                 ImGui::EndDisabled();
             }
+        }
+        // Save & Sync button at the bottom of the nav rail
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr,
+                                       ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
+            ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
     }
     ImGui::EndChild();
