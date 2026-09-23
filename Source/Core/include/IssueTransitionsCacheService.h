@@ -18,9 +18,9 @@
 
 #include "Config/ConfigManager.h"
 #include "SmatchetResult.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 class IEditMetaDeps;
-struct TrackerFieldOption;
 
 struct TransitionsLookup {
     bool applicable = false; // false when the backend doesn't support FetchIssueTransitions
