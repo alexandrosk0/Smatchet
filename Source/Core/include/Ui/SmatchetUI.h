@@ -100,6 +100,9 @@ class SmatchetUI {
                                            const IAppTicketMutations& ticketMutations, PreferencesFilter& filter) {
         annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations, filter);
     }
+    void OnPreferencesSaveAndSyncForwarded(AppController& app, UiDrawSession& d) {
+        onPreferencesSaveAndSync(app, d);
+    }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
     /// from cfg.Keybindings (rebuildKeybindingCache). The Keyboard Shortcuts editor +

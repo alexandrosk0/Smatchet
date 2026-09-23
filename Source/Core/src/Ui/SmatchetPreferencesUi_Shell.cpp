@@ -231,7 +231,7 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         // In narrow-width combo mode, place the Save & Sync button to the right of the combo
         ImGui::SameLine();
         if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
-            ui.onPreferencesSaveAndSync(app, d);
+            ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
         return;
     }
@@ -255,7 +255,7 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         ImGui::Separator();
         if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr,
                                        ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
-            ui.onPreferencesSaveAndSync(app, d);
+            ui.OnPreferencesSaveAndSyncForwarded(app, d);
         }
     }
     ImGui::EndChild();
