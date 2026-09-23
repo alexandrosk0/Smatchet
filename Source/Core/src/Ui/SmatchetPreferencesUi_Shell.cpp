@@ -203,7 +203,11 @@ void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool tra
         // the visible part only.
         char preview[96];
         std::snprintf(preview, sizeof(preview), "%s%s", current->TitleEn, current->Dirty ? " *" : "");
-        ImGui::SetNextItemWidth(-FLT_MIN);
+        // Leave room for the Save & Sync button beside the combo in narrow-width mode.
+        // Button width (140px) + spacing (4px) gives us the reserved width.
+        const float buttonSpaceNeeded = 140.0f + ImGui::GetStyle().ItemSpacing.x;
+        const float comboWidth = ImGui::GetContentRegionAvail().x - buttonSpaceNeeded;
+        ImGui::SetNextItemWidth(comboWidth);
         if (ImGui::BeginCombo("###prefsNavCombo", preview)) {
             for (const PrefsNavEntry& e : entries) {
                 const bool selected = e.Category == d.preferencesCategory;
