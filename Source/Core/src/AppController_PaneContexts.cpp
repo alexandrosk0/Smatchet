@@ -712,6 +712,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     // Pattern mirrors TicketSyncService::DrainPendingStreamingBatches: update-in-place for matching
     // ids, then republish + bump revision once if any field changed.
     bool anyFieldUpdated = false;
+    std::vector<CachedTicket> updatedTickets;  // Track updated tickets for cache persistence
     {
         std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
         for (const auto& t : fetched) {
@@ -719,6 +720,7 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
             if (it != ctx.ActiveTickets.end()) {
                 *it = t;  // Update in place with fully-populated fetched data
+                updatedTickets.push_back(t);  // Track for cache persistence
                 anyFieldUpdated = true;
             }
         }
@@ -736,6 +738,14 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
             }
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
             ctx.ActiveTicketsRevision.fetch_add(1);
+        }
+    }
+    // Persist updated tickets to durable cache (outside the mutex, mirrors ApplyIssueFetchPack pattern).
+    // Without this, later cache reloads (RefreshLocalData, hidden-pane re-seed) would revert the updates
+    // since the fresh field values were never written to tickets_v2.
+    if (Cache && !updatedTickets.empty()) {
+        for (const auto& t : updatedTickets) {
+            Cache->SaveTicket(backendKey, t);
         }
     }
 
