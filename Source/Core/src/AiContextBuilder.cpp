@@ -194,11 +194,11 @@ std::string BuildActiveViewBody(const ViewDefinition* view) {
     if (!view->Jql.empty()) {
         out.append("query: ").append(view->Jql).push_back('\n');
     }
-    if (!view->ColumnOrder.empty()) {
+    if (!view->Columns.empty()) {
         out.append("columns:");
-        for (const std::string& col : view->ColumnOrder) {
+        for (const ViewColumn& col : view->Columns) {
             out.push_back(' ');
-            out.append(col);
+            out.append(col.Key);
         }
         out.push_back('\n');
     }

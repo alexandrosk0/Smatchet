@@ -142,9 +142,12 @@ TEST_CASE("Views::Create builds ids from names, dedupes collisions, and auto-bui
     const ViewDefinition& created = *views.GetActiveView();
     CHECK(created.Id == "my_view"); // lowercased, space -> underscore
     CHECK(created.Name == "My View");
-    // Empty prototype ColumnOrder is auto-built: "id" + field:<each field>.
+    // Empty prototype Columns is auto-built (via MigrateLegacyColumns from Fields):
+    // "id" + field:<each field>, in Fields order.
     const std::vector<std::string> expectedOrder = {"id", "field:summary", "field:status"};
-    CHECK(created.ColumnOrder == expectedOrder);
+    std::vector<std::string> createdOrder;
+    for (const auto& c : created.Columns) createdOrder.push_back(c.Key);
+    CHECK(createdOrder == expectedOrder);
 
     // Same name again: id collision resolved with a numeric suffix.
     REQUIRE(views.Create(proto));
@@ -181,6 +184,48 @@ TEST_CASE("Views::UpdateActive preserves the active id and falls back the name")
     CHECK(views.GetActiveView()->Id == "default_view"); // id preserved
     CHECK(views.GetActiveView()->Name == "default_view"); // empty name -> id
     CHECK(views.GetActiveView()->Jql == "project = UPD");
+}
+
+TEST_CASE("Views::Update edits a NAMED view whether or not it is the active one, and never "
+          "touches an unrelated view — the fix for the strip-Save-writes-the-wrong-view bug") {
+    smatchet_tests::TestEnvGuard env;
+    ViewsFileCleanup cleanup;
+
+    Views views;
+    views.EnsureLoaded(MakeCfg("Jira"));
+
+    ViewDefinition second;
+    second.Name = "Second View";
+    second.Jql = "project = SECOND";
+    REQUIRE(views.Create(second)); // Create auto-activates — "Second View" is now active
+    const std::string secondId = views.GetActiveView()->Id;
+    REQUIRE(views.Activate("default_view")); // switch back — "default_view" is active again
+    REQUIRE(views.GetActiveView()->Id == "default_view");
+
+    CHECK(views.Find(secondId) != nullptr);
+    CHECK(views.Find("no_such_id") == nullptr);
+
+    // Update the NON-active "second" view by id.
+    ViewDefinition editedSecond = *views.Find(secondId);
+    editedSecond.Jql = "project = EDITED";
+    const std::uint64_t rev = views.GetRevision();
+    REQUIRE(views.Update(secondId, editedSecond));
+    CHECK(views.GetRevision() == rev + 1);
+
+    // The edit landed on "second", not on the still-active "default_view".
+    const ViewDefinition* secondAfter = views.Find(secondId);
+    REQUIRE(secondAfter != nullptr);
+    CHECK(secondAfter->Jql == "project = EDITED");
+    REQUIRE(views.GetActiveView() != nullptr);
+    CHECK(views.GetActiveView()->Id == "default_view");
+    CHECK(views.GetActiveView()->Jql != "project = EDITED");
+
+    // Updating an unknown id fails without mutating anything or bumping the revision.
+    ViewDefinition bogus;
+    bogus.Id = "no_such_id";
+    const std::uint64_t revBeforeFailedUpdate = views.GetRevision();
+    CHECK_FALSE(views.Update("no_such_id", bogus));
+    CHECK(views.GetRevision() == revBeforeFailedUpdate);
 }
 
 TEST_CASE("Views::DeleteActive refuses the last view and picks the neighbour after a delete") {

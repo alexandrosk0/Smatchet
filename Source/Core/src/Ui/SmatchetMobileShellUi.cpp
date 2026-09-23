@@ -329,7 +329,8 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     const ImGuiWindowFlags kPanelFlags =
         ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNavFocus;
-    if (::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags)) {
+    const bool panelBegin = ::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags);
+    if (panelBegin) {
         ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.drawer.pages", "Pages"));
         ::ImGui::Separator();
         // Full 5-page universe (not just the visible MobileNavPages subset) so a

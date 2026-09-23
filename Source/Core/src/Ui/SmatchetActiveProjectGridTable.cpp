@@ -9,6 +9,7 @@
 #include "ConfigManager.h"
 #include "GridColumnOrderPure.h"
 #include "IssueDraft.h"
+#include "ViewColumnsPure.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerHttpUtils.h"
 #include "Logger.h"
@@ -365,9 +366,15 @@ static void RebuildGridSortAndFilterProjection(GridPane& pane, ImGuiTableSortSpe
     std::snprintf(lastFilter, lastFilterCap, "%s", pane.gridSearchBuf);
 }
 
-// Mirror header-click sort changes back onto the active view definition, marking it
-// dirty only when the rules actually changed (avoids a false-dirty on startup or when
+// Mirror header-click sort changes back onto the active view definition — the sole sort
+// write-back path (the former every-frame mirror in drawActiveProjectGridPost read stale
+// SpecsCount==0 transients and could wipe a view's SortSpecs mid-cycle; deleted). Only
+// touches the view when the rules actually changed (avoids a false-dirty on startup or when
 // the active view is swapped). Extracted from drawActiveProjectGridSort for the cap.
+// Autosaved (column-view-save-simplification): commits straight into the live view and arms
+// the debounced disk-save; no dirty flag, no strip, no snapshot — a sort click is exactly the
+// class of reversible, low-stakes edit CaptureHeaderDragColumnOrder's own comment already
+// makes this argument for (another click cycles it right back).
 static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* sortSpecs,
                                        const std::vector<TicketGridColumn>& columns, ViewDefinition& activeView) {
     std::vector<ViewSortSpec> newSpecs;
@@ -382,7 +389,7 @@ static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* so
         }
     }
 
-    // Only mark dirty if the sorting rules actually changed (prevent startup/view-switch false dirty)
+    // Only commit if the sorting rules actually changed (prevent startup/view-switch no-ops).
     bool changed = (newSpecs.size() != activeView.SortSpecs.size());
     if (!changed) {
         for (size_t i = 0; i < newSpecs.size(); ++i) {
@@ -395,12 +402,8 @@ static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* so
     }
 
     if (changed) {
-        // Snapshot pre-change view so Discard can revert sort + widths
-        // + column order + buffers all at once.
-        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, activeView);
         activeView.SortSpecs = std::move(newSpecs);
-        d.viewSortDirty = true;
-        d.viewsDirty = true;
+        d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
     }
 }
 
@@ -421,6 +424,13 @@ static void SyncHeaderSortClicksToView(UiDrawSession& d, ImGuiTableSortSpecs* so
 // columns[] is already built in the view's saved order, so the table's own permutation only
 // ever carries a drag the user has not committed yet, and a consistent map (fresh table, or
 // post-drag once ImGui rescatters) always passes this check untouched.
+static void ResetTableDisplayOrderToIdentity(ImGuiTable* table) {
+    for (int r = 0; r < table->ColumnsCount; ++r) {
+        table->Columns[r].DisplayOrder = static_cast<ImGuiTableColumnIdx>(r);
+        table->DisplayOrderToIndex[r] = static_cast<ImGuiTableColumnIdx>(r);
+    }
+}
+
 static void RepairDesyncedTableDisplayOrder(ImGuiTable* table) {
     if (table == nullptr || table->ColumnsCount <= 0) {
         return;
@@ -434,17 +444,39 @@ static void RepairDesyncedTableDisplayOrder(ImGuiTable* table) {
     if (mismatch < 0) {
         return;
     }
-    for (int r = 0; r < table->ColumnsCount; ++r) {
-        table->Columns[r].DisplayOrder = static_cast<ImGuiTableColumnIdx>(r);
-        table->DisplayOrderToIndex[r] = static_cast<ImGuiTableColumnIdx>(r);
-    }
+    ResetTableDisplayOrderToIdentity(table);
 }
 
-// Capture a user-driven column reorder (drag the header) into the editing buffer and mark the
-// view dirty so the unsaved-layout strip appears. Deliberately not autosaved: a column-order
-// change is destructive, unlike width/sort which the user can revert with another drag.
-static void CaptureHeaderDragColumnOrder(UiDrawSession& d, const std::vector<TicketGridColumn>& columns,
-                                         ViewDefinition& activeView) {
+// The double-permutation fix (column-view-save-simplification): a column-order or column-SET
+// change (Save in the Views editor, or CaptureHeaderDragColumnOrder's own autosave below)
+// rebuilds `columns[]` in the view's new order next frame, but ImGui's per-column DisplayOrder
+// is untouched by that rebuild — it still encodes whatever permutation was live before the
+// change. Composing an already-current permutation on top of an already-reordered array is
+// what made columns visibly jump right after a header drag committed. RepairDesyncedTableDisplayOrder
+// (above) does not catch this: a table mid-drag (or freshly settled after one) is internally
+// CONSISTENT, just stale relative to the new columns[] order. Call this once, right after
+// BeginTable, whenever the pane's column cache is about to rebuild (its ViewsRevision moved) —
+// columns[] is already in the view's saved order at that point, so identity is always correct,
+// the same argument RepairDesyncedTableDisplayOrder's own comment makes above.
+static void ResetTableDisplayOrderIfColumnsChanged(ImGuiTable* table, bool columnsChangedThisFrame) {
+    if (!columnsChangedThisFrame || table == nullptr || table->ColumnsCount <= 0) {
+        return;
+    }
+    if (table->ColumnsCount > table->DisplayOrderToIndex.size() || table->ColumnsCount > table->Columns.size()) {
+        return;
+    }
+    ResetTableDisplayOrderToIdentity(table);
+}
+
+// Capture a user-driven column reorder (drag the header) straight into the active view's
+// Columns, preserving each column's width (ReorderViewColumns), and arm the debounced disk
+// save. Autosaved, same as width/sort (column-view-save-simplification) — a header drag is
+// exactly as reversible as a resize (drag it back), so there is no reason to gate it behind
+// a different commit model. Bumps the views revision so the pane's cached column array (and
+// its ImGui table, via ResetTableDisplayOrderToIdentity below) picks up the new order next
+// frame — TicketGridColumnsBuilder::Build's output changed, unlike a pure sort/width edit.
+static void CaptureHeaderDragColumnOrder(UiDrawSession& d, Views& viewState,
+                                         const std::vector<TicketGridColumn>& columns, ViewDefinition& activeView) {
     ImGuiTable* table = ImGui::GetCurrentTable();
     if (table == nullptr || table->ColumnsCount <= 0) {
         return;
@@ -464,20 +496,22 @@ static void CaptureHeaderDragColumnOrder(UiDrawSession& d, const std::vector<Tic
     }
     // Persist only a true permutation of the column set: an order that comes out short, or that
     // repeats a key, means the display-order map was inconsistent this frame. Writing it would
-    // bake a duplicate key into ColumnOrder, and the load-side dedupe then drops a column back to
+    // bake a duplicate key into Columns, and the load-side dedupe then drops a column back to
     // the end of the grid.
     if (!GridVisualColumnOrderIsPermutation(visualOrder, columns.size())) {
         return;
     }
-    // Compare against the editing buffer too: a saved ColumnOrder holding a stale key that the
-    // column set no longer carries never converges on the visual order, so a saved-only compare
-    // would re-capture and re-dirty the view every frame until the user hits Save.
-    if (visualOrder == activeView.ColumnOrder || visualOrder == d.editingColumnOrder) {
+    std::vector<std::string> currentOrder;
+    currentOrder.reserve(activeView.Columns.size());
+    for (const auto& col : activeView.Columns) {
+        currentOrder.push_back(col.Key);
+    }
+    if (visualOrder == currentOrder) {
         return;
     }
-    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, activeView);
-    d.editingColumnOrder = visualOrder;
-    d.viewsDirty = true;
+    ReorderViewColumns(visualOrder, activeView);
+    viewState.BumpRevision();
+    d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
 }
 
 } // namespace
@@ -719,7 +753,22 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         // RepairDesyncedTableDisplayOrder): adding or removing a grid field changes the
         // column count, which is exactly when ImGui can leave the map inconsistent for a
         // NoSavedSettings table.
-        RepairDesyncedTableDisplayOrder(ImGui::GetCurrentTable());
+        ImGuiTable* liveTable = ImGui::GetCurrentTable();
+        RepairDesyncedTableDisplayOrder(liveTable);
+        // The double-permutation fix (see ResetTableDisplayOrderIfColumnsChanged): detect a
+        // column KEY SEQUENCE change since the pane's last draw (a Save in the Views editor,
+        // or CaptureHeaderDragColumnOrder's own autosave) and reset the table's per-column
+        // DisplayOrder to identity so it doesn't compose on top of the already-reordered
+        // columns[] array. Keyed on the actual key sequence, not the cache-invalidation
+        // revision, so an unrelated catalog change (e.g. a field label rename) that also
+        // bumps the pane's column cache does NOT discard an in-progress or just-settled drag.
+        std::vector<std::string> currentColumnKeys;
+        currentColumnKeys.reserve(columns.size());
+        for (const auto& col : columns) {
+            currentColumnKeys.push_back(col.Key);
+        }
+        ResetTableDisplayOrderIfColumnsChanged(liveTable, currentColumnKeys != ctx.pane.lastDrawnColumnKeys);
+        ctx.pane.lastDrawnColumnKeys = std::move(currentColumnKeys);
         // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
         // tests can drive the grid position without human input. Scenarios address "the
         // grid" — the focused pane.
@@ -772,18 +821,15 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     // NOT push ITS widths onto this pane by shared column-key match — a non-owned pane uses
     // its own captured widths or the defaults, never the fallback's (review #986 class).
     const bool widthsArePanesOwn = activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId;
-    // Materialise column widths once (§3.1 item 56): avoids ColumnWidths.find per column per frame.
+    // Materialise column widths once (§3.1 item 56): avoids an EffectiveColumnWidth scan per
+    // column per frame, AND is what drawActiveProjectGridPost compares its post-layout readback
+    // against — see ActiveProjectDrawCtx::requestedColumnWidths.
     std::vector<float> colWidths(columns.size());
     for (size_t ci = 0; ci < columns.size(); ++ci) {
-        float w = (columns[ci].ColumnKind == TicketGridColumn::Kind::Id) ? 90.0f : 180.0f;
-        if (widthsArePanesOwn) {
-            const auto wIt = activeViewForGrid->ColumnWidths.find(columns[ci].Key);
-            if (wIt != activeViewForGrid->ColumnWidths.end() && wIt->second > 0.0f) {
-                w = wIt->second;
-            }
-        }
-        colWidths[ci] = w;
+        colWidths[ci] = widthsArePanesOwn ? EffectiveColumnWidth(*activeViewForGrid, columns[ci].Key)
+                                          : DefaultColumnWidthPx(columns[ci].Key);
     }
+    ctx.requestedColumnWidths = colWidths;
     for (size_t ci = 0; ci < columns.size(); ++ci) {
         ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
     }
@@ -1067,81 +1113,56 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
     RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d, ctx.pane);
 
-    // Capture column widths and sort specs into the active view IN MEMORY so the
-    // grid renders the user's drag/sort immediately. The unsaved-layout strip gates
-    // these changes behind Save / Discard; the snapshot on first mutation lets Discard
-    // revert. Focused pane only — these mutate the session view-edit state, and
-    // resizing a non-focused pane's table first click-focuses it anyway.
+    // Capture column widths + a header-drag reorder into the active view IN MEMORY so the
+    // grid renders the user's drag immediately, and arm the debounced disk save
+    // (column-view-save-simplification: layout autosaves — no dirty flag, no strip, no
+    // snapshot; the moment a resize/reorder happens it IS the view, same as it already was
+    // in memory, just now also persisted without a Save click). Sort is handled entirely by
+    // the event-driven SyncHeaderSortClicksToView (drawActiveProjectGridSort) — the
+    // every-frame mirror this function used to also do here is deleted: reading
+    // ImGui::TableGetSortSpecs() unconditionally on every frame could observe a transient
+    // SpecsCount==0 and wipe a view's SortSpecs mid-cycle.
     //
-    // ALSO strict view ownership, on both halves: `columns` was built for the RENDERED
-    // view, but every write below lands in ViewState.GetActiveViewMutable() — a
-    // different object whenever resolvePaneView hands back something that is not this
-    // pane's own view (a cross-backend pane whose self-repair is refused renders the
-    // other backend's active view, and a pane holding its OWN stored view is not
-    // necessarily the globally-active one). Without the Id equality a width drag or a
-    // header reorder in such a pane bakes one view's column keys into another view's
-    // ColumnWidths / SortSpecs / ColumnOrder. Same class as the HIGH-1 sort-mirror
-    // guard above, and the same argument makes Id equality sufficient: resolvePaneView's
-    // self-repair already ran this draw, so a pane still mismatching here is exactly a
-    // repair-refused one.
+    // Strict view ownership: `columns` was built for the RENDERED view, but every write below
+    // lands in ViewState.GetActiveViewMutable() — a different object whenever resolvePaneView
+    // hands back something that is not this pane's own view (a cross-backend pane whose
+    // self-repair is refused renders the other backend's active view, and a pane holding its
+    // OWN stored view is not necessarily the globally-active one). Without the Id equality a
+    // width drag or a header reorder in such a pane bakes one view's column keys into another
+    // view's Columns. Same class as the HIGH-1 sort-mirror guard in drawActiveProjectGridSort,
+    // and the same argument makes Id equality sufficient: resolvePaneView's self-repair
+    // already ran this draw, so a pane still mismatching here is exactly a repair-refused one.
     const bool paneOwnsRenderedView = activeViewForGrid && activeViewForGrid->Id == ctx.pane.viewId;
     if (paneOwnsRenderedView && ctx.pane.focused) {
         ViewDefinition* mutableActive = ViewState.GetActiveViewMutable();
         if (mutableActive && mutableActive->Id == ctx.pane.viewId) {
-            bool metaChanged = false;
+            bool widthChanged = false;
             ImGuiTable* table = ImGui::GetCurrentTable();
             if (table) {
                 for (int i = 0; i < static_cast<int>(columns.size()); ++i) {
                     const std::string& key = columns[static_cast<size_t>(i)].Key;
-                    const float width = (i < table->ColumnsCount) ? table->Columns[i].WidthGiven : 0.0f;
-                    const auto oldIt = mutableActive->ColumnWidths.find(key);
-                    const float oldWidth = (oldIt == mutableActive->ColumnWidths.end()) ? 0.0f : oldIt->second;
-                    if (std::abs(oldWidth - width) > 0.5f) {
-                        if (!metaChanged) {
-                            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
+                    const float given = (i < table->ColumnsCount) ? table->Columns[i].WidthGiven : 0.0f;
+                    const float requested = (static_cast<size_t>(i) < ctx.requestedColumnWidths.size())
+                                                ? ctx.requestedColumnWidths[static_cast<size_t>(i)]
+                                                : given;
+                    if (ShouldCaptureColumnWidth(requested, given, 0.5f)) {
+                        auto it = std::find_if(mutableActive->Columns.begin(), mutableActive->Columns.end(),
+                                               [&](const ViewColumn& c) { return c.Key == key; });
+                        if (it != mutableActive->Columns.end()) {
+                            it->Width = given;
+                            widthChanged = true;
                         }
-                        mutableActive->ColumnWidths[key] = width;
-                        metaChanged = true;
                     }
                 }
             }
-            // Re-fetch sort specs from the table right before persisting so we use current state.
-            ImGuiTableSortSpecs* currentSortSpecs = ImGui::TableGetSortSpecs();
-            if (currentSortSpecs && currentSortSpecs->SpecsCount > 0 && currentSortSpecs->Specs != nullptr) {
-                std::vector<ViewSortSpec> newSortSpecs;
-                for (int s = 0; s < currentSortSpecs->SpecsCount; ++s) {
-                    const int colIndex = currentSortSpecs->Specs[s].ColumnIndex;
-                    if (colIndex >= 0 && colIndex < static_cast<int>(columns.size()) &&
-                        IsPersistableSortDirection(currentSortSpecs->Specs[s].SortDirection)) {
-                        ViewSortSpec vs;
-                        vs.ColumnKey = columns[static_cast<size_t>(colIndex)].Key;
-                        vs.Direction = static_cast<int>(currentSortSpecs->Specs[s].SortDirection);
-                        newSortSpecs.push_back(vs);
-                    }
-                }
-                if (newSortSpecs != mutableActive->SortSpecs) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                    mutableActive->SortSpecs = std::move(newSortSpecs);
-                    metaChanged = true;
-                }
-            } else {
-                if (!mutableActive->SortSpecs.empty()) {
-                    SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *mutableActive);
-                    mutableActive->SortSpecs.clear();
-                    metaChanged = true;
-                }
-            }
-            if (metaChanged) {
-                // Bump revision so the grid frame context rebuilds with new widths/sort
-                // next frame. Surface as dirty so the user can Save / Discard. No
-                // debounced disk write here — explicit Save commits everything.
+            if (widthChanged) {
                 ViewState.BumpRevision();
-                d.viewsDirty = true;
+                d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
             }
 
-            // Capture a user-driven column reorder (drag the header) into the editing
-            // buffer; see CaptureHeaderDragColumnOrder.
-            CaptureHeaderDragColumnOrder(d, columns, *mutableActive);
+            // Capture a user-driven column reorder (drag the header); see
+            // CaptureHeaderDragColumnOrder — autosaves + bumps revision itself.
+            CaptureHeaderDragColumnOrder(d, ViewState, columns, *mutableActive);
         }
     }
 }

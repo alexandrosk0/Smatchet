@@ -471,10 +471,11 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     const bool viewChanged = viewIsPanesOwn && (activeViewForGrid->Id != pane.lastGridActiveViewId);
     if (viewChanged) {
         pane.lastGridActiveViewId = activeViewForGrid->Id;
-        // Session-level unsaved-edit state belongs to the focused pane's view only.
+        // Session-level unsaved-edit state belongs to the focused pane's view only. Layout
+        // (widths/order/sort/hide-parents/story-group) autosaves and carries no such state to
+        // abandon here — only a not-yet-saved query-apply does (applyQueryToPaneView).
         if (pane.focused) {
-            d.viewSortDirty = false;
-            // Active view switched — abandon unsaved edits that belonged to the old
+            // Active view switched — abandon an unsaved query edit that belonged to the old
             // view (no confirmation in the grid path; Views editor has its own modal).
             d.viewsDirty = false;
             d.viewsHasOriginalSnapshot = false;
@@ -483,7 +484,6 @@ void SmatchetUI::applyActiveProjectViewChange(ActiveProjectDrawCtx& ctx) {
     if (!activeViewForGrid) {
         pane.lastGridActiveViewId.clear();
         if (pane.focused) {
-            d.viewSortDirty = false;
             d.viewsDirty = false;
             d.viewsHasOriginalSnapshot = false;
         }
@@ -536,21 +536,25 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
     UiDrawSession& d = ctx.d;
     ViewDefinition* activeViewForGrid = ctx.activeViewForGrid;
 
-    // -------- Unsaved layout strip --------
-    // Appears whenever d.viewsDirty OR d.viewSortDirty is true — fed by grid column
-    // reorder, sort changes, OR buffer edits made in the Views editor window. Lets
-    // the user commit, discard, or fork the in-memory edits without leaving the grid.
-    // The frame fence lets a screenshot scenario hide the strip for its capture window
-    // without clearing the dirty flags (see UiDrawSession::suppressUnsavedLayoutStripUntilFrame).
-    const bool stripFenced = ImGui::GetFrameCount() <= d.suppressUnsavedLayoutStripUntilFrame;
-    if ((d.viewsDirty || d.viewSortDirty) && activeViewForGrid && !stripFenced) {
+    // -------- Unsaved-query strip --------
+    // column-view-save-simplification: layout (column widths/order/sort, hide-parents,
+    // story-group) autosaves straight to disk — see the grid-table write-back and
+    // DrawSortByPopupBody — and never sets d.viewsDirty, so it can no longer appear here.
+    // The ONLY remaining producer of d.viewsDirty is applyQueryToPaneView (the grid search
+    // box / User-Info "add to query" path): a query-apply is a bigger behavioural change
+    // than a layout tweak (it changes WHICH ROWS the saved view shows) and stays a
+    // deliberate, confirmable edit — the UX-critique P2-H1 fix this strip already was for.
+    // No frame fence needed: applyQueryToPaneView only ever runs from an explicit user
+    // action, never passively per-frame, so there is no phantom-dirty case to fence out here
+    // (unlike the old width/sort write-back this strip used to also gate).
+    if (d.viewsDirty && activeViewForGrid) {
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.32f, 0.27f, 0.10f, 0.35f));
-        ImGui::BeginChild("##UnsavedLayoutStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
+        ImGui::BeginChild("##UnsavedQueryStrip", ImVec2(0, ImGui::GetFrameHeightWithSpacing() + 4.0f), true,
                           ImGuiWindowFlags_NoScrollbar);
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "●");
         ImGui::SameLine();
-        ImGui::Text("Unsaved layout changes to \"%s\"", activeViewForGrid->Name.c_str());
+        ImGui::Text("Query changed but not saved to \"%s\"", activeViewForGrid->Name.c_str());
         ImGui::SameLine();
         const float saveW = ImGui::CalcTextSize("Save").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
         const float saveAsW = ImGui::CalcTextSize("Save as new...").x + ImGui::GetStyle().FramePadding.x * 2.0f + 8.0f;
@@ -562,39 +566,17 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
             ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail - cluster));
         }
         if (ImGui::Button("Save")) {
-            // Commit editing buffers + currently-stored widths/sort onto the active view.
-            ViewDefinition updated = *activeViewForGrid;
-            updated.Name = d.viewNameBuf[0] ? std::string(d.viewNameBuf) : activeViewForGrid->Name;
-            // The editor buffer holds display names on Jira — persist the id-canonical query
-            // of record (names reverse-mapped to account ids) instead of the display form.
-            updated.Jql = d.viewJqlEditor.buf[0]
-                              ? TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, app.GetAvailableFields(),
-                                                                       app.GetAvailableUsers(), d.viewJqlEditor,
-                                                                       std::string(d.viewJqlEditor.buf))
-                              : activeViewForGrid->Jql;
-            // Authoritative selection set, not the truncating buffer (#views-field-uncheck) — a
-            // large selection persists in full instead of being clipped on disk at the 1023-byte cap.
-            const std::vector<std::string> editedFields =
-                SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
-            if (!editedFields.empty()) {
-                updated.Fields = editedFields;
-            }
-            if (!d.editingColumnOrder.empty()) {
-                updated.ColumnOrder = d.editingColumnOrder;
-            }
-            if (ViewState.UpdateActive(updated)) {
-                d.cfg.JqlQuery = updated.Jql;
-                d.cfg.SelectedFields = updated.Fields;
-                d.lastSyncedColumnOrder = updated.ColumnOrder;
-                d.viewsDirty = false;
-                d.viewSortDirty = false;
-                d.viewsHasOriginalSnapshot = false;
-                d.pendingViewStateSave = false;
-                ConfigManager::Save(d.cfg);
-                ViewState.Save();
-                SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"),
-                                                      updated.Name, ToastType::Success, 1500);
-            }
+            // applyQueryToPaneView already committed the new Jql straight into this same
+            // live ViewDefinition* (ViewState.GetActiveViewMutable(), same target the grid
+            // renders from) — there is no separate buffer to reconcile. Save just persists.
+            d.cfg.JqlQuery = activeViewForGrid->Jql;
+            d.cfg.SelectedFields = activeViewForGrid->Fields;
+            d.viewsDirty = false;
+            d.viewsHasOriginalSnapshot = false;
+            ConfigManager::Save(d.cfg);
+            ViewState.Save();
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.view_saved", "View saved"),
+                                                  activeViewForGrid->Name, ToastType::Success, 1500);
         }
         ImGui::SameLine();
         if (ImGui::Button("Save as new...")) {
@@ -602,37 +584,29 @@ void SmatchetUI::drawActiveProjectUnsavedStrip(ActiveProjectDrawCtx& ctx) {
         }
         ImGui::SameLine();
         if (ImGui::Button("Discard")) {
-            // Restore the active view from the pre-dirty snapshot when present —
-            // covers widths / sort specs that got mutated in-place during this dirty
-            // session. Then reload the session edit buffers from that restored view.
+            // Restore only the Jql this strip actually gates, from the pre-dirty snapshot
+            // taken when the query-apply first dirtied it (SnapshotActiveViewIfNeeded, in
+            // applyQueryToPaneView). A wholesale `*mutableActiveForDiscard = snapshot`
+            // clobbers any layout (column width/order, sort, hide-parents, story-group) that
+            // autosaved into this same live ViewDefinition after the snapshot was taken —
+            // the snapshot is a point-in-time full copy, but layout keeps writing after it's
+            // taken (Cursor Bugbot finding). Narrowing the restore to Jql keeps Discard
+            // meaning exactly "undo the query edit", matching what the strip displays.
             ViewDefinition* mutableActiveForDiscard = ViewState.GetActiveViewMutable();
             if (mutableActiveForDiscard && d.viewsHasOriginalSnapshot) {
-                *mutableActiveForDiscard = d.viewsOriginalSnapshot;
+                mutableActiveForDiscard->Jql = d.viewsOriginalSnapshot.Jql;
             }
             const ViewDefinition* restoreSource = mutableActiveForDiscard ? mutableActiveForDiscard : activeViewForGrid;
-            d.editingColumnOrder = restoreSource->ColumnOrder;
-            d.lastSyncedColumnOrder = restoreSource->ColumnOrder;
-            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, restoreSource->Name);
-            SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, restoreSource->Jql);
-            // Re-seed the authoritative field selection from the restored view
-            // (#views-field-uncheck).
-            d.selectedFieldSet.clear();
-            for (const auto& fieldId : restoreSource->Fields) {
-                d.selectedFieldSet.insert(fieldId);
-            }
             d.viewsDirty = false;
-            d.viewSortDirty = false;
             d.viewsHasOriginalSnapshot = false;
-            d.pendingViewStateSave = false;
-            ViewState.BumpRevision(); // force grid to redraw columns in the stored order
-            // If the unsaved edit included the QUERY (the grid search box / User-Info add-to-query
-            // path — P2-H1), restoring the definition must also restore the visible rows:
-            // re-adopt the saved JQL and re-run it, or the grid keeps showing the search.
+            ViewState.BumpRevision(); // force grid to redraw columns/rows from the restored view
+            // The query is what this strip gates, so restoring the definition must also
+            // restore the visible rows: re-adopt the saved JQL and re-run it.
             if (d.cfg.JqlQuery != restoreSource->Jql) {
                 d.cfg.JqlQuery = restoreSource->Jql;
                 SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
             }
-            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.reverted_layout", "Reverted layout"),
+            SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.reverted_layout", "Reverted query"),
                                                   restoreSource->Name, ToastType::Info, 1500);
         }
         ImGui::EndChild();
@@ -690,24 +664,12 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             // crash. Copy the payload while the pointer is valid; applyPendingViewCreate
             // consumes the latch at the top of next frame (AdoptCfg reloads buffers + adopts
             // Jql/fields into cfg + saves, replacing the former inline post-create block).
+            // *activeViewForGrid already carries everything: layout autosaves straight into
+            // it, and a query-apply (if any) already landed its Jql there too — no separate
+            // buffers to reconcile (column-view-save-simplification).
             ViewDefinition created = *activeViewForGrid;
             created.Name = s_newViewName;
             created.Id.clear();
-            if (!d.editingColumnOrder.empty()) {
-                created.ColumnOrder = d.editingColumnOrder;
-            }
-            // Authoritative selection set, not the truncating buffer (#views-field-uncheck).
-            const std::vector<std::string> editedFields =
-                SmatchetViewsDashboardUiDetail::ToSortedVector(d.selectedFieldSet);
-            if (!editedFields.empty()) {
-                created.Fields = editedFields;
-            }
-            if (d.viewJqlEditor.buf[0]) {
-                // Reverse-map display names to account ids (see the unsaved-strip Save above).
-                created.Jql = TrackerQueryAcp_CanonicalQueryForApply(d.cfg.TrackerType, ctx.app.GetAvailableFields(),
-                                                                     ctx.app.GetAvailableUsers(), d.viewJqlEditor,
-                                                                     std::string(d.viewJqlEditor.buf));
-            }
             d.viewsPendingCreate = true;
             d.viewsPendingCreatePayload = std::move(created);
             d.viewsPendingCreateToastTitle = "View created";
@@ -715,7 +677,6 @@ void SmatchetUI::drawActiveProjectSaveAsNewModal(ActiveProjectDrawCtx& ctx) {
             d.viewsPendingCreateAdoptCfg = true;
             d.viewsDirty = false;
             d.viewsHasOriginalSnapshot = false;
-            d.pendingViewStateSave = false;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();

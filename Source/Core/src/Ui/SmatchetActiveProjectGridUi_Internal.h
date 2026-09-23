@@ -57,6 +57,13 @@ struct ActiveProjectDrawCtx {
     // Parent-hierarchy nesting depth of the row currently being drawn (set per row by
     // drawActiveProjectGridRows, read by the Id cell for its indent). 0 = root / feature off.
     int currentRowDepth = 0;
+    // The width EACH column was asked to render at this frame (drawActiveProjectGridSetup's
+    // TableSetupColumn argument, one entry per `columns[i]`) — set once at table setup, read
+    // back by drawActiveProjectGridPost so a resize is captured only when ImGui's WidthGiven
+    // actually diverges from what we requested, not from the stored/default value. On an
+    // untouched column these are equal, which is the direct fix for the phantom "unsaved
+    // layout" strip on every launch (column-view-save-simplification).
+    std::vector<float> requestedColumnWidths{};
 };
 
 #endif // SMATCHET_UI_SMATCHET_ACTIVE_PROJECT_GRID_UI_INTERNAL_H

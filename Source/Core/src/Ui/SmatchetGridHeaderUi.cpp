@@ -95,10 +95,10 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
                          const std::vector<TicketGridColumn>& columns) {
     bool sortChanged = false;
 
-    // Parent-issue hierarchy toggles (per-view, persisted). Both re-run the sort/filter projection.
+    // Parent-issue hierarchy toggles (per-view, persisted, autosaved — same as the rest of
+    // this popup; column-view-save-simplification). Both re-run the sort/filter projection.
     bool storyGroup = activeViewForGrid->StoryGroupSort;
     if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.story_group", "Parent group"), &storyGroup)) {
-        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
         activeViewForGrid->StoryGroupSort = storyGroup;
         sortChanged = true;
     }
@@ -106,7 +106,6 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
         "%s", SmatchetLocalization::T("grid.sort.story_group.tip", "Group children under their parent issue"));
     bool hideParents = activeViewForGrid->HideParents;
     if (ImGui::Checkbox(SmatchetLocalization::T("grid.sort.hide_parents", "Hide parent stories"), &hideParents)) {
-        SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
         activeViewForGrid->HideParents = hideParents;
         sortChanged = true;
     }
@@ -130,7 +129,6 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
         const bool removeSortClicked = ImGui::Button("X");
         ImGui::SetItemTooltip("%s", SmatchetLocalization::T("grid.sort.remove_key", "Remove this sort key"));
         if (removeSortClicked) {
-            SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
             activeViewForGrid->SortSpecs.erase(activeViewForGrid->SortSpecs.begin() + i);
             sortChanged = true;
             ImGui::PopID();
@@ -142,12 +140,10 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
         ImGui::SetNextItemWidth(100.0f);
         if (ImGui::BeginCombo("##dir", dirStr, ImGuiComboFlags_NoArrowButton)) {
             if (ImGui::Selectable("Ascending", spec.Direction == 1)) {
-                SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                 spec.Direction = 1;
                 sortChanged = true;
             }
             if (ImGui::Selectable("Descending", spec.Direction == 2)) {
-                SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                 spec.Direction = 2;
                 sortChanged = true;
             }
@@ -171,7 +167,6 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
             bool alreadySorted = std::any_of(activeViewForGrid->SortSpecs.begin(), activeViewForGrid->SortSpecs.end(),
                                              [&](const auto& s) { return s.ColumnKey == c.Key; });
             if (!alreadySorted && ImGui::MenuItem(c.Label.c_str())) {
-                SmatchetViewsDashboardUiDetail::SnapshotActiveViewIfNeeded(d, *activeViewForGrid);
                 ViewSortSpec newSpec;
                 newSpec.ColumnKey = c.Key;
                 newSpec.Direction = 1; // Default Ascending
@@ -183,9 +178,12 @@ void DrawSortByPopupBody(UiDrawSession& d, ViewDefinition*& activeViewForGrid,
     }
 
     if (sortChanged) {
-        d.viewSortDirty = true;
         d.pane().forceApplySortSpecs = true; // per-pane since Slice 2
-        d.viewsDirty = true;
+        // Autosaved (column-view-save-simplification): no dirty flag, no strip. See
+        // ActiveProjectDrawCtx::requestedColumnWidths / the grid-table write-back for the
+        // sibling width/order autosave; this popup edits SortSpecs/HideParents/StoryGroupSort
+        // directly on the same live ViewDefinition* the grid table renders.
+        d.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
     }
 }
 

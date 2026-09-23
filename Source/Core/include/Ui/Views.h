@@ -54,10 +54,19 @@ class Views {
 
     const ViewDefinition* GetActiveView() const;
     ViewDefinition* GetActiveViewMutable();
+    /// Look up any view by id, active or not — for a command/writeback path that names its
+    /// target explicitly instead of implicitly meaning "whatever is globally active" (the
+    /// wrong-view-write class of bug this replaces: a strip Save that always targeted the
+    /// active view could write a different pane's edits onto it).
+    const ViewDefinition* Find(const std::string& id) const;
 
     bool Activate(const std::string& viewId);
     bool Create(const ViewDefinition& prototype);
     bool UpdateActive(const ViewDefinition& updated);
+    /// Update the view named by `id` in place (pointer-stable — no resize, so it's exempt
+    /// from the Create/DeleteActive deferral-latch rule in Ui/AGENTS.md), whether or not it
+    /// is the active view. `UpdateActive` delegates here.
+    bool Update(const std::string& id, const ViewDefinition& updated);
     bool DeleteActive();
     /// Delete the view with `id` regardless of whether it is the active view (DR13b —
     /// right-click Delete on a non-active row). Refuses to delete the last remaining view

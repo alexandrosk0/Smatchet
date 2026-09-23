@@ -1,3 +1,8 @@
+// SMATCHET_DEVIATION(rule=tu-line-ceiling; reason=pre-existing grandfathered whale, only
+// surfaced now because this change touches two small, unrelated spots (the debounced
+// layout-autosave drain, and one field rename) — a real split of this orchestrator TU is out
+// of scope for column-view-save-simplification; owner=orchestrator; revisit=next dedicated
+// SmatchetUI.cpp file-split pass)
 #include "SmatchetUI.h"
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
@@ -705,7 +710,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             d.connectivityRecoveryTicketFetchFuture = {};
             d.connectivityRecoveryTicketResyncPending = false;
             d.triggerCatalogRefetch = true;
-            d.editingViewId.clear();
+            d.viewDraftId.clear();
         }
         lastViewsBackendKey = bk;
     }
@@ -1358,14 +1363,25 @@ void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // tab bar (it re-Begins the dock HOST window). Also runs the expand self-heal, so it
     // must come AFTER the layout reset above cleared its state on a reset frame.
     SmatchetWindowExpand::EndFrame(d);
-    // Skip the debounced auto-save while a view edit is pending an explicit Save —
-    // widths / sort specs mutated under the unsaved-layout strip must not bleed
-    // through to disk until the user commits.
-    if (g_ui.pendingViewStateSave && !g_ui.viewsDirty &&
-        std::chrono::steady_clock::now() >= g_ui.pendingViewStateSaveAt) {
-        SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
-        ViewState.Save();
-        g_ui.pendingViewStateSave = false;
+    // Drain the debounced layout autosave (column-view-save-simplification): the grid table
+    // write-back / DrawSortByPopupBody arm g_ui.viewLayoutSaveAt whenever a width/order/sort/
+    // hide-parents/story-group edit lands on the live active view. Disarm BEFORE calling
+    // Save() (not after) so a fresh edit arriving inside Save()'s own I/O can re-arm rather
+    // than being clobbered by this drain resetting it back to disarmed afterward.
+    if (std::chrono::steady_clock::now() >= g_ui.viewLayoutSaveAt) {
+        if (g_ui.viewsDirty) {
+            // An unconfirmed query edit (the grid's unsaved-query strip) sits in the same
+            // live ViewDefinition Save() would serialize whole-view — persisting it now would
+            // silently commit a change the user hasn't confirmed via Save/Discard yet (Cursor
+            // Bugbot finding). Re-check next frame instead of dropping the layout autosave
+            // outright; Save/Discard/Save-as-new on the strip all clear viewsDirty, so this
+            // fires on the very next frame once the query is resolved.
+            g_ui.viewLayoutSaveAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+        } else {
+            g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
+            SMATCHET_UI_PERF_SCOPE("ViewState::SaveDebounced");
+            ViewState.Save();
+        }
     }
     smatchet::ui_detail::PersistWindowOpenPreferences(g_ui);
     if (g_ui.layoutForceDefaultsFrames > 0) {

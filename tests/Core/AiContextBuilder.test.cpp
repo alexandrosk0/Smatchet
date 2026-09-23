@@ -153,7 +153,7 @@ TEST_CASE("AiContextBuilder::BuildActiveViewBody — null view yields empty; pop
     v.Id = "v-default";
     v.Name = "My Sprint";
     v.Jql = "project = SMA AND sprint in openSprints()";
-    v.ColumnOrder = {"id", "summary", "status"};
+    v.Columns = {{"id", 0.0f}, {"summary", 0.0f}, {"status", 0.0f}};
     const std::string body = AiContextBuilder::BuildActiveViewBody(&v);
     CHECK(Contains(body, "name: My Sprint"));
     CHECK(Contains(body, "id: v-default"));

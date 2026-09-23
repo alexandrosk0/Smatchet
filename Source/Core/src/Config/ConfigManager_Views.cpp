@@ -8,6 +8,7 @@
 #include "UiThreadAffinity.h"
 #include "ConfigManager_Internal.h"
 #include "FileIo.h"
+#include "ViewColumnsPure.h"
 
 #include "Logger.h"
 
@@ -37,26 +38,49 @@ ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
     view.Id = viewJson.value("id", std::string());
     view.Name = viewJson.value("name", std::string());
     view.Jql = viewJson.value("jql", view.Jql);
-    if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
-        for (const auto& field : viewJson["fields"]) {
-            if (field.is_string()) {
-                view.Fields.push_back(field.get<std::string>());
+
+    // v3: an explicit ordered "columns" array is the source of truth when present — read it
+    // straight into view.Columns. Otherwise migrate from the legacy v2 shape (fields +
+    // column_order + column_widths, read here into locals only — ViewDefinition no longer
+    // carries them) via MigrateLegacyColumns, which reproduces the pre-v3
+    // TicketGridColumnsBuilder::Build ordering exactly so nothing visually moves on upgrade.
+    // Either way NormalizeViewDefinition (below) has the final say and regenerates Fields.
+    if (viewJson.contains("columns") && viewJson["columns"].is_array()) {
+        for (const auto& colJson : viewJson["columns"]) {
+            if (!colJson.is_object() || !colJson.contains("key") || !colJson["key"].is_string()) {
+                continue;
+            }
+            ViewColumn col;
+            col.Key = colJson["key"].get<std::string>();
+            col.Width = colJson.value("width", 0.0f);
+            view.Columns.push_back(std::move(col));
+        }
+    } else {
+        std::vector<std::string> legacyFields;
+        std::vector<std::string> legacyColumnOrder;
+        std::unordered_map<std::string, float> legacyWidths;
+        if (viewJson.contains("fields") && viewJson["fields"].is_array()) {
+            for (const auto& field : viewJson["fields"]) {
+                if (field.is_string()) {
+                    legacyFields.push_back(field.get<std::string>());
+                }
             }
         }
-    }
-    if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
-        for (const auto& col : viewJson["column_order"]) {
-            if (col.is_string()) {
-                view.ColumnOrder.push_back(col.get<std::string>());
+        if (viewJson.contains("column_order") && viewJson["column_order"].is_array()) {
+            for (const auto& col : viewJson["column_order"]) {
+                if (col.is_string()) {
+                    legacyColumnOrder.push_back(col.get<std::string>());
+                }
             }
         }
-    }
-    if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
-        for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
-            if (it.value().is_number()) {
-                view.ColumnWidths[it.key()] = it.value().get<float>();
+        if (viewJson.contains("column_widths") && viewJson["column_widths"].is_object()) {
+            for (auto it = viewJson["column_widths"].begin(); it != viewJson["column_widths"].end(); ++it) {
+                if (it.value().is_number()) {
+                    legacyWidths[it.key()] = it.value().get<float>();
+                }
             }
         }
+        view.Columns = MigrateLegacyColumns(legacyFields, legacyColumnOrder, legacyWidths);
     }
     if (viewJson.contains("sort_specs") && viewJson["sort_specs"].is_array()) {
         for (const auto& specJson : viewJson["sort_specs"]) {
@@ -78,6 +102,7 @@ ViewDefinition ParseViewDefinition(const nlohmann::json& viewJson) {
     if (view.Name.empty()) {
         view.Name = view.Id.empty() ? std::string("View") : view.Id;
     }
+    NormalizeViewDefinition(view);
     return view;
 }
 
@@ -114,11 +139,21 @@ nlohmann::json SerializeView(const ViewDefinition& view) {
     viewJson["id"] = view.Id;
     viewJson["name"] = view.Name;
     viewJson["jql"] = view.Jql;
+    // v3 source of truth.
+    viewJson["columns"] = nlohmann::json::array();
+    for (const auto& col : view.Columns) {
+        viewJson["columns"].push_back(nlohmann::json{{"key", col.Key}, {"width", col.Width}});
+    }
+    // Legacy v2 mirror, derived from Columns — kept for one release so a downgrade to a build
+    // that only understands fields/column_order/column_widths does not lose the user's layout.
+    // Fields is already the derived form (NormalizeViewDefinition keeps it in lock-step); the
+    // other two are reconstructed here rather than stored, since Columns is now authoritative.
     viewJson["fields"] = view.Fields;
-    viewJson["column_order"] = view.ColumnOrder;
+    viewJson["column_order"] = nlohmann::json::array();
     viewJson["column_widths"] = nlohmann::json::object();
-    for (const auto& kv : view.ColumnWidths) {
-        viewJson["column_widths"][kv.first] = kv.second;
+    for (const auto& col : view.Columns) {
+        viewJson["column_order"].push_back(col.Key);
+        viewJson["column_widths"][col.Key] = col.Width;
     }
     viewJson["sort_specs"] = nlohmann::json::array();
     for (const auto& spec : view.SortSpecs) {
@@ -146,17 +181,19 @@ nlohmann::json SerializeWorkspace(const ViewWorkspaceState& ws) {
 
 ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backendKey, const TrackerConfig& cfg) {
     ViewWorkspaceState ws;
+    // Every default view is built the same way: name each field once, then let
+    // NormalizeViewDefinition turn that into a complete Columns list (with "id" prepended and
+    // every width defaulted) and derive Fields back out of it. Building Columns by hand for
+    // each backend (as the pre-v3 code did with a parallel ColumnOrder + ColumnWidths["id"])
+    // is exactly the duplication that let the two drift; there is now one path.
     if (backendKey == "Plane") {
         ViewDefinition v;
         v.Id = "plane_default_view";
         v.Name = "Default Plane View";
         v.Jql = "";
         v.Fields = {"summary", "status", "priority", "assignee", "labels", "created", "updated"};
-        v.ColumnOrder = {"id"};
-        for (const auto& fieldId : v.Fields) {
-            v.ColumnOrder.push_back("field:" + fieldId);
-        }
-        v.ColumnWidths["id"] = 90.0f;
+        v.Columns = MigrateLegacyColumns(v.Fields, {}, {});
+        NormalizeViewDefinition(v);
         ws.ActiveViewId = v.Id;
         ws.Views.push_back(std::move(v));
         return ws;
@@ -171,11 +208,8 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         v.Name = "Default GitHub View";
         v.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
         v.Fields = {"summary", "description", "status", "assignee", "labels", "author", "created", "updated"};
-        v.ColumnOrder = {"id"};
-        for (const auto& fieldId : v.Fields) {
-            v.ColumnOrder.push_back("field:" + fieldId);
-        }
-        v.ColumnWidths["id"] = 90.0f;
+        v.Columns = MigrateLegacyColumns(v.Fields, {}, {});
+        NormalizeViewDefinition(v);
         ws.ActiveViewId = v.Id;
         ws.Views.push_back(std::move(v));
         return ws;
@@ -187,11 +221,8 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
         v.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
         v.Fields = {"summary",  "description", "status",  "assignee", "labels",
                     "priority", "project",     "created", "updated"};
-        v.ColumnOrder = {"id"};
-        for (const auto& fieldId : v.Fields) {
-            v.ColumnOrder.push_back("field:" + fieldId);
-        }
-        v.ColumnWidths["id"] = 90.0f;
+        v.Columns = MigrateLegacyColumns(v.Fields, {}, {});
+        NormalizeViewDefinition(v);
         ws.ActiveViewId = v.Id;
         ws.Views.push_back(std::move(v));
         return ws;
@@ -203,11 +234,8 @@ ViewWorkspaceState MakeDefaultViewWorkspaceForBackend(const std::string& backend
     defaultView.Jql = cfg.JqlQuery.empty() ? std::string("assignee=currentUser()") : cfg.JqlQuery;
     defaultView.Fields = {"summary",   "assignee",    "priority", "status",
                           "issuetype", "description", "created",  "updated"};
-    defaultView.ColumnOrder = {"id"};
-    for (const auto& fieldId : defaultView.Fields) {
-        defaultView.ColumnOrder.push_back("field:" + fieldId);
-    }
-    defaultView.ColumnWidths["id"] = 90.0f;
+    defaultView.Columns = MigrateLegacyColumns(defaultView.Fields, {}, {});
+    NormalizeViewDefinition(defaultView);
     ws.ActiveViewId = defaultView.Id;
     ws.Views.push_back(std::move(defaultView));
     return ws;
@@ -218,6 +246,16 @@ ViewsStore ViewWorkspaceToViewsStoreImpl(const ViewWorkspaceState& ws) {
     s.Version = 2;
     s.ActiveViewId = ws.ActiveViewId;
     s.Views = ws.Views;
+    // A persisted ActiveViewId that no longer names an existing view (stale on-disk state,
+    // or a caller that mutated Views without going through Views::Delete's own repair) would
+    // otherwise make Views::GetActiveView() return nullptr forever for this backend until
+    // something explicitly Activate()s a valid id — self-heal to the first view instead of
+    // propagating a dangling reference every time this backend's workspace loads.
+    if (!s.Views.empty() &&
+        std::none_of(s.Views.begin(), s.Views.end(),
+                     [&](const ViewDefinition& v) { return v.Id == s.ActiveViewId; })) {
+        s.ActiveViewId = s.Views.front().Id;
+    }
     return s;
 }
 

@@ -93,22 +93,15 @@ void QuiesceCaptureFrame() {
     g_ui.appUpdateCheckInFlight = false;
     g_ui.appUpdateModalOpen = false;
 
-    // Unsaved-layout strip: drawActiveProjectGridPost writes the table's resolved
-    // column widths + sort specs back onto the active view and latches viewsDirty,
-    // which paints an "Unsaved layout changes to <view>" bar the user never asked
-    // for on a first-launch (empty user-data) session. The bar is ~33px tall and
-    // pushes every pane below it down, so whether it had latched by the captured
-    // frame flipped the whole lower half of the frame (L_inf 240) run to run — the
-    // latch frame moves with pane-focus and data-arrival timing.
-    //
-    // Fence the strip by frame number rather than clearing the dirty flags: the
-    // write-back can re-latch on ANY later frame including the capture frame (which
-    // gets no OnFrame tick), and clobbering the flags would cost a real user the
-    // Save/Discard affordance for genuinely pending edits. The fence reaches two
-    // frames ahead so it still covers the capture frame — the frame after the last
-    // OnFrame, on which OnFinish stages the screenshot. It auto-expires, so
-    // RestoreCaptureQuiesce has nothing to unwind here.
-    g_ui.suppressUnsavedLayoutStripUntilFrame = ImGui::GetFrameCount() + 2;
+    // Unsaved-layout strip: this used to be latched by drawActiveProjectGridPost's
+    // width/sort write-back on a frame that moved with pane-focus + data-arrival timing,
+    // flipping a captured frame's whole lower half (L_inf 240) run to run — hence a
+    // frame-number fence here to suppress it for the capture window without clobbering a
+    // real user's pending-edit Save/Discard affordance. Removed (column-view-save-
+    // simplification): layout now autosaves straight into the active view with no dirty
+    // flag and no strip at all, so there is nothing left for a first-launch capture to
+    // spuriously latch. The one remaining strip (an unsaved QUERY edit) is only ever
+    // produced by an explicit user action, never passively during a scripted capture.
 }
 
 void RestoreCaptureQuiesce() {
