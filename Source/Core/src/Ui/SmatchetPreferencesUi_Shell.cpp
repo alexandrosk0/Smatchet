@@ -11,11 +11,13 @@
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
+#include "Ui/SmatchetIconButtons.h"
 
 #include <cfloat>
 #include <cstdio>
 #include <string>
 
+#include "IconsFontAwesome6.h"
 #include "imgui.h"
 
 #include "SmatchetLocalizedImGui.h"
@@ -156,7 +158,7 @@ void PrefsSectionEnd(UiDrawSession& d, const char* sectionId) {
     ImGui::PopID();
 }
 
-void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
+void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight) {
     (void)assistantDirty; // only read when the AI feature is compiled in
     // Order mirrors SmatchetPrefsSchema::Categories(); AI & Voice is compiled
     // out entirely when neither feature is built, matching the schema's guard.
@@ -221,6 +223,11 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
             }
             ImGui::EndCombo();
         }
+        // In narrow-width combo mode, place the Save & Sync button to the right of the combo
+        ImGui::SameLine();
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
+            ui.onPreferencesSaveAndSync(app, d);
+        }
         return;
     }
     const float railWidth = 11.0f * ImGui::GetFontSize();
@@ -237,6 +244,13 @@ void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, floa
             if (empty) {
                 ImGui::EndDisabled();
             }
+        }
+        // Save & Sync button at the bottom of the nav rail
+        ImGui::Spacing();
+        ImGui::Separator();
+        if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr,
+                                       ImVec2(ImGui::GetContentRegionAvail().x, 0.0f))) {
+            ui.onPreferencesSaveAndSync(app, d);
         }
     }
     ImGui::EndChild();
