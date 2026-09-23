@@ -853,31 +853,32 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         bool transitionsLoaded = true;
         if (field.Id == "status") {
             auto lookup = app.GetAvailableTransitionsForIssue(ticket.id);
-            if (lookup.applicable) {
-                if (lookup.loaded) {
-                    allowedTransitions = lookup.options;
-                    // Prepend current status if missing (transitions are outgoing only).
-                    const std::string currentId = ResolveOptionId(field, currentValue);
-                    if (!currentId.empty()) {
-                        const auto it =
-                            std::find_if(allowedTransitions.begin(), allowedTransitions.end(),
-                                         [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
-                        if (it == allowedTransitions.end()) {
-                            TrackerFieldOption current;
-                            current.Id = currentId;
-                            current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
-                            if (current.Value.empty()) {
-                                current.Value = currentId;
-                            }
-                            allowedTransitions.insert(allowedTransitions.begin(), current);
+            if (!lookup.loaded) {
+                // Trigger fetch on first open; this is the first state for all issues.
+                transitionsLoaded = false;
+                app.EnsureIssueTransitionsLoaded(ticket.id);
+            } else if (lookup.applicable) {
+                // Loaded and applicable: use the filtered transitions.
+                allowedTransitions = lookup.options;
+                // Prepend current status if missing (transitions are outgoing only).
+                const std::string currentId = ResolveOptionId(field, currentValue);
+                if (!currentId.empty()) {
+                    const auto it =
+                        std::find_if(allowedTransitions.begin(), allowedTransitions.end(),
+                                     [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
+                    if (it == allowedTransitions.end()) {
+                        TrackerFieldOption current;
+                        current.Id = currentId;
+                        current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                        if (current.Value.empty()) {
+                            current.Value = currentId;
                         }
+                        allowedTransitions.insert(allowedTransitions.begin(), current);
                     }
-                    opts = &allowedTransitions;
-                } else {
-                    transitionsLoaded = false;
-                    app.EnsureIssueTransitionsLoaded(ticket.id);
                 }
+                opts = &allowedTransitions;
             }
+            // If loaded && !applicable, fall through to use AllowedValueOptions (non-Jira backend).
         }
 
         if (field.Id == "status" && !transitionsLoaded) {
