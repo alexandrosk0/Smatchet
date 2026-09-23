@@ -118,6 +118,13 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         ctx->Yield();
         ctx->Yield();
         const std::unordered_set<std::string> seeded = DraftFieldIds(); // S0 == view.Fields
+        {
+            std::string keys;
+            for (const auto& col : g_ui.viewDraft.Columns) {
+                keys += col.Key + "|";
+            }
+            std::fprintf(stderr, "[test] seeded baseline: keys=%s\n", keys.c_str());
+        }
 
         // Pollute the draft with a stale field column AND force a reseed by moving viewDraftId off
         // the active view id (the exact condition LoadBuffersFromView guards on). The next drawer
@@ -153,6 +160,11 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
                 std::fprintf(stderr, "[test] iter %d: Columns=%zu (was %zu) droppedStale=%s viewDraftId='%s'\n", i,
                              g_ui.viewDraft.Columns.size(), lastLoggedColumns, droppedStale ? "true" : "false",
                              g_ui.viewDraftId.c_str());
+                std::string keys;
+                for (const auto& col : g_ui.viewDraft.Columns) {
+                    keys += col.Key + "|";
+                }
+                std::fprintf(stderr, "[test] iter %d: keys=%s\n", i, keys.c_str());
                 lastLoggedColumns = g_ui.viewDraft.Columns.size();
             }
         }
