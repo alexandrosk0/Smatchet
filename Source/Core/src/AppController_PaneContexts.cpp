@@ -718,7 +718,8 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         for (const auto& t : fetched) {
             auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
-            if (it != ctx.ActiveTickets.end()) {
+            if (it != ctx.ActiveTickets.end() &&
+                (it->fieldValues != t.fieldValues || it->fieldRichValues != t.fieldRichValues)) {
                 *it = t;  // Update in place with fully-populated fetched data
                 updatedTickets.push_back(t);  // Track for cache persistence
                 anyFieldUpdated = true;
