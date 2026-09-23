@@ -716,6 +716,16 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
     std::vector<CachedTicket> updatedTickets;  // Track updated tickets for cache persistence
     {
         std::lock_guard<std::mutex> lock(ctx.activeTicketsMutex_);
+        // Handle membership removals first (within the same lock) before merge, so removed IDs
+        // cannot be found and re-added during the merge loop. Prevents orphan cache entries.
+        if (!plan.residentRemovals.empty()) {
+            for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
+                const std::string& key = plan.residentRemovals[i].issueKey;
+                ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
+                                                       [&key](const CachedTicket& t) { return t.id == key; }),
+                                        ctx.ActiveTickets.end());
+            }
+        }
         for (const auto& t : fetched) {
             auto it = std::find_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
                                    [&](const CachedTicket& existing) { return existing.id == t.id; });
@@ -729,26 +739,16 @@ void AppController::applyChangeProbeOnMainThread_(const std::string& paneId, std
         // Consolidate republish + revision bump: fire once per invocation when anything changed
         // (membership removals OR field updates). Readers see atomically consistent state.
         if (anyFieldUpdated || !plan.residentRemovals.empty()) {
-            // Handle membership removals first (within the same lock)
-            if (!plan.residentRemovals.empty()) {
-                for (std::size_t i = 0; i < plan.residentRemovals.size(); ++i) {
-                    const std::string& key = plan.residentRemovals[i].issueKey;
-                    ctx.ActiveTickets.erase(std::remove_if(ctx.ActiveTickets.begin(), ctx.ActiveTickets.end(),
-                                                           [&key](const CachedTicket& t) { return t.id == key; }),
-                                            ctx.ActiveTickets.end());
-                }
-            }
             ctx.activeTicketsPublished_ = std::make_shared<const std::vector<CachedTicket>>(ctx.ActiveTickets);
             ctx.ActiveTicketsRevision.fetch_add(1);
         }
     }
     // Persist updated tickets to durable cache (outside the mutex, mirrors ApplyIssueFetchPack pattern).
     // Without this, later cache reloads (RefreshLocalData, hidden-pane re-seed) would revert the updates
-    // since the fresh field values were never written to tickets_v2.
+    // since the fresh field values were never written to tickets_v2. Use SaveTickets (batch) instead of
+    // per-ticket SaveTicket calls to avoid N synchronous SQLite writes on the UI thread.
     if (Cache && !updatedTickets.empty()) {
-        for (const auto& t : updatedTickets) {
-            Cache->SaveTicket(backendKey, t);
-        }
+        Cache->SaveTickets(backendKey, updatedTickets);
     }
 
     if (!plan.residentRemovals.empty()) {
