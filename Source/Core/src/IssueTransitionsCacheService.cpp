@@ -39,7 +39,7 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const std::strin
         const auto it = issueTransitions_.find(issueId);
         if (it == issueTransitions_.end() || !it->second.loaded) {
             // Mark as loading to prevent concurrent fetches (TOCTOU guard).
-            issueTransitions_[issueId].loaded = false;
+            issueTransitions_[issueId].loaded = true;
             shouldFetch = true;
         }
     }
