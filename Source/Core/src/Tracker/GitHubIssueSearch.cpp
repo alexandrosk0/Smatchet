@@ -36,6 +36,8 @@ constexpr long kGitHubFetchOverallTimeoutMs = 30000;
 // API hard limit. Surface a Warning when reached.
 constexpr int kGitHubPerPage = 100;
 constexpr int kGitHubMaxPages = 10;
+constexpr size_t kGitHubMaxTotalFetchBytes = 50u * 1024u * 1024u; // 50 MB cumulative limit
+constexpr size_t kGitHubMaxResultCount = 5000u;                   // hard cap on issue/PR count
 
 const char* const kPatMissingError = "GitHub PAT not configured (set Preferences > Tracker > GitHub PAT)";
 
@@ -253,6 +255,7 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
     }
     bool reachedShortPage = false;
     std::string cursor; // empty → page 1; subsequent pages use endCursor.
+    size_t totalFetchedBytes = 0;  // cumulative response size guard
 
     for (int page = 1; page <= kGitHubMaxPages; ++page) {
         const std::string body = BuildGraphQlBody(graphQlQuery, cursor);
@@ -280,6 +283,16 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
             return false;
         }
 
+        // Track cumulative response size for total-fetch guard.
+        totalFetchedBytes += resp.text.size();
+        if (totalFetchedBytes > kGitHubMaxTotalFetchBytes) {
+            AppendOutWarning(outWarning, std::string("GitHub total result size exceeds ") +
+                                         std::to_string(kGitHubMaxTotalFetchBytes / 1024 / 1024) + "MB; stopped.");
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: total fetch size (%zu bytes) exceeds limit (%zu bytes)",
+                     totalFetchedBytes, kGitHubMaxTotalFetchBytes);
+            return false;
+        }
+
         GraphQlPageParse parse = ParseGraphQlSearchPage(resp.text, owner, repo, includePullRequests);
         if (parse.Fatal) {
             if (outFetchError) {
@@ -302,6 +315,16 @@ bool RunGraphQlIssueSearch(const std::string& endpoint, const cpr::Header& heade
 
         bool isLastPage = false;
         bool stopLoop = false;
+
+        // Guard result count to prevent memory exhaustion from massive result sets.
+        if (accum.size() + pageTickets.size() > kGitHubMaxResultCount) {
+            AppendOutWarning(outWarning, std::string("GitHub result count exceeds ") +
+                                         std::to_string(kGitHubMaxResultCount) + " items; stopped.");
+            LOG_WARN("GitHubIssueSearch::RunGraphQlIssueSearch: result count (%zu total) exceeds limit (%zu)",
+                     accum.size() + pageTickets.size(), kGitHubMaxResultCount);
+            isLastPage = true;
+            stopLoop = true;
+        }
         if (!hasNext) {
             reachedShortPage = true;
             isLastPage = true;

@@ -211,6 +211,7 @@ struct PlaneIssuePageFetch {
     // (retire-transport-error-text item 12).
     TrackerError Classified;
     nlohmann::json Body;
+    std::string RawBody;  // raw HTTP response text for size tracking
 };
 
 // Phase 4: HTTP GET one work-items page + classify the response body. Reproduces the original
@@ -242,6 +243,9 @@ PlaneIssuePageFetch FetchPlaneIssuePage(const std::string& planeApi, const std::
     // Thread the sync worker's cancellation token into the retry loop so an abort during a
     // backoff/retry window is honoured immediately, not only at the next page boundary.
     auto response = TrackerGetLogged("PlaneClient", listBase, headers, params, shouldCancel);
+
+    // Store raw response for size tracking.
+    out.RawBody = response.text;
 
     if (response.status_code != 200) {
         const std::string urlHint = SanitizeAsciiSnippet(listBase, 200);
@@ -340,6 +344,9 @@ struct PlanePageLoopResult {
     bool HardFailed = false;
     bool EndedCleanly = false;
     int PageCount = 0;
+    size_t TotalFetchedBytes = 0;  // cumulative response size (bytes) across all pages
+    bool TotalSizeLimitHit = false; // true if total fetch size exceeded the cap
+    bool ResultCountLimitHit = false; // true if result count exceeded the cap
 };
 
 // Phase 4-6: drive the cursor-paginated work-items loop — fetch + classify each page, map its
@@ -359,6 +366,8 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
     // 50 pages × 100 work-items/page = 5,000 issues, comfortably above any active-view JQL
     // and matches the per-server safety limit in JiraIssueSearch.cpp.
     constexpr int kMaxPlanePages = 50;
+    constexpr size_t kMaxTotalFetchBytes = 100u * 1024u * 1024u; // 100 MB cumulative limit
+    constexpr size_t kMaxResultCount = 10000u;                    // hard cap on issue count
     std::string listCursor;
 
     while (true) {
@@ -391,6 +400,16 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
             return result;
         }
 
+        // Track cumulative response size for total-fetch guard.
+        result.TotalFetchedBytes += page.RawBody.size();
+        if (result.TotalFetchedBytes > kMaxTotalFetchBytes) {
+            LOG_WARN("PlaneClient: total search result size (%zu bytes) exceeds limit (%zu bytes). Stopping pagination.",
+                     result.TotalFetchedBytes, kMaxTotalFetchBytes);
+            result.TotalSizeLimitHit = true;
+            result.EndedCleanly = false;
+            break;
+        }
+
         auto results = (page.Body.is_object() && page.Body.contains("results")) ? page.Body["results"] : page.Body;
 
         if (results.empty()) {
@@ -415,6 +434,15 @@ RunPlanePageLoop(const std::string& planeApi, const std::string& workspaceSlug, 
 
         if (onBatch && added > 0) {
             onBatch(std::move(pageIssues));
+        }
+
+        // Guard result count to prevent memory exhaustion from massive result sets.
+        if (summary.FetchedCount > kMaxResultCount) {
+            LOG_WARN("PlaneClient: result count (%zu issues) exceeds limit (%zu). Stopping pagination.",
+                     summary.FetchedCount, kMaxResultCount);
+            result.ResultCountLimitHit = true;
+            result.EndedCleanly = false;
+            break;
         }
 
         // Phase 6: cursor pagination — advance or terminate.

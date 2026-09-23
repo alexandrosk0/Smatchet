@@ -489,6 +489,10 @@ add_executable(SmatchetTests
     # no cpr/sqlite — safe in the doctest rig.
     Core/JqlEscape.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
+    # JQL search result guards (Pillar 3 — never crash, Pillar 5 — DRY memory protection).
+    # Guard constant verification + memory-exhaustion prevention checks across all backends.
+    # Header-only (constants, no production .cpp needed).
+    Core/JqlSearchGuards.test.cpp
     # dedup-tracker-query-and-ai-client-clones cluster A — backend-agnostic query-suggest
     # helpers extracted from JqlSuggestEngine.cpp + PlaneQuerySuggestEngine.cpp. The reparam
     # to const std::vector<TrackerField>& (away from AppController) makes the field-catalog
