@@ -42,14 +42,16 @@ extern UiDrawSession g_ui;
 
 namespace {
 
-// Snapshot which canonical windows are docked before the flip, keyed by DockId.
+/// Snapshot of a canonical window's docked state, keyed by DockId.
 struct DockedWindowSnapshot {
-    std::string WindowTitle;
-    ImGuiID DockId;
+    std::string WindowTitle; ///< Localized window title
+    ImGuiID DockId;          ///< Dock node ID if docked, 0 if undocked or window not found
 };
 
-// Fetch the docked state of one canonical window by its runtime title (localized).
-// Returns {title, DockId} if the window is currently live and docked, or {title, 0} otherwise.
+/// Fetch the docked state of one canonical window by its runtime title (localized).
+/// @param windowTitle Localized window name to look up
+/// @return {title, DockId} if the window is currently live and docked with a valid non-orphan node,
+///         {title, 0} if undocked or window not found
 DockedWindowSnapshot SnapshotWindowDockState(const char* windowTitle) {
     const ImGuiWindow* win = ::ImGui::FindWindowByName(windowTitle);
     if (win == nullptr) {
@@ -66,7 +68,12 @@ DockedWindowSnapshot SnapshotWindowDockState(const char* windowTitle) {
     return {windowTitle, win->DockId};
 }
 
-// Poll until a condition is true or maxFrames elapsed.
+/// Poll a predicate over multiple frames, yielding the UI loop between checks.
+/// @tparam Pred Callable returning bool; called each frame
+/// @param ctx ImGui test context for yielding control
+/// @param pred Predicate to poll; returns true when condition is met
+/// @param maxFrames Maximum number of frames to poll before timeout
+/// @return true if predicate became true within maxFrames, false on timeout
 template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
     for (int i = 0; i < maxFrames; ++i) {
         ctx->Yield();
@@ -77,15 +84,18 @@ template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int m
     return false;
 }
 
-// True if a live dock node with `nodeId` exists and is non-orphan.
+/// Check if a dock node is live and non-orphan (has valid parent and host window).
+/// @param nodeId Dock node ID to check
+/// @return true if the node exists and is properly linked (not orphaned), false otherwise
 bool NodeIsDockedNonOrphan(ImGuiID nodeId) {
     const ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(nodeId);
     return node != nullptr && node->ParentNode != nullptr && node->HostWindow != nullptr;
 }
 
-// ============================================================================
-// Mobile ↔ Desktop UI-mode round-trip preserves docked windows.
-// ============================================================================
+/// Register the Mobile ↔ Desktop layout round-trip regression test.
+/// Verifies that desktop window docking is preserved after a Mobile→Desktop UI-mode
+/// transition, guarding against mid-frame ini restoration that causes undocking.
+/// @param engine ImGui Test Engine instance to register the test with
 void RegisterMobileDesktopLayoutRoundTripTest(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "MobileDesktopLayoutRoundtrip", "PreservesDocking_AfterRoundTrip");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -166,6 +176,9 @@ void RegisterMobileDesktopLayoutRoundTripTest(ImGuiTestEngine* engine) {
 
 } // namespace
 
+/// Public entry point to register all Mobile-Desktop layout round-trip regression tests.
+/// Called once from UiTestScenario::OnStart() after ImGui Test Engine initialization.
+/// @param engine ImGui Test Engine instance
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine) {
     RegisterMobileDesktopLayoutRoundTripTest(engine);
 }
