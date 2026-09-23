@@ -2,6 +2,7 @@
 #include "TicketFieldEditor_detail.h"
 
 #include "AppController.h"
+#include "IssueTransitionsCacheService.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
