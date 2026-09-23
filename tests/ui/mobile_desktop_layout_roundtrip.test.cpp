@@ -32,6 +32,7 @@
 #include "SmatchetDockNodeIds.h"
 #include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
+#include "Commands/Scenarios/UiTestScenario.h"
 
 #include "imgui.h"
 #include "imgui_internal.h" // ImGuiDockNode::DockId / ParentNode / HostWindow, DockBuilderGetNode
