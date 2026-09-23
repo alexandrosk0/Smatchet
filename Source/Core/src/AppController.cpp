@@ -92,6 +92,7 @@
 #include "FieldEditPipelineService.h"
 #include "ConnectivityMonitorService.h"
 #include "AttachmentAppUpdateService.h"
+#include "IssueTransitionsCacheService.h"
 
 #include "PaneSyncKickPolicy.h"
 
