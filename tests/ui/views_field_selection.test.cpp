@@ -30,6 +30,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <cstdio>
 #include <string>
 #include <unordered_set>
 
@@ -124,6 +125,13 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         const std::string kMarker = "smatchet_stale_field_marker";
         g_ui.viewDraft.Columns.push_back({"field:" + kMarker, 0.0f});
         g_ui.viewDraftId = "smatchet_force_reseed_sentinel";
+        // [temp-debug] Direct loop-state diagnostic — production-code tracing left an
+        // unresolved contradiction (a clean reload observed mid-loop, yet droppedStale never
+        // flips), so report the test's own view of state at every iteration boundary where it
+        // changes, plus the final iteration count reached, to settle it. Revert alongside the
+        // other [temp-debug] lines on this branch.
+        std::fprintf(stderr, "[test] after pollution: Columns=%zu viewDraftId='%s'\n", g_ui.viewDraft.Columns.size(),
+                     g_ui.viewDraftId.c_str());
 
         // Re-pin mobileDrawerOpen/mobilePage every iteration rather than a plain YieldUntil: the
         // reload this loop waits for only runs from drawMobileDrawerViews, which is gated on both
@@ -134,12 +142,22 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         // frame with no click of our own — silently starving drawMobileDrawerViews for the rest of
         // the wait and making the reload this test exercises look like it never ran.
         bool droppedStale = false;
-        for (int i = 0; i < 300 && !droppedStale; ++i) {
+        size_t lastLoggedColumns = g_ui.viewDraft.Columns.size();
+        int i = 0;
+        for (; i < 300 && !droppedStale; ++i) {
             g_ui.mobileDrawerOpen = true;
             g_ui.mobilePage = MobilePage::Views;
             ctx->Yield();
             droppedStale = DraftFieldIds().find(kMarker) == DraftFieldIds().end();
+            if (g_ui.viewDraft.Columns.size() != lastLoggedColumns) {
+                std::fprintf(stderr, "[test] iter %d: Columns=%zu (was %zu) droppedStale=%s viewDraftId='%s'\n", i,
+                             g_ui.viewDraft.Columns.size(), lastLoggedColumns, droppedStale ? "true" : "false",
+                             g_ui.viewDraftId.c_str());
+                lastLoggedColumns = g_ui.viewDraft.Columns.size();
+            }
         }
+        std::fprintf(stderr, "[test] loop exited: ran %d iterations, droppedStale=%s, final Columns=%zu\n", i,
+                     droppedStale ? "true" : "false", g_ui.viewDraft.Columns.size());
         if (!droppedStale) {
             ctx->LogError("viewDraft.Columns still holds the stale marker after a forced reseed — "
                           "LoadBuffersFromView did not reload the draft from the view");
