@@ -371,22 +371,29 @@ void SmatchetUI::Draw(AppController& app) {
     // (toasts + update modal) and end-of-frame persistence still run.
     //
     // While the mobile ini is attached (mobileDockSeeded), the live dock tree is the mobile one.
-    // On the Mobile->Desktop edge, draw the shell ONE more frame and swap the ini at end-of-frame,
-    // after every window has ended. A mid-frame swap rebuilds nodes that DockSpaceOverViewport
-    // has not marked alive this frame, so BeginDocked undocks every desktop window (imgui.cpp ~21208).
+    // On the Mobile->Desktop edge, render mobile UI one more frame, then restore the ini at
+    // end-of-frame after every window has ended. A mid-frame swap rebuilds nodes that
+    // DockSpaceOverViewport has not marked alive this frame, so BeginDocked undocks every
+    // desktop window (imgui.cpp ~21208). After restoration (mobileDockSeeded reset to false),
+    // render the desktop UI on the same frame.
     if (d.effectiveUiMode == EffectiveUiMode::Mobile || d.mobileDockSeeded) {
-        drawMobileShell(app, d);
-        drawGlobalOverlays(app, d);
-        drawEndOfFramePersistence(d);
         // Defer desktop ini restoration by one frame to avoid layoutForceDefaultsFrames
         // countdown saving the mobile tree to the desktop path on the transition frame.
         if (d.deferDesktopIniRestore) {
-            drawMobileRestoreDesktopIni(d);
+            drawMobileRestoreDesktopIni(d);  // Sets mobileDockSeeded = false
             d.deferDesktopIniRestore = false;
         } else if (d.effectiveUiMode == EffectiveUiMode::Desktop && d.mobileDockSeeded) {
             d.deferDesktopIniRestore = true;
         }
-        return;
+
+        // Only render mobile UI if still in mobile mode after any restoration
+        if (d.mobileDockSeeded) {
+            drawMobileShell(app, d);
+            drawGlobalOverlays(app, d);
+            drawEndOfFramePersistence(d);
+            return;
+        }
+        // If mobileDockSeeded now false (after restoration), fall through to render desktop UI
     }
 
     drawChromeAndModeToggles(app, d);
