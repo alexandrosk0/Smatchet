@@ -63,12 +63,6 @@ enum ViewsEditorTab : int {
 // directly, and "dirty" is ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f),
 // computed fresh every frame in drawViewsEditorHeader. Resets autocomplete state too.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
-    // [temp-debug] Instrument the reseed for UI test debugging. fprintf(stderr, ...) rather
-    // than LOG_INFO: Logger writes to an in-memory ring + an opt-in file sink, never to
-    // stdout/stderr, so it never reaches the bucket-E CI harness's captured child log.
-    std::fprintf(stderr, "[LoadBuffersFromView] called with view.Id='%s', current d.viewDraftId='%s'\n",
-                 view.Id.c_str(), d.viewDraftId.c_str());
-
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
     d.viewJqlEditor.jqlAcpApplyReplace = false;
     d.viewJqlEditor.jqlAcpReplaceStart = -1;
@@ -92,12 +86,8 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpUserSearchFireAt = 0.0;
     d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
 
-    std::fprintf(stderr, "[LoadBuffersFromView] about to assign d.viewDraft = view\n");
     d.viewDraft = view;
-    std::fprintf(stderr, "[LoadBuffersFromView] assigned d.viewDraft; now d.Columns has %zu entries\n",
-                 d.viewDraft.Columns.size());
     d.viewDraftId = view.Id;
-    std::fprintf(stderr, "[LoadBuffersFromView] complete; d.viewDraftId='%s'\n", d.viewDraftId.c_str());
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
     d.selectedColumnOrderIndex = -1;
@@ -250,12 +240,6 @@ ViewsDashboardDrawCtx SmatchetUI::buildMobileViewsCtx(AppController& app, UiDraw
 }
 
 void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
-    // [temp-debug] Edge-triggered only (log volume from a per-frame print across a 300-frame
-    // wait loop exceeded what CI log fetching could return) — revert alongside the other
-    // [temp-debug] lines below.
-    static int callCount = 0;
-    ++callCount;
-
     ViewState.EnsureLoaded(d.cfg);
     const ViewDefinition* activeView = ViewState.GetActiveView();
     if (!activeView) {
@@ -268,8 +252,6 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
     // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
     // independently of the editor's draft, and the two resynchronize on the next activate).
     if (d.viewDraftId != activeView->Id) {
-        std::fprintf(stderr, "[drawMobileDrawerViews] frame %d: IDs DO NOT MATCH — calling LoadBuffersFromView\n",
-                     callCount);
         LoadBuffersFromView(d, *activeView);
     }
 
@@ -1010,10 +992,6 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
     // Reload the draft whenever the active view id changed underneath us — see the matching
     // comment in drawMobileDrawerViews for why a mere layout drift no longer force-reloads.
     if (activeView && d.viewDraftId != activeView->Id) {
-        // [temp-debug] Edge-triggered (fires only on an actual reload, already low-volume) —
-        // revert alongside the other [temp-debug] lines below.
-        std::fprintf(stderr, "[drawViewsDashboardWindow] embedded=%s IDs DO NOT MATCH — calling LoadBuffersFromView\n",
-                     embedded ? "true" : "false");
         LoadBuffersFromView(d, *activeView);
     }
 
@@ -1067,32 +1045,12 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
     // Editor header: title (inline-editable) + status strip + Apply button.
     drawViewsEditorHeader(ctx);
 
-    // [temp-debug] Bisect where within this function's tab bar the draft's Columns count
-    // changes — pinpointing whether drawViewsFieldsTab/ColumnsTab reintroduce a column the
-    // reload guard just dropped. Edge-triggered on the previous checkpoint's value (a plain
-    // per-frame print across a 300-frame wait loop produced more log volume than CI log
-    // fetching could return) — revert alongside the other [temp-debug] lines below.
-    static size_t s_lastColumnsCheckpoint = static_cast<size_t>(-1);
-    auto logColumnsCheckpoint = [&](const char* where) {
-        if (d.viewDraft.Columns.size() != s_lastColumnsCheckpoint) {
-            std::fprintf(stderr, "[drawViewsDashboardWindow] %s embedded=%s activeTab=%d Columns=%zu (was %zu)\n",
-                         where, embedded ? "true" : "false", static_cast<int>(d.viewsActiveTab),
-                         d.viewDraft.Columns.size(), s_lastColumnsCheckpoint);
-            s_lastColumnsCheckpoint = d.viewDraft.Columns.size();
-        }
-    };
-    logColumnsCheckpoint("pre-tabbar");
-
     // Tab bar.
     if (ImGui::BeginTabBar("##ViewsEditorTabs", ImGuiTabBarFlags_None)) {
         drawViewsFilterTab(ctx);
-        logColumnsCheckpoint("post-filter");
         drawViewsFieldsTab(ctx);
-        logColumnsCheckpoint("post-fields");
         drawViewsColumnsTab(ctx);
-        logColumnsCheckpoint("post-columns");
         drawViewsSortTab(ctx);
-        logColumnsCheckpoint("post-sort");
         ImGui::EndTabBar();
     }
 

@@ -26,7 +26,6 @@
 
 #include <ghc/filesystem.hpp>
 
-#include <cstdio> // [temp-debug] fprintf(stderr, ...) — revert alongside the debug lines below
 #include <string>
 #include <vector>
 
