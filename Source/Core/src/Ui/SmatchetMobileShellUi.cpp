@@ -333,8 +333,8 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
     static int panelFrameCount = 0;
     ++panelFrameCount;
     const bool panelBegin = ::ImGui::Begin("##MobileDrawerPanel", nullptr, kPanelFlags);
-    LOG_DEBUG("[drawMobileDrawer] ##MobileDrawerPanel frame %d: ImGui::Begin returned %s", panelFrameCount,
-              panelBegin ? "true" : "false");
+    LOG_INFO("[drawMobileDrawer] ##MobileDrawerPanel frame %d: ImGui::Begin returned %s", panelFrameCount,
+             panelBegin ? "true" : "false");
     if (panelBegin) {
         ::ImGui::TextDisabled("%s", SmatchetLocalization::T("mobile.drawer.pages", "Pages"));
         ::ImGui::Separator();
@@ -353,7 +353,7 @@ void SmatchetUI::drawMobileDrawer(AppController& app, UiDrawSession& d) {
         ::ImGui::Separator();
         // Slice 6 — reuse the desktop Views sidebar (search / activate / rename /
         // duplicate / delete) inside the drawer; picking a view closes the drawer.
-        LOG_DEBUG("[drawMobileDrawer] calling drawMobileDrawerViews on frame %d", panelFrameCount);
+        LOG_INFO("[drawMobileDrawer] calling drawMobileDrawerViews on frame %d", panelFrameCount);
         drawMobileDrawerViews(app, d);
     }
     ::ImGui::End();
