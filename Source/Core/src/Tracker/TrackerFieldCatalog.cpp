@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "JiraIssueMappingPure.h"
 #include "TrackerFieldCatalogPure.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
