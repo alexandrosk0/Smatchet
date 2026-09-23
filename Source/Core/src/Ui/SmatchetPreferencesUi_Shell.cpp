@@ -7,6 +7,7 @@
 
 #include "SmatchetPreferencesUi_detail.h"
 
+#include "SmatchetUI.h"
 #include "ConfigManager.h"
 #include "PreferencesSchema.h"
 #include "SmatchetLocalization.h"
