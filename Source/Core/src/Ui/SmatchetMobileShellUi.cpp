@@ -474,6 +474,9 @@ void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
     }
     ::ImGuiIO& io = ::ImGui::GetIO();
     d.savedDesktopIniFilename = io.IniFilename;
+    if (io.IniFilename != nullptr) {
+        ::ImGui::SaveIniSettingsToDisk(io.IniFilename); // flush changes still inside ImGui's 5 s autosave window
+    }
     io.IniFilename = nullptr;
     ::ImGui::ClearIniSettings();
     const std::string mobileIni = ConfigManager::GetMobileImGuiSettingsPath();
@@ -491,10 +494,13 @@ void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
     LOG_DEBUG("Mobile shell: attached imgui_mobile.ini (loaded=%d, willSeed=%d)", loaded ? 1 : 0, loaded ? 0 : 1);
 }
 
-// Mobile->Desktop ini edge (called from the desktop Draw path). Flushes mobile geometry one
-// last time, drops the mobile layout, re-attaches the captured desktop imgui.ini pointer, and
-// reloads it so desktop windows come back exactly as saved (the byte-identical round-trip:
-// nothing in the mobile session ever writes imgui.ini). Resets the seed latches per the plan.
+// Mobile->Desktop ini edge (called from end-of-frame drawEndOfFramePersistence at the frame
+// where effectiveUiMode becomes Desktop). Flushes mobile geometry one last time, drops the
+// mobile layout, re-attaches the captured desktop imgui.ini pointer, and reloads it so desktop
+// windows come back exactly as saved (the byte-identical round-trip: nothing in the mobile
+// session ever writes imgui.ini). Resets the seed latches per the plan. Must run at
+// end-of-frame after every window has ended — a mid-frame swap rebuilds dock nodes that
+// DockSpaceOverViewport has not marked alive, so BeginDocked immediately undocks every window.
 void SmatchetUI::drawMobileRestoreDesktopIni(UiDrawSession& d) {
     if (!d.mobileDockSeeded) {
         return;
