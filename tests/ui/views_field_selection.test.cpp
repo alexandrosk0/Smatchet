@@ -1,4 +1,4 @@
-// views_field_selection.test.cpp — bucket-E regression coverage for the Views-editor field-selection
+﻿// views_field_selection.test.cpp — bucket-E regression coverage for the Views-editor field-selection
 // reseed lifecycle (the #views-field-uncheck bug class). column-view-save-simplification:
 // UiDrawSession::selectedFieldSet is gone — the authoritative column/field set is now
 // UiDrawSession::viewDraft.Columns, reseeded straight from the active view by LoadBuffersFromView
@@ -123,12 +123,15 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         // frame must reload the draft from the view, dropping the stale marker.
         const std::string kMarker = "smatchet_stale_field_marker";
         g_ui.viewDraft.Columns.push_back({"field:" + kMarker, 0.0f});
-        g_ui.viewDraftId = "smatchet_force_reseed_sentinel";
 
-        // Re-pin mobileDrawerOpen/mobilePage every iteration rather than a plain YieldUntil: the
-        // reload this loop waits for only runs from drawMobileDrawerViews, which is gated on both
-        // — and ImGui Test Engine's simulated mouse cursor persists across tests in the same
-        // process, so a sibling "Plane"-backend test's trailing ItemClick (e.g.
+        // Re-pin mobileDrawerOpen/mobilePage AND the sentinel EVERY iteration: the reload this loop
+        // waits for only runs from drawMobileDrawerViews when d.viewDraftId != activeView->Id.
+        // LoadBuffersFromView updates d.viewDraftId to match activeView->Id, so the mismatch is
+        // one-time only (next frame sees a match and skips the reload). By re-setting the sentinel
+        // every frame, we force a re-mismatch and trigger a re-reseed, ensuring the draft is
+        // continuously reloaded until the marker is gone (not one reload).
+        // ImGui Test Engine's simulated mouse cursor persists across tests in the same process,
+        // so a sibling "Plane"-backend test's trailing ItemClick (e.g.
         // mobile_view_quick_switcher.test.cpp) can leave it positioned over the drawer's full-
         // screen scrim, closing the drawer via the scrim's click-outside handler on the very next
         // frame with no click of our own — silently starving drawMobileDrawerViews for the rest of
@@ -137,6 +140,7 @@ void RegisterFieldSetReseedDropsStale(ImGuiTestEngine* engine) {
         for (int i = 0; i < 300 && !droppedStale; ++i) {
             g_ui.mobileDrawerOpen = true;
             g_ui.mobilePage = MobilePage::Views;
+            g_ui.viewDraftId = "smatchet_force_reseed_sentinel"; // Re-set to force another reseed
             ctx->Yield();
             // DraftFieldIds() returns a fresh temporary set on every call — capture it once so
             // find()/end() come from the SAME container. Comparing an iterator from one temporary
