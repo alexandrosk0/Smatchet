@@ -1076,12 +1076,22 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
     // Editor header: title (inline-editable) + status strip + Apply button.
     drawViewsEditorHeader(ctx);
 
+    // [temp-debug] Bisect where within this function's tab bar the draft's Columns count
+    // changes — pinpointing whether drawViewsFieldsTab/ColumnsTab reintroduce a column the
+    // reload guard just dropped.
+    std::fprintf(stderr, "[drawViewsDashboardWindow] pre-tabbar embedded=%s activeTab=%d Columns=%zu\n",
+                 embedded ? "true" : "false", static_cast<int>(d.viewsActiveTab), d.viewDraft.Columns.size());
+
     // Tab bar.
     if (ImGui::BeginTabBar("##ViewsEditorTabs", ImGuiTabBarFlags_None)) {
         drawViewsFilterTab(ctx);
+        std::fprintf(stderr, "[drawViewsDashboardWindow] post-filter Columns=%zu\n", d.viewDraft.Columns.size());
         drawViewsFieldsTab(ctx);
+        std::fprintf(stderr, "[drawViewsDashboardWindow] post-fields Columns=%zu\n", d.viewDraft.Columns.size());
         drawViewsColumnsTab(ctx);
+        std::fprintf(stderr, "[drawViewsDashboardWindow] post-columns Columns=%zu\n", d.viewDraft.Columns.size());
         drawViewsSortTab(ctx);
+        std::fprintf(stderr, "[drawViewsDashboardWindow] post-sort Columns=%zu\n", d.viewDraft.Columns.size());
         ImGui::EndTabBar();
     }
 
