@@ -40,8 +40,7 @@ class IssueTransitionsCacheService {
 
     /// Kick an async fetch of transitions if not already loaded for this issue.
     /// Non-blocking; the fetch runs in a background worker and populates the cache on completion.
-    void EnsureIssueTransitionsLoaded(const std::string& issueId,
-                                      const TrackerConfig* configSnapshot = nullptr);
+    void EnsureIssueTransitionsLoaded(const std::string& issueId, const TrackerConfig* configSnapshot = nullptr);
 
     /// Drop the cached entry for one issue; called after a successful status transition
     /// so the next combo open re-fetches the now-current set of valid next statuses.

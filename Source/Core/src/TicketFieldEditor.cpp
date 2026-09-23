@@ -859,9 +859,9 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
                     // Prepend current status if missing (transitions are outgoing only).
                     const std::string currentId = ResolveOptionId(field, currentValue);
                     if (!currentId.empty()) {
-                        const auto it = std::find_if(
-                            allowedTransitions.begin(), allowedTransitions.end(),
-                            [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
+                        const auto it =
+                            std::find_if(allowedTransitions.begin(), allowedTransitions.end(),
+                                         [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
                         if (it == allowedTransitions.end()) {
                             TrackerFieldOption current;
                             current.Id = currentId;

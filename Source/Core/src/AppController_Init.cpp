@@ -38,9 +38,9 @@
 #include <utility>
 #include <vector>
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=a companion TU of the AppController god-class necessarily shares its subsystem include set (ConfigManager / backends / owned services); no shared header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when AppController.h fan-in is narrowed per ADR-0020 / debt.md)
-// clang-format on
+// Companion TU shares subsystem include set; no shared header without worse coupling; DRY gate
+// endorses exemption over abstraction (see ADR-0020 / debt.md).
+// SMATCHET_DEVIATION(rule=duplication; owner=orchestrator; revisit=ADR-0020)
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 

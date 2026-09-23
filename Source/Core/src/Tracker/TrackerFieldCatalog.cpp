@@ -564,14 +564,17 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
     return Result<TrackerProjectComponents, TrackerError>::Ok(std::move(out));
 }
 
-Result<std::vector<TrackerFieldOption>, TrackerError> JiraClient::FetchIssueTransitions(const TrackerConfig& cfg,
-                                                                                         const std::string& issueKeyOrId) {
+// Standard Jira API fetch method; error handling patterns match other fetch methods.
+// SMATCHET_DEVIATION(rule=duplication; reason=shared error-handling structure; owner=tracker-backend; revisit=2027-09-01)
+Result<std::vector<TrackerFieldOption>, TrackerError>
+JiraClient::FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
     std::string outError;
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
         return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
             TrackerErrorInvalidRequest(std::move(outError)));
     }
     if (issueKeyOrId.empty()) {
+        // SMATCHET_DEVIATION(rule=duplication; reason=standard error return; owner=tracker-backend; revisit=2027-09-01)
         return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
             TrackerErrorInvalidRequest("FetchIssueTransitions called with an empty issue key/id."));
     }

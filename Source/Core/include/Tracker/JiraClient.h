@@ -99,8 +99,8 @@ class JiraClient : public ITrackerBackend,
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     /** GET /rest/api/3/issue/{issueKeyOrId}/transitions — Ok = available transition target statuses. */
-    Result<std::vector<TrackerFieldOption>, TrackerError> FetchIssueTransitions(const TrackerConfig& cfg,
-                                                                                  const std::string& issueKeyOrId) override;
+    Result<std::vector<TrackerFieldOption>, TrackerError>
+    FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — Ok = watcher display names / account ids. */
     Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& cfg,

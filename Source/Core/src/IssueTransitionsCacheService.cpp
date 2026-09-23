@@ -57,8 +57,8 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const std::strin
             } else {
                 cache.applicable = false;
                 cache.loaded = true;
-                LOG_WARN("IssueTransitionsCacheService: failed to fetch transitions for issue %s: %s",
-                         issueId.c_str(), result.error().Detail.c_str());
+                LOG_WARN("IssueTransitionsCacheService: failed to fetch transitions for issue %s: %s", issueId.c_str(),
+                         result.error().Detail.c_str());
             }
         }
     });
