@@ -50,15 +50,15 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const std::strin
         {
             std::lock_guard<std::mutex> lock(issueTransitionsMutex_);
             IssueTransitionsCache& cache = issueTransitions_[issueId];
-            if (result.IsOk) {
+            if (result.has_value()) {
                 cache.applicable = true;
                 cache.loaded = true;
-                cache.options = result.Ok;
+                cache.options = result.value();
             } else {
                 cache.applicable = false;
                 cache.loaded = true;
                 LOG_WARN("IssueTransitionsCacheService: failed to fetch transitions for issue %s: %s",
-                         issueId.c_str(), result.Err.Message.c_str());
+                         issueId.c_str(), result.error().Detail.c_str());
             }
         }
     });

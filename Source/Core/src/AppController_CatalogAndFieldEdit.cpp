@@ -711,7 +711,7 @@ struct TransitionsLookup AppController::GetAvailableTransitionsForIssue(const st
     return transitions_->GetAvailableTransitions(issueId);
 }
 
-void AppController::EnsureIssueTransitionsLoaded(const std::string& issueId) {
+void AppController::EnsureIssueTransitionsLoaded(const std::string& issueId) const {
     transitions_->EnsureIssueTransitionsLoaded(issueId);
 }
 

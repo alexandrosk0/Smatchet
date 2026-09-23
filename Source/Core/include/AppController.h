@@ -1014,7 +1014,7 @@ class AppController : public IAppThreading,
 
     /// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
     struct TransitionsLookup GetAvailableTransitionsForIssue(const std::string& issueId) const;
-    void EnsureIssueTransitionsLoaded(const std::string& issueId);
+    void EnsureIssueTransitionsLoaded(const std::string& issueId) const;
     void InvalidateIssueTransitions(const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;

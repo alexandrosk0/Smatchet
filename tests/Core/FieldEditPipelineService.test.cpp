@@ -21,6 +21,7 @@
 #include "CachedTicketTypes.h"
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
+#include "IssueTransitionsCacheService.h"
 #include "Tracker/TrackerFieldSchema.h"
 #include "Types/FieldEditTypes.h"
 
@@ -75,12 +76,13 @@ TrackerField MakeTimetrackingField() {
     return f;
 }
 
-// Build the (deps, editMeta, service) trio with a single edited ticket already in the snapshot.
+// Build the (deps, editMeta, transitions, service) trio with a single edited ticket already in the snapshot.
 struct Rig {
     FakeFieldEditDeps fieldDeps;
     FakeEditMetaDeps editMetaDeps;
     EditMetaCacheService editMeta{editMetaDeps};
-    FieldEditPipelineService svc{fieldDeps, editMeta};
+    IssueTransitionsCacheService transitions{editMetaDeps};
+    FieldEditPipelineService svc{fieldDeps, editMeta, transitions};
 };
 
 } // namespace
