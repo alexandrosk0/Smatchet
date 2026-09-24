@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+
 // Pure, ImGui-free state machine for the status bar auto-hide feature. The bar hides
 // when idle and reveals on (a) tracker/connectivity problems and (b) pointer hover over
 // the bottom edge. Keeping the logic here decouples visibility decisions from ImGui,

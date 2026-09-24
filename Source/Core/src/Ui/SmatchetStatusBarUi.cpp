@@ -5,6 +5,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "Ui/SmatchetBackendDisplay.h"
+#include "Ui/SmatchetBottomPanelDrag.h"
 #include "Ui/SmatchetBottomPanelDragPure.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
@@ -244,7 +245,7 @@ void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBar
         const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
         const float barH = GetStatusBarHeightPx();
         const float gripInset =
-            !SmatchetBottomPanelDragPure::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
+            !SmatchetBottomPanelDrag::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
         pointerInZone = PointerInZone(io.MousePos.y, workBottomY, gripInset, barH, state.visible);
     }
 
@@ -261,7 +262,7 @@ void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBar
     const float barH = GetStatusBarHeightPx();
     const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
     const float gripInset =
-        !SmatchetBottomPanelDragPure::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
+        !SmatchetBottomPanelDrag::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
     const ImVec2 barPos(vp->WorkPos.x, workBottomY - gripInset - barH);
     const ImVec2 barSize(vp->WorkSize.x, barH);
 
