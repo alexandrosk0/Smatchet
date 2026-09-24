@@ -1,4 +1,5 @@
 # Plan — Status bar: third "Auto-Hide" state
+<!-- plan-date: 2026-09-24 -->
 
 > **Slug**: `status-bar-auto-hide` (matches this file's basename without `.md`).
 >
