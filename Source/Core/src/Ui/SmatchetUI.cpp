@@ -370,30 +370,20 @@ void SmatchetUI::Draw(AppController& app) {
     // on top of it. Skip the entire desktop chrome + docked-window path; global overlays
     // (toasts + update modal) and end-of-frame persistence still run.
     //
-    // While the mobile ini is attached (mobileDockSeeded), the live dock tree is the mobile one.
-    // On the Mobile->Desktop edge, render mobile UI one more frame, then restore the ini at
-    // end-of-frame after every window has ended. A mid-frame swap rebuilds nodes that
-    // DockSpaceOverViewport has not marked alive this frame, so BeginDocked undocks every
-    // desktop window (imgui.cpp ~21208). After restoration (mobileDockSeeded reset to false),
-    // render the desktop UI on the same frame.
+    // While the mobile ini is attached (mobileDockSeeded) the live dock tree is the mobile one,
+    // so the Mobile->Desktop edge frame still draws the shell and swaps the ini back only at
+    // end-of-frame, once every window has ended. A mid-frame swap rebuilds dock nodes the host's
+    // DockSpaceOverViewport has already walked this frame, so they are not LastFrameAlive and
+    // BeginDocked undocks every desktop window (imgui.cpp ~21208) — the undocked layout then
+    // autosaves. Desktop windows first submit next frame, after the host marks the tree alive.
     if (d.effectiveUiMode == EffectiveUiMode::Mobile || d.mobileDockSeeded) {
-        // Defer desktop ini restoration by one frame to avoid layoutForceDefaultsFrames
-        // countdown saving the mobile tree to the desktop path on the transition frame.
-        if (d.deferDesktopIniRestore) {
-            drawMobileRestoreDesktopIni(d);  // Sets mobileDockSeeded = false
-            d.deferDesktopIniRestore = false;
-        } else if (d.effectiveUiMode == EffectiveUiMode::Desktop && d.mobileDockSeeded) {
-            d.deferDesktopIniRestore = true;
+        drawMobileShell(app, d);
+        drawGlobalOverlays(app, d);
+        drawEndOfFramePersistence(d);
+        if (d.effectiveUiMode == EffectiveUiMode::Desktop) {
+            drawMobileRestoreDesktopIni(d);
         }
-
-        // Only render mobile UI if still in mobile mode after any restoration
-        if (d.mobileDockSeeded) {
-            drawMobileShell(app, d);
-            drawGlobalOverlays(app, d);
-            drawEndOfFramePersistence(d);
-            return;
-        }
-        // If mobileDockSeeded now false (after restoration), fall through to render desktop UI
+        return;
     }
 
     drawChromeAndModeToggles(app, d);
@@ -1359,11 +1349,8 @@ void SmatchetUI::drawDockDebugOverlay(UiDrawSession& d) {
     }
 }
 
-/// End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
-/// forced layout-defaults ini flush, and debounced prefs ConfigManager::Save.
-/// Called after all windows and overlays have ended to safely apply deferred layout resets,
-/// window expand self-heals, and periodic saves without mid-frame state mutations.
-/// @param d UI session context
+// End-of-frame coalesced persistence: debounced ViewState save, window-open prefs,
+// forced layout-defaults ini flush, and the debounced prefs ConfigManager::Save.
 void SmatchetUI::drawEndOfFramePersistence(UiDrawSession& d) {
     // Drain a latched layout reset HERE, at end-of-frame. SmatchetUI_ResetLayoutToDefault is
     // always invoked mid-frame (menu / command) and only sets the latch; applying the heavy

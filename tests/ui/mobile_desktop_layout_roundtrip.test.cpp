@@ -1,207 +1,149 @@
-// mobile_desktop_layout_roundtrip.test.cpp — bucket-E regression guard for the
-// Mobile ↔ Desktop UI-mode round-trip docking preservation fix.
+// mobile_desktop_layout_roundtrip.test.cpp — bucket-E regression guard for the desktop
+// layout undocking on a Mobile -> Desktop UI-mode round-trip (e.g. an Auto-mode window
+// narrowed past the mobile breakpoint and widened back).
 //
-// Bug (fixed): On the Mobile→Desktop transition, drawMobileRestoreDesktopIni was
-// called mid-frame, rebuilding dock nodes that DockSpaceOverViewport had not marked
-// alive (LastFrameAlive < FrameCount). Each desktop window's BeginDocked then hit
-// the liveness check and called DockContextProcessUndockWindow, clearing the DockId
-// and marking the ini dirty. The broken layout was then autosaved, wiping the user's
-// custom desktop layout.
+// Bug (fixed): SmatchetUI::Draw restored the desktop imgui.ini MID-FRAME on the
+// Mobile->Desktop edge. LoadIniSettings rebuilds the dock tree immediately, but the host's
+// DockSpaceOverViewport had already run that frame, so the rebuilt nodes were not
+// LastFrameAlive and BeginDocked undocked every desktop window submitted later in the same
+// frame (imgui.cpp ~21208); the floating layout was then autosaved. A second, smaller gap:
+// the Desktop->Mobile edge dropped the in-memory desktop layout without flushing it, so a
+// dock change inside ImGui's autosave window was lost.
 //
-// Secondary bug (fixed): On the Desktop→Mobile transition, drawMobileEnsureIniAttached
-// did ClearIniSettings without first saving the live desktop layout to disk. ImGui only
-// autosaves every 5 seconds, so dock changes made in the last few seconds before the
-// window got narrow were lost.
+// Fix: the edge frame still draws the mobile shell and swaps the ini back at end-of-frame,
+// so desktop windows first submit on the next frame against a tree the host has already
+// marked alive; the Desktop->Mobile edge flushes the desktop ini before detaching it.
 //
-// Fix:
-// 1. Defer the Mobile→Desktop ini swap from mid-frame to end-of-frame (after every
-//    window has ended). Nodes rebuild on the next NewFrame and settle cleanly before
-//    BeginDocked runs, so they never undock.
-// 2. Save the desktop layout to disk before detaching io.IniFilename on the
-//    Desktop→Mobile edge to flush changes still inside ImGui's 5 s autosave window.
-//
-// Verification: Probe the LIVE host after the round-trip: record which canonical
-// desktop windows were docked before the flip, switch to Mobile, switch back to Desktop,
-// and assert each previously-docked window is still docked with the same root node.
-// Gate on pre-state so headless Mesa (no HostWindow even when healthy) skips instead of
-// false-failing.
+// Why the check is FIRST-FRAME rather than eventual: repairTopLevelWindow re-docks a
+// floating canonical window into its DEFAULT slot a frame later, which hides the bug for
+// those windows (while silently losing any custom placement) and never re-docks
+// non-canonical ones. So the assertion is that on the first frame each window is active
+// again after the edge, it is docked into the exact node it occupied before the flip.
+// Gated on pre-flip state so a host with no docked desktop windows (or no ini file
+// attached) skips instead of false-failing.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
-#include "AppController.h"
-#include "SmatchetDockNodeIds.h"
 #include "SmatchetUiModeIds.h"
 #include "SmatchetUiSession.h"
-#include "Commands/Scenarios/UiTestScenario.h"
 
 #include "imgui.h"
-#include "imgui_internal.h" // ImGuiDockNode::DockId / ParentNode / HostWindow, DockBuilderGetNode
+#include "imgui_internal.h" // ImGuiWindow::DockId / DockNode / LastFrameActive, FindWindowByID
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
+
+#include <vector>
 
 extern UiDrawSession g_ui;
 
 namespace {
 
-/// Snapshot of a canonical window's docked state, keyed by DockId and root node.
-struct DockedWindowSnapshot {
-    std::string WindowTitle; ///< Localized window title
-    ImGuiID DockId;          ///< Dock node ID if docked, 0 if undocked or window not found
-    ImGuiID RootNodeId;      ///< Root dock node ID, 0 if not docked
+struct DockedWindowRecord {
+    ImGuiID windowId = 0;
+    ImGuiID dockId = 0;
+    bool checked = false;
 };
 
-/// Fetch the docked state of one canonical window by its runtime title (localized).
-/// Probes ImGui's window table to get the current DockId and traces to the root dock node.
-/// Returns a snapshot with zero IDs if the window is not found, not docked, or orphaned.
-/// @param windowTitle Localized window name to look up
-/// @return {title, DockId, RootNodeId} if the window is currently live and docked with a valid non-orphan node,
-///         {title, 0, 0} if undocked, window not found, or node is orphaned (no parent/host)
-DockedWindowSnapshot SnapshotWindowDockState(const char* windowTitle) {
-    const ImGuiWindow* win = ::ImGui::FindWindowByName(windowTitle);
-    if (win == nullptr) {
-        return {windowTitle, 0, 0};
-    }
-    // DockId != 0 and a valid (non-orphan) node means the window is docked and reachable.
-    if (win->DockId == 0) {
-        return {windowTitle, 0, 0};
-    }
-    const ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(win->DockId);
-    if (node == nullptr || node->ParentNode == nullptr || node->HostWindow == nullptr) {
-        return {windowTitle, 0, 0};
-    }
-    // Walk up to find the root node (the one with no parent).
-    ImGuiID rootNodeId = win->DockId;
-    ImGuiDockNode* currentNode = const_cast<ImGuiDockNode*>(node);
-    while (currentNode->ParentNode != nullptr) {
-        rootNodeId = currentNode->ParentNode->ID;
-        currentNode = currentNode->ParentNode;
-    }
-    return {windowTitle, win->DockId, rootNodeId};
-}
+// True when the window was submitted on the most recently completed frame (robust to the
+// test coroutine resuming either side of NewFrame's Active -> WasActive roll-over).
+bool WasActiveLastFrame(const ImGuiWindow& window) { return window.LastFrameActive >= ::ImGui::GetFrameCount() - 1; }
 
-/// Poll a predicate over multiple frames, yielding the UI loop between checks.
-/// Repeatedly calls ctx->Yield() to advance frames, invoking the predicate each iteration
-/// until it returns true or maxFrames is reached.
-/// @tparam Pred Callable returning bool; invoked once per frame, must be a predicate
-/// @param ctx ImGui test context for yielding control; advances UI loop each call
-/// @param pred Predicate to poll; returns true when desired condition is met, false otherwise
-/// @param maxFrames Maximum number of frames to poll before timeout (default 300)
-/// @return true if predicate became true within maxFrames, false on timeout
-template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
-    for (int i = 0; i < maxFrames; ++i) {
-        ctx->Yield();
-        if (pred()) {
-            return true;
+// Every live top-level window that is docked right now. Child windows and dock-host windows
+// carry no DockNode of their own, so the DockNode filter excludes them.
+std::vector<DockedWindowRecord> SnapshotDockedWindows() {
+    std::vector<DockedWindowRecord> out;
+    const ImGuiContext& g = *::ImGui::GetCurrentContext();
+    for (const ImGuiWindow* window : g.Windows) {
+        if (window == nullptr || window->DockNode == nullptr || window->DockId == 0 || !WasActiveLastFrame(*window)) {
+            continue;
         }
+        DockedWindowRecord record;
+        record.windowId = window->ID;
+        record.dockId = window->DockId;
+        out.push_back(record);
     }
-    return false;
+    return out;
 }
 
-/// Check if a dock node is live and non-orphan (has valid parent and host window).
-/// Verifies that the node exists in ImGui's dock tree and has both a parent node
-/// and a host window, indicating it is properly integrated and not orphaned.
-/// @param nodeId Dock node ID to check; 0 always returns false
-/// @return true if the node exists and is properly linked (not orphaned), false otherwise
-bool NodeIsDockedNonOrphan(ImGuiID nodeId) {
-    const ImGuiDockNode* node = ::ImGui::DockBuilderGetNode(nodeId);
-    return node != nullptr && node->ParentNode != nullptr && node->HostWindow != nullptr;
+bool MobileShellIsLive() {
+    const ImGuiWindow* shell = ::ImGui::FindWindowByName("##MobileShell");
+    return shell != nullptr && WasActiveLastFrame(*shell);
 }
 
-/// Register the Mobile ↔ Desktop layout round-trip regression test.
-/// Verifies that desktop window docking is preserved after a Mobile→Desktop UI-mode
-/// transition, guarding against mid-frame ini restoration that causes undocking.
-/// The test switches to Mobile mode, waits for the mobile shell to activate, then
-/// switches back to Desktop and confirms the main pane regains its original DockId
-/// and root node within 120 frames. Skips cleanly if the main pane was not docked
-/// before the flip or if running on headless Mesa (HostWindow nullptr).
-/// @param engine ImGui Test Engine instance to register the test with
-void RegisterMobileDesktopLayoutRoundTripTest(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "MobileDesktopLayoutRoundtrip", "PreservesDocking_AfterRoundTrip");
+void RegisterRoundTripKeepsDockingVariant(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "MobileDesktopLayout", "RoundTrip_KeepsEveryWindowDocked");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        const AppController* app = SmatchetActiveUiTestAppController();
-        if (app == nullptr) {
-            ctx->LogInfo("SKIP: SmatchetActiveUiTestAppController() returned nullptr — app not booted");
-            return;
-        }
-
-        // Save state we mutate so the test leaves g_ui as it found it.
         const UiMode origUiMode = g_ui.cfg.UiMode;
         const MobilePage origPage = g_ui.mobilePage;
+        const bool origDrawerOpen = g_ui.mobileDrawerOpen;
 
-        // Let the desktop boot settle first so the canonical nodes are realized.
+        // Pin Desktop and let the layout settle so the snapshot sees a steady desktop tree.
+        g_ui.cfg.UiMode = UiMode::Desktop;
         for (int i = 0; i < 8; ++i) {
             ctx->Yield();
         }
-
-        // Snapshot which canonical windows are docked BEFORE the flip. Only assert
-        // windows that were docked before — in Mesa-headless HostWindow is nullptr
-        // even when healthy, so we gate on pre-state to skip cleanly instead of
-        // false-failing. Use the desktop main-pane identity to verify the fix.
-        const DockedWindowSnapshot mainPaneBefore = SnapshotWindowDockState("Smatchet - Active Project");
-        const bool preMainPaneDocked = (mainPaneBefore.DockId != 0);
-
-        if (!preMainPaneDocked) {
-            ctx->LogInfo("skip: Smatchet - Active Project window not docked pre-flip — headless/non-default host layout");
+        if (::ImGui::GetIO().IniFilename == nullptr) {
+            ctx->LogInfo("skip: no desktop imgui.ini attached — nothing to round-trip");
+            g_ui.cfg.UiMode = origUiMode;
+            return;
+        }
+        std::vector<DockedWindowRecord> docked = SnapshotDockedWindows();
+        if (docked.empty()) {
+            ctx->LogInfo("skip: no docked desktop window pre-flip — headless/non-default host layout");
+            g_ui.cfg.UiMode = origUiMode;
             return;
         }
 
-        // Switch to Mobile mode. drawResolveUiMode (SmatchetMobileShellUi.cpp) pins Mobile
-        // when cfg.UiMode == UiMode::Mobile, bypassing the viewport-width hysteresis check.
+        // Desktop -> Mobile. The Grid page exercises the shell's own MobileContentDock too.
         g_ui.cfg.UiMode = UiMode::Mobile;
-
-        // Poll until the mobile shell is live (##MobileShell Begin() returned true this frame).
-        const bool shellLive = YieldUntil(ctx, [&] {
-            const ImGuiWindow* win = ::ImGui::FindWindowByName("##MobileShell");
-            return win != nullptr && win->Active;
-        });
+        g_ui.mobilePage = MobilePage::Grid;
+        g_ui.mobileDrawerOpen = false;
+        bool shellLive = false;
+        for (int i = 0; i < 300 && !shellLive; ++i) {
+            ctx->Yield();
+            shellLive = MobileShellIsLive();
+        }
         IM_CHECK_NO_RET(shellLive);
 
-        if (!shellLive) {
-            // Restore and bail.
-            g_ui.cfg.UiMode = origUiMode;
-            g_ui.mobilePage = origPage;
-            return;
-        }
-
-        // Switch back to Desktop. The LIVE Draw loop (SmatchetUI::Draw) detects
-        // effectiveUiMode == Desktop while mobileDockSeeded is still true, and defers
-        // the ini swap to end-of-frame (drawEndOfFramePersistence). The desktop windows
-        // are then submitted on a rebuilt tree that BeginDocked (next frame) finds
-        // non-orphan, so they stay docked.
-        g_ui.cfg.UiMode = origUiMode;
-
-        // Poll until the desktop main pane is back and docked with the same root node.
-        // The dock tree rebuilds lazily on the next NewFrame after the ini swap, then
-        // BeginDocked applies the restored DockIds on that frame. A generous frame cap
-        // handles slow Mesa settle. Compare both DockId and RootNodeId to catch reparenting.
-        const ImGuiID preRootNodeId = mainPaneBefore.RootNodeId;
-        const ImGuiID preDockId = mainPaneBefore.DockId;
-        bool restored = false;
-        for (int i = 0; i < 120 && !restored; ++i) {
+        // Mobile -> Desktop: check each window on the first frame it is active again, before
+        // repairTopLevelWindow could re-dock a floating one into its default slot.
+        g_ui.cfg.UiMode = UiMode::Desktop;
+        size_t remaining = shellLive ? docked.size() : 0;
+        for (int frame = 0; frame < 120 && remaining > 0; ++frame) {
             ctx->Yield();
-            const DockedWindowSnapshot postMainPane = SnapshotWindowDockState("Smatchet - Active Project");
-            restored = (postMainPane.DockId != 0 && postMainPane.DockId == preDockId &&
-                       postMainPane.RootNodeId == preRootNodeId);
+            for (DockedWindowRecord& record : docked) {
+                if (record.checked) {
+                    continue;
+                }
+                const ImGuiWindow* window = ::ImGui::FindWindowByID(record.windowId);
+                if (window == nullptr || !WasActiveLastFrame(*window)) {
+                    continue;
+                }
+                record.checked = true;
+                --remaining;
+                if (window->DockId != record.dockId) {
+                    ctx->LogError("'%s' came back in dock 0x%08X, was 0x%08X before the round-trip", window->Name,
+                                  window->DockId, record.dockId);
+                }
+                IM_CHECK_NO_RET(window->DockId == record.dockId);
+            }
+        }
+        if (remaining > 0) {
+            ctx->LogInfo("note: %d docked window(s) were not re-submitted within the frame budget",
+                         static_cast<int>(remaining));
         }
 
-        // The exact inverse of the undock bug: the main pane that was docked
-        // before the round-trip is STILL docked with the same DockId and RootNodeId after it.
-        IM_CHECK_NO_RET(restored);
-
-        // Restore every mutated field.
         g_ui.cfg.UiMode = origUiMode;
         g_ui.mobilePage = origPage;
+        g_ui.mobileDrawerOpen = origDrawerOpen;
         ctx->Yield();
     };
 }
 
 } // namespace
 
-/// Public entry point to register all Mobile-Desktop layout round-trip regression tests.
-/// Called once from UiTestScenario::OnStart() after ImGui Test Engine initialization.
-/// @param engine ImGui Test Engine instance
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine) {
-    RegisterMobileDesktopLayoutRoundTripTest(engine);
+    RegisterRoundTripKeepsDockingVariant(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
