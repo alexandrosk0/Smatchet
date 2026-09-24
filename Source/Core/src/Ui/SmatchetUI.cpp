@@ -374,17 +374,22 @@ void SmatchetUI::Draw(AppController& app) {
     // is already created by the host layer; the mobile shell is a fullscreen window drawn
     // on top of it. Skip the entire desktop chrome + docked-window path; global overlays
     // (toasts + update modal) and end-of-frame persistence still run.
-    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+    //
+    // While the mobile ini is attached (mobileDockSeeded) the live dock tree is the mobile one,
+    // so the Mobile->Desktop edge frame still draws the shell and swaps the ini back only at
+    // end-of-frame, once every window has ended. A mid-frame swap rebuilds dock nodes the host's
+    // DockSpaceOverViewport has already walked this frame, so they are not LastFrameAlive and
+    // BeginDocked undocks every desktop window (imgui.cpp ~21208) — the undocked layout then
+    // autosaves. Desktop windows first submit next frame, after the host marks the tree alive.
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile || d.mobileDockSeeded) {
         drawMobileShell(app, d);
         drawGlobalOverlays(app, d);
         drawEndOfFramePersistence(d);
+        if (d.effectiveUiMode == EffectiveUiMode::Desktop) {
+            drawMobileRestoreDesktopIni(d);
+        }
         return;
     }
-
-    // Mobile->Desktop edge (slice 5): if the previous frame ran the mobile shell it
-    // detached io.IniFilename and routed saves to imgui_mobile.ini; re-attach the desktop
-    // ini + reload it before any desktop window submits so dock geometry comes back.
-    drawMobileRestoreDesktopIni(d);
 
     drawChromeAndModeToggles(app, d);
     DrainAppUpdateCheck(d);
