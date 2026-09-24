@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "CachedTicketTypes.h" // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return + UpdateTicket arg)
+#include "Types/ConnectivityTypes.h" // TrackerConnectivityState
 
 class ITrackerBackend;
 
@@ -63,4 +64,7 @@ class IFieldEditDeps {
     /// IEditMetaDeps::RequestDeferredLiveTrackerBackendSuccessNotify() declares; the one adapter
     /// override satisfies both interfaces.
     virtual void RequestDeferredLiveTrackerBackendSuccessNotify() const = 0;
+
+    /// Last connectivity probe result (Pillar 6 offline gating). Safe on any thread.
+    virtual TrackerConnectivityState TrackerConnectivity() const = 0;
 };

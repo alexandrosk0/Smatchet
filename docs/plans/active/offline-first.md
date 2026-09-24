@@ -2893,7 +2893,17 @@ This plan touches `Source/Core/`.
 - Tests: `CatalogOfflinePolicyPure` (new), `TrackerCatalogBuild` (500 → ServerError, 401 → Auth, unreachable → Transport), `ConnectivityMonitorService` (startup wording).
 - Review fix (CodeRabbit): the offline catalog banner names the configured backend (Jira / Plane / GitHub / Linear); it previously said "Jira" for every non-Plane backend. `HandleFieldCatalogError` now takes the normalized backend key instead of a `catalogPlane` flag.
 
+### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240) (stacked on #2238)
+- Shipped: `OfflineFirstPure.h` (IsOfflineState / ShouldAttemptNetwork / ClassifyFreshness / ShouldRenderContent / RouteWrite), `KeyedLookupCache.h` + `RunKeyedFetch`, shared `ScopeExit.h` (moved out of `OfflineQueueService.cpp`), `DataFreshnessCue` + 7 `freshness.*` strings, atomic `ConnectivityMonitorService::lastState_` + `RequestProbeNow` / `AppController::RequestTrackerProbeNow`, `IAppSync::IsTrackerOffline()`, `TrackerConnectivity()` on `IEditMetaDeps` / `IFieldEditDeps`.
+- Tests: `OfflineFirstPure`, `KeyedLookupCache` (both lists); the concurrency case runs 8 threads × 1000 `TryBeginFetch` calls.
+- Nothing consumes the primitives yet (S5+ do); `DataFreshnessCue` is compiled but unused.
+
 ## Deviations from plan
+
+- **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
+  - `ClassifyFreshness` returns `Fresh` only while the tracker is reachable. This session's live data reads `CachedOffline` once the tracker drops.
+  - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
+  - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
 
 ## Verification (actual)
 
