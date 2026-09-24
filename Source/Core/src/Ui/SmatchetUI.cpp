@@ -1473,7 +1473,6 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 app.SetFieldCatalog({}, {},
                                     result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
                                     result.ErrorTransient);
-                app.SetAvailableUsers({});
                 d.fieldCatalogWarning.clear();
             }
         } catch (const std::exception& ex) {

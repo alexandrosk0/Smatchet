@@ -77,7 +77,8 @@ class JiraClient : public ITrackerBackend,
 
     bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                            std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
-                           std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
+                           std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                           TrackerError* outClassified = nullptr);
 
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;
