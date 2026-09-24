@@ -227,6 +227,7 @@ run_selftest() {
         git init -q -b base .
         git config user.email selftest@local
         git config user.name selftest
+        git config commit.gpgsign false
         printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > project.config.json
         mkdir -p Source/Core/src/Sync
         echo "// base" > Source/Core/src/Sync/SelfTest.cpp
@@ -337,7 +338,61 @@ run_selftest() {
            return 1 ;;
     esac
 
-    rm -rf "$tmpd" "$tmp2"
+    # --- Fingerprint must survive the ack-before-commit seam (Bugbot, PR #2221) ---
+    # A branch that ALREADY has a prior first-party C++ commit, then acks the
+    # NEXT delta while it's still uncommitted, then commits it: the fingerprint
+    # recorded pre-commit (base...old-HEAD + worktree) must still match the one
+    # recomputed post-commit (base...new-HEAD + empty worktree). Before the
+    # commit-invariant _ra_branch_base fix this diverged whenever the two edits
+    # touched the same file, because "diff A + diff B" concatenated two separate
+    # hunks for that file while "diff A-to-C" (post-commit) produced one.
+    local tmp3 fp3
+    tmp3="$(mktemp -d)" \
+        || { rm -rf "$tmpd" "$tmp2"; echo "record-review-verdict --selftest: FAIL — mktemp failed (tmp3)" >&2; return 1; }
+    if ! (
+        set -e
+        cd "$tmp3"
+        git init -q -b base .
+        git config user.email selftest@local
+        git config user.name selftest
+        git config commit.gpgsign false
+        printf '{"lint":{"zones":{"strict":["Source/Core/src/Sync/"]}}}\n' > project.config.json
+        mkdir -p Source/Core/src/Sync
+        echo "// base" > Source/Core/src/Sync/SelfTest.cpp
+        git add -A && git commit -qm base
+        git checkout -qb feature
+        # Prior first-party C++ commit already on the branch, touching the SAME
+        # file the next (to-be-acked) edit will also touch.
+        printf '// first edit\n' >> Source/Core/src/Sync/SelfTest.cpp
+        git commit -aqm first-edit
+        # The delta to be reviewed/acked is left UNCOMMITTED here, mirroring
+        # pre-ship.sh --ack-review running before the final commit.
+        printf 'int self_test_fn() { return 1; }\n' >> Source/Core/src/Sync/SelfTest.cpp
+    ); then
+        rm -rf "$tmpd" "$tmp2" "$tmp3"
+        echo "record-review-verdict --selftest: FAIL — could not build the ack-before-commit fixture" >&2
+        return 1
+    fi
+    fp3="$(
+        cd "$tmp3" || exit 1
+        # shellcheck source=agents/scripts/core/lib/review-ack.sh
+        . "$REVIEW_ACK_LIB"
+        ra_fingerprint branch base
+    )" || {
+        rm -rf "$tmpd" "$tmp2" "$tmp3"
+        echo "record-review-verdict --selftest: FAIL — could not compute the pre-commit fingerprint" >&2
+        return 1
+    }
+    (cd "$tmp3" && printf 'branch\t%s\n' "$fp3" > .review-ack &&
+        printf '{"fingerprint":"%s","reviewer":"selftest"}\n' "$fp3" > .review-findings.json)
+    (cd "$tmp3" && git commit -aqm final)
+    if ! (cd "$tmp3" && bash "$SELF" "0 findings" base >/dev/null 2>&1); then
+        rm -rf "$tmpd" "$tmp2" "$tmp3"
+        echo "record-review-verdict --selftest: FAIL — committing the acked delta invalidated its fingerprint" >&2
+        return 1
+    fi
+
+    rm -rf "$tmpd" "$tmp2" "$tmp3"
     echo "record-review-verdict --selftest: PASS"
 }
 

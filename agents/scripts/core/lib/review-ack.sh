@@ -107,6 +107,20 @@ ra_resolve_python() {
     return 1
 }
 
+# _ra_branch_base <base_ref> — the merge-base of <base_ref> and HEAD (falls back
+# to <base_ref> itself if merge-base fails, e.g. unrelated histories). Resolving
+# this ONCE and diffing it straight against the working tree in a single `git
+# diff <mb>` call (rather than concatenating `git diff <base>...HEAD` with a
+# separate `git diff HEAD`) is what makes branch-mode output commit-invariant:
+# a single two-endpoint diff is the same text whether a given delta is staged,
+# committed, or both, whereas two diffs stitched together can show duplicate
+# "diff --git a/F b/F" blocks for a file touched on both sides of the seam —
+# Bugbot on PR #2221: committing the reviewed worktree delta changed the
+# recorded fingerprint out from under a just-acked review.
+_ra_branch_base() {
+    git merge-base "$1" HEAD 2>/dev/null || printf '%s\n' "$1"
+}
+
 # ra_fingerprint <mode> [base_ref] — hash the diff CONTENT (not just the file list)
 # so any change, including a clang-format reflow, re-arms the gate.
 ra_fingerprint() {
@@ -115,8 +129,7 @@ ra_fingerprint() {
         if [ "$mode" = "staged" ]; then
             git diff --cached -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         else
-            git diff "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-            git diff HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+            git diff "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         fi
     } | sha256sum | cut -d' ' -f1
 }
@@ -127,8 +140,7 @@ ra_changed_files() {
     if [ "$mode" = "staged" ]; then
         git diff --cached --name-only --diff-filter=d -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
     else
-        git diff --name-only --diff-filter=d "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-        git diff --name-only --diff-filter=d -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+        git diff --name-only --diff-filter=d "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
     fi
 }
 
@@ -140,8 +152,7 @@ ra_changed_lines() {
         if [ "$mode" = "staged" ]; then
             git diff --cached --numstat -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         else
-            git diff --numstat "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-            git diff --numstat -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+            git diff --numstat "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         fi
     } | awk '{a+=($1=="-"?0:$1); d+=($2=="-"?0:$2)} END {print a+d+0}'
 }
