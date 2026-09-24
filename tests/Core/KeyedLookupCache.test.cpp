@@ -9,7 +9,7 @@
 #include <vector>
 
 using namespace smatchet::offline;
-using smatchet::Result;
+using ::Result;
 
 TEST_SUITE("KeyedLookupCache") {
 
