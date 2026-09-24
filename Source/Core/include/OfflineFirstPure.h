@@ -27,9 +27,9 @@ inline bool ShouldAttemptNetwork(TrackerConnectivityState s, Clock::time_point n
 }
 
 enum class DataFreshness : std::uint8_t {
-    Fresh,              ///< live data from this session
+    Fresh,              ///< live data from this session and the tracker is reachable
     Refreshing,         ///< cached data shown while a live fetch runs
-    CachedOffline,      ///< cached data shown; the tracker is unreachable
+    CachedOffline,      ///< cached data shown (even this session's live data); the tracker is unreachable
     CachedStale,        ///< cached data shown; the last live fetch failed or has not run yet
     LoadingNoCache,     ///< nothing cached yet; a live fetch is running
     UnavailableNoCache, ///< nothing cached and no fetch running
@@ -50,7 +50,7 @@ inline DataFreshness ClassifyFreshness(const FreshnessInputs& in) {
     if (in.InFlight) {
         return DataFreshness::Refreshing;
     }
-    if (in.Live && !in.LastAttemptFailed) {
+    if (in.Live && !in.LastAttemptFailed && !IsOfflineState(in.Connectivity)) {
         return DataFreshness::Fresh;
     }
     return IsOfflineState(in.Connectivity) ? DataFreshness::CachedOffline : DataFreshness::CachedStale;

@@ -14,11 +14,11 @@ const char* CueText(smatchet::offline::DataFreshness f) {
     case smatchet::offline::DataFreshness::CachedOffline:
         return SmatchetLocalization::T("freshness.cached_offline", "Offline — showing saved data");
     case smatchet::offline::DataFreshness::CachedStale:
-        return SmatchetLocalization::T("freshness.cached_stale", "Showing saved data — the last refresh failed");
+        return SmatchetLocalization::T("freshness.cached_stale", "Showing saved data");
     case smatchet::offline::DataFreshness::LoadingNoCache:
         return SmatchetLocalization::T("freshness.loading_no_cache", "Loading…");
     case smatchet::offline::DataFreshness::UnavailableNoCache:
-        return SmatchetLocalization::T("freshness.unavailable_offline", "Not available offline yet");
+        return SmatchetLocalization::T("freshness.unavailable", "Not available yet");
     }
     return "";
 }

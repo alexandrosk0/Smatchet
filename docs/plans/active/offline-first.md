@@ -2900,6 +2900,11 @@ This plan touches `Source/Core/`.
 
 ## Deviations from plan
 
+- **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
+  - `ClassifyFreshness` returns `Fresh` only while the tracker is reachable. This session's live data reads `CachedOffline` once the tracker drops.
+  - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
+  - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
+
 ## Verification (actual)
 
 ## Archive

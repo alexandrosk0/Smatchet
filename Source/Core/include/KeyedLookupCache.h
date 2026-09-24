@@ -149,8 +149,9 @@ template <typename Value> class KeyedLookupCache {
 };
 
 /// Run `fetch` (returns Result<Value, TrackerError>) for a ticket from TryBeginFetch and record the
-/// outcome. Call it on a worker thread. A throw is recorded as an Unknown failure (and rethrown), so
-/// InFlight can never stay latched.
+/// outcome. Call it on a worker thread. A throw from the fetch or from recording its result (e.g. a
+/// throwing Value move-assignment) is recorded as an Unknown failure and rethrown, so InFlight can
+/// never stay latched.
 template <typename Value, typename FetchFn>
 void RunKeyedFetch(KeyedLookupCache<Value>& cache, const typename KeyedLookupCache<Value>::Ticket& ticket,
                    FetchFn&& fetch) {
@@ -161,12 +162,12 @@ void RunKeyedFetch(KeyedLookupCache<Value>& cache, const typename KeyedLookupCac
         }
     });
     auto result = fetch();
-    recorded = true;
     if (result.has_value()) {
         cache.CompleteSuccess(ticket, std::move(result.value()));
     } else {
         cache.CompleteFailure(ticket, result.error(), Clock::now());
     }
+    recorded = true; // only once a completion has actually been stored
 }
 
 } // namespace offline

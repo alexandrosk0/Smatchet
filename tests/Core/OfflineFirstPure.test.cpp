@@ -60,6 +60,18 @@ TEST_SUITE("OfflineFirstPure") {
         CHECK(ClassifyFreshness(in) == DataFreshness::Fresh);
     }
 
+    TEST_CASE("ClassifyFreshness: live data from this session reads as offline once the tracker drops") {
+        FreshnessInputs in;
+        in.HasCache = true;
+        in.Live = true;
+        in.Connectivity = TrackerConnectivityState::AuthenticatedReachable;
+        CHECK(ClassifyFreshness(in) == DataFreshness::Fresh);
+        in.Connectivity = TrackerConnectivityState::TransportDown;
+        CHECK(ClassifyFreshness(in) == DataFreshness::CachedOffline);
+        in.Connectivity = TrackerConnectivityState::ServiceUnavailable;
+        CHECK(ClassifyFreshness(in) == DataFreshness::CachedOffline);
+    }
+
     TEST_CASE("ClassifyFreshness: has cache, in flight") {
         FreshnessInputs in;
         in.HasCache = true;

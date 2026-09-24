@@ -12,6 +12,21 @@
 using namespace smatchet::offline;
 using ::Result;
 
+namespace {
+
+// Value whose move-assignment throws: CompleteSuccess stores the payload by move-assignment, so this
+// exercises a completion that throws after the fetch itself succeeded.
+struct ThrowOnMoveAssign {
+    int V = 0;
+    ThrowOnMoveAssign() = default;
+    ThrowOnMoveAssign(const ThrowOnMoveAssign&) = default;
+    ThrowOnMoveAssign(ThrowOnMoveAssign&&) = default;
+    ThrowOnMoveAssign& operator=(const ThrowOnMoveAssign&) = default;
+    ThrowOnMoveAssign& operator=(ThrowOnMoveAssign&&) { throw std::runtime_error("move-assign"); }
+};
+
+} // namespace
+
 TEST_SUITE("KeyedLookupCache") {
 
     TEST_CASE("TryBeginFetch returns true on first call, false while in flight") {
@@ -165,4 +180,20 @@ TEST_SUITE("KeyedLookupCache") {
         CHECK(cache.Get("shared").InFlight);
     }
 
+    TEST_CASE("RunKeyedFetch: a throwing completion still clears InFlight and the key can retry") {
+        KeyedLookupCache<ThrowOnMoveAssign> cache;
+        const auto now = Clock::now();
+        KeyedLookupCache<ThrowOnMoveAssign>::Ticket t;
+        REQUIRE(cache.TryBeginFetch("key1", TrackerConnectivityState::AuthenticatedReachable, now, t));
+
+        auto fetch = []() { return Result<ThrowOnMoveAssign, TrackerError>::Ok(ThrowOnMoveAssign()); };
+        CHECK_THROWS(RunKeyedFetch(cache, t, fetch));
+
+        const auto entry = cache.Get("key1");
+        CHECK_FALSE(entry.InFlight);
+        CHECK(entry.LastAttemptFailed);
+        CHECK_FALSE(entry.HasValue);
+        cache.OnConnectivityRecovered();
+        CHECK(cache.TryBeginFetch("key1", TrackerConnectivityState::AuthenticatedReachable, now, t));
+    }
 } // TEST_SUITE
