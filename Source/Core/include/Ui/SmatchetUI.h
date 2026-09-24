@@ -10,6 +10,7 @@
 #include "Ui/ImGuiHotkey.h"
 #include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetUserInfoUi.h"
+#include "Ui/StatusBarAutoHidePure.h"
 #include "Views.h"
 
 #include <algorithm>
@@ -100,9 +101,7 @@ class SmatchetUI {
                                            const IAppTicketMutations& ticketMutations, PreferencesFilter& filter) {
         annotateAnalysisUi_.DrawAnnotatePrefsSection(section, availableFields, ticketMutations, filter);
     }
-    void OnPreferencesSaveAndSyncForwarded(AppController& app, UiDrawSession& d) {
-        onPreferencesSaveAndSync(app, d);
-    }
+    void OnPreferencesSaveAndSyncForwarded(AppController& app, UiDrawSession& d) { onPreferencesSaveAndSync(app, d); }
 
     /// Mark the parsed keybinding dispatch cache stale so the next frame rebuilds it
     /// from cfg.Keybindings (rebuildKeybindingCache). The Keyboard Shortcuts editor +
@@ -381,6 +380,7 @@ class SmatchetUI {
         int dockDebugLogFrame = 0;
     };
     DrawBodyState drawBodyState_;
+    StatusBarAutoHidePure::State statusBarAutoHide_;
 #if defined(SMATCHET_WITH_AI)
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside

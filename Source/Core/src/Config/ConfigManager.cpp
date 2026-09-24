@@ -188,7 +188,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
 
 template <typename T> struct FieldDesc {
     const char* key;
-    T TrackerConfig::* member;
+    T TrackerConfig::*member;
 };
 
 // Plain string / bool / int fields: `cfg.member = j.value(key, cfg.member)` on Load,
@@ -286,6 +286,7 @@ const FieldDesc<bool> kBoolFields[] = {
     {"show_secondary_side_bar", &TrackerConfig::ShowSecondarySideBar},
     {"show_panel", &TrackerConfig::ShowPanel},
     {"show_status_bar", &TrackerConfig::ShowStatusBar},
+    {"status_bar_auto_hide", &TrackerConfig::StatusBarAutoHide},
     {"primary_side_bar_on_right", &TrackerConfig::PrimarySideBarOnRight},
     {"skip_layout_reset_confirm", &TrackerConfig::SkipLayoutResetConfirm},
     {"update_check_enabled", &TrackerConfig::UpdateCheckEnabled},

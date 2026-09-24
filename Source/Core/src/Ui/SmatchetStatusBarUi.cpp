@@ -5,6 +5,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetTheme.h"
 #include "Ui/SmatchetBackendDisplay.h"
+#include "Ui/SmatchetBottomPanelDragPure.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetThemeIds.h"
@@ -86,22 +87,9 @@ static const char* ConnectivityTooltip(AppController& app) {
     }
 }
 
-} // namespace
+static float GetStatusBarHeightPx() { return ::ImGui::GetFrameHeight() + ::ImGui::GetStyle().WindowPadding.y * 2.0f; }
 
-void DrawStatusBar(AppController& app, const UiDrawSession& d) {
-    // One frame-line of content plus the window padding above/below it (the side-bar
-    // sizing). A bare GetFrameHeight() under-reserves by the padding, so the single
-    // line overflowed the bar and could be wheel-scrolled half out of view
-    // (NoScrollbar only hides the bar — NoScrollWithMouse is what disables the wheel).
-    // The status bar is exactly one line, always.
-    const float barH = ::ImGui::GetFrameHeight() + ::ImGui::GetStyle().WindowPadding.y * 2.0f;
-    ImGuiWindowFlags flags =
-        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
-    if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(), ImGuiDir_Down, barH, flags)) {
-        ::ImGui::End();
-        return;
-    }
-
+static void DrawStatusBarContents(AppController& app, const UiDrawSession& d) {
     ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 0.0f));
 
     // Left side ---------------------------------------------------------------
@@ -209,5 +197,86 @@ void DrawStatusBar(AppController& app, const UiDrawSession& d) {
     }
 
     ImGui::PopStyleVar();
+}
+
+} // namespace
+
+void DrawStatusBar(AppController& app, const UiDrawSession& d) {
+    // One frame-line of content plus the window padding above/below it (the side-bar
+    // sizing). A bare GetFrameHeight() under-reserves by the padding, so the single
+    // line overflowed the bar and could be wheel-scrolled half out of view
+    // (NoScrollbar only hides the bar — NoScrollWithMouse is what disables the wheel).
+    // The status bar is exactly one line, always.
+    const float barH = GetStatusBarHeightPx();
+    ImGuiWindowFlags flags =
+        ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
+    if (!::ImGui::BeginViewportSideBar("##StatusBar", ::ImGui::GetMainViewport(), ImGuiDir_Down, barH, flags)) {
+        ::ImGui::End();
+        return;
+    }
+
+    DrawStatusBarContents(app, d);
+
+    ::ImGui::End();
+}
+
+void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBarAutoHidePure::State& state) {
+    using namespace StatusBarAutoHidePure;
+
+    // Build signals from current app state.
+    Signals signals{};
+    {
+        using ConnState = AppController::TrackerConnectivityState;
+        const ConnState connState = app.GetLastTrackerConnectivityState();
+        signals.trackerProblem = (connState == ConnState::ReachableAuthOrConfigError ||
+                                  connState == ConnState::TransportDown || connState == ConnState::ServiceUnavailable);
+        signals.queuedOps = app.GetPendingCreateCount() + static_cast<size_t>(d.cachedPendingFieldEditCount);
+        signals.savingEdit = d.hasInFlightEdit;
+        signals.unreadErrors = SmatchetToastManager::Instance().UnreadErrorCount();
+    }
+
+    // Determine pointer position and whether it's in the reveal zone.
+    const ImGuiIO& io = ::ImGui::GetIO();
+    const bool pointerValid = ::ImGui::IsMousePosValid();
+    bool pointerInZone = false;
+    if (pointerValid) {
+        const ImGuiViewport* vp = ::ImGui::GetMainViewport();
+        const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
+        const float barH = GetStatusBarHeightPx();
+        const float gripInset =
+            !SmatchetBottomPanelDragPure::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
+        pointerInZone = PointerInZone(io.MousePos.y, workBottomY, gripInset, barH, state.visible);
+    }
+
+    const bool anyMouseDown = ::ImGui::IsAnyMouseDown();
+    const double t = ::ImGui::GetTime();
+
+    // Tick the state machine.
+    if (!Tick(state, signals, t, pointerInZone, anyMouseDown)) {
+        return; // Bar is hidden; nothing to draw.
+    }
+
+    // Bar is visible; draw it as a floating overlay above the docked layout.
+    const ImGuiViewport* vp = ::ImGui::GetMainViewport();
+    const float barH = GetStatusBarHeightPx();
+    const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
+    const float gripInset =
+        !SmatchetBottomPanelDragPure::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
+    const ImVec2 barPos(vp->WorkPos.x, workBottomY - gripInset - barH);
+    const ImVec2 barSize(vp->WorkSize.x, barH);
+
+    ::ImGui::SetNextWindowPos(barPos);
+    ::ImGui::SetNextWindowSize(barSize);
+    ::ImGui::SetNextWindowViewport(vp->ID);
+
+    const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                                   ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                   ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking |
+                                   ImGuiWindowFlags_NoScrollWithMouse;
+
+    if (::ImGui::Begin("##StatusBarAutoHide", nullptr, flags)) {
+        DrawStatusBarContents(app, d);
+        ::ImGui::BringWindowToDisplayFront(::ImGui::GetCurrentWindow());
+    }
     ::ImGui::End();
 }

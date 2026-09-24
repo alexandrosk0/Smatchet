@@ -508,6 +508,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.ShowSecondarySideBar = true;
     c.ShowPanel = false;
     c.ShowStatusBar = false;
+    c.StatusBarAutoHide = true;
     c.Density = TrackerConfig::UiDensity::Compact;
     c.PanelDockSide = TrackerConfig::PanelPosition::Right;
     c.PrimarySideBarOnRight = false;

@@ -346,6 +346,7 @@ struct TrackerConfig {
     bool ShowSecondarySideBar = false;
     bool ShowPanel = true;
     bool ShowStatusBar = true;
+    bool StatusBarAutoHide = false;
 
     // UI density: controls ItemSpacing / FramePadding applied each frame.
     enum class UiDensity : int { Compact = 0, Normal = 1, Comfortable = 2 };
