@@ -81,6 +81,16 @@ _require_review_proof() {
         echo "record-review-verdict: WARN — review-artifact requirement bypassed (SMATCHET_SKIP_REVIEW_GATE=1)." >&2
         return 0
     fi
+    # An unresolvable base_ref makes ra_changed_files/ra_changed_lines fail
+    # silently (git diff ... 2>/dev/null || true), so ra_is_substantive would
+    # see zero files/lines and report "not substantive" — the exact
+    # proof-evasion hole this script exists to close (a bad/unfetched
+    # <base-ref> would otherwise let a substantive diff record an unproven
+    # verdict). Fail loud instead of silently treating it as trivial.
+    if ! git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null; then
+        echo "record-review-verdict: base ref '$base_ref' does not resolve — cannot judge substantiveness (fetch it or pass a valid <base-ref>)" >&2
+        return 2
+    fi
     ra_is_substantive branch "$base_ref" || return 0
     local reason="$RA_SUBSTANTIVE_REASON" want_fp have_fp findings_fp
     want_fp="$(ra_fingerprint branch "$base_ref")"
@@ -152,7 +162,7 @@ run_selftest() {
     # ordering makes that assertable (the pass case below stamps this same path).
     # An unfilled findings-form placeholder MUST be rejected, for the grammar
     # reason, with nothing stamped.
-    out="$(cd "$tmpd" && bash "$SELF" "0 findings, <disposition>" 2>&1)" && {
+    out="$(cd "$tmpd" && bash "$SELF" "0 findings, <disposition>" HEAD 2>&1)" && {
         rm -rf "$tmpd"
         echo "record-review-verdict --selftest: FAIL — accepted an unfilled findings placeholder" >&2
         return 1
@@ -170,7 +180,7 @@ run_selftest() {
         return 1
     fi
     # The unfilled n/a placeholder MUST be rejected too.
-    out="$(cd "$tmpd" && bash "$SELF" "n/a — <reason the diff is trivial>" 2>&1)" && {
+    out="$(cd "$tmpd" && bash "$SELF" "n/a — <reason the diff is trivial>" HEAD 2>&1)" && {
         rm -rf "$tmpd"
         echo "record-review-verdict --selftest: FAIL — accepted an unfilled n/a placeholder" >&2
         return 1
@@ -181,13 +191,13 @@ run_selftest() {
         return 1
     fi
     # An empty tail is a usage error, not a stamp.
-    out="$(cd "$tmpd" && bash "$SELF" "" 2>&1)" && {
+    out="$(cd "$tmpd" && bash "$SELF" "" HEAD 2>&1)" && {
         rm -rf "$tmpd"
         echo "record-review-verdict --selftest: FAIL — accepted an empty tail" >&2
         return 1
     }
     # A valid tail MUST stamp the marker and print the head-bound line.
-    out="$(cd "$tmpd" && bash "$SELF" "0 findings")" || {
+    out="$(cd "$tmpd" && bash "$SELF" "0 findings" HEAD)" || {
         rm -rf "$tmpd"
         echo "record-review-verdict --selftest: FAIL — rejected a valid bare-count tail" >&2
         return 1
@@ -310,6 +320,22 @@ run_selftest() {
         echo "record-review-verdict --selftest: FAIL — SMATCHET_SKIP_REVIEW_GATE=1 bypass broken" >&2
         return 1
     fi
+    # An unresolvable base_ref MUST be refused, not silently treated as "no
+    # substantive diff" — ra_changed_files/ra_changed_lines swallow a bad ref's
+    # git-diff error (2>/dev/null || true), so without this guard a substantive
+    # diff against a never-fetched <base-ref> would record an unproven verdict.
+    out="$(cd "$tmp2" && bash "$SELF" "n/a — trivial" no-such-ref-xyz 2>&1)" && {
+        rm -rf "$tmpd" "$tmp2"
+        echo "record-review-verdict --selftest: FAIL — recorded a verdict against an unresolvable base_ref" >&2
+        return 1
+    }
+    case "$out" in
+        *"does not resolve"*) ;;
+        *) rm -rf "$tmpd" "$tmp2"
+           echo "record-review-verdict --selftest: FAIL — unresolvable base_ref rejected for the wrong reason:" >&2
+           printf '%s\n' "$out" | sed 's/^/    /' >&2
+           return 1 ;;
+    esac
 
     rm -rf "$tmpd" "$tmp2"
     echo "record-review-verdict --selftest: PASS"
