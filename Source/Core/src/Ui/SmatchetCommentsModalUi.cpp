@@ -3,6 +3,7 @@
 #include "AiChatTimestamp.h"
 #include "AppController.h"
 #include "ITrackerCollaboration.h"
+#include "MarkdownPreviewRender.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
@@ -88,8 +89,8 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     });
 }
 
-/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • PLAIN-TEXT
-/// body (never markdown). Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
+/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • markdown
+/// body. Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
 /// (both take unix-epoch milliseconds; TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
     if (s_CommentsState.Comments.empty()) {
@@ -115,9 +116,15 @@ void DrawCommentsThread() {
                 ImGui::SetTooltip("%s", abs.c_str());
             }
         }
-        // Body is plain text only and opaque to the UI per the interface contract — never render
-        // markdown or rich formatting. TextWrapped wraps to the child width.
-        ImGui::TextWrapped("%s", c.Body.c_str());
+        // Body renders markdown with the same code path as descriptions (MarkdownPreviewRender
+        // in Full mode). TextWrapped is replaced with PushTextWrapPos + MarkdownPreviewRender::Render
+        // for consistent markdown rendering.
+        ImGui::PushTextWrapPos(0.0f);
+        MarkdownPreviewRender::Options opts;
+        opts.mode = MarkdownPreviewRender::Mode::Full;
+        opts.clickableLinks = true;
+        MarkdownPreviewRender::Render(c.Body, opts);
+        ImGui::PopTextWrapPos();
         ImGui::Separator();
         ImGui::PopID();
     }
