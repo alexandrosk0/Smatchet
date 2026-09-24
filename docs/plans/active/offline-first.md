@@ -586,6 +586,11 @@ Replace it with:
 - `grep -n "TODO(#21b" Source/Core/src/Tracker/TrackerFieldCatalog.cpp` is empty;
 - the new tests pass.
 
+**Implementation log (S1)**
+- Shipped: classifier thread through JiraClient/LinearClient, CatalogOfflinePolicyPure header, offline-first banner logic in AppController, grid pending-edit hold during connectivity-error read-only, reduced SetAvailableUsers scope, 5 test cases (CatalogOfflinePolicyPure + TrackerCatalogBuild + ConnectivityMonitorService variants).
+- Deviations: none.
+- Tests: CatalogOfflinePolicyPure + TrackerCatalogBuild + ConnectivityMonitorService tests pass on Linux; Windows SmatchetTests CI TBD.
+
 ---
 
 ## S2 — feat(offline): shared offline-first primitives
