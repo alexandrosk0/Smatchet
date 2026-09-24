@@ -38,6 +38,7 @@ extern UiDrawSession g_ui;
 
 namespace {
 
+// One docked window captured before the round-trip, and whether it has been re-checked since.
 struct DockedWindowRecord {
     ImGuiID windowId = 0;
     ImGuiID dockId = 0;
@@ -65,11 +66,14 @@ std::vector<DockedWindowRecord> SnapshotDockedWindows() {
     return out;
 }
 
+// True once the fullscreen mobile shell window was submitted on the last completed frame.
 bool MobileShellIsLive() {
     const ImGuiWindow* shell = ::ImGui::FindWindowByName("##MobileShell");
     return shell != nullptr && WasActiveLastFrame(*shell);
 }
 
+// Desktop -> Mobile -> Desktop, then assert every pre-flip docked window is back in its exact
+// dock node on the first frame it is active again.
 void RegisterRoundTripKeepsDockingVariant(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "MobileDesktopLayout", "RoundTrip_KeepsEveryWindowDocked");
     t->TestFunc = [](ImGuiTestContext* ctx) {
@@ -142,6 +146,7 @@ void RegisterRoundTripKeepsDockingVariant(ImGuiTestEngine* engine) {
 
 } // namespace
 
+// Entry point called from SmatchetRegisterAllUiTests (ui_tests_registry.cpp).
 extern "C" void SmatchetRegisterMobileDesktopLayoutRoundtripTests(ImGuiTestEngine* engine) {
     RegisterRoundTripKeepsDockingVariant(engine);
 }
