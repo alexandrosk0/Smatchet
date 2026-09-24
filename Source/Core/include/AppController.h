@@ -744,6 +744,7 @@ class AppController : public IAppThreading,
     /** Latest reachability from background probe (or after a successful live backend request).
      *  De-inlined (Phase 3) — delegates to ConnectivityMonitorService (a complete type only in the .cpp). */
     TrackerConnectivityState GetLastTrackerConnectivityState() const override;
+    void RequestTrackerProbeNow();
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog

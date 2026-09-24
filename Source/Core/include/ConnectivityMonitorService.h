@@ -18,10 +18,11 @@
 // THREADING: the FSM state is UI-thread-only by contract (driven from the per-frame
 // TickTrackerConnectivityMonitor). No mutex — the std::future is the only cross-thread handle and
 // it stays owned by the single UI-thread FSM. The two std::atomic<bool> latches are read by UI
-// consumers on any frame. lastTicketSyncWarning_ has a second writer (TicketSyncService, via the
-// adapter's re-pointed SetLastTrackerTicketSyncWarning) but both writers run on the UI tick, so the
-// string keeps a single logical owner. The catalog-warning reads/clears go through the deps adapter
-// UNLOCKED, preserving the current UI-thread-only single-kick-time-latch discipline.
+// consumers on any frame. lastState_ is atomic because workers and the command/MCP threads read it.
+// lastTicketSyncWarning_ has a second writer (TicketSyncService, via the adapter's re-pointed
+// SetLastTrackerTicketSyncWarning) but both writers run on the UI tick, so the string keeps a single
+// logical owner. The catalog-warning reads/clears go through the deps adapter UNLOCKED, preserving
+// the current UI-thread-only single-kick-time-latch discipline.
 
 #include <atomic>
 #include <chrono>
@@ -45,7 +46,7 @@ class ConnectivityMonitorService {
     void TickTrackerConnectivityMonitor(const TrackerConfig& cfg);
 
     /// Latest reachability from background probe (or after a successful live backend request).
-    TrackerConnectivityState GetLastState() const { return lastState_; }
+    TrackerConnectivityState GetLastState() const { return lastState_.load(); }
 
     /// Set when a live JQL refresh failed with a transport-style error; UI may show cached
     /// tickets. Returns a const reference (callers bind a reference — do not return by value).
@@ -56,6 +57,10 @@ class ConnectivityMonitorService {
         lastTicketSyncWarning_.clear();
         lastTicketSyncWarningTransient_ = false;
     }
+
+    /// UI thread only: probe on the next tick instead of waiting out the interval (a live request
+    /// just failed at the transport level, or a test brought the network back).
+    void RequestProbeNow() { nextProbeAt_ = std::chrono::steady_clock::now(); }
 
     /// One consolidated banner for field-catalog error/warning, ticket-list cache warning, and an
     /// optional session note (e.g. Views dashboard users-fetch warning). Pure given the catalog /
@@ -87,7 +92,7 @@ class ConnectivityMonitorService {
         lastTicketSyncWarning_ = message;
         lastTicketSyncWarningTransient_ = transient && !message.empty();
     }
-    void SetLastState(TrackerConnectivityState state) { lastState_ = state; }
+    void SetLastState(TrackerConnectivityState state) { lastState_.store(state); }
     void SetNextProbeAt(std::chrono::steady_clock::time_point at) { nextProbeAt_ = at; }
 
     /// Push replay timers forward while the transport is down (also called internally by
@@ -122,7 +127,7 @@ class ConnectivityMonitorService {
     std::chrono::steady_clock::time_point nextProbeAt_{};
     bool probeInFlight_ = false;
     std::future<TrackerReachabilityProbeResult> probeFuture_;
-    TrackerConnectivityState lastState_ = TrackerConnectivityState::Unknown;
+    std::atomic<TrackerConnectivityState> lastState_{TrackerConnectivityState::Unknown};
     std::string lastDiagnostic_;
     bool recoveryPending_ = false;
     std::atomic<bool> fieldCatalogRefetchAfterLiveTicketSyncPending_{false};
