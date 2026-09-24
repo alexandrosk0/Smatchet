@@ -86,6 +86,9 @@ User decisions:
    - No `// ----` banner lines, and no runs of 2+ bare `//` lines.
    - Comment what the code does and why. Never write `PR <n>`.
    - `SMATCHET_DEVIATION(...)` markers must be a single line directly above the target.
+   - In markdown, `AGENTS.md § <Section>` must name a heading of the root `AGENTS.md` or of
+     `docs/agent-rules/*.md` (CI `test-doc-anchors` fails otherwise). For a leaf doc, write
+     'the "<Section>" section of `Source/Core/src/<ctx>/AGENTS.md`' instead.
 7. **Size limits:** functions ≤ 120 lines (≤ 200 for `Draw*`/`Render*` or anything under `Ui/`),
    ≤ 30 branches. Source files stay < 67 KB. `AGENTS.md` stays ≤ 150 lines.
 8. **Registering a new test `tests/Core/X.test.cpp`:** list it in `tests/CMakeLists.txt`, or configure
@@ -1737,7 +1740,7 @@ and paste the per-rule counts into the PR body (the calibration baseline).
   - Append these triggers to `triggers:`: `connectivity`, `transport`, `stale`, `cached`, `offline-first`, `freshness`.
 - **Banner:** change both banner lines' `v2` to `v3`.
 - **Hard invariants:** add three bullets:
-  - `**Cache-first reads.** A network-backed view renders its cached value with a DataFreshnessCue; it never shows loading-only while a cache exists (Ui/AGENTS.md § Offline-first reads).`
+  - `**Cache-first reads.** A network-backed view renders its cached value with a DataFreshnessCue; it never shows loading-only while a cache exists (see the "Offline-first reads" section of `Source/Core/src/Ui/AGENTS.md`).`
   - `**Never wipe on error.** A failed fetch keeps whatever was cached and backs off; transport kind is preserved (Tracker/AGENTS.md).`
   - `**Queue first offline.** A write made while the tracker is unreachable persists to the queue immediately and replays on reconnect.`
 - **Workflow step 4:** replace it with: `Build (cmake --preset posix-core-check / ninja-test-linux on Linux; ninja-iter-msvc on Windows). Offline smoke: bucket A — wrap a test in smatchet_tests::ScopedFakeNetworkReset and set GlobalFakeNetwork() to TransportDown (tests/support/FakeNetworkSwitch.h); bucket E — bash scripts/dev/test-ui-offline-first.sh; manual — block the tracker host (hosts file / firewall) or disconnect, make the change, reconnect, confirm replay + audit entry. There is no in-app network toggle.`
