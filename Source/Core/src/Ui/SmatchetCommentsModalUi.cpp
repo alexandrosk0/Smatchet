@@ -89,7 +89,7 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     });
 }
 
-/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • markdown
+/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • plain-text
 /// body. Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
 /// (both take unix-epoch milliseconds; TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
@@ -116,15 +116,9 @@ void DrawCommentsThread() {
                 ImGui::SetTooltip("%s", abs.c_str());
             }
         }
-        // Body renders markdown with the same code path as descriptions (MarkdownPreviewRender
-        // in Full mode). TextWrapped is replaced with PushTextWrapPos + MarkdownPreviewRender::Render
-        // for consistent markdown rendering.
-        ImGui::PushTextWrapPos(0.0f);
-        MarkdownPreviewRender::Options opts;
-        opts.mode = MarkdownPreviewRender::Mode::Full;
-        opts.clickableLinks = true;
-        MarkdownPreviewRender::Render(c.Body, opts);
-        ImGui::PopTextWrapPos();
+        // Body: plain-text comment body. Tracker backends store all comments as plain text,
+        // never markdown, so we render as-is without markdown parsing.
+        ImGui::TextWrapped("%s", c.Body.c_str());
         ImGui::Separator();
         ImGui::PopID();
     }

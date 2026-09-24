@@ -153,7 +153,6 @@ void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::s
 // (empty → not yet fetched / no comments) — this function only references it. A long
 // thread renders inside a height-capped scrollable child; the wheel reaches it via the
 // pre-NewFrame router (SmatchetImGuiHost calls RouteWheelToScrollableTooltipBeforeNewFrame).
-// Renders markdown with the same code path as description tooltips.
 void RenderCommentsCellTooltip(const std::string& commentBlob) {
     if (commentBlob.empty()) {
         ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
@@ -169,20 +168,12 @@ void RenderCommentsCellTooltip(const std::string& commentBlob) {
         ImGui::BeginChild("##comments_tooltip_scroll", ImVec2(wrapWidth + ImGui::GetStyle().ScrollbarSize, maxHeight),
                           false);
         ImGui::PushTextWrapPos(wrapWidth);
-        MarkdownPreviewRender::Options opts;
-        opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-        opts.clickableLinks = false;
-        opts.wrapWidth = wrapWidth;
-        MarkdownPreviewRender::Render(commentBlob, opts);
+        ImGui::TextUnformatted(commentBlob.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndChild();
     } else {
         ImGui::PushTextWrapPos(wrapWidth);
-        MarkdownPreviewRender::Options opts;
-        opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-        opts.clickableLinks = false;
-        opts.wrapWidth = wrapWidth;
-        MarkdownPreviewRender::Render(commentBlob, opts);
+        ImGui::TextUnformatted(commentBlob.c_str());
         ImGui::PopTextWrapPos();
     }
     ImGui::EndTooltip();
