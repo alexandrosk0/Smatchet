@@ -1,9 +1,10 @@
 <!-- index-summary: Multiple Jira origins with inherited credentials and a Views domain picker. -->
 # Plan — Multiple Jira backend domains
+<!-- plan-date: 2026-09-11 -->
 
 > **Slug**: `multi-jira-backend-domains`
 >
-> **Status**: `active`
+> **Status**: `shipped`
 >
 > **Usage**: product feature requested by the user: extra Jira sites, credentials that default to the first instance, domain switcher in Views - Jira.
 
@@ -117,6 +118,7 @@ N/A — new helper TU, no whale extraction.
 - `ninja-test-linux` configure + build + `ctest --preset ninja-test-linux` — **pass** (SmatchetTsanTests, 0.60s).
 - New doctest cases (host normalize, inherit, cache key, add/remove/select, persist-prepare, Save/Load extras, extras domain sanitize, same-kind host recreate) — **pass**.
 - Dual-target MSVC / bucket-E / `Smatchet.exe` Views combo — **manual residue** (linux-container).
+- Squash-merged as #2212 (`050bcceb`). Intent body could not be rewritten (not agent-managed); `intent-out-of-band` + `cr-out-of-band` / `cr-disposition:oss-threshold-no-auto-review` carried the last poll.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
