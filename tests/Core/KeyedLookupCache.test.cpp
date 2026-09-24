@@ -4,6 +4,7 @@
 
 #include <doctest/doctest.h>
 
+#include <atomic>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -144,12 +145,16 @@ TEST_CASE("Concurrent TryBeginFetch on same key, at most one wins") {
     auto now = Clock::now();
 
     std::vector<std::thread> threads;
-    std::vector<bool> results(8);
+    std::vector<std::atomic<bool>> results(8);
+    for (auto& r : results) {
+        r.store(false, std::memory_order_relaxed);
+    }
 
     for (int i = 0; i < 8; ++i) {
         threads.emplace_back([&, i](){
             KeyedLookupCache<int>::Ticket t;
-            results[i] = cache.TryBeginFetch("shared", TrackerConnectivityState::AuthenticatedReachable, now, t);
+            results[i].store(cache.TryBeginFetch("shared", TrackerConnectivityState::AuthenticatedReachable, now, t),
+                             std::memory_order_relaxed);
         });
     }
 
@@ -158,8 +163,8 @@ TEST_CASE("Concurrent TryBeginFetch on same key, at most one wins") {
     }
 
     int wins = 0;
-    for (bool r : results) {
-        if (r) ++wins;
+    for (const auto& r : results) {
+        if (r.load(std::memory_order_relaxed)) ++wins;
     }
     CHECK(wins == 1);
 }
