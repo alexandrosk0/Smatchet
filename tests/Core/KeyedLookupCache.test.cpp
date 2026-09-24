@@ -1,4 +1,5 @@
 #include "KeyedLookupCache.h"
+#include "SmatchetResult.h"
 #include "Tracker/TrackerError.h"
 
 #include <doctest/doctest.h>
@@ -8,6 +9,7 @@
 #include <vector>
 
 using namespace smatchet::offline;
+using smatchet::Result;
 
 TEST_SUITE("KeyedLookupCache") {
 
@@ -115,7 +117,8 @@ TEST_CASE("RunKeyedFetch with exception records Unknown failure and rethrows") {
     KeyedLookupCache<int>::Ticket t;
     CHECK(cache.TryBeginFetch("key1", TrackerConnectivityState::AuthenticatedReachable, now, t));
 
-    CHECK_THROWS(RunKeyedFetch(cache, t, [](){ throw std::runtime_error("test"); }));
+    auto lambda = []() -> Result<int, TrackerError> { throw std::runtime_error("test"); };
+    CHECK_THROWS(RunKeyedFetch(cache, t, lambda));
 
     auto entry = cache.Get("key1");
     CHECK_FALSE(entry.InFlight);
