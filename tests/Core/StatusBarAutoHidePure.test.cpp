@@ -1,240 +1,190 @@
-#include <doctest/doctest.h>
+// Pure-logic coverage for the status-bar Auto-Hide state machine (StatusBarAutoHidePure.h).
+// Pins the contract the impure driver (DrawStatusBarAutoHide) feeds live signals + pointer
+// geometry into: attention states pin the bar, any signal change flashes it, the bottom-edge
+// hover reveal needs a dwell and never starts under a held button, and the reveal zone is a
+// thin band at the bottom (lifted above the bottom-panel reveal grip when it is present).
 
 #include "Ui/StatusBarAutoHidePure.h"
 
+#include <doctest/doctest.h>
+
 using namespace StatusBarAutoHidePure;
 
+namespace {
+
+const Signals kIdle{false, 0, false, 0};
+const Signals kOffline{true, 0, false, 0};
+
+// Drives the pointer into the zone long enough to reveal the bar; returns the time it showed.
+double RevealByHover(State& state, const Signals& sig, double enterT) {
+    Tick(state, sig, enterT, true, false);
+    const double shownT = enterT + kHoverDwellSeconds + 0.01;
+    REQUIRE(Tick(state, sig, shownT, true, false));
+    return shownT;
+}
+
+} // namespace
+
 TEST_SUITE("StatusBarAutoHidePure") {
-    TEST_CASE("ModeFromConfig") {
-        // !show => Hidden
+    TEST_CASE("ModeFromConfig maps the two config flags to three modes") {
         CHECK_EQ(ModeFromConfig(false, false), Mode::Hidden);
         CHECK_EQ(ModeFromConfig(false, true), Mode::Hidden);
-
-        // show && !autoHide => Always
         CHECK_EQ(ModeFromConfig(true, false), Mode::Always);
-
-        // show && autoHide => AutoHide
         CHECK_EQ(ModeFromConfig(true, true), Mode::AutoHide);
     }
 
-    TEST_CASE("first frame doesn't flash") {
-        State state;
-        Signals sig{true, 0, false, 0}; // has problem
-        bool visible = Tick(state, sig, 0.0, false, false);
-        CHECK_FALSE(state.flashUntil > 0);
-        CHECK(visible); // needs attention
+    TEST_CASE("first frame records the baseline without flashing") {
+        State idle;
+        CHECK_FALSE(Tick(idle, kIdle, 0.0, false, false));
+        CHECK_EQ(idle.flashUntil, 0.0);
+
+        State offline;
+        CHECK(Tick(offline, kOffline, 0.0, false, false)); // visible for attention, not a flash
+        CHECK_EQ(offline.flashUntil, 0.0);
     }
 
-    TEST_CASE("change in signals flashes") {
+    TEST_CASE("entering an attention state arms a flash") {
         State state;
-        Signals sig1{false, 0, false, 0}; // no attention
-        Signals sig2{true, 0, false, 0};  // has problem
-
-        // First frame, no flash.
-        Tick(state, sig1, 0.0, false, false);
-        CHECK_EQ(state.flashUntil, 0);
-
-        // Change at t=1, flash starts.
-        Tick(state, sig2, 1.0, false, false);
-        CHECK_EQ(state.flashUntil, 1.0 + kFlashSeconds);
+        Tick(state, kIdle, 0.0, false, false);
+        CHECK(Tick(state, kOffline, 1.0, false, false));
+        CHECK_EQ(state.flashUntil, doctest::Approx(1.0 + kFlashSeconds));
     }
 
-    TEST_CASE("flash expires") {
+    TEST_CASE("recovering from attention flashes, then the bar hides") {
         State state;
-        Signals sig1{false, 0, false, 0};
-        Signals sig2{true, 0, false, 0};
-
-        Tick(state, sig1, 0.0, false, false);
-        Tick(state, sig2, 1.0, false, false);
-
-        // During flash, visible.
-        CHECK(Tick(state, sig1, 2.0, false, false));
-
-        // After flash expires, hidden (no other attention).
-        CHECK_FALSE(Tick(state, sig1, 1.0 + kFlashSeconds + 0.1, false, false));
+        Tick(state, kOffline, 0.0, false, false);
+        CHECK(Tick(state, kOffline, 5.0, false, false));
+        // offline -> online at t=6: no attention any more, but the change is shown.
+        CHECK(Tick(state, kIdle, 6.0, false, false));
+        CHECK(Tick(state, kIdle, 6.0 + kFlashSeconds - 0.1, false, false));
+        CHECK_FALSE(Tick(state, kIdle, 6.0 + kFlashSeconds + 0.1, false, false));
     }
 
-    TEST_CASE("attention keeps bar visible") {
+    TEST_CASE("any counter change flashes, including a decrease") {
         State state;
-        Signals sig{true, 0, false, 0};
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK(Tick(state, sig, 100.0, false, false)); // far in future, still visible
+        Tick(state, Signals{false, 2, false, 0}, 0.0, false, false);
+        CHECK(Tick(state, kIdle, 1.0, false, false)); // queue drained
+        CHECK_EQ(state.flashUntil, doctest::Approx(1.0 + kFlashSeconds));
     }
 
-    TEST_CASE("Unknown connectivity doesn't pin the bar") {
-        // Only auth/config error, transport down, service unavailable count as problems.
-        // Unknown state should not block the bar.
-        State state;
-        Signals sig{false, 0, false, 0}; // no problem, no queued ops, no in-flight, no errors
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK_FALSE(Tick(state, sig, 1.0, false, false)); // bar hides
+    TEST_CASE("each attention signal pins the bar") {
+        const Signals pinned[] = {kOffline, Signals{false, 1, false, 0}, Signals{false, 0, true, 0},
+                                  Signals{false, 0, false, 3}};
+        for (const Signals& sig : pinned) {
+            State state;
+            Tick(state, sig, 0.0, false, false);
+            CHECK(Tick(state, sig, 100.0, false, false));
+        }
     }
 
-    TEST_CASE("queued ops keep bar visible") {
+    TEST_CASE("idle signals keep the bar hidden") {
+        // Unknown connectivity maps to trackerProblem=false, so a setup with no tracker does
+        // not pin the bar.
         State state;
-        Signals sig{false, 1, false, 0}; // 1 queued op
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK(Tick(state, sig, 100.0, false, false));
+        Tick(state, kIdle, 0.0, false, false);
+        CHECK_FALSE(Tick(state, kIdle, 1.0, false, false));
     }
 
-    TEST_CASE("in-flight edit keeps bar visible") {
+    TEST_CASE("hover reveal needs the dwell time") {
         State state;
-        Signals sig{false, 0, true, 0}; // saving
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK(Tick(state, sig, 100.0, false, false));
+        Tick(state, kIdle, 0.0, false, false);
+        CHECK_FALSE(Tick(state, kIdle, 0.10, true, false));
+        CHECK_FALSE(Tick(state, kIdle, 0.10 + kHoverDwellSeconds - 0.01, true, false));
+        CHECK(Tick(state, kIdle, 0.10 + kHoverDwellSeconds + 0.01, true, false));
     }
 
-    TEST_CASE("unread errors keep bar visible") {
+    TEST_CASE("a held button blocks starting the dwell") {
         State state;
-        Signals sig{false, 0, false, 3}; // 3 errors
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK(Tick(state, sig, 100.0, false, false));
+        Tick(state, kIdle, 0.0, false, false);
+        // Dragging along the bottom edge (scrollbar / splitter): never reveals.
+        CHECK_FALSE(Tick(state, kIdle, 0.1, true, true));
+        CHECK_FALSE(Tick(state, kIdle, 1.0, true, true));
+        CHECK_EQ(state.hoverSince, -1.0);
+        // Released: the dwell starts from the release.
+        CHECK_FALSE(Tick(state, kIdle, 1.1, true, false));
+        CHECK(Tick(state, kIdle, 1.1 + kHoverDwellSeconds + 0.01, true, false));
     }
 
-    TEST_CASE("hover dwell requires time in zone") {
+    TEST_CASE("a held button never hides a bar that is already visible") {
         State state;
-        Signals sig{false, 0, false, 0}; // no attention
-
-        Tick(state, sig, 0.0, false, false);
-        CHECK_FALSE(Tick(state, sig, 0.1, true, false)); // in zone but too fast
-
-        // Enough dwell time (0.1 + 0.25 = 0.35, use 0.36 to avoid floating-point boundary).
-        CHECK(Tick(state, sig, 0.36, true, false));
+        Tick(state, kIdle, 0.0, false, false);
+        const double shownT = RevealByHover(state, kIdle, 0.01);
+        CHECK(Tick(state, kIdle, shownT + 0.01, true, true));
+        CHECK(Tick(state, kIdle, shownT + 2.0, true, true)); // held for a long press
     }
 
-    TEST_CASE("mouse button blocks pointer reveal") {
+    TEST_CASE("hovering a bar shown for attention keeps it after the attention clears") {
         State state;
-        Signals sig{false, 0, false, 0};
-
-        Tick(state, sig, 0.0, false, false);
-
-        // Button down while in zone: dwell doesn't start.
-        Tick(state, sig, 0.1, true, true);
-        CHECK_EQ(state.hoverSince, -1);
-
-        // Release button and wait: dwell starts anew.
-        Tick(state, sig, 0.2, true, false);
-        CHECK_GE(state.hoverSince, 0);
+        Tick(state, kOffline, 0.0, false, false);
+        CHECK(Tick(state, kOffline, 1.0, true, true)); // pointer on the bar, button down
+        // Attention clears; flash runs out; pointer still on the bar keeps it open.
+        Tick(state, kIdle, 2.0, true, false);
+        CHECK(Tick(state, kIdle, 2.0 + kFlashSeconds + 1.0, true, false));
     }
 
-    TEST_CASE("button down doesn't hide a visible bar") {
+    TEST_CASE("grace period after the pointer leaves a revealed bar") {
         State state;
-        Signals sig{false, 0, false, 0};
-
-        Tick(state, sig, 0.0, false, false);
-        // Enter zone at t=0.01, then wait until dwell time is met.
-        Tick(state, sig, 0.01, true, false);
-        Tick(state, sig, 0.26, true, false);
-        CHECK(state.visible);
-
-        // Button down: bar stays visible.
-        bool stillVisible = Tick(state, sig, 0.27, true, true);
-        CHECK(stillVisible);
+        Tick(state, kIdle, 0.0, false, false);
+        const double shownT = RevealByHover(state, kIdle, 0.01);
+        const double leftT = shownT + 0.01;
+        CHECK(Tick(state, kIdle, leftT, false, false));
+        CHECK(Tick(state, kIdle, leftT + kHoverGraceSeconds - 0.05, false, false));
+        CHECK_FALSE(Tick(state, kIdle, leftT + kHoverGraceSeconds + 0.05, false, false));
     }
 
-    TEST_CASE("grace period after pointer leaves") {
+    TEST_CASE("passing over the edge before the dwell never flickers the bar") {
         State state;
-        Signals sig{false, 0, false, 0};
-
-        Tick(state, sig, 0.0, false, false);
-        // Enter zone and establish dwell (enter at t=0.01, dwell at t=0.26+).
-        Tick(state, sig, 0.01, true, false);
-        Tick(state, sig, 0.26, true, false);
-        CHECK(state.visible);
-
-        // Leave zone.
-        Tick(state, sig, 0.27, false, false);
-        CHECK(state.hoverLeftAt >= 0);
-        CHECK(state.visible); // grace is active
-
-        // Grace expires (need t > 0.27 + 0.4 = 0.67 for grace to expire).
-        CHECK_FALSE(Tick(state, sig, 0.68, false, false));
+        Tick(state, kIdle, 0.0, false, false);
+        CHECK_FALSE(Tick(state, kIdle, 0.10, true, false));
+        CHECK_FALSE(Tick(state, kIdle, 0.15, false, false));
+        CHECK_EQ(state.hoverLeftAt, -1.0);
+        CHECK_FALSE(Tick(state, kIdle, 0.20, false, false));
     }
 
-    TEST_CASE("pointer re-entering resets dwell") {
+    TEST_CASE("re-entering the zone restarts the dwell") {
         State state;
-        Signals sig{false, 0, false, 0};
-
-        Tick(state, sig, 0.0, false, false);
-        // Enter zone but not long enough.
-        Tick(state, sig, 0.1, true, false);
-        double firstHoverSince = state.hoverSince;
-
-        // Leave.
-        Tick(state, sig, 0.15, false, false);
-        CHECK_EQ(state.hoverSince, -1);
-
-        // Re-enter.
-        Tick(state, sig, 0.2, true, false);
-        CHECK_GT(state.hoverSince, firstHoverSince); // timer restarted
+        Tick(state, kIdle, 0.0, false, false);
+        Tick(state, kIdle, 0.10, true, false);
+        Tick(state, kIdle, 0.15, false, false);
+        Tick(state, kIdle, 0.20, true, false);
+        CHECK_EQ(state.hoverSince, doctest::Approx(0.20));
+        CHECK_FALSE(Tick(state, kIdle, 0.10 + kHoverDwellSeconds + 0.01, true, false));
     }
 
-    TEST_CASE("PointerInZone: hidden bar, no inset") {
-        // Hidden bar, no grip inset: zone is kRevealZonePx above bottom.
-        const float workBottom = 1000.0f;
+    TEST_CASE("PointerInZone: hidden bar, no grip - only the bottom band") {
+        const float bottom = 1000.0f;
         const float barH = 24.0f;
-        const float inset = 0.0f;
-
-        // Just below threshold: not in zone.
-        CHECK_FALSE(PointerInZone(workBottom - kRevealZonePx + 1, workBottom, inset, barH, false));
-
-        // At threshold: in zone.
-        CHECK(PointerInZone(workBottom - kRevealZonePx, workBottom, inset, barH, false));
-
-        // Well above: in zone.
-        CHECK(PointerInZone(workBottom - kRevealZonePx - 10, workBottom, inset, barH, false));
+        CHECK(PointerInZone(bottom - 1.0f, bottom, 0.0f, barH, false));
+        CHECK(PointerInZone(bottom - kRevealZonePx, bottom, 0.0f, barH, false));
+        CHECK_FALSE(PointerInZone(bottom - kRevealZonePx - 1.0f, bottom, 0.0f, barH, false));
+        CHECK_FALSE(PointerInZone(bottom - 500.0f, bottom, 0.0f, barH, false)); // mid-screen
     }
 
-    TEST_CASE("PointerInZone: hidden bar with grip inset") {
-        // Hidden bar, grip inset > kRevealZonePx: zone is inset height.
-        const float workBottom = 1000.0f;
+    TEST_CASE("PointerInZone: hidden bar with the reveal grip - the grip band") {
+        const float bottom = 1000.0f;
         const float barH = 24.0f;
-        const float gripInset = 10.0f;
-
-        // Below grip inset: not in zone.
-        CHECK_FALSE(PointerInZone(workBottom - gripInset + 1, workBottom, gripInset, barH, false));
-
-        // At grip inset: in zone.
-        CHECK(PointerInZone(workBottom - gripInset, workBottom, gripInset, barH, false));
+        const float grip = 7.0f;
+        CHECK(PointerInZone(bottom - grip, bottom, grip, barH, false));
+        CHECK_FALSE(PointerInZone(bottom - grip - 1.0f, bottom, grip, barH, false));
+        // An inset thinner than the default band never shrinks the zone.
+        CHECK(PointerInZone(bottom - kRevealZonePx, bottom, 2.0f, barH, false));
     }
 
-    TEST_CASE("PointerInZone: visible bar") {
-        // Visible bar: zone is immediately above the bar position.
-        const float workBottom = 1000.0f;
+    TEST_CASE("PointerInZone: visible bar - the bar plus the grip below it") {
+        const float bottom = 1000.0f;
         const float barH = 24.0f;
-        const float inset = 7.0f;
-
-        const float barTop = workBottom - inset - barH;
-
-        // Below bar top: not in zone.
-        CHECK_FALSE(PointerInZone(barTop - 1, workBottom, inset, barH, true));
-
-        // At bar top: in zone.
-        CHECK(PointerInZone(barTop, workBottom, inset, barH, true));
-
-        // Inside bar: in zone.
-        CHECK(PointerInZone(barTop + 5, workBottom, inset, barH, true));
+        const float grip = 7.0f;
+        const float barTop = bottom - grip - barH;
+        CHECK(PointerInZone(barTop, bottom, grip, barH, true));
+        CHECK(PointerInZone(barTop + 5.0f, bottom, grip, barH, true));
+        CHECK(PointerInZone(bottom - 1.0f, bottom, grip, barH, true));
+        CHECK_FALSE(PointerInZone(barTop - 1.0f, bottom, grip, barH, true));
     }
 
-    TEST_CASE("Signals equality") {
-        Signals sig1{true, 5, false, 2};
-        Signals sig2{true, 5, false, 2};
-        Signals sig3{false, 5, false, 2};
-
-        CHECK_EQ(sig1, sig2);
-        CHECK_NE(sig1, sig3);
-    }
-
-    TEST_CASE("NeedsAttention") {
-        CHECK(NeedsAttention({true, 0, false, 0}));        // problem
-        CHECK(NeedsAttention({false, 1, false, 0}));       // queued
-        CHECK(NeedsAttention({false, 0, true, 0}));        // saving
-        CHECK(NeedsAttention({false, 0, false, 1}));       // errors
-        CHECK_FALSE(NeedsAttention({false, 0, false, 0})); // nothing
+    TEST_CASE("Signals equality and NeedsAttention") {
+        CHECK(Signals{true, 5, false, 2} == Signals{true, 5, false, 2});
+        CHECK(Signals{true, 5, false, 2} != Signals{false, 5, false, 2});
+        CHECK_FALSE(NeedsAttention(kIdle));
+        CHECK(NeedsAttention(kOffline));
     }
 }

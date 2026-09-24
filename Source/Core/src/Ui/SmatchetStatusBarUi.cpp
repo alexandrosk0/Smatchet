@@ -236,33 +236,20 @@ void DrawStatusBarAutoHide(AppController& app, const UiDrawSession& d, StatusBar
         signals.unreadErrors = SmatchetToastManager::Instance().UnreadErrorCount();
     }
 
-    // Determine pointer position and whether it's in the reveal zone.
-    const ImGuiIO& io = ::ImGui::GetIO();
-    const bool pointerValid = ::ImGui::IsMousePosValid();
-    bool pointerInZone = false;
-    if (pointerValid) {
-        const ImGuiViewport* vp = ::ImGui::GetMainViewport();
-        const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
-        const float barH = GetStatusBarHeightPx();
-        const float gripInset =
-            !SmatchetBottomPanelDrag::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
-        pointerInZone = PointerInZone(io.MousePos.y, workBottomY, gripInset, barH, state.visible);
-    }
-
-    const bool anyMouseDown = ::ImGui::IsAnyMouseDown();
-    const double t = ::ImGui::GetTime();
-
-    // Tick the state machine.
-    if (!Tick(state, signals, t, pointerInZone, anyMouseDown)) {
-        return; // Bar is hidden; nothing to draw.
-    }
-
-    // Bar is visible; draw it as a floating overlay above the docked layout.
+    // Layout: the bar floats at the bottom of the work area, lifted above the bottom-panel
+    // reveal grip while the panel is collapsed so the grip stays grabbable.
     const ImGuiViewport* vp = ::ImGui::GetMainViewport();
     const float barH = GetStatusBarHeightPx();
     const float workBottomY = vp->WorkPos.y + vp->WorkSize.y;
     const float gripInset =
-        !SmatchetBottomPanelDrag::IsPanelVisible() ? SmatchetBottomPanelDragPure::kRevealGripHeightPx : 0.0f;
+        SmatchetBottomPanelDrag::IsPanelVisible() ? 0.0f : SmatchetBottomPanelDragPure::kRevealGripHeightPx;
+
+    const bool pointerInZone = ::ImGui::IsMousePosValid() &&
+                               PointerInZone(::ImGui::GetIO().MousePos.y, workBottomY, gripInset, barH, state.visible);
+    if (!Tick(state, signals, ::ImGui::GetTime(), pointerInZone, ::ImGui::IsAnyMouseDown())) {
+        return;
+    }
+
     const ImVec2 barPos(vp->WorkPos.x, workBottomY - gripInset - barH);
     const ImVec2 barSize(vp->WorkSize.x, barH);
 

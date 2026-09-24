@@ -188,7 +188,7 @@ constexpr char kDefaultImGuiDockLayoutIni[] =
 
 template <typename T> struct FieldDesc {
     const char* key;
-    T TrackerConfig::*member;
+    T TrackerConfig::* member;
 };
 
 // Plain string / bool / int fields: `cfg.member = j.value(key, cfg.member)` on Load,

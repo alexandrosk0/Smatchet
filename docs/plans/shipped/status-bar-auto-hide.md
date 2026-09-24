@@ -83,22 +83,27 @@ N/A — this plan introduces new files and helpers but does not extract existing
 
 ## Implementation log
 
-- `8fdd684` · feat(status-bar): Add Auto-Hide mode with pointer reveal and attention flash — all 14 files implemented, 25+ test cases added, lint checks pass
+- `8fdd684` · feat(status-bar): Add Auto-Hide mode with pointer reveal and attention flash
+- `832ffac` · fix(status-bar): Android build — `SmatchetBottomPanelDrag::IsPanelVisible` + `<cstddef>`
+- review-pass commit · fix(status-bar): reveal-zone inversion, flash-on-any-change, no-flicker grace, held-button semantics (see § Deviations 1)
 
 ## Deviations from plan
 
-1. **Floating-point dwell-time precision** (test timing): The dwell-time calculation `t - hoverSince >= kHoverDwellSeconds` exhibits floating-point rounding at the exact boundary (0.35 - 0.1 = 0.24999... < 0.25). Tests adjusted to use slightly later timestamps (0.36, 0.26, 0.01+0.26) to avoid the boundary and ensure reliable dwell-time detection. This has no impact on the shipped logic — the state machine correctly accumulates time; only test timings needed adjustment.
+1. **Review-pass fixes to the state machine** (follow-up commit on the same PR). The first implementation diverged from the plan in four ways, and its tests pinned the divergence:
+   - `PointerInZone` for a hidden bar returned `mouseY <= workBottom - band`, true almost everywhere on screen, so any resting pointer revealed the bar. Now `mouseY >= workBottom - max(kRevealZonePx, insetPx)`.
+   - The flash fired only on a transition *into* attention, where the bar is already visible, so it had no effect. It now fires on any signal change, so recoveries such as offline -> online are shown.
+   - Leaving the zone before the dwell armed the grace period, so passing over the bottom edge flickered the bar for 0.4 s. Grace is now armed only when leaving a visible bar.
+   - A held mouse button reset the hover, hiding a bar that was already visible. It now only blocks *starting* the dwell (`Source/Core/include/Ui/StatusBarAutoHidePure.h:94`).
 
-2. **Test structure for hover establishment** (test design): Tests that need to verify "bar is visible after dwell" require two Tick() calls: one to enter the zone (hoverSince=t), then a second at a later time to accumulate dwell. This is correct semantics (you can't have dwell on the same frame you enter), but differs from an intuitive single-call test structure. Test comments clarified the two-step pattern.
+   `StatusBarAutoHidePure.test.cpp` was rewritten around the specified behaviour. 6 of its 18 cases fail against the first implementation.
+2. **Test timing margins.** Dwell checks sample at `kHoverDwellSeconds ± 0.01` instead of the exact boundary, because `double` subtraction makes exact-boundary checks brittle.
 
 ## Verification (actual)
 
-- **Bucket A (ctest)**: 443 unit tests pass (all StatusBarAutoHidePure test cases + full suite); no failures.
-  - StatusBarAutoHidePure: 25 test cases covering mode mapping, flash expiry, signal transitions, hover dwell (two-step entry + dwell accumulation), pointer zone geometry with/without inset, signal equality, and grace period.
-  - ConfigManager.test.cpp: StatusBarAutoHide round-trip verified; legacy config without the key defaults to false.
-- **Build gate**: `cmake --build --preset ninja-test-linux --target SmatchetTsanTests` → all tests link and run successfully.
-- **Lint gate**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` → PASS on all 14 rules (no strict-zone violations, include cycles, AppController fan-in, empty catch blocks, etc.). One soft-tier warning on DrawStatusBarContents line count (109 vs soft 40-80) is acceptable for a UI function with rich content.
-- **Manual residue**: Visual-validation exception applies (touches SmatchetUI.cpp, SmatchetStatusBarUi.cpp, SmatchetUI_MainMenu.cpp). User must verify in running app: (a) mode menu shows three radio items, (b) Auto-Hide mode hides bar when idle, (c) bar reveals on attention signals, (d) bar reveals on pointer dwell in bottom zone, (e) grace period keeps bar visible after pointer leaves, (f) floating bar overlays panels without layout shift.
+- **Bucket A (pure)**: `StatusBarAutoHidePure.test.cpp`: 18 cases / 59 assertions pass as strict C++14 (`-Wall -Wextra -Wconversion -Wshadow -pedantic -Werror`) under Clang 18 and GCC, and under GCC with ASan+UBSan.
+- **ConfigManager**: the per-field round-trip now checks `StatusBarAutoHide`. The empty-config defaults test asserts that a config without `status_bar_auto_hide` loads as Always Show (`ShowStatusBar` default, `StatusBarAutoHide == false`).
+- **Lint gate**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop`.
+- **Manual residue**: the visual-validation exception applies (`SmatchetStatusBarUi.cpp`, `SmatchetUI.cpp`, `SmatchetUI_MainMenu.cpp`). The user checks the manual steps listed in the PR body.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
