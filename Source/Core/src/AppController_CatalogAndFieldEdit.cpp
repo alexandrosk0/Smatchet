@@ -316,7 +316,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                                     bool errorTransient) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
-    const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
+    const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
+    const bool catalogPlane = backendKey == "Plane";
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
@@ -337,7 +338,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     (void)catalogPlane;
 
     if (!error.empty()) {
-        HandleFieldCatalogError(error, errorTransient, catalogCacheKey, catalogPlane);
+        HandleFieldCatalogError(error, errorTransient, catalogCacheKey, backendKey);
         return;
     }
 
@@ -385,7 +386,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 }
 
 void AppController::HandleFieldCatalogError(const std::string& error, bool errorTransient,
-                                            const std::string& catalogCacheKey, bool catalogPlane) {
+                                            const std::string& catalogCacheKey, const std::string& backendKey) {
+    const bool catalogPlane = backendKey == "Plane";
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
@@ -426,7 +428,8 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
             }
         }
     }
-    const std::string backendLabel = catalogPlane ? "Plane" : "Jira";
+    // The banner names the configured backend (Jira / Plane / GitHub / Linear), never a hard-coded one.
+    const std::string& backendLabel = backendKey;
     using smatchet::catalogoffline::CatalogFailureBanner;
     switch (smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasFieldsNow, snapshotLoaded,
                                                                  cat.fieldCatalogEverLoaded_)) {

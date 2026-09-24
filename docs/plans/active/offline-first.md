@@ -586,11 +586,6 @@ Replace it with:
 - `grep -n "TODO(#21b" Source/Core/src/Tracker/TrackerFieldCatalog.cpp` is empty;
 - the new tests pass.
 
-**Implementation log (S1)**
-- Shipped: classifier thread through JiraClient/LinearClient, CatalogOfflinePolicyPure header, offline-first banner logic in AppController, grid pending-edit hold during connectivity-error read-only, reduced SetAvailableUsers scope, 5 test cases (CatalogOfflinePolicyPure + TrackerCatalogBuild + ConnectivityMonitorService variants).
-- Deviations: none.
-- Tests: CatalogOfflinePolicyPure + TrackerCatalogBuild + ConnectivityMonitorService tests pass on Linux; Windows SmatchetTests CI TBD.
-
 ---
 
 ## S2 — feat(offline): shared offline-first primitives
@@ -2892,6 +2887,11 @@ This plan touches `Source/Core/`.
 ## Implementation log
 
 (each slice appends here after merge)
+
+### S1 — [#2238](https://github.com/alexandrosk0/Smatchet/pull/2238)
+- Shipped: Jira / Linear catalog failures keep their `TrackerError` kind (the #21b collapse is gone); `CatalogOfflinePolicyPure.h`; `HandleFieldCatalogError` never clears the catalog and restores the snapshot whatever the error kind; the grid holds pending edits under a banner-driven read-only state; a failed catalog fetch no longer wipes users; the startup "Working offline:" banner is recognised.
+- Tests: `CatalogOfflinePolicyPure` (new), `TrackerCatalogBuild` (500 → ServerError, 401 → Auth, unreachable → Transport), `ConnectivityMonitorService` (startup wording).
+- Review fix (CodeRabbit): the offline catalog banner names the configured backend (Jira / Plane / GitHub / Linear); it previously said "Jira" for every non-Plane backend. `HandleFieldCatalogError` now takes the normalized backend key instead of a `catalogPlane` flag.
 
 ## Deviations from plan
 
