@@ -96,6 +96,16 @@ TEST_CASE("ConnectivityMonitorService::GetBannerForUi snapshot-catalog headline 
     CHECK(banner.Message.find("local snapshot") != std::string::npos);
 }
 
+TEST_CASE("ConnectivityMonitorService::GetBannerForUi startup snapshot wording from AppController is recognised") {
+    FakeConnectivityDeps deps;
+    deps.CatalogWarningImpl =
+        "Working offline: tracker field catalog loaded from local snapshot until a live refresh succeeds.";
+    ConnectivityMonitorService svc(deps);
+    const auto banner = svc.GetBannerForUi(nullptr);
+    CHECK(banner.Kind == TrackerConnectivityBannerForUi::Level::Warning);
+    CHECK(banner.Message.find("local snapshot") != std::string::npos);
+}
+
 TEST_CASE("ConnectivityMonitorService::GetBannerForUi both warnings -> combined headline") {
     FakeConnectivityDeps deps;
     deps.CatalogWarningImpl = "Offline: using cached tracker field catalog. Last fetch failed: boom";

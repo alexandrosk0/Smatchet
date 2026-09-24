@@ -281,6 +281,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/CatalogOfflinePolicyPure.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -1162,6 +1163,7 @@ add_executable(SmatchetTests
     # converge here). Pure — no I/O, no Logger.
     Core/CommentBlobFormatPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
+    Core/CatalogOfflinePolicyPure.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.

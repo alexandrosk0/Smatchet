@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "CatalogOfflinePolicyPure.h"
 #include "EditMetaCacheService.h"     // editmeta delegators forward to editMeta_ (god-object decomposition Phase 1).
 #include "FieldEditPipelineService.h" // field-edit delegators forward to fieldEdit_ (decomposition Phase 2).
 #include "IssueTransitionsCacheService.h" // transitions delegators forward to transitions_.
@@ -315,7 +316,8 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
                                     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta, const std::string& error,
                                     bool errorTransient) {
     const TrackerConfig cfgSnap = ConfigManager::Load();
-    const bool catalogPlane = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType) == "Plane";
+    const std::string backendKey = ConfigManager::NormalizeViewsBackendKey(cfgSnap.TrackerType);
+    const bool catalogPlane = backendKey == "Plane";
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
@@ -336,7 +338,7 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
     (void)catalogPlane;
 
     if (!error.empty()) {
-        HandleFieldCatalogError(error, errorTransient, catalogCacheKey, catalogPlane);
+        HandleFieldCatalogError(error, errorTransient, catalogCacheKey, backendKey);
         return;
     }
 
@@ -384,38 +386,58 @@ void AppController::SetFieldCatalog(std::vector<TrackerField> fields, std::vecto
 }
 
 void AppController::HandleFieldCatalogError(const std::string& error, bool errorTransient,
-                                            const std::string& catalogCacheKey, bool catalogPlane) {
+                                            const std::string& catalogCacheKey, const std::string& backendKey) {
+    const bool catalogPlane = backendKey == "Plane";
     // Latch the catalog once: fieldCatalog() re-resolves focusedContextPtr_ per call; a focus
     // switch between two calls would lock context A's mutex while mutating context B (Pillar 3).
     GridContextFieldCatalog& cat = fieldCatalog();
-    // N12 item 13b: the flag was classified where the catalog fetch's TrackerError was
-    // flattened — no re-classification of the text here.
-    if (!errorTransient) {
-        {
-            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-            cat.AvailableFields.clear();
-            cat.AvailableComponents.clear();
-            cat.AvailableIssueTypeMeta.clear();
-        }
-        cat.fieldCatalogEverLoaded_ = false;
-        cat.LastTrackerFieldCatalogWarning.clear();
-        cat.LastTrackerFieldCatalogError = error;
-        cat.LastTrackerFieldCatalogErrorTransient = false;
-        cat.TrackerFieldCatalogRevision.fetch_add(1);
-        LOG_ERROR("AppController::SetFieldCatalog error: %s", error.c_str());
-        return;
-    }
-
-    bool catalogHasFields;
+    bool hasFieldsNow;
     {
         std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        catalogHasFields = !cat.AvailableFields.empty();
+        hasFieldsNow = !cat.AvailableFields.empty();
     }
-    if (catalogHasFields) {
+    // Pillar 6 (offline-first): a failed refresh never clears a catalog the user already has. When
+    // memory is empty, restore the local snapshot whatever the error kind; only the banner differs.
+    bool snapshotLoaded = false;
+    std::string snapErr;
+    if (!hasFieldsNow) {
+        std::vector<TrackerField> snapFields;
+        std::vector<TrackerComponent> snapComponents;
+        std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
+        snapshotLoaded = FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents,
+                                                                        snapIssueTypeMeta, snapErr);
+        if (snapshotLoaded) {
+            {
+                std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
+                cat.AvailableFields = std::move(snapFields);
+                cat.AvailableComponents = std::move(snapComponents);
+                cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
+                if (!catalogPlane) {
+                    for (auto& field : cat.AvailableFields) {
+                        if (IsNonEditableTimetrackingFieldId(field.Id)) {
+                            field.ReadOnly = true;
+                        }
+                    }
+                }
+            }
+            cat.fieldCatalogEverLoaded_ = true;
+            if (!catalogPlane) {
+                EraseCatalogLegacyCommentField(cat);
+                EnsureCatalogHistoryField(cat);
+                EnsureCatalogCommentsField(cat);
+            }
+        }
+    }
+    // The banner names the configured backend (Jira / Plane / GitHub / Linear), never a hard-coded one.
+    const std::string& backendLabel = backendKey;
+    using smatchet::catalogoffline::CatalogFailureBanner;
+    switch (smatchet::catalogoffline::DecideCatalogFailureBanner(errorTransient, hasFieldsNow, snapshotLoaded,
+                                                                 cat.fieldCatalogEverLoaded_)) {
+    case CatalogFailureBanner::WarningUsingCached: {
         cat.LastTrackerFieldCatalogError.clear();
         cat.LastTrackerFieldCatalogErrorTransient = false;
-        const std::string nextWarning = std::string("Offline: using cached ") + (catalogPlane ? "Plane" : "Jira") +
-                                        " field catalog. Last fetch failed: " + error;
+        const std::string nextWarning =
+            "Offline: using cached " + backendLabel + " field catalog. Last fetch failed: " + error;
         if (nextWarning != cat.LastTrackerFieldCatalogWarning) {
             cat.LastTrackerFieldCatalogWarning = nextWarning;
             cat.TrackerFieldCatalogRevision.fetch_add(1);
@@ -423,66 +445,41 @@ void AppController::HandleFieldCatalogError(const std::string& error, bool error
         LOG_WARN("AppController::SetFieldCatalog transport failure (catalog preserved): %s", error.c_str());
         return;
     }
-
-    std::vector<TrackerField> snapFields;
-    std::vector<TrackerComponent> snapComponents;
-    std::vector<TrackerIssueTypeCreateMeta> snapIssueTypeMeta;
-    std::string snapErr;
-    if (FieldCatalogCache::TryLoadFieldCatalogSnapshot(catalogCacheKey, snapFields, snapComponents, snapIssueTypeMeta,
-                                                       snapErr)) {
-        {
-            std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-            cat.AvailableFields = std::move(snapFields);
-            cat.AvailableComponents = std::move(snapComponents);
-            cat.AvailableIssueTypeMeta = std::move(snapIssueTypeMeta);
-            if (!catalogPlane) {
-                for (auto& field : cat.AvailableFields) {
-                    if (IsNonEditableTimetrackingFieldId(field.Id)) {
-                        field.ReadOnly = true;
-                    }
-                }
-            }
-        }
-        cat.fieldCatalogEverLoaded_ = true;
+    case CatalogFailureBanner::WarningRestoredSnapshot:
         cat.LastTrackerFieldCatalogError.clear();
         cat.LastTrackerFieldCatalogErrorTransient = false;
-        cat.LastTrackerFieldCatalogWarning = std::string("Offline: restored ") + (catalogPlane ? "Plane" : "Jira") +
-                                             " field catalog from local snapshot. Last fetch failed: " + error;
-        if (!catalogPlane) {
-            EraseCatalogLegacyCommentField(cat);
-            EnsureCatalogHistoryField(cat);
-            EnsureCatalogCommentsField(cat);
-        }
-        cat.TrackerFieldCatalogRevision.fetch_add(1);
+        cat.LastTrackerFieldCatalogWarning =
+            "Offline: restored " + backendLabel + " field catalog from local snapshot. Last fetch failed: " + error;
         LOG_WARN("AppController::SetFieldCatalog transport failure; loaded snapshot err=%s", snapErr.c_str());
-        return;
-    }
-
-    if (cat.fieldCatalogEverLoaded_) {
+        break;
+    case CatalogFailureBanner::WarningSessionHadCatalog:
         cat.LastTrackerFieldCatalogError.clear();
         cat.LastTrackerFieldCatalogErrorTransient = false;
         cat.LastTrackerFieldCatalogWarning =
             "Offline: no field catalog snapshot could be loaded for this tracker context. Last fetch failed: " + error;
-        cat.TrackerFieldCatalogRevision.fetch_add(1);
         LOG_WARN("AppController::SetFieldCatalog transport failure; no snapshot (session had catalog): %s",
                  error.c_str());
-        return;
+        break;
+    case CatalogFailureBanner::ErrorKeepCatalog:
+        // Non-retryable (auth / config / parse): the user must act, so show the error banner, but keep
+        // the catalog. The grid holds pending edits instead of discarding them.
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.LastTrackerFieldCatalogError = error;
+        cat.LastTrackerFieldCatalogErrorTransient = false;
+        LOG_ERROR("AppController::SetFieldCatalog error (catalog kept): %s", error.c_str());
+        break;
+    case CatalogFailureBanner::ErrorNoCatalog:
+        cat.fieldCatalogEverLoaded_ = false;
+        cat.LastTrackerFieldCatalogWarning.clear();
+        cat.LastTrackerFieldCatalogErrorTransient = errorTransient;
+        cat.LastTrackerFieldCatalogError = errorTransient
+                                               ? "No cached " + backendLabel + " field catalog available. " +
+                                                     (error.empty() ? std::string("Last fetch failed.") : error)
+                                               : error;
+        LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
+        break;
     }
-
-    {
-        std::lock_guard<std::mutex> lk(cat.availableFieldsMutex_);
-        cat.AvailableFields.clear();
-        cat.AvailableComponents.clear();
-        cat.AvailableIssueTypeMeta.clear();
-    }
-    cat.fieldCatalogEverLoaded_ = false;
-    cat.LastTrackerFieldCatalogWarning.clear();
-    cat.LastTrackerFieldCatalogErrorTransient = true; // this branch is reached only on a transport-shaped failure
-    cat.LastTrackerFieldCatalogError = std::string("No cached ") + (catalogPlane ? "Plane" : "Jira") +
-                                       " field catalog available. " +
-                                       (error.empty() ? std::string("Last fetch failed.") : error);
     cat.TrackerFieldCatalogRevision.fetch_add(1);
-    LOG_ERROR("AppController::SetFieldCatalog error (no cache): %s", error.c_str());
 }
 
 const TrackerField* AppController::FindFieldById(const std::string& fieldId) const {

@@ -446,7 +446,8 @@ void AddCatalogPriorityField(TrackerFieldCatalogResult& catalog) {
 // look up the team whose key matches projectKey (preferred) or cfg.LinearTeamKey
 // among the workspace teams. Returns empty when nothing resolves.
 std::string ResolveCatalogTeamId(const std::string& apiUrl, const std::string& apiKey, const std::string& teamIdCfg,
-                                 const std::string& teamKeyCfg, const std::string& projectKey) {
+                                 const std::string& teamKeyCfg, const std::string& projectKey,
+                                 TrackerError* outClassified = nullptr) {
     if (!teamIdCfg.empty()) {
         return teamIdCfg;
     }
@@ -463,6 +464,10 @@ std::string ResolveCatalogTeamId(const std::string& apiUrl, const std::string& a
     if (resp.status_code != 200 || parsed.is_discarded() ||
         smatchet::linear::LinearResponseHasErrors(parsed, errorMessage) || !parsed.is_object() ||
         !parsed.contains("data") || !parsed["data"].is_object() || !parsed["data"].contains("teams")) {
+        if (outClassified && resp.status_code != 200) {
+            *outClassified = ClassifyRejectedHttpStatus(resp.status_code, "Linear team lookup failed (HTTP " +
+                                                                              std::to_string(resp.status_code) + ")");
+        }
         return "";
     }
     const nlohmann::json& nodes = parsed["data"]["teams"].value("nodes", nlohmann::json::array());
@@ -489,8 +494,12 @@ Result<TrackerFieldCatalogResult, TrackerError> LinearClient::FetchFieldCatalog(
     if (auth.ApiKey.empty()) {
         return CatalogResult::Err(TrackerErrorAuth(kApiKeyMissingError));
     }
-    const std::string teamId =
-        ResolveCatalogTeamId(auth.ApiUrl, auth.ApiKey, cfg.LinearTeamId, cfg.LinearTeamKey, projectKey);
+    TrackerError teamClassified;
+    const std::string teamId = ResolveCatalogTeamId(auth.ApiUrl, auth.ApiKey, cfg.LinearTeamId, cfg.LinearTeamKey,
+                                                    projectKey, &teamClassified);
+    if (teamId.empty() && !teamClassified.IsOk()) {
+        return CatalogResult::Err(teamClassified);
+    }
     if (teamId.empty()) {
         return CatalogResult::Err(TrackerErrorInvalidRequest(
             "LinearClient::FetchFieldCatalog: no Linear team configured (set Preferences > Tracker > Linear team)"));

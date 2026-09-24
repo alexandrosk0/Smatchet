@@ -1,5 +1,6 @@
 #include "ConnectivityMonitorService.h"
 
+#include "CatalogOfflinePolicyPure.h"
 #include "IConnectivityDeps.h"
 
 #include <algorithm>
@@ -219,9 +220,6 @@ bool ConnectivityMonitorService::ConsumeDeferredLiveTrackerBackendSuccessNotifyI
 
 namespace {
 
-constexpr char kWorkingOfflineSnapshotCatalog[] =
-    "Working offline: Jira field catalog loaded from local snapshot until a live refresh succeeds.";
-
 std::string TruncateTrackerBannerDetail(const std::string& s, std::size_t maxLen) {
     if (s.size() <= maxLen) {
         return s;
@@ -236,20 +234,15 @@ std::string CatalogOfflineTechnicalSuffix(const std::string& cw) {
     if (cw.empty()) {
         return std::string();
     }
-    static const char* prefixes[] = {
-        "Offline: using cached tracker field catalog. Last fetch failed: ",
-        "Offline: restored tracker field catalog from local snapshot. Last fetch failed: ",
-        "Offline: no field catalog snapshot could be loaded. Last fetch failed: ",
-    };
-    for (const char* p : prefixes) {
-        const size_t pl = std::strlen(p);
-        if (cw.size() >= pl && cw.compare(0, pl, p) == 0) {
-            // The suffix embeds the raw fetch error (cpr transport / backend text) — scrub
-            // secret-shaped tokens before it reaches the banner (reuses the AI-side redactor).
-            return RedactHttpBodyForLog(cw.substr(pl));
-        }
+    // Every AppController catalog warning embeds the raw fetch error after one shared marker
+    // (CatalogOfflinePolicyPure.h), so match the marker rather than per-wording prefixes.
+    const std::string detail = smatchet::catalogoffline::ExtractLastFetchFailedDetail(cw);
+    if (!detail.empty()) {
+        // The suffix embeds the raw fetch error (cpr transport / backend text) — scrub
+        // secret-shaped tokens before it reaches the banner (reuses the AI-side redactor).
+        return RedactHttpBodyForLog(detail);
     }
-    if (cw == kWorkingOfflineSnapshotCatalog) {
+    if (smatchet::catalogoffline::IsStartupSnapshotWarning(cw)) {
         return std::string();
     }
     return TruncateTrackerBannerDetail(RedactHttpBodyForLog(cw), 100);
@@ -325,7 +318,7 @@ TrackerConnectivityBannerForUi ConnectivityMonitorService::GetBannerForUi(const 
     out.Kind = TrackerConnectivityBannerForUi::Level::Warning;
     const std::string catSuffix = CatalogOfflineTechnicalSuffix(cw);
     const std::string ticketSuffix = TicketOfflineTechnicalSuffix(tw);
-    const bool snapshotCatalogOnly = haveCw && cw == kWorkingOfflineSnapshotCatalog;
+    const bool snapshotCatalogOnly = haveCw && smatchet::catalogoffline::IsStartupSnapshotWarning(cw);
 
     std::string headline;
     if (haveCw && haveTw) {

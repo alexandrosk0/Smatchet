@@ -199,7 +199,10 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
             d.gridEditError = "Edit skipped: Tracker is in read-only mode.";
         }
 
-        if (readOnlyMode) {
+        // Pillar 6: only the user's own Read-only preference discards not-yet-sent edits. A tracker
+        // error banner also makes the grid read-only, but those edits are held (the pump does not
+        // dispatch while read-only) and go out once the tracker is usable again.
+        if (readOnlyMode && d.cfg.ReadOnlyMode) {
             d.queuedFieldEdits.clear();
         }
     }
@@ -217,6 +220,16 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
     if (!readOnlyMode && !pendingEdits.empty()) {
         d.gridEditError.clear();
     }
+}
+
+void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d) {
+    if (d.queuedFieldEdits.empty()) {
+        return;
+    }
+    LOG_WARN("GridFieldEdit: discarded %zu unsent edit(s) on tracker backend switch", d.queuedFieldEdits.size());
+    d.queuedFieldEdits.clear();
+    d.gridEditSuccess.clear();
+    d.gridEditError = "Unsent edits discarded: the tracker backend changed before they could be sent.";
 }
 
 // Pump half (called ONCE per frame by the pane-window host with the FOCUSED pane's

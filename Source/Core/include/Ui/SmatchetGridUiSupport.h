@@ -88,6 +88,11 @@ void DrawGridHeaderToolbar(AppController& app, UiDrawSession& d, ViewDefinition*
 /// (latest-per-cell). No dispatch / chip decay (review MEDIUM-1 split).
 void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode);
 
+/// Drop every queued, not-yet-dispatched grid edit when the tracker backend changes. The queue is
+/// session-wide and its edits name the previous backend's issues, so they must never reach the
+/// new backend (a tracker-error banner can hold them past the switch). Sets a visible error.
+void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d);
+
 /// Pump half — called ONCE per frame by the pane-window host with the FOCUSED
 /// pane's live ticket snapshot: dispatches the next queued edit to a worker and
 /// decays success chips.

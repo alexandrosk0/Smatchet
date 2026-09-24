@@ -702,6 +702,9 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         // this fires on host focus switches as well.
         std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
+            // Before the catalog reset clears any error banner (which lifts grid read-only and lets the
+            // pump run): queued edits target the previous backend and must not be sent to this one.
+            DiscardQueuedGridFieldEditsOnBackendSwitch(d);
             app.SetFieldCatalog({}, {}, {}, std::string());
             app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
@@ -1473,7 +1476,6 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 app.SetFieldCatalog({}, {},
                                     result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
                                     result.ErrorTransient);
-                app.SetAvailableUsers({});
                 d.fieldCatalogWarning.clear();
             }
         } catch (const std::exception& ex) {

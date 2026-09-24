@@ -457,11 +457,32 @@ TEST_CASE("FetchFieldCatalog result overload — /field failure returns an Err w
     JiraClient client;
     auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
     REQUIRE_FALSE(catalogResult);
-    // The virtual unwraps the internal bool 5-vector helper, so the kind is the
-    // deliberately-unclassified Unknown; the detail string is preserved from the
-    // helper's HTTP-failure message (non-empty).
-    CHECK(catalogResult.error().Kind == TrackerErrorKind::Unknown);
-    CHECK_FALSE(catalogResult.error().Detail.empty());
+    // The failure keeps its HTTP kind: 500 is a retryable ServerError, never a collapsed Unknown.
+    CHECK(catalogResult.error().Kind == TrackerErrorKind::ServerError);
+    CHECK(catalogResult.error().IsRetryable());
+}
+
+TEST_CASE("FetchFieldCatalog result overload — 401 on /field classifies as Auth") {
+    JiraCatalogHttpFixture fx;
+    fx.ScriptStatus("/rest/api/3/field", 401);
+
+    JiraClient client;
+    auto catalogResult = client.FetchFieldCatalog(fx.Config(), std::string());
+    REQUIRE_FALSE(catalogResult);
+    CHECK(catalogResult.error().Kind == TrackerErrorKind::Auth);
+    CHECK_FALSE(catalogResult.error().IsRetryable());
+}
+
+TEST_CASE("FetchFieldCatalog result overload — unreachable host classifies as Transport") {
+    JiraCatalogHttpFixture fx;
+    TrackerConfig cfg = fx.Config();
+    cfg.Domain = "http://127.0.0.1:1";
+
+    JiraClient client;
+    auto catalogResult = client.FetchFieldCatalog(cfg, std::string());
+    REQUIRE_FALSE(catalogResult);
+    CHECK(catalogResult.error().Kind == TrackerErrorKind::Transport);
+    CHECK(catalogResult.error().IsRetryable());
 }
 
 TEST_CASE("FetchIssueEditMeta result overload — editmeta fields map into the Ok payload") {
