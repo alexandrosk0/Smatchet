@@ -37,4 +37,12 @@ class ITrackerFieldCatalog {
         return Result<TrackerProjectComponents, TrackerError>::Err(
             TrackerErrorInvalidRequest("FetchProjectComponents is not supported by this backend."));
     }
+
+    // Interface default-stub pattern; owner=tracker-backend.
+    // SMATCHET_DEVIATION(rule=duplication; owner=tracker-backend; revisit=2027-09-01)
+    virtual Result<std::vector<TrackerFieldOption>, TrackerError>
+    FetchIssueTransitions(const TrackerConfig& /*cfg*/, const std::string& /*issueKeyOrId*/) {
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchIssueTransitions is not supported by this backend."));
+    }
 };

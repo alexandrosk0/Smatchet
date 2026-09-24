@@ -16,6 +16,7 @@
 
 using smatchet::jira::AppendCachedTicketFromJiraSearchIssue;
 using smatchet::jira::BuildFetchFieldListsFromView;
+using smatchet::jira::ParseAvailableTransitionTargets;
 
 namespace {
 
@@ -725,4 +726,70 @@ TEST_CASE("AppendCachedTicketFromJiraSearchIssue — parent absent on the wire s
     REQUIRE(AppendCachedTicketFromJiraSearchIssue(issue, selected, NoCommentFetch(), results));
     REQUIRE(results.size() == 1);
     CHECK(GetField(results[0], "parent") == "SMAT-2 - Linked story");
+}
+
+TEST_CASE("ParseAvailableTransitionTargets — basic transitions extraction") {
+    nlohmann::json transitions = nlohmann::json::array();
+    nlohmann::json t1;
+    t1["id"] = "11";
+    t1["name"] = "Start Progress";
+    t1["to"]["id"] = "3";
+    t1["to"]["name"] = "In Progress";
+    transitions.push_back(t1);
+
+    nlohmann::json t2;
+    t2["id"] = "21";
+    t2["name"] = "Resolve";
+    t2["to"]["id"] = "5";
+    t2["to"]["name"] = "Done";
+    transitions.push_back(t2);
+
+    const auto result = ParseAvailableTransitionTargets(transitions);
+    REQUIRE(result.size() == 2);
+    CHECK(result[0].Id == "3");
+    CHECK(result[0].Value == "In Progress");
+    CHECK(result[1].Id == "5");
+    CHECK(result[1].Value == "Done");
+}
+
+TEST_CASE("ParseAvailableTransitionTargets — handles numeric status ids") {
+    nlohmann::json transitions = nlohmann::json::array();
+    nlohmann::json t1;
+    t1["id"] = 11;
+    t1["name"] = "Start Progress";
+    t1["to"]["id"] = 3;
+    t1["to"]["name"] = "In Progress";
+    transitions.push_back(t1);
+
+    const auto result = ParseAvailableTransitionTargets(transitions);
+    REQUIRE(result.size() == 1);
+    CHECK(result[0].Id == "3");
+    CHECK(result[0].Value == "In Progress");
+}
+
+TEST_CASE("ParseAvailableTransitionTargets — returns empty for invalid input") {
+    nlohmann::json nonArray = nlohmann::json::object();
+    const auto result = ParseAvailableTransitionTargets(nonArray);
+    CHECK(result.empty());
+}
+
+TEST_CASE("ParseAvailableTransitionTargets — skips transitions with missing to object") {
+    nlohmann::json transitions = nlohmann::json::array();
+    nlohmann::json t1;
+    t1["id"] = "11";
+    t1["name"] = "Start Progress";
+    // no "to" field
+    transitions.push_back(t1);
+
+    nlohmann::json t2;
+    t2["id"] = "21";
+    t2["name"] = "Resolve";
+    t2["to"]["id"] = "5";
+    t2["to"]["name"] = "Done";
+    transitions.push_back(t2);
+
+    const auto result = ParseAvailableTransitionTargets(transitions);
+    REQUIRE(result.size() == 1);
+    CHECK(result[0].Id == "5");
+    CHECK(result[0].Value == "Done");
 }
