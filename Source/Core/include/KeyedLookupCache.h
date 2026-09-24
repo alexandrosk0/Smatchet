@@ -37,7 +37,8 @@ template <typename Value> class KeyedLookupCache {
         std::uint64_t Gen = 0;
     };
 
-    explicit KeyedLookupCache(int retryAfterSeconds = kLookupRetryAfterSeconds) : retryAfterSeconds_(retryAfterSeconds) {}
+    explicit KeyedLookupCache(int retryAfterSeconds = kLookupRetryAfterSeconds)
+        : retryAfterSeconds_(retryAfterSeconds) {}
 
     Entry Get(const std::string& key) const {
         std::lock_guard<std::mutex> lock(mutex_);

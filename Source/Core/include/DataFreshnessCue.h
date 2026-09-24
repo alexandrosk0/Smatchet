@@ -12,7 +12,7 @@ namespace DataFreshnessCue {
 const char* CueText(smatchet::offline::DataFreshness f);
 /// One disabled-text line; `detail` (e.g. the last error) shows as a hover tooltip when non-null and non-empty.
 void Draw(smatchet::offline::DataFreshness f, const char* detail = nullptr);
-/// Compact "(cached)" / "(refreshing)" badge for combo rows and grid cells; nothing for Fresh.
+/// Compact "(saved)" / "(refreshing)" badge for combo rows and grid cells; nothing for Fresh.
 void DrawInlineBadge(smatchet::offline::DataFreshness f, const char* detail = nullptr);
 
 } // namespace DataFreshnessCue

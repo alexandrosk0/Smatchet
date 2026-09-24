@@ -32,6 +32,8 @@
 
 namespace {
 
+// Shared RAII exit guard (ScopeExit.h): TickOfflineCreates / TickOfflineFieldEdits reset
+// offlineReplayInFlight_ through it so the latch clears on exception unwind too (CPP_CODE_AUDIT.md #6).
 using smatchet::ScopeExit;
 
 // Anonymous-namespace helpers (formerly in AppController_IssueCreateOffline.cpp). Used by the

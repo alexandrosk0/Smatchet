@@ -26,7 +26,7 @@
 #include <memory>
 #include <vector>
 
-#include "CachedTicketTypes.h"       // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return + UpdateTicket arg)
+#include "CachedTicketTypes.h" // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return + UpdateTicket arg)
 #include "Types/ConnectivityTypes.h" // TrackerConnectivityState
 
 class ITrackerBackend;

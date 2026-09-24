@@ -2893,6 +2893,11 @@ This plan touches `Source/Core/`.
 - Tests: `CatalogOfflinePolicyPure` (new), `TrackerCatalogBuild` (500 → ServerError, 401 → Auth, unreachable → Transport), `ConnectivityMonitorService` (startup wording).
 - Review fix (CodeRabbit): the offline catalog banner names the configured backend (Jira / Plane / GitHub / Linear); it previously said "Jira" for every non-Plane backend. `HandleFieldCatalogError` now takes the normalized backend key instead of a `catalogPlane` flag.
 
+### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240) (stacked on #2238)
+- Shipped: `OfflineFirstPure.h` (IsOfflineState / ShouldAttemptNetwork / ClassifyFreshness / ShouldRenderContent / RouteWrite), `KeyedLookupCache.h` + `RunKeyedFetch`, shared `ScopeExit.h` (moved out of `OfflineQueueService.cpp`), `DataFreshnessCue` + 7 `freshness.*` strings, atomic `ConnectivityMonitorService::lastState_` + `RequestProbeNow` / `AppController::RequestTrackerProbeNow`, `IAppSync::IsTrackerOffline()`, `TrackerConnectivity()` on `IEditMetaDeps` / `IFieldEditDeps`.
+- Tests: `OfflineFirstPure`, `KeyedLookupCache` (both lists); the concurrency case runs 8 threads × 1000 `TryBeginFetch` calls.
+- Nothing consumes the primitives yet (S5+ do); `DataFreshnessCue` is compiled but unused.
+
 ## Deviations from plan
 
 ## Verification (actual)
