@@ -222,6 +222,16 @@ void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>
     }
 }
 
+void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d) {
+    if (d.queuedFieldEdits.empty()) {
+        return;
+    }
+    LOG_WARN("GridFieldEdit: discarded %zu unsent edit(s) on tracker backend switch", d.queuedFieldEdits.size());
+    d.queuedFieldEdits.clear();
+    d.gridEditSuccess.clear();
+    d.gridEditError = "Unsent edits discarded: the tracker backend changed before they could be sent.";
+}
+
 // Pump half (called ONCE per frame by the pane-window host with the FOCUSED pane's
 // live snapshot — review MEDIUM-1): dispatches the next queued edit to a worker and
 // decays success chips. Running this per visible pane faded chips N× faster and
