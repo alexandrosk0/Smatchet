@@ -82,15 +82,22 @@ N/A — this plan introduces new files and helpers but does not extract existing
 
 ## Implementation log
 
-*(populated post-ship per `AGENTS.md` § Plan revision after implementation)*
+- `8fdd684` · feat(status-bar): Add Auto-Hide mode with pointer reveal and attention flash — all 14 files implemented, 25+ test cases added, lint checks pass
 
 ## Deviations from plan
 
-*(populated post-ship)*
+1. **Floating-point dwell-time precision** (test timing): The dwell-time calculation `t - hoverSince >= kHoverDwellSeconds` exhibits floating-point rounding at the exact boundary (0.35 - 0.1 = 0.24999... < 0.25). Tests adjusted to use slightly later timestamps (0.36, 0.26, 0.01+0.26) to avoid the boundary and ensure reliable dwell-time detection. This has no impact on the shipped logic — the state machine correctly accumulates time; only test timings needed adjustment.
+
+2. **Test structure for hover establishment** (test design): Tests that need to verify "bar is visible after dwell" require two Tick() calls: one to enter the zone (hoverSince=t), then a second at a later time to accumulate dwell. This is correct semantics (you can't have dwell on the same frame you enter), but differs from an intuitive single-call test structure. Test comments clarified the two-step pattern.
 
 ## Verification (actual)
 
-*(populated post-ship)*
+- **Bucket A (ctest)**: 443 unit tests pass (all StatusBarAutoHidePure test cases + full suite); no failures.
+  - StatusBarAutoHidePure: 25 test cases covering mode mapping, flash expiry, signal transitions, hover dwell (two-step entry + dwell accumulation), pointer zone geometry with/without inset, signal equality, and grace period.
+  - ConfigManager.test.cpp: StatusBarAutoHide round-trip verified; legacy config without the key defaults to false.
+- **Build gate**: `cmake --build --preset ninja-test-linux --target SmatchetTsanTests` → all tests link and run successfully.
+- **Lint gate**: `bash agents/scripts/project/test-lint-rules.sh --diff origin/develop` → PASS on all 14 rules (no strict-zone violations, include cycles, AppController fan-in, empty catch blocks, etc.). One soft-tier warning on DrawStatusBarContents line count (109 vs soft 40-80) is acceptable for a UI function with rich content.
+- **Manual residue**: Visual-validation exception applies (touches SmatchetUI.cpp, SmatchetStatusBarUi.cpp, SmatchetUI_MainMenu.cpp). User must verify in running app: (a) mode menu shows three radio items, (b) Auto-Hide mode hides bar when idle, (c) bar reveals on attention signals, (d) bar reveals on pointer dwell in bottom zone, (e) grace period keeps bar visible after pointer leaves, (f) floating bar overlays panels without layout shift.
 
 ## Archive (post-ship — DO IN THIS PR, never a follow-up)
 
