@@ -21,21 +21,33 @@
 OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
-OFFLINE_KIND_FALLBACK_RE='IsOk\(\)[[:space:]]*\?[[:space:]]*TrackerErrorUnknown\('
+# `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`); group 1 captures a
+# leading `!` / `not` so a negated condition — whose true branch collapses a real error — is never masked.
+OFFLINE_ISOK_RECV_RE='(!|not[[:space:]])?[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\(\))?([[:space:]]*(\.|->)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\(\))?)*[[:space:]]*(\.|->)[[:space:]]*IsOk\(\)'
+OFFLINE_KIND_FALLBACK_RE="${OFFLINE_ISOK_RECV_RE}"'[[:space:]]*\?[[:space:]]*TrackerErrorUnknown\('
 
 offline_mask_kind_fallbacks() {
     # $1 = code of the hit line, $2 = code of the (up to two) lines above. Prints the hit line with every
-    # `IsOk() ? TrackerErrorUnknown(` fallback collapse renamed, so only a collapse outside a fallback still
-    # matches OFFLINE_KIND_COLLAPSE_RE. Handles the same-line form and a ternary clang-format wrapped
-    # before `?` or before the collapse.
-    local masked="$1" prevc="$2" m trimmed
+    # `<recv>.IsOk() ? TrackerErrorUnknown(` fallback collapse renamed, so only a collapse outside a fallback
+    # still matches OFFLINE_KIND_COLLAPSE_RE. A negated condition (`!recv.IsOk() ?`) is never a fallback: its
+    # IsOk() is renamed so the loop moves on, but its collapse stays visible. Handles the same-line form and
+    # a ternary clang-format wrapped before `?` or before the collapse.
+    local masked="$1" prevc="$2" m repl trimmed
     while [[ "$masked" =~ $OFFLINE_KIND_FALLBACK_RE ]]; do
         m="${BASH_REMATCH[0]}"
-        masked="${masked/"$m"/IsOk() ? FallbackUnknown(}"
+        if [ -n "${BASH_REMATCH[1]}" ]; then
+            repl="${m/IsOk()/NegatedIsOk()}"
+        else
+            repl="${m/TrackerErrorUnknown(/FallbackUnknown(}"
+        fi
+        masked="${masked/"$m"/"$repl"}"
     done
     trimmed="${masked#"${masked%%[![:space:]]*}"}"
-    if { [[ "$prevc" =~ IsOk\(\)[[:space:]]*\?[[:space:]]*$ ]] && [[ "$trimmed" =~ ^TrackerErrorUnknown\( ]]; } \
-        || { [[ "$prevc" =~ IsOk\(\)[[:space:]]*$ ]] && [[ "$trimmed" =~ ^\?[[:space:]]*TrackerErrorUnknown\( ]]; }; then
+    if [[ "$prevc" =~ ${OFFLINE_ISOK_RECV_RE}[[:space:]]*\?[[:space:]]*$ ]] && [ -z "${BASH_REMATCH[1]}" ] \
+        && [[ "$trimmed" =~ ^TrackerErrorUnknown\( ]]; then
+        masked="${masked/TrackerErrorUnknown(/FallbackUnknown(}"
+    elif [[ "$prevc" =~ ${OFFLINE_ISOK_RECV_RE}[[:space:]]*$ ]] && [ -z "${BASH_REMATCH[1]}" ] \
+        && [[ "$trimmed" =~ ^\?[[:space:]]*TrackerErrorUnknown\( ]]; then
         masked="${masked/TrackerErrorUnknown(/FallbackUnknown(}"
     fi
     printf '%s' "$masked"

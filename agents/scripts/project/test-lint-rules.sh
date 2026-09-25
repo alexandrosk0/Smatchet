@@ -520,6 +520,13 @@ case "$MODE" in
     printf '    return F(a.IsOk() ? TrackerErrorUnknown(x) : a, TrackerErrorUnknown(y));\n' > "$_off_tmp"
     if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a fallback sharing its line" >&2; miss=1; fi
+    # selftest: a NEGATED condition is never the fallback — same-line and wrapped forms both fire.
+    printf '    return !classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a negated !IsOk() condition" >&2; miss=1; fi
+    printf '    return !classified.IsOk()\n        ? TrackerErrorUnknown(outError)\n        : classified;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a wrapped negated !IsOk() condition" >&2; miss=1; fi
     # selftest: the ternary wrapped after `?` (collapse opens the next line) is still the allowed fallback.
     printf '    return classified.IsOk() ?\n        TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
