@@ -71,6 +71,7 @@ set(_SMATCHET_UI_TEST_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/command_palette_deferred_dispatch.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/grid_search_apply.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/offline_conflict_modal_panes.test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/offline_first.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/whisper_ai_assistant_autosend.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/sync_stall_visible_cue.test.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/annotate_before_cl_cue.test.cpp"

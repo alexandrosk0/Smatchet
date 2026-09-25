@@ -1812,6 +1812,59 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      # Offline-first bucket-E tests (Quality Pillar 6, Slice 3)
+      - name: Run offline-first bucket-E (hard)
+        shell: bash
+        env:
+          GALLIUM_DRIVER: llvmpipe
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
+          SMATCHET_TEST_OFFLINE_FIRST_FIXTURE: tests/fixtures/jira_backend/offline-first.json
+          SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/offline-first-outlog.txt
+        run: |
+          set -uo pipefail
+          mkdir -p "${{ github.workspace }}/build/tmp"
+          attempts=2
+          rc=1
+          for attempt in $(seq 1 "$attempts"); do
+            echo "offline-first: attempt ${attempt}/${attempts}"
+            set +e
+            bash scripts/dev/test-ui-offline-first.sh
+            rc=$?
+            set -e
+            if [ "$rc" -eq 0 ]; then
+              echo "offline-first: attempt ${attempt}/${attempts} PASSED."
+              break
+            fi
+            if [ "$rc" -eq 2 ]; then
+              echo "::error::offline-first: exit 2 (binary missing or SMATCHET_BUILD_UI_TESTS=OFF) — config error, not a flake." >&2
+              break
+            fi
+            if [ "$attempt" -lt "$attempts" ]; then
+              echo "::warning::offline-first: attempt ${attempt}/${attempts} failed (rc=$rc), retrying (Mesa first-frame flake absorber)."
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            if [ -f "$SMATCHET_UI_TEST_OUTLOG" ]; then
+              echo "===== offline-first per-test log ====="
+              cat "$SMATCHET_UI_TEST_OUTLOG"
+              echo "===== end per-test log ====="
+            else
+              echo "::warning::offline-first: per-test outLog not found at $SMATCHET_UI_TEST_OUTLOG"
+            fi
+            echo "::error::offline-first: bucket-E FAILED after ${attempts} attempt(s). This is a fixture-backend regression, not a render flake." >&2
+            exit "$rc"
+          fi
+
+      - name: Upload offline-first per-test log
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: offline-first-outlog-${{ github.run_id }}
+          path: build/tmp/offline-first-outlog.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
   mobile-texture-guard-smoke:
     name: Mobile texture-guard smoke (Mesa headless GL, advisory)
     # Issue #1133 — ADVISORY headless gate for the #1122 dynamic-texture crash class.

@@ -10,9 +10,13 @@
 // Every call is recorded so tests can assert "PUT called once with this payload" without
 // needing a separate spy layer.
 //
+// AttachNetwork(&GlobalFakeNetwork()) makes every network-shaped call fail like a real outage
+// while the switch is down.
+//
 // The class lives in tests/support/ and is header-only so test TUs can include it without
 // CMake glue beyond `target_include_directories(... tests/support)`.
 
+#include "FakeNetworkSwitch.h"
 #include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
@@ -28,6 +32,8 @@
 #include <deque>
 #include <functional>
 #include <iterator>
+#include <optional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -103,14 +109,32 @@ class FakeTrackerClient : public ITrackerBackend,
     // itself, so hand back `this`; FetchIssueEditMeta / FetchProjectComponents below are scriptable.
     ITrackerFieldCatalog* FieldCatalog() override { return this; }
     ITrackerIssueMutations* Mutations() override { return this; }
-    ITrackerCollaboration* Collaboration() override { return nullptr; }
+    ITrackerCollaboration* Collaboration() override { return collaborationEnabled_ ? this : nullptr; }
     ITrackerActivity* Activity() override { return nullptr; }
+
+    // --- Network switch (Quality Pillar 6 offline-first harness) --------------------------------
+    void AttachNetwork(FakeNetworkSwitch* net) { network_ = net; }
+    void EnableCollaboration(bool on) { collaborationEnabled_ = on; }
 
     // --- Capability interface surface --------------------------------------------------------
 
     std::string GetTrackerType() const override { return trackerType_; }
 
+    // --- Private helper for network gating ---
+    bool NetworkDown(bool countCall = true) const {
+        if (network_ != nullptr && network_->IsDown()) {
+            if (countCall) {
+                network_->NoteCallWhileDown();
+            }
+            return true;
+        }
+        return false;
+    }
+
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& /*cfg*/) override {
+        if (NetworkDown(false)) {
+            return TrackerReachabilityProbeResult{network_->Mode() == FakeNetworkMode::ServiceUnavailable ? TrackerReachabilityProbeKind::ServiceUnavailable : TrackerReachabilityProbeKind::TransportDown, "fake network down"};
+        }
         ++probeReachabilityCalls_;
         return reachabilityResult_;
     }
@@ -120,6 +144,18 @@ class FakeTrackerClient : public ITrackerBackend,
                                           const ViewsStore* /*viewsOverride*/ = nullptr,
                                           std::string* outFetchError = nullptr, std::string* outWarning = nullptr,
                                           TrackerError* outFetchErrorStructured = nullptr) override {
+        if (NetworkDown()) {
+            TrackerError e = network_->MakeError();
+            if (outFullSyncCompleted)
+                *outFullSyncCompleted = false;
+            if (outFetchError)
+                *outFetchError = e.Detail;
+            if (outFetchErrorStructured)
+                *outFetchErrorStructured = e;
+            if (outWarning)
+                *outWarning = "";
+            return {};
+        }
         ++fetchIssuesCalls_;
         if (!fetchQueue_.empty()) {
             ScriptedFetchResult r = std::move(fetchQueue_.front());
@@ -148,6 +184,9 @@ class FakeTrackerClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchIssuesForKeys(const TrackerConfig& /*cfg*/,
                                                                        const std::vector<std::string>& issueKeys,
                                                                        const ViewsStore& /*views*/) override {
+        if (NetworkDown()) {
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(network_->MakeError());
+        }
         ++fetchIssuesForKeysCalls_;
         fetchIssuesForKeysLastKeys_ = issueKeys;
         if (!fetchIssuesForKeysOk_) {
@@ -175,6 +214,9 @@ class FakeTrackerClient : public ITrackerBackend,
     Result<std::vector<CachedTicket>, TrackerError> FetchChildrenOfKeys(const TrackerConfig& /*cfg*/,
                                                                         const std::vector<std::string>& parentKeys,
                                                                         const ViewsStore& /*views*/) override {
+        if (NetworkDown()) {
+            return Result<std::vector<CachedTicket>, TrackerError>::Err(network_->MakeError());
+        }
         ++fetchChildrenOfKeysCalls_;
         fetchChildrenOfKeysLastParentKeys_ = parentKeys;
         if (!fetchChildrenOfKeysOk_) {
@@ -200,6 +242,9 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     TrackerError UpdateIssueFields(const std::string& issueId, const nlohmann::json& fields) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
         UpdateIssueFieldsCall call;
         call.IssueId = issueId;
         call.Fields = fields;
@@ -216,6 +261,9 @@ class FakeTrackerClient : public ITrackerBackend,
 
     TrackerError UpdateField(const std::string& issueId, const TrackerField& field,
                              const std::vector<std::string>& values) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
         UpdateFieldCall call;
         call.IssueId = issueId;
         call.FieldId = field.Id;
@@ -271,6 +319,9 @@ class FakeTrackerClient : public ITrackerBackend,
 
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId) override {
+        if (NetworkDown()) {
+            return Result<std::unordered_map<std::string, bool>, TrackerError>::Err(network_->MakeError());
+        }
         ++fetchIssueEditMetaCalls_;
         fetchIssueEditMetaKeys_.push_back(issueKeyOrId);
         const auto perIssue = issueEditMetaByIssue_.find(issueKeyOrId);
@@ -291,6 +342,9 @@ class FakeTrackerClient : public ITrackerBackend,
 
     Result<TrackerProjectComponents, TrackerError> FetchProjectComponents(const TrackerConfig& /*cfg*/,
                                                                           const std::string& projectKey) override {
+        if (NetworkDown()) {
+            return Result<TrackerProjectComponents, TrackerError>::Err(network_->MakeError());
+        }
         ++fetchProjectComponentsCalls_;
         fetchProjectComponentsKeys_.push_back(projectKey);
         const auto it = projectComponentsByKey_.find(projectKey);
@@ -310,6 +364,9 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     Result<std::string, TrackerError> CreateIssue(const nlohmann::json& fields) override {
+        if (NetworkDown()) {
+            return Result<std::string, TrackerError>::Err(network_->MakeError());
+        }
         CreateIssueCall call;
         call.Fields = fields;
         createIssueCalls_.push_back(std::move(call));
@@ -322,6 +379,9 @@ class FakeTrackerClient : public ITrackerBackend,
 
     Result<std::vector<std::pair<std::string, std::string>>, TrackerError>
     AttachFilesToIssue(const std::string& issueKey, const std::vector<std::string>& absolutePaths) override {
+        if (NetworkDown()) {
+            return Result<std::vector<std::pair<std::string, std::string>>, TrackerError>::Err(network_->MakeError());
+        }
         AttachFilesCall call;
         call.IssueKey = issueKey;
         call.Paths = absolutePaths;
@@ -334,6 +394,9 @@ class FakeTrackerClient : public ITrackerBackend,
     }
 
     TrackerError AddIssueToSprint(const std::string& issueKey, const std::string& sprintId) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
         AddIssueToSprintCall call;
         call.IssueKey = issueKey;
         call.SprintId = sprintId;
@@ -342,6 +405,93 @@ class FakeTrackerClient : public ITrackerBackend,
         if (!reply.Ok) {
             return TrackerErrorInvalidRequest(reply.Error);
         }
+        return TrackerError::Ok();
+    }
+
+    // --- ITrackerCollaboration (comments, worklog, watchers) -----------------------------------
+
+    Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& /*cfg*/,
+                                                                      const std::string& /*projectKey*/) override {
+        if (NetworkDown()) {
+            return Result<TrackerFieldCatalogResult, TrackerError>::Err(network_->MakeError());
+        }
+        ++fetchFieldCatalogCalls_;
+        if (fieldCatalogResult_.has_value()) {
+            return Result<TrackerFieldCatalogResult, TrackerError>::Ok(fieldCatalogResult_.value());
+        }
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchFieldCatalog is not supported by this backend."));
+    }
+
+    Result<std::vector<TrackerFieldOption>, TrackerError>
+    FetchIssueTransitions(const TrackerConfig& /*cfg*/, const std::string& issueKeyOrId) override {
+        if (NetworkDown()) {
+            return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(network_->MakeError());
+        }
+        ++fetchIssueTransitionsCalls_;
+        if (issueTransitionsThrows_) {
+            throw std::runtime_error("scripted transitions throw");
+        }
+        const auto it = issueTransitionsByIssueId_.find(issueKeyOrId);
+        if (it != issueTransitionsByIssueId_.end()) {
+            return Result<std::vector<TrackerFieldOption>, TrackerError>::Ok(it->second);
+        }
+        if (!issueTransitionsError_.IsOk()) {
+            return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(issueTransitionsError_);
+        }
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchIssueTransitions not scripted"));
+    }
+
+    Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override {
+        if (NetworkDown()) {
+            return Result<std::vector<TrackerIssueComment>, TrackerError>::Err(network_->MakeError());
+        }
+        ++fetchIssueCommentsCalls_;
+        const auto it = issueCommentsByIssueKey_.find(issueKey);
+        if (it != issueCommentsByIssueKey_.end()) {
+            return Result<std::vector<TrackerIssueComment>, TrackerError>::Ok(it->second);
+        }
+        return Result<std::vector<TrackerIssueComment>, TrackerError>::Ok({});
+    }
+
+    struct AddCommentCall {
+        std::string IssueKey;
+        std::string Body;
+    };
+
+    TrackerError AddIssueCommentPlain(const TrackerConfig& /*cfg*/, const std::string& issueKey,
+                                      const std::string& plainText) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
+        AddCommentCall call;
+        call.IssueKey = issueKey;
+        call.Body = plainText;
+        addCommentCalls_.push_back(std::move(call));
+        TrackerError reply = TrackerError::Ok();
+        if (!addCommentReplies_.empty()) {
+            reply = std::move(addCommentReplies_.front());
+            addCommentReplies_.pop_front();
+        }
+        return reply;
+    }
+
+    TrackerError AddWorklog(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*timeSpent*/,
+                            const std::string& /*timeRemaining*/, const std::string& /*adjustEstimate*/,
+                            const std::string& /*workDescription*/, const std::string& /*startedDate*/) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
+        ++addWorklogCalls_;
+        return TrackerError::Ok();
+    }
+
+    TrackerError AddIssueWatcher(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/) override {
+        if (NetworkDown()) {
+            return network_->MakeError();
+        }
+        ++addWatcherCalls_;
         return TrackerError::Ok();
     }
 
@@ -605,6 +755,25 @@ class FakeTrackerClient : public ITrackerBackend,
         reachabilityResult_.Diagnostic = diagnostic;
     }
 
+    // Collaboration scripting (new methods for S3)
+    std::size_t FetchFieldCatalogCalls() const { return fetchFieldCatalogCalls_; }
+    void SetFieldCatalogResult(TrackerFieldCatalogResult result) { fieldCatalogResult_ = result; }
+
+    std::size_t FetchIssueTransitionsCalls() const { return fetchIssueTransitionsCalls_; }
+    void SetIssueTransitions(const std::string& issueId, std::vector<TrackerFieldOption> transitions) {
+        issueTransitionsByIssueId_[issueId] = std::move(transitions);
+    }
+    void SetIssueTransitionsError(TrackerError error) { issueTransitionsError_ = std::move(error); }
+    void SetIssueTransitionsThrows(bool throws) { issueTransitionsThrows_ = throws; }
+
+    std::size_t FetchIssueCommentsCalls() const { return fetchIssueCommentsCalls_; }
+    void SetIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment> comments) {
+        issueCommentsByIssueKey_[issueKey] = std::move(comments);
+    }
+
+    const std::vector<AddCommentCall>& AddCommentCalls() const { return addCommentCalls_; }
+    void EnqueueAddCommentResult(TrackerError error) { addCommentReplies_.push_back(std::move(error)); }
+
     // Whole-recorder reset (between test sub-cases that share a fixture).
     void ResetCalls() {
         createIssueCalls_.clear();
@@ -620,6 +789,13 @@ class FakeTrackerClient : public ITrackerBackend,
         buildCreatePayloadCalls_ = 0;
         buildUpdatePayloadCalls_ = 0;
         buildFieldPayloadCalls_ = 0;
+        fetchFieldCatalogCalls_ = 0;
+        fetchIssueTransitionsCalls_ = 0;
+        fetchIssueCommentsCalls_ = 0;
+        addCommentCalls_.clear();
+        addCommentReplies_.clear();
+        addWorklogCalls_ = 0;
+        addWatcherCalls_ = 0;
     }
 
   private:
@@ -630,6 +806,10 @@ class FakeTrackerClient : public ITrackerBackend,
         queue.pop_front();
         return r;
     }
+
+    // Network switch (Quality Pillar 6 offline-first harness)
+    FakeNetworkSwitch* network_ = nullptr;
+    bool collaborationEnabled_ = false;
 
     std::string trackerType_ = "fake";
 
@@ -729,6 +909,26 @@ class FakeTrackerClient : public ITrackerBackend,
     std::string projectComponentsDefaultError_ = "FetchProjectComponents not scripted";
     std::size_t fetchProjectComponentsCalls_ = 0;
     std::vector<std::string> fetchProjectComponentsKeys_;
+
+    // FetchFieldCatalog (Pillar 6)
+    std::optional<TrackerFieldCatalogResult> fieldCatalogResult_;
+    std::size_t fetchFieldCatalogCalls_ = 0;
+
+    // FetchIssueTransitions (Pillar 6)
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> issueTransitionsByIssueId_;
+    TrackerError issueTransitionsError_;
+    bool issueTransitionsThrows_ = false;
+    std::size_t fetchIssueTransitionsCalls_ = 0;
+
+    // FetchIssueComments (Pillar 6)
+    std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
+    std::size_t fetchIssueCommentsCalls_ = 0;
+
+    // Collaboration scripting (Pillar 6)
+    std::vector<AddCommentCall> addCommentCalls_;
+    std::deque<TrackerError> addCommentReplies_;
+    std::size_t addWorklogCalls_ = 0;
+    std::size_t addWatcherCalls_ = 0;
 };
 
 } // namespace smatchet_tests

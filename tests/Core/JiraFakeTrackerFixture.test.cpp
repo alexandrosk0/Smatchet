@@ -201,3 +201,119 @@ TEST_CASE("JiraFakeTrackerFixture — Configure applies to pre-existing client")
     const auto tickets = client.FetchIssues();
     CHECK(tickets.size() == 2);
 }
+
+// Offline-first (Slice 3) tests for network mode, catalog, transitions, comments parsing
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — network mode TransportDown parsed and applied") {
+    const char* offlineFixture = R"({
+      "network": {"mode": "TransportDown"},
+      "fetches": [
+        {"fullSyncCompleted": true, "selectedFields": [], "jiraSearchPages": [{"issues": [], "isLast": true}]}
+      ]
+    })";
+
+    const auto fixture = JiraFakeTrackerFixture::LoadFromString(offlineFixture);
+    const auto client = fixture.CreateClient();
+
+    // ProbeReachability with network down should return TransportDown
+    TrackerConfig cfg;
+    const auto result = client->ProbeReachability(cfg);
+    CHECK(result.Kind == TrackerReachabilityProbeKind::TransportDown);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — field catalog parsed from catalog.fields") {
+    const char* catalogFixture = R"({
+      "catalog": {
+        "fields": [
+          {"id": "status", "name": "Status", "family": "Status", "options": [
+            {"id": "1", "value": "To Do"},
+            {"id": "2", "value": "Done"}
+          ]},
+          {"id": "summary", "name": "Summary", "family": "Text", "options": []}
+        ]
+      },
+      "fetches": [
+        {"fullSyncCompleted": true, "selectedFields": [], "jiraSearchPages": [{"issues": [], "isLast": true}]}
+      ]
+    })";
+
+    const auto fixture = JiraFakeTrackerFixture::LoadFromString(catalogFixture);
+    const auto client = fixture.CreateClient();
+
+    // FetchFieldCatalog should return the scripted fields
+    TrackerConfig cfg;
+    const auto catalogResult = client->FetchFieldCatalog(cfg, "TEST");
+    REQUIRE(static_cast<bool>(catalogResult));
+    const auto& fields = catalogResult.value().Fields;
+    REQUIRE(fields.size() == 2);
+    CHECK(fields[0].Id == "status");
+    CHECK(fields[0].AllowedValueOptions.size() == 2);
+    CHECK(fields[1].Id == "summary");
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — issue transitions parsed per key") {
+    const char* transitionsFixture = R"({
+      "transitions": {
+        "OFF-1": [
+          {"id": "2", "name": "In Progress"},
+          {"id": "3", "name": "Done"}
+        ]
+      },
+      "fetches": [
+        {"fullSyncCompleted": true, "selectedFields": [], "jiraSearchPages": [{"issues": [], "isLast": true}]}
+      ]
+    })";
+
+    const auto fixture = JiraFakeTrackerFixture::LoadFromString(transitionsFixture);
+    const auto client = fixture.CreateClient();
+
+    // Collaboration must be enabled for transitions to be accessible
+    CHECK(client->Collaboration() != nullptr);
+
+    TrackerConfig cfg;
+    const auto result = client->FetchIssueTransitions(cfg, "OFF-1");
+    REQUIRE(static_cast<bool>(result));
+    const auto& transitions = result.value();
+    REQUIRE(transitions.size() == 2);
+    CHECK(transitions[0].Value == "In Progress");
+    CHECK(transitions[1].Value == "Done");
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — issue comments parsed per key") {
+    const char* commentsFixture = R"({
+      "comments": {
+        "OFF-1": [
+          {"id": "c1", "author": "Alice", "body": "First comment", "createdAtSec": 1000},
+          {"id": "c2", "author": "Bob", "body": "Second comment", "createdAtSec": 2000}
+        ]
+      },
+      "fetches": [
+        {"fullSyncCompleted": true, "selectedFields": [], "jiraSearchPages": [{"issues": [], "isLast": true}]}
+      ]
+    })";
+
+    const auto fixture = JiraFakeTrackerFixture::LoadFromString(commentsFixture);
+    const auto client = fixture.CreateClient();
+
+    // Collaboration must be enabled for comments to be accessible
+    CHECK(client->Collaboration() != nullptr);
+
+    const auto result = client->FetchIssueComments("OFF-1");
+    REQUIRE(static_cast<bool>(result));
+    const auto& comments = result.value();
+    REQUIRE(comments.size() == 2);
+    CHECK(comments[0].Author == "Alice");
+    CHECK(comments[0].Body == "First comment");
+    CHECK(comments[1].Author == "Bob");
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — fixture without network key does not block") {
+    // Backward compatibility: fixtures without "network" key should still work
+    const auto fixture = JiraFakeTrackerFixture::LoadFromString(kBasicFixture);
+    const auto client = fixture.CreateClient();
+
+    // Should not crash; network should be UP by default (no outage)
+    TrackerConfig cfg;
+    const auto result = client->ProbeReachability(cfg);
+    CHECK(result.Kind == TrackerReachabilityProbeKind::AuthenticatedReachable);
+}

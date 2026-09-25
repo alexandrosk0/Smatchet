@@ -16,12 +16,15 @@
 
 #include "CachedTicketTypes.h"
 #include "FakeTrackerClient.h"
+#include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 #include <nlohmann/json.hpp>
 
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace smatchet_tests {
@@ -59,6 +62,11 @@ class JiraFakeTrackerFixture {
     // Scripted mutation replies (FIFO, same shape as FakeTrackerClient queues).
     std::vector<ScriptedReply> updateIssueFieldsReplies_;
     std::vector<ScriptedReply> createIssueReplies_;
+    // Offline-first (Slice 3) — network mode, field catalog, transitions, comments
+    std::string networkMode_;  // "Up" | "TransportDown" | "ServiceUnavailable" — empty if not set
+    std::vector<TrackerField> fields_;
+    std::unordered_map<std::string, std::vector<TrackerFieldOption>> issueTransitionsByIssueId_;
+    std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;
 };
 
 } // namespace smatchet_tests

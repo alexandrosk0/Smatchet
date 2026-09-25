@@ -3,7 +3,10 @@
 
 #include "JiraFakeTrackerFixture.h"
 
+#include "FakeNetworkSwitch.h"
+#include "ITrackerCollaboration.h"
 #include "JiraIssueMappingPure.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 #include <fstream>
 #include <stdexcept>
@@ -24,6 +27,25 @@ TrackerReachabilityProbeKind ParseReachabilityKind(const std::string& kind) {
     if (kind == "TransportDown")
         return TrackerReachabilityProbeKind::TransportDown;
     throw std::runtime_error("JiraFakeTrackerFixture: unknown reachability kind: " + kind);
+}
+
+TrackerFieldFamily ParseFieldFamily(const std::string& family) {
+    if (family == "Text") return TrackerFieldFamily::Text;
+    if (family == "Number") return TrackerFieldFamily::Number;
+    if (family == "Date") return TrackerFieldFamily::Date;
+    if (family == "DateTime") return TrackerFieldFamily::DateTime;
+    if (family == "Labels") return TrackerFieldFamily::Labels;
+    if (family == "UserSingle") return TrackerFieldFamily::UserSingle;
+    if (family == "UserMulti") return TrackerFieldFamily::UserMulti;
+    if (family == "SelectSingle") return TrackerFieldFamily::SelectSingle;
+    if (family == "SelectMulti") return TrackerFieldFamily::SelectMulti;
+    if (family == "CascadingSelect") return TrackerFieldFamily::CascadingSelect;
+    if (family == "StructuredSingle") return TrackerFieldFamily::StructuredSingle;
+    if (family == "StructuredMulti") return TrackerFieldFamily::StructuredMulti;
+    if (family == "Sprint") return TrackerFieldFamily::Sprint;
+    if (family == "Status") return TrackerFieldFamily::Status;
+    if (family == "IssueType") return TrackerFieldFamily::IssueType;
+    return TrackerFieldFamily::Unknown;
 }
 
 } // namespace
@@ -121,10 +143,90 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
         }
     }
 
+    // Network mode (optional)
+    if (root.contains("network") && root["network"].is_object()) {
+        fixture.networkMode_ = root["network"].value("mode", std::string());
+    }
+
+    // Field catalog (parsed from "catalog.fields", which mirrors the fetch structure for simplicity)
+    if (root.contains("catalog") && root["catalog"].is_object()) {
+        const auto& catalog = root["catalog"];
+        if (catalog.contains("fields") && catalog["fields"].is_array()) {
+            for (const auto& fieldJson : catalog["fields"]) {
+                TrackerField field;
+                field.Id = fieldJson.value("id", std::string());
+                field.Name = fieldJson.value("name", std::string());
+                field.Family = ParseFieldFamily(fieldJson.value("family", std::string("Unknown")));
+
+                // Parse options (status field options, etc.)
+                if (fieldJson.contains("options") && fieldJson["options"].is_array()) {
+                    for (const auto& optJson : fieldJson["options"]) {
+                        TrackerFieldOption opt;
+                        opt.Id = optJson.value("id", std::string());
+                        opt.Value = optJson.value("value", std::string());
+                        field.AllowedValueOptions.push_back(std::move(opt));
+                    }
+                }
+                fixture.fields_.push_back(std::move(field));
+            }
+        }
+    }
+
+    // Issue transitions (optional)
+    if (root.contains("transitions") && root["transitions"].is_object()) {
+        for (auto it = root["transitions"].begin(); it != root["transitions"].end(); ++it) {
+            const std::string& issueKey = it.key();
+            if (it.value().is_array()) {
+                std::vector<TrackerFieldOption> transitions;
+                for (const auto& transJson : it.value()) {
+                    TrackerFieldOption trans;
+                    trans.Id = transJson.value("id", std::string());
+                    trans.Value = transJson.value("name", std::string());
+                    transitions.push_back(std::move(trans));
+                }
+                fixture.issueTransitionsByIssueId_[issueKey] = std::move(transitions);
+            }
+        }
+    }
+
+    // Issue comments (optional)
+    if (root.contains("comments") && root["comments"].is_object()) {
+        for (auto it = root["comments"].begin(); it != root["comments"].end(); ++it) {
+            const std::string& issueKey = it.key();
+            if (it.value().is_array()) {
+                std::vector<TrackerIssueComment> comments;
+                for (const auto& commentJson : it.value()) {
+                    TrackerIssueComment comment;
+                    comment.Id = commentJson.value("id", std::string());
+                    comment.Author = commentJson.value("author", std::string());
+                    comment.Body = commentJson.value("body", std::string());
+                    comment.CreatedAtSec = commentJson.value("createdAtSec", std::int64_t(0));
+                    comment.UpdatedAtSec = commentJson.value("updatedAtSec", comment.CreatedAtSec);
+                    comments.push_back(std::move(comment));
+                }
+                fixture.issueCommentsByIssueKey_[issueKey] = std::move(comments);
+            }
+        }
+    }
+
     return fixture;
 }
 
 void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
+    // Attach network switch FIRST (required for all network-gated calls)
+    client.AttachNetwork(&GlobalFakeNetwork());
+
+    // Set network mode if specified
+    if (!networkMode_.empty()) {
+        if (networkMode_ == "Up") {
+            GlobalFakeNetwork().Set(FakeNetworkMode::Up);
+        } else if (networkMode_ == "TransportDown") {
+            GlobalFakeNetwork().Set(FakeNetworkMode::TransportDown);
+        } else if (networkMode_ == "ServiceUnavailable") {
+            GlobalFakeNetwork().Set(FakeNetworkMode::ServiceUnavailable);
+        }
+    }
+
     client.SetReachabilityResult(reachabilityKind_, reachabilityDiagnostic_);
 
     for (const auto& fetch : fetches_) {
@@ -158,6 +260,29 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         } else {
             client.EnqueueCreateIssueFailure(reply.Error);
         }
+    }
+
+    // Apply field catalog if present
+    if (!fields_.empty()) {
+        TrackerFieldCatalogResult catalogResult;
+        catalogResult.Fields = fields_;
+        client.SetFieldCatalogResult(catalogResult);
+    }
+
+    // Apply transitions if present
+    for (const auto& entry : issueTransitionsByIssueId_) {
+        client.SetIssueTransitions(entry.first, entry.second);
+    }
+
+    // Enable collaboration and apply comments if present
+    if (!issueCommentsByIssueKey_.empty()) {
+        client.EnableCollaboration(true);
+        for (const auto& entry : issueCommentsByIssueKey_) {
+            client.SetIssueComments(entry.first, entry.second);
+        }
+    } else if (!issueTransitionsByIssueId_.empty()) {
+        // Enable collaboration for transitions even without comments
+        client.EnableCollaboration(true);
     }
 }
 

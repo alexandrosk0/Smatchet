@@ -1,0 +1,83 @@
+{
+  "name": "offline-first",
+  "reachability": {"kind": "AuthenticatedReachable", "diagnostic": ""},
+  "catalog": {
+    "fields": [
+      {
+        "id": "status",
+        "name": "Status",
+        "family": "Status",
+        "options": [
+          {"id": "1", "value": "To Do"},
+          {"id": "2", "value": "In Progress"},
+          {"id": "3", "value": "Done"},
+          {"id": "4", "value": "Blocked"}
+        ]
+      },
+      {
+        "id": "summary",
+        "name": "Summary",
+        "family": "Text",
+        "options": []
+      }
+    ],
+    "components": [],
+    "issueTypeMeta": [],
+    "users": []
+  },
+  "fetches": [
+    {
+      "fullSyncCompleted": true,
+      "warning": "",
+      "fetchError": "",
+      "selectedFields": ["summary", "status", "priority", "assignee"],
+      "jiraSearchPages": [
+        {
+          "issues": [
+            {
+              "key": "OFF-1",
+              "fields": {
+                "summary": "Offline first issue",
+                "status": {"name": "To Do", "id": "1"},
+                "priority": {"name": "High", "id": "2"},
+                "assignee": {"displayName": "Alice Offline"},
+                "issuetype": {"name": "Bug"}
+              }
+            },
+            {
+              "key": "OFF-2",
+              "fields": {
+                "summary": "Second offline issue",
+                "status": {"name": "In Progress", "id": "2"},
+                "priority": {"name": "Medium", "id": "3"},
+                "assignee": {"displayName": "Bob Offline"},
+                "issuetype": {"name": "Story"}
+              }
+            }
+          ],
+          "isLast": true
+        }
+      ]
+    }
+  ],
+  "transitions": {
+    "OFF-1": [
+      {"id": "2", "name": "In Progress"},
+      {"id": "3", "name": "Done"}
+    ]
+  },
+  "comments": {
+    "OFF-1": [
+      {
+        "id": "c1",
+        "author": "Ana Offline",
+        "body": "cached comment body",
+        "createdAtSec": 1700000000
+      }
+    ]
+  },
+  "mutations": {
+    "updateIssueFields": [{"ok": true}],
+    "createIssue": [{"ok": true, "issueKey": "OFF-99"}]
+  }
+}
