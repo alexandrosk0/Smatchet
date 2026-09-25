@@ -2893,6 +2893,16 @@ This plan touches `Source/Core/`.
 - Tests: `CatalogOfflinePolicyPure` (new), `TrackerCatalogBuild` (500 → ServerError, 401 → Auth, unreachable → Transport), `ConnectivityMonitorService` (startup wording).
 - Review fix (CodeRabbit): the offline catalog banner names the configured backend (Jira / Plane / GitHub / Linear); it previously said "Jira" for every non-Plane backend. `HandleFieldCatalogError` now takes the normalized backend key instead of a `catalogPlane` flag.
 
+### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240)
+- Shipped: `ConnectivityMonitorService` shared connectivity tracking; `KeyedLookupCache` pattern for caching keyed operations with TTL and freshness cue; offline metadata persistence for UI.
+- Tests: `KeyedLookupCache` (new), `ConnectivityMonitor` (transient flag handling).
+- Deviations: follow-up work on tracking offline state transitions and caching strategies.
+
+### S3 — [#2245](https://github.com/alexandrosk0/Smatchet/pull/2245)
+- Shipped: `FakeNetworkSwitch` (process-wide atomic network mode); `FakeTrackerClient` network gating on all network-shaped calls; `JiraFakeTrackerFixture` parsing of `"network"`, `"catalog.fields"`, `"transitions"`, `"comments"` JSON keys; `offline-first.json` fixture with OFF-1/OFF-2 tickets; `offline_first.test.cpp` bucket-E UI tests; `test-ui-offline-first.sh` driver script; CI bucket-e-offline-first lane with 2-attempt Mesa GL retry.
+- Tests: 5 new JiraFakeTrackerFixture doctests (network mode, field catalog, transitions, comments, backward compatibility).
+- Verification: offline-first.json valid JSON; lint gates pass; placeholder UI tests ready for network simulation hook (S4).
+
 ## Deviations from plan
 
 ## Verification (actual)
