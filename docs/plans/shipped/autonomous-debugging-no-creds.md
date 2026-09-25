@@ -365,7 +365,7 @@ Backlog closure: `process.md` doesn't yet have a sanitizer-CI entry; slice 11 cl
 - **Pillar 1 (Performance ≤ 6.94 ms)** — slice 8's `blame-open-entry-tab` scenario directly exercises the Pillar-1 perf regression gate already named in `docs/plans/shipped/pillar-1-2-perf-review-system.md` § File-level table for the blame tokenizer hot-path. Other scenarios add `rows[]` emission so `perf-gatekeeper` can read them (closes the 8-of-15-scenarios-missing-`rows[]` gap).
 - **Pillar 2 (UI never freezes >100 ms)** — slice 4's `StubAiClientCancel.test.cpp` asserts cancel propagation < 100 ms against the stub (test-infrastructure contract). The concrete-client cancel propagation is verified by `code-review`'s cancel-token-discipline grep at PR time, not in this plan. Slice 9's bucket-E coverage densifies the visible-cue regression coverage.
 - **Pillar 3 (Never crash)** — slice 11's sanitizer CI gates catch ASAN / UBSAN failures *automatically*; this is the strongest single Pillar-3 strengthening currently feasible.
-- **Pillar 4 (Accessibility)** — out of scope; pillar 4 is backlogged per AGENTS.md § UX Pillars.
+- **Pillar 4 (Accessibility)** — out of scope; pillar 4 is backlogged per AGENTS.md § Quality Pillars.
 
 ## Perf-review-system gates (mandatory when diff touches `Source_Core/`; else `N/A — <reason>`)
 
@@ -495,7 +495,7 @@ Per AGENTS.md § Verification automation, every item classified into a bucket (A
 - **Stub-`p4`-binary for the `scripts/dev/p4-*.sh` dual-VCS dev-environment layer** — per user direction, slice 3 covers only the C++ `P4Blame` feature surface (annotate + describe-cache), which has a single seam (`P4RunCommand`) and two subcommands. The dev-environment shell layer has 30+ subcommand shapes, is opt-in via `SMATCHET_AGENT_VCS=p4`, and is exercised manually — not part of the autonomous-debug loop. The `SMATCHET_TEST_REAL_P4D=1` integration gate at `scripts/dev/test-p4-dual-vcs.sh` stays as the path for testing those scripts against a real p4d.
 - **In-process HTTP server (`AiHttpFixture`) for testing the real cpr layer** — per grill Q6 user direction, slice 4 sidesteps cpr / httplib entirely by injecting a stub `IAiClient` through the existing `AiClientFactory::SetTestOverride` seam. The cpr-layer bugs (auth-header building, retry logic, error-body parsing) are caught in production on the first live call rather than by an automated test against a fake server. A future opt-in `SMATCHET_TEST_REAL_AI_API=<provider>` integration test (sibling shape to `SMATCHET_TEST_REAL_P4D`) could land later; not in this plan.
 - **VCR-style replay over the real cpr / httplib HTTP layer** — much more powerful than the dropped `AiHttpFixture` approach (real responses captured from production traffic) but vastly more complex. Defer.
-- **Pillar 4 (accessibility)** — backlogged per AGENTS.md § UX Pillars.
+- **Pillar 4 (accessibility)** — backlogged per AGENTS.md § Quality Pillars.
 - **C4 prong 4** (replacing the spawned-Claude session entirely with a deterministic CLI fixer) — out of scope; C4 prongs 1+2+3 (shipped via #428, #431, #437) plus this plan's slice 11 sanitizer routing close the C4 design space.
 - **Replacing `code-review` with debug-detective on sanitizer failures** — the two agents stay distinct; slice 11 only adds the sanitizer-failure trigger for debug-detective, not for code-review.
 - **Cross-platform CI (Linux / macOS)** — the plan's CI changes target Windows + MSYS2 UCRT64 (the canonical PR-gating job). Linux / macOS coverage is a separate plan.
