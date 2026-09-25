@@ -418,6 +418,9 @@ bool InitAppAndPlugins(BootstrapContext& ctx, const TrackerConfig& cfg, const bo
 #pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
 #endif
             const char* fixturePath = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+            if (fixturePath == nullptr || fixturePath[0] == '\0') {
+                fixturePath = std::getenv("SMATCHET_TEST_OFFLINE_FIRST_FIXTURE");
+            }
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif

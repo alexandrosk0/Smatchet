@@ -213,10 +213,16 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
 }
 
 void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
-    // Attach network switch FIRST (required for all network-gated calls)
+    // Reset network to Up state FIRST — ensures each fixture Configure() starts with clean state.
+    // This prevents TransportDown doctests from leaking into subsequent fixture Configure() calls
+    // (the global singleton would otherwise retain the down state across fixtures).
+    GlobalFakeNetwork().Set(FakeNetworkMode::Up);
+    GlobalFakeNetwork().ResetCounters();
+
+    // Attach network switch (required for all network-gated calls)
     client.AttachNetwork(&GlobalFakeNetwork());
 
-    // Set network mode if specified
+    // Set network mode if specified (overrides the default Up state set above)
     if (!networkMode_.empty()) {
         if (networkMode_ == "Up") {
             GlobalFakeNetwork().Set(FakeNetworkMode::Up);
