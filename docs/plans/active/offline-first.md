@@ -2898,12 +2898,23 @@ This plan touches `Source/Core/`.
 - Tests: `OfflineFirstPure`, `KeyedLookupCache` (both lists); the concurrency case runs 8 threads × 1000 `TryBeginFetch` calls.
 - Nothing consumes the primitives yet (S5+ do); `DataFreshnessCue` is compiled but unused.
 
+### S3 — [#2245](https://github.com/alexandrosk0/Smatchet/pull/2245)
+- Shipped:
+  - `tests/support/FakeNetworkSwitch.h`: the process-wide `GlobalFakeNetwork()` plus `ScopedFakeNetworkReset`.
+  - `FakeTrackerClient`: a network gate goes first in every network-shaped call and records nothing while down; new scriptable `FetchFieldCatalog` / `FetchIssueTransitions` / comments / worklog / watcher overrides.
+  - `JiraFakeTrackerFixture`: the `network`, `catalog.fields`, `transitions` and `comments` keys.
+  - The `offline-first.json` fixture.
+  - The `OfflineFirst` bucket-E group: `Catalog_SurvivesTransportDown`.
+  - The `scripts/dev/test-ui-offline-first.sh` wrapper and its CI step.
+- Tests: `JiraFakeTrackerFixture` offline cases (Windows `SmatchetTests`); the bucket-E lane runs in CI.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
   - `ClassifyFreshness` returns `Fresh` only while the tracker is reachable. This session's live data reads `CachedOffline` once the tracker drops.
   - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
   - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
+- **S3:** the fixture reuses the existing (previously ignored) `"catalog": {"fields": [...]}` key instead of adding `"fieldCatalog"`, and scripts the catalog only when that list is non-empty, so existing fixtures keep the fake's not-supported default. A fixture's `"network"` key sets the global switch only when present; tests restore it with `ScopedFakeNetworkReset`.
 
 ## Verification (actual)
 

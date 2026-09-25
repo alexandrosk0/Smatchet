@@ -201,3 +201,133 @@ TEST_CASE("JiraFakeTrackerFixture — Configure applies to pre-existing client")
     const auto tickets = client.FetchIssues();
     CHECK(tickets.size() == 2);
 }
+
+// Offline-first harness (Quality Pillar 6): network switch, catalog, transitions and comments keys.
+// Every case restores the process-wide switch with ScopedFakeNetworkReset so no outage leaks.
+
+namespace {
+const char* const kEmptyFetch =
+    R"("fetches": [{"fullSyncCompleted": true, "selectedFields": [], "jiraSearchPages": [{"issues": [], "isLast": true}]}])";
+} // namespace
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — TransportDown fails network calls like a real outage") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"network": {"mode": "TransportDown"},
+      "transitions": {"OFF-1": [{"id": "2", "name": "In Progress"}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    TrackerConfig cfg;
+    CHECK(client->ProbeReachability(cfg).Kind == TrackerReachabilityProbeKind::TransportDown);
+    const auto transitions = client->FetchIssueTransitions(cfg, "OFF-1");
+    REQUIRE_FALSE(static_cast<bool>(transitions));
+    CHECK(transitions.error().Kind == TrackerErrorKind::Transport);
+    CHECK(transitions.error().IsRetryable());
+    // The probe is expected while offline and is not counted; the transitions call is.
+    CHECK(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 1);
+    CHECK(client->FetchIssueTransitionsCalls() == 0); // a down call is never recorded
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — ServiceUnavailable reports a retryable 503") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"network": {"mode": "ServiceUnavailable"}, )") + kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    TrackerConfig cfg;
+    CHECK(client->ProbeReachability(cfg).Kind == TrackerReachabilityProbeKind::ServiceUnavailable);
+    const TrackerError err = client->UpdateIssueFields("OFF-1", nlohmann::json::object());
+    CHECK(err.Kind == TrackerErrorKind::ServerError);
+    CHECK(err.IsRetryable());
+    CHECK(client->UpdateIssueFieldsCallCount() == 0);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — an unknown network mode is rejected") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"network": {"mode": "Sideways"}, )") + kEmptyFetch + "}";
+    CHECK_THROWS(JiraFakeTrackerFixture::LoadFromString(json));
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — transitions round-trip per issue") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"transitions": {"OFF-1": [
+        {"id": "2", "name": "In Progress"}, {"id": "3", "name": "Done"}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    TrackerConfig cfg;
+    const auto result = client->FetchIssueTransitions(cfg, "OFF-1");
+    REQUIRE(static_cast<bool>(result));
+    REQUIRE(result.value().size() == 2);
+    CHECK(result.value()[0].Id == "2");
+    CHECK(result.value()[0].Value == "In Progress");
+    CHECK(result.value()[1].Value == "Done");
+    CHECK_FALSE(static_cast<bool>(client->FetchIssueTransitions(cfg, "OFF-2"))); // unscripted
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — catalog.fields builds a Status field with its options") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"catalog": {"fields": [
+        {"id": "status", "name": "Status", "family": "Status", "options": [
+          {"id": "1", "value": "To Do"}, {"id": "2", "value": "In Progress"},
+          {"id": "3", "value": "Done"}, {"id": "4", "value": "Blocked"}]},
+        {"id": "summary", "name": "Summary", "family": "Text", "options": []}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    TrackerConfig cfg;
+    const auto catalog = client->FetchFieldCatalog(cfg, std::string());
+    REQUIRE(static_cast<bool>(catalog));
+    const auto& fields = catalog.value().Fields;
+    REQUIRE(fields.size() == 2);
+    CHECK(fields[0].Id == "status");
+    CHECK(fields[0].Family == TrackerFieldFamily::Status);
+    REQUIRE(fields[0].AllowedValueOptions.size() == 4);
+    CHECK(fields[0].AllowedValueOptions[3].Value == "Blocked");
+    CHECK(fields[0].AllowedValues.size() == 4);
+    CHECK(fields[1].Family == TrackerFieldFamily::Text);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — an empty catalog keeps the not-supported default") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();
+    TrackerConfig cfg;
+    const auto catalog = client->FetchFieldCatalog(cfg, std::string());
+    REQUIRE_FALSE(static_cast<bool>(catalog));
+    CHECK(catalog.error().Kind == TrackerErrorKind::InvalidRequest);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — comments enable Collaboration and round-trip") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json = std::string(R"({"comments": {"OFF-1": [
+        {"id": "c1", "author": "Ana Offline", "body": "cached comment body", "createdAtSec": 1700000000}]}, )") +
+                             kEmptyFetch + "}";
+    const auto client = JiraFakeTrackerFixture::LoadFromString(json).CreateClient();
+
+    ITrackerCollaboration* collab = client->Collaboration();
+    REQUIRE(collab != nullptr);
+    const auto comments = collab->FetchIssueComments("OFF-1");
+    REQUIRE(static_cast<bool>(comments));
+    REQUIRE(comments.value().size() == 1);
+    CHECK(comments.value()[0].Author == "Ana Offline");
+    CHECK(comments.value()[0].Body == "cached comment body");
+    CHECK(comments.value()[0].CreatedAtSec == 1700000000);
+    CHECK(comments.value()[0].UpdatedAtSec == 1700000000);
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — no network key leaves the switch up") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();
+    CHECK_FALSE(smatchet_tests::GlobalFakeNetwork().IsDown());
+    TrackerConfig cfg;
+    CHECK(client->ProbeReachability(cfg).Kind == TrackerReachabilityProbeKind::AuthenticatedReachable);
+    CHECK(client->Collaboration() == nullptr); // no comments scripted
+}
+
+TEST_CASE("JiraFakeTrackerFixture::Offline — a new client never resets an outage already in force") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+    const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();
+    CHECK(smatchet_tests::GlobalFakeNetwork().IsDown());
+    TrackerConfig cfg;
+    CHECK(client->ProbeReachability(cfg).Kind == TrackerReachabilityProbeKind::TransportDown);
+}
