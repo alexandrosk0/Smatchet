@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <ctime>
 
 // See header. This TU is deliberately Logger.h-free / I/O-free so the doctest
@@ -40,7 +41,90 @@ std::string EpochSecToUtcDate(std::int64_t epochSec) {
     return std::string(buf);
 }
 
+// A CommonMark fence line: <=3 spaces of indent, then a run of >=3 '`' or '~'.
+// On a match, reports the fence char, the run length, and whether only
+// whitespace follows the run (the precondition for a CLOSING fence).
+bool ParseFenceLine(const std::string& line, char& outChar, size_t& outLen, bool& outBareRun) {
+    size_t i = 0;
+    while (i < line.size() && i < 3 && line[i] == ' ') {
+        ++i;
+    }
+    if (i >= line.size() || (line[i] != '`' && line[i] != '~')) {
+        return false;
+    }
+    const char c = line[i];
+    size_t runEnd = i;
+    while (runEnd < line.size() && line[runEnd] == c) {
+        ++runEnd;
+    }
+    if (runEnd - i < 3) {
+        return false;
+    }
+    outChar = c;
+    outLen = runEnd - i;
+    outBareRun = line.find_first_not_of(" \t\r", runEnd) == std::string::npos;
+    return true;
+}
+
 } // namespace
+
+std::string EscapeMarkdownInline(const std::string& text) {
+    static const char kSpecial[] = "\\`*_[]<>#|~!&$";
+    std::string out;
+    out.reserve(text.size() + text.size() / 8);
+    for (const char c : text) {
+        if (c == '\r' || c == '\n') {
+            out.push_back(' ');
+        } else {
+            if (std::strchr(kSpecial, c) != nullptr) {
+                out.push_back('\\');
+            }
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+std::string CloseOpenCodeFence(const std::string& md) {
+    char openChar = '\0';
+    size_t openLen = 0;
+    size_t start = 0;
+    while (start <= md.size()) {
+        size_t end = md.find('\n', start);
+        if (end == std::string::npos) {
+            end = md.size();
+        }
+        char c = '\0';
+        size_t len = 0;
+        bool bareRun = false;
+        if (ParseFenceLine(md.substr(start, end - start), c, len, bareRun)) {
+            if (openLen == 0) {
+                openChar = c;
+                openLen = len;
+            } else if (c == openChar && len >= openLen && bareRun) {
+                openLen = 0;
+            }
+        }
+        start = end + 1;
+    }
+    if (openLen == 0) {
+        return md;
+    }
+    std::string out = md;
+    if (!out.empty() && out.back() != '\n') {
+        out.push_back('\n');
+    }
+    out.append(openLen, openChar);
+    return out;
+}
+
+std::string ActivityEntryHeader(const std::string& author, const std::string& date) {
+    std::string header = "**" + EscapeMarkdownInline(author.empty() ? std::string("Unknown") : author) + "**";
+    if (!date.empty()) {
+        header += " " + date;
+    }
+    return header;
+}
 
 std::string CleanCommentOutputAscii(const std::string& input) {
     std::string cleaned;
@@ -88,19 +172,20 @@ std::string FormatCommentBlob(const std::vector<TrackerIssueComment>& comments) 
         if (commentCount >= kMaxComments) {
             break;
         }
-        const std::string body = CleanCommentOutputAscii(comment->Body);
+        const std::string body = CloseOpenCodeFence(CleanCommentOutputAscii(comment->Body));
         if (body.empty()) {
             continue;
         }
-        const std::string author = comment->Author.empty() ? std::string("Unknown") : comment->Author;
-        const std::string entry = "[" + author + "] " + EpochSecToUtcDate(comment->CreatedAtSec) + "\n" + body + "\n";
-        // +1 for the blank-line separator so the cap holds for what is actually appended.
-        const size_t appended = entry.size() + (commentCount > 0 ? 1 : 0);
+        const std::string entry =
+            ActivityEntryHeader(comment->Author, EpochSecToUtcDate(comment->CreatedAtSec)) + "\n\n" + body + "\n";
+        // Count the separator too so the cap holds for what is actually appended.
+        const size_t separatorLen = commentCount > 0 ? std::strlen(kActivityEntrySeparator) : 0;
+        const size_t appended = entry.size() + separatorLen;
         if (result.size() + appended > kMaxTotalLength) {
             break;
         }
         if (commentCount > 0) {
-            result += "\n";
+            result += kActivityEntrySeparator;
         }
         result += entry;
         commentCount++;

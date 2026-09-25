@@ -14,7 +14,6 @@
 #include "ITrackerCollaboration.h" // TrackerIssueComment — comments-cell lazy tooltip fetch
 #include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
-#include "MarkdownPreviewRender.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
@@ -149,34 +148,16 @@ void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::s
     });
 }
 
-// Hover tooltip for the comments cell. `commentBlob` is the precomputed thread text
-// (empty → not yet fetched / no comments) — this function only references it. A long
-// thread renders inside a height-capped scrollable child; the wheel reaches it via the
-// pre-NewFrame router (SmatchetImGuiHost calls RouteWheelToScrollableTooltipBeforeNewFrame).
+// Hover tooltip for the comments cell. `commentBlob` is the precomputed Markdown thread
+// (empty → not yet fetched / no comments) — this function only references it. It renders
+// through the shared description-tooltip path (RenderMarkdownTooltip), which caps a long
+// thread at half the screen with the newest comments (top of the blob) on-frame.
 void RenderCommentsCellTooltip(const std::string& commentBlob) {
     if (commentBlob.empty()) {
         ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
         return;
     }
-    ImGui::BeginTooltip();
-    const float wrapWidth = ImGui::GetFontSize() * 40.0f;
-    const ImVec2 textSize = ImGui::CalcTextSize(commentBlob.c_str(), nullptr, false, wrapWidth);
-    const float maxHeight = ImGui::GetIO().DisplaySize.y * 0.5f;
-    if (textSize.y > maxHeight) {
-        // Cap the tooltip at half the screen so the newest comments (top of the blob)
-        // stay on-frame; overflow scrolls. Width includes scrollbar room.
-        ImGui::BeginChild("##comments_tooltip_scroll", ImVec2(wrapWidth + ImGui::GetStyle().ScrollbarSize, maxHeight),
-                          false);
-        ImGui::PushTextWrapPos(wrapWidth);
-        ImGui::TextUnformatted(commentBlob.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndChild();
-    } else {
-        ImGui::PushTextWrapPos(wrapWidth);
-        ImGui::TextUnformatted(commentBlob.c_str());
-        ImGui::PopTextWrapPos();
-    }
-    ImGui::EndTooltip();
+    RenderMarkdownTooltip(commentBlob);
 }
 
 } // namespace

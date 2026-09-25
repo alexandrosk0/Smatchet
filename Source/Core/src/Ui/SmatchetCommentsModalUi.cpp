@@ -27,6 +27,9 @@ namespace {
 struct CommentsModalState {
     std::string IssueId;
     std::vector<TrackerIssueComment> Comments;
+    /// Parsed Markdown per comment body, index-aligned with `Comments`; rebuilt whenever the
+    /// sizes diverge so the thread is not re-parsed every frame the modal is open.
+    std::vector<MarkdownPreviewRender::PreviewPlanPtr> BodyPlans;
     bool FetchInFlight = false;
     bool PostInFlight = false;
     std::string Error;
@@ -73,6 +76,7 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
             s_CommentsState.FetchInFlight = false;
             if (ok) {
                 s_CommentsState.Comments = std::move(comments);
+                s_CommentsState.BodyPlans.clear();
                 s_CommentsState.Error.clear();
                 // issue-comments fix (#1291, extended) — runs on every fetch: modal-open AND the
                 // post-success re-fetch. Pushes the observed thread into the cached ticket (count +
@@ -89,14 +93,31 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     });
 }
 
-/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • plain-text
-/// body. Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
-/// (both take unix-epoch milliseconds; TrackerIssueComment times are seconds → ×1000).
+void EnsureCommentBodyPlans() {
+    if (s_CommentsState.BodyPlans.size() == s_CommentsState.Comments.size()) {
+        return;
+    }
+    s_CommentsState.BodyPlans.clear();
+    s_CommentsState.BodyPlans.reserve(s_CommentsState.Comments.size());
+    for (const TrackerIssueComment& c : s_CommentsState.Comments) {
+        MarkdownPreviewRender::PreviewPlanPtr plan = MarkdownPreviewRender::MakePlan();
+        MarkdownPreviewRender::BuildPlan(c.Body, *plan);
+        s_CommentsState.BodyPlans.push_back(std::move(plan));
+    }
+}
+
+/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • Markdown
+/// body (same renderer as the description preview, Full mode). Time formatting reuses
+/// smatchet::ai::FormatRelativeTime / FormatAbsoluteTime (both take unix-epoch milliseconds;
+/// TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
     if (s_CommentsState.Comments.empty()) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.none", "No comments yet."));
         return;
     }
+    EnsureCommentBodyPlans();
+    MarkdownPreviewRender::Options bodyOpts;
+    bodyOpts.mode = MarkdownPreviewRender::Mode::Full;
     const std::int64_t nowMs = smatchet::ai::NowUnixMs();
     for (size_t i = 0; i < s_CommentsState.Comments.size(); ++i) {
         const TrackerIssueComment& c = s_CommentsState.Comments[i];
@@ -116,9 +137,7 @@ void DrawCommentsThread() {
                 ImGui::SetTooltip("%s", abs.c_str());
             }
         }
-        // Body: plain-text comment body. Tracker backends store all comments as plain text,
-        // never markdown, so we render as-is without markdown parsing.
-        ImGui::TextWrapped("%s", c.Body.c_str());
+        MarkdownPreviewRender::RenderPlan(*s_CommentsState.BodyPlans[i], bodyOpts);
         ImGui::Separator();
         ImGui::PopID();
     }

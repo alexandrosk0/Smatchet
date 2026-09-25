@@ -20,8 +20,9 @@ namespace jira {
 /// `comments` arrays across pages, as gathered by JiraFetchIssueCommentsPages)
 /// into the backend-agnostic `TrackerIssueComment` shape. Pure — no I/O, unit-testable.
 /// Per element: `Id` = `id` (string), `Author` = `author.displayName` ("Unknown"
-/// if absent, via ParseCommentAuthor), `Body` = the ADF `body` flattened to plain
-/// text (via AdfBodyToPlainText — the Body contract is plain text only),
+/// if absent, via ParseCommentAuthor), `Body` = the ADF `body` as Markdown (via
+/// MarkdownConvert::AdfToMarkdown — the Body contract is Markdown; a legacy string
+/// body passes through, and an unconvertible tree falls back to AdfBodyToPlainText),
 /// `CreatedAtSec` / `UpdatedAtSec` = epoch seconds parsed from the ISO-8601
 /// `created` / `updated` strings (via smatchet::github::ParseIso8601ToUnixSec, which
 /// tolerates Jira's millisecond precision). `UpdatedAtSec` defaults to `CreatedAtSec`

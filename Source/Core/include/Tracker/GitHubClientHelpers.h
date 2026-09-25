@@ -129,6 +129,12 @@ GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const 
 /// populate `CachedTicket::CreatedAtSec` + `UpdatedAtSec`.
 Result<std::int64_t, std::string> ParseIso8601ToUnixSec(const std::string& iso8601);
 
+/// Created/updated epoch pair for a comment-like record (all three comment mappers). An
+/// unparseable `createdIso` leaves `outCreatedSec` at 0; an absent or unparseable
+/// `updatedIso` falls back to the created value ("never edited"). Never throws.
+void ParseIso8601CreatedUpdated(const std::string& createdIso, const std::string& updatedIso,
+                                std::int64_t& outCreatedSec, std::int64_t& outUpdatedSec);
+
 } // namespace github
 } // namespace smatchet
 

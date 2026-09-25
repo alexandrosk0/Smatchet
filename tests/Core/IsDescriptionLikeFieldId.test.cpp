@@ -15,3 +15,11 @@ TEST_CASE("IsDescriptionLikeFieldId: non-description field IDs") {
     CHECK(IsDescriptionLikeFieldId("status") == false);
     CHECK(IsDescriptionLikeFieldId("") == false);
 }
+
+TEST_CASE("IsMarkdownActivityFieldId: only the synthetic History field") {
+    CHECK(IsMarkdownActivityFieldId("history") == true);
+    CHECK(IsMarkdownActivityFieldId("History") == false);
+    CHECK(IsMarkdownActivityFieldId("comment") == false);
+    CHECK(IsMarkdownActivityFieldId("description") == false);
+    CHECK(IsMarkdownActivityFieldId("") == false);
+}

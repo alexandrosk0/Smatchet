@@ -1,9 +1,12 @@
 #include "JiraCommentMappingPure.h"
 
+#include "CommentNodeArrayPure.h"
 #include "GitHubClientHelpers.h"
+#include "MarkdownConvert.h"
 #include "TrackerFieldValueParser.h"
 
 #include <cstdint>
+#include <exception>
 
 // issue-comments PR-B — pure Jira comment-node → TrackerIssueComment mapping. See
 // header. Kept cpr-free / SQLite-free so the doctest rig links it without HTTP.
@@ -14,36 +17,42 @@
 namespace smatchet {
 namespace jira {
 
-std::vector<TrackerIssueComment> MapJiraIssueComments(const nlohmann::json& nodesArray) {
-    std::vector<TrackerIssueComment> out;
-    if (!nodesArray.is_array()) {
-        return out;
+namespace {
+
+// ADF → Markdown via the same converter the description tooltip uses, so a comment keeps its
+// paragraphs, lists, code and emphasis. A legacy (v2) string body passes through unchanged.
+// Falls back to the plain-text flattening if the converter yields nothing (every node dropped)
+// or throws on a malformed tree — the mapper's never-throws contract.
+std::string CommentBodyToMarkdown(const nlohmann::json& body) {
+    if (!body.is_object()) {
+        return AdfBodyToPlainText(body);
     }
-    out.reserve(nodesArray.size());
-    for (const auto& node : nodesArray) {
-        if (!node.is_object()) {
-            continue;
+    try {
+        std::string md = MarkdownConvert::AdfToMarkdown(body);
+        if (!md.empty()) {
+            return md;
         }
+    } catch (const std::exception&) {
+        // Unconvertible tree — the plain-text flattening below still shows the words.
+    }
+    return AdfBodyToPlainText(body);
+}
+
+} // namespace
+
+std::vector<TrackerIssueComment> MapJiraIssueComments(const nlohmann::json& nodesArray) {
+    return smatchet::tracker::MapCommentNodeArray(nodesArray, [](const nlohmann::json& node) {
         TrackerIssueComment comment;
         comment.Id = JsonGetStringIfString(node, "id");
         comment.Author = ParseCommentAuthor(node);
         if (node.contains("body")) {
-            comment.Body = AdfBodyToPlainText(node["body"]);
+            comment.Body = CommentBodyToMarkdown(node["body"]);
         }
-
-        const std::string createdIso = JsonGetStringIfString(node, "created");
-        const Result<std::int64_t, std::string> created = smatchet::github::ParseIso8601ToUnixSec(createdIso);
-        if (created) {
-            comment.CreatedAtSec = created.value();
-        }
-
-        const std::string updatedIso = JsonGetStringIfString(node, "updated");
-        const Result<std::int64_t, std::string> updated = smatchet::github::ParseIso8601ToUnixSec(updatedIso);
-        comment.UpdatedAtSec = updated ? updated.value() : comment.CreatedAtSec;
-
-        out.push_back(std::move(comment));
-    }
-    return out;
+        smatchet::github::ParseIso8601CreatedUpdated(JsonGetStringIfString(node, "created"),
+                                                     JsonGetStringIfString(node, "updated"), comment.CreatedAtSec,
+                                                     comment.UpdatedAtSec);
+        return comment;
+    });
 }
 
 } // namespace jira

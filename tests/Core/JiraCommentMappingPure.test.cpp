@@ -2,7 +2,7 @@
 // TrackerIssueComment mapping. issue-comments PR-B. Mirrors the
 // GitHubCommentMappingPure.test.cpp style (bare include, Pillar-3 tolerance
 // cases) but for the Jira node shape: string `id`, `author.displayName`
-// (defaults "Unknown"), ADF/string `body`, ms-precision `created`/`updated`.
+// (defaults "Unknown"), ADF (→ Markdown) / string `body`, ms-precision `created`/`updated`.
 
 #include "JiraCommentMappingPure.h"
 
@@ -87,6 +87,26 @@ TEST_CASE("MapJiraIssueComments — plain-string body passes through unchanged")
     const std::vector<TrackerIssueComment> out = MapJiraIssueComments(arr);
     REQUIRE(out.size() == 1);
     CHECK(out[0].Body == "legacy wiki-markup body");
+}
+
+TEST_CASE("MapJiraIssueComments — ADF body keeps its formatting as Markdown (paragraphs, bold)") {
+    nlohmann::json bold = nlohmann::json::object();
+    bold["type"] = "text";
+    bold["text"] = "bold";
+    bold["marks"] = nlohmann::json::array({nlohmann::json::object({{"type", "strong"}})});
+    nlohmann::json firstPara = nlohmann::json::object();
+    firstPara["type"] = "paragraph";
+    firstPara["content"] = nlohmann::json::array({bold});
+
+    nlohmann::json doc = AdfParagraph("first");
+    doc["content"] = nlohmann::json::array({firstPara, AdfParagraph("second")["content"][0]});
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "4";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "**bold**\n\nsecond");
 }
 
 TEST_CASE("MapJiraIssueComments — absent author defaults Author to \"Unknown\"") {

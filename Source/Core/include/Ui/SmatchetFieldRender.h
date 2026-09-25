@@ -13,6 +13,15 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
                             const std::string* rawForTooltip = nullptr, bool renderMarkdown = false,
                             const std::string* fieldId = nullptr);
 
+/** The one Markdown hover-tooltip path, shared by the description, comments and history
+ *  tooltips: `MarkdownPreviewRender` in Tooltip mode at a fixed wrap width, inside a child
+ *  that grows with the content and scrolls once taller than half the display (the wheel
+ *  reaches it via `RouteWheelToScrollableTooltipBeforeNewFrame`). `RenderMarkdownTooltip`
+ *  opens and closes the tooltip; `RenderMarkdownTooltipBody` draws into one already open.
+ *  Empty `markdown` draws nothing (and opens no tooltip). UI thread only. */
+void RenderMarkdownTooltip(const std::string& markdown);
+void RenderMarkdownTooltipBody(const std::string& markdown);
+
 /** Tell the renderer which tracker field id holds C/C++ callstack source so it
  *  can paint the grid cell + overflow tooltip with `DrawColoredCppText`. */
 void SetCallstackFieldIdHint(const std::string& fieldId);

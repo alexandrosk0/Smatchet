@@ -1163,7 +1163,8 @@ add_executable(SmatchetTests
     # issue-comments PR-B — pure Jira comment-node array → TrackerIssueComment
     # mapping, split out of JiraIssueSearch.cpp (which pulls cpr). Reuses
     # ParseCommentAuthor / AdfBodyToPlainText (TrackerFieldValueParser.cpp) +
-    # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) — both already linked above.
+    # ParseIso8601ToUnixSec (GitHubClientHelpers.cpp) + MarkdownConvert::AdfToMarkdown
+    # (MarkdownConvert.cpp, the ADF body → Markdown) — all linked elsewhere in this target.
     Core/JiraCommentMappingPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JiraCommentMappingPure.cpp"
     # Comments-cell tooltip blob — the ONE shared formatter behind fieldValues["comment"]
