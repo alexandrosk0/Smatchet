@@ -12,8 +12,9 @@
 using smatchet::tracker::ActivityEntryHeader;
 using smatchet::tracker::CleanCommentOutputAscii;
 using smatchet::tracker::CloseOpenCodeFence;
-using smatchet::tracker::EscapeMarkdownInline;
+using smatchet::tracker::EscapeMarkdownText;
 using smatchet::tracker::FormatCommentBlob;
+using smatchet::tracker::PlainActivityBlobToMarkdown;
 
 namespace {
 
@@ -140,18 +141,20 @@ TEST_CASE("FormatCommentBlob — an unclosed fence is closed so it cannot swallo
     CHECK(out == "**New** 2024-01-16\n\n```\nunclosed\n```\n\n---\n\n**Old** 2024-01-15\n\nold body\n");
 }
 
-TEST_CASE("FormatCommentBlob — author Markdown is escaped in the header") {
+TEST_CASE("FormatCommentBlob — author keeps searchable text; only span-breaking chars are escaped") {
     std::vector<TrackerIssueComment> comments;
-    comments.push_back(MakeComment("a_b*c", "body", kJan15));
-    CHECK(FormatCommentBlob(comments).find("**a\\_b\\*c**") == 0);
+    comments.push_back(MakeComment("github-actions[bot] a_b*c", "body", kJan15));
+    CHECK(FormatCommentBlob(comments).find("**github-actions[bot] a_b\\*c**") == 0);
 }
 
-TEST_CASE("EscapeMarkdownInline — escapes Markdown punctuation and folds line breaks") {
-    CHECK(EscapeMarkdownInline("plain text 1.2") == "plain text 1.2");
-    CHECK(EscapeMarkdownInline("*a* _b_ `c` [d](e) <f> #g |h| ~i~ !j &k $l \\m") ==
-          "\\*a\\* \\_b\\_ \\`c\\` \\[d\\](e) \\<f\\> \\#g \\|h\\| \\~i\\~ \\!j \\&k \\$l \\\\m");
-    CHECK(EscapeMarkdownInline("a\r\nb\nc") == "a  b c");
-    CHECK(EscapeMarkdownInline("") == "");
+TEST_CASE("EscapeMarkdownText — escapes every ASCII punctuation char and folds line breaks") {
+    CHECK(EscapeMarkdownText("plain text 42") == "plain text 42");
+    CHECK(EscapeMarkdownText("*a* _b_ `c` [d](e) <f> #g") == "\\*a\\* \\_b\\_ \\`c\\` \\[d\\]\\(e\\) \\<f\\> \\#g");
+    CHECK(EscapeMarkdownText("1. - + = ~ \\") == "1\\. \\- \\+ \\= \\~ \\\\");
+    CHECK(EscapeMarkdownText("a\r\nb\nc") == "a  b c");
+    CHECK(EscapeMarkdownText("") == "");
+    // UTF-8 multi-byte sequences are not ASCII punctuation and pass through untouched.
+    CHECK(EscapeMarkdownText("caf\xc3\xa9") == "caf\xc3\xa9");
 }
 
 TEST_CASE("CloseOpenCodeFence — balanced input is unchanged") {
@@ -172,13 +175,48 @@ TEST_CASE("CloseOpenCodeFence — only a same-char, long-enough, bare fence clos
     CHECK(CloseOpenCodeFence("````\n~~~\n```\n```` x") == "````\n~~~\n```\n```` x\n````");
     // Two backticks are not a fence; indent of 4+ spaces is not a fence.
     CHECK(CloseOpenCodeFence("``not\n    ```") == "``not\n    ```");
-    // Up to 3 spaces of indent still opens.
-    CHECK(CloseOpenCodeFence("   ```\nx") == "   ```\nx\n```");
 }
 
-TEST_CASE("ActivityEntryHeader — bold escaped author, optional date") {
+TEST_CASE("CloseOpenCodeFence — a backtick run with a backtick after it is inline code, not a fence") {
+    CHECK(CloseOpenCodeFence("```git pull --rebase```") == "```git pull --rebase```");
+    CHECK(CloseOpenCodeFence("run ```x``` then\n```y` z") == "run ```x``` then\n```y` z");
+    // Tilde fences may carry backticks in their info string.
+    CHECK(CloseOpenCodeFence("~~~ a`b\ncode") == "~~~ a`b\ncode\n~~~");
+}
+
+TEST_CASE("CloseOpenCodeFence — the closer takes the opener's indent (stays inside a list item)") {
+    CHECK(CloseOpenCodeFence("1. step\n   ```\n   code") == "1. step\n   ```\n   code\n   ```");
+}
+
+TEST_CASE("ActivityEntryHeader — bold author, optional date") {
     CHECK(ActivityEntryHeader("Ann", "2024-01-15") == "**Ann** 2024-01-15");
     CHECK(ActivityEntryHeader("Ann", "") == "**Ann**");
     CHECK(ActivityEntryHeader("", "2024-01-15") == "**Unknown** 2024-01-15");
-    CHECK(ActivityEntryHeader("x*y", "") == "**x\\*y**");
+    CHECK(ActivityEntryHeader("x*y`z<w\\v", "") == "**x\\*y\\`z\\<w\\\\v**");
+    CHECK(ActivityEntryHeader("two\nlines", "") == "**two lines**");
+}
+
+TEST_CASE("PlainActivityBlobToMarkdown — History entries become the Comments-tooltip Markdown shape") {
+    // Exactly what ParseChangelog stores: "[Author] date\nfield: from -> to\n", blank line between.
+    const std::string blob = "[Ann] 2024-01-15\nstatus: To Do -> Done\n\n[Ben] 2024-01-16\nsummary: a -> b\n";
+    CHECK(PlainActivityBlobToMarkdown(blob) == "**Ann** 2024-01-15\n\nstatus\\: To Do \\-\\> Done\n\n---\n\n"
+                                               "**Ben** 2024-01-16\n\nsummary\\: a \\-\\> b\n");
+}
+
+TEST_CASE("PlainActivityBlobToMarkdown — values render literally and keep their line breaks") {
+    const std::string blob = "[Ann] 2024-01-15\ndescription:  -> # not *a* heading\n- not a list\n\n   indented\n";
+    CHECK(PlainActivityBlobToMarkdown(blob) ==
+          "**Ann** 2024-01-15\n\ndescription\\:  \\-\\> \\# not \\*a\\* heading\\\n"
+          "\\- not a list\n\nindented\n");
+}
+
+TEST_CASE("PlainActivityBlobToMarkdown — bracketed value text after a blank line is not an entry header") {
+    const std::string blob = "[Ann] 2024-01-15\nsummary: x -> y\n\n[WIP] fix\n";
+    CHECK(PlainActivityBlobToMarkdown(blob) == "**Ann** 2024-01-15\n\nsummary\\: x \\-\\> y\n\n\\[WIP\\] fix\n");
+}
+
+TEST_CASE("PlainActivityBlobToMarkdown — empty date, author with brackets, CRLF, empty input") {
+    CHECK(PlainActivityBlobToMarkdown("") == "");
+    CHECK(PlainActivityBlobToMarkdown("[bot[x]] \r\nlabels: a -> b\r\n") == "**bot[x]**\n\nlabels\\: a \\-\\> b\n");
+    CHECK(PlainActivityBlobToMarkdown("\n\n[... truncated ...]\n") == "\\[\\.\\.\\. truncated \\.\\.\\.\\]\n");
 }

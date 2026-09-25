@@ -22,7 +22,8 @@ namespace jira {
 /// Per element: `Id` = `id` (string), `Author` = `author.displayName` ("Unknown"
 /// if absent, via ParseCommentAuthor), `Body` = the ADF `body` as Markdown (via
 /// MarkdownConvert::AdfToMarkdown — the Body contract is Markdown; a legacy string
-/// body passes through, and an unconvertible tree falls back to AdfBodyToPlainText),
+/// body passes through, and a tree with a node the converter cannot represent, or
+/// that fails to convert, falls back to AdfBodyToPlainText so no text is lost),
 /// `CreatedAtSec` / `UpdatedAtSec` = epoch seconds parsed from the ISO-8601
 /// `created` / `updated` strings (via smatchet::github::ParseIso8601ToUnixSec, which
 /// tolerates Jira's millisecond precision). `UpdatedAtSec` defaults to `CreatedAtSec`

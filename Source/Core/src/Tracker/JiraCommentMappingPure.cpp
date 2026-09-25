@@ -7,6 +7,8 @@
 
 #include <cstdint>
 #include <exception>
+#include <string>
+#include <vector>
 
 // issue-comments PR-B — pure Jira comment-node → TrackerIssueComment mapping. See
 // header. Kept cpr-free / SQLite-free so the doctest rig links it without HTTP.
@@ -21,15 +23,17 @@ namespace {
 
 // ADF → Markdown via the same converter the description tooltip uses, so a comment keeps its
 // paragraphs, lists, code and emphasis. A legacy (v2) string body passes through unchanged.
-// Falls back to the plain-text flattening if the converter yields nothing (every node dropped)
-// or throws on a malformed tree — the mapper's never-throws contract.
+// Falls back to the plain-text flattening when the converter skipped any node (a panel or
+// expand it cannot represent would otherwise lose its text), yields nothing, or throws on a
+// malformed tree — the mapper's never-throws contract.
 std::string CommentBodyToMarkdown(const nlohmann::json& body) {
     if (!body.is_object()) {
         return AdfBodyToPlainText(body);
     }
     try {
-        std::string md = MarkdownConvert::AdfToMarkdown(body);
-        if (!md.empty()) {
+        std::vector<std::string> dropped;
+        std::string md = MarkdownConvert::AdfToMarkdown(body, &dropped);
+        if (dropped.empty() && !md.empty()) {
             return md;
         }
     } catch (const std::exception&) {

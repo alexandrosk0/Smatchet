@@ -728,7 +728,7 @@ TEST_CASE("ParseChangelog falls back to from/to id keys when *String absent") {
 
     const std::string out = ParseChangelog(hist);
     CHECK(out.find("Carol") != std::string::npos);
-    CHECK(out.find("**assignee**: 101 -> acct-2") != std::string::npos);
+    CHECK(out.find("assignee: 101 -> acct-2") != std::string::npos);
 }
 
 TEST_CASE("ParseChangelog formats time-duration field values") {
@@ -776,46 +776,18 @@ TEST_CASE("ParseChangelog caps at 60 entries and appends truncated marker") {
         hist.push_back(history);
     }
     const std::string out = ParseChangelog(hist);
-    CHECK(out.find("*... truncated ...*") != std::string::npos);
+    CHECK(out.find("[... truncated ...]") != std::string::npos);
     // 60th entry (index 59) present; 61st (index 60) dropped.
     CHECK(out.find("a59 -> b59") != std::string::npos);
     CHECK(out.find("a60 -> b60") == std::string::npos);
 }
 
-TEST_CASE("ParseChangelog dumps raw JSON as a code block when no formattable items produced") {
+TEST_CASE("ParseChangelog dumps raw when no formattable items produced") {
     // Array is non-empty but every history lacks an items array -> raw dump path.
     nlohmann::json hist = nlohmann::json::array();
     nlohmann::json history = nlohmann::json::object();
     history["author"]["displayName"] = "NoItems";
     hist.push_back(history);
     const std::string out = ParseChangelog(hist);
-    CHECK(out == "```\n" + hist.dump() + "\n```\n");
-}
-
-TEST_CASE("ParseChangelog emits Markdown entries: bold header, blank line, rule between entries") {
-    nlohmann::json hist = nlohmann::json::array();
-    for (int i = 0; i < 2; ++i) {
-        nlohmann::json history = nlohmann::json::object();
-        history["author"]["displayName"] = i == 0 ? "Ann" : "Ben";
-        nlohmann::json item;
-        item["field"] = "status";
-        item["fromString"] = "Open";
-        item["toString"] = "Done";
-        history["items"] = nlohmann::json::array({item});
-        hist.push_back(history);
-    }
-    const std::string out = ParseChangelog(hist);
-    CHECK(out == "**Ann**\n\n**status**: Open -> Done\n\n---\n\n**Ben**\n\n**status**: Open -> Done\n");
-}
-
-TEST_CASE("ParseChangelog escapes Markdown in plain-text values so they render literally") {
-    nlohmann::json history = nlohmann::json::object();
-    history["author"]["displayName"] = "Ann";
-    nlohmann::json item;
-    item["field"] = "summary";
-    item["fromString"] = "fix *all* [bugs]";
-    item["toString"] = "line1\n# not a heading";
-    history["items"] = nlohmann::json::array({item});
-    const std::string out = ParseChangelog(nlohmann::json::array({history}));
-    CHECK(out.find("fix \\*all\\* \\[bugs\\] -> line1 \\# not a heading") != std::string::npos);
+    CHECK(out == hist.dump());
 }

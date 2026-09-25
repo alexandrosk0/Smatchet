@@ -623,14 +623,10 @@ void ParseChangelogHistory(const nlohmann::json& history, size_t maxEntries, siz
         }
 
         if (entryCount > 0) {
-            formatted << smatchet::tracker::kActivityEntrySeparator;
+            formatted << "\n";
         }
-        // Markdown, same entry shape as the Comments blob; changelog values are plain text, so
-        // they are escaped to render literally.
-        formatted << smatchet::tracker::ActivityEntryHeader(author, created) << "\n\n**"
-                  << smatchet::tracker::EscapeMarkdownInline(fieldName)
-                  << "**: " << smatchet::tracker::EscapeMarkdownInline(fromValue) << " -> "
-                  << smatchet::tracker::EscapeMarkdownInline(toValue) << "\n";
+        formatted << "[" << author << "] " << created << "\n"
+                  << fieldName << ": " << fromValue << " -> " << toValue << "\n";
         entryCount++;
 
         if (entryCount >= maxEntries) {
@@ -658,21 +654,19 @@ std::string ParseChangelog(const nlohmann::json& histories) {
     }
 
     if (entryCount >= kMaxChangelogEntries) {
-        formatted << smatchet::tracker::kActivityEntrySeparator << "*... truncated ...*\n";
+        formatted << "\n[... truncated ...]\n";
     }
 
     if (!formatted.str().empty()) {
         return formatted.str();
     }
 
-    // Unrecognised shape: show the raw JSON as a code block so Markdown never reinterprets it.
-    // dump() is single-line (newlines inside strings are escaped), so no line can close the fence.
     std::string raw = histories.dump();
     if (raw.size() > kMaxRawChangelogChars) {
         raw.resize(kMaxRawChangelogChars);
         raw += "...";
     }
-    return "```\n" + raw + "\n```\n";
+    return raw;
 }
 
 long long ParseWorkDurationToSeconds(const std::string& input) {

@@ -1603,8 +1603,7 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         }
     } else {
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;
-        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip,
-                               IsMarkdownActivityFieldId(column.FieldId), &column.FieldId);
+        RenderClippedFieldText(display, availWidth, tooltipsEnabled, disabled, tip, false, &column.FieldId);
     }
 }
 } // namespace
