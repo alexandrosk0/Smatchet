@@ -512,6 +512,18 @@ case "$MODE" in
     printf '    // was: classified.IsOk() ? TrackerErrorUnknown(outError) : classified\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
     if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() ternary text in a comment" >&2; miss=1; fi
+    # selftest: a valid fallback on the previous line does not exempt a separate collapse on this one.
+    printf '    auto x = classified.IsOk() ? TrackerErrorUnknown(other) : classified;\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" != "tracker-error-kind-collapsed"$'\t'"Source/Core/src/Tracker/X.cpp:2" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a valid fallback on the previous line" >&2; miss=1; fi
+    # selftest: one line holding a fallback AND a separate collapse still fires.
+    printf '    return F(a.IsOk() ? TrackerErrorUnknown(x) : a, TrackerErrorUnknown(y));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a fallback sharing its line" >&2; miss=1; fi
+    # selftest: the ternary wrapped after `?` (collapse opens the next line) is still the allowed fallback.
+    printf '    return classified.IsOk() ?\n        TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a fallback wrapped after the ?" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
