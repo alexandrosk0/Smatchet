@@ -24,7 +24,7 @@ The underlying tooling already exists and is production-grade — scenario runne
 
 **Pillar 2 ready-to-use:**
 - `Source_Core/include/MainThreadDispatcher.h` — 4096-task bounded queue; `Drain()` runs once per frame at `SmatchetUI::Draw` head; `BeginShutdown()` for teardown safety.
-- AGENTS.md § Quality Pillars: Pillar 2 enforceable invariants (code-review CRITICAL flag for new `cpr::` / `SQLite::` / `p4 …` / `std::ifstream` / `std::mutex::lock` reachable from `ImGui::*`).
+- AGENTS.md § UX Pillars: Pillar 2 enforceable invariants (code-review CRITICAL flag for new `cpr::` / `SQLite::` / `p4 …` / `std::ifstream` / `std::mutex::lock` reachable from `ImGui::*`).
 - Audit precedent: `docs/plans/shipped/pillar-1-2-audit-2026-05-17.md` — 9 CRITICAL + 3 HIGH + 3 MEDIUM sites; closed by PR #191.
 - `agents/code-review.md` Pillar 2 checklist (manual diff read today).
 
@@ -115,7 +115,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 | C8 | Subsystem marker inventory | P2 | S | `scripts/dev/perf-marker-inventory.sh`, `docs/perf/MARKER_INVENTORY.md` | text-search only |
 | C9 | Visible-cue assertion harness (bucket-E) | P2 | L | `tests/ui/sync_stall_visible_cue.test.cpp` (`IM_REGISTER_TEST`), `scripts/dev/test-ui-sync-stall-visible-cue.sh`, `#ifdef SMATCHET_DEBUG_VISIBLE_CUE_HARNESS`-gated stall hook in one chosen sync path (icon fetch is the simplest target); `ninja-ui-test-msvc` preset gains `SMATCHET_DEBUG_VISIBLE_CUE_HARNESS=1` | bucket-E ImGui Test Engine rig (see `docs/plans/shipped/imgui-test-engine-bucket-e-execution.md`); pattern from `tests/ui/views_columns_reorder.test.cpp` |
 | C10 | Sync-call latency comment lint | P2 | S | extends C2's scanner — same script | shared with Pillar 2 lint pass |
-| C11 | Process mandate update | P0 | S | `AGENTS.md` (§ Quality Pillars cross-link to the registry + workflows), `docs/guides/perf-workflow.md` (add § "Step 7: gate-check vs baseline"); close + archive existing § Perf process/P2 backlog entry from 2026-05-20 in `docs/backlog/agent-self-improvement/process.md` → `applied.md` | existing backlog format |
+| C11 | Process mandate update | P0 | S | `AGENTS.md` (§ UX Pillars cross-link to the registry + workflows), `docs/guides/perf-workflow.md` (add § "Step 7: gate-check vs baseline"); close + archive existing § Perf process/P2 backlog entry from 2026-05-20 in `docs/backlog/agent-self-improvement/process.md` → `applied.md` | existing backlog format |
 | C12 | Pillar 2 site annotation migration | P0 | L | bulk-add `/* PILLAR2_WORKER_ONLY */ // est-latency: <N>ms` annotations to existing safe sync-I/O sites; scope ~25-35 lines across ~10-15 files (audit doc as ground truth + fresh scanner output as the working list) | the audit doc lists the confirmed-safe sites |
 
 ## Slice plan
@@ -131,7 +131,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 3. Implement `scripts/dev/perf-compare.py` — Python 3 (Python is already required per the recent tooling/P2 backlog entry). Loads baseline JSON + new snapshot, computes mean / p99 / max delta percentages, emits markdown table to stdout, exit code 1 on regression > thresholds from `regression-policy.json`. Tolerance band: default `mean_delta_pct: 10`, `p99_abs_ceiling_ms: 16.67`, `consecutive_run_required: 2`.
 4. Implement `scripts/dev/perf-baseline.sh` — `init <scenario>` captures fresh baseline; `bump <scenario>` diffs vs current baseline, asks confirmation (non-interactive `--yes` flag for CI use), writes update; `list` shows current baseline inventory.
 5. Capture initial `dev`-host baselines for all 14 scenarios on current `develop` HEAD locally. Commit JSON files to `docs/perf/baselines/`. (CI-runner baselines populate themselves on Slice 3's first run via a one-shot `bump` step.)
-6. Update `AGENTS.md` § Quality Pillars with cross-links to `scripts/dev/perf-run.sh` + `docs/perf/baselines/`. Add `docs/guides/perf-workflow.md` § "Step 7: gate-check vs baseline" with usage examples for every harness. Close the existing § Perf process/P2 backlog entry from 2026-05-20 → archive to `applied.md` per the established workflow.
+6. Update `AGENTS.md` § UX Pillars with cross-links to `scripts/dev/perf-run.sh` + `docs/perf/baselines/`. Add `docs/guides/perf-workflow.md` § "Step 7: gate-check vs baseline" with usage examples for every harness. Close the existing § Perf process/P2 backlog entry from 2026-05-20 → archive to `applied.md` per the established workflow.
 
 **Verification**: `bash scripts/dev/perf-run.sh idle` → JSON written. `bash scripts/dev/perf-compare.py docs/perf/baselines/idle.dev.json /tmp/idle-latest.json` exits 0. Inject a synthetic 2 ms `std::this_thread::sleep_for` into the idle render path → re-run → assert exit code 1 + markdown table identifies the regression. Revert.
 
@@ -208,7 +208,7 @@ Harness adapters (Claude Code / Codex / Cursor) — Slice 2 only
 ## Critical files
 
 **To modify (existing files)**:
-- `AGENTS.md` (§ Quality Pillars cross-links — Slice 1; § Merge gates `perf-out-of-band` label — Slice 3)
+- `AGENTS.md` (§ UX Pillars cross-links — Slice 1; § Merge gates `perf-out-of-band` label — Slice 3)
 - `docs/guides/perf-workflow.md` (Step 7 baseline gate — Slice 1)
 - `docs/harness/claude-code/hooks/lint-cpp-drain.sh` (canonical template; live `.claude/hooks/lint-cpp-drain.sh` mirrors via setup-harness — Slice 2)
 - `Source_Core/include/MainThreadDispatcher.h` (Slice 2; dispatcher.drain scope + LastDrainTaskCount accessor)

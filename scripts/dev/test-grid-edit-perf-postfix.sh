@@ -5,7 +5,7 @@
 # UI-thread cost stays inside pillar-1 (144 Hz, 6.94 ms mean) and pillar-2
 # (no UI hitch > 10.0 ms / 100 Hz floor) budgets. See:
 #   docs/plans/shipped/grid-cell-edit-perf.md
-#   AGENTS.md § Quality Pillars
+#   AGENTS.md § UX Pillars
 #
 # The assertion is that the HTTP commit no longer blocks the UI thread — the
 # worker spawn + dispatcher post-back should be sub-millisecond per cell.

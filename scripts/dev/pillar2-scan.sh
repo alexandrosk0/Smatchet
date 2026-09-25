@@ -169,7 +169,7 @@ if [[ $CRITICAL_COUNT -gt 0 ]]; then
     echo >&2
     echo "pillar2-scan: $CRITICAL_COUNT CRITICAL finding(s) across $SCANNED_COUNT UI-reachable file(s); $EXEMPT_COUNT exempt." >&2
     echo >&2
-    echo "Pillar 2 (AGENTS.md § Quality Pillars): synchronous I/O reaching the UI thread is code-review CRITICAL." >&2
+    echo "Pillar 2 (AGENTS.md § UX Pillars § 2): synchronous I/O reaching the UI thread is code-review CRITICAL." >&2
     echo "Fix options:" >&2
     echo "  (a) Move the call to a worker thread + post results back via MainThreadDispatcher::PostToMainThread." >&2
     echo "  (b) If already on a worker (false positive), annotate the line with:" >&2

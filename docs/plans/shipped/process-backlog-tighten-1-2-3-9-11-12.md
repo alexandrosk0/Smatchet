@@ -46,7 +46,7 @@ Ship order: **3 → 1 → 2 → 11 → 9 → 12**. Rationale: Slice 3 is the onl
       - A change that touches the visual paths AND has bucket-C/E coverage — coverage is the gate; ship-loop continues. If the user disagrees with the golden after merge, the bucket-C golden is re-bootstrapped per AGENTS.md.
    ```
 
-2. Add a pillar anchor — AGENTS.md § Quality Pillars. Accessibility gets a new sub-bullet under **Locked in-scope**:
+2. Add a pillar anchor — AGENTS.md § UX Pillars § 4. Accessibility gets a new sub-bullet under **Locked in-scope**:
    ```markdown
    - **Visual-validation acceptance**: when no automated check covers a visual change (palette, layout, font), the user is the verifier. See § Autonomous ship-loop default § Exceptions § Visual-validation exception for the loop-pause contract.
    ```
