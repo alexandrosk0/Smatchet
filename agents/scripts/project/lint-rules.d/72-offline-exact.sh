@@ -11,11 +11,11 @@
 # tracker-error-kind-collapsed — TrackerErrorUnknown(<one variable>) in tracker code. It throws away the
 # Transport kind, so an offline failure reads as permanent and callers wipe cached data (the #21b
 # collapse behind the PR #2234 postmortem). Classify where the response is in hand. The
-# `classified.IsOk() ? TrackerErrorUnknown(x) : classified` fallback is allowed (IsOk() on the line or
-# the 2 lines above).
+# `classified.IsOk() ? TrackerErrorUnknown(x) : classified` fallback is allowed: an `IsOk() ?` ternary
+# on the line or the 2 lines above. An unrelated IsOk() check nearby does not exempt the hit.
 #
-# Escape: // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the nearest non-blank
-# line above the hit.
+# Escape: a comment line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
+# nearest non-blank line above the hit. A marker trailing a code line never hides that line's code.
 
 OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
@@ -38,7 +38,8 @@ scan_offline_exact_file() {
     local lineno=0 prev_dev_rule="" prev1="" prev2="" line s code
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno+1))
-        if [[ "$line" =~ $DEV_RE ]]; then
+        s="${line#"${line%%[![:space:]]*}"}"
+        if [[ "$s" == '//'* || "$s" == '/*'* ]] && [[ "$line" =~ $DEV_RE ]]; then
             local body="${BASH_REMATCH[1]}" kv
             prev_dev_rule=""
             IFS=';' read -ra kvs <<< "$body"
@@ -48,7 +49,6 @@ scan_offline_exact_file() {
         fi
         if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
         local suppress="$prev_dev_rule"; prev_dev_rule=""
-        s="${line#"${line%%[![:space:]]*}"}"
         case "$s" in '//'*|'*'*|'/*'*) prev2="$prev1"; prev1="$line"; continue ;; esac
         code="${line%%//*}"
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
@@ -57,10 +57,10 @@ scan_offline_exact_file() {
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
             && [[ "$code" =~ $OFFLINE_KIND_COLLAPSE_RE ]]; then
-            case "$code$prev1$prev2" in
-                *'IsOk()'*) ;;
-                *) printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno" ;;
-            esac
+            # Chronological join, so a ternary wrapped by clang-format (`IsOk()` / `? …` split) still reads as one.
+            if ! [[ "$prev2 $prev1 $code" =~ IsOk\(\)[[:space:]]*\? ]]; then
+                printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno"
+            fi
         fi
         prev2="$prev1"; prev1="$line"
     done < "$f"
@@ -74,21 +74,24 @@ compute_offline_exact_violations() {
 offline_delta_hits() {
     # $1 = scanner fn, $2 = merge-base, $3.. = rule ids. Scans each CHANGED first-party C++ file once at
     # HEAD and once at the merge-base, and prints the HEAD hits of every rule whose HEAD count exceeds the
-    # merge-base count (a new file counts from zero, so a moved line never fails).
+    # merge-base count (a new file counts from zero, so a moved line never fails). A renamed file is
+    # compared with its merge-base source path (scanned under that path's scope), so a rename alone
+    # never un-grandfathers the hits it carries.
     local fn="$1" mb="$2"
     shift 2
-    local changed f head_out base_out rule head_n base_n tmp
-    changed="$(git diff --name-only --diff-filter=d "$mb" 2>/dev/null \
-        | grep -E '^Source/.*\.(cpp|h|hpp)$' | grep -vE '(^|/)ThirdParty/' || true)"
+    local changed status src f head_out base_out rule head_n base_n tmp
+    changed="$(git diff --name-status -M --diff-filter=d "$mb" 2>/dev/null || true)"
     [ -n "$changed" ] || return 0
     tmp="$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/offline_delta.$$")"
-    while IFS= read -r f; do
-        [ -n "$f" ] || continue
+    while IFS=$'\t' read -r status src f; do
+        case "$status" in R*|C*) ;; *) f="$src" ;; esac
+        [[ "$f" =~ ^Source/.*\.(cpp|h|hpp)$ ]] || continue
+        case "$f" in */ThirdParty/*) continue ;; esac
         head_out="$("$fn" "$f" "$f")"
         [ -n "$head_out" ] || continue
         base_out=""
-        if git show "$mb:$f" > "$tmp" 2>/dev/null; then
-            base_out="$("$fn" "$tmp" "$f")"
+        if git show "$mb:$src" > "$tmp" 2>/dev/null; then
+            base_out="$("$fn" "$tmp" "$src")"
         fi
         for rule in "$@"; do
             head_n="$(printf '%s\n' "$head_out" | grep -cF "${rule}"$'\t' || true)"

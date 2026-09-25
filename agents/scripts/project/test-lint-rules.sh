@@ -494,6 +494,17 @@ case "$MODE" in
     printf 'return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on IsOk() idiom (allowed)" >&2; miss=1; fi
+    # selftest: a deviation marker trailing a code line does not hide that line's own write.
+    printf '    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e); // SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue was hidden by a same-line trailing deviation" >&2; miss=1; fi
+    # selftest: an unrelated IsOk() check above does not exempt a collapse; a clang-format-wrapped ternary does.
+    printf 'if (!r.IsOk()) {\n    return Err(TrackerErrorUnknown(outError));\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by an unrelated IsOk() check" >&2; miss=1; fi
+    printf '    return classified.IsOk()\n               ? TrackerErrorUnknown(outError)\n               : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a wrapped IsOk() ternary (allowed)" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then

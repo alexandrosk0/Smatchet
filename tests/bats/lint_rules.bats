@@ -974,6 +974,27 @@ _resolve_py() {
     [[ "$output" == *"New.cpp"* ]]
 }
 
+@test "--diff delta keeps a renamed file's existing offline hits grandfathered" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop && git mv Source/Core/src/Ui/Old.cpp Source/Core/src/Ui/Renamed.cpp && git commit -qm rename ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && offline_delta_hits scan_offline_exact_file develop offline-write-bypasses-queue"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "--diff delta fails a write moved out of the exempt Sync/ seam into Ui/" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Sync" "$tmp/Source/Core/src/Ui"
+    printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Sync/Q.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop && git mv Source/Core/src/Sync/Q.cpp Source/Core/src/Ui/Q.cpp && git commit -qm move ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && offline_delta_hits scan_offline_exact_file develop offline-write-bypasses-queue"
+    [[ "$output" == *"Source/Core/src/Ui/Q.cpp"* ]]
+}
+
 # ---------- lint-rules.d module loading (monolith split) ----------
 # The scanner sources its per-rule-family modules from lint-rules.d/ next to the
 # entry point. Loading must FAIL CLOSED: a missing module means a silently

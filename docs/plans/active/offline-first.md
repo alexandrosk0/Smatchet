@@ -2924,6 +2924,10 @@ This plan touches `Source/Core/`.
   - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
 - **S3:** the fixture reuses the existing (previously ignored) `"catalog": {"fields": [...]}` key instead of adding `"fieldCatalog"`, and scripts the catalog only when that list is non-empty, so existing fixtures keep the fake's not-supported default. A fixture's `"network"` key sets the global switch only when present; tests restore it with `ScopedFakeNetworkReset`.
 - **S4:** the `AGENTS.md` pillar lead line starts with `**UX Pillars**` rather than "Six north-star invariants —". Its old second line was the bold-prefix anchor that `AGENTS.md § UX Pillars` references resolve to (`test-doc-anchors`), and keeping the anchor avoids rewriting historical plans and scripts. The line count is still 149.
+  - `72-offline-exact.sh` (CodeRabbit review on #2247) differs from the Step 5 block in three ways.
+    - A deviation marker counts only on a comment line; a marker trailing a code line no longer hides that line's code.
+    - `offline_delta_hits` reads `git diff --name-status -M` and scans a renamed file's merge-base copy under its source path, so a rename no longer un-grandfathers its hits, and a write moved out of an exempt seam still fails.
+    - The `tracker-error-kind-collapsed` fallback needs an `IsOk() ?` ternary within two lines; any nearby `IsOk()` no longer exempts.
 
 ## Verification (actual)
 
