@@ -505,6 +505,13 @@ case "$MODE" in
     printf '    return classified.IsOk()\n               ? TrackerErrorUnknown(outError)\n               : classified;\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a wrapped IsOk() ternary (allowed)" >&2; miss=1; fi
+    # selftest: the exemption binds to the collapse — an unrelated ternary or comment text above does not exempt.
+    printf '    const int n = r.IsOk() ? 1 : 2;\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by an unrelated IsOk() ternary above" >&2; miss=1; fi
+    printf '    // was: classified.IsOk() ? TrackerErrorUnknown(outError) : classified\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() ternary text in a comment" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then

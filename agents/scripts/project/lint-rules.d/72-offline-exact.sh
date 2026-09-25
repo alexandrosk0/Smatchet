@@ -11,14 +11,25 @@
 # tracker-error-kind-collapsed — TrackerErrorUnknown(<one variable>) in tracker code. It throws away the
 # Transport kind, so an offline failure reads as permanent and callers wipe cached data (the #21b
 # collapse behind the PR #2234 postmortem). Classify where the response is in hand. The
-# `classified.IsOk() ? TrackerErrorUnknown(x) : classified` fallback is allowed: an `IsOk() ?` ternary
-# on the line or the 2 lines above. An unrelated IsOk() check nearby does not exempt the hit.
+# `classified.IsOk() ? TrackerErrorUnknown(x) : classified` fallback is allowed: the collapse must be the
+# true branch of an `IsOk() ?` ternary (which may wrap over the 2 lines above). An unrelated IsOk() check,
+# an unrelated ternary or comment text nearby does not exempt the hit.
 #
 # Escape: a comment line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker trailing a code line never hides that line's code.
 
 OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
+
+OFFLINE_KIND_FALLBACK_RE='IsOk\(\)[[:space:]]*\?[[:space:]]*TrackerErrorUnknown\('
+
+offline_code_of() {
+    # $1 = raw source line. Prints its code part: empty for a comment-only line, else the text before `//`.
+    local l="$1" t
+    t="${l#"${l%%[![:space:]]*}"}"
+    case "$t" in '//'*|'*'*|'/*'*) return 0 ;; esac
+    printf '%s' "${l%%//*}"
+}
 
 scan_offline_exact_file() {
     # $1 = file to read; $2 = logical repo path for scope + output (defaults to $1).
@@ -57,8 +68,10 @@ scan_offline_exact_file() {
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
             && [[ "$code" =~ $OFFLINE_KIND_COLLAPSE_RE ]]; then
-            # Chronological join, so a ternary wrapped by clang-format (`IsOk()` / `? …` split) still reads as one.
-            if ! [[ "$prev2 $prev1 $code" =~ IsOk\(\)[[:space:]]*\? ]]; then
+            # The fallback is exempt only when the collapse IS the `IsOk() ?` true branch. Join the code of the
+            # two lines above (comments dropped) with this one in order, so a clang-format-wrapped ternary still
+            # reads as one expression, then require `IsOk() ?` immediately followed by `TrackerErrorUnknown(`.
+            if ! [[ "$(offline_code_of "$prev2") $(offline_code_of "$prev1") $code" =~ $OFFLINE_KIND_FALLBACK_RE ]]; then
                 printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno"
             fi
         fi

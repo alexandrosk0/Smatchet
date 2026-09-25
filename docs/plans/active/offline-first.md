@@ -2927,7 +2927,7 @@ This plan touches `Source/Core/`.
   - `72-offline-exact.sh` (CodeRabbit review on #2247) differs from the Step 5 block in three ways.
     - A deviation marker counts only on a comment line; a marker trailing a code line no longer hides that line's code.
     - `offline_delta_hits` reads `git diff --name-status -M` and scans a renamed file's merge-base copy under its source path, so a rename no longer un-grandfathers its hits, and a write moved out of an exempt seam still fails.
-    - The `tracker-error-kind-collapsed` fallback needs an `IsOk() ?` ternary within two lines; any nearby `IsOk()` no longer exempts.
+    - The `tracker-error-kind-collapsed` fallback is exempt only when the collapse is the true branch of an `IsOk() ?` ternary (`IsOk() ? TrackerErrorUnknown(`, with comment text dropped and a wrap over two lines allowed). An unrelated `IsOk()` check, ternary or comment nearby no longer exempts it.
 
 ## Verification (actual)
 
