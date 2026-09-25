@@ -14,6 +14,7 @@
 #include "ITrackerCollaboration.h" // TrackerIssueComment — comments-cell lazy tooltip fetch
 #include "SmatchetCommentsModalUi.h"
 #include "SmatchetFieldRender.h"
+#include "MarkdownPreviewRender.h"
 #include "SmatchetInputModifierBridge.h"
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"

@@ -3,6 +3,7 @@
 #include "AiChatTimestamp.h"
 #include "AppController.h"
 #include "ITrackerCollaboration.h"
+#include "MarkdownPreviewRender.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
@@ -88,8 +89,8 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     });
 }
 
-/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • PLAIN-TEXT
-/// body (never markdown). Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
+/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • plain-text
+/// body. Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
 /// (both take unix-epoch milliseconds; TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
     if (s_CommentsState.Comments.empty()) {
@@ -115,8 +116,8 @@ void DrawCommentsThread() {
                 ImGui::SetTooltip("%s", abs.c_str());
             }
         }
-        // Body is plain text only and opaque to the UI per the interface contract — never render
-        // markdown or rich formatting. TextWrapped wraps to the child width.
+        // Body: plain-text comment body. Tracker backends store all comments as plain text,
+        // never markdown, so we render as-is without markdown parsing.
         ImGui::TextWrapped("%s", c.Body.c_str());
         ImGui::Separator();
         ImGui::PopID();
