@@ -1814,6 +1814,7 @@ jobs:
 
       # Offline-first bucket-E tests (Quality Pillar 6, Slice 3)
       - name: Run offline-first bucket-E (hard)
+        if: always()
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe

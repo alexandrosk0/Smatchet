@@ -50,6 +50,7 @@ if [ -n "$OUTLOG" ]; then
 fi
 
 RAW_OUTPUT="$(SMATCHET_USER_DATA="$TMPDIR_DATA" \
+    SMATCHET_TEST_JIRA_BACKEND_FIXTURE= \
     SMATCHET_TEST_OFFLINE_FIRST_FIXTURE="$FIXTURE" \
     "$EXE" cmd ui_test.run --name="$FILTER" --spawn --yes \
     "${OUTLOG_ARG[@]}" \

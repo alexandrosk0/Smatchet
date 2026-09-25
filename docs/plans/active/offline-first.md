@@ -2899,11 +2899,13 @@ This plan touches `Source/Core/`.
 - Deviations: follow-up work on tracking offline state transitions and caching strategies.
 
 ### S3 — [#2245](https://github.com/alexandrosk0/Smatchet/pull/2245)
-- Shipped: `FakeNetworkSwitch` (process-wide atomic network mode); `FakeTrackerClient` network gating on all network-shaped calls; `JiraFakeTrackerFixture` parsing of `"network"`, `"catalog.fields"`, `"transitions"`, `"comments"` JSON keys; `offline-first.json` fixture with OFF-1/OFF-2 tickets; `offline_first.test.cpp` bucket-E UI tests; `test-ui-offline-first.sh` driver script; CI bucket-e-offline-first lane with 2-attempt Mesa GL retry.
+- Shipped: `FakeNetworkSwitch` (process-wide atomic network mode); `FakeTrackerClient` network gating on all network-shaped calls; `JiraFakeTrackerFixture` parsing of `"network"`, `"catalog.fields"`, `"transitions"`, `"comments"` JSON keys; `offline-first.json` fixture with OFF-1/OFF-2 tickets; `offline_first.test.cpp` bucket-E UI tests; `test-ui-offline-first.sh` driver script; CI bucket-e-jira-fixture-mesa-gl job with offline-first step and 2-attempt Mesa GL retry.
 - Tests: 5 new JiraFakeTrackerFixture doctests (network mode, field catalog, transitions, comments, backward compatibility).
 - Verification: offline-first.json valid JSON; lint gates pass; placeholder UI tests ready for network simulation hook (S4).
 
 ## Deviations from plan
+
+None.
 
 ## Verification (actual)
 

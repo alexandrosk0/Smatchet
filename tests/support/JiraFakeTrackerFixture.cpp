@@ -146,6 +146,12 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
     // Network mode (optional)
     if (root.contains("network") && root["network"].is_object()) {
         fixture.networkMode_ = root["network"].value("mode", std::string());
+        // Validate the network mode if present
+        if (!fixture.networkMode_.empty()) {
+            if (fixture.networkMode_ != "Up" && fixture.networkMode_ != "TransportDown" && fixture.networkMode_ != "ServiceUnavailable") {
+                throw std::runtime_error("JiraFakeTrackerFixture: unknown network mode: " + fixture.networkMode_);
+            }
+        }
     }
 
     // Field catalog (parsed from "catalog.fields", which mirrors the fetch structure for simplicity)

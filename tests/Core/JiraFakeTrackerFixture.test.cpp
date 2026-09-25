@@ -205,6 +205,7 @@ TEST_CASE("JiraFakeTrackerFixture — Configure applies to pre-existing client")
 // Offline-first (Slice 3) tests for network mode, catalog, transitions, comments parsing
 
 TEST_CASE("JiraFakeTrackerFixture::Offline — network mode TransportDown parsed and applied") {
+    ScopedFakeNetworkReset netReset;
     const char* offlineFixture = R"({
       "network": {"mode": "TransportDown"},
       "fetches": [

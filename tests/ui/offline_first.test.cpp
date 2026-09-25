@@ -61,16 +61,16 @@ static void RegisterOfflineFirstCatalogSurvivesTransportDown(ImGuiTestEngine* en
             return;
         }
         AppController* app = SmatchetActiveUiTestAppController();
-        IM_CHECK_NO_RET(app != nullptr);
+        IM_CHECK(app != nullptr);
 
         // Sync while network is up
         app->SyncWithBackend();
         const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
-        IM_CHECK_NO_RET(syncDone);
+        IM_CHECK(syncDone);
 
         // Verify issues loaded
         const auto tickets = app->GetActiveTickets();
-        IM_CHECK_NO_RET(!tickets.empty());
+        IM_CHECK(!tickets.empty());
 
         // TODO: Simulate TransportDown and verify catalog survives
         // (network simulation hook to be integrated in later iterations)
@@ -90,16 +90,16 @@ static void RegisterOfflineFirstFetchReadsWhenNetworkUp(ImGuiTestEngine* engine)
             return;
         }
         AppController* app = SmatchetActiveUiTestAppController();
-        IM_CHECK_NO_RET(app != nullptr);
+        IM_CHECK(app != nullptr);
 
         // Perform a sync — network should be up by default
         app->SyncWithBackend();
         const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
-        IM_CHECK_NO_RET(syncDone);
+        IM_CHECK(syncDone);
 
         // Verify the offline-first fixture's issues are loaded
         const auto tickets = app->GetActiveTickets();
-        IM_CHECK_NO_RET(!tickets.empty());
+        IM_CHECK(!tickets.empty());
 
         // offline-first.json fixture has OFF-1 and OFF-2
         bool foundOffline1 = false;
@@ -113,7 +113,7 @@ static void RegisterOfflineFirstFetchReadsWhenNetworkUp(ImGuiTestEngine* engine)
 }
 
 // Scan and register all offline-first tests
-void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
+extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstFetchReadsWhenNetworkUp(engine);
 }
