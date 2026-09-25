@@ -62,8 +62,10 @@ class JiraFakeTrackerFixture {
     // Scripted mutation replies (FIFO, same shape as FakeTrackerClient queues).
     std::vector<ScriptedReply> updateIssueFieldsReplies_;
     std::vector<ScriptedReply> createIssueReplies_;
-    // Offline-first (Slice 3) — network mode, field catalog, transitions, comments
-    std::string networkMode_;  // "Up" | "TransportDown" | "ServiceUnavailable" — empty if not set
+    // Offline-first harness (Quality Pillar 6): an optional network mode applied to the global
+    // switch on Configure, plus the scripted field catalog, transitions and comments.
+    bool hasNetworkMode_ = false;
+    FakeNetworkMode networkMode_ = FakeNetworkMode::Up;
     std::vector<TrackerField> fields_;
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> issueTransitionsByIssueId_;
     std::unordered_map<std::string, std::vector<TrackerIssueComment>> issueCommentsByIssueKey_;

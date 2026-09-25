@@ -133,7 +133,10 @@ class FakeTrackerClient : public ITrackerBackend,
 
     TrackerReachabilityProbeResult ProbeReachability(const TrackerConfig& /*cfg*/) override {
         if (NetworkDown(false)) {
-            return TrackerReachabilityProbeResult{network_->Mode() == FakeNetworkMode::ServiceUnavailable ? TrackerReachabilityProbeKind::ServiceUnavailable : TrackerReachabilityProbeKind::TransportDown, "fake network down"};
+            return TrackerReachabilityProbeResult{network_->Mode() == FakeNetworkMode::ServiceUnavailable
+                                                      ? TrackerReachabilityProbeKind::ServiceUnavailable
+                                                      : TrackerReachabilityProbeKind::TransportDown,
+                                                  "fake network down"};
         }
         ++probeReachabilityCalls_;
         return reachabilityResult_;
@@ -477,9 +480,10 @@ class FakeTrackerClient : public ITrackerBackend,
         return reply;
     }
 
-    TrackerError AddWorklog(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/, const std::string& /*timeSpent*/,
-                            const std::string& /*timeRemaining*/, const std::string& /*adjustEstimate*/,
-                            const std::string& /*workDescription*/, const std::string& /*startedDate*/) override {
+    TrackerError AddWorklog(const TrackerConfig& /*cfg*/, const std::string& /*issueKey*/,
+                            const std::string& /*timeSpent*/, const std::string& /*timeRemaining*/,
+                            const std::string& /*adjustEstimate*/, const std::string& /*workDescription*/,
+                            const std::string& /*startedDate*/) override {
         if (NetworkDown()) {
             return network_->MakeError();
         }

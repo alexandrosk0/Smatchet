@@ -2893,19 +2893,20 @@ This plan touches `Source/Core/`.
 - Tests: `CatalogOfflinePolicyPure` (new), `TrackerCatalogBuild` (500 → ServerError, 401 → Auth, unreachable → Transport), `ConnectivityMonitorService` (startup wording).
 - Review fix (CodeRabbit): the offline catalog banner names the configured backend (Jira / Plane / GitHub / Linear); it previously said "Jira" for every non-Plane backend. `HandleFieldCatalogError` now takes the normalized backend key instead of a `catalogPlane` flag.
 
-### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240)
-- Shipped: `ConnectivityMonitorService` shared connectivity tracking; `KeyedLookupCache` pattern for caching keyed operations with TTL and freshness cue; offline metadata persistence for UI.
-- Tests: `KeyedLookupCache` (new), `ConnectivityMonitor` (transient flag handling).
-- Deviations: follow-up work on tracking offline state transitions and caching strategies.
-
-### S3 — [#2245](https://github.com/alexandrosk0/Smatchet/pull/2245)
-- Shipped: `FakeNetworkSwitch` (process-wide atomic network mode); `FakeTrackerClient` network gating on all network-shaped calls; `JiraFakeTrackerFixture` parsing of `"network"`, `"catalog.fields"`, `"transitions"`, `"comments"` JSON keys; `offline-first.json` fixture with OFF-1/OFF-2 tickets; `offline_first.test.cpp` bucket-E UI tests; `test-ui-offline-first.sh` driver script; CI bucket-e-offline-first lane with 2-attempt Mesa GL retry.
-- Tests: 5 new JiraFakeTrackerFixture doctests (network mode, field catalog, transitions, comments, backward compatibility).
-- Verification: offline-first.json valid JSON; lint gates pass; placeholder UI tests ready for network simulation hook (S4).
 ### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240) (stacked on #2238)
 - Shipped: `OfflineFirstPure.h` (IsOfflineState / ShouldAttemptNetwork / ClassifyFreshness / ShouldRenderContent / RouteWrite), `KeyedLookupCache.h` + `RunKeyedFetch`, shared `ScopeExit.h` (moved out of `OfflineQueueService.cpp`), `DataFreshnessCue` + 7 `freshness.*` strings, atomic `ConnectivityMonitorService::lastState_` + `RequestProbeNow` / `AppController::RequestTrackerProbeNow`, `IAppSync::IsTrackerOffline()`, `TrackerConnectivity()` on `IEditMetaDeps` / `IFieldEditDeps`.
 - Tests: `OfflineFirstPure`, `KeyedLookupCache` (both lists); the concurrency case runs 8 threads × 1000 `TryBeginFetch` calls.
 - Nothing consumes the primitives yet (S5+ do); `DataFreshnessCue` is compiled but unused.
+
+### S3 — [#2245](https://github.com/alexandrosk0/Smatchet/pull/2245)
+- Shipped:
+  - `tests/support/FakeNetworkSwitch.h`: the process-wide `GlobalFakeNetwork()` plus `ScopedFakeNetworkReset`.
+  - `FakeTrackerClient`: a network gate goes first in every network-shaped call and records nothing while down; new scriptable `FetchFieldCatalog` / `FetchIssueTransitions` / comments / worklog / watcher overrides.
+  - `JiraFakeTrackerFixture`: the `network`, `catalog.fields`, `transitions` and `comments` keys.
+  - The `offline-first.json` fixture.
+  - The `OfflineFirst` bucket-E group: `Catalog_SurvivesTransportDown`.
+  - The `scripts/dev/test-ui-offline-first.sh` wrapper and its CI step.
+- Tests: `JiraFakeTrackerFixture` offline cases (Windows `SmatchetTests`); the bucket-E lane runs in CI.
 
 ## Deviations from plan
 
@@ -2913,6 +2914,7 @@ This plan touches `Source/Core/`.
   - `ClassifyFreshness` returns `Fresh` only while the tracker is reachable. This session's live data reads `CachedOffline` once the tracker drops.
   - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
   - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
+- **S3:** the fixture reuses the existing (previously ignored) `"catalog": {"fields": [...]}` key instead of adding `"fieldCatalog"`, and scripts the catalog only when that list is non-empty, so existing fixtures keep the fake's not-supported default. A fixture's `"network"` key sets the global switch only when present; tests restore it with `ScopedFakeNetworkReset`.
 
 ## Verification (actual)
 

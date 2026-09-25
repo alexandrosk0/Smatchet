@@ -1812,14 +1812,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      # Offline-first bucket-E tests (Quality Pillar 6, Slice 3)
+      # Offline-first bucket-E (Quality Pillar 6): the OfflineFirst group against offline-first.json.
+      # The wrapper sets the fixture + filter itself, so this step deliberately has no fixture env.
       - name: Run offline-first bucket-E (hard)
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
           LIBGL_ALWAYS_SOFTWARE: "1"
           SMATCHET_EXE: build/ninja-ui-test-msvc/Smatchet.exe
-          SMATCHET_TEST_OFFLINE_FIRST_FIXTURE: tests/fixtures/jira_backend/offline-first.json
           SMATCHET_UI_TEST_OUTLOG: ${{ github.workspace }}/build/tmp/offline-first-outlog.txt
         run: |
           set -uo pipefail

@@ -29,22 +29,47 @@ TrackerReachabilityProbeKind ParseReachabilityKind(const std::string& kind) {
     throw std::runtime_error("JiraFakeTrackerFixture: unknown reachability kind: " + kind);
 }
 
+FakeNetworkMode ParseNetworkMode(const std::string& mode) {
+    if (mode == "Up")
+        return FakeNetworkMode::Up;
+    if (mode == "TransportDown")
+        return FakeNetworkMode::TransportDown;
+    if (mode == "ServiceUnavailable")
+        return FakeNetworkMode::ServiceUnavailable;
+    throw std::runtime_error("JiraFakeTrackerFixture: unknown network mode: " + mode);
+}
+
 TrackerFieldFamily ParseFieldFamily(const std::string& family) {
-    if (family == "Text") return TrackerFieldFamily::Text;
-    if (family == "Number") return TrackerFieldFamily::Number;
-    if (family == "Date") return TrackerFieldFamily::Date;
-    if (family == "DateTime") return TrackerFieldFamily::DateTime;
-    if (family == "Labels") return TrackerFieldFamily::Labels;
-    if (family == "UserSingle") return TrackerFieldFamily::UserSingle;
-    if (family == "UserMulti") return TrackerFieldFamily::UserMulti;
-    if (family == "SelectSingle") return TrackerFieldFamily::SelectSingle;
-    if (family == "SelectMulti") return TrackerFieldFamily::SelectMulti;
-    if (family == "CascadingSelect") return TrackerFieldFamily::CascadingSelect;
-    if (family == "StructuredSingle") return TrackerFieldFamily::StructuredSingle;
-    if (family == "StructuredMulti") return TrackerFieldFamily::StructuredMulti;
-    if (family == "Sprint") return TrackerFieldFamily::Sprint;
-    if (family == "Status") return TrackerFieldFamily::Status;
-    if (family == "IssueType") return TrackerFieldFamily::IssueType;
+    if (family == "Text")
+        return TrackerFieldFamily::Text;
+    if (family == "Number")
+        return TrackerFieldFamily::Number;
+    if (family == "Date")
+        return TrackerFieldFamily::Date;
+    if (family == "DateTime")
+        return TrackerFieldFamily::DateTime;
+    if (family == "Labels")
+        return TrackerFieldFamily::Labels;
+    if (family == "UserSingle")
+        return TrackerFieldFamily::UserSingle;
+    if (family == "UserMulti")
+        return TrackerFieldFamily::UserMulti;
+    if (family == "SelectSingle")
+        return TrackerFieldFamily::SelectSingle;
+    if (family == "SelectMulti")
+        return TrackerFieldFamily::SelectMulti;
+    if (family == "CascadingSelect")
+        return TrackerFieldFamily::CascadingSelect;
+    if (family == "StructuredSingle")
+        return TrackerFieldFamily::StructuredSingle;
+    if (family == "StructuredMulti")
+        return TrackerFieldFamily::StructuredMulti;
+    if (family == "Sprint")
+        return TrackerFieldFamily::Sprint;
+    if (family == "Status")
+        return TrackerFieldFamily::Status;
+    if (family == "IssueType")
+        return TrackerFieldFamily::IssueType;
     return TrackerFieldFamily::Unknown;
 }
 
@@ -143,12 +168,13 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
         }
     }
 
-    // Network mode (optional)
+    // Network mode (optional). Unknown modes throw, like unknown reachability kinds.
     if (root.contains("network") && root["network"].is_object()) {
-        fixture.networkMode_ = root["network"].value("mode", std::string());
+        fixture.hasNetworkMode_ = true;
+        fixture.networkMode_ = ParseNetworkMode(root["network"].value("mode", std::string("Up")));
     }
 
-    // Field catalog (parsed from "catalog.fields", which mirrors the fetch structure for simplicity)
+    // Field catalog from the existing "catalog.fields" key (scripted on the client only when non-empty).
     if (root.contains("catalog") && root["catalog"].is_object()) {
         const auto& catalog = root["catalog"];
         if (catalog.contains("fields") && catalog["fields"].is_array()) {
@@ -156,6 +182,7 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
                 TrackerField field;
                 field.Id = fieldJson.value("id", std::string());
                 field.Name = fieldJson.value("name", std::string());
+                field.Type = "option";
                 field.Family = ParseFieldFamily(fieldJson.value("family", std::string("Unknown")));
 
                 // Parse options (status field options, etc.)
@@ -164,6 +191,7 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
                         TrackerFieldOption opt;
                         opt.Id = optJson.value("id", std::string());
                         opt.Value = optJson.value("value", std::string());
+                        field.AllowedValues.push_back(opt.Value);
                         field.AllowedValueOptions.push_back(std::move(opt));
                     }
                 }
@@ -213,24 +241,12 @@ JiraFakeTrackerFixture JiraFakeTrackerFixture::ParseJson(const nlohmann::json& r
 }
 
 void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
-    // Reset network to Up state FIRST — ensures each fixture Configure() starts with clean state.
-    // This prevents TransportDown doctests from leaking into subsequent fixture Configure() calls
-    // (the global singleton would otherwise retain the down state across fixtures).
-    GlobalFakeNetwork().Set(FakeNetworkMode::Up);
-    GlobalFakeNetwork().ResetCounters();
-
-    // Attach network switch (required for all network-gated calls)
+    // Every fixture client honours the process-wide network switch. The switch is only set when the
+    // fixture names a mode: the app can create a fresh client mid-test (backend re-init), and that
+    // must not silently undo a test's outage. Tests restore it with ScopedFakeNetworkReset.
     client.AttachNetwork(&GlobalFakeNetwork());
-
-    // Set network mode if specified (overrides the default Up state set above)
-    if (!networkMode_.empty()) {
-        if (networkMode_ == "Up") {
-            GlobalFakeNetwork().Set(FakeNetworkMode::Up);
-        } else if (networkMode_ == "TransportDown") {
-            GlobalFakeNetwork().Set(FakeNetworkMode::TransportDown);
-        } else if (networkMode_ == "ServiceUnavailable") {
-            GlobalFakeNetwork().Set(FakeNetworkMode::ServiceUnavailable);
-        }
+    if (hasNetworkMode_) {
+        GlobalFakeNetwork().Set(networkMode_);
     }
 
     client.SetReachabilityResult(reachabilityKind_, reachabilityDiagnostic_);
@@ -280,15 +296,13 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         client.SetIssueTransitions(entry.first, entry.second);
     }
 
-    // Enable collaboration and apply comments if present
+    // Comments live on ITrackerCollaboration, so scripting them turns that role on. Transitions are
+    // ITrackerFieldCatalog (always exposed) and need no switch.
     if (!issueCommentsByIssueKey_.empty()) {
         client.EnableCollaboration(true);
         for (const auto& entry : issueCommentsByIssueKey_) {
             client.SetIssueComments(entry.first, entry.second);
         }
-    } else if (!issueTransitionsByIssueId_.empty()) {
-        // Enable collaboration for transitions even without comments
-        client.EnableCollaboration(true);
     }
 }
 

@@ -129,6 +129,8 @@ target_include_directories(SmatchetStandalone PRIVATE
 if(TARGET SmatchetCore_DX12 AND TARGET SmatchetImGuiTestEngine_DX12)
     target_sources(SmatchetCore_DX12 PRIVATE ${_SMATCHET_UI_TEST_SOURCES})
     target_link_libraries(SmatchetCore_DX12 PRIVATE SmatchetImGuiTestEngine_DX12)
+    # offline_first.test.cpp includes the header-only tests/support/FakeNetworkSwitch.h.
+    target_include_directories(SmatchetCore_DX12 PRIVATE "${CMAKE_SOURCE_DIR}/tests/support")
 endif()
 
 if(SMATCHET_DEBUG_VISIBLE_CUE_HARNESS)

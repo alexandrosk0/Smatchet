@@ -1,121 +1,91 @@
-// offline_first.test.cpp — bucket-E tests for offline-first behavior (Quality Pillar 6 / Slice 3).
+// offline_first.test.cpp — bucket-E tests for Quality Pillar 6 (offline-first).
 //
-// Tests that tracker reads and cached metadata survive a TransportDown outage and that
-// write attempts fail gracefully while the network is offline.
+// Runs against the offline-first fixture (tests/fixtures/jira_backend/offline-first.json) booted via
+// SMATCHET_TEST_JIRA_BACKEND_FIXTURE; scripts/dev/test-ui-offline-first.sh sets it and the
+// OfflineFirst filter. The fixture's FakeTrackerClient is attached to the process-wide
+// GlobalFakeNetwork() switch (tests/support/FakeNetworkSwitch.h), so a test takes the tracker offline
+// by flipping that switch and every network-shaped call fails like a real outage. Each test restores
+// the switch with ScopedFakeNetworkReset.
 //
-// All tests require SMATCHET_TEST_JIRA_BACKEND_FIXTURE to be set and point to
-// offline-first.json fixture (or compatible).
+// Tests are APP-STATE-COUPLED (like jira_deterministic_backend.test.cpp): they call the live
+// AppController through SmatchetActiveUiTestAppController() and assert on its state, not on ImGui
+// labels. Under any other fixture they skip with an informational log.
 
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
 #include "Commands/Scenarios/UiTestScenario.h"
-#include "Tracker/TrackerFieldSchema.h"
+#include "Config/ConfigManager.h"
+#include "FakeNetworkSwitch.h"
 
 #include "imgui.h"
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
 #include <cstdlib>
+#include <cstring>
 #include <string>
-#include <vector>
 
 namespace {
 
-// Yield frames until predicate returns true or frame budget is exhausted.
-template <typename Pred> bool YieldUntil(ImGuiTestContext* ctx, Pred pred, int maxFrames = 300) {
-    for (int i = 0; i < maxFrames; ++i) {
-        ctx->Yield();
-        if (pred()) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// True if the fixture env var was set — tests skip without it.
-bool OfflineFirstFixtureActive() {
+// True when the app was booted with the offline-first fixture; otherwise logs a SKIP.
+bool OfflineFirstFixtureActive(ImGuiTestContext* ctx) {
 #ifdef _MSC_VER
 #pragma warning(push)
-#pragma warning(disable : 4996)
+#pragma warning(disable : 4996) // getenv: cross-platform — _dupenv_s is MSVC-only
 #endif
-    const bool set = std::getenv("SMATCHET_TEST_OFFLINE_FIRST_FIXTURE") != nullptr;
+    const char* fixture = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
 #ifdef _MSC_VER
 #pragma warning(pop)
 #endif
-    return set;
+    if (fixture != nullptr && std::strstr(fixture, "offline-first") != nullptr) {
+        return true;
+    }
+    ctx->LogInfo("SKIP: offline-first fixture not active");
+    return false;
 }
 
 } // namespace
 
 // ---------------------------------------------------------------------------
 // OfflineFirst_Catalog_SurvivesTransportDown
-// Load offline-first fixture with catalog, trigger sync on network up,
-// then simulate TransportDown. Verify catalog remains cached and accessible.
+// A field-catalog refresh that fails because the tracker is unreachable must keep the catalog the
+// user already has, raise no catalog error and show a Warning (not Error) banner (S1 behaviour).
 // ---------------------------------------------------------------------------
 static void RegisterOfflineFirstCatalogSurvivesTransportDown(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Catalog_SurvivesTransportDown");
     t->TestFunc = [](ImGuiTestContext* ctx) {
-        if (!OfflineFirstFixtureActive()) {
-            ctx->LogInfo("SKIP: SMATCHET_TEST_OFFLINE_FIRST_FIXTURE not set");
+        if (!OfflineFirstFixtureActive(ctx)) {
             return;
         }
+        smatchet_tests::ScopedFakeNetworkReset reset;
         AppController* app = SmatchetActiveUiTestAppController();
-        IM_CHECK_NO_RET(app != nullptr);
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr); // surfaces as a test failure with context
+            return;
+        }
+        const TrackerConfig cfg = ConfigManager::Load();
 
-        // Sync while network is up
-        app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
-        IM_CHECK_NO_RET(syncDone);
+        // Online: the fixture's scripted catalog loads.
+        IM_CHECK_NO_RET(app->RefreshFieldCatalog(cfg));
+        IM_CHECK_NO_RET(!app->GetAvailableFields().empty());
+        IM_CHECK_NO_RET(app->GetFieldCatalogError().empty());
 
-        // Verify issues loaded
-        const auto tickets = app->GetActiveTickets();
-        IM_CHECK_NO_RET(!tickets.empty());
+        // Offline: the refresh fails at the transport level...
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(!app->RefreshFieldCatalog(cfg));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() >= 1);
 
-        // TODO: Simulate TransportDown and verify catalog survives
-        // (network simulation hook to be integrated in later iterations)
+        // ...but the catalog the user already had survives, with a warning rather than an error.
+        IM_CHECK_NO_RET(!app->GetAvailableFields().empty());
+        IM_CHECK_NO_RET(app->GetFieldCatalogError().empty());
+        IM_CHECK_NO_RET(app->GetTrackerConnectivityBannerForUi(nullptr).Kind ==
+                        TrackerConnectivityBannerForUi::Level::Warning);
     };
 }
 
-// ---------------------------------------------------------------------------
-// OfflineFirst_FetchReadsWhenNetworkUp
-// Load offline-first fixture and verify that a successful sync occurs
-// when the network is UP and issues are cached.
-// ---------------------------------------------------------------------------
-static void RegisterOfflineFirstFetchReadsWhenNetworkUp(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "FetchReadsWhenNetworkUp");
-    t->TestFunc = [](ImGuiTestContext* ctx) {
-        if (!OfflineFirstFixtureActive()) {
-            ctx->LogInfo("SKIP: SMATCHET_TEST_OFFLINE_FIRST_FIXTURE not set");
-            return;
-        }
-        AppController* app = SmatchetActiveUiTestAppController();
-        IM_CHECK_NO_RET(app != nullptr);
-
-        // Perform a sync — network should be up by default
-        app->SyncWithBackend();
-        const bool syncDone = YieldUntil(ctx, [&] { return !app->IsStreamingSyncActive(); });
-        IM_CHECK_NO_RET(syncDone);
-
-        // Verify the offline-first fixture's issues are loaded
-        const auto tickets = app->GetActiveTickets();
-        IM_CHECK_NO_RET(!tickets.empty());
-
-        // offline-first.json fixture has OFF-1 and OFF-2
-        bool foundOffline1 = false;
-        for (const auto& ticket : tickets) {
-            if (ticket.id == "OFF-1") {
-                foundOffline1 = true;
-            }
-        }
-        IM_CHECK_NO_RET(foundOffline1);
-    };
-}
-
-// Scan and register all offline-first tests
-void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
+extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
-    RegisterOfflineFirstFetchReadsWhenNetworkUp(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
