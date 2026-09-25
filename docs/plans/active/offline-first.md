@@ -2908,6 +2908,11 @@ This plan touches `Source/Core/`.
   - The `scripts/dev/test-ui-offline-first.sh` wrapper and its CI step.
 - Tests: `JiraFakeTrackerFixture` offline cases (Windows `SmatchetTests`); the bucket-E lane runs in CI.
 
+### S4 — Quality Pillar 6 (process-only)
+- Shipped: ADR-0026 (offline-first as UX Quality Pillar 6); seven lint rules (two blocking exact: `offline-write-bypasses-queue`, `tracker-error-kind-collapsed`; five WARN-first heuristics for graduation); updated AGENTS.md § Project rules (7 rules, 1-line table), quality-pillars.md § Pillar 6, code-review.md § Offline-first (reviewer-of-record role), offline-sync.md v3 (three new hard invariants, bucket-A + bucket-E smoke-test workflow), delegation.md offline-sync row, Ui/AGENTS.md § Pillar 2, Tracker/AGENTS.md § Offline error kinds, recurring-finding-classes.md (new "Shipped this batch (Slice S4)" section with 7-row gate table), three debt entries (heuristics-graduation-watch, ui-bucket-e-validation, offline-sync-v3-extension).
+- Tests: 8 bats tests in lint_rules.bats for exact and heuristic rules, all passing; tree clean on all 14 lint gates (`--diff origin/develop`).
+- No code changes; pure process. The offline-first exact rules block on zero-hit tree per #1605 bare-json / catch-all precedent.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.

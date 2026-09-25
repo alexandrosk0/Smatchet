@@ -2,7 +2,7 @@
 
 > Lifted from [`AGENTS.md`](../../AGENTS.md) § Quality Pillars per [`docs/plans/shipped/agents-md-reduction.md`](../plans/shipped/agents-md-reduction.md). AGENTS.md retains a load-bearing stub naming the pillars + their owning agents (with **UX Pillars** + **Engineering Pillars** sub-anchors) so external `AGENTS.md § <subsection>` references — including legacy `§ UX Pillars` — continue to resolve. Renamed from `ux-pillars.md` when DRY was added as an Engineering Pillar (ADR-0015). Edit this file directly — no parallel copy in AGENTS.md.
 
-Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are user-facing: 1-3 are **enforceable** (agents auto-fail PRs that violate them); 4 is **aspirational** today (flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` category `process`, not a merge block, until the supporting infrastructure lands). **Engineering Pillars** (5: DRY) govern code-maintainability and are enforced like UX 1-3.
+Six north-star quality invariants in two sub-groups. **UX Pillars** (1-4 and 6) are user-facing: 1-3 and 6 are **enforceable** (agents auto-fail PRs that violate them); 4 is **aspirational** today (flagged in `docs/self-improvement/AGENT_SELF_IMPROVEMENT.md` category `process`, not a merge block, until the supporting infrastructure lands). **Engineering Pillars** (5: DRY) govern code-maintainability and are enforced like UX 1-3.
 
 ## 1. Performance — sustain ≈ 144 Hz
 
@@ -72,6 +72,18 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 
 **Tools**: `agents/scripts/core/dup_audit.py` (`--diff` / `--scan-file` / `--baseline-md` / `--selftest`); baseline regen via `bash agents/scripts/project/test-lint-rules.sh --dup-baseline`.
 
+## 6. Offline-first — keep working offline, sync later (UX Pillar)
+
+**Pillar 6** ([ADR-0026](../adr/0026-offline-first-quality-pillar.md)): with the tracker unreachable the app keeps showing what it last knew and keeps every change the user makes, then syncs when the connection returns. Offline, a tracker request spends up to ~90 s in its retry window, so anything that waits on it looks frozen.
+
+**Enforceable invariants:**
+1. A network-backed read that has cached data renders it with a freshness cue (`DataFreshnessCue`) — never a loading-only or empty state. "Loading…" alone is only for `DataFreshness::LoadingNoCache`.
+2. A failed fetch never discards cached data and is never remembered as final: it backs off (`KeyedLookupCache`) and retries after reconnect; its in-flight flag clears on every path.
+3. Every tracker write goes through the offline queue when the tracker is unreachable (`RouteWrite` → queue immediately) and replays on reconnect; toasts say what actually happened ("Queued offline" vs "Saved").
+4. A `TrackerError` keeps its `Transport` kind wherever it is flattened; `TrackerErrorUnknown(<string>)` is never how a failure is reported.
+
+**Gates**: `offline-write-bypasses-queue` and `tracker-error-kind-collapsed` block (delta-gated); `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared` and `offline-network-read-ungated` warn first (mechanics: [`cpp-rules.md`](cpp-rules.md) § Tiered enforcement). **Tests**: bucket A with `GlobalFakeNetwork()` (`tests/support/FakeNetworkSwitch.h`); bucket E with `scripts/dev/test-ui-offline-first.sh`. **Tools**: `Source/Core/include/OfflineFirstPure.h`, `KeyedLookupCache.h`, `DataFreshnessCue.h`; whole-tree sweep `bash agents/scripts/project/test-lint-rules.sh --scan-offline`.
+
 ## Agent ownership
 
 | Pillar | Primary agent | Notes |
@@ -81,3 +93,4 @@ Five north-star quality invariants in two sub-groups. **UX Pillars** (1-4) are u
 | 3. Never crash | `debug-detective` (diagnose), `code-review` (RAII / bounds / nullptr review), `build-doctor` (sanitizer build gate) | Crashes block merge unconditionally. |
 | 4. Accessibility | none today | Flag in backlog; reassess pillar hardening when keyboard-nav / zoom / contrast checks have automated test support. |
 | 5. DRY (Engineering) | `code-review` (reviewer-of-record + exemption sign-off) | `dup_audit.py` delta-gate is blocking; duplication triage + the coupling-CRITICAL guardrail are the reviewer's. |
+| 6. Offline-first | `offline-sync` (implementer), `code-review` (reviewer-of-record) | Two blocking offline gates + five WARN heuristics; the offline test lanes are the backstop. |

@@ -40,6 +40,8 @@
 #   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
 #                          nlohmann::json/sol::object param with no depth/budget token (WARN)
 #   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
+#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking, delta per file)
+#   (advisory)             offline-* heuristics (Pillar 6, WARN-first; 74-offline-heuristic.sh)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -119,7 +121,7 @@ for _mod in "$LINT_RULES_D"/00-common.sh "$LINT_RULES_D"/10-line-rules.sh \
             "$LINT_RULES_D"/20-narrowing.sh "$LINT_RULES_D"/30-cmake-ci-scope.sh \
             "$LINT_RULES_D"/40-unused-config-guard.sh "$LINT_RULES_D"/50-bare-json.sh \
             "$LINT_RULES_D"/55-catch-all.sh "$LINT_RULES_D"/60-json-walker.sh \
-            "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh \
+            "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh "$LINT_RULES_D"/72-offline-exact.sh "$LINT_RULES_D"/74-offline-heuristic.sh \
             "$LINT_RULES_D"/75-pr-comments.sh "$LINT_RULES_D"/80-interface-doc.sh \
             "$LINT_RULES_D"/85-ui-include-direction.sh \
             "$LINT_RULES_D"/90-tu-line-ceiling.sh; do
@@ -163,9 +165,10 @@ case "${1:-}" in
     --scan-ui-include) MODE=scanuiinclude ;;
     --scan-pr-comments) MODE=scanprcomments ;;
     --scan-tu-ceiling) MODE=scantuceiling ;;
+    --scan-offline) MODE=scanoffline ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--scan-offline|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -468,6 +471,46 @@ case "$MODE" in
         echo "SELFTEST FAIL: interface-doc WARNed despite the leaf doc being touched in the same diff" >&2; miss=1; fi
     if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_miss" 2>&1 1>/dev/null)" ]; then
         echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
+    # --- offline-first rules (Pillar 6; ADR-0026) — assert each is documented + fires correctly. ---
+    for r in "${OFFLINE_EXACT_RULES[@]}" "${OFFLINE_WARN_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: offline rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    # selftest: offline-write-bypasses-queue fires on a direct backend write outside the queue seam.
+    _off_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/off_selftest.$$.cpp")"
+    case "$_off_tmp" in *.cpp) ;; *) mv -f "$_off_tmp" "$_off_tmp.cpp" 2>/dev/null && _off_tmp="$_off_tmp.cpp" ;; esac
+    printf 'void F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue did not fire on a backend write" >&2; miss=1; fi
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Sync/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired on a write in Sync/ (exempt)" >&2; miss=1; fi
+    printf '// SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\nvoid F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired despite a deviation" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed fires on a bare TrackerErrorUnknown variable.
+    printf 'return Err(TrackerErrorUnknown(std::move(outError)));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed did not fire" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed allows IsOk() idiom.
+    printf 'return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on IsOk() idiom (allowed)" >&2; miss=1; fi
+    # selftest: offline-loading-only-render fires on a "Loading" draw + fetch + no cue.
+    printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ] || ! grep -q "offline-loading-only-render" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-loading-only-render did not fire" >&2; miss=1; fi
+    # selftest: offline-loading-only-render skips when DataFreshnessCue is in the window.
+    printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    DataFreshnessCue::Draw(f);\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$_off_tmp"
+    if grep -q "offline-loading-only-render" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-loading-only-render fired despite DataFreshnessCue in window" >&2; miss=1; fi
+    # selftest: offline-inflight-latch-unguarded fires on an in-flight flag set before a launch.
+    printf 'void K() {\n    s.FetchInFlight = true;\n    app.LaunchBackgroundTask([](){});\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ] || ! grep -q "offline-inflight-latch-unguarded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-inflight-latch-unguarded did not fire" >&2; miss=1; fi
+    # selftest: offline-inflight-latch-unguarded skips when guarded by ScopeExit.
+    printf 'void K() {\n    s.FetchInFlight = true;\n    ScopeExit g([](){});\n    app.LaunchBackgroundTask([](){});\n}\n' > "$_off_tmp"
+    if grep -q "offline-inflight-latch-unguarded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-inflight-latch-unguarded fired despite ScopeExit guard" >&2; miss=1; fi
+    rm -f "$_off_tmp" 2>/dev/null || true
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
@@ -559,6 +602,13 @@ case "$MODE" in
     # tu-line-ceiling set over first-party C++ TUs — whole-tree diagnostic sweep (debug + bats
     # harness). Advisory rule; the blocking path is delta-scoped in the --diff mode below.
     compute_tu_line_ceiling_violations
+    ;;
+
+  scanoffline)
+    # Quality Pillar 6 offline-first — whole-tree sweep of all seven rules (campaign + calibration).
+    # `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_offline_exact_violations
+    compute_offline_heuristic_violations
     ;;
 
   catalog)
@@ -800,6 +850,24 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
     fi
 
+    # --- Quality Pillar 6 offline-first EXACT rules (changed files; BLOCKING, delta per file) ---
+    # offline-write-bypasses-queue + tracker-error-kind-collapsed (72-offline-exact.sh; ADR-0026). A
+    # changed file fails only when it has MORE hits than its merge-base copy (existing hits are
+    # grandfathered). A SMATCHET_DEVIATION(rule=<id>; ...) on the line above escapes.
+    ofx_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    ofx_out="$(offline_delta_hits scan_offline_exact_file "$ofx_mb" "${OFFLINE_EXACT_RULES[@]}" | grep -E . || true)"
+    if [ -n "$ofx_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: Quality Pillar 6 (offline-first) — new offline-breaking code (ADR-0026):"
+        printf '%s\n' "$ofx_out" | sed 's/^/  /'
+        echo "  offline-write-bypasses-queue: route the write through the offline queue so it replays on reconnect."
+        echo "  tracker-error-kind-collapsed: classify at the failure site (ClassifyRejectedHttpStatus / TrackerErrorFromHttpStatus / TrackerErrorParse)."
+        echo "  Genuine exception: add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
+    else
+        echo "[test-lint-rules] PASS — no new Pillar 6 offline-first exact-rule hit"
+    fi
+
     # --- no-ui-include-in-domain (domain subsystems; ABSOLUTE-0) ---
     # A quote-form `#include "Ui/..."` in a DOMAIN subsystem (Tracker/Sync/Persistence/Config +
     # include mirrors + Plugins/Mcp) inverts the architecture layer DAG (Ui ranks above every domain
@@ -997,6 +1065,18 @@ case "$MODE" in
             echo "  Rephrase the comment to state what the code does / why, without the dev-PR number (keep GitHub Issue / ADR refs)."
             echo "  If a specific historical PR genuinely must be cited (e.g. an audit trail): add"
             echo "  // SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=...; owner=...; revisit=...) above the comment."
+        } >&2
+    fi
+
+    # --- Quality Pillar 6 offline-first HEURISTICS (changed .cpp; WARN-first, never touches $rc) ---
+    ofh_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    ofh_out="$(offline_delta_hits scan_offline_heuristic_file "$ofh_mb" "${OFFLINE_WARN_RULES[@]}" | grep -E . || true)"
+    if [ -n "$ofh_out" ]; then
+        {
+            echo "[offline-first] WARN: possible offline-breaking pattern (Quality Pillar 6, ADR-0026). Advisory; not blocking:"
+            printf '%s\n' "$ofh_out" | sed 's/^/  /'
+            echo "  Render cached data + DataFreshnessCue, gate fetches with KeyedLookupCache / IsOfflineState, back off on failure."
+            echo "  If intended, add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
         } >&2
     fi
 

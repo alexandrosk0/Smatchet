@@ -206,6 +206,11 @@ CATCHALL_RULES=(catch-all-swallow)
 JSONWALKER_RULES=(unbounded-recursive-json-walker)
 SLURP_RULES=(unbounded-file-slurp)
 
+# Quality Pillar 6 offline-first (ADR-0026) — exact rules BLOCK (delta-gated per changed file); the
+# heuristics are WARN-first. KEEP IN SYNC with AGENTS.md § Enforcement contract-card.
+OFFLINE_EXACT_RULES=(offline-write-bypasses-queue tracker-error-kind-collapsed)
+OFFLINE_WARN_RULES=(offline-loading-only-render offline-inflight-latch-unguarded offline-failure-cached-as-loaded offline-cache-cleared offline-network-read-ungated)
+
 ratio_warn_for() {
     # Advisory soft warning (never blocks): delegate to comment_audit.py --ratio-warn, which warns
     # per changed file whose comment ratio rises vs base AND exceeds 0.50. Always returns 0.

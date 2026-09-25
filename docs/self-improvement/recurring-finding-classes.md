@@ -33,6 +33,20 @@ whole-tree clean invariants bats-asserted, campaign sweep modes
 (`--scan-bare-json` / `--scan-catch-all` / `--scan-json-walkers` /
 `--scan-slurps`), remediation printed on every failure.
 
+## Shipped this batch (Slice S4 — Quality Pillar 6 offline-first gates)
+
+| Rank | Class | Recurrence evidence | Gate shipped | Tier |
+|---|---|---|---|---|
+| 1 | Backend write outside offline queue | New pillar; ADR-0026 codifies offline-first as UX Quality Pillar 6; blocking exact rule to catch tracker mutations reaching the wire without queueing | `offline-write-bypasses-queue` exact-delta, blocking | **blocking** |
+| 2 | Transport error kind collapsed to Unknown | ADR-0026; dead-letter + audit data loss on kind erasure; blocking exact rule to catch `TrackerErrorUnknown()` bare-call in tracker code | `tracker-error-kind-collapsed` exact-delta, blocking | **blocking** |
+| 3 | Loading-only render while cache exists | UX regression (Pillar 4 / Pillar 6 contract); a view with cached data must show cache + freshness cue, never loading spinner | `offline-loading-only-render` heuristic, delta-warn | **WARN-first** (graduation per duplication precedent: calibrate 5 PRs before blocking) |
+| 4 | Inflight-fetch latch unguarded on poll | Pillar 2 stall risk; `ResultIsCurrent` + `in_flight` must be kept in lock-step, never cached separately | `offline-inflight-latch-unguarded` heuristic, delta-warn | **WARN-first** |
+| 5 | Failed fetch cached as loaded | Logic error (Pillar 6); a fetch failure keeps prior cache but must not mark as live/loaded; next poll must retry | `offline-failure-cached-as-loaded` heuristic, delta-warn | **WARN-first** |
+| 6 | Cache cleared without audit | Data loss (Pillar 6); a wipe of `lookup_cache` / `pending_actions` must emit audit entry so user sees intent | `offline-cache-cleared` heuristic, delta-warn | **WARN-first** |
+| 7 | Network read ungated by freshness cue | UX regression (Pillar 6); a cached view must gate fetch behind `DataFreshnessCue` so network off / failed fetch keeps rendering | `offline-network-read-ungated` heuristic, delta-warn | **WARN-first** |
+
+Rationale: exact rules (1–2) block on zero-hit tree per the bare-json / catch-all precedent; heuristics (3–7) start WARN-first and graduate to blocking once a 5-PR calibration window closes with <10 % false-positive rate (per ADR-0015 duplication gate).
+
 ## Reconciliation vs `docs/plans/shipped/ci-falsepositive-hardening.md`
 
 Checked before building (campaign charter requirement). No overlap to extend:

@@ -20,6 +20,7 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 - Long lambdas posted to `MainThreadDispatcher` — `Drain()` blocks the frame; chunk + repost instead.
 - Holding a `std::mutex` across an HTTP / SQLite / p4 / file-I/O call from any thread (the UI thread waiting on that mutex = a spike).
 - New owners of `std::thread` / `std::async` futures missing the join contract in their destructor — `~AppController` (with `BeginShutdown()` + join) is the reference pattern; a missing join → `std::terminate`.
+- **Offline-first reads on Pillar-2 deadline.** A network-backed view shows its `DataFreshnessCue` (fresh/stale indicator) alongside the cached data, never a loading spinner with an empty pane. Loading-only + no-cache = **code-review CRITICAL** (Pillar 6 enforcement; see [`offline-sync`](../../../../agents/project/offline-sync.md) v3).
 
 ## Steady-state perf (Pillar 1)
 

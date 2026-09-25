@@ -873,6 +873,107 @@ _resolve_py() {
     [[ "$output" == *"no first-party no-raw-new / deviation-overdue"* ]]
 }
 
+# ---------- offline-first (Quality Pillar 6; ADR-0026) ----------
+
+@test "--scan-offline flags a direct backend write outside the queue seam" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/X.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"offline-write-bypasses-queue"* ]]
+}
+
+@test "--scan-offline exempts Sync/ and Tracker/ writes" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Sync" "$tmp/Source/Core/src/Tracker"
+    printf 'void F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Sync/Q.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"offline-write-bypasses-queue"* ]]
+    printf 'void F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Tracker/C.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base2 ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"offline-write-bypasses-queue"* ]]
+}
+
+@test "--scan-offline flags a collapsed TrackerErrorUnknown in tracker code" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf 'return Err(TrackerErrorUnknown(outError));\n' > "$tmp/Source/Core/src/Tracker/C.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"tracker-error-kind-collapsed"* ]]
+}
+
+@test "--scan-offline allows the IsOk() fallback idiom" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Tracker"
+    printf 'return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$tmp/Source/Core/src/Tracker/C.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"tracker-error-kind-collapsed"* ]]
+}
+
+@test "--scan-offline ignores comment and string mentions" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf '// Collaboration()->AddWorklog(\n' > "$tmp/Source/Core/src/Ui/X.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"offline-write-bypasses-queue"* ]]
+}
+
+@test "--scan-offline respects SMATCHET_DEVIATION" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf '// SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\nvoid F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/X.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"offline-write-bypasses-queue"* ]]
+}
+
+@test "--scan-offline flags a loading-only render" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$tmp/Source/Core/src/Ui/X.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash "$LINT" --root "$tmp" --scan-offline
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"offline-loading-only-render"* ]]
+}
+
+@test "--diff fails on a NEW offline write and passes on a grandfathered one" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    printf '// moved\nvoid A(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm moved ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && offline_delta_hits scan_offline_exact_file develop offline-write-bypasses-queue"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+    printf 'void N(B& b) {\n    b.Mutations()->UpdateIssueFields(k, f);\n}\n' > "$tmp/Source/Core/src/Ui/New.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm new ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && offline_delta_hits scan_offline_exact_file develop offline-write-bypasses-queue"
+    [[ "$output" == *"New.cpp"* ]]
+}
+
 # ---------- lint-rules.d module loading (monolith split) ----------
 # The scanner sources its per-rule-family modules from lint-rules.d/ next to the
 # entry point. Loading must FAIL CLOSED: a missing module means a silently
