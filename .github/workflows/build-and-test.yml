@@ -1815,6 +1815,8 @@ jobs:
       # Offline-first bucket-E (Quality Pillar 6): the OfflineFirst group against offline-first.json.
       # The wrapper sets the fixture + filter itself, so this step deliberately has no fixture env.
       - name: Run offline-first bucket-E (hard)
+        # Runs even when the Jira fixture step above failed, so both lanes report; skipped on cancel.
+        if: ${{ !cancelled() }}
         shell: bash
         env:
           GALLIUM_DRIVER: llvmpipe
