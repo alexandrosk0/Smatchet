@@ -47,11 +47,9 @@ bool OfflineFirstFixtureActive(ImGuiTestContext* ctx) {
 
 } // namespace
 
-// ---------------------------------------------------------------------------
-// OfflineFirst_Catalog_SurvivesTransportDown
-// A field-catalog refresh that fails because the tracker is unreachable must keep the catalog the
-// user already has, raise no catalog error and show a Warning (not Error) banner (S1 behaviour).
-// ---------------------------------------------------------------------------
+// OfflineFirst/Catalog_SurvivesTransportDown: a field-catalog refresh that fails because the tracker
+// is unreachable keeps the catalog the user already has, raises no catalog error and shows a Warning
+// (not Error) banner.
 static void RegisterOfflineFirstCatalogSurvivesTransportDown(ImGuiTestEngine* engine) {
     ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Catalog_SurvivesTransportDown");
     t->TestFunc = [](ImGuiTestContext* ctx) {
