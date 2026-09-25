@@ -23,6 +23,7 @@
 #include "ITrackerFieldCatalog.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
+#include "SmatchetResult.h"
 #include "Tracker/ParentHierarchyPure.h" // ParentKeyOf — FetchChildrenOfKeys filters by it
 
 #include <nlohmann/json.hpp>
@@ -32,7 +33,6 @@
 #include <deque>
 #include <functional>
 #include <iterator>
-#include <optional>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -911,7 +911,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::vector<std::string> fetchProjectComponentsKeys_;
 
     // FetchFieldCatalog (Pillar 6)
-    std::optional<TrackerFieldCatalogResult> fieldCatalogResult_;
+    Optional<TrackerFieldCatalogResult> fieldCatalogResult_;
     std::size_t fetchFieldCatalogCalls_ = 0;
 
     // FetchIssueTransitions (Pillar 6)
