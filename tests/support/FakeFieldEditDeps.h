@@ -39,6 +39,9 @@ class FakeFieldEditDeps : public IFieldEditDeps {
     /// HasCache() predicate (settable). Default true — the common "cache initialized" case.
     bool HasCacheImpl = true;
 
+    /// Connectivity state (settable). Default authenticated reachable.
+    TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
+
     /// Recorded side effects.
     std::vector<CachedTicket> UpdatedTickets; ///< every UpdateTicket() arg, in order
     int RefreshLocalDataCalls = 0;            ///< RefreshLocalData() call count
@@ -62,6 +65,8 @@ class FakeFieldEditDeps : public IFieldEditDeps {
     void RefreshLocalData() override { ++RefreshLocalDataCalls; }
 
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
+
+    TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
 };
 
 } // namespace smatchet_tests

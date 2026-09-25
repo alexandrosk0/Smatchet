@@ -10,6 +10,7 @@
 #include "Ui/ImGuiHotkey.h"
 #include "Ui/SmatchetHotkeyCapture.h"
 #include "Ui/SmatchetUserInfoUi.h"
+#include "Ui/StatusBarAutoHidePure.h"
 #include "Views.h"
 
 #include <algorithm>
@@ -381,6 +382,7 @@ class SmatchetUI {
         int dockDebugLogFrame = 0;
     };
     DrawBodyState drawBodyState_;
+    StatusBarAutoHidePure::State statusBarAutoHide_;
 #if defined(SMATCHET_WITH_AI)
     /// Right-anchored Smatchet Assistant side panel. Delegates to the free function in
     /// `SmatchetAiAssistantUi.cpp` after `drawAuditWindow` runs; early-returns inside

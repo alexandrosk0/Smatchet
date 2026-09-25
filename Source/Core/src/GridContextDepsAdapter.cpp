@@ -274,6 +274,10 @@ void GridContextDepsAdapter::RequestDeferredLiveTrackerBackendSuccessNotify() co
 // never a completion-time fieldCatalog() re-resolve.
 GridContextFieldCatalog* GridContextDepsAdapter::KickTimeFieldCatalog() { return &ctx().fieldCatalog; }
 
+TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
+    return app_.GetLastTrackerConnectivityState();
+}
+
 // ---- IFieldEditDeps -------------------------------------------------------------------
 // BackendShared / GetActiveTicketsSnapshot / RefreshLocalData / const-RequestDeferred are reused
 // from the IEditMetaDeps + IOfflineQueueDeps overrides above. Only these two are genuinely new.

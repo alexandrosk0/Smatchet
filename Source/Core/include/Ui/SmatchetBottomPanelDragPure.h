@@ -7,6 +7,9 @@
 
 namespace SmatchetBottomPanelDragPure {
 
+// Height of the reveal grip at the bottom of the work area when the panel is collapsed.
+const float kRevealGripHeightPx = 7.0f;
+
 // Minimum upward travel from the reveal grip before the panel opens, so a plain click
 // or a 1-2 px wiggle on the grip never pops the panel open.
 const float kRevealDragThresholdPx = 12.0f;

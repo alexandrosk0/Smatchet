@@ -24,6 +24,7 @@
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
 #include "SmatchetBottomPanelDrag.h"
+#include "Ui/StatusBarAutoHidePure.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetViewVisibility.h"
 #include "TicketGridModel.h"
@@ -591,9 +592,25 @@ void SmatchetUI::drawMenuBarAppearanceMenu(MainMenuDrawCtx& ctx) {
         recentViews_.Touch("view.toggle.secondary_side_bar");
         ConfigManager::Save(d.cfg);
     }
-    if (ImGui::MenuItem("Status Bar", nullptr, d.cfg.ShowStatusBar)) {
-        d.cfg.ShowStatusBar = !d.cfg.ShowStatusBar;
-        ConfigManager::Save(d.cfg);
+    // Status bar mode: Always Show / Auto-Hide / Hidden (three radio items in a submenu).
+    if (ImGui::BeginMenu("Status Bar")) {
+        const auto sbMode = StatusBarAutoHidePure::ModeFromConfig(d.cfg.ShowStatusBar, d.cfg.StatusBarAutoHide);
+        if (ImGui::MenuItem("Always Show", nullptr, sbMode == StatusBarAutoHidePure::Mode::Always)) {
+            d.cfg.ShowStatusBar = true;
+            d.cfg.StatusBarAutoHide = false;
+            ConfigManager::Save(d.cfg);
+        }
+        if (ImGui::MenuItem("Auto-Hide", nullptr, sbMode == StatusBarAutoHidePure::Mode::AutoHide)) {
+            d.cfg.ShowStatusBar = true;
+            d.cfg.StatusBarAutoHide = true;
+            ConfigManager::Save(d.cfg);
+        }
+        if (ImGui::MenuItem("Hidden", nullptr, sbMode == StatusBarAutoHidePure::Mode::Hidden)) {
+            d.cfg.ShowStatusBar = false;
+            d.cfg.StatusBarAutoHide = false;
+            ConfigManager::Save(d.cfg);
+        }
+        ImGui::EndMenu();
     }
     // The bottom panel routes through SmatchetBottomPanelDrag rather than the bare cfg
     // flag: hiding must remember + close the docked tabs (an empty node is what actually

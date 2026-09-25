@@ -18,7 +18,8 @@
 #include <string>
 #include <vector>
 
-#include "CachedTicketTypes.h" // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return)
+#include "CachedTicketTypes.h"       // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return)
+#include "Types/ConnectivityTypes.h" // TrackerConnectivityState
 
 class ITrackerBackend;
 struct TrackerField;
@@ -76,4 +77,7 @@ class IEditMetaDeps {
     /// via this pointer — NEVER re-resolve the catalog at write time (that re-creates the
     /// completion-time-resolve leak #975 fixed).
     virtual GridContextFieldCatalog* KickTimeFieldCatalog() = 0;
+
+    /// Last connectivity probe result (Pillar 6 offline gating). Safe on any thread.
+    virtual TrackerConnectivityState TrackerConnectivity() const = 0;
 };

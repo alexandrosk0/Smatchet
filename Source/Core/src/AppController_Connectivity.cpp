@@ -54,6 +54,12 @@ TrackerConnectivityState AppController::GetLastTrackerConnectivityState() const 
     return connectivity_ ? connectivity_->GetLastState() : TrackerConnectivityState::Unknown;
 }
 
+void AppController::RequestTrackerProbeNow() {
+    if (connectivity_) {
+        connectivity_->RequestProbeNow();
+    }
+}
+
 const std::string& AppController::GetLastTicketSyncWarning() const {
     static const std::string kEmpty;
     return connectivity_ ? connectivity_->LastTicketSyncWarning() : kEmpty;

@@ -2902,8 +2902,17 @@ This plan touches `Source/Core/`.
 - Shipped: `FakeNetworkSwitch` (process-wide atomic network mode); `FakeTrackerClient` network gating on all network-shaped calls; `JiraFakeTrackerFixture` parsing of `"network"`, `"catalog.fields"`, `"transitions"`, `"comments"` JSON keys; `offline-first.json` fixture with OFF-1/OFF-2 tickets; `offline_first.test.cpp` bucket-E UI tests; `test-ui-offline-first.sh` driver script; CI bucket-e-offline-first lane with 2-attempt Mesa GL retry.
 - Tests: 5 new JiraFakeTrackerFixture doctests (network mode, field catalog, transitions, comments, backward compatibility).
 - Verification: offline-first.json valid JSON; lint gates pass; placeholder UI tests ready for network simulation hook (S4).
+### S2 — [#2240](https://github.com/alexandrosk0/Smatchet/pull/2240) (stacked on #2238)
+- Shipped: `OfflineFirstPure.h` (IsOfflineState / ShouldAttemptNetwork / ClassifyFreshness / ShouldRenderContent / RouteWrite), `KeyedLookupCache.h` + `RunKeyedFetch`, shared `ScopeExit.h` (moved out of `OfflineQueueService.cpp`), `DataFreshnessCue` + 7 `freshness.*` strings, atomic `ConnectivityMonitorService::lastState_` + `RequestProbeNow` / `AppController::RequestTrackerProbeNow`, `IAppSync::IsTrackerOffline()`, `TrackerConnectivity()` on `IEditMetaDeps` / `IFieldEditDeps`.
+- Tests: `OfflineFirstPure`, `KeyedLookupCache` (both lists); the concurrency case runs 8 threads × 1000 `TryBeginFetch` calls.
+- Nothing consumes the primitives yet (S5+ do); `DataFreshnessCue` is compiled but unused.
 
 ## Deviations from plan
+
+- **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
+  - `ClassifyFreshness` returns `Fresh` only while the tracker is reachable. This session's live data reads `CachedOffline` once the tracker drops.
+  - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
+  - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
 
 ## Verification (actual)
 

@@ -16,6 +16,7 @@
 #include "MarkdownConvert.h"
 #include "OfflineFieldConflictPolicy.h"
 #include "OfflineQueueReplayPolicy.h"
+#include "ScopeExit.h"
 #include "TextMerge.h"
 #include "Views.h"
 
@@ -31,27 +32,9 @@
 
 namespace {
 
-// Minimal RAII "run this closure on scope exit" helper — fires on normal return AND on
-// exception unwind, unlike a bare tail statement. TickOfflineCreates uses it to guarantee
-// offlineReplayInFlight_ resets even if ReplayOneCreate throws mid-loop (a bare
-// cache->SaveTicket in IssueCreatePipeline::Run could do exactly this before that call
-// site was wrapped in try/catch — CPP_CODE_AUDIT.md #6). Without this, the
-// LaunchBackgroundTask firewall catches the exception (no crash) but the lambda tail that
-// resets the latch never runs, so offline replay goes silently dead until restart.
-class ScopeExit {
-  public:
-    explicit ScopeExit(std::function<void()> fn) : fn_(std::move(fn)) {}
-    ~ScopeExit() {
-        if (fn_) {
-            fn_();
-        }
-    }
-    ScopeExit(const ScopeExit&) = delete;
-    ScopeExit& operator=(const ScopeExit&) = delete;
-
-  private:
-    std::function<void()> fn_;
-};
+// Shared RAII exit guard (ScopeExit.h): TickOfflineCreates / TickOfflineFieldEdits reset
+// offlineReplayInFlight_ through it so the latch clears on exception unwind too (CPP_CODE_AUDIT.md #6).
+using smatchet::ScopeExit;
 
 // Anonymous-namespace helpers (formerly in AppController_IssueCreateOffline.cpp). Used by the
 // Tick* replay loops below to format dead-letter audit lines.

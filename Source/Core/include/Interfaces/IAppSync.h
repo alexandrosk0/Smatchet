@@ -15,6 +15,7 @@
 // Pillar-1 exclusion protects. GetFieldCatalogError is header-inlined but its only callers are
 // command TUs (never a draw loop), so its vtable slot is likewise off the hot path.
 
+#include "OfflineFirstPure.h"        // IsOfflineState (rank-0)
 #include "SmatchetResult.h"          // VoidResult (RecreateLocalCacheDatabase)
 #include "Sync/SyncTypes.h"          // TrackerIssueFetchPack (rank-0)
 #include "Types/ConnectivityTypes.h" // TrackerConnectivityState (rank-0)
@@ -37,6 +38,9 @@ class IAppSync {
     virtual TrackerConnectivityState GetLastTrackerConnectivityState() const = 0;
     virtual const std::string& GetLastTicketSyncWarning() const = 0;
     virtual const std::string& GetFieldCatalogError() const = 0;
+
+    /// Pillar 6: true while the last probe says the tracker is unreachable. Non-virtual on purpose.
+    bool IsTrackerOffline() const { return smatchet::offline::IsOfflineState(GetLastTrackerConnectivityState()); }
 };
 
 #endif // SMATCHET_INTERFACES_IAPP_SYNC_H
