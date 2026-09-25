@@ -34,6 +34,23 @@
 
 <!-- Latest first. Append new entries at the top. -->
 
+## 2026-09-24 · PR #2234 · design escape: the status combo stopped working offline (no gate existed)
+
+### What escaped
+PR #2234 made the status combo wait for a live `/transitions` fetch before showing any option ("Loading transitions…"). Offline that fetch spends 1–90 s in the tracker retry window per issue; a failure was cached as final and never reset on reconnect. It shipped on top of an older collapse (#21b TODO): every Jira field-catalog failure became `TrackerErrorUnknown`, so an offline refresh wiped the catalog, turned the grid read-only and dropped pending edits. The same sweep found the comments modal ignoring its cached thread and ~20 further network-only paths.
+
+### Root cause
+No invariant, gate or review item covered offline behaviour: reviews checked that network work was off the UI thread (Pillar 2) but not what the user sees when it fails. The fixture backends could not simulate an outage, so no test could observe it. `postmortem-owed.sh` had no signal to key on — every gate was green because none existed.
+
+### Preventing gate
+UX Quality Pillar 6 (ADR-0026): blocking `offline-write-bypasses-queue` + `tracker-error-kind-collapsed`, five WARN-first heuristics (`offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated`), the fake-network harness (`tests/support/FakeNetworkSwitch.h`) and the `OfflineFirst` bucket-E lane, plus the code-review Offline-first block.
+
+### Eval case
+The PR #2234 diff of `TicketFieldEditor.cpp` + `IssueTransitionsCacheService.cpp`: a reviewer must flag the loading-only combo branch and the failure cached as loaded as High.
+
+### Filed as
+`docs/plans/offline-first.md` (slices S1–S13).
+
 ## 2026-09-12 · PR #2160 · `plan-lock-out-of-band` waived a red `Plan-lock gate` with no recorded reason
 
 ### What escaped

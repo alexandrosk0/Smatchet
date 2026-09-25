@@ -939,7 +939,7 @@ _resolve_py() {
     tmp="$(mktemp -d)"
     ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
     mkdir -p "$tmp/Source/Core/src/Ui"
-    printf '// SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\nvoid F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/X.cpp"
+    printf 'void F(Backend& b) {\n    // SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/X.cpp"
     ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
     run bash "$LINT" --root "$tmp" --scan-offline
     [ "$status" -eq 0 ]

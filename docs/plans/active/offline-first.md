@@ -2908,10 +2908,13 @@ This plan touches `Source/Core/`.
   - The `scripts/dev/test-ui-offline-first.sh` wrapper and its CI step.
 - Tests: `JiraFakeTrackerFixture` offline cases (Windows `SmatchetTests`); the bucket-E lane runs in CI.
 
-### S4 — Quality Pillar 6 (process-only)
-- Shipped: ADR-0026 (offline-first as UX Quality Pillar 6); seven lint rules (two blocking exact: `offline-write-bypasses-queue`, `tracker-error-kind-collapsed`; five WARN-first heuristics for graduation); updated AGENTS.md § Project rules (7 rules, 1-line table), quality-pillars.md § Pillar 6, code-review.md § Offline-first (reviewer-of-record role), offline-sync.md v3 (three new hard invariants, bucket-A + bucket-E smoke-test workflow), delegation.md offline-sync row, Ui/AGENTS.md § Pillar 2, Tracker/AGENTS.md § Offline error kinds, recurring-finding-classes.md (new "Shipped this batch (Slice S4)" section with 7-row gate table), three debt entries (heuristics-graduation-watch, ui-bucket-e-validation, offline-sync-v3-extension).
-- Tests: 8 bats tests in lint_rules.bats for exact and heuristic rules, all passing; tree clean on all 14 lint gates (`--diff origin/develop`).
-- No code changes; pure process. The offline-first exact rules block on zero-hit tree per #1605 bare-json / catch-all precedent.
+### S4 — [#2247](https://github.com/alexandrosk0/Smatchet/pull/2247)
+- Shipped:
+  - ADR-0026: offline-first is UX Quality Pillar 6.
+  - Gates: `lint-rules.d/72-offline-exact.sh` blocks `offline-write-bypasses-queue` and `tracker-error-kind-collapsed`, delta-gated per changed file. `74-offline-heuristic.sh` warns on the five heuristics. `test-lint-rules.sh` gains the `--scan-offline` sweep, selftest cases and the `--diff` blocks, and `lint_rules.bats` gains 8 tests.
+  - Rules: the Pillar 6 rows in `AGENTS.md`, § 6 of `quality-pillars.md`, the `cpp-rules.md` paragraph, the code-review Offline-first block, `offline-sync` v3, and the Ui/Tracker leaf invariants.
+  - Records: the PR #2234 postmortem, the recurring-classes batch and three debt entries.
+- Calibration baseline (`--scan-offline`, develop aed95ea): inflight-latch 23, loading-only-render 18, network-read-ungated 7, write-bypasses-queue 4 (all in `AppController_CatalogAndFieldEdit.cpp`, S9's target), kind-collapsed 3, failure-cached-as-loaded 3, cache-cleared 2.
 
 ## Deviations from plan
 
@@ -2920,6 +2923,7 @@ This plan touches `Source/Core/`.
   - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
   - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
 - **S3:** the fixture reuses the existing (previously ignored) `"catalog": {"fields": [...]}` key instead of adding `"fieldCatalog"`, and scripts the catalog only when that list is non-empty, so existing fixtures keep the fake's not-supported default. A fixture's `"network"` key sets the global switch only when present; tests restore it with `ScopedFakeNetworkReset`.
+- **S4:** the `AGENTS.md` pillar lead line starts with `**UX Pillars**` rather than "Six north-star invariants —". Its old second line was the bold-prefix anchor that `AGENTS.md § UX Pillars` references resolve to (`test-doc-anchors`), and keeping the anchor avoids rewriting historical plans and scripts. The line count is still 149.
 
 ## Verification (actual)
 

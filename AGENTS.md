@@ -10,7 +10,7 @@ Skimmable map (operating *model*; the Quality Pillars are the quality *targets*)
 
 ## Quality Pillars
 
-Six north-star invariants — **UX Pillars** 1-4 + 6 (user-facing; 1-3 + 6 enforceable / auto-fail PRs, 4 aspirational-backlogged) + **Engineering Pillar 5 — DRY** (blocking delta-gate, graduated from WARN-first 2026-06-21, [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)); Pillar 6 **Offline-first** per [ADR-0026](docs/adr/0026-offline-first-quality-pillar.md):
+**UX Pillars** 1-4 + 6 (user-facing; 1-3 + 6 enforceable / auto-fail PRs, 4 aspirational-backlogged) + **Engineering Pillar 5 — DRY** (blocking delta-gate, graduated from WARN-first 2026-06-21, [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)) — six north-star invariants; Pillar 6 **Offline-first** per [ADR-0026](docs/adr/0026-offline-first-quality-pillar.md):
 
 | # | Group | Pillar | Hard invariant | Primary owner |
 |---|---|---|---|---|

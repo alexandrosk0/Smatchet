@@ -483,7 +483,7 @@ case "$MODE" in
         echo "SELFTEST FAIL: offline-write-bypasses-queue did not fire on a backend write" >&2; miss=1; fi
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Sync/X.cpp)" ]; then
         echo "SELFTEST FAIL: offline-write-bypasses-queue fired on a write in Sync/ (exempt)" >&2; miss=1; fi
-    printf '// SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\nvoid F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
+    printf 'void F(Backend& b) {\n    // SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
         echo "SELFTEST FAIL: offline-write-bypasses-queue fired despite a deviation" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed fires on a bare TrackerErrorUnknown variable.
@@ -494,6 +494,10 @@ case "$MODE" in
     printf 'return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on IsOk() idiom (allowed)" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
+    printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a string-literal detail" >&2; miss=1; fi
     # selftest: offline-loading-only-render fires on a "Loading" draw + fetch + no cue.
     printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$_off_tmp"
     if [ -z "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ] || ! grep -q "offline-loading-only-render" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then

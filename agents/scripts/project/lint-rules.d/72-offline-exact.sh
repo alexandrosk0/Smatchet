@@ -46,22 +46,20 @@ scan_offline_exact_file() {
             prev2="$prev1"; prev1="$line"
             continue
         fi
-        if [[ "$line" =~ ^[[:space:]]*$ ]]; then prev_dev_rule=""; continue; fi
-        local suppress="$prev_dev_rule"
+        if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
+        local suppress="$prev_dev_rule"; prev_dev_rule=""
         s="${line#"${line%%[![:space:]]*}"}"
         case "$s" in '//'*|'*'*|'/*'*) prev2="$prev1"; prev1="$line"; continue ;; esac
         code="${line%%//*}"
-        local found_violation=0
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
             && [[ "$code" =~ $OFFLINE_WRITE_RE ]]; then
             printf 'offline-write-bypasses-queue\t%s:%s\n' "$logical" "$lineno"
-            found_violation=1; prev_dev_rule=""
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
             && [[ "$code" =~ $OFFLINE_KIND_COLLAPSE_RE ]]; then
             case "$code$prev1$prev2" in
                 *'IsOk()'*) ;;
-                *) printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno"; found_violation=1; prev_dev_rule="" ;;
+                *) printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno" ;;
             esac
         fi
         prev2="$prev1"; prev1="$line"
