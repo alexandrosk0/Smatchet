@@ -236,8 +236,7 @@ class FakeTrackerClient : public ITrackerBackend,
         std::vector<CachedTicket> matched;
         for (const CachedTicket& ticket : fetchChildrenOfKeysTickets_) {
             const std::string parentKey = ParentHierarchyPure::ParentKeyOf(ticket);
-            if (!parentKey.empty() &&
-                std::find(parentKeys.begin(), parentKeys.end(), parentKey) != parentKeys.end()) {
+            if (!parentKey.empty() && std::find(parentKeys.begin(), parentKeys.end(), parentKey) != parentKeys.end()) {
                 matched.push_back(ticket);
             }
         }
