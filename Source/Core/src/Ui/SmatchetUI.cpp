@@ -844,7 +844,9 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
     // (Ctrl+Alt+D dock-debug toggle migrated to the rebindable app.dock_debug.toggle binding,
     // dispatched in dispatchKeybindings.)
     // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
-    if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
+    const StatusBarAutoHidePure::Mode sbMode =
+        StatusBarAutoHidePure::ModeFromConfig(d.cfg.ShowStatusBar, d.cfg.StatusBarAutoHide);
+    if (sbMode == StatusBarAutoHidePure::Mode::Always && !d.cfg.ZenMode) {
         DrawStatusBar(app, d);
     }
 
@@ -1250,6 +1252,14 @@ void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
 // Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
 // list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
 void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+    // Auto-hide status bar: draw it floating above docked panels, before toasts so toasts appear on top.
+    const StatusBarAutoHidePure::Mode sbMode =
+        StatusBarAutoHidePure::ModeFromConfig(d.cfg.ShowStatusBar, d.cfg.StatusBarAutoHide);
+    if (sbMode == StatusBarAutoHidePure::Mode::AutoHide && !d.cfg.ZenMode) {
+        SMATCHET_UI_PERF_SCOPE("DrawStatusBarAutoHide");
+        DrawStatusBarAutoHide(app, d, statusBarAutoHide_);
+    }
+
     drawGlobalOverlays(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");

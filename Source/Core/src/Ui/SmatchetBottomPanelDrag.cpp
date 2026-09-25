@@ -168,7 +168,7 @@ void DrawRevealGrip(UiDrawSession& d) {
     if (vp == nullptr) {
         return;
     }
-    const float gripH = 7.0f;
+    const float gripH = SmatchetBottomPanelDragPure::kRevealGripHeightPx;
     const ImVec2 pos(vp->WorkPos.x, vp->WorkPos.y + vp->WorkSize.y - gripH);
     const ImVec2 size(vp->WorkSize.x, gripH);
     ::ImGui::SetNextWindowPos(pos);

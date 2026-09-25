@@ -508,6 +508,7 @@ TrackerConfig MakeNonDefaultConfig() {
     c.ShowSecondarySideBar = true;
     c.ShowPanel = false;
     c.ShowStatusBar = false;
+    c.StatusBarAutoHide = true;
     c.Density = TrackerConfig::UiDensity::Compact;
     c.PanelDockSide = TrackerConfig::PanelPosition::Right;
     c.PrimarySideBarOnRight = false;
@@ -674,6 +675,7 @@ TEST_CASE("ConfigManager Save/Load per-field round-trip preserves every persiste
     CHECK(out.ShowSecondarySideBar == in.ShowSecondarySideBar);
     CHECK(out.ShowPanel == in.ShowPanel);
     CHECK(out.ShowStatusBar == in.ShowStatusBar);
+    CHECK(out.StatusBarAutoHide == in.StatusBarAutoHide);
     CHECK(out.PrimarySideBarOnRight == in.PrimarySideBarOnRight);
     CHECK(out.UpdateCheckEnabled == in.UpdateCheckEnabled);
     CHECK(out.UpdateIncludePrerelease == in.UpdateIncludePrerelease);
@@ -751,6 +753,9 @@ TEST_CASE("ConfigManager Load of an empty config yields documented struct defaul
     CHECK(cfg.UiLanguage == def.UiLanguage);
     CHECK(cfg.Density == def.Density);
     CHECK(cfg.PanelDockSide == def.PanelDockSide);
+    // A config written before the Auto-Hide status-bar mode loads as Always Show.
+    CHECK(cfg.ShowStatusBar == def.ShowStatusBar);
+    CHECK(cfg.StatusBarAutoHide == false);
     CHECK(cfg.AiModelOpenAi == def.AiModelOpenAi);
     CHECK(cfg.AiModelAnthropic == def.AiModelAnthropic);
     CHECK(cfg.AiReasoningEffort == def.AiReasoningEffort);
