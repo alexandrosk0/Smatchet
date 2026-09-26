@@ -166,8 +166,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # background task) + SaveTicket (UI-thread write) from two std::threads sharing
         # one LocalCacheManager instance. LCM.cpp already linked above; no extra .cpp.
         Core/LocalCacheConcurrentSeed.test.cpp
-        # lookup_cache (Pillar 6 offline lookups) — LocalCacheManager_Lookup.cpp linked below.
-        Core/LookupCacheSqlite.test.cpp
+        # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
+        # linked below.
+        Core/LocalCacheManagerLookup.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
@@ -726,7 +727,8 @@ add_executable(SmatchetTests
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
     # already pulled in below.
     Core/LocalCacheTicketsV2Migration.test.cpp
-    Core/LookupCacheSqlite.test.cpp
+    Core/LocalCacheManagerLookup.test.cpp
+    Core/LocalCacheManagerLookupPersist.test.cpp
     # Slice G Phase 1 (testing-surface.md §6 Gap 6, plan slice-g-db-corruption.md) —
     # characterizes today's corrupt/truncated cache-file-on-open behaviour: the ctor's
     # schema-init runs OUTSIDE the WAL-pragma try/catch, so a non-SQLite/truncated file throws

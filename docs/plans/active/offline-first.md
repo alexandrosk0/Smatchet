@@ -2922,7 +2922,7 @@ This plan touches `Source/Core/`.
   - `IssueTransitionsCacheService` now runs on `KeyedLookupCache`: no fetch while offline, a 30 s backoff after a failure, the backoff cleared on reconnect (`AppController::ConsumeTrackerConnectivityRecovery`), and no in-flight latch left behind by a throw or a failed launch.
   - Every successful fetch is remembered per (project, issue type, from status), in memory and in the new SQLite `lookup_cache` table (`ILookupCache`, `LocalCacheManager_Lookup.cpp`). The stored rows load on a worker once per backend.
   - `ITrackerFieldCatalog::SupportsIssueTransitions()`, true for Jira only: other backends make no request and log nothing.
-- Tests: `LearnedWorkflowPure`, `StatusComboOptionsPure`, `IssueTransitionsCacheService` (fakes; both lists) and `LookupCacheSqlite` (both lists). Also a `JiraFakeTrackerFixture` capability case and the bucket-E test `OfflineFirst/StatusCombo_OfflineShowsOptions`.
+- Tests: `LearnedWorkflowPure`, `StatusComboOptionsPure`, `IssueTransitionsCacheService` (fakes; both lists), `LocalCacheManagerLookup` (in-memory; both lists) and `LocalCacheManagerLookupPersist` (file-backed; `SmatchetTests`). Also a `JiraFakeTrackerFixture` capability case and the bucket-E test `OfflineFirst/StatusCombo_OfflineShowsOptions`.
 
 ## Deviations from plan
 
@@ -2944,7 +2944,7 @@ This plan touches `Source/Core/`.
   - `EnsureIssueTransitionsLoaded` catches an exception from the launch (e.g. `std::thread` resource exhaustion) and records a failure, so the entry backs off instead of staying in flight. With the test fake's inline runner, the scripted throwing fetch is caught there too, so that case asserts `CHECK_NOTHROW` plus a recorded failure instead of `CHECK_THROWS`.
   - `tests/support/JiraFakeTrackerFixture.cpp` is outside the S5 file table. Its scripted `transitions` now also turn on `SupportsIssueTransitions()`, as `JiraClient` does; otherwise the bucket-E test could never reach the service.
   - `TicketFieldEditor.cpp` does not include `DataFreshnessCue.h`. The status cue is its own static line (Step 11's `DrawStatusComboCue`), so the header would be unused.
-  - `LookupCacheSqlite` is also registered in `SmatchetTsanTests`, which already links SQLite, for Linux coverage. The three `status.cue.*` strings sit after the `freshness.*` group, which itself follows `comments.fetch_failed`.
+  - The plan's `LookupCacheSqlite.test.cpp` is split along the repo's cache-test convention (CodeRabbit review on #2249). The in-memory cases are in `LocalCacheManagerLookup.test.cpp`, registered in both lists; `SmatchetTsanTests` already links SQLite. The two file-backed cases (restart persistence, an old file gaining the table) are in `LocalCacheManagerLookupPersist.test.cpp`, which states why it needs a file and, like the other file-backed `LocalCacheManager*` suites, runs only in `SmatchetTests`. The three `status.cue.*` strings sit after the `freshness.*` group, which itself follows `comments.fetch_failed`.
   - The bucket-E test waits for the probe to report each connectivity state (`RequestTrackerProbeNow` each frame, up to 600 frames) and for the live fetch (up to 300 frames) instead of fixed yields, and leaves the app online at the end.
 
 ## Verification (actual)
