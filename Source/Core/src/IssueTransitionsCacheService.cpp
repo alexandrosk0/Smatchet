@@ -8,6 +8,7 @@
 #include "LearnedWorkflowPure.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
+#include "ScopeExit.h"
 #include "Tracker/TrackerError.h"
 
 #include <exception>
@@ -95,8 +96,10 @@ void IssueTransitionsCacheService::EnsureIssueTransitionsLoaded(const Transition
     try {
         // `backend` keeps `catalog` alive for the whole fetch (ADR-0012 latched handle).
         deps_.LaunchBackgroundTask([this, backend, catalog, ticket, q, backendKey, store, haveCfg, cfg]() {
-            const TrackerConfig useCfg = haveCfg ? cfg : ConfigManager::Load();
+            // Everything that can throw, the config load included, runs inside RunKeyedFetch: its guard
+            // records a failure on every exit, so a throw can never leave the ticket in flight.
             smatchet::offline::RunKeyedFetch(live_, ticket, [&]() {
+                const TrackerConfig useCfg = haveCfg ? cfg : ConfigManager::Load();
                 auto r = catalog->FetchIssueTransitions(useCfg, q.IssueId);
                 if (r.has_value()) {
                     RememberLearned(backendKey, q, r.value(), store);
@@ -140,6 +143,14 @@ void IssueTransitionsCacheService::EnsureLearnedLoaded(const std::string& backen
     try {
         // SQLite read on a worker; never hold learnedMutex_ across it or across the launch.
         deps_.LaunchBackgroundTask([this, backendKey, store]() {
+            // Un-latch on every early exit (a throw included) so a later call retries the load.
+            bool loaded = false;
+            smatchet::ScopeExit unlatchOnFailure([this, &backendKey, &loaded]() {
+                if (!loaded) {
+                    std::lock_guard<std::mutex> lock(learnedMutex_);
+                    learnedLoadedBackends_.erase(backendKey);
+                }
+            });
             const std::vector<LookupCacheRow> rows =
                 store->LoadLookups(backendKey, smatchet::workflow::kLearnedTransitionsKind);
             std::vector<std::pair<std::string, std::vector<TrackerFieldOption>>> parsed;
@@ -154,6 +165,7 @@ void IssueTransitionsCacheService::EnsureLearnedLoaded(const std::string& backen
             for (auto& kv : parsed) {
                 learned_.emplace(std::move(kv.first), std::move(kv.second)); // never overwrite a newer edge
             }
+            loaded = true;
         });
     } catch (const std::exception& ex) {
         LOG_WARN("IssueTransitionsCacheService: loading the saved workflow did not complete: %s", ex.what());

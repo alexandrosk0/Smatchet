@@ -18,7 +18,9 @@
 
 #include <doctest/doctest.h>
 
+#include <functional>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -51,6 +53,37 @@ std::shared_ptr<FakeLookupCache> SetUpJiraLike(FakeEditMetaDeps& deps) {
     deps.LookupCacheImpl = store;
     return store;
 }
+
+// Runs tasks inline but contains a throw the way AppController::LaunchBackgroundTask does (the task
+// is abandoned, the app continues), so a test sees the production path where the service's own
+// launch-time catch is never reached.
+class FirewalledEditMetaDeps : public FakeEditMetaDeps {
+  public:
+    int FirewalledThrows = 0;
+    void LaunchBackgroundTask(std::function<void()> task) override {
+        ++LaunchBackgroundTaskCalls;
+        try {
+            task();
+        } catch (const std::exception&) {
+            ++FirewalledThrows; // abandoned like a production worker
+        }
+    }
+};
+
+// A lookup store whose first LoadLookups throws, then behaves normally.
+class ThrowOnceLookupCache : public FakeLookupCache {
+  public:
+    std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) override {
+        if (!thrown_) {
+            thrown_ = true;
+            throw std::runtime_error("scripted LoadLookups throw");
+        }
+        return FakeLookupCache::LoadLookups(backendKey, kind);
+    }
+
+  private:
+    bool thrown_ = false;
+};
 
 } // namespace
 
@@ -237,6 +270,45 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(lookup.freshness != DataFreshness::LoadingNoCache);
         svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
         CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 1);
+    }
+
+    TEST_CASE("a throw on a production-style worker still records the failure (no in-flight latch)") {
+        FirewalledEditMetaDeps deps;
+        SetUpJiraLike(deps);
+        deps.Fake()->SetIssueTransitionsThrows(true);
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+
+        CHECK(deps.FirewalledThrows == 1); // the worker died; the service's launch catch never ran
+        const TransitionsLookup lookup = svc.GetAvailableTransitions(Query("PROJ-1"));
+        CHECK(lookup.freshness != DataFreshness::Refreshing);
+        CHECK(lookup.freshness != DataFreshness::LoadingNoCache);
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 1); // backing off, not stuck in flight
+        svc.OnConnectivityRecovered();
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1"));
+        CHECK(deps.Fake()->FetchIssueTransitionsCalls() == 2);
+    }
+
+    TEST_CASE("a failed saved-workflow load is retried on the next use") {
+        FirewalledEditMetaDeps deps;
+        deps.Fake()->SetSupportsIssueTransitions(true);
+        const auto store = std::make_shared<ThrowOnceLookupCache>();
+        store->UpsertLookup("Jira", smatchet::workflow::kLearnedTransitionsKind, "PROJ|bug|1",
+                            smatchet::workflow::SerializeTransitionTargets({Option("2", "In Progress")}));
+        deps.LookupCacheImpl = store;
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        IssueTransitionsCacheService svc(deps);
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // the load worker throws
+        CHECK(deps.FirewalledThrows == 1);
+        CHECK(svc.GetAvailableTransitions(Query("PROJ-1")).options.empty());
+
+        svc.EnsureIssueTransitionsLoaded(Query("PROJ-1")); // un-latched: loads again, succeeds
+        const TransitionsLookup lookup = svc.GetAvailableTransitions(Query("PROJ-1"));
+        CHECK(lookup.fromLearned);
+        CHECK(lookup.options.size() == 1);
     }
 
     TEST_CASE("a fetched list containing the from-status is not remembered") {
