@@ -33,6 +33,24 @@ whole-tree clean invariants bats-asserted, campaign sweep modes
 (`--scan-bare-json` / `--scan-catch-all` / `--scan-json-walkers` /
 `--scan-slurps`), remediation printed on every failure.
 
+## Offline-first batch (ADR-0026, 2026-09)
+
+| Rank | Class | Recurrence evidence | Gate shipped | Tier |
+|---|---|---|---|---|
+| 1 | Write bypasses the offline queue | comment post, worklog, watch, Annotate, command/Lua field edits, bulk import (offline-first sweep 2026-09-24) | `offline-write-bypasses-queue` | **blocking** (delta) |
+| 2 | Error kind collapsed to Unknown | #21b TODO in `JiraClient::FetchFieldCatalog` wiped the catalog offline; Linear team lookup | `tracker-error-kind-collapsed` | **blocking** (delta) |
+| 3 | Loading-only render while cache exists | PR #2234 status combo; comments modal; components editor | `offline-loading-only-render` | WARN-first |
+| 4 | In-flight latch without an exit guard | comments modal; transitions service; plan-doc viewer (#2056/#2057/#2108) | `offline-inflight-latch-unguarded` | WARN-first |
+| 5 | Failure cached as final / no backoff | transitions service; editmeta per-frame storm | `offline-failure-cached-as-loaded` | WARN-first |
+| 6 | Cached state cleared on error | catalog + users wipe on catalog failure | `offline-cache-cleared` | WARN-first |
+| 7 | Network read with no connectivity gate | comments modal, tooltip fetch, project picker | `offline-network-read-ungated` | WARN-first |
+
+Blocking-vs-advisory rationale: the two exact signals (ranks 1–2) block, delta-gated per changed file so the
+existing hits S5–S13 burn down stay grandfathered; the five judgment-call heuristics (ranks 3–7) start
+advisory and graduate one by one under the ADR-0026 criteria, mirroring the `duplication` WARN→block
+graduation (ADR-0015). Wiring: all seven ride the existing required `test-lint-rules.sh --diff` lane;
+whole-tree sweep `--scan-offline`.
+
 ## Reconciliation vs `docs/plans/shipped/ci-falsepositive-hardening.md`
 
 Checked before building (campaign charter requirement). No overlap to extend:

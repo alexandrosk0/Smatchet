@@ -10,8 +10,7 @@ Skimmable map (operating *model*; the Quality Pillars are the quality *targets*)
 
 ## Quality Pillars
 
-Five north-star invariants:
-- **UX Pillars** 1-4 (user-facing; 1-3 enforceable / auto-fail PRs, 4 aspirational-backlogged) + **Engineering Pillar 5 — DRY** (blocking delta-gate, graduated from WARN-first 2026-06-21, [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)):
+**UX Pillars** 1-4 + 6 (user-facing; 1-3 + 6 enforceable / auto-fail PRs, 4 aspirational-backlogged) + **Engineering Pillar 5 — DRY** (blocking delta-gate, graduated from WARN-first 2026-06-21, [ADR-0015](docs/adr/0015-dry-quality-pillar-duplication-gate.md)) — six north-star invariants; Pillar 6 **Offline-first** per [ADR-0026](docs/adr/0026-offline-first-quality-pillar.md):
 
 | # | Group | Pillar | Hard invariant | Primary owner |
 |---|---|---|---|---|
@@ -20,6 +19,7 @@ Five north-star invariants:
 | 3 | UX | Never crash | Sanitizer build clean; RAII + bounds-checked + no silent UB; graceful degradation in ship builds | `debug-detective`, `code-review`, `build-doctor` |
 | 4 | UX | Accessibility | Keyboard nav, font scaling, WCAG AA contrast — flagged in backlog (no auto-fail yet) | none today (backlogged) |
 | 5 | Engineering | DRY | No NEW copy-paste clone vs `origin/develop` (delta-gated `dup_audit.py`; **blocking** — graduated from WARN-first 2026-06-21, ADR-0015) — copy-paste only (not structural similarity); exemptions cheap (`SMATCHET_DEVIATION(rule=duplication)`); a DRY refactor coupling independent subsystems = CRITICAL | `code-review` (reviewer-of-record + exemption sign-off) |
+| 6 | UX | Offline-first | Cached data renders with a freshness cue, never a loading-only state; a failed fetch never wipes cached data or is cached as final; offline writes persist to the queue and replay on reconnect; `TrackerError` keeps its Transport kind | `offline-sync` (implementer), `code-review` |
 
 Visual-validation exception (Pillar 4): no bucket-C/E coverage for a visual change → the orchestrator pauses and the user verifies ([`ship-loops.md`](docs/agent-rules/ship-loops.md) § Visual-validation exception). Full enforceable-invariant text + visual-cue contract + per-pillar tooling: [`docs/agent-rules/quality-pillars.md`](docs/agent-rules/quality-pillars.md).
 
@@ -76,6 +76,7 @@ Full per-outcome semantics + halt-prompt return-code table + env knobs + REST co
 | `unused-symbol-under-config-guard` (WARN) | changed first-party C++ `**/*.cpp` | advisory (calibration): a free-function def unguarded while ALL its refs are under a positive `#if defined(SMATCHET_WITH_*)` is dead in the feature-OFF build → Clang `-Werror,-Wunused-function` — the #863 config-skew escape (fixed by #945). WARN-first per the original `duplication` calibration precedent (per-file text proxy, not the compiler); nightly Lua-OFF sanitizer build is the authoritative backstop |
 | `comment-commented-out-code`, `comment-decorative-banner`, `comment-blank-run` | all first-party C++ | comment-regrowth |
 | `pr-numbered-temporal-comments` (WARN) | changed first-party C++ `**/*.{cpp,h,hpp}` comments | advisory (calibration): a comment pinning a DEV pull-request number (`// PR 5`, `// PR #1104`, `PR#1218`, `PR12`) is a temporal scaffold that rots once the PR squash-merges — rewrite to durable present-tense intent. Narrow regex (`PR` + optional space/`#` + digit) so product-domain "PR" (no number — `PR-only`, `type:pr`, `per-PR`) + Issue/ADR refs never match. WARN-first per the original `duplication` calibration precedent |
+| `offline-write-bypasses-queue`, `tracker-error-kind-collapsed` · WARN: `offline-loading-only-render`, `offline-inflight-latch-unguarded`, `offline-failure-cached-as-loaded`, `offline-cache-cleared`, `offline-network-read-ungated` | changed first-party C++ under `Source/` | Pillar 6 ([ADR-0026](docs/adr/0026-offline-first-quality-pillar.md)): the first two **blocking**, delta-gated per changed file (existing hits grandfathered); the five heuristics WARN-first → graduate per ADR-0026; whole-tree sweep `--scan-offline` |
 | `function-too-long` | all first-party C++ | **120** lines non-UI / **200** ImGui-draw (path under `Ui/` OR name starts `Draw`/`Render`) |
 | `function-too-branchy` | all first-party C++ | **30** decision points |
 | `include-cycle` | `Source/Core/**` quote-includes | acyclicity + layer-DAG; delta-gated vs origin/develop; baseline-grandfathered; SCC>1 or low→high back-edge fails |
@@ -145,6 +146,4 @@ git/GitHub is the **ship-line** (PR review, CI, `smatchet-merge-watcher`); Perfo
 
 ## Harness adapter
 
-Each agent declares a closed set of **capability tags**; the orchestrator (and the harness) maps tags to concrete tools. The full capability-tag → per-harness tool table + the per-harness discovery notes live in [`docs/harness/capability-adapter.md`](docs/harness/capability-adapter.md) (load when porting to a new harness or resolving what a tag means here). **Per-agent harness hints**: each agent's YAML frontmatter may carry a `harness-hints.<harness>:` block with harness-specific routing details (e.g. Anthropic model selection, MCP tool list); harnesses ignore unknown blocks.
-
-**Recommended companion — caveman**: output-token compressor (~75% cut, technical content preserved byte-for-byte). Install + use instructions: [`docs/guides/caveman.md`](docs/guides/caveman.md). Default: `/caveman full` at session start.
+Each agent declares a closed set of **capability tags**; the orchestrator (and the harness) maps tags to concrete tools. The full capability-tag → per-harness tool table + the per-harness discovery notes live in [`docs/harness/capability-adapter.md`](docs/harness/capability-adapter.md) (load when porting to a new harness or resolving what a tag means here). **Per-agent harness hints**: each agent's YAML frontmatter may carry a `harness-hints.<harness>:` block with harness-specific routing details (e.g. Anthropic model selection, MCP tool list); harnesses ignore unknown blocks. **Recommended companion — caveman**: output-token compressor (~75% cut, technical content preserved byte-for-byte). Install + use instructions: [`docs/guides/caveman.md`](docs/guides/caveman.md). Default: `/caveman full` at session start.

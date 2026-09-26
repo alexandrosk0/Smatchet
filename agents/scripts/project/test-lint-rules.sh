@@ -40,6 +40,8 @@
 #   (advisory)             unbounded-recursive-json-walker — self-recursive fn over a
 #                          nlohmann::json/sol::object param with no depth/budget token (WARN)
 #   (advisory)             unbounded-file-slurp — rdbuf()/istreambuf whole-file read (WARN)
+#   offline-write-bypasses-queue / tracker-error-kind-collapsed  Pillar 6 exact rules (blocking, delta per file)
+#   (advisory)             offline-* heuristics (Pillar 6, WARN-first; 74-offline-heuristic.sh)
 #
 # Modes:
 #   (no args) / --diff [<ref>]   delta gate: fail only on (rule,basename,hash)
@@ -119,7 +121,7 @@ for _mod in "$LINT_RULES_D"/00-common.sh "$LINT_RULES_D"/10-line-rules.sh \
             "$LINT_RULES_D"/20-narrowing.sh "$LINT_RULES_D"/30-cmake-ci-scope.sh \
             "$LINT_RULES_D"/40-unused-config-guard.sh "$LINT_RULES_D"/50-bare-json.sh \
             "$LINT_RULES_D"/55-catch-all.sh "$LINT_RULES_D"/60-json-walker.sh \
-            "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh \
+            "$LINT_RULES_D"/65-file-slurp.sh "$LINT_RULES_D"/70-ui-request-flag.sh "$LINT_RULES_D"/72-offline-exact.sh "$LINT_RULES_D"/74-offline-heuristic.sh \
             "$LINT_RULES_D"/75-pr-comments.sh "$LINT_RULES_D"/80-interface-doc.sh \
             "$LINT_RULES_D"/85-ui-include-direction.sh \
             "$LINT_RULES_D"/90-tu-line-ceiling.sh; do
@@ -163,9 +165,10 @@ case "${1:-}" in
     --scan-ui-include) MODE=scanuiinclude ;;
     --scan-pr-comments) MODE=scanprcomments ;;
     --scan-tu-ceiling) MODE=scantuceiling ;;
+    --scan-offline) MODE=scanoffline ;;
     --selftest)    MODE=selftest ;;
     "")            MODE=diff ;;
-    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--selftest]" >&2; exit 2 ;;
+    *) echo "usage: $0 [--diff[=]<ref>|--catalog [--refresh]|--funcsize-baseline|--agentsize-baseline|--dup-baseline|--include-cycle-baseline|--scan-file[=]<f>|--full|--scan-wide|--scan-glfw|--scan-cmake-ci|--scan-unused-cfg|--scan-bare-json|--scan-catch-all|--scan-json-walkers|--scan-slurps|--scan-ui-reqflag|--scan-ui-include|--scan-pr-comments|--scan-tu-ceiling|--scan-offline|--selftest]" >&2; exit 2 ;;
 esac
 
 case "$MODE" in
@@ -468,6 +471,123 @@ case "$MODE" in
         echo "SELFTEST FAIL: interface-doc WARNed despite the leaf doc being touched in the same diff" >&2; miss=1; fi
     if [ -n "$(interface_doc_emit "Source/Core/src/Tracker/AGENTS.md" 0 "$_idoc_pins" "$_idoc_miss" 2>&1 1>/dev/null)" ]; then
         echo "SELFTEST FAIL: interface-doc WARNed when the pinned symbol was absent from the header hunk" >&2; miss=1; fi
+    # --- offline-first rules (Pillar 6; ADR-0026) — assert each is documented + fires correctly. ---
+    for r in "${OFFLINE_EXACT_RULES[@]}" "${OFFLINE_WARN_RULES[@]}"; do
+        if ! grep -qF "$r" AGENTS.md; then echo "SELFTEST FAIL: offline rule '$r' missing from AGENTS.md" >&2; miss=1; fi
+    done
+    # selftest: offline-write-bypasses-queue fires on a direct backend write outside the queue seam.
+    _off_tmp="$(mktemp --suffix=.cpp 2>/dev/null || echo "${TMPDIR:-/tmp}/off_selftest.$$.cpp")"
+    case "$_off_tmp" in *.cpp) ;; *) mv -f "$_off_tmp" "$_off_tmp.cpp" 2>/dev/null && _off_tmp="$_off_tmp.cpp" ;; esac
+    printf 'void F(Backend& b) {\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue did not fire on a backend write" >&2; miss=1; fi
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Sync/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired on a write in Sync/ (exempt)" >&2; miss=1; fi
+    printf 'void F(Backend& b) {\n    // SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n}\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired despite a deviation" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed fires on a bare TrackerErrorUnknown variable.
+    printf 'return Err(TrackerErrorUnknown(std::move(outError)));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed did not fire" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed allows IsOk() idiom.
+    printf 'return classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on IsOk() idiom (allowed)" >&2; miss=1; fi
+    # selftest: a deviation marker trailing a code line does not hide that line's own write.
+    printf '    b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e); // SMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue was hidden by a same-line trailing deviation" >&2; miss=1; fi
+    # selftest: an unrelated IsOk() check above does not exempt a collapse; a clang-format-wrapped ternary does.
+    printf 'if (!r.IsOk()) {\n    return Err(TrackerErrorUnknown(outError));\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by an unrelated IsOk() check" >&2; miss=1; fi
+    printf '    return classified.IsOk()\n               ? TrackerErrorUnknown(outError)\n               : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a wrapped IsOk() ternary (allowed)" >&2; miss=1; fi
+    # selftest: the exemption binds to the collapse — an unrelated ternary or comment text above does not exempt.
+    printf '    const int n = r.IsOk() ? 1 : 2;\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by an unrelated IsOk() ternary above" >&2; miss=1; fi
+    printf '    // was: classified.IsOk() ? TrackerErrorUnknown(outError) : classified\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() ternary text in a comment" >&2; miss=1; fi
+    # selftest: a valid fallback on the previous line does not exempt a separate collapse on this one.
+    printf '    auto x = classified.IsOk() ? TrackerErrorUnknown(other) : classified;\n    return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" != "tracker-error-kind-collapsed"$'\t'"Source/Core/src/Tracker/X.cpp:2" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a valid fallback on the previous line" >&2; miss=1; fi
+    # selftest: one line holding a fallback AND a separate collapse still fires.
+    printf '    return F(a.IsOk() ? TrackerErrorUnknown(x) : a, TrackerErrorUnknown(y));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a fallback sharing its line" >&2; miss=1; fi
+    # selftest: a NEGATED condition is never the fallback — same-line and wrapped forms both fire.
+    printf '    return !classified.IsOk() ? TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a negated !IsOk() condition" >&2; miss=1; fi
+    printf '    return !classified.IsOk()\n        ? TrackerErrorUnknown(outError)\n        : classified;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a wrapped negated !IsOk() condition" >&2; miss=1; fi
+    # selftest: the ternary wrapped after `?` (collapse opens the next line) is still the allowed fallback.
+    printf '    return classified.IsOk() ?\n        TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a fallback wrapped after the ?" >&2; miss=1; fi
+    # selftest: a COMPOUND condition is never the fallback (its true branch is reachable without IsOk()).
+    printf '    return a.IsOk() || b.IsOk() ? TrackerErrorUnknown(error) : b;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a compound || condition" >&2; miss=1; fi
+    printf '    return Err(a.IsOk() ||\n        b.IsOk() ? TrackerErrorUnknown(error) : b);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a wrapped compound || condition" >&2; miss=1; fi
+    # selftest: a fallback opening its line after `Err(` stays exempt with a comment line in between.
+    printf '    return Result<T, E>::Err(\n        // keep the kind\n        classified.IsOk() ? TrackerErrorUnknown(std::move(outError)) : classified);\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a line-start fallback below a comment" >&2; miss=1; fi
+    # selftest: IsOk() ternary text inside a multi-line /* */ block never exempts the collapse below it.
+    printf '    return Err(\n    /*\n       classified.IsOk() ?\n    */\n        TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() text inside a block comment" >&2; miss=1; fi
+    # selftest: only comments are skipped — a `*`-dereference line, code after `/* */` or a closing `*/`, and
+    # code after a `//` inside a string literal are all scanned; write text inside a string literal is not code.
+    printf '    *out = TrackerErrorUnknown(detail);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped a line starting with a * dereference" >&2; miss=1; fi
+    printf '    /* note */ return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped code after a one-line block comment" >&2; miss=1; fi
+    printf '    /*\n     note\n    */ return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" != "tracker-error-kind-collapsed"$'\t'"Source/Core/src/Tracker/X.cpp:3" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped code after a closing */" >&2; miss=1; fi
+    printf '    LOG_INFO("see http://x"); b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue lost code after a // inside a string literal" >&2; miss=1; fi
+    printf '    LOG_INFO("b.Collaboration()->AddWorklog(");\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired on text inside a string literal" >&2; miss=1; fi
+    # selftest: marker-like text inside a multi-line raw string is not a comment, so it never escapes a hit.
+    printf '    auto q = R"(\nSMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n)"; b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" != "offline-write-bypasses-queue"$'\t'"Source/Core/src/Ui/X.cpp:3" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue was escaped by marker text inside a raw string" >&2; miss=1; fi
+    # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
+    printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a string-literal detail" >&2; miss=1; fi
+    # selftest: offline-loading-only-render fires on a "Loading" draw + fetch + no cue.
+    printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ] || ! grep -q "offline-loading-only-render" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-loading-only-render did not fire" >&2; miss=1; fi
+    # selftest: offline-loading-only-render skips when DataFreshnessCue is in the window.
+    printf 'void D() {\n    app.LaunchBackgroundTask([](){});\n    DataFreshnessCue::Draw(f);\n    ImGui::TextDisabled("Loading things...");\n}\n' > "$_off_tmp"
+    if grep -q "offline-loading-only-render" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-loading-only-render fired despite DataFreshnessCue in window" >&2; miss=1; fi
+    # selftest: offline-inflight-latch-unguarded fires on an in-flight flag set before a launch.
+    printf 'void K() {\n    s.FetchInFlight = true;\n    app.LaunchBackgroundTask([](){});\n}\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ] || ! grep -q "offline-inflight-latch-unguarded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-inflight-latch-unguarded did not fire" >&2; miss=1; fi
+    # selftest: offline-inflight-latch-unguarded skips when guarded by ScopeExit.
+    printf 'void K() {\n    s.FetchInFlight = true;\n    ScopeExit g([](){});\n    app.LaunchBackgroundTask([](){});\n}\n' > "$_off_tmp"
+    if grep -q "offline-inflight-latch-unguarded" <<< "$(scan_offline_heuristic_file "$_off_tmp" Source/Core/src/Ui/X.cpp)"; then
+        echo "SELFTEST FAIL: offline-inflight-latch-unguarded fired despite ScopeExit guard" >&2; miss=1; fi
+    rm -f "$_off_tmp" 2>/dev/null || true
     st_py="$(resolve_python || true)"
     if [ -n "$st_py" ]; then
         if ! "$st_py" "$LAYER_ROOT/agents/scripts/core/function_size_audit.py" --selftest; then miss=1; fi
@@ -559,6 +679,13 @@ case "$MODE" in
     # tu-line-ceiling set over first-party C++ TUs — whole-tree diagnostic sweep (debug + bats
     # harness). Advisory rule; the blocking path is delta-scoped in the --diff mode below.
     compute_tu_line_ceiling_violations
+    ;;
+
+  scanoffline)
+    # Quality Pillar 6 offline-first — whole-tree sweep of all seven rules (campaign + calibration).
+    # `--root <dir>` (handled above) points this at an arbitrary tree.
+    compute_offline_exact_violations
+    compute_offline_heuristic_violations
     ;;
 
   catalog)
@@ -800,6 +927,24 @@ case "$MODE" in
         echo "[test-lint-rules] PASS — no off-UI-thread g_ui request-flag write in command-dispatch TUs"
     fi
 
+    # --- Quality Pillar 6 offline-first EXACT rules (changed files; BLOCKING, delta per file) ---
+    # offline-write-bypasses-queue + tracker-error-kind-collapsed (72-offline-exact.sh; ADR-0026). A
+    # changed file fails only when it has MORE hits than its merge-base copy (existing hits are
+    # grandfathered). A SMATCHET_DEVIATION(rule=<id>; ...) on the line above escapes.
+    ofx_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    ofx_out="$(offline_delta_hits scan_offline_exact_file "$ofx_mb" "${OFFLINE_EXACT_RULES[@]}" | grep -E . || true)"
+    if [ -n "$ofx_out" ]; then
+        rc=1
+        echo
+        echo "FAIL: Quality Pillar 6 (offline-first) — new offline-breaking code (ADR-0026):"
+        printf '%s\n' "$ofx_out" | sed 's/^/  /'
+        echo "  offline-write-bypasses-queue: route the write through the offline queue so it replays on reconnect."
+        echo "  tracker-error-kind-collapsed: classify at the failure site (ClassifyRejectedHttpStatus / TrackerErrorFromHttpStatus / TrackerErrorParse)."
+        echo "  Genuine exception: add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
+    else
+        echo "[test-lint-rules] PASS — no new Pillar 6 offline-first exact-rule hit"
+    fi
+
     # --- no-ui-include-in-domain (domain subsystems; ABSOLUTE-0) ---
     # A quote-form `#include "Ui/..."` in a DOMAIN subsystem (Tracker/Sync/Persistence/Config +
     # include mirrors + Plugins/Mcp) inverts the architecture layer DAG (Ui ranks above every domain
@@ -997,6 +1142,18 @@ case "$MODE" in
             echo "  Rephrase the comment to state what the code does / why, without the dev-PR number (keep GitHub Issue / ADR refs)."
             echo "  If a specific historical PR genuinely must be cited (e.g. an audit trail): add"
             echo "  // SMATCHET_DEVIATION(rule=pr-numbered-temporal-comments; reason=...; owner=...; revisit=...) above the comment."
+        } >&2
+    fi
+
+    # --- Quality Pillar 6 offline-first HEURISTICS (changed .cpp; WARN-first, never touches $rc) ---
+    ofh_mb="$(git merge-base "$BASE" HEAD 2>/dev/null || echo "$BASE")"
+    ofh_out="$(offline_delta_hits scan_offline_heuristic_file "$ofh_mb" "${OFFLINE_WARN_RULES[@]}" | grep -E . || true)"
+    if [ -n "$ofh_out" ]; then
+        {
+            echo "[offline-first] WARN: possible offline-breaking pattern (Quality Pillar 6, ADR-0026). Advisory; not blocking:"
+            printf '%s\n' "$ofh_out" | sed 's/^/  /'
+            echo "  Render cached data + DataFreshnessCue, gate fetches with KeyedLookupCache / IsOfflineState, back off on failure."
+            echo "  If intended, add // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) above the line."
         } >&2
     fi
 

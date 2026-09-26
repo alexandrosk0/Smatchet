@@ -2908,6 +2908,14 @@ This plan touches `Source/Core/`.
   - The `scripts/dev/test-ui-offline-first.sh` wrapper and its CI step.
 - Tests: `JiraFakeTrackerFixture` offline cases (Windows `SmatchetTests`); the bucket-E lane runs in CI.
 
+### S4 — [#2247](https://github.com/alexandrosk0/Smatchet/pull/2247)
+- Shipped:
+  - ADR-0026: offline-first is UX Quality Pillar 6.
+  - Gates: `lint-rules.d/72-offline-exact.sh` blocks `offline-write-bypasses-queue` and `tracker-error-kind-collapsed`, delta-gated per changed file. `74-offline-heuristic.sh` warns on the five heuristics. `test-lint-rules.sh` gains the `--scan-offline` sweep, selftest cases and the `--diff` blocks, and `lint_rules.bats` gains 8 tests.
+  - Rules: the Pillar 6 rows in `AGENTS.md`, § 6 of `quality-pillars.md`, the `cpp-rules.md` paragraph, the code-review Offline-first block, `offline-sync` v3, and the Ui/Tracker leaf invariants.
+  - Records: the PR #2234 postmortem, the recurring-classes batch and three debt entries.
+- Calibration baseline (`--scan-offline`, develop aed95ea): inflight-latch 23, loading-only-render 18, network-read-ungated 7, write-bypasses-queue 4 (all in `AppController_CatalogAndFieldEdit.cpp`, S9's target), kind-collapsed 3, failure-cached-as-loaded 3, cache-cleared 2.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -2915,6 +2923,12 @@ This plan touches `Source/Core/`.
   - `RunKeyedFetch` marks the outcome recorded only after `CompleteSuccess` / `CompleteFailure` returns, so a throwing completion also clears `InFlight`.
   - The cue texts are state-neutral: `freshness.cached_stale` is "Showing saved data" (the failure detail goes in the tooltip), and `freshness.unavailable_offline` was renamed `freshness.unavailable` ("Not available yet"). Neither state implies a failure or an outage it can't know about.
 - **S3:** the fixture reuses the existing (previously ignored) `"catalog": {"fields": [...]}` key instead of adding `"fieldCatalog"`, and scripts the catalog only when that list is non-empty, so existing fixtures keep the fake's not-supported default. A fixture's `"network"` key sets the global switch only when present; tests restore it with `ScopedFakeNetworkReset`.
+- **S4:** the `AGENTS.md` pillar lead line starts with `**UX Pillars**` rather than "Six north-star invariants —". Its old second line was the bold-prefix anchor that `AGENTS.md § UX Pillars` references resolve to (`test-doc-anchors`), and keeping the anchor avoids rewriting historical plans and scripts. The line count is still 149.
+  - `72-offline-exact.sh` (CodeRabbit review on #2247) differs from the Step 5 block in three ways.
+    - A deviation marker counts only on a comment-only line; a marker on a line that also holds code no longer hides that code.
+    - Both exact rules read only code: a small awk lexer (`offline_code_lines`) strips `//` and `/* */` comments and blanks string, char and raw-string literal contents, tracking blocks and raw strings across lines. A `*`-dereference line, code after `/* … */` or a closing `*/`, and code after a `//` inside a string are scanned; a mention inside a comment or string is not. The lexer also emits each line's comment text, and a deviation is read only from that text, so marker-like text inside a multi-line raw string never escapes a hit.
+    - `offline_delta_hits` reads `git diff --name-status -M` and scans a renamed file's merge-base copy under its source path, so a rename no longer un-grandfathers its hits, and a write moved out of an exempt seam still fails.
+    - `tracker-error-kind-collapsed` exempts a collapse on the hit line only when it is the true branch of a ternary whose whole condition is one unnegated `<receiver>.IsOk()`: the code before it (the two code lines above joined with this line) must end in an expression boundary, the receiver, `.IsOk()` and `?`. A negated or compound condition (`!c.IsOk()`, `a.IsOk() || c.IsOk()`), an unrelated `IsOk()` check, ternary, comment text (including a multi-line `/* … */` block) or a valid fallback on a previous line never exempts a collapse.
 
 ## Verification (actual)
 
