@@ -12,8 +12,10 @@
 # Transport kind, so an offline failure reads as permanent and callers wipe cached data (the #21b
 # collapse behind the PR #2234 postmortem). Classify where the response is in hand. The
 # `classified.IsOk() ? TrackerErrorUnknown(x) : classified` fallback is allowed: each collapse on the hit
-# line must itself be the true branch of an `IsOk() ?` ternary (which may wrap from the line above). An
-# unrelated IsOk() check, ternary, comment text, or a valid fallback on a previous line never exempts it.
+# line must itself be the true branch of a ternary whose WHOLE condition is one unnegated `<recv>.IsOk()`
+# (the ternary may wrap across the two code lines above). A negated or compound condition (`!c.IsOk()`,
+# `a.IsOk() || c.IsOk()`), an unrelated IsOk() check or ternary, comment text, or a valid fallback on a
+# previous line never exempts it.
 #
 # Escape: a comment line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker trailing a code line never hides that line's code.
@@ -21,44 +23,28 @@
 OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
-# `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`); group 1 captures a
-# leading `!` / `not` so a negated condition — whose true branch collapses a real error — is never masked.
-OFFLINE_ISOK_RECV_RE='(!|not[[:space:]])?[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\(\))?([[:space:]]*(\.|->)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\(\))?)*[[:space:]]*(\.|->)[[:space:]]*IsOk\(\)'
-OFFLINE_KIND_FALLBACK_RE="${OFFLINE_ISOK_RECV_RE}"'[[:space:]]*\?[[:space:]]*TrackerErrorUnknown\('
+# `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`).
+OFFLINE_ISOK_RECV_RE='[A-Za-z_][A-Za-z0-9_]*(\(\))?([[:space:]]*(\.|->)[[:space:]]*[A-Za-z_][A-Za-z0-9_]*(\(\))?)*[[:space:]]*(\.|->)[[:space:]]*IsOk\(\)'
+# What may sit right before a ternary condition: `(` `,` `{` `;` `?`, an assignment `=` (not `==` `!=` `<=`
+# `>=`), a ternary `:` (not `::`), or `return`. Every other operator binds tighter than `?:`, so it would be
+# part of the condition (`!c`, `a || c`, `x == c`) and the condition would no longer be the IsOk() check.
+OFFLINE_COND_BOUNDARY_RE='(([(,{;?]|[^=!<>]=|[^:]:)[[:space:]]*|[^A-Za-z0-9_]return[[:space:]]+)'
+# Code before a collapse that makes it the fallback: the condition is exactly `<recv>.IsOk()`, then `?`.
+OFFLINE_FALLBACK_PREFIX_RE="${OFFLINE_COND_BOUNDARY_RE}${OFFLINE_ISOK_RECV_RE}"'[[:space:]]*\?[[:space:]]*$'
 
-offline_mask_kind_fallbacks() {
-    # $1 = code of the hit line, $2 = code of the (up to two) lines above. Prints the hit line with every
-    # `<recv>.IsOk() ? TrackerErrorUnknown(` fallback collapse renamed, so only a collapse outside a fallback
-    # still matches OFFLINE_KIND_COLLAPSE_RE. A negated condition (`!recv.IsOk() ?`) is never a fallback: its
-    # IsOk() is renamed so the loop moves on, but its collapse stays visible. Handles the same-line form and
-    # a ternary clang-format wrapped before `?` or before the collapse.
-    local masked="$1" prevc="$2" m repl trimmed
-    while [[ "$masked" =~ $OFFLINE_KIND_FALLBACK_RE ]]; do
+offline_kind_collapse_unexempt() {
+    # $1 = code of the hit line, $2 = code of the (up to two) code lines above. Succeeds when some collapse on
+    # the hit line is not the true branch of a fallback ternary: the code before it (the lines above joined,
+    # then this line up to the collapse) must end in `<boundary> <recv>.IsOk() ?`.
+    local rest="$1" seen=" $2 " m pre
+    while [[ "$rest" =~ $OFFLINE_KIND_COLLAPSE_RE ]]; do
         m="${BASH_REMATCH[0]}"
-        if [ -n "${BASH_REMATCH[1]}" ]; then
-            repl="${m/IsOk()/NegatedIsOk()}"
-        else
-            repl="${m/TrackerErrorUnknown(/FallbackUnknown(}"
-        fi
-        masked="${masked/"$m"/"$repl"}"
+        pre="${rest%%"$m"*}"
+        [[ "$seen$pre" =~ $OFFLINE_FALLBACK_PREFIX_RE ]] || return 0
+        seen="$seen$pre$m"
+        rest="${rest#*"$m"}"
     done
-    trimmed="${masked#"${masked%%[![:space:]]*}"}"
-    if [[ "$prevc" =~ ${OFFLINE_ISOK_RECV_RE}[[:space:]]*\?[[:space:]]*$ ]] && [ -z "${BASH_REMATCH[1]}" ] \
-        && [[ "$trimmed" =~ ^TrackerErrorUnknown\( ]]; then
-        masked="${masked/TrackerErrorUnknown(/FallbackUnknown(}"
-    elif [[ "$prevc" =~ ${OFFLINE_ISOK_RECV_RE}[[:space:]]*$ ]] && [ -z "${BASH_REMATCH[1]}" ] \
-        && [[ "$trimmed" =~ ^\?[[:space:]]*TrackerErrorUnknown\( ]]; then
-        masked="${masked/TrackerErrorUnknown(/FallbackUnknown(}"
-    fi
-    printf '%s' "$masked"
-}
-
-offline_code_of() {
-    # $1 = raw source line. Prints its code part: empty for a comment-only line, else the text before `//`.
-    local l="$1" t
-    t="${l#"${l%%[![:space:]]*}"}"
-    case "$t" in '//'*|'*'*|'/*'*) return 0 ;; esac
-    printf '%s' "${l%%//*}"
+    return 1
 }
 
 scan_offline_exact_file() {
@@ -76,21 +62,26 @@ scan_offline_exact_file() {
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
     esac
     [ "$write_scope" -eq 1 ] || [ "$kind_scope" -eq 1 ] || return 0
-    local lineno=0 prev_dev_rule="" prev1="" prev2="" line s code
+    local lineno=0 prev_dev_rule="" prev1="" prev2="" in_block=0 line s code
     while IFS= read -r line || [ -n "$line" ]; do
         lineno=$((lineno+1))
+        # Inside a multi-line /* ... */ block nothing is code (so it never enters the prev1/prev2 window).
+        if [ "$in_block" -eq 1 ]; then
+            case "$line" in *'*/'*) in_block=0 ;; esac
+            continue
+        fi
         s="${line#"${line%%[![:space:]]*}"}"
+        case "$s" in '/*'*) case "$s" in *'*/'*) ;; *) in_block=1 ;; esac ;; esac
         if [[ "$s" == '//'* || "$s" == '/*'* ]] && [[ "$line" =~ $DEV_RE ]]; then
             local body="${BASH_REMATCH[1]}" kv
             prev_dev_rule=""
             IFS=';' read -ra kvs <<< "$body"
             for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
-            prev2="$prev1"; prev1="$line"
             continue
         fi
         if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
         local suppress="$prev_dev_rule"; prev_dev_rule=""
-        case "$s" in '//'*|'*'*|'/*'*) prev2="$prev1"; prev1="$line"; continue ;; esac
+        case "$s" in '//'*|'*'*|'/*'*) continue ;; esac
         code="${line%%//*}"
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
             && [[ "$code" =~ $OFFLINE_WRITE_RE ]]; then
@@ -98,15 +89,14 @@ scan_offline_exact_file() {
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
             && [[ "$code" =~ $OFFLINE_KIND_COLLAPSE_RE ]]; then
-            # Mask the collapses on THIS line that are the true branch of an `IsOk() ?` fallback (same line, or
-            # wrapped from the code of the lines above), then fire only if a collapse is still left. So neither an
-            # unrelated ternary nor a valid fallback on a previous line can exempt a separate collapse here.
-            if [[ "$(offline_mask_kind_fallbacks "$code" "$(offline_code_of "$prev2") $(offline_code_of "$prev1")")" \
-                =~ $OFFLINE_KIND_COLLAPSE_RE ]]; then
+            # Each collapse on THIS line is checked on its own against the code right before it (this line plus
+            # the two code lines above, for a clang-format-wrapped ternary). So neither an unrelated ternary nor a
+            # valid fallback on a previous line or elsewhere on this line can exempt a separate collapse.
+            if offline_kind_collapse_unexempt "$code" "$prev2 $prev1"; then
                 printf 'tracker-error-kind-collapsed\t%s:%s\n' "$logical" "$lineno"
             fi
         fi
-        prev2="$prev1"; prev1="$line"
+        prev2="$prev1"; prev1="$code"
     done < "$f"
 }
 

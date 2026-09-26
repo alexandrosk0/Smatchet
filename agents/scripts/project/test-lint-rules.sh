@@ -531,6 +531,21 @@ case "$MODE" in
     printf '    return classified.IsOk() ?\n        TrackerErrorUnknown(outError) : classified;\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a fallback wrapped after the ?" >&2; miss=1; fi
+    # selftest: a COMPOUND condition is never the fallback (its true branch is reachable without IsOk()).
+    printf '    return a.IsOk() || b.IsOk() ? TrackerErrorUnknown(error) : b;\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a compound || condition" >&2; miss=1; fi
+    printf '    return Err(a.IsOk() ||\n        b.IsOk() ? TrackerErrorUnknown(error) : b);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by a wrapped compound || condition" >&2; miss=1; fi
+    # selftest: a fallback opening its line after `Err(` stays exempt with a comment line in between.
+    printf '    return Result<T, E>::Err(\n        // keep the kind\n        classified.IsOk() ? TrackerErrorUnknown(std::move(outError)) : classified);\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed fired on a line-start fallback below a comment" >&2; miss=1; fi
+    # selftest: IsOk() ternary text inside a multi-line /* */ block never exempts the collapse below it.
+    printf '    return Err(\n    /*\n       classified.IsOk() ?\n    */\n        TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() text inside a block comment" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then

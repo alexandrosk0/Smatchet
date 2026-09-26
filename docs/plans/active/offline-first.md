@@ -2927,7 +2927,7 @@ This plan touches `Source/Core/`.
   - `72-offline-exact.sh` (CodeRabbit review on #2247) differs from the Step 5 block in three ways.
     - A deviation marker counts only on a comment line; a marker trailing a code line no longer hides that line's code.
     - `offline_delta_hits` reads `git diff --name-status -M` and scans a renamed file's merge-base copy under its source path, so a rename no longer un-grandfathers its hits, and a write moved out of an exempt seam still fails.
-    - `tracker-error-kind-collapsed` masks only the collapses on the hit line that are the true branch of an `IsOk() ?` fallback (same line, or wrapped from the code of the line above), then fires on whatever collapse is left. A negated `!…IsOk() ?` condition, an unrelated `IsOk()` check, ternary, comment text or a valid fallback on a previous line never exempts a collapse.
+    - `tracker-error-kind-collapsed` exempts a collapse on the hit line only when it is the true branch of a ternary whose whole condition is one unnegated `<receiver>.IsOk()`: the code before it (the two code lines above joined with this line) must end in an expression boundary, the receiver, `.IsOk()` and `?`. A negated or compound condition (`!c.IsOk()`, `a.IsOk() || c.IsOk()`), an unrelated `IsOk()` check, ternary, comment text (including a multi-line `/* … */` block) or a valid fallback on a previous line never exempts a collapse.
 
 ## Verification (actual)
 
