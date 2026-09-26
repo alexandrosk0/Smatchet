@@ -12,12 +12,24 @@
 namespace smatchet {
 namespace workflow {
 
+std::string EscapeKeyPart(const std::string& part) {
+    std::string escaped;
+    escaped.reserve(part.size());
+    for (const char c : part) {
+        if (c == '\\' || c == '|') {
+            escaped += '\\';
+        }
+        escaped += c;
+    }
+    return escaped;
+}
+
 std::string BuildLearnedTransitionsKey(const std::string& projectKey, const std::string& issueTypeKey,
                                        const std::string& fromStatusKey) {
     if (projectKey.empty() || issueTypeKey.empty() || fromStatusKey.empty()) {
         return std::string();
     }
-    return projectKey + "|" + issueTypeKey + "|" + fromStatusKey;
+    return EscapeKeyPart(projectKey) + "|" + EscapeKeyPart(issueTypeKey) + "|" + EscapeKeyPart(fromStatusKey);
 }
 
 std::string SerializeTransitionTargets(const std::vector<TrackerFieldOption>& options) {

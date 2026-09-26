@@ -19,13 +19,14 @@
 
 IssueTransitionsCacheService::IssueTransitionsCacheService(IEditMetaDeps& deps) : deps_(deps) {}
 
+// Composite keys escape each free-text part (EscapeKeyPart) so two backends or issues never collide.
 std::string IssueTransitionsCacheService::LiveKey(const std::string& backendKey, const std::string& issueId) {
-    return backendKey + "|" + issueId;
+    return smatchet::workflow::EscapeKeyPart(backendKey) + "|" + smatchet::workflow::EscapeKeyPart(issueId);
 }
 
 std::string IssueTransitionsCacheService::LearnedMemoryKey(const std::string& backendKey,
                                                            const std::string& learnedKey) {
-    return backendKey + "|" + learnedKey;
+    return smatchet::workflow::EscapeKeyPart(backendKey) + "|" + learnedKey; // learnedKey is already escaped
 }
 
 bool IssueTransitionsCacheService::BackendSupportsTransitions() const {

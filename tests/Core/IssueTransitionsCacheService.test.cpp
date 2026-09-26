@@ -136,6 +136,22 @@ TEST_SUITE("IssueTransitionsCacheService") {
         CHECK(lookup.options[1].Value == "Done");
     }
 
+    TEST_CASE("an issue type containing the key separator does not borrow another workflow") {
+        FakeEditMetaDeps deps;
+        SetUpJiraLike(deps);
+        deps.Fake()->SetIssueTransitions("PROJ-1", {Option("2", "In Progress")});
+        IssueTransitionsCacheService svc(deps);
+        TransitionsQuery learnedQ = Query("PROJ-1", "special|1");
+        learnedQ.IssueTypeKey = "bug"; // remembered under ("PROJ", "bug", "special|1")
+        svc.EnsureIssueTransitionsLoaded(learnedQ);
+
+        deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+        TransitionsQuery otherQ = Query("PROJ-2", "1");
+        otherQ.IssueTypeKey = "bug|special"; // same joined text before escaping
+        CHECK(svc.GetAvailableTransitions(otherQ).options.empty());
+        CHECK_FALSE(svc.GetAvailableTransitions(otherQ).fromLearned);
+    }
+
     TEST_CASE("the stored workflow is namespaced per backend") {
         FakeEditMetaDeps deps;
         const auto store = SetUpJiraLike(deps);

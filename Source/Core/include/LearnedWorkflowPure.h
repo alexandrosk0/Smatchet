@@ -16,7 +16,12 @@ namespace workflow {
 /// `lookup_cache.kind` of the learned transition rows.
 constexpr const char* kLearnedTransitionsKind = "workflow_transitions";
 
-/// `projectKey|issueTypeKey|fromStatusKey`, or "" when any part is empty (nothing to learn under).
+/// `part` with every `\` and `|` prefixed by `\`, so parts joined with `|` never collide
+/// (("a|b", "c") and ("a", "b|c") yield different keys).
+std::string EscapeKeyPart(const std::string& part);
+
+/// `projectKey|issueTypeKey|fromStatusKey` with each part escaped (EscapeKeyPart), or "" when any
+/// part is empty (nothing to learn under).
 std::string BuildLearnedTransitionsKey(const std::string& projectKey, const std::string& issueTypeKey,
                                        const std::string& fromStatusKey);
 

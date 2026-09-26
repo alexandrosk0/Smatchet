@@ -10,6 +10,7 @@
 #include <vector>
 
 using smatchet::workflow::BuildLearnedTransitionsKey;
+using smatchet::workflow::EscapeKeyPart;
 using smatchet::workflow::ParseTransitionTargets;
 using smatchet::workflow::SerializeTransitionTargets;
 
@@ -26,6 +27,17 @@ TrackerFieldOption Option(const std::string& id, const std::string& value) {
 
 TEST_CASE("LearnedWorkflowPure — key joins project, issue type and from status") {
     CHECK(BuildLearnedTransitionsKey("PROJ", "bug", "1") == "PROJ|bug|1");
+}
+
+TEST_CASE("LearnedWorkflowPure — separators and backslashes in a part are escaped, so keys never collide") {
+    CHECK(BuildLearnedTransitionsKey("PROJ", "bug|special", "1") == "PROJ|bug\\|special|1");
+    CHECK(BuildLearnedTransitionsKey("PROJ", "bug", "special|1") == "PROJ|bug|special\\|1");
+    CHECK(BuildLearnedTransitionsKey("PROJ", "bug|special", "1") !=
+          BuildLearnedTransitionsKey("PROJ", "bug", "special|1"));
+    // A trailing backslash cannot swallow the separator that follows it.
+    CHECK(BuildLearnedTransitionsKey("A\\", "b", "c") != BuildLearnedTransitionsKey("A", "\\|b", "c"));
+    CHECK(EscapeKeyPart("a\\b|c") == "a\\\\b\\|c");
+    CHECK(EscapeKeyPart("plain") == "plain");
 }
 
 TEST_CASE("LearnedWorkflowPure — key is empty when any part is empty (nothing to learn under)") {
