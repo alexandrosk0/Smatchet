@@ -147,6 +147,30 @@ TEST_CASE("MapJiraIssueComments — an implausibly deep ADF body skips the Markd
     CHECK(out[0].Body.find('>') == std::string::npos); // not the Markdown (blockquote) rendering
 }
 
+TEST_CASE("MapJiraIssueComments — a code block inside a table cell falls back to plain text, keeping the code") {
+    nlohmann::json code = nlohmann::json::object();
+    code["type"] = "codeBlock";
+    code["content"] = nlohmann::json::array({nlohmann::json::object({{"type", "text"}, {"text", "make build"}})});
+    nlohmann::json cell = nlohmann::json::object();
+    cell["type"] = "tableCell";
+    cell["content"] = nlohmann::json::array({code});
+    nlohmann::json row = nlohmann::json::object();
+    row["type"] = "tableRow";
+    row["content"] = nlohmann::json::array({cell});
+    nlohmann::json table = nlohmann::json::object();
+    table["type"] = "table";
+    table["content"] = nlohmann::json::array({row});
+    nlohmann::json doc = AdfParagraph("x");
+    doc["content"] = nlohmann::json::array({table});
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "7";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body.find("make build") != std::string::npos);
+}
+
 TEST_CASE("MapJiraIssueComments — absent author defaults Author to \"Unknown\"") {
     nlohmann::json arr = nlohmann::json::array();
     nlohmann::json c = nlohmann::json::object();
