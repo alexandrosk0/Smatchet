@@ -47,6 +47,7 @@ class FakeEditMetaDeps : public IEditMetaDeps {
 
     bool ShuttingDownImpl = false;
     mutable int DeferredNotifyCalls = 0;
+    TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
 
     /// Real per-context field catalog the #975 kick-time pointer threads through. Warm tests
     /// inspect CatalogImpl.projectComponentOptions_ / projectComponentsInFlight_ after a kick.
@@ -107,6 +108,8 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
 
     GridContextFieldCatalog* KickTimeFieldCatalog() override { return &CatalogImpl; }
+
+    TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
 };
 
 } // namespace smatchet_tests

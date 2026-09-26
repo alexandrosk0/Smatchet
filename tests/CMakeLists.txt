@@ -84,6 +84,14 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # ImGui-free, no threads (SmatchetBottomPanelDragPure.h), so the P4V-style
         # gesture contract is covered on the Linux subset too.
         Core/SmatchetBottomPanelDragPure.test.cpp
+        # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
+        # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
+        Core/StatusBarAutoHidePure.test.cpp
+        # Drag-to-paint checkbox gesture (click a checkbox and drag across its neighbours to
+        # set the whole run) — header-only, ImGui-free, no threads
+        # (SmatchetDragCheckboxPure.h); the ImGui wrapper SmatchetDragCheckbox.h feeds live
+        # hit-testing into these decisions.
+        Core/SmatchetDragCheckboxPure.test.cpp
         # Gap map Tier 1 #3 — grid-cell render-model builders (untrusted tracker-value parsing).
         # No threads; proves the pure TU compiles/links under TSan and runs its doctests on the
         # Linux subset (TrackerFieldValueParser/Utils closure already linked below).
@@ -213,6 +221,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     FakeFieldEditDeps / FakeEditMetaDeps / FakeTrackerClient).
         Core/FieldEditPipelineService.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -275,6 +284,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/OfflineFirstPure.test.cpp
+        Core/KeyedLookupCache.test.cpp
+        Core/CatalogOfflinePolicyPure.test.cpp
         Core/JiraCommentMappingPure.test.cpp
         Core/JiraIssueMappingPure.test.cpp
         # DRY consolidation (#2178) — pins the shared TimeNowPure clocks, the one
@@ -492,6 +504,10 @@ add_executable(SmatchetTests
     # no cpr/sqlite — safe in the doctest rig.
     Core/JqlEscape.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/JqlEscape.cpp"
+    # JQL search result guards (Pillar 3 — never crash, Pillar 5 — DRY memory protection).
+    # Guard constant verification + memory-exhaustion prevention checks across all backends.
+    # Header-only (constants, no production .cpp needed).
+    Core/JqlSearchGuards.test.cpp
     # dedup-tracker-query-and-ai-client-clones cluster A — backend-agnostic query-suggest
     # helpers extracted from JqlSuggestEngine.cpp + PlaneQuerySuggestEngine.cpp. The reparam
     # to const std::vector<TrackerField>& (away from AppController) makes the field-catalog
@@ -613,6 +629,14 @@ add_executable(SmatchetTests
     # collapse) — SmatchetBottomPanelDragPure.h is header-only + ImGui-free; the impure
     # driver (SmatchetBottomPanelDrag.cpp) feeds live dock geometry into these decisions.
     Core/SmatchetBottomPanelDragPure.test.cpp
+    # Status bar auto-hide state machine (StatusBarAutoHidePure.h) — ImGui-free header-only.
+    # Covers visibility flash, hover dwell, pointer reveal, and signal tracking.
+    Core/StatusBarAutoHidePure.test.cpp
+    # Drag-to-paint checkbox gesture behind the checkbox LISTS (Views > Fields, the
+    # multi-select / Labels cell editors): press a row and drag across its neighbours to set
+    # the whole run to one value. SmatchetDragCheckboxPure.h is header-only + ImGui-free; the
+    # impure wrapper (SmatchetDragCheckbox.h) feeds live hit-testing into these decisions.
+    Core/SmatchetDragCheckboxPure.test.cpp
     # jql-omnibox-search Stream A — pure icon/text fallback-selection predicate
     # behind SmatchetIconButton (the icon-only Refresh + icon-leading Save&Sync
     # helpers). SmatchetIconButtonLabel.h is header-only + ImGui-free; the ImGui
@@ -1147,6 +1171,9 @@ add_executable(SmatchetTests
     # converge here). Pure — no I/O, no Logger.
     Core/CommentBlobFormatPure.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
+    Core/OfflineFirstPure.test.cpp
+    Core/KeyedLookupCache.test.cpp
+    Core/CatalogOfflinePolicyPure.test.cpp
     # error-message-quality-pass — pure Jira error-body extractor (errorMessages[]/errors{}
     # → joined message, bounded parse, never the raw body). Jira counterpart of
     # ExtractLinearErrorMessage; used by every JiraIssueMutation failure path.
@@ -1351,6 +1378,7 @@ add_executable(SmatchetTests
     # TrackerFieldSchema — all already in this target. cpr/ImGui/SQLite-free;
     # Core/FieldEditPipelineService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
     # ConnectivityMonitorService (AppController god-object decomposition Phase 3). Pulls
     # ConfigManager + ITrackerConnectivity (header-only) + RedactHttpBodyForLog / ResolveSslConfig
     # (TrackerHttpPure.cpp / TrackerHttpUtils.cpp, both already linked into this target). cpr/ImGui/

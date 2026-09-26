@@ -38,9 +38,9 @@
 #include <utility>
 #include <vector>
 
-// clang-format off
-// SMATCHET_DEVIATION(rule=duplication; reason=a companion TU of the AppController god-class necessarily shares its subsystem include set (ConfigManager / backends / owned services); no shared header to factor into without worse coupling, and the DRY gate doc endorses an exemption over cross-context abstraction; owner=orchestrator; revisit=when AppController.h fan-in is narrowed per ADR-0020 / debt.md)
-// clang-format on
+// Companion TU shares subsystem include set; no shared header without worse coupling; DRY gate
+// endorses exemption over abstraction (see ADR-0020 / debt.md).
+// SMATCHET_DEVIATION(rule=duplication; owner=orchestrator; revisit=ADR-0020)
 #include "ConfigManager.h"
 #include "ConfigSaveWorker.h" // not AI-gated — config saves happen regardless of feature flags
 
@@ -63,6 +63,7 @@
 #include "OfflineQueueService.h"
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
+#include "IssueTransitionsCacheService.h"
 #include "ConnectivityMonitorService.h"
 #include "AttachmentAppUpdateService.h"
 #include "TicketSyncService.h"
@@ -210,11 +211,18 @@ void AppController::WireCoreServices() {
     if (!offlineQueue_) {
         offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
     }
+    // IssueTransitionsCacheService — caches per-issue available transitions for the status field combo.
+    // Constructed before FieldEditPipelineService (which holds a reference to it and calls
+    // InvalidateIssueTransitions after a field edit). Holds the deps adapter by reference.
+    if (!transitions_) {
+        transitions_ = std::make_unique<IssueTransitionsCacheService>(*depsAdapter_);
+    }
     // FieldEditPipelineService — every field-edit delegator (SubmitFieldEdit, SubmitFieldEditNetworkOnly,
     // TryPrepareOfflineFieldEdit, ApplyFieldEditResult) needs a live target from the first tick (Phase 2).
-    // Holds the deps adapter + EditMetaCacheService by reference — both constructed above, both outlive it.
+    // Holds the deps adapter + EditMetaCacheService + IssueTransitionsCacheService by reference —
+    // all constructed above, all outlive it.
     if (!fieldEdit_) {
-        fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_);
+        fieldEdit_ = std::make_unique<FieldEditPipelineService>(*depsAdapter_, *editMeta_, *transitions_);
     }
     // TicketSyncService — its `CancelAndJoinActiveStreamingSync` is called by RecreateLocalCacheDatabase
     // (which the legacy-pending cleanup may trigger), so it must exist before that path runs (item 11).

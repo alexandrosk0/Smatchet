@@ -225,6 +225,8 @@ The table below is **auto-generated** by `agents/scripts/core/test-plan-index.sh
 | [`gate-selftest-msys-execbit`](shipped/gate-selftest-msys-execbit.md) | 2026-08-29 | Plan — gate-selftest MSYS exec-bit heuristic fix |
 | [`jql-username-in-input`](shipped/jql-username-in-input.md) | 2026-08-30 | jql-username-in-input — show display names in the JQL input, keep wire/disk id-canonical |
 | [`parent-issue-hierarchy`](shipped/parent-issue-hierarchy.md) | 2026-09-06 | Plan — Parent issue hierarchy (FS parity) |
+| [`multi-jira-backend-domains`](shipped/multi-jira-backend-domains.md) | 2026-09-11 | Multiple Jira origins with inherited credentials and a Views domain picker. |
+| [`status-bar-auto-hide`](shipped/status-bar-auto-hide.md) | 2026-09-24 | Plan — Status bar: third "Auto-Hide" state |
 <!-- END auto-plan-index -->
 
 ### Notes

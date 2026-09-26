@@ -35,6 +35,8 @@
 #   ra_write_marker <mode> <sha> [verdict...] -> records <sha> (+ optional verdict)
 #   ra_read_verdict <mode>               -> prints the recorded verdict, or empty
 #   ra_verdict_from_json <aggregate.json> -> verdict fields from a sidecar result
+#   ra_findings_path                     -> absolute path of the .review-findings.json artifact
+#   ra_findings_fingerprint              -> the artifact's "fingerprint" field, or empty + rc 1
 #
 #   <mode> is `branch` (committed-on-branch + working tree, vs base_ref) or
 #   `staged` (the index only). base_ref defaults to origin/develop and is ignored
@@ -105,6 +107,20 @@ ra_resolve_python() {
     return 1
 }
 
+# _ra_branch_base <base_ref> — the merge-base of <base_ref> and HEAD (falls back
+# to <base_ref> itself if merge-base fails, e.g. unrelated histories). Resolving
+# this ONCE and diffing it straight against the working tree in a single `git
+# diff <mb>` call (rather than concatenating `git diff <base>...HEAD` with a
+# separate `git diff HEAD`) is what makes branch-mode output commit-invariant:
+# a single two-endpoint diff is the same text whether a given delta is staged,
+# committed, or both, whereas two diffs stitched together can show duplicate
+# "diff --git a/F b/F" blocks for a file touched on both sides of the seam —
+# Bugbot on PR #2221: committing the reviewed worktree delta changed the
+# recorded fingerprint out from under a just-acked review.
+_ra_branch_base() {
+    git merge-base "$1" HEAD 2>/dev/null || printf '%s\n' "$1"
+}
+
 # ra_fingerprint <mode> [base_ref] — hash the diff CONTENT (not just the file list)
 # so any change, including a clang-format reflow, re-arms the gate.
 ra_fingerprint() {
@@ -113,8 +129,7 @@ ra_fingerprint() {
         if [ "$mode" = "staged" ]; then
             git diff --cached -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         else
-            git diff "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-            git diff HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+            git diff "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         fi
     } | sha256sum | cut -d' ' -f1
 }
@@ -125,8 +140,7 @@ ra_changed_files() {
     if [ "$mode" = "staged" ]; then
         git diff --cached --name-only --diff-filter=d -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
     else
-        git diff --name-only --diff-filter=d "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-        git diff --name-only --diff-filter=d -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+        git diff --name-only --diff-filter=d "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
     fi
 }
 
@@ -138,8 +152,7 @@ ra_changed_lines() {
         if [ "$mode" = "staged" ]; then
             git diff --cached --numstat -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         else
-            git diff --numstat "$base"...HEAD -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
-            git diff --numstat -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
+            git diff --numstat "$(_ra_branch_base "$base")" -- "${RA_CPP_GLOBS[@]}" 2>/dev/null || true
         fi
     } | awk '{a+=($1=="-"?0:$1); d+=($2=="-"?0:$2)} END {print a+d+0}'
 }
@@ -320,4 +333,34 @@ ra_verdict_from_json() {
             ((.veto_reasons // []) | if type == "array" and length > 0 then (.[0] | tostring) else "" end)
           ] | @tsv
     ' "$file" 2>/dev/null
+}
+
+# ra_findings_path — absolute path of the .review-findings.json review artifact
+# (empty when not inside a work tree). Per-worktree, same construction as
+# ra_marker_path.
+ra_findings_path() {
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    [ -n "$root" ] || return 0
+    printf '%s\n' "$root/.review-findings.json"
+}
+
+# ra_findings_fingerprint — echo the "fingerprint" field of .review-findings.json
+# (the code-review agent's stamp of the diff it actually read); rc 1 if the file
+# is absent or unparseable. Parsed with grep, not python/jq, deliberately — same
+# reasoning as ra_strict_hit's fail-closed budget (#1116): a 64-hex field needs no
+# JSON parser, and a second interpreter dependency would only widen the surface
+# this exists to close. Shared by scripts/dev/pre-ship.sh's push-gate artifact
+# check and agents/scripts/core/record-review-verdict.sh's verdict-recording
+# gate, so the two never drift on what "a matching artifact" means (the class of
+# bug check-pr-intent.sh's own --check-workflow-sync guards against elsewhere).
+ra_findings_fingerprint() {
+    local path
+    path="$(ra_findings_path)"
+    [ -n "$path" ] && [ -r "$path" ] || return 1
+    local fp
+    fp="$(grep -oE '"fingerprint"[[:space:]]*:[[:space:]]*"[0-9a-f]{64}"' "$path" 2>/dev/null |
+        head -n 1 | grep -oE '[0-9a-f]{64}' || true)"
+    [ -n "$fp" ] || return 1
+    printf '%s\n' "$fp"
 }

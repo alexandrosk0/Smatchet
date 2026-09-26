@@ -2,7 +2,8 @@
 
 #include "TrackerFieldPayloadPure.h"
 
-#include "EditMetaCacheService.h" // editMeta_ ref: Ensure/CanEdit/Refresh editmeta checks
+#include "EditMetaCacheService.h"         // editMeta_ ref: Ensure/CanEdit/Refresh editmeta checks
+#include "IssueTransitionsCacheService.h" // transitions_ ref: invalidate after status edits
 #include "IFieldEditDeps.h"
 #include "ITrackerBackend.h"
 #include "ITrackerIssueMutations.h"
@@ -49,8 +50,9 @@ bool ErrorTextContainsHttpStatus(const std::string& errorText, int statusCode) {
 
 } // namespace
 
-FieldEditPipelineService::FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta)
-    : deps_(deps), editMeta_(editMeta) {}
+FieldEditPipelineService::FieldEditPipelineService(IFieldEditDeps& deps, EditMetaCacheService& editMeta,
+                                                   IssueTransitionsCacheService& transitions)
+    : deps_(deps), editMeta_(editMeta), transitions_(transitions) {}
 
 bool FieldEditPipelineService::FieldEditSupportsOfflineQueue(const TrackerField& field) {
     if (TrackerFieldPayloadPure::IsSprintField(field)) {
@@ -366,6 +368,11 @@ VoidResult FieldEditPipelineService::SubmitFieldEditRegular(const SubmitFieldEdi
                            {"before", ticketIt != tickets.end() ? ticketIt->GetFieldValue(field.Id) : std::string()},
                            {"after", rawValues}});
         return VoidResult::Err(outError);
+    }
+
+    // Invalidate cached transitions if a status field was updated (must come before cache update).
+    if (field.Id == "status") {
+        transitions_.InvalidateIssueTransitions(issueId);
     }
 
     // Keep local cache and in-memory model in sync with the successful backend update.
@@ -699,6 +706,11 @@ VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& iss
     }
     if (issueId.empty()) {
         return VoidResult::Err("Issue id is empty.");
+    }
+
+    // Invalidate cached transitions if a status field was updated (must come before cache update).
+    if (result.UpdatedDisplayValues.count("status") != 0) {
+        transitions_.InvalidateIssueTransitions(issueId);
     }
 
     const auto ticketsSnapApply = deps_.GetActiveTicketsSnapshot();

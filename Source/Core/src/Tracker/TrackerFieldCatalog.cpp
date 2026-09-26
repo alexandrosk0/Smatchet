@@ -1,5 +1,6 @@
 #include "JiraClient.h"
 
+#include "JiraIssueMappingPure.h"
 #include "TrackerFieldCatalogPure.h"
 #include "TrackerFieldValueParser.h"
 #include "TrackerHttpUtils.h"
@@ -323,12 +324,18 @@ void EnrichSprintFields(const std::vector<std::string>& sprintFieldIds, const st
 
 // Fetch + parse the global /field list into the catalog, collecting sprint custom-field ids.
 bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers, std::vector<TrackerField>& outFields,
-                            std::vector<std::string>& outSprintFieldIds, std::string& outError) {
+                            std::vector<std::string>& outSprintFieldIds, std::string& outError,
+                            TrackerError& outClassified) {
     // SMATCHET_DEVIATION(rule=duplication; reason=ParseBounded clone #8; owner=cpp-audit; revisit=2026-09-30)
     const std::string fieldsListUrl = base + "/rest/api/3/field";
     auto fieldsResponse = TrackerGetLogged("JiraClient", fieldsListUrl, headers);
     if (fieldsResponse.status_code != 200) {
         outError = "Failed to fetch fields: HTTP " + std::to_string(fieldsResponse.status_code);
+        if (fieldsResponse.status_code <= 0 && !fieldsResponse.error.message.empty()) {
+            outError += " (" + fieldsResponse.error.message + ")";
+        }
+        // Status 0 (no response) classifies as Transport, so callers keep the cached catalog.
+        outClassified = ClassifyRejectedHttpStatus(fieldsResponse.status_code, outError);
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
@@ -338,11 +345,13 @@ bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers,
         auto response = smatchet::json_safe::ParseBounded(fieldsResponse.text, parseErr);
         if (!parseErr.empty()) {
             outError = "Failed to parse /field response: " + parseErr;
+            outClassified = TrackerErrorParse(outError);
             LOG_ERROR("JiraClient: %s", outError.c_str());
             return false;
         }
         if (!response.is_array()) {
             outError = "Unexpected /field response shape.";
+            outClassified = TrackerErrorParse(outError);
             LOG_ERROR("JiraClient: %s body=%s", outError.c_str(), RedactHttpBodyForLog(fieldsResponse.text).c_str());
             return false;
         }
@@ -354,6 +363,7 @@ bool FetchAndParseFieldList(const std::string& base, const cpr::Header& headers,
         }
     } catch (const std::exception& ex) {
         outError = std::string("Failed to parse /field response: ") + ex.what();
+        outClassified = TrackerErrorParse(outError);
         LOG_ERROR("JiraClient: %s", outError.c_str());
         return false;
     }
@@ -369,10 +379,11 @@ Result<TrackerFieldCatalogResult, TrackerError> JiraClient::FetchFieldCatalog(co
     std::vector<TrackerComponent> components;
     std::vector<TrackerIssueTypeCreateMeta> issueTypeMeta;
     std::string outError;
-    if (!FetchFieldCatalog(cfg, projectKey, fields, components, issueTypeMeta, outError)) {
-        // TODO(#21b later slice): re-thread status from inner helper instead of collapsing to Unknown — IsRetryable()
-        // consumers land in a later slice.
-        return Result<TrackerFieldCatalogResult, TrackerError>::Err(TrackerErrorUnknown(std::move(outError)));
+    TrackerError classified;
+    if (!FetchFieldCatalog(cfg, projectKey, fields, components, issueTypeMeta, outError, &classified)) {
+        // Keep the failure's kind (Transport stays retryable) so an offline refresh never reads as permanent.
+        return Result<TrackerFieldCatalogResult, TrackerError>::Err(
+            classified.IsOk() ? TrackerErrorUnknown(std::move(outError)) : classified);
     }
 
     std::vector<TrackerUser> users;
@@ -409,13 +420,17 @@ Result<TrackerFieldCatalogResult, TrackerError> JiraClient::FetchFieldCatalog(co
 
 bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                                    std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
-                                   std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError) {
+                                   std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                                   TrackerError* outClassified) {
     outFields.clear();
     outComponents.clear();
     outIssueTypeMeta.clear();
     outError.clear();
 
     if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        if (outClassified) {
+            *outClassified = TrackerErrorInvalidRequest(outError);
+        }
         return false;
     }
 
@@ -427,7 +442,11 @@ bool JiraClient::FetchFieldCatalog(const TrackerConfig& cfg, const std::string& 
     std::vector<std::string> sprintFieldIds;
 
     // Phase 1: fetch + parse the global /field list.
-    if (!FetchAndParseFieldList(base, headers, outFields, sprintFieldIds, outError)) {
+    TrackerError listClassified;
+    if (!FetchAndParseFieldList(base, headers, outFields, sprintFieldIds, outError, listClassified)) {
+        if (outClassified) {
+            *outClassified = listClassified;
+        }
         return false;
     }
 
@@ -562,4 +581,49 @@ Result<TrackerProjectComponents, TrackerError> JiraClient::FetchProjectComponent
         return a.Id < b.Id;
     });
     return Result<TrackerProjectComponents, TrackerError>::Ok(std::move(out));
+}
+
+// Standard Jira API fetch method; error handling patterns match other fetch methods.
+// SMATCHET_DEVIATION(rule=duplication; reason=shared error-handling structure; owner=tracker-backend; revisit=2027-09-01)
+Result<std::vector<TrackerFieldOption>, TrackerError>
+JiraClient::FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) {
+    std::string outError;
+    if (!EnsureTrackerAuthConfig(cfg, outError)) {
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest(std::move(outError)));
+    }
+    if (issueKeyOrId.empty()) {
+        // SMATCHET_DEVIATION(rule=duplication; reason=standard error return; owner=tracker-backend; revisit=2027-09-01)
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorInvalidRequest("FetchIssueTransitions called with an empty issue key/id."));
+    }
+
+    const std::string base = NormalizeBaseUrl(cfg.Domain);
+    const cpr::Header headers = BuildTrackerHeaders(cfg);
+    const std::string transitionsUrl = base + "/rest/api/3/issue/" + UrlEncode(issueKeyOrId) + "/transitions";
+
+    auto response = TrackerGetLogged("JiraClient", transitionsUrl, headers);
+    if (response.status_code != 200) {
+        std::string detail = "Failed to fetch issue transitions (HTTP " + std::to_string(response.status_code) + ").";
+        LOG_WARN("JiraClient: %s", detail.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorFromHttpStatus(response.status_code, std::move(detail)));
+    }
+
+    std::string parseErr;
+    auto json = smatchet::json_safe::ParseBounded(response.text, parseErr);
+    if (!parseErr.empty() || !json.is_object()) {
+        LOG_WARN("JiraClient: transitions response parse failed for %s: %s", issueKeyOrId.c_str(), parseErr.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorParse("Transitions response parse failed."));
+    }
+
+    if (!json.contains("transitions") || !json["transitions"].is_array()) {
+        LOG_WARN("JiraClient: transitions response missing transitions array for %s.", issueKeyOrId.c_str());
+        return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
+            TrackerErrorParse("Transitions response missing transitions array."));
+    }
+
+    const auto options = smatchet::jira::ParseAvailableTransitionTargets(json["transitions"]);
+    return Result<std::vector<TrackerFieldOption>, TrackerError>::Ok(options);
 }

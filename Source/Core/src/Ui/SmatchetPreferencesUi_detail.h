@@ -73,7 +73,9 @@ inline bool ResolvePrefsNavUseCombo(bool mobileUi, float availWidth, float fontS
 /// dirty "*" to the Tracker / Assistant labels (the old dirty-tab markers — the
 /// flags are computed by the caller because the diff helpers live in the main
 /// TU / behind SMATCHET_WITH_AI). Defined in SmatchetPreferencesUi_Shell.cpp.
-void DrawPrefsNav(UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight);
+/// The SmatchetUI reference is needed to invoke onPreferencesSaveAndSync on the
+/// Save & Sync button click.
+void DrawPrefsNav(SmatchetUI& ui, AppController& app, UiDrawSession& d, bool trackerDirty, bool assistantDirty, float bodyHeight);
 
 /// Drop any armed hotkey-capture state in the Keybindings page. Called by the
 /// dispatch in drawPreferencesWindow whenever the page is not drawn (category

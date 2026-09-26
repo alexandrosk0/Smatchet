@@ -8,6 +8,7 @@
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
+#include "Tracker/TrackerFieldSchema.h"
 
 #include <algorithm>
 #include <cctype>
@@ -94,6 +95,42 @@ JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray,
         }
     }
     return fallback;
+}
+
+std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray) {
+    std::vector<TrackerFieldOption> result;
+    if (!transitionsArray.is_array()) {
+        return result;
+    }
+    std::unordered_set<std::string> seenKeys; // dedup by option.Id, falling back to option.Value
+    for (const auto& transition : transitionsArray) {
+        if (!transition.is_object()) {
+            continue;
+        }
+        if (!transition.contains("to") || !transition["to"].is_object()) {
+            continue;
+        }
+        const auto& to = transition["to"];
+        std::string toStatusId;
+        std::string toStatusName;
+        if (to.contains("id")) {
+            toStatusId = TransitionFieldToString(to["id"]);
+        }
+        toStatusName = to.value("name", std::string());
+        if (toStatusId.empty() && toStatusName.empty()) {
+            continue;
+        }
+        // Dedup by Id-or-Value (same fallback as TicketFieldEditor::RenderSingleSelectComboBody)
+        const std::string key = toStatusId.empty() ? toStatusName : toStatusId;
+        if (!seenKeys.insert(key).second) {
+            continue; // already seen this option
+        }
+        TrackerFieldOption option;
+        option.Id = toStatusId;
+        option.Value = toStatusName;
+        result.push_back(std::move(option));
+    }
+    return result;
 }
 
 void BuildFetchFieldListsFromView(const ViewsStore& viewStore, std::vector<std::string>& outFieldsList,

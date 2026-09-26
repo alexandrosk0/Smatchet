@@ -151,6 +151,7 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // #975: hand back THIS context's kick-time catalog so the warm worker writes the per-project
     // component options under the catalog's own lock without a completion-time re-resolve.
     GridContextFieldCatalog* KickTimeFieldCatalog() override;
+    TrackerConnectivityState TrackerConnectivity() const override;
 
     // ---- IFieldEditDeps ---------------------------------------------------------------
     // BackendShared() / GetActiveTicketsSnapshot() (IEditMetaDeps), RefreshLocalData()

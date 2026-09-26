@@ -138,9 +138,11 @@ class EditMetaCacheService;
 class FieldEditPipelineService;
 class ConnectivityMonitorService;
 class AttachmentAppUpdateService;
+class IssueTransitionsCacheService;
 class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
+struct TransitionsLookup;
 
 namespace smatchet {
 namespace cmd {
@@ -742,6 +744,9 @@ class AppController : public IAppThreading,
     /** Latest reachability from background probe (or after a successful live backend request).
      *  De-inlined (Phase 3) — delegates to ConnectivityMonitorService (a complete type only in the .cpp). */
     TrackerConnectivityState GetLastTrackerConnectivityState() const override;
+    /// UI thread only: run the next connectivity probe on the next tick instead of waiting out the
+    /// probe interval (Pillar 6: after a live transport failure, or when a test restores the network).
+    void RequestTrackerProbeNow();
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
@@ -768,9 +773,10 @@ class AppController : public IAppThreading,
                          bool errorTransient = false);
     /// SetFieldCatalog helper — handle the non-empty-error branch (transport-error
     /// snapshot restore vs hard catalog clear) and publish the matching warning/error
-    /// state. `catalogPlane` mirrors the caller's tracker-kind classification.
+    /// state. `backendKey` is the caller's NormalizeViewsBackendKey result (names the backend in
+    /// the banner; "Plane" also selects the Plane catalog fix-ups).
     void HandleFieldCatalogError(const std::string& error, bool errorTransient, const std::string& catalogCacheKey,
-                                 bool catalogPlane);
+                                 const std::string& backendKey);
     /// Pin the project key the next SetFieldCatalog() snapshot saves under. The grid's scoped
     /// catalog fetch resolves a project from the active-view JQL but applies the result through
     /// SetFieldCatalog() (not RefreshFieldCatalog()), so without this hint the scoped result would
@@ -1010,6 +1016,11 @@ class AppController : public IAppThreading,
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
+    /// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
+    struct TransitionsLookup GetAvailableTransitionsForIssue(const std::string& issueId) const;
+    void EnsureIssueTransitionsLoaded(const std::string& issueId) const;
+    void InvalidateIssueTransitions(const std::string& issueId);
+
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
 
     // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
@@ -1132,12 +1143,20 @@ class AppController : public IAppThreading,
     /// `EnsureIssueEditMetaLoaded`, etc.) are thin delegators forwarding to this service. See the
     /// AppController god-object decomposition plan (Phase 1).
     std::unique_ptr<EditMetaCacheService> editMeta_;
+    /// Owns the per-issue transitions cache (issueTransitionsMutex_ + its containers) and the
+    /// load/invalidate/query methods. Constructed eagerly in `Initialize` after `editMeta_`
+    /// (FieldEditPipelineService calls InvalidateIssueTransitions after a field edit). Public
+    /// AppController methods (GetAvailableTransitionsForIssue, EnsureIssueTransitionsLoaded,
+    /// InvalidateIssueTransitions) are thin delegators forwarding to this service. Mirrors the
+    /// EditMetaCacheService decomposition pattern. MUST be declared before `fieldEdit_` since
+    /// FieldEditPipelineService holds a reference to it.
+    std::unique_ptr<IssueTransitionsCacheService> transitions_;
     /// Owns the field-edit network pipeline (SubmitFieldEdit / SubmitFieldEditNetworkOnly /
     /// TryPrepareOfflineFieldEdit / ApplyFieldEditResult + their branch helpers). Constructed
-    /// eagerly in `Initialize` AFTER `editMeta_` (it holds an `EditMetaCacheService&` directly) so
-    /// it destructs before editMeta_ — the ref outlives it. Public AppController field-edit methods
-    /// are thin delegators forwarding to this service. See the AppController god-object
-    /// decomposition plan (Phase 2).
+    /// eagerly in `Initialize` after `editMeta_` and `transitions_` (it holds an
+    /// `EditMetaCacheService&` and an `IssueTransitionsCacheService&`, declared after both so it
+    /// destructs first). Public AppController field-edit methods are thin delegators forwarding to
+    /// this service. See the AppController god-object decomposition plan (Phase 2).
     std::unique_ptr<FieldEditPipelineService> fieldEdit_;
     /// GLOBAL singleton owning the tracker connectivity-probe FSM (probe state + recovery latch +
     /// the live ticket-sync warning + the per-frame offline banner formatter). Constructed eagerly

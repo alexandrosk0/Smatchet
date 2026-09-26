@@ -13,6 +13,7 @@
 //     injectable so tests can supply in-memory data without HTTP.
 
 #include "CachedTicketTypes.h"
+#include "TrackerFieldSchema.h"
 
 #include <nlohmann/json.hpp>
 
@@ -49,6 +50,11 @@ struct JiraTransitionMatch {
 /// status ahead of a later transition that actually *leads* there → wrong status.
 JiraTransitionMatch FindJiraTransitionId(const nlohmann::json& transitionsArray, const std::string& targetStatusId,
                                          const std::string& targetStatusName);
+
+/// Parse a Jira /transitions response into the list of statuses (id, name)
+/// reachable from the issue's current state. Returns empty vector if transitionsArray
+/// is not valid or contains no transitions.
+std::vector<TrackerFieldOption> ParseAvailableTransitionTargets(const nlohmann::json& transitionsArray);
 
 /// Fills `outFieldsList` (all fields to request from Jira) and `outSelectedFields`
 /// (the subset to populate on CachedTicket) from the active view in `viewStore`.

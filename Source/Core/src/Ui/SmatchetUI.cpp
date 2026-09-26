@@ -374,17 +374,22 @@ void SmatchetUI::Draw(AppController& app) {
     // is already created by the host layer; the mobile shell is a fullscreen window drawn
     // on top of it. Skip the entire desktop chrome + docked-window path; global overlays
     // (toasts + update modal) and end-of-frame persistence still run.
-    if (d.effectiveUiMode == EffectiveUiMode::Mobile) {
+    //
+    // While the mobile ini is attached (mobileDockSeeded) the live dock tree is the mobile one,
+    // so the Mobile->Desktop edge frame still draws the shell and swaps the ini back only at
+    // end-of-frame, once every window has ended. A mid-frame swap rebuilds dock nodes the host's
+    // DockSpaceOverViewport has already walked this frame, so they are not LastFrameAlive and
+    // BeginDocked undocks every desktop window (imgui.cpp ~21208) — the undocked layout then
+    // autosaves. Desktop windows first submit next frame, after the host marks the tree alive.
+    if (d.effectiveUiMode == EffectiveUiMode::Mobile || d.mobileDockSeeded) {
         drawMobileShell(app, d);
         drawGlobalOverlays(app, d);
         drawEndOfFramePersistence(d);
+        if (d.effectiveUiMode == EffectiveUiMode::Desktop) {
+            drawMobileRestoreDesktopIni(d);
+        }
         return;
     }
-
-    // Mobile->Desktop edge (slice 5): if the previous frame ran the mobile shell it
-    // detached io.IniFilename and routed saves to imgui_mobile.ini; re-attach the desktop
-    // ini + reload it before any desktop window submits so dock geometry comes back.
-    drawMobileRestoreDesktopIni(d);
 
     drawChromeAndModeToggles(app, d);
     DrainAppUpdateCheck(d);
@@ -697,6 +702,9 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
         // this fires on host focus switches as well.
         std::string& lastViewsBackendKey = d.lastViewsBackendKey;
         if (!lastViewsBackendKey.empty() && lastViewsBackendKey != bk) {
+            // Before the catalog reset clears any error banner (which lifts grid read-only and lets the
+            // pump run): queued edits target the previous backend and must not be sent to this one.
+            DiscardQueuedGridFieldEditsOnBackendSwitch(d);
             app.SetFieldCatalog({}, {}, {}, std::string());
             app.SetAvailableUsers({});
             d.fieldCatalogWarning.clear();
@@ -836,7 +844,9 @@ void SmatchetUI::drawChromeAndModeToggles(AppController& app, UiDrawSession& d) 
     // (Ctrl+Alt+D dock-debug toggle migrated to the rebindable app.dock_debug.toggle binding,
     // dispatched in dispatchKeybindings.)
     // Status bar — must be drawn before dockspace/other windows (viewport side-bar reservation).
-    if (d.cfg.ShowStatusBar && !d.cfg.ZenMode) {
+    const StatusBarAutoHidePure::Mode sbMode =
+        StatusBarAutoHidePure::ModeFromConfig(d.cfg.ShowStatusBar, d.cfg.StatusBarAutoHide);
+    if (sbMode == StatusBarAutoHidePure::Mode::Always && !d.cfg.ZenMode) {
         DrawStatusBar(app, d);
     }
 
@@ -1242,6 +1252,14 @@ void SmatchetUI::drawGlobalOverlays(AppController& app, UiDrawSession& d) {
 // Tail half of drawSecondaryWindows: toasts, update modal, audit, AI assistant, watchers/votes
 // list windows, MCP server, log window, FPS overlay. Split out for function-size compliance.
 void SmatchetUI::drawSecondaryWindowsTail(AppController& app, UiDrawSession& d) {
+    // Auto-hide status bar: draw it floating above docked panels, before toasts so toasts appear on top.
+    const StatusBarAutoHidePure::Mode sbMode =
+        StatusBarAutoHidePure::ModeFromConfig(d.cfg.ShowStatusBar, d.cfg.StatusBarAutoHide);
+    if (sbMode == StatusBarAutoHidePure::Mode::AutoHide && !d.cfg.ZenMode) {
+        SMATCHET_UI_PERF_SCOPE("DrawStatusBarAutoHide");
+        DrawStatusBarAutoHide(app, d, statusBarAutoHide_);
+    }
+
     drawGlobalOverlays(app, d);
     {
         SMATCHET_UI_PERF_SCOPE("drawAuditWindow");
@@ -1468,7 +1486,6 @@ void SmatchetUI::drawEnsureCatalogAndInitialSync(AppController& app, UiDrawSessi
                 app.SetFieldCatalog({}, {},
                                     result.Error.empty() ? std::string("Failed to fetch field catalog.") : result.Error,
                                     result.ErrorTransient);
-                app.SetAvailableUsers({});
                 d.fieldCatalogWarning.clear();
             }
         } catch (const std::exception& ex) {

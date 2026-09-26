@@ -1403,17 +1403,13 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
                      SmatchetPreferencesUiDetail::AssistantAiFieldsDiffer(d.assistantPrefsWorking, d.cfg);
 #endif
 
-    // Reserve the footer strip (separator + Save & Sync row) so the nav rail and the
-    // right pane share the remaining height.
-    const float footerHeight = ImGui::GetFrameHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y * 3.0f;
-    const float bodyHeight = ImGui::GetContentRegionAvail().y - footerHeight;
+    const float bodyHeight = ImGui::GetContentRegionAvail().y;
     d.prefsNavCombo = SmatchetPreferencesUiDetail::ResolvePrefsNavUseCombo(embedded, ImGui::GetContentRegionAvail().x,
                                                                            ImGui::GetFontSize(), d.prefsNavCombo);
-    SmatchetPreferencesUiDetail::DrawPrefsNav(d, trackerDirty, assistantDirty, bodyHeight);
-    float paneHeight = bodyHeight;
+    SmatchetPreferencesUiDetail::DrawPrefsNav(*this, app, d, trackerDirty, assistantDirty, bodyHeight);
+    float paneHeight = ImGui::GetContentRegionAvail().y;
     if (d.prefsNavCombo) {
-        // The combo consumed a row above the pane; re-measure what's left.
-        paneHeight = ImGui::GetContentRegionAvail().y - footerHeight;
+        // The combo consumed a row above the pane; measure remaining height.
     } else {
         ImGui::SameLine();
     }
@@ -1425,12 +1421,6 @@ void SmatchetUI::drawPreferencesWindow(AppController& app, UiDrawSession& d, boo
         // Preserve the old inactive-BeginTabItem early-return semantics: an armed
         // hotkey capture dies when the page stops drawing.
         SmatchetPreferencesUiDetail::ResetKeybindingsCaptureState();
-    }
-
-    ImGui::Spacing();
-    ImGui::Separator();
-    if (SmatchetIconLeadingButton(ICON_FA_ARROWS_ROTATE, "Save & Sync", nullptr, ImVec2(140.0f, 0.0f))) {
-        onPreferencesSaveAndSync(app, d);
     }
 
     // P2-H3 close guard: entered via the close gate above when the window was dismissed

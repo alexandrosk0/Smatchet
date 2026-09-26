@@ -19,6 +19,7 @@
 #include "SmatchetToast.h"
 #include "SmatchetLocalization.h"
 #include "Ui/SmatchetDestructiveButton.h"
+#include "SmatchetDragCheckbox.h"
 #include "StringUtil.h"
 #include "TrackerFieldSchema.h"
 #include "Logger.h"
@@ -489,7 +490,10 @@ void DrawViewsFieldGroup(const char* groupName, const std::vector<const TrackerF
     for (const TrackerField* field : fields) {
         bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
         const std::string checkboxId = "##ViewField_" + field->Id;
-        if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
+        // Drag-to-paint: press one row and drag down the group to tick (or clear) a whole run
+        // of fields in one gesture instead of one click per field. The gesture is scoped to the
+        // enclosing child, so it carries across the System/Custom group boundary.
+        if (SmatchetDragCheckbox(checkboxId.c_str(), &checked)) {
             if (checked) {
                 selectedFieldSet.insert(field->Id);
             } else {
@@ -537,7 +541,9 @@ void DrawViewsBasicFieldsGroup(const UiDrawSession& d, const std::vector<const T
         const TrackerField* field = *it;
         bool checked = selectedFieldSet.find(field->Id) != selectedFieldSet.end();
         const std::string checkboxId = "##ViewField_" + field->Id;
-        if (ImGui::Checkbox(checkboxId.c_str(), &checked)) {
+        // Same drag-to-paint gesture as the System/Custom groups; the locked ID row above is
+        // disabled, so a run dragged over it leaves it alone.
+        if (SmatchetDragCheckbox(checkboxId.c_str(), &checked)) {
             if (checked) {
                 selectedFieldSet.insert(field->Id);
             } else {

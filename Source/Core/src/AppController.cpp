@@ -73,6 +73,7 @@
 
 #include <ghc/filesystem.hpp>
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include-prologue overlap with SmatchetUI.cpp is unavoidable for per-TU include requirements; owner=~; revisit=2026-11-30)
 #include "DefaultTrackerBackendFactory.h"
 
 #include "GitHubFixtureBackend.h"
@@ -92,6 +93,7 @@
 #include "FieldEditPipelineService.h"
 #include "ConnectivityMonitorService.h"
 #include "AttachmentAppUpdateService.h"
+#include "IssueTransitionsCacheService.h"
 
 #include "PaneSyncKickPolicy.h"
 

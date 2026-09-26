@@ -465,16 +465,21 @@ void SmatchetUI::drawMobileGridDetail(AppController& app, UiDrawSession& d, Grid
     }
 }
 
-// Desktop->Mobile ini edge. Captures the host's desktop imgui.ini pointer, detaches it (so
-// ImGui stops auto-saving desktop dock nodes), drops the in-memory desktop layout, and loads
-// imgui_mobile.ini if present. Absent file -> arm the DockBuilder seed. Idempotent: re-runs are
-// no-ops while mobileDockSeeded stays true.
+// Desktop->Mobile ini edge. Captures the host's desktop imgui.ini pointer, flushes the live
+// desktop layout to it (ImGui only autosaves every IniSavingRate, so a dock change made just
+// before the edge would otherwise be lost), detaches it (so ImGui stops auto-saving desktop
+// dock nodes), drops the in-memory desktop layout, and loads imgui_mobile.ini if present.
+// Absent file -> arm the DockBuilder seed. Idempotent: re-runs are no-ops while
+// mobileDockSeeded stays true.
 void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
     if (d.mobileDockSeeded) {
         return;
     }
     ::ImGuiIO& io = ::ImGui::GetIO();
     d.savedDesktopIniFilename = io.IniFilename;
+    if (io.IniFilename != nullptr) {
+        ::ImGui::SaveIniSettingsToDisk(io.IniFilename);
+    }
     io.IniFilename = nullptr;
     ::ImGui::ClearIniSettings();
     const std::string mobileIni = ConfigManager::GetMobileImGuiSettingsPath();
@@ -492,10 +497,12 @@ void SmatchetUI::drawMobileEnsureIniAttached(UiDrawSession& d) {
     LOG_DEBUG("Mobile shell: attached imgui_mobile.ini (loaded=%d, willSeed=%d)", loaded ? 1 : 0, loaded ? 0 : 1);
 }
 
-// Mobile->Desktop ini edge (called from the desktop Draw path). Flushes mobile geometry one
-// last time, drops the mobile layout, re-attaches the captured desktop imgui.ini pointer, and
-// reloads it so desktop windows come back exactly as saved (the byte-identical round-trip:
-// nothing in the mobile session ever writes imgui.ini). Resets the seed latches per the plan.
+// Mobile->Desktop ini edge. Flushes mobile geometry one last time, drops the mobile layout,
+// re-attaches the captured desktop imgui.ini pointer, and reloads it so desktop windows come
+// back exactly as saved (nothing in the mobile session ever writes imgui.ini). Resets the seed
+// latches. MUST run at end-of-frame (SmatchetUI::Draw's mobile fork), after every window has
+// ended: the reload rebuilds the dock tree immediately, and a desktop window submitted later in
+// the same frame would find its node not LastFrameAlive and undock (imgui.cpp ~21208).
 void SmatchetUI::drawMobileRestoreDesktopIni(UiDrawSession& d) {
     if (!d.mobileDockSeeded) {
         return;

@@ -77,7 +77,8 @@ class JiraClient : public ITrackerBackend,
 
     bool FetchFieldCatalog(const TrackerConfig& cfg, const std::string& projectKey,
                            std::vector<TrackerField>& outFields, std::vector<TrackerComponent>& outComponents,
-                           std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError);
+                           std::vector<TrackerIssueTypeCreateMeta>& outIssueTypeMeta, std::string& outError,
+                           TrackerError* outClassified = nullptr);
 
     Result<TrackerFieldCatalogResult, TrackerError> FetchFieldCatalog(const TrackerConfig& cfg,
                                                                       const std::string& projectKey) override;
@@ -97,6 +98,10 @@ class JiraClient : public ITrackerBackend,
      */
     Result<std::unordered_map<std::string, bool>, TrackerError>
     FetchIssueEditMeta(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
+
+    /** GET /rest/api/3/issue/{issueKeyOrId}/transitions — Ok = available transition target statuses. */
+    Result<std::vector<TrackerFieldOption>, TrackerError>
+    FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
     /** GET /rest/api/3/issue/{issueKey}/watchers — Ok = watcher display names / account ids. */
     Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& cfg,
