@@ -104,11 +104,37 @@ float ColumnCenterX(const ImGuiTable& table, int columnIndex) {
     return 0.5f * (c.MinX + c.MaxX);
 }
 
+// Focuses the grid, then steps until its visible strip and scroll range have held still for a
+// few frames: closing or docking a window next to the grid re-lays it out over several frames,
+// and a grab point computed mid-relayout lands on the wrong header.
 bool FocusGrid(ImGuiTestContext* ctx) {
-    return StepUntil(ctx, 300, [] {
+    const bool live = StepUntil(ctx, 300, [] {
         g_ui.requestActiveProjectFocus = true;
         return LiveTicketGrid() != nullptr && !g_ui.gridPanes.empty() && !DrawnKeys().empty();
     });
+    if (!live) {
+        return false;
+    }
+    const int kQuietFrames = 8;
+    ImRect lastClip;
+    float lastScrollMax = -1.0f;
+    int quiet = 0;
+    for (int frame = 0; frame < 240 && quiet < kQuietFrames; ++frame) {
+        ctx->Yield();
+        const ImGuiTable* table = LiveTicketGrid();
+        if (table == nullptr) {
+            quiet = 0;
+            continue;
+        }
+        const ImRect clip = table->InnerClipRect;
+        const float scrollMax = table->InnerWindow->ScrollMax.x;
+        const bool still = clip.Min.x == lastClip.Min.x && clip.Max.x == lastClip.Max.x &&
+                           clip.Min.y == lastClip.Min.y && scrollMax == lastScrollMax;
+        quiet = still ? quiet + 1 : 0;
+        lastClip = clip;
+        lastScrollMax = scrollMax;
+    }
+    return quiet >= kQuietFrames && LiveTicketGrid() != nullptr;
 }
 
 // Press on `key`'s header, carry it into the edge band on `toRight` side, hold until the grid has
@@ -126,6 +152,14 @@ bool DragHeaderIntoEdgeAndHold(ImGuiTestContext* ctx, const std::string& key, bo
     ctx->MouseMoveToPos(grab);
     ctx->MouseDown(ImGuiMouseButton_Left);
     ctx->MouseMoveToPos(ImVec2(grab.x + (toRight ? 24.0f : -24.0f), y)); // past the drag threshold
+    // The press must have caught THIS column's header; anything else would only time out below.
+    const ImGuiTable* pressed = LiveTicketGrid();
+    const bool heldRight = pressed != nullptr && pressed->HeldHeaderColumn == index;
+    IM_CHECK_NO_RET(heldRight);
+    if (!heldRight) {
+        ctx->MouseUp(ImGuiMouseButton_Left);
+        return false;
+    }
 
     float stripMinX = 0.0f;
     float stripMaxX = 0.0f;
