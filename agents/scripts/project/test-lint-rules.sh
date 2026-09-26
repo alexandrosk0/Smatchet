@@ -546,6 +546,23 @@ case "$MODE" in
     printf '    return Err(\n    /*\n       classified.IsOk() ?\n    */\n        TrackerErrorUnknown(outError));\n' > "$_off_tmp"
     if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
         echo "SELFTEST FAIL: tracker-error-kind-collapsed was exempted by IsOk() text inside a block comment" >&2; miss=1; fi
+    # selftest: only comments are skipped — a `*`-dereference line, code after `/* */` or a closing `*/`, and
+    # code after a `//` inside a string literal are all scanned; write text inside a string literal is not code.
+    printf '    *out = TrackerErrorUnknown(detail);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped a line starting with a * dereference" >&2; miss=1; fi
+    printf '    /* note */ return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped code after a one-line block comment" >&2; miss=1; fi
+    printf '    /*\n     note\n    */ return Err(TrackerErrorUnknown(outError));\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" != "tracker-error-kind-collapsed"$'\t'"Source/Core/src/Tracker/X.cpp:3" ]; then
+        echo "SELFTEST FAIL: tracker-error-kind-collapsed skipped code after a closing */" >&2; miss=1; fi
+    printf '    LOG_INFO("see http://x"); b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n' > "$_off_tmp"
+    if [ -z "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue lost code after a // inside a string literal" >&2; miss=1; fi
+    printf '    LOG_INFO("b.Collaboration()->AddWorklog(");\n' > "$_off_tmp"
+    if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue fired on text inside a string literal" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then

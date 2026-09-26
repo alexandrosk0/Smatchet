@@ -17,8 +17,11 @@
 # `a.IsOk() || c.IsOk()`), an unrelated IsOk() check or ternary, comment text, or a valid fallback on a
 # previous line never exempts it.
 #
-# Escape: a comment line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
-# nearest non-blank line above the hit. A marker trailing a code line never hides that line's code.
+# Both rules read only CODE: comments and literal contents are stripped first (offline_code_lines), so a
+# comment or string never fires and code before or after a comment on the same line is still scanned.
+#
+# Escape: a comment-only line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
+# nearest non-blank line above the hit. A marker on a line that also holds code never hides that code.
 
 OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
@@ -47,6 +50,68 @@ offline_kind_collapse_unexempt() {
     return 1
 }
 
+# One output line per input line holding only that line's CODE: `//` and `/* */` comments (tracked across lines)
+# are removed, and string / char / raw-string literal contents are blanked to `""` (raw strings tracked across
+# lines). So a comment never counts as code, code around a comment is still scanned, and a `//` or `/*` inside
+# a literal changes nothing. A `'` after an identifier or number that is not a char prefix (L u U u8) is a C++14
+# digit separator, not a char literal.
+# shellcheck disable=SC2016  # an awk program: its $0 / fields are awk's, never shell expansions.
+OFFLINE_CODE_LEXER_AWK='
+function prev_ident(s, i,   k) {
+    k = i - 1
+    while (k >= 1 && substr(s, k, 1) ~ /[A-Za-z0-9_]/) k--
+    return substr(s, k + 1, i - 1 - k)
+}
+function skip_quoted(s, i, q, n,   d) {
+    while (i <= n) {
+        d = substr(s, i, 1)
+        if (d == "\\") { i += 2; continue }
+        if (d == q) return i + 1
+        i++
+    }
+    return n + 1
+}
+{
+    line = $0; n = length(line); out = ""; i = 1
+    while (i <= n) {
+        if (blk) {
+            j = index(substr(line, i), "*/")
+            if (j == 0) break
+            i += j + 1; blk = 0; out = out " "; continue
+        }
+        if (rawend != "") {
+            j = index(substr(line, i), rawend)
+            if (j == 0) break
+            i += j - 1 + length(rawend); rawend = ""; out = out "\""; continue
+        }
+        c = substr(line, i, 1); c2 = substr(line, i, 2)
+        if (c2 == "//") break
+        if (c2 == "/*") { blk = 1; i += 2; continue }
+        if (c == "\"") {
+            t = prev_ident(line, i)
+            j = index(substr(line, i + 1), "(")
+            if ((t == "R" || t == "LR" || t == "uR" || t == "UR" || t == "u8R") && j > 0) {
+                rawend = ")" substr(line, i + 1, j - 1) "\""
+                out = out "\""; i += j + 1; continue
+            }
+            out = out "\"\""; i = skip_quoted(line, i + 1, "\"", n); continue
+        }
+        if (c == "\047") {
+            t = prev_ident(line, i)
+            if (t == "" || t == "L" || t == "u" || t == "U" || t == "u8") {
+                out = out "\047\047"; i = skip_quoted(line, i + 1, "\047", n); continue
+            }
+        }
+        out = out c; i++
+    }
+    print out
+}'
+
+offline_code_lines() {
+    # $1 = file. Prints the code of every line (see OFFLINE_CODE_LEXER_AWK), one output line per input line.
+    awk "$OFFLINE_CODE_LEXER_AWK" "$1"
+}
+
 scan_offline_exact_file() {
     # $1 = file to read; $2 = logical repo path for scope + output (defaults to $1).
     local f="$1" logical="${2:-$1}"
@@ -62,27 +127,23 @@ scan_offline_exact_file() {
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
     esac
     [ "$write_scope" -eq 1 ] || [ "$kind_scope" -eq 1 ] || return 0
-    local lineno=0 prev_dev_rule="" prev1="" prev2="" in_block=0 line s code
-    while IFS= read -r line || [ -n "$line" ]; do
+    local lineno=0 prev_dev_rule="" prev1="" prev2="" line code suppress body kv kvs
+    # fd 3 = the raw lines (deviation markers live in comments), fd 4 = their code (offline_code_lines).
+    # shellcheck disable=SC2094  # both descriptors only READ $f (raw lines + their code); nothing writes it.
+    while { IFS= read -r line <&3 || [ -n "$line" ]; } && IFS= read -r code <&4; do
         lineno=$((lineno+1))
-        # Inside a multi-line /* ... */ block nothing is code (so it never enters the prev1/prev2 window).
-        if [ "$in_block" -eq 1 ]; then
-            case "$line" in *'*/'*) in_block=0 ;; esac
-            continue
-        fi
-        s="${line#"${line%%[![:space:]]*}"}"
-        case "$s" in '/*'*) case "$s" in *'*/'*) ;; *) in_block=1 ;; esac ;; esac
-        if [[ "$s" == '//'* || "$s" == '/*'* ]] && [[ "$line" =~ $DEV_RE ]]; then
-            local body="${BASH_REMATCH[1]}" kv
-            prev_dev_rule=""
-            IFS=';' read -ra kvs <<< "$body"
-            for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
-            continue
-        fi
         if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
-        local suppress="$prev_dev_rule"; prev_dev_rule=""
-        case "$s" in '//'*|'*'*|'/*'*) continue ;; esac
-        code="${line%%//*}"
+        suppress="$prev_dev_rule"; prev_dev_rule=""
+        if [[ "$code" =~ ^[[:space:]]*$ ]]; then
+            # A comment-only line: a SMATCHET_DEVIATION on it escapes the next non-blank line. A marker on a line
+            # that also holds code never hides that code.
+            if [[ "$line" =~ $DEV_RE ]]; then
+                body="${BASH_REMATCH[1]}"
+                IFS=';' read -ra kvs <<< "$body"
+                for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done
+            fi
+            continue
+        fi
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
             && [[ "$code" =~ $OFFLINE_WRITE_RE ]]; then
             printf 'offline-write-bypasses-queue\t%s:%s\n' "$logical" "$lineno"
@@ -97,7 +158,7 @@ scan_offline_exact_file() {
             fi
         fi
         prev2="$prev1"; prev1="$code"
-    done < "$f"
+    done 3< "$f" 4< <(offline_code_lines "$f")
 }
 
 compute_offline_exact_violations() {
