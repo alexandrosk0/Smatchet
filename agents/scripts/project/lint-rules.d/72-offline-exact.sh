@@ -50,10 +50,11 @@ offline_kind_collapse_unexempt() {
     return 1
 }
 
-# One output line per input line holding only that line's CODE: `//` and `/* */` comments (tracked across lines)
-# are removed, and string / char / raw-string literal contents are blanked to `""` (raw strings tracked across
-# lines). So a comment never counts as code, code around a comment is still scanned, and a `//` or `/*` inside
-# a literal changes nothing. A `'` after an identifier or number that is not a char prefix (L u U u8) is a C++14
+# One output line per input line: that line's CODE, a \037 (unit separator), then its COMMENT text. `//` and
+# `/* */` comments (tracked across lines) go to the comment part, and string / char / raw-string literal contents
+# are blanked to `""` in the code part (raw strings tracked across lines) and appear in neither. So a comment
+# never counts as code, code around a comment is still scanned, a `//` or `/*` inside a literal changes nothing,
+# and text inside a literal is never mistaken for a comment (or a SMATCHET_DEVIATION marker). A `'` after an identifier or number that is not a char prefix (L u U u8) is a C++14
 # digit separator, not a char literal.
 # shellcheck disable=SC2016  # an awk program: its $0 / fields are awk's, never shell expansions.
 OFFLINE_CODE_LEXER_AWK='
@@ -72,12 +73,12 @@ function skip_quoted(s, i, q, n,   d) {
     return n + 1
 }
 {
-    line = $0; n = length(line); out = ""; i = 1
+    line = $0; n = length(line); out = ""; cm = ""; i = 1
     while (i <= n) {
         if (blk) {
             j = index(substr(line, i), "*/")
-            if (j == 0) break
-            i += j + 1; blk = 0; out = out " "; continue
+            if (j == 0) { cm = cm substr(line, i); break }
+            cm = cm substr(line, i, j - 1) " "; i += j + 1; blk = 0; out = out " "; continue
         }
         if (rawend != "") {
             j = index(substr(line, i), rawend)
@@ -85,7 +86,7 @@ function skip_quoted(s, i, q, n,   d) {
             i += j - 1 + length(rawend); rawend = ""; out = out "\""; continue
         }
         c = substr(line, i, 1); c2 = substr(line, i, 2)
-        if (c2 == "//") break
+        if (c2 == "//") { cm = cm substr(line, i + 2); break }
         if (c2 == "/*") { blk = 1; i += 2; continue }
         if (c == "\"") {
             t = prev_ident(line, i)
@@ -104,11 +105,11 @@ function skip_quoted(s, i, q, n,   d) {
         }
         out = out c; i++
     }
-    print out
+    print out "\037" cm
 }'
 
 offline_code_lines() {
-    # $1 = file. Prints the code of every line (see OFFLINE_CODE_LEXER_AWK), one output line per input line.
+    # $1 = file. Prints `<code>\037<comment>` for every line (see OFFLINE_CODE_LEXER_AWK), one per input line.
     awk "$OFFLINE_CODE_LEXER_AWK" "$1"
 }
 
@@ -127,17 +128,20 @@ scan_offline_exact_file() {
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
     esac
     [ "$write_scope" -eq 1 ] || [ "$kind_scope" -eq 1 ] || return 0
-    local lineno=0 prev_dev_rule="" prev1="" prev2="" line code suppress body kv kvs
-    # fd 3 = the raw lines (deviation markers live in comments), fd 4 = their code (offline_code_lines).
-    # shellcheck disable=SC2094  # both descriptors only READ $f (raw lines + their code); nothing writes it.
-    while { IFS= read -r line <&3 || [ -n "$line" ]; } && IFS= read -r code <&4; do
+    local lineno=0 prev_dev_rule="" prev1="" prev2="" line lexed code comment suppress body kv kvs
+    # fd 3 = the raw lines (only to skip blank ones), fd 4 = their `<code>\037<comment>` split (offline_code_lines).
+    # shellcheck disable=SC2094  # both descriptors only READ $f (raw lines + their lexed form); nothing writes it.
+    while { IFS= read -r line <&3 || [ -n "$line" ]; } && IFS= read -r lexed <&4; do
         lineno=$((lineno+1))
         if [[ "$line" =~ ^[[:space:]]*$ ]]; then continue; fi
+        code="${lexed%%$'\037'*}"
+        comment="${lexed#*$'\037'}"
         suppress="$prev_dev_rule"; prev_dev_rule=""
         if [[ "$code" =~ ^[[:space:]]*$ ]]; then
-            # A comment-only line: a SMATCHET_DEVIATION on it escapes the next non-blank line. A marker on a line
-            # that also holds code never hides that code.
-            if [[ "$line" =~ $DEV_RE ]]; then
+            # A line with no code: a SMATCHET_DEVIATION in its COMMENT text escapes the next non-blank line. A
+            # marker on a line that also holds code never hides that code, and marker-like text inside a string
+            # or raw-string literal is not a comment, so it never counts.
+            if [[ "$comment" =~ $DEV_RE ]]; then
                 body="${BASH_REMATCH[1]}"
                 IFS=';' read -ra kvs <<< "$body"
                 for kv in "${kvs[@]}"; do kv="${kv# }"; case "$kv" in rule=*) prev_dev_rule="${kv#rule=}" ;; esac; done

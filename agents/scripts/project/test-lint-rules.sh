@@ -563,6 +563,10 @@ case "$MODE" in
     printf '    LOG_INFO("b.Collaboration()->AddWorklog(");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" ]; then
         echo "SELFTEST FAIL: offline-write-bypasses-queue fired on text inside a string literal" >&2; miss=1; fi
+    # selftest: marker-like text inside a multi-line raw string is not a comment, so it never escapes a hit.
+    printf '    auto q = R"(\nSMATCHET_DEVIATION(rule=offline-write-bypasses-queue; reason=t; owner=x; revisit=2099-01-01)\n)"; b.Collaboration()->AddWorklog(cfg, k, a, b2, c, d, e);\n' > "$_off_tmp"
+    if [ "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Ui/X.cpp)" != "offline-write-bypasses-queue"$'\t'"Source/Core/src/Ui/X.cpp:3" ]; then
+        echo "SELFTEST FAIL: offline-write-bypasses-queue was escaped by marker text inside a raw string" >&2; miss=1; fi
     # selftest: tracker-error-kind-collapsed ignores a literal detail (only a flattened variable collapses a kind).
     printf 'return TrackerErrorUnknown("fixed text");\n' > "$_off_tmp"
     if [ -n "$(scan_offline_exact_file "$_off_tmp" Source/Core/src/Tracker/X.cpp)" ]; then
