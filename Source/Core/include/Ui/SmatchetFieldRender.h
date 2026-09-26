@@ -20,6 +20,10 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
  *  (History reaches it through `RenderClippedFieldText`, keyed on the field id.) */
 void RenderMarkdownTooltip(const std::string& markdown);
 
+/** Same tooltip for a plain "[Author] date" activity blob (History, or a Comments blob cached
+ *  before comments were stored as Markdown), converted by `PlainActivityBlobToMarkdown`. */
+void RenderPlainActivityTooltip(const std::string& blob);
+
 /** Tell the renderer which tracker field id holds C/C++ callstack source so it
  *  can paint the grid cell + overflow tooltip with `DrawColoredCppText`. */
 void SetCallstackFieldIdHint(const std::string& fieldId);

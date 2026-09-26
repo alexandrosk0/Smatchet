@@ -39,11 +39,21 @@ std::string EscapeMarkdownText(const std::string& text);
 /// fence. Balanced input is returned unchanged.
 std::string CloseOpenCodeFence(const std::string& md);
 
-/// Markdown header line for one activity entry: `**Author** YYYY-MM-DD`. Only
-/// `\`, `*`, backtick and `<` are escaped in the author, so a stored blob stays
-/// searchable by name; an empty author becomes "Unknown"; an empty date drops the
-/// trailing space.
+/// Markdown header line for one activity entry: `**Author** YYYY-MM-DD`. The author is
+/// trimmed and only its restyling characters (`\ * _ ` < [ ] ~ &`) are escaped, so a stored
+/// blob stays searchable by most names; an empty author becomes "Unknown"; an empty date
+/// drops the trailing space.
 std::string ActivityEntryHeader(const std::string& author, const std::string& date);
+
+/// Keep a Markdown body's single line breaks as line breaks (GitHub renders comment newlines
+/// that way; plain-text fallback bodies rely on it): every non-blank line followed by a
+/// non-blank line gets a trailing two-space hard break, except inside or on a fenced code
+/// block. CRLF is normalised to LF.
+std::string PreserveLineBreaks(const std::string& md);
+
+/// The one display transform for a comment body, shared by the Comments tooltip blob and the
+/// comments modal: CleanCommentOutputAscii, then CloseOpenCodeFence, then PreserveLineBreaks.
+std::string CommentBodyDisplayMarkdown(const std::string& body);
 
 /// Render-time view of a plain activity blob (the History field, which ParseChangelog
 /// stores as plain "[Author] date" / "field: from -> to" text so the grid cell and the
@@ -61,7 +71,7 @@ std::string PlainActivityBlobToMarkdown(const std::string& blob);
 /// entries joined by kActivityEntrySeparator, NEWEST FIRST (sorted by
 /// CreatedAtSec descending — callers need not pre-order). Dates render as the UTC
 /// calendar day; a non-positive CreatedAtSec renders no date. Bodies pass through
-/// CleanCommentOutputAscii and CloseOpenCodeFence; entries with an empty body are
+/// CommentBodyDisplayMarkdown; entries with an empty body are
 /// skipped. Caps: at most 20 comments and 12000 chars total, truncating at an
 /// entry boundary. Empty/no-usable-input yields an empty string. Never throws.
 std::string FormatCommentBlob(const std::vector<TrackerIssueComment>& comments);

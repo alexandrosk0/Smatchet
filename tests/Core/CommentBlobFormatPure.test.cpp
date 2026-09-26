@@ -15,6 +15,7 @@ using smatchet::tracker::CloseOpenCodeFence;
 using smatchet::tracker::EscapeMarkdownText;
 using smatchet::tracker::FormatCommentBlob;
 using smatchet::tracker::PlainActivityBlobToMarkdown;
+using smatchet::tracker::PreserveLineBreaks;
 
 namespace {
 
@@ -141,10 +142,16 @@ TEST_CASE("FormatCommentBlob — an unclosed fence is closed so it cannot swallo
     CHECK(out == "**New** 2024-01-16\n\n```\nunclosed\n```\n\n---\n\n**Old** 2024-01-15\n\nold body\n");
 }
 
-TEST_CASE("FormatCommentBlob — author keeps searchable text; only span-breaking chars are escaped") {
+TEST_CASE("FormatCommentBlob — author is trimmed and its restyling characters escaped") {
     std::vector<TrackerIssueComment> comments;
-    comments.push_back(MakeComment("github-actions[bot] a_b*c", "body", kJan15));
-    CHECK(FormatCommentBlob(comments).find("**github-actions[bot] a_b\\*c**") == 0);
+    comments.push_back(MakeComment(" Jane.Doe-2 [bot] a_b*c ", "body", kJan15));
+    CHECK(FormatCommentBlob(comments).find("**Jane.Doe-2 \\[bot\\] a\\_b\\*c** 2024-01-15") == 0);
+}
+
+TEST_CASE("FormatCommentBlob — single newlines in a body stay line breaks") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Alice", "Thanks,\r\nAlex", kJan15));
+    CHECK(FormatCommentBlob(comments) == "**Alice** 2024-01-15\n\nThanks,  \nAlex\n");
 }
 
 TEST_CASE("EscapeMarkdownText — escapes every ASCII punctuation char and folds line breaks") {
@@ -193,7 +200,10 @@ TEST_CASE("ActivityEntryHeader — bold author, optional date") {
     CHECK(ActivityEntryHeader("Ann", "") == "**Ann**");
     CHECK(ActivityEntryHeader("", "2024-01-15") == "**Unknown** 2024-01-15");
     CHECK(ActivityEntryHeader("x*y`z<w\\v", "") == "**x\\*y\\`z\\<w\\\\v**");
+    CHECK(ActivityEntryHeader("_ops_ ~~x~~ &amp;", "") == "**\\_ops\\_ \\~\\~x\\~\\~ \\&amp;**");
     CHECK(ActivityEntryHeader("two\nlines", "") == "**two lines**");
+    CHECK(ActivityEntryHeader("  Jane Doe \t", "") == "**Jane Doe**");
+    CHECK(ActivityEntryHeader("   ", "") == "**Unknown**");
 }
 
 TEST_CASE("PlainActivityBlobToMarkdown — History entries become the Comments-tooltip Markdown shape") {
@@ -215,8 +225,27 @@ TEST_CASE("PlainActivityBlobToMarkdown — bracketed value text after a blank li
     CHECK(PlainActivityBlobToMarkdown(blob) == "**Ann** 2024-01-15\n\nsummary\\: x \\-\\> y\n\n\\[WIP\\] fix\n");
 }
 
+TEST_CASE("PlainActivityBlobToMarkdown — a header needs an empty or YYYY-MM-DD date") {
+    const std::string blob = "[Ann] 2024-01-15\ndescription: a -> x\n\n[1] 2 repro steps\n";
+    CHECK(PlainActivityBlobToMarkdown(blob) ==
+          "**Ann** 2024-01-15\n\ndescription\\: a \\-\\> x\n\n\\[1\\] 2 repro steps\n");
+}
+
+TEST_CASE("PreserveLineBreaks — hard breaks between adjacent text lines only") {
+    CHECK(PreserveLineBreaks("") == "");
+    CHECK(PreserveLineBreaks("one") == "one");
+    CHECK(PreserveLineBreaks("a\nb\nc\n") == "a  \nb  \nc\n");
+    CHECK(PreserveLineBreaks("para\n\nnext") == "para\n\nnext");
+    CHECK(PreserveLineBreaks("a\r\nb") == "a  \nb");
+}
+
+TEST_CASE("PreserveLineBreaks — fenced code is left byte-for-byte (minus CR)") {
+    CHECK(PreserveLineBreaks("text\n```\nx\ny\n```\nafter\nmore") == "text  \n```\nx\ny\n```\nafter  \nmore");
+    CHECK(PreserveLineBreaks("~~~\nx\ny") == "~~~\nx\ny");
+}
+
 TEST_CASE("PlainActivityBlobToMarkdown — empty date, author with brackets, CRLF, empty input") {
     CHECK(PlainActivityBlobToMarkdown("") == "");
-    CHECK(PlainActivityBlobToMarkdown("[bot[x]] \r\nlabels: a -> b\r\n") == "**bot[x]**\n\nlabels\\: a \\-\\> b\n");
+    CHECK(PlainActivityBlobToMarkdown("[bot[x]] \r\nlabels: a -> b\r\n") == "**bot\\[x\\]**\n\nlabels\\: a \\-\\> b\n");
     CHECK(PlainActivityBlobToMarkdown("\n\n[... truncated ...]\n") == "\\[\\.\\.\\. truncated \\.\\.\\.\\]\n");
 }

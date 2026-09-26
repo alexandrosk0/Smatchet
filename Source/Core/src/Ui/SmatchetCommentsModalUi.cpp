@@ -5,6 +5,7 @@
 #include "ITrackerCollaboration.h"
 #include "MarkdownPreviewRender.h"
 #include "SmatchetLocalization.h"
+#include "Tracker/CommentBlobFormatPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
 
@@ -108,7 +109,7 @@ void EnsureCommentBodyPlans(float fontSize, float width) {
         st.BodyPlans.reserve(st.Comments.size());
         for (const TrackerIssueComment& c : st.Comments) {
             MarkdownPreviewRender::PreviewPlanPtr plan = MarkdownPreviewRender::MakePlan();
-            MarkdownPreviewRender::BuildPlan(c.Body, *plan);
+            MarkdownPreviewRender::BuildPlan(smatchet::tracker::CommentBodyDisplayMarkdown(c.Body), *plan);
             st.BodyPlans.push_back(std::move(plan));
         }
         st.BodyPlansFontSize = fontSize;

@@ -171,8 +171,18 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     const std::string type = node.value("type", std::string());
     const auto& emitters = InlineEmitters();
     const auto it = emitters.find(type);
-    if (it != emitters.end())
+    if (it != emitters.end()) {
         it->second(node, out);
+        return;
+    }
+    // Unmapped inline node (status lozenge, inline extension, ...): keep its display text, as the
+    // plain-text flattener does, rather than silently dropping the words.
+    const auto attrs = node.find("attrs");
+    if (attrs != node.end() && attrs->is_object()) {
+        const auto text = attrs->find("text");
+        if (text != attrs->end() && text->is_string())
+            out << text->get_ref<const std::string&>();
+    }
 }
 
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {

@@ -109,6 +109,21 @@ TEST_CASE("MapJiraIssueComments — ADF body keeps its formatting as Markdown (p
     CHECK(out[0].Body == "**bold**\n\nsecond");
 }
 
+TEST_CASE("MapJiraIssueComments — an unmapped inline node (status lozenge) keeps its text") {
+    nlohmann::json status = nlohmann::json::object();
+    status["type"] = "status";
+    status["attrs"] = nlohmann::json::object({{"text", "IN REVIEW"}, {"color", "blue"}});
+    nlohmann::json doc = AdfParagraph("Moved to ");
+    doc["content"][0]["content"].push_back(status);
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "5";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "Moved to IN REVIEW");
+}
+
 TEST_CASE("MapJiraIssueComments — absent author defaults Author to \"Unknown\"") {
     nlohmann::json arr = nlohmann::json::array();
     nlohmann::json c = nlohmann::json::object();

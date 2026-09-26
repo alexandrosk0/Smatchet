@@ -65,10 +65,9 @@ TooltipPlanRef CachedTooltipPlan(const std::string& source, TooltipSource kind) 
 void RenderTooltipBody(const std::string& source, TooltipSource kind) {
     const TooltipPlanRef ref = CachedTooltipPlan(source, kind);
     const float wrapWidth = MarkdownTooltipWrapWidth();
-    const ImGuiStyle& style = ImGui::GetStyle();
-    ImGui::SetNextWindowSizeConstraints(
-        ImVec2(0.0f, 0.0f),
-        ImVec2(wrapWidth + style.ScrollbarSize + style.WindowPadding.x * 2.0f, ImGui::GetIO().DisplaySize.y * 0.5f));
+    // Width is not capped: prose wraps at wrapWidth, but indented lists, code lines and tables
+    // may be wider, and the tooltip grows to show them in full as it did before the child.
+    ImGui::SetNextWindowSizeConstraints(ImVec2(0.0f, 0.0f), ImVec2(FLT_MAX, ImGui::GetIO().DisplaySize.y * 0.5f));
     if (ref.ContentChanged) {
         ImGui::SetNextWindowScroll(ImVec2(0.0f, 0.0f));
     }
@@ -96,6 +95,8 @@ void RenderTooltip(const std::string& source, TooltipSource kind) {
 } // namespace
 
 void RenderMarkdownTooltip(const std::string& markdown) { RenderTooltip(markdown, TooltipSource::Markdown); }
+
+void RenderPlainActivityTooltip(const std::string& blob) { RenderTooltip(blob, TooltipSource::PlainActivityBlob); }
 
 void SetCallstackFieldIdHint(const std::string& fieldId) { g_callstackFieldId = fieldId; }
 
@@ -141,7 +142,7 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
     // ADF/HTML description fields convert their rich value first in TicketFieldEditor.cpp, then
     // reach the same RenderMarkdownTooltip path. History is recognised here from the field id so
     // every caller gets its Markdown tooltip, not only the ones that remember to ask.
-    const bool isActivityBlob = fieldId != nullptr && IsMarkdownActivityFieldId(*fieldId);
+    const bool isActivityBlob = fieldId != nullptr && IsActivityLogFieldId(*fieldId);
     // For callstack fields the cell always shows only the first line (singleLine);
     // show the full-text tooltip on hover regardless of clipping so the user can
     // read the complete stack even when the first line fits in the column width.

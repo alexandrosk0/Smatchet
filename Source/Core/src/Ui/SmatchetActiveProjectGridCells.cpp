@@ -157,7 +157,13 @@ void RenderCommentsCellTooltip(const std::string& commentBlob) {
         ImGui::SetTooltip("%s", SmatchetLocalization::T("comments.cell_tooltip", "View / post comments"));
         return;
     }
-    RenderMarkdownTooltip(commentBlob);
+    // Blobs are Markdown ("**Author** ..."); one cached before that change still starts with
+    // "[Author] date" and is rendered through the plain-activity conversion until it refreshes.
+    if (commentBlob[0] == '[') {
+        RenderPlainActivityTooltip(commentBlob);
+    } else {
+        RenderMarkdownTooltip(commentBlob);
+    }
 }
 
 } // namespace
