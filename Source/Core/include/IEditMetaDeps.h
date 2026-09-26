@@ -22,6 +22,7 @@
 #include "Types/ConnectivityTypes.h" // TrackerConnectivityState
 
 class ITrackerBackend;
+class ILookupCache;
 struct TrackerField;
 // GridContextFieldCatalog is defined in GridLiveContext.h (NOT its own header); forward-declared
 // here so the interface does not pull GridLiveContext.h. The #975 kick-time pointer is threaded
@@ -80,4 +81,10 @@ class IEditMetaDeps {
 
     /// Last connectivity probe result (Pillar 6 offline gating). Safe on any thread.
     virtual TrackerConnectivityState TrackerConnectivity() const = 0;
+
+    /// Latched strong handle to the lookup cache (Pillar 6 offline-first reads); null before the cache exists.
+    virtual std::shared_ptr<ILookupCache> LookupCacheShared() = 0;
+
+    /// Backend namespace key for cache operations (multi-grid ADR-0018).
+    virtual std::string CacheBackendKey() const = 0;
 };

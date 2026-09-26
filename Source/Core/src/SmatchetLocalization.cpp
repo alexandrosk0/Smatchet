@@ -829,6 +829,11 @@ const TranslationEntry kEntries[] = {
      "view's JQL to load them.",
      u8"Cette vue ne cible pas un projet unique : les options liées au projet n'ont pas été chargées. Ajoutez "
      u8"`project = KEY` au JQL de la vue pour les charger."},
+
+    {"status.cue.checking", "↻", u8"↻"},
+    {"status.cue.cached_workflow", "⊷", u8"⊷"},
+    {"status.cue.all_statuses_offline", "!", u8"!"},
+
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",

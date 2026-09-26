@@ -3,6 +3,8 @@
 
 #include "AppController.h"
 #include "IssueTransitionsCacheService.h"
+#include "OfflineFirstPure.h"
+#include "Types/TransitionsTypes.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
@@ -698,6 +700,40 @@ void RenderTextEditor(AppController& app, const CachedTicket& ticket, const Trac
     }
 }
 
+// Draw a freshness cue for status field transitions (Pillar 6 offline-first).
+// Indicates whether available transitions are fresh, cached offline, or still loading.
+void DrawStatusComboCue(smatchet::offline::DataFreshness freshness) {
+    using DataFreshness = smatchet::offline::DataFreshness;
+    ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+
+    const char* cueText = "?";
+    ImVec4 cueColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+
+    switch (freshness) {
+    case DataFreshness::Fresh:
+        // Live data — no cue needed
+        return;
+    case DataFreshness::Refreshing:
+        cueText = SmatchetLocalization::T("status.cue.checking", "↻");
+        cueColor = ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled);
+        break;
+    case DataFreshness::CachedOffline:
+        cueText = SmatchetLocalization::T("status.cue.cached_workflow", "⊷");
+        cueColor = ImGui::GetStyleColorVec4(ImGuiCol_Warning);
+        break;
+    case DataFreshness::UnavailableNoCache:
+        cueText = SmatchetLocalization::T("status.cue.all_statuses_offline", "!");
+        cueColor = ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        break;
+    default:
+        return;
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, cueColor);
+    ImGui::TextUnformatted(cueText);
+    ImGui::PopStyleColor();
+}
+
 // The "(no options)" line of an open select combo, plus — when the catalog was fetched without a
 // project scope (#2146) — the one sentence that tells the user WHY the list is empty and what to
 // change. Without it an unscoped default view ("assignee=currentUser()") produced silently empty
@@ -855,38 +891,60 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
         // For status field on Jira, filter to valid transitions + current status.
         const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
         std::vector<TrackerFieldOption> allowedTransitions;
-        bool transitionsLoaded = true;
+        smatchet::offline::DataFreshness transitionsFreshness = smatchet::offline::DataFreshness::LoadingNoCache;
+        bool transitionsApplicable = false;
+
         if (field.Id == "status") {
-            auto lookup = app.GetAvailableTransitionsForIssue(ticket.id);
-            if (!lookup.loaded) {
-                // Trigger fetch on first open; this is the first state for all issues.
-                transitionsLoaded = false;
-                app.EnsureIssueTransitionsLoaded(ticket.id);
-            } else if (lookup.applicable) {
-                // Loaded and applicable: use the filtered transitions.
+            // Build TransitionsQuery from available context. For issue type, use a placeholder since
+            // the full issue-type key is not readily available in CachedTicket (it's in the field catalog,
+            // keyed by issue-type field ID). This is a limitation of the current grid API.
+            const std::string projectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+            const std::string fromStatusKey = ResolveOptionId(field, currentValue);
+            TransitionsQuery query{ticket.id, projectKey, "", fromStatusKey};
+
+            auto lookup = app.GetAvailableTransitionsForIssue(query);
+            transitionsFreshness = lookup.freshness;
+            transitionsApplicable = lookup.applicable;
+
+            if (lookup.applicable && !lookup.options.empty()) {
+                // Applicable backend (e.g., Jira): use fetched/learned transitions.
                 allowedTransitions = lookup.options;
                 // Prepend current status if missing (transitions are outgoing only).
-                const std::string currentId = ResolveOptionId(field, currentValue);
-                if (!currentId.empty()) {
+                if (!fromStatusKey.empty()) {
                     const auto it = std::find_if(allowedTransitions.begin(), allowedTransitions.end(),
-                                                 [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
+                                                 [&](const TrackerFieldOption& opt) { return opt.Id == fromStatusKey; });
                     if (it == allowedTransitions.end()) {
                         TrackerFieldOption current;
-                        current.Id = currentId;
+                        current.Id = fromStatusKey;
                         current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
                         if (current.Value.empty()) {
-                            current.Value = currentId;
+                            current.Value = fromStatusKey;
                         }
                         allowedTransitions.insert(allowedTransitions.begin(), std::move(current));
                     }
                 }
                 opts = &allowedTransitions;
+            } else if (!lookup.applicable) {
+                // Non-Jira backend: fall through to use AllowedValueOptions.
+                opts = &field.AllowedValueOptions;
+            } else {
+                // Applicable but no options yet: loading or offline with no cache.
+                opts = &field.AllowedValueOptions;
+
+                // Trigger fetch if not already in flight.
+                if (transitionsFreshness == smatchet::offline::DataFreshness::LoadingNoCache) {
+                    app.EnsureIssueTransitionsLoaded(query);
+                }
             }
-            // If loaded && !applicable, fall through to use AllowedValueOptions (non-Jira backend).
         }
 
-        if (field.Id == "status" && !transitionsLoaded) {
+        if (field.Id == "status" && transitionsFreshness == smatchet::offline::DataFreshness::LoadingNoCache) {
             ImGui::TextDisabled("Loading transitions\xE2\x80\xA6");
+        } else if (field.Id == "status" && transitionsApplicable) {
+            // Draw freshness cue next to the combo.
+            DrawStatusComboCue(transitionsFreshness);
+            RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+                                        opts->empty() && app.FieldCatalogLacksProjectScope(), opts);
         } else {
             RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
                                         opts->empty() && app.FieldCatalogLacksProjectScope(), opts);

@@ -747,6 +747,10 @@ class AppController : public IAppThreading,
     /// UI thread only: run the next connectivity probe on the next tick instead of waiting out the
     /// probe interval (Pillar 6: after a live transport failure, or when a test restores the network).
     void RequestTrackerProbeNow();
+    /// Resume offline transitions fetches on connectivity recovery (Pillar 6). Call after
+    /// ConsumeTrackerConnectivityRecovery returns true to re-enable async fetches for the
+    /// issue-transitions cache.
+    void RestartOfflineTransitionsOnConnectivityRecovery();
     /**
      * One-shot: true when reachability improved to authenticated-reachable (including from
      * transport-down, service-unavailable, or auth/config errors, and cold-start when a catalog
@@ -1017,8 +1021,8 @@ class AppController : public IAppThreading,
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
     /// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
-    struct TransitionsLookup GetAvailableTransitionsForIssue(const std::string& issueId) const;
-    void EnsureIssueTransitionsLoaded(const std::string& issueId) const;
+    struct TransitionsLookup GetAvailableTransitionsForIssue(const TransitionsQuery& q) const;
+    void EnsureIssueTransitionsLoaded(const TransitionsQuery& q, const TrackerConfig* configSnapshot = nullptr) const;
     void InvalidateIssueTransitions(const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;

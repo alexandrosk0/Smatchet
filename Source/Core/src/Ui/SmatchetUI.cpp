@@ -775,6 +775,7 @@ void SmatchetUI::drawViewStateAndConnectivity(AppController& app, UiDrawSession&
             g_ui.connectivityRecoveryTicketResyncPending = true;
         }
         clearStaleQueuedOfflineGridBanner();
+        app.RestartOfflineTransitionsOnConnectivityRecovery();
     }
     if (app.ConsumeDeferredLiveTrackerBackendSuccessNotifyIfAny()) {
         clearStaleQueuedOfflineGridBanner();

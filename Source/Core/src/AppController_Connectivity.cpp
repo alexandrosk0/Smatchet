@@ -64,3 +64,9 @@ const std::string& AppController::GetLastTicketSyncWarning() const {
     static const std::string kEmpty;
     return connectivity_ ? connectivity_->LastTicketSyncWarning() : kEmpty;
 }
+
+void AppController::RestartOfflineTransitionsOnConnectivityRecovery() {
+    if (transitions_) {
+        transitions_->OnConnectivityRecovered();
+    }
+}
