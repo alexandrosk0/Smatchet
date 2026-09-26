@@ -2,7 +2,7 @@
 // TrackerIssueComment mapping. issue-comments PR-B. Mirrors the
 // GitHubCommentMappingPure.test.cpp style (bare include, Pillar-3 tolerance
 // cases) but for the Jira node shape: string `id`, `author.displayName`
-// (defaults "Unknown"), ADF/string `body`, ms-precision `created`/`updated`.
+// (defaults "Unknown"), ADF (→ Markdown) / string `body`, ms-precision `created`/`updated`.
 
 #include "JiraCommentMappingPure.h"
 
@@ -87,6 +87,88 @@ TEST_CASE("MapJiraIssueComments — plain-string body passes through unchanged")
     const std::vector<TrackerIssueComment> out = MapJiraIssueComments(arr);
     REQUIRE(out.size() == 1);
     CHECK(out[0].Body == "legacy wiki-markup body");
+}
+
+TEST_CASE("MapJiraIssueComments — ADF body keeps its formatting as Markdown (paragraphs, bold)") {
+    nlohmann::json bold = nlohmann::json::object();
+    bold["type"] = "text";
+    bold["text"] = "bold";
+    bold["marks"] = nlohmann::json::array({nlohmann::json::object({{"type", "strong"}})});
+    nlohmann::json firstPara = nlohmann::json::object();
+    firstPara["type"] = "paragraph";
+    firstPara["content"] = nlohmann::json::array({bold});
+
+    nlohmann::json doc = AdfParagraph("first");
+    doc["content"] = nlohmann::json::array({firstPara, AdfParagraph("second")["content"][0]});
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "4";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "**bold**\n\nsecond");
+}
+
+TEST_CASE("MapJiraIssueComments — an unmapped inline node (status lozenge) keeps its text") {
+    nlohmann::json status = nlohmann::json::object();
+    status["type"] = "status";
+    status["attrs"] = nlohmann::json::object({{"text", "IN REVIEW"}, {"color", "blue"}});
+    nlohmann::json doc = AdfParagraph("Moved to ");
+    doc["content"][0]["content"].push_back(status);
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "5";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "Moved to IN REVIEW");
+}
+
+TEST_CASE("MapJiraIssueComments — an implausibly deep ADF body skips the Markdown walk, keeps its text") {
+    // 100 nested blockquotes: past the mapper's convertible-depth guard, so the body takes the
+    // iterative-safe plain-text flattening instead of the recursive ADF→Markdown walk (which
+    // overflowed the MSVC ASan stack on the 400-deep hostile case).
+    nlohmann::json doc = AdfParagraph("deep text");
+    for (int i = 0; i < 100; ++i) {
+        nlohmann::json quote = nlohmann::json::object();
+        quote["type"] = "blockquote";
+        quote["content"] = nlohmann::json::array({doc["content"][0]});
+        nlohmann::json wrapper = nlohmann::json::object();
+        wrapper["type"] = "doc";
+        wrapper["content"] = nlohmann::json::array({quote});
+        doc = std::move(wrapper);
+    }
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "6";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "deep text");
+    CHECK(out[0].Body.find('>') == std::string::npos); // not the Markdown (blockquote) rendering
+}
+
+TEST_CASE("MapJiraIssueComments — a code block inside a table cell falls back to plain text, keeping the code") {
+    nlohmann::json code = nlohmann::json::object();
+    code["type"] = "codeBlock";
+    code["content"] = nlohmann::json::array({nlohmann::json::object({{"type", "text"}, {"text", "make build"}})});
+    nlohmann::json cell = nlohmann::json::object();
+    cell["type"] = "tableCell";
+    cell["content"] = nlohmann::json::array({code});
+    nlohmann::json row = nlohmann::json::object();
+    row["type"] = "tableRow";
+    row["content"] = nlohmann::json::array({cell});
+    nlohmann::json table = nlohmann::json::object();
+    table["type"] = "table";
+    table["content"] = nlohmann::json::array({row});
+    nlohmann::json doc = AdfParagraph("x");
+    doc["content"] = nlohmann::json::array({table});
+
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "7";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body.find("make build") != std::string::npos);
 }
 
 TEST_CASE("MapJiraIssueComments — absent author defaults Author to \"Unknown\"") {

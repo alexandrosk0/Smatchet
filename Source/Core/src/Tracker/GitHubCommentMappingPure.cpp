@@ -1,5 +1,6 @@
 #include "GitHubCommentMappingPure.h"
 
+#include "CommentNodeArrayPure.h"
 #include "GitHubClientHelpers.h"
 
 #include <cstdint>
@@ -55,33 +56,15 @@ std::string CommentIdString(const nlohmann::json& obj) {
 } // namespace
 
 std::vector<TrackerIssueComment> MapGitHubIssueComments(const nlohmann::json& commentsArray) {
-    std::vector<TrackerIssueComment> out;
-    if (!commentsArray.is_array()) {
-        return out;
-    }
-    out.reserve(commentsArray.size());
-    for (const auto& node : commentsArray) {
-        if (!node.is_object()) {
-            continue;
-        }
+    return smatchet::tracker::MapCommentNodeArray(commentsArray, [](const nlohmann::json& node) {
         TrackerIssueComment comment;
         comment.Id = CommentIdString(node);
         comment.Author = CommentNestedString(node, "user", "login");
         comment.Body = CommentString(node, "body");
-
-        const std::string createdIso = CommentString(node, "created_at");
-        const Result<std::int64_t, std::string> created = ParseIso8601ToUnixSec(createdIso);
-        if (created) {
-            comment.CreatedAtSec = created.value();
-        }
-
-        const std::string updatedIso = CommentString(node, "updated_at");
-        const Result<std::int64_t, std::string> updated = ParseIso8601ToUnixSec(updatedIso);
-        comment.UpdatedAtSec = updated ? updated.value() : comment.CreatedAtSec;
-
-        out.push_back(std::move(comment));
-    }
-    return out;
+        ParseIso8601CreatedUpdated(CommentString(node, "created_at"), CommentString(node, "updated_at"),
+                                   comment.CreatedAtSec, comment.UpdatedAtSec);
+        return comment;
+    });
 }
 
 } // namespace github

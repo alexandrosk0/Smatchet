@@ -171,8 +171,18 @@ void EmitInlineText(const json& node, std::ostringstream& out) {
     const std::string type = node.value("type", std::string());
     const auto& emitters = InlineEmitters();
     const auto it = emitters.find(type);
-    if (it != emitters.end())
+    if (it != emitters.end()) {
         it->second(node, out);
+        return;
+    }
+    // Unmapped inline node (status lozenge, inline extension, ...): keep its display text, as the
+    // plain-text flattener does, rather than silently dropping the words.
+    const auto attrs = node.find("attrs");
+    if (attrs != node.end() && attrs->is_object()) {
+        const auto text = attrs->find("text");
+        if (text != attrs->end() && text->is_string())
+            out << text->get_ref<const std::string&>();
+    }
 }
 
 static bool MatchStoredTaskPrefix(const json& paraContent, bool* doneOut) {
@@ -248,8 +258,9 @@ static std::string MarkdownCellFlattenInline(const json& inlineArr) {
 // join blocks with an HTML `<br>` (the GFM-safe in-cell line break), and represent list items
 // with a marker, so multiple paragraphs and lists survive the ADF→Markdown conversion instead
 // of being merged or dropped. Deeper fidelity (code blocks, nested lists/tables inside a cell)
-// remains tracked in RICH_TEXT_EDITING_V2.
-static std::string MarkdownCellPlainInner(const json& cell) {
+// remains tracked in RICH_TEXT_EDITING_V2; until then those block types are reported in
+// `dropped`, so callers (the editor's save gate, the comment mapper's fallback) see the loss.
+static std::string MarkdownCellPlainInner(const json& cell, std::vector<std::string>& dropped) {
     std::vector<std::string> segments;
     if (cell.contains("content") && cell["content"].is_array()) {
         for (const auto& blk : cell["content"]) {
@@ -270,8 +281,11 @@ static std::string MarkdownCellPlainInner(const json& cell) {
                         std::ostringstream lo;
                         if (li.contains("content") && li["content"].is_array()) {
                             for (const auto& lblk : li["content"]) {
-                                if (lblk.value("type", std::string()) == "paragraph")
+                                const std::string lt = lblk.value("type", std::string());
+                                if (lt == "paragraph")
                                     EmitInlineRun(lblk.value("content", json::array()), lo);
+                                else
+                                    dropped.push_back(lt.empty() ? std::string("<unknown>") : lt);
                             }
                         }
                         std::string t = lo.str();
@@ -282,8 +296,10 @@ static std::string MarkdownCellPlainInner(const json& cell) {
                             ++order;
                     }
                 }
+            } else {
+                // codeBlock, nested table, mediaSingle, ...: not representable in a GFM cell (B5).
+                dropped.push_back(bt.empty() ? std::string("<unknown>") : bt);
             }
-            // Other block types (codeBlock, nested table / mediaSingle) remain unrepresented — see B5.
         }
     }
     std::string joined;
@@ -307,7 +323,7 @@ static void EmitMarkdownTable(const json& table, AdfWalkState& s) {
             for (const auto& cell : row["content"]) {
                 const std::string ct = cell.value("type", std::string());
                 if (ct == "tableHeader" || ct == "tableCell") {
-                    cells.push_back(MarkdownCellPlainInner(cell));
+                    cells.push_back(MarkdownCellPlainInner(cell, s.dropped));
                 }
             }
         }

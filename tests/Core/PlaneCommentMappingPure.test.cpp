@@ -2,7 +2,7 @@
 // mapping. issue-comments PR-C. Mirrors GitHubCommentMappingPure.test.cpp style
 // (bare include, smatchet::plane namespace, Pillar-3 tolerance cases) adapted to
 // the Plane comment shape: stringly-typed `id`, `actor_detail.display_name` /
-// `created_by` author, plain-text `comment_stripped` body.
+// `created_by` author, Markdown body from `comment_html` (plain `comment_stripped` fallback).
 
 #include "PlaneCommentMappingPure.h"
 
@@ -58,18 +58,30 @@ TEST_CASE("MapPlaneIssueComments — happy path maps id/author/stripped body + p
     CHECK(out[1].UpdatedAtSec == kEpoch2021_01_02);
 }
 
-TEST_CASE("MapPlaneIssueComments — Body comes from comment_stripped, never comment_html") {
+TEST_CASE("MapPlaneIssueComments — Body is comment_html converted to Markdown") {
     nlohmann::json arr = nlohmann::json::array();
     nlohmann::json c = nlohmann::json::object();
     c["id"] = "x1";
+    c["comment_stripped"] = "rich markup";
+    c["comment_html"] = "<p class=\"editor-paragraph-block\"><strong>rich</strong> markup</p>";
+    arr.push_back(c);
+
+    const std::vector<TrackerIssueComment> out = MapPlaneIssueComments(arr);
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "**rich** markup");
+}
+
+TEST_CASE("MapPlaneIssueComments — HTML outside the converter allowlist falls back to comment_stripped") {
+    nlohmann::json arr = nlohmann::json::array();
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "x2";
     c["comment_stripped"] = "plain text only";
-    c["comment_html"] = "<b>rich</b> markup";
+    c["comment_html"] = "<mention-component id=\"u1\">plain</mention-component> text only";
     arr.push_back(c);
 
     const std::vector<TrackerIssueComment> out = MapPlaneIssueComments(arr);
     REQUIRE(out.size() == 1);
     CHECK(out[0].Body == "plain text only");
-    CHECK(out[0].Body.find('<') == std::string::npos);
 }
 
 TEST_CASE("MapPlaneIssueComments — absent actor_detail falls back to created_by") {

@@ -16,7 +16,6 @@
 #include "TrackerFieldPayload.h"
 #include "DictationInsertionRouter.h"
 #include "MarkdownConvert.h"
-#include "MarkdownPreviewRender.h"
 #include "TicketFieldEditorLongTextPure.h"
 #include "TicketFieldEditorDescriptionPure.h"
 #include "TicketFieldEditorOptionFilterPure.h"
@@ -621,16 +620,12 @@ void DrawTextCellTooltip(const CachedTicket& ticket, const TrackerField& field, 
     if (tipSource.empty()) {
         return;
     }
-    ImGui::BeginTooltip();
     if (isDescriptionLike) {
-        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-        MarkdownPreviewRender::Options opts;
-        opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-        opts.clickableLinks = false;
-        opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
-        MarkdownPreviewRender::Render(tipSource, opts);
-        ImGui::PopTextWrapPos();
-    } else if (isCallstack) {
+        RenderMarkdownTooltip(tipSource);
+        return;
+    }
+    ImGui::BeginTooltip();
+    if (isCallstack) {
         // No wrap-pos: callstack source lines are per-line semantic tokens
         // (Module!Class::Method() [File:Line]); word-wrapping them mid-line
         // mangles the layout. Render each line full-width like the cell path.
@@ -1603,19 +1598,8 @@ void RenderPlainTextCell(AppController& app, const CachedTicket& ticket, const T
         // Lazy: parse ADF → markdown only on actual hover, not per-cell per-frame.
         RenderClippedFieldText(display, availWidth, false, disabled, nullptr, false, &column.FieldId);
         if (tooltipsEnabled && ImGui::IsItemHovered()) {
-            const std::string md = TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(
-                ticket.GetFieldRichValue(column.FieldId), currentValue);
-            if (!md.empty()) {
-                ImGui::BeginTooltip();
-                ImGui::PushTextWrapPos(ImGui::GetFontSize() * 48.0f);
-                MarkdownPreviewRender::Options opts;
-                opts.mode = MarkdownPreviewRender::Mode::Tooltip;
-                opts.clickableLinks = false;
-                opts.wrapWidth = ImGui::GetFontSize() * 48.0f;
-                MarkdownPreviewRender::Render(md, opts);
-                ImGui::PopTextWrapPos();
-                ImGui::EndTooltip();
-            }
+            RenderMarkdownTooltip(TicketFieldEditorLongTextPure::RichValueToTooltipMarkdown(
+                ticket.GetFieldRichValue(column.FieldId), currentValue));
         }
     } else {
         const std::string* tip = column.IsDateLike ? &currentValue : nullptr;

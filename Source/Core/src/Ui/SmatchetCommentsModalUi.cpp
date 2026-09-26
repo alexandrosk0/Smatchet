@@ -5,6 +5,7 @@
 #include "ITrackerCollaboration.h"
 #include "MarkdownPreviewRender.h"
 #include "SmatchetLocalization.h"
+#include "Tracker/CommentBlobFormatPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
 #include "Ui/SmatchetToast.h"
 
@@ -27,6 +28,16 @@ namespace {
 struct CommentsModalState {
     std::string IssueId;
     std::vector<TrackerIssueComment> Comments;
+    /// Parsed Markdown per comment body, index-aligned with `Comments`; rebuilt when the sizes
+    /// diverge or the font size changes (a plan caches word widths), so the thread is not
+    /// re-parsed every frame the modal is open.
+    std::vector<MarkdownPreviewRender::PreviewPlanPtr> BodyPlans;
+    float BodyPlansFontSize = 0.0f;
+    /// Last drawn height of each comment (header + body + separator, incl. trailing item
+    /// spacing), or <= 0 when not yet measured at `BodyHeightsWidth`. Off-screen comments with a
+    /// known height draw as a spacer instead of re-emitting every word each frame (Pillar 1).
+    std::vector<float> BodyHeights;
+    float BodyHeightsWidth = 0.0f;
     bool FetchInFlight = false;
     bool PostInFlight = false;
     std::string Error;
@@ -73,6 +84,8 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
             s_CommentsState.FetchInFlight = false;
             if (ok) {
                 s_CommentsState.Comments = std::move(comments);
+                s_CommentsState.BodyPlans.clear();
+                s_CommentsState.BodyHeights.clear();
                 s_CommentsState.Error.clear();
                 // issue-comments fix (#1291, extended) — runs on every fetch: modal-open AND the
                 // post-success re-fetch. Pushes the observed thread into the cached ticket (count +
@@ -89,38 +102,74 @@ void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) 
     });
 }
 
-/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • plain-text
-/// body. Time formatting reuses smatchet::ai::FormatRelativeTime / FormatAbsoluteTime
-/// (both take unix-epoch milliseconds; TrackerIssueComment times are seconds → ×1000).
+void EnsureCommentBodyPlans(float fontSize, float width) {
+    CommentsModalState& st = s_CommentsState;
+    if (st.BodyPlans.size() != st.Comments.size() || st.BodyPlansFontSize != fontSize) {
+        st.BodyPlans.clear();
+        st.BodyPlans.reserve(st.Comments.size());
+        for (const TrackerIssueComment& c : st.Comments) {
+            MarkdownPreviewRender::PreviewPlanPtr plan = MarkdownPreviewRender::MakePlan();
+            MarkdownPreviewRender::BuildPlan(smatchet::tracker::CommentBodyDisplayMarkdown(c.Body), *plan);
+            st.BodyPlans.push_back(std::move(plan));
+        }
+        st.BodyPlansFontSize = fontSize;
+        st.BodyHeightsWidth = -1.0f;
+    }
+    if (st.BodyHeightsWidth != width || st.BodyHeights.size() != st.Comments.size()) {
+        st.BodyHeights.assign(st.Comments.size(), 0.0f);
+        st.BodyHeightsWidth = width;
+    }
+}
+
+void DrawCommentHeader(const TrackerIssueComment& c, std::int64_t nowMs) {
+    // Author (emphasised) • relative time, absolute on hover.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
+    ImGui::TextUnformatted(c.Author.empty() ? SmatchetLocalization::T("comments.unknown_author", "(unknown)")
+                                            : c.Author.c_str());
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    const std::int64_t thenMs = c.CreatedAtSec * 1000;
+    const std::string rel = smatchet::ai::FormatRelativeTime(nowMs, thenMs);
+    ImGui::TextDisabled("\xe2\x80\xa2 %s", rel.c_str());
+    if (ImGui::IsItemHovered()) {
+        const std::string abs = smatchet::ai::FormatAbsoluteTime(thenMs);
+        if (!abs.empty()) {
+            ImGui::SetTooltip("%s", abs.c_str());
+        }
+    }
+}
+
+/// Draws the scrollable read-only comment thread. Each comment: author • formatted time • Markdown
+/// body (same renderer as the description preview, Full mode). Time formatting reuses
+/// smatchet::ai::FormatRelativeTime / FormatAbsoluteTime (both take unix-epoch milliseconds;
+/// TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
     if (s_CommentsState.Comments.empty()) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.none", "No comments yet."));
         return;
     }
+    const float width = ImGui::GetContentRegionAvail().x;
+    EnsureCommentBodyPlans(ImGui::GetFontSize(), width);
+    MarkdownPreviewRender::Options bodyOpts;
+    bodyOpts.mode = MarkdownPreviewRender::Mode::Full;
+    // Comment bodies are other people's text: MarkdownPreviewRender opens a clicked href with no
+    // scheme check, so links here are shown, not followed.
+    bodyOpts.clickableLinks = false;
+    const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const std::int64_t nowMs = smatchet::ai::NowUnixMs();
     for (size_t i = 0; i < s_CommentsState.Comments.size(); ++i) {
-        const TrackerIssueComment& c = s_CommentsState.Comments[i];
-        ImGui::PushID(static_cast<int>(i));
-        // Header line: author (emphasised) • relative time, absolute on hover.
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.85f, 1.0f, 1.0f));
-        ImGui::TextUnformatted(c.Author.empty() ? SmatchetLocalization::T("comments.unknown_author", "(unknown)")
-                                                : c.Author.c_str());
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        const std::int64_t thenMs = c.CreatedAtSec * 1000;
-        const std::string rel = smatchet::ai::FormatRelativeTime(nowMs, thenMs);
-        ImGui::TextDisabled("\xe2\x80\xa2 %s", rel.c_str());
-        if (ImGui::IsItemHovered()) {
-            const std::string abs = smatchet::ai::FormatAbsoluteTime(thenMs);
-            if (!abs.empty()) {
-                ImGui::SetTooltip("%s", abs.c_str());
-            }
+        float& height = s_CommentsState.BodyHeights[i];
+        if (height > itemSpacingY && !ImGui::IsRectVisible(ImVec2(width, height))) {
+            ImGui::Dummy(ImVec2(width, height - itemSpacingY)); // Dummy re-adds the trailing spacing
+            continue;
         }
-        // Body: plain-text comment body. Tracker backends store all comments as plain text,
-        // never markdown, so we render as-is without markdown parsing.
-        ImGui::TextWrapped("%s", c.Body.c_str());
+        const float startY = ImGui::GetCursorPosY();
+        ImGui::PushID(static_cast<int>(i));
+        DrawCommentHeader(s_CommentsState.Comments[i], nowMs);
+        MarkdownPreviewRender::RenderPlan(*s_CommentsState.BodyPlans[i], bodyOpts);
         ImGui::Separator();
         ImGui::PopID();
+        height = ImGui::GetCursorPosY() - startY;
     }
 }
 
