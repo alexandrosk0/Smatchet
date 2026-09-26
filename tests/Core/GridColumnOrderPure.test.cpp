@@ -80,3 +80,76 @@ TEST_CASE("GridVisualColumnOrderIsPermutation guards the ColumnOrder writeback")
         CHECK_FALSE(GridVisualColumnOrderIsPermutation({}, 3));
     }
 }
+
+TEST_CASE("GridHeaderDragTargetOrder follows the mouse, not one neighbour per frame") {
+    // Five 100px columns laid out at x = 0..500; centres 50, 150, 250, 350, 450.
+    const std::vector<float> centers{50.0f, 150.0f, 250.0f, 350.0f, 450.0f};
+
+    SUBCASE("mouse inside the held column's own cell keeps it in place") {
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 120.0f) == 1);
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 180.0f) == 1);
+    }
+    SUBCASE("mouse far to the right jumps straight to that slot in one step") {
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 470.0f) == 4);
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 360.0f) == 3);
+    }
+    SUBCASE("mouse far to the left jumps straight to that slot in one step") {
+        CHECK(GridHeaderDragTargetOrder(centers, 4, 10.0f) == 0);
+        CHECK(GridHeaderDragTargetOrder(centers, 4, 160.0f) == 2);
+    }
+    SUBCASE("a column only moves past a neighbour once the mouse crosses that neighbour's centre") {
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 240.0f) == 1);
+        CHECK(GridHeaderDragTargetOrder(centers, 1, 260.0f) == 2);
+    }
+    SUBCASE("narrow column over a wide neighbour does not oscillate") {
+        // H = 50px at 0..50, W = 300px at 50..350. Mouse at 210 has crossed W's centre (200).
+        const std::vector<float> before{25.0f, 200.0f};
+        CHECK(GridHeaderDragTargetOrder(before, 0, 210.0f) == 1);
+        // After the move W sits at 0..300 (centre 150) and H at 300..350; the same mouse
+        // position must keep H where it now is rather than send it back.
+        const std::vector<float> after{150.0f, 325.0f};
+        CHECK(GridHeaderDragTargetOrder(after, 1, 210.0f) == 1);
+        // Moving back left only happens once the mouse crosses W's new centre.
+        CHECK(GridHeaderDragTargetOrder(after, 1, 140.0f) == 0);
+    }
+    SUBCASE("out-of-range held slot is returned unchanged") {
+        CHECK(GridHeaderDragTargetOrder(centers, -1, 100.0f) == -1);
+        CHECK(GridHeaderDragTargetOrder(centers, 5, 100.0f) == 5);
+        CHECK(GridHeaderDragTargetOrder({}, 0, 100.0f) == 0);
+    }
+}
+
+TEST_CASE("GridHeaderDragAutoScrollSpeed") {
+    // Strip 100..900, 40px edge bands, 500px/s at the edge.
+    const float kMin = 100.0f;
+    const float kMax = 900.0f;
+    const float kZone = 40.0f;
+    const float kSpeed = 500.0f;
+
+    SUBCASE("no scroll away from the edges") {
+        CHECK(GridHeaderDragAutoScrollSpeed(500.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin + kZone, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax - kZone, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+    }
+    SUBCASE("ramps inside the band, full speed at the edge, left is negative") {
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin + 20.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(-250.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin, kMin, kMax, kZone, kSpeed) == doctest::Approx(-500.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax - 20.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(250.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax, kMin, kMax, kZone, kSpeed) == doctest::Approx(500.0f));
+    }
+    SUBCASE("keeps speeding up past the edge, capped at four times the edge speed") {
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 40.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(1000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 5000.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(2000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin - 5000.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(-2000.0f));
+    }
+    SUBCASE("a strip narrower than two bands shrinks the band instead of scrolling everywhere") {
+        // 90px strip -> 30px bands; the middle 30px stays still.
+        CHECK(GridHeaderDragAutoScrollSpeed(145.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(100.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(-500.0f));
+    }
+    SUBCASE("degenerate inputs never scroll") {
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, 100.0f, 100.0f, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kMin, kMax, 0.0f, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kMin, kMax, kZone, 0.0f) == doctest::Approx(0.0f));
+    }
+}

@@ -192,31 +192,91 @@ inline std::vector<std::string> ReorderViewColumns(const std::vector<std::string
     return ignored;
 }
 
-/// True when `draft` has diverged from `saved` in any way the Views editor (or the grid's
-/// remaining query-only strip) should surface as "unsaved" — name, JQL, parent-hierarchy
-/// flags, sort specs (exact), the column KEY SEQUENCE (order + membership), and each column's
-/// EffectiveColumnWidth within `widthTolPx`. A width stored under a key absent from the
-/// current column list can never contribute (EffectiveColumnWidth is only ever asked about
-/// keys that are in both sequences, since the key-sequence check already gates on that).
-inline bool ViewDraftDiffersFromSaved(const ViewDefinition& draft, const ViewDefinition& saved, float widthTolPx) {
-    if (draft.Name != saved.Name || draft.Jql != saved.Jql || draft.HideParents != saved.HideParents ||
-        draft.StoryGroupSort != saved.StoryGroupSort) {
-        return true;
+/// True when both lists name the same columns in the same order (widths ignored).
+inline bool ViewColumnKeysEqual(const std::vector<ViewColumn>& a, const std::vector<ViewColumn>& b) {
+    if (a.size() != b.size()) {
+        return false;
     }
-    if (draft.SortSpecs != saved.SortSpecs) {
-        return true;
-    }
-    if (draft.Columns.size() != saved.Columns.size()) {
-        return true;
-    }
-    for (std::size_t i = 0; i < draft.Columns.size(); ++i) {
-        if (draft.Columns[i].Key != saved.Columns[i].Key) {
-            return true;
-        }
-        if (ShouldCaptureColumnWidth(EffectiveColumnWidth(saved, draft.Columns[i].Key),
-                                     EffectiveColumnWidth(draft, draft.Columns[i].Key), widthTolPx)) {
-            return true;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+        if (a[i].Key != b[i].Key) {
+            return false;
         }
     }
-    return false;
+    return true;
+}
+
+/// `keys`' column sequence, each carrying the width `widthSource` renders it at (a key new to
+/// `widthSource` gets the kind default).
+inline std::vector<ViewColumn> ColumnKeysWithWidthsFrom(const std::vector<ViewColumn>& keys,
+                                                         const ViewDefinition& widthSource) {
+    std::vector<ViewColumn> out;
+    out.reserve(keys.size());
+    for (const auto& col : keys) {
+        out.push_back({col.Key, EffectiveColumnWidth(widthSource, col.Key)});
+    }
+    return out;
+}
+
+/// True when the Views editor's draft carries an edit the user has not applied yet. Only the
+/// three things the editor edits through its draft count: the name, the query, and the column
+/// key sequence (Fields tab membership + Columns tab order). Widths, sort, hide-parents and
+/// story-group are layout: the grid and the editor's Sort tab write those straight into the
+/// saved view and autosave them, so they can never be "unsaved" — counting them is what made
+/// every view switch after a grid resize/drag/sort raise a confirm the user had no edit behind.
+inline bool ViewDraftHasUnsavedEdits(const ViewDefinition& draft, const ViewDefinition& saved) {
+    return draft.Name != saved.Name || draft.Jql != saved.Jql || !ViewColumnKeysEqual(draft.Columns, saved.Columns);
+}
+
+/// What Apply/Save commits: the live saved view with the draft's name, query and column key
+/// sequence laid over it. Everything else (widths, sort, hierarchy flags) comes from `saved`,
+/// so applying the editor never reverts a layout change the grid autosaved meanwhile.
+inline ViewDefinition MergeDraftEditsOntoSaved(const ViewDefinition& draft, const ViewDefinition& saved) {
+    ViewDefinition merged = saved;
+    merged.Name = draft.Name;
+    merged.Jql = draft.Jql;
+    merged.Columns = ColumnKeysWithWidthsFrom(draft.Columns, saved);
+    NormalizeViewDefinition(merged);
+    return merged;
+}
+
+struct ViewDraftRebaseResult {
+    bool NameAdopted = false; ///< draft.Name was replaced by the saved name (refresh its text buffer)
+    bool JqlAdopted = false;  ///< draft.Jql was replaced by the saved query (refresh its text buffer)
+};
+
+/// Three-way rebase of the editor draft onto a saved view that changed underneath it. `base` is
+/// the saved view the draft was last synced with. For each editor-owned part (name, query,
+/// column key sequence) the draft keeps its own value only if the user edited it (draft differs
+/// from base); otherwise it follows `saved`. Everything else always follows `saved`. `base`
+/// becomes `saved`. No-op when `saved` still equals `base`.
+///
+/// Without this the draft is a snapshot taken at view-load time: a grid column drag, resize or
+/// sort autosaves into the saved view, the stale draft then reads as "unsaved", the view switch
+/// prompts, and "Save & switch" writes the stale column order back over the user's drag.
+inline ViewDraftRebaseResult RebaseViewDraft(ViewDefinition& draft, ViewDefinition& base, const ViewDefinition& saved) {
+    ViewDraftRebaseResult result;
+    if (saved == base) {
+        return result;
+    }
+    const bool nameEdited = draft.Name != base.Name;
+    const bool jqlEdited = draft.Jql != base.Jql;
+    const bool columnsEdited = !ViewColumnKeysEqual(draft.Columns, base.Columns);
+    ViewDefinition rebased = saved;
+    if (nameEdited) {
+        rebased.Name = draft.Name;
+    } else {
+        result.NameAdopted = draft.Name != saved.Name;
+    }
+    if (jqlEdited) {
+        rebased.Jql = draft.Jql;
+    } else {
+        result.JqlAdopted = draft.Jql != saved.Jql;
+    }
+    if (columnsEdited) {
+        rebased.Columns = ColumnKeysWithWidthsFrom(draft.Columns, saved);
+        NormalizeViewDefinition(rebased);
+    }
+    draft = std::move(rebased);
+    base = saved;
+    return result;
 }
