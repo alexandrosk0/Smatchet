@@ -1,6 +1,7 @@
 #include "AppController.h"
 
 #include "ConnectivityMonitorService.h"
+#include "IssueTransitionsCacheService.h"
 
 #include <chrono>
 #include <string>
@@ -27,7 +28,12 @@ AppController::GetTrackerConnectivityBannerForUi(const std::string* sessionCatal
 }
 
 bool AppController::ConsumeTrackerConnectivityRecovery() {
-    return connectivity_ ? connectivity_->ConsumeTrackerConnectivityRecovery() : false;
+    const bool recovered = connectivity_ ? connectivity_->ConsumeTrackerConnectivityRecovery() : false;
+    if (recovered && transitions_) {
+        // Pillar 6: clear the transitions failure backoff so the next status-combo open retries live.
+        transitions_->OnConnectivityRecovered();
+    }
+    return recovered;
 }
 
 bool AppController::ConsumeFieldCatalogRefetchAfterLiveTicketSync() {
@@ -63,10 +69,4 @@ void AppController::RequestTrackerProbeNow() {
 const std::string& AppController::GetLastTicketSyncWarning() const {
     static const std::string kEmpty;
     return connectivity_ ? connectivity_->LastTicketSyncWarning() : kEmpty;
-}
-
-void AppController::RestartOfflineTransitionsOnConnectivityRecovery() {
-    if (transitions_) {
-        transitions_->OnConnectivityRecovered();
-    }
 }

@@ -166,7 +166,10 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # background task) + SaveTicket (UI-thread write) from two std::threads sharing
         # one LocalCacheManager instance. LCM.cpp already linked above; no extra .cpp.
         Core/LocalCacheConcurrentSeed.test.cpp
+        # lookup_cache (Pillar 6 offline lookups) — LocalCacheManager_Lookup.cpp linked below.
+        Core/LookupCacheSqlite.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
         # Logger.cpp now routes the file sink through RedactLogLine (audit
@@ -222,6 +225,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/FieldEditPipelineService.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/LearnedWorkflowPure.cpp"
         # --- ConnectivityMonitorService (AppController god-object decomposition Phase 3): the
         #     tracker connectivity-probe FSM. UI-thread-only by contract (no mutex) but it owns the
         #     ONE cross-thread handle in the service — the std::async reachability probe future.
@@ -284,6 +288,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        # Quality Pillar 6 status combo (offline-first S5): learned-workflow key/JSON, option pick,
+        # and the transitions service on fakes (IssueTransitionsCacheService.cpp +
+        # LearnedWorkflowPure.cpp are linked with the field-edit pipeline above).
+        Core/LearnedWorkflowPure.test.cpp
+        Core/StatusComboOptionsPure.test.cpp
+        Core/IssueTransitionsCacheService.test.cpp
         Core/OfflineFirstPure.test.cpp
         Core/KeyedLookupCache.test.cpp
         Core/CatalogOfflinePolicyPure.test.cpp
@@ -716,6 +726,7 @@ add_executable(SmatchetTests
     # and two-backend disjointness on a colliding numeric id. Links the production LCM TU
     # already pulled in below.
     Core/LocalCacheTicketsV2Migration.test.cpp
+    Core/LookupCacheSqlite.test.cpp
     # Slice G Phase 1 (testing-surface.md §6 Gap 6, plan slice-g-db-corruption.md) —
     # characterizes today's corrupt/truncated cache-file-on-open behaviour: the ctor's
     # schema-init runs OUTSIDE the WAL-pragma try/catch, so a non-SQLite/truncated file throws
@@ -1170,6 +1181,9 @@ add_executable(SmatchetTests
     # (ParseComments delegation, the lazy first-hover fetch and the modal post-back all
     # converge here). Pure — no I/O, no Logger.
     Core/CommentBlobFormatPure.test.cpp
+    Core/LearnedWorkflowPure.test.cpp
+    Core/StatusComboOptionsPure.test.cpp
+    Core/IssueTransitionsCacheService.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
     Core/OfflineFirstPure.test.cpp
     Core/KeyedLookupCache.test.cpp
@@ -1349,6 +1363,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/MarkdownToHtml.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -1379,6 +1394,7 @@ add_executable(SmatchetTests
     # Core/FieldEditPipelineService.test.cpp drives it via header-only fakes.
     "${CMAKE_SOURCE_DIR}/Source/Core/src/FieldEditPipelineService.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/IssueTransitionsCacheService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/LearnedWorkflowPure.cpp"
     # ConnectivityMonitorService (AppController god-object decomposition Phase 3). Pulls
     # ConfigManager + ITrackerConnectivity (header-only) + RedactHttpBodyForLog / ResolveSslConfig
     # (TrackerHttpPure.cpp / TrackerHttpUtils.cpp, both already linked into this target). cpr/ImGui/
@@ -2000,7 +2016,11 @@ set(_smatchet_pure_sync_test_files
     # state + a std::async probe future; no LocalCacheManager. Replay-timer pushes route through the
     # deps interface (recorded in the fake), never a Cache*.
     Core/ConnectivityMonitorService.test.cpp
+    # IssueTransitionsCacheService (Pillar 6 status combo) reaches its lookup store through
+    # ILookupCache/FakeLookupCache only.
+    Core/IssueTransitionsCacheService.test.cpp
     support/FakeEditMetaDeps.h
+    support/FakeLookupCache.h
     support/FakeFieldEditDeps.h
     support/FakeConnectivityDeps.h
     support/FakeOfflineQueueDeps.h

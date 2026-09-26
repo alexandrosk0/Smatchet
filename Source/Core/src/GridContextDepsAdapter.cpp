@@ -41,9 +41,8 @@ ISyncCache* GridContextDepsAdapter::Cache() { return app_.Cache.get(); }
 // LocalCacheManager derives from ISyncCache, so the shared_ptr converts implicitly.
 std::shared_ptr<ISyncCache> GridContextDepsAdapter::CacheShared() { return std::atomic_load(&app_.Cache); }
 
-std::shared_ptr<ILookupCache> GridContextDepsAdapter::LookupCacheShared() {
-    return std::atomic_load(&app_.Cache);
-}
+// LocalCacheManager also implements ILookupCache (Pillar 6 offline lookups); same latched load.
+std::shared_ptr<ILookupCache> GridContextDepsAdapter::LookupCacheShared() { return std::atomic_load(&app_.Cache); }
 
 // Backend reads go through std::atomic_load so the shared_ptr-instance read can't race the
 // live swap (atomic_store/atomic_exchange in SetBackend). The ALIASING shared_ptr keeps the

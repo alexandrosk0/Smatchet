@@ -132,15 +132,13 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits() override;
     void DeleteDeadPendingFieldEdit(std::int64_t deadId) override;
 
-    // ILookupCache implementation
-    bool UpsertLookup(const std::string& backendKey, const std::string& kind,
-                      const std::string& cacheKey, const std::string& payloadJson) override;
-    bool TryGetLookup(const std::string& backendKey, const std::string& kind,
-                      const std::string& cacheKey, LookupCacheRow& out) override;
-    std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey,
-                                            const std::string& kind) override;
-    bool DeleteLookup(const std::string& backendKey, const std::string& kind,
-                      const std::string& cacheKey) override;
+    // ILookupCache (LocalCacheManager_Lookup.cpp): offline read-side lookups, worker threads only.
+    bool UpsertLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey,
+                      const std::string& payloadJson) override;
+    bool TryGetLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey,
+                      LookupCacheRow& out) override;
+    std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) override;
+    bool DeleteLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey) override;
 
 #if defined(SMATCHET_WITH_AI)
     // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------
@@ -174,7 +172,7 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /// Create/upgrade every cache table (additive-only schema). Re-runnable on a fresh
     /// file — the ctor calls it after quarantining + reopening an unreadable cache.
     void InitSchema();
-    /// Initialize the lookup_cache table for offline-first reads (Pillar 6).
+    /// Create the lookup_cache table (Pillar 6 offline reads); called from InitSchema.
     void InitLookupCacheSchema_();
     /// Recover from a genuinely-corrupt cache file (ctor caught SQLITE_NOTADB / SQLITE_CORRUPT
     /// from InitSchema): release the handle, quarantine the bad file + its WAL sidecars to

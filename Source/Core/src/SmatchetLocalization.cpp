@@ -806,6 +806,10 @@ const TranslationEntry kEntries[] = {
     {"freshness.unavailable", "Not available yet", u8"Pas encore disponible"},
     {"freshness.badge_cached", "(saved)", u8"(enregistré)"},
     {"freshness.badge_refreshing", "(refreshing)", u8"(actualisation)"},
+    {"status.cue.checking", "Checking valid transitions\xE2\x80\xA6", u8"Vérification des transitions…"},
+    {"status.cue.cached_workflow", "Saved workflow (last seen online)", u8"Flux enregistré (vu en ligne)"},
+    {"status.cue.all_statuses_offline", "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs",
+     u8"Tous les statuts affichés — un changement invalide sera refusé à la synchronisation"},
     {"comments.post_placeholder", "Write a comment (Markdown supported)...",
      u8"Écrire un commentaire (Markdown pris en charge)..."},
     {"comments.posting", "Posting comment...", u8"Publication du commentaire..."},
@@ -829,11 +833,6 @@ const TranslationEntry kEntries[] = {
      "view's JQL to load them.",
      u8"Cette vue ne cible pas un projet unique : les options liées au projet n'ont pas été chargées. Ajoutez "
      u8"`project = KEY` au JQL de la vue pour les charger."},
-
-    {"status.cue.checking", "↻", u8"↻"},
-    {"status.cue.cached_workflow", "⊷", u8"⊷"},
-    {"status.cue.all_statuses_offline", "!", u8"!"},
-
     {"worklog.log_work_button", "Log work", u8"Saisir le travail"},
     {"worklog.none", "No work logged yet. Click to log work.", u8"Aucun travail journalisé. Cliquez pour le saisir."},
     {"worklog.total", "Total Time Spent: %s\nClick to log work / edit estimates.",

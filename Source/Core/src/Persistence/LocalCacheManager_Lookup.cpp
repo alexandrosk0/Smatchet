@@ -3,8 +3,18 @@
 #include "Logger.h"
 
 #include <SQLiteCpp/SQLiteCpp.h>
+
+#include <cstdint>
 #include <ctime>
 #include <exception>
+#include <string>
+#include <utility>
+#include <vector>
+
+// LocalCacheManager's ILookupCache half (Quality Pillar 6): persisted read-side lookups such as the
+// workflow remembered from earlier online use. Additive table; an older cache file gains it on open.
+// Every method uses its own local SQLite::Statement, so none touches the cached-statement slots that
+// stmtMutex_ guards (same shape as EnqueuePendingFieldEdit); the connection is OPEN_FULLMUTEX.
 
 void LocalCacheManager::InitLookupCacheSchema_() {
     db.exec("CREATE TABLE IF NOT EXISTS lookup_cache ("
@@ -14,13 +24,11 @@ void LocalCacheManager::InitLookupCacheSchema_() {
 }
 
 bool LocalCacheManager::UpsertLookup(const std::string& backendKey, const std::string& kind,
-                                      const std::string& cacheKey, const std::string& payloadJson) {
+                                     const std::string& cacheKey, const std::string& payloadJson) {
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
         const std::int64_t nowSec = std::time(nullptr);
-        SQLite::Statement stmt(db,
-                               "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "
-                               "payload_json, schema_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)");
+        SQLite::Statement stmt(db, "INSERT OR REPLACE INTO lookup_cache (backend_key, kind, cache_key, "
+                                   "payload_json, schema_version, updated_at) VALUES (?, ?, ?, ?, 1, ?)");
         stmt.bind(1, backendKey);
         stmt.bind(2, kind);
         stmt.bind(3, cacheKey);
@@ -35,12 +43,10 @@ bool LocalCacheManager::UpsertLookup(const std::string& backendKey, const std::s
 }
 
 bool LocalCacheManager::TryGetLookup(const std::string& backendKey, const std::string& kind,
-                                      const std::string& cacheKey, LookupCacheRow& out) {
+                                     const std::string& cacheKey, LookupCacheRow& out) {
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
-        SQLite::Statement stmt(db,
-                               "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
-                               "WHERE backend_key = ? AND kind = ? AND cache_key = ?");
+        SQLite::Statement stmt(db, "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
+                                   "WHERE backend_key = ? AND kind = ? AND cache_key = ?");
         stmt.bind(1, backendKey);
         stmt.bind(2, kind);
         stmt.bind(3, cacheKey);
@@ -57,14 +63,11 @@ bool LocalCacheManager::TryGetLookup(const std::string& backendKey, const std::s
     }
 }
 
-std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& backendKey,
-                                                            const std::string& kind) {
+std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& backendKey, const std::string& kind) {
     std::vector<LookupCacheRow> result;
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
-        SQLite::Statement stmt(db,
-                               "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
-                               "WHERE backend_key = ? AND kind = ?");
+        SQLite::Statement stmt(db, "SELECT cache_key, payload_json, updated_at FROM lookup_cache "
+                                   "WHERE backend_key = ? AND kind = ?");
         stmt.bind(1, backendKey);
         stmt.bind(2, kind);
         while (stmt.executeStep()) {
@@ -81,11 +84,9 @@ std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& ba
 }
 
 bool LocalCacheManager::DeleteLookup(const std::string& backendKey, const std::string& kind,
-                                      const std::string& cacheKey) {
+                                     const std::string& cacheKey) {
     try {
-        std::lock_guard<std::mutex> lock(stmtMutex_);
-        SQLite::Statement stmt(db,
-                               "DELETE FROM lookup_cache WHERE backend_key = ? AND kind = ? AND cache_key = ?");
+        SQLite::Statement stmt(db, "DELETE FROM lookup_cache WHERE backend_key = ? AND kind = ? AND cache_key = ?");
         stmt.bind(1, backendKey);
         stmt.bind(2, kind);
         stmt.bind(3, cacheKey);

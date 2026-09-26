@@ -20,8 +20,8 @@
 #include "FakeTrackerClient.h"
 #include "GridLiveContext.h" // GridContextFieldCatalog (real, default-constructed CatalogImpl)
 #include "IEditMetaDeps.h"
+#include "ILookupCache.h"
 #include "ITrackerBackend.h"
-#include "FakeLookupCache.h"
 
 #include <functional>
 #include <memory>
@@ -49,8 +49,10 @@ class FakeEditMetaDeps : public IEditMetaDeps {
     bool ShuttingDownImpl = false;
     mutable int DeferredNotifyCalls = 0;
     TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
-    std::shared_ptr<ILookupCache> LookupCacheImpl{std::make_shared<FakeLookupCache>()};
-    std::string CacheBackendKeyImpl = "test-backend";
+    /// Null by default (no local store, like before the cache exists); tests that exercise the
+    /// remembered workflow install a FakeLookupCache.
+    std::shared_ptr<ILookupCache> LookupCacheImpl;
+    std::string CacheBackendKeyImpl = "Jira";
 
     /// Real per-context field catalog the #975 kick-time pointer threads through. Warm tests
     /// inspect CatalogImpl.projectComponentOptions_ / projectComponentsInFlight_ after a kick.

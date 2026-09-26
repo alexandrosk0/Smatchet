@@ -1,53 +1,64 @@
 #include "LearnedWorkflowPure.h"
 
 #include "Json/BoundedJsonParse.h"
-#include "StringUtil.h"
+#include "Tracker/TrackerFieldValueParser.h"
 
 #include <nlohmann/json.hpp>
 
-using json = nlohmann::json;
+#include <string>
+#include <utility>
+#include <vector>
 
-namespace smatchet::workflow {
-
-const char* kLearnedTransitionsKind = "workflow_transitions";
+namespace smatchet {
+namespace workflow {
 
 std::string BuildLearnedTransitionsKey(const std::string& projectKey, const std::string& issueTypeKey,
                                        const std::string& fromStatusKey) {
     if (projectKey.empty() || issueTypeKey.empty() || fromStatusKey.empty()) {
-        return "";
+        return std::string();
     }
     return projectKey + "|" + issueTypeKey + "|" + fromStatusKey;
 }
 
 std::string SerializeTransitionTargets(const std::vector<TrackerFieldOption>& options) {
-    json arr = json::array();
-    for (const auto& opt : options) {
-        json obj;
-        obj["id"] = opt.Id;
-        obj["name"] = opt.Value;
-        arr.push_back(obj);
+    nlohmann::json arr = nlohmann::json::array();
+    for (const TrackerFieldOption& opt : options) {
+        nlohmann::json entry = nlohmann::json::object();
+        entry["id"] = opt.Id;
+        entry["name"] = opt.Value;
+        arr.push_back(std::move(entry));
     }
-    return arr.dump();
+    // A status name is tracker-supplied text; replace invalid UTF-8 instead of throwing.
+    return arr.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
-bool ParseTransitionTargets(const std::string& jsonStr, std::vector<TrackerFieldOption>& out) {
-    std::string errOut;
-    const auto parsed = json_safe::ParseBounded(jsonStr, errOut);
-    if (!errOut.empty() || !parsed.is_array()) {
+bool ParseTransitionTargets(const std::string& json, std::vector<TrackerFieldOption>& out) {
+    out.clear();
+    std::string err;
+    const nlohmann::json parsed = smatchet::json_safe::ParseBounded(json, err);
+    if (!err.empty() || !parsed.is_array()) {
         return false;
     }
-    out.clear();
-    for (const auto& item : parsed) {
-        if (item.is_object() && item.contains("id") && item.contains("name")) {
-            TrackerFieldOption opt;
-            opt.Id = item["id"].is_string() ? item["id"].get<std::string>() : "";
-            opt.Value = item["name"].is_string() ? item["name"].get<std::string>() : "";
-            if (!opt.Id.empty() || !opt.Value.empty()) {
-                out.push_back(opt);
-            }
+    for (const nlohmann::json& entry : parsed) {
+        if (!entry.is_object()) {
+            continue;
         }
+        TrackerFieldOption opt;
+        const auto id = entry.find("id");
+        if (id != entry.end()) {
+            opt.Id = JsonIdToString(*id); // a string or integer id; anything else reads as absent
+        }
+        const auto name = entry.find("name");
+        if (name != entry.end() && name->is_string()) {
+            opt.Value = name->get<std::string>();
+        }
+        if (opt.Id.empty() && opt.Value.empty()) {
+            continue;
+        }
+        out.push_back(std::move(opt));
     }
     return true;
 }
 
-} // namespace smatchet::workflow
+} // namespace workflow
+} // namespace smatchet
