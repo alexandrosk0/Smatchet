@@ -124,6 +124,29 @@ TEST_CASE("MapJiraIssueComments — an unmapped inline node (status lozenge) kee
     CHECK(out[0].Body == "Moved to IN REVIEW");
 }
 
+TEST_CASE("MapJiraIssueComments — an implausibly deep ADF body skips the Markdown walk, keeps its text") {
+    // 100 nested blockquotes: past the mapper's convertible-depth guard, so the body takes the
+    // iterative-safe plain-text flattening instead of the recursive ADF→Markdown walk (which
+    // overflowed the MSVC ASan stack on the 400-deep hostile case).
+    nlohmann::json doc = AdfParagraph("deep text");
+    for (int i = 0; i < 100; ++i) {
+        nlohmann::json quote = nlohmann::json::object();
+        quote["type"] = "blockquote";
+        quote["content"] = nlohmann::json::array({doc["content"][0]});
+        nlohmann::json wrapper = nlohmann::json::object();
+        wrapper["type"] = "doc";
+        wrapper["content"] = nlohmann::json::array({quote});
+        doc = std::move(wrapper);
+    }
+    nlohmann::json c = nlohmann::json::object();
+    c["id"] = "6";
+    c["body"] = doc;
+    const std::vector<TrackerIssueComment> out = MapJiraIssueComments(nlohmann::json::array({c}));
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].Body == "deep text");
+    CHECK(out[0].Body.find('>') == std::string::npos); // not the Markdown (blockquote) rendering
+}
+
 TEST_CASE("MapJiraIssueComments — absent author defaults Author to \"Unknown\"") {
     nlohmann::json arr = nlohmann::json::array();
     nlohmann::json c = nlohmann::json::object();
