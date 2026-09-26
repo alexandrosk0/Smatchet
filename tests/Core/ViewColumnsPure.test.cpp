@@ -50,26 +50,30 @@ TEST_CASE("MigrateLegacyColumns reproduces the pre-v3 TicketGridColumnsBuilder::
     SUBCASE("empty ColumnOrder — id then fields in Fields order") {
         const auto columns = MigrateLegacyColumns({"summary", "status", "priority"}, {}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary", "field:status", "field:priority"});
     }
     SUBCASE("complete ColumnOrder — that order wins outright") {
         const auto columns = MigrateLegacyColumns({"summary", "status"}, {"id", "field:status", "field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary"});
     }
     SUBCASE("short ColumnOrder — a field added elsewhere is appended in Fields order, not dropped") {
         const auto columns = MigrateLegacyColumns({"summary", "status", "assignee"}, {"id", "field:status"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee"});
     }
     SUBCASE("ColumnOrder missing id — id is not silently invented by this pass, it is what "
             "MigrateLegacyColumns is given, and 'id' only comes from Fields' own allKeys seed") {
         const auto columns = MigrateLegacyColumns({"summary"}, {"field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         // "id" is always in allKeys (MigrateLegacyColumns seeds it unconditionally) and was not
         // consumed by columnOrder, so it lands in the tail-append.
         CHECK(keys == std::vector<std::string>{"field:summary", "id"});
@@ -77,13 +81,15 @@ TEST_CASE("MigrateLegacyColumns reproduces the pre-v3 TicketGridColumnsBuilder::
     SUBCASE("stale ColumnOrder key naming a field that no longer exists is dropped") {
         const auto columns = MigrateLegacyColumns({"summary"}, {"id", "field:gone", "field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary"});
     }
     SUBCASE("legacy comment alias folds onto comments, deduped") {
         const auto columns = MigrateLegacyColumns({"comment"}, {"id", "field:comments"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:comments"});
     }
     SUBCASE("widths carry over by key") {
@@ -161,7 +167,8 @@ TEST_CASE("ReorderViewColumns") {
         const auto ignored = ReorderViewColumns({"field:status", "id", "field:summary"}, v);
         CHECK(ignored.empty());
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"field:status", "id", "field:summary"});
     }
     SUBCASE("widths survive the reorder") {
@@ -176,7 +183,8 @@ TEST_CASE("ReorderViewColumns") {
         const auto ignored = ReorderViewColumns({"field:status"}, v);
         CHECK(ignored.empty());
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"field:status", "id", "field:summary"});
     }
     SUBCASE("an unknown key is reported in ignored, not silently dropped or invented") {
@@ -185,77 +193,172 @@ TEST_CASE("ReorderViewColumns") {
         REQUIRE(ignored.size() == 1);
         CHECK(ignored.front() == "field:typo");
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary"});
     }
 }
 
-TEST_CASE("ViewDraftDiffersFromSaved") {
-    SUBCASE("a fresh draft equal to saved is never dirty — no phantom launch-time strip") {
+namespace {
+
+std::vector<std::string> KeysOf(const ViewDefinition& v) {
+    std::vector<std::string> keys;
+    for (const auto& c : v.Columns) {
+        keys.push_back(c.Key);
+    }
+    return keys;
+}
+
+} // namespace
+
+TEST_CASE("ViewDraftHasUnsavedEdits") {
+    SUBCASE("a fresh draft equal to saved is never unsaved") {
         const ViewDefinition saved = MakeView(MigrateLegacyColumns({"summary", "status"}, {}, {{"id", 90.0f}}));
-        ViewDefinition draft = saved;
-        CHECK_FALSE(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(saved, saved));
     }
-    SUBCASE("Name / Jql / HideParents / StoryGroupSort each flip dirty") {
-        const ViewDefinition saved = MakeView({{"id", 90.0f}});
-        ViewDefinition draft = saved;
-        draft.Name = "Renamed";
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-        draft = saved;
-        draft.Jql = "status = Open";
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-        draft = saved;
-        draft.HideParents = true;
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-        draft = saved;
-        draft.StoryGroupSort = true;
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-    }
-    SUBCASE("a SortSpec change is dirty") {
-        const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:status", 0.0f}});
-        ViewDefinition draft = saved;
-        draft.SortSpecs.push_back({"field:status", 1});
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-    }
-    SUBCASE("a column swap is dirty") {
+    SUBCASE("name, query and column set / order are editor edits") {
         const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 0.0f}, {"field:status", 0.0f}});
         ViewDefinition draft = saved;
+        draft.Name = "Renamed";
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
+        draft = saved;
+        draft.Jql = "status = Open";
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
+        draft = saved;
         std::swap(draft.Columns[1], draft.Columns[2]);
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
+        draft = saved;
+        draft.Columns.pop_back();
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
     }
-    SUBCASE("a width change past tolerance is dirty; within tolerance is not") {
-        const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 180.0f}});
+    SUBCASE("layout is never an unsaved edit — the grid and Sort tab autosave it") {
+        // Regression guard: counting these made every view switch after a grid resize, sort or
+        // hierarchy toggle raise "You have unsaved changes" with no edit behind it.
+        const ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 180.0f}, {"field:status", 0.0f}});
         ViewDefinition draft = saved;
-        draft.Columns[1].Width = 180.3f;
-        CHECK_FALSE(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-        draft.Columns[1].Width = 240.0f;
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
+        draft.Columns[1].Width = 400.0f;
+        draft.SortSpecs.push_back({"field:status", 1});
+        draft.HideParents = !saved.HideParents;
+        draft.StoryGroupSort = !saved.StoryGroupSort;
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
     }
-    SUBCASE("a width stored under a key absent from the current column list can never contribute — "
-            "the size/key-sequence check gates it out before any width is compared") {
-        ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 180.0f}, {"field:status", 999.0f}});
-        ViewDefinition draft = MakeView({{"id", 90.0f}, {"field:summary", 180.0f}});
-        // Different column COUNT is itself a real difference (status was removed) — this proves
-        // the removal is caught by the size check, not by width leakage from the removed key.
-        CHECK(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
-        saved = draft; // now genuinely equal
-        CHECK_FALSE(ViewDraftDiffersFromSaved(draft, saved, 0.5f));
+}
+
+TEST_CASE("MergeDraftEditsOntoSaved") {
+    ViewDefinition saved = MakeView({{"id", 90.0f}, {"field:summary", 320.0f}, {"field:status", 150.0f}});
+    saved.SortSpecs = {{"field:status", 2}};
+    saved.HideParents = true;
+    ViewDefinition draft = saved;
+    draft.Name = "Edited";
+    draft.Jql = "project = X";
+    draft.Columns = {{"id", 90.0f}, {"field:status", 1.0f}, {"field:summary", 1.0f}, {"field:assignee", 0.0f}};
+
+    const ViewDefinition merged = MergeDraftEditsOntoSaved(draft, saved);
+    CHECK(merged.Id == saved.Id);
+    CHECK(merged.Name == "Edited");
+    CHECK(merged.Jql == "project = X");
+    CHECK(KeysOf(merged) == std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee"});
+    // Widths come from the saved view, never from the draft's load-time copy.
+    CHECK(EffectiveColumnWidth(merged, "field:summary") == doctest::Approx(320.0f));
+    CHECK(EffectiveColumnWidth(merged, "field:status") == doctest::Approx(150.0f));
+    CHECK(EffectiveColumnWidth(merged, "field:assignee") == doctest::Approx(180.0f));
+    // Layout is the saved view's.
+    CHECK(merged.SortSpecs == saved.SortSpecs);
+    CHECK(merged.HideParents);
+    CHECK(merged.Fields == std::vector<std::string>{"status", "summary", "assignee"});
+}
+
+TEST_CASE("RebaseViewDraft") {
+    const ViewDefinition loaded =
+        MakeView({{"id", 90.0f}, {"field:summary", 180.0f}, {"field:status", 180.0f}, {"field:priority", 180.0f}});
+
+    SUBCASE("no change underneath is a no-op") {
+        ViewDefinition draft = loaded;
+        draft.Name = "mid-edit";
+        ViewDefinition base = loaded;
+        const ViewDraftRebaseResult r = RebaseViewDraft(draft, base, loaded);
+        CHECK_FALSE(r.NameAdopted);
+        CHECK_FALSE(r.JqlAdopted);
+        CHECK(draft.Name == "mid-edit");
     }
+    SUBCASE("a grid drag + resize + sort on a clean draft is adopted, and the draft stays clean") {
+        // The reported bug: drag a column in the grid, then switch view -> phantom "unsaved"
+        // prompt, and "Save & switch" wrote the stale order back over the drag.
+        ViewDefinition draft = loaded;
+        ViewDefinition base = loaded;
+        ViewDefinition saved = loaded;
+        ReorderViewColumns({"id", "field:priority", "field:summary", "field:status"}, saved);
+        saved.Columns[2].Width = 333.0f;
+        saved.SortSpecs = {{"field:priority", 1}};
+
+        RebaseViewDraft(draft, base, saved);
+        CHECK(draft == saved);
+        CHECK(base == saved);
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
+        CHECK(MergeDraftEditsOntoSaved(draft, saved) == saved);
+    }
+    SUBCASE("an editor column edit survives a grid change underneath; widths follow the saved view") {
+        ViewDefinition draft = loaded;
+        ViewDefinition base = loaded;
+        draft.Columns.pop_back(); // user unticked priority in the Fields tab
+        ViewDefinition saved = loaded;
+        ReorderViewColumns({"id", "field:status", "field:summary", "field:priority"}, saved); // grid drag
+        saved.Columns[1].Width = 250.0f;                                                      // grid resize
+
+        RebaseViewDraft(draft, base, saved);
+        CHECK(KeysOf(draft) == std::vector<std::string>{"id", "field:summary", "field:status"});
+        CHECK(EffectiveColumnWidth(draft, "field:status") == doctest::Approx(250.0f));
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved));
+        CHECK(base == saved);
+    }
+    SUBCASE("query and name saved elsewhere are adopted unless the user edited them") {
+        ViewDefinition draft = loaded;
+        ViewDefinition base = loaded;
+        ViewDefinition saved = loaded;
+        saved.Jql = "status = Done"; // grid search box / view.update command
+        saved.Name = "Renamed by command";
+        ViewDraftRebaseResult r = RebaseViewDraft(draft, base, saved);
+        CHECK(r.JqlAdopted);
+        CHECK(r.NameAdopted);
+        CHECK(draft.Jql == "status = Done");
+        CHECK(draft.Name == "Renamed by command");
+
+        draft.Jql = "my own edit";
+        ViewDefinition saved2 = saved;
+        saved2.Jql = "another external edit";
+        r = RebaseViewDraft(draft, base, saved2);
+        CHECK_FALSE(r.JqlAdopted);
+        CHECK(draft.Jql == "my own edit");
+        CHECK(ViewDraftHasUnsavedEdits(draft, saved2));
+    }
+    SUBCASE("an editor edit equal to the new saved value is simply clean") {
+        ViewDefinition draft = loaded;
+        ViewDefinition base = loaded;
+        draft.Name = "Same";
+        ViewDefinition saved = loaded;
+        saved.Name = "Same";
+        RebaseViewDraft(draft, base, saved);
+        CHECK_FALSE(ViewDraftHasUnsavedEdits(draft, saved));
+    }
+}
+
+TEST_CASE("Save round-trip keeps column order") {
     SUBCASE("Save is identity: normalizing a view with non-alphabetical Fields and a complete "
             "column order round-trips the same key sequence — the direct regression guard for "
             "'I press Save and the columns reshuffle'") {
         ViewDefinition v;
         v.Fields = {"summary", "assignee", "priority", "status"}; // deliberately non-alphabetical
-        v.Columns = MigrateLegacyColumns(v.Fields, {"id", "field:status", "field:summary", "field:assignee",
-                                                    "field:priority"}, {});
+        v.Columns = MigrateLegacyColumns(
+            v.Fields, {"id", "field:status", "field:summary", "field:assignee", "field:priority"}, {});
         NormalizeViewDefinition(v);
         const std::vector<ViewColumn> before = v.Columns;
         // Simulate a round-trip through Save (build -> commit -> reload) by normalizing again.
         NormalizeViewDefinition(v);
         CHECK(v.Columns == before);
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
-        CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee",
-                                               "field:priority"});
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
+        CHECK(keys ==
+              std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee", "field:priority"});
     }
 }

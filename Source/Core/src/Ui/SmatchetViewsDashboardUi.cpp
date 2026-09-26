@@ -57,12 +57,9 @@ enum ViewsEditorTab : int {
     Tab_Sort = 3,
 };
 
-// Load the Views editor's draft from a saved view (column-view-save-simplification):
-// d.viewDraft becomes a full editable COPY of `view`, and the ImGui text buffers are
-// re-seeded as display mirrors of it. No separate selected-field set, column-order buffer,
-// or dirty flag — the Fields/Columns/Sort tabs edit the draft's Columns and SortSpecs
-// directly, and "dirty" is ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f),
-// computed fresh every frame in drawViewsEditorHeader. Resets autocomplete state too.
+// Load the Views editor's draft from a saved view: d.viewDraft (and its rebase ancestor
+// d.viewDraftBase) become copies of `view`, and the ImGui text buffers are re-seeded as display
+// mirrors of it. Resets autocomplete state too. See UiDrawSession::viewDraft.
 void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     std::memset(d.fieldSearchBuf, 0, sizeof(d.fieldSearchBuf));
     d.viewJqlEditor.jqlAcpApplyReplace = false;
@@ -88,6 +85,7 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewJqlEditor.jqlAcpUserSearchInFlightId = 0;
 
     d.viewDraft = view;
+    d.viewDraftBase = view;
     d.viewDraftId = view.Id;
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, view.Name);
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, view.Jql);
@@ -95,6 +93,26 @@ void LoadBuffersFromView(UiDrawSession& d, const ViewDefinition& view) {
     d.viewsHasOriginalSnapshot = false; // grid-side-only field; unused by the editor, kept clean
     d.viewsKeyboardReorderRow = -1;
     d.viewsTitleEditing = false;
+}
+
+// Bring the editor draft in line with the active view before anything reads it: reload on a
+// view switch, otherwise rebase it onto whatever the saved view became since the last sync
+// (grid column drag / resize / sort, Sort tab, grid search query, view.* commands). A part the
+// user edited in the editor keeps the user's value; everything else follows the saved view.
+void SyncViewsEditorDraft(UiDrawSession& d, const ViewDefinition& active) {
+    if (d.viewDraftId != active.Id) {
+        LoadBuffersFromView(d, active);
+        return;
+    }
+    const ViewDraftRebaseResult rebased = RebaseViewDraft(d.viewDraft, d.viewDraftBase, active);
+    // The inline title editor commits to the draft only on Enter/deactivate, so mid-rename the
+    // draft still equals its base; leave the buffer the user is typing into alone.
+    if (rebased.NameAdopted && !d.viewsTitleEditing) {
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, d.viewDraft.Name);
+    }
+    if (rebased.JqlAdopted) {
+        SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, d.viewDraft.Jql);
+    }
 }
 
 } // namespace
@@ -247,14 +265,7 @@ void SmatchetUI::drawMobileDrawerViews(AppController& app, UiDrawSession& d) {
         ImGui::TextDisabled("No views available.");
         return;
     }
-    // Reload the draft whenever the active view id changed underneath us (column-view-save-
-    // simplification: a mere layout drift — e.g. the grid autosaving a width/order change to
-    // the same view — no longer force-reloads a possibly-mid-edit draft here; only an actual
-    // view switch does. See d.viewDraft's doc comment for why this is safe: layout autosaves
-    // independently of the editor's draft, and the two resynchronize on the next activate).
-    if (d.viewDraftId != activeView->Id) {
-        LoadBuffersFromView(d, *activeView);
-    }
+    SyncViewsEditorDraft(d, *activeView);
 
     ViewsDashboardDrawCtx ctx = buildMobileViewsCtx(app, d, activeView, ImGui::GetContentRegionAvail().x);
     drawViewsSidebar(ctx);
@@ -334,9 +345,9 @@ void SmatchetUI::drawViewsEditorHeader(ViewsDashboardDrawCtx& ctx) {
     const ViewsStore& store = ctx.store;
     const ViewDefinition* activeView = ctx.activeView;
 
-    // Dirty is DERIVED, never a stored flag (column-view-save-simplification): compared fresh
-    // every frame against the live saved view, so it can never go stale or false-positive.
-    const bool dirty = ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f);
+    // Derived every frame against the live saved view (the draft was synced this frame by
+    // drawViewsDashboardWindow), never a stored flag.
+    const bool dirty = ViewDraftHasUnsavedEdits(d.viewDraft, *activeView);
 
     // Title row. The buffer is a display mirror of d.viewDraft.Name (see its doc comment) —
     // committing writes straight into the draft, no separate dirty flag to set.
@@ -995,10 +1006,8 @@ void SmatchetUI::drawViewsDashboardWindow(AppController& app, UiDrawSession& d, 
 
     const ViewDefinition* activeView = ViewState.GetActiveView();
 
-    // Reload the draft whenever the active view id changed underneath us — see the matching
-    // comment in drawMobileDrawerViews for why a mere layout drift no longer force-reloads.
-    if (activeView && d.viewDraftId != activeView->Id) {
-        LoadBuffersFromView(d, *activeView);
+    if (activeView) {
+        SyncViewsEditorDraft(d, *activeView);
     }
 
     if (!activeView) {
@@ -1137,36 +1146,23 @@ void SmatchetUI::drawViewsJiraDomainPicker(AppController& app, UiDrawSession& d)
     }
 }
 
-// Apply the editing buffers onto the active view + sync the grid. Former applyAndSync closure body.
-// Commit the draft onto the store (column-view-save-simplification). ViewState.Update
-// normalizes it (regenerating Fields from Columns, filling default widths, pruning stale
-// SortSpecs) — reload the draft from what ACTUALLY landed rather than assume the pre-commit
-// draft matches, which is what let a prior version of this function forget to keep
-// d.lastSyncedColumnOrder in sync and cause a spurious buffer reload the very next frame.
+// Commit the editor's edits (name, query, column set/order) onto the active view and sync the
+// grid. Layout comes from the live saved view (MergeDraftEditsOntoSaved), so Apply never reverts
+// a width/order/sort the grid autosaved while the editor was open. The draft is reloaded from
+// what actually landed (ViewState normalizes on write).
 void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     if (!activeView) {
         return;
     }
-    // Apply only what the editor's own tabs actually edit (Name/Jql via the Filter tab,
-    // column order + membership via the Fields/Columns tabs) onto the CURRENT live view,
-    // not a wholesale draft overwrite. SortSpecs/HideParents/StoryGroupSort are owned by
-    // the grid header (DrawSortByPopupBody writes them straight to the live view and
-    // autosaves) and are never edited through d.viewDraft, so taking them from the draft
-    // here would silently revert whatever autosaved into the live view since the draft was
-    // last loaded — the draft only reloads on a view-id switch, not on every live layout
-    // write (Cursor Bugbot finding). Column widths get the same treatment: order/membership
-    // come from the draft, but each surviving key's width is re-read from the live view so a
-    // grid-driven resize made while the editor was open isn't clobbered by the draft's
-    // load-time width.
-    ViewDefinition merged = *activeView;
-    merged.Name = d.viewDraft.Name;
-    merged.Jql = d.viewDraft.Jql;
-    merged.Columns.clear();
-    merged.Columns.reserve(d.viewDraft.Columns.size());
-    for (const auto& col : d.viewDraft.Columns) {
-        merged.Columns.push_back({col.Key, EffectiveColumnWidth(*activeView, col.Key)});
-    }
+    SyncViewsEditorDraft(d, *activeView);
+    const ViewDefinition merged = MergeDraftEditsOntoSaved(d.viewDraft, *activeView);
     if (ViewState.UpdateActive(merged)) {
+        // UpdateActive persisted the whole view, including a query the grid search box applied
+        // (the draft adopted it on sync), so the grid's "not saved" strip no longer applies —
+        // and its pre-edit snapshot must go too, or a later strip Discard restores that stale
+        // query over the one just saved.
+        d.viewsDirty = false;
+        d.viewsHasOriginalSnapshot = false;
         const ViewDefinition* saved = ViewState.GetActiveView();
         if (saved) {
             d.cfg.JqlQuery = saved->Jql;
@@ -1216,15 +1212,16 @@ void SmatchetUI::viewsActivateView(AppController& app, UiDrawSession& d, const s
     }
 }
 
-// Request activation, guarded by the unsaved-changes confirm. Former requestActivate closure body.
-// Dirty is derived (column-view-save-simplification), not d.viewsDirty — that field is the
-// GRID's own query-strip flag now, unrelated to this editor's draft.
+// Request activation, guarded by the unsaved-changes confirm. Only an editor edit the user has
+// not applied (name / query / column set or order) prompts — never a layout change, which is
+// already saved. d.viewsDirty is the GRID's own query-strip flag, unrelated to this draft.
 void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, const ViewDefinition* activeView,
                                       const std::string& id) {
     if (id == activeView->Id) {
         return;
     }
-    if (ViewDraftDiffersFromSaved(d.viewDraft, *activeView, 0.5f)) {
+    SyncViewsEditorDraft(d, *activeView);
+    if (ViewDraftHasUnsavedEdits(d.viewDraft, *activeView)) {
         d.viewsPendingActivateId = id;
         d.viewsShowDiscardConfirm = true;
     } else {
@@ -1239,7 +1236,9 @@ void SmatchetUI::viewsRequestActivate(AppController& app, UiDrawSession& d, cons
 // *activeView is still valid; applyPendingViewCreate consumes the latch next frame.
 void SmatchetUI::viewsCreateNewView(AppController& app, UiDrawSession& d, const ViewDefinition* activeView) {
     (void)app;
-    (void)activeView;
+    if (activeView) {
+        SyncViewsEditorDraft(d, *activeView);
+    }
     ViewDefinition created = d.viewDraft;
     created.Name = "New View";
     created.Id.clear();

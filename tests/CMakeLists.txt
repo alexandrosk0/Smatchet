@@ -104,6 +104,9 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # it, links ImGuiLib → GLFW/X11/OpenGL and is Windows-only — a bug in this file
         # silently passed a "397/397" Linux run and was only caught by CI on Windows).
         Core/ViewColumnsPure.test.cpp
+        # Grid header drag-reorder target + edge auto-scroll + display-order predicates
+        # (GridColumnOrderPure.h) — header-only, ImGui-free, no threads.
+        Core/GridColumnOrderPure.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/TrackerGridFieldDisplayPure.cpp"
         # Gap map Tier 1 #5 — the JQL / Plane query-suggest engines behind their catalog-vector
         # seams (keystroke-frequency untrusted-input parsers), + their shared-helper closure

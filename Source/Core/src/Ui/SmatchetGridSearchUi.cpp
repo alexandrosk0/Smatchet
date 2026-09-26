@@ -157,6 +157,13 @@ SmatchetUI::ApplyQueryResult SmatchetUI::applyQueryToPaneView(AppController& app
     ViewState.BumpRevision();
     d.viewsDirty = true;
     d.cfg.JqlQuery = query;
+    // The search is the user's latest query action, so it replaces the Views editor's query as
+    // a whole — box, draft and the draft's rebase base — never just the box, which would show one
+    // query while Apply commits another.
+    if (d.viewDraftId == mutableActive->Id) {
+        d.viewDraft.Jql = query;
+        d.viewDraftBase.Jql = query;
+    }
     SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewJqlEditor.buf, query);
     SmatchetViewsDashboardUiDetail::SyncWithCurrentView(app, d, ViewState.GetStore(), true);
     return ApplyQueryResult::Ok;

@@ -79,10 +79,12 @@ struct ViewsDrawerStateGuard {
     bool drawerOpen = g_ui.mobileDrawerOpen;
     std::string viewDraftId = g_ui.viewDraftId;
     ViewDefinition viewDraft = g_ui.viewDraft;
+    ViewDefinition viewDraftBase = g_ui.viewDraftBase;
     ~ViewsDrawerStateGuard() {
         g_ui.mobileDrawerOpen = drawerOpen;
         g_ui.viewDraftId = viewDraftId;
         g_ui.viewDraft = viewDraft;
+        g_ui.viewDraftBase = viewDraftBase;
         g_ui.mobilePage = page;
         g_ui.cfg.UiMode = uiMode;
         g_ui.cfg.TrackerType = tracker;

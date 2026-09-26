@@ -44,6 +44,7 @@ extern "C" void SmatchetRegisterFuncSizeMainUiSmokeTests(ImGuiTestEngine* engine
 extern "C" void SmatchetRegisterFuncSizeGridRenderTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridPaneWindowsTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridParentHierarchyTests(ImGuiTestEngine* engine);
+extern "C" void SmatchetRegisterGridHeaderDragTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterGridWheelRouteOwnershipTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterResetLayoutDockingTests(ImGuiTestEngine* engine);
 extern "C" void SmatchetRegisterDockSlotLivenessTests(ImGuiTestEngine* engine);
@@ -116,6 +117,7 @@ extern "C" void SmatchetRegisterAllUiTests(ImGuiTestEngine* engine) {
     SmatchetRegisterFuncSizeGridRenderTests(engine);
     SmatchetRegisterGridPaneWindowsTests(engine);
     SmatchetRegisterGridParentHierarchyTests(engine);
+    SmatchetRegisterGridHeaderDragTests(engine);
     SmatchetRegisterGridWheelRouteOwnershipTests(engine);
     SmatchetRegisterResetLayoutDockingTests(engine);
     SmatchetRegisterDockSlotLivenessTests(engine);

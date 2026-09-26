@@ -23,4 +23,11 @@ inline bool SmatchetUiTestIsHeadlessSoftwareGl() {
     return v != nullptr && v[0] == '1';
 }
 
+// True when the deterministic Jira fixture backend is configured for this run
+// (SMATCHET_TEST_JIRA_BACKEND_FIXTURE). Tests that need its tickets skip-with-log without it.
+inline bool SmatchetUiTestHasJiraFixture() {
+    const char* v = std::getenv("SMATCHET_TEST_JIRA_BACKEND_FIXTURE");
+    return v != nullptr && v[0] != '\0';
+}
+
 #endif // SMATCHET_BUILD_UI_TESTS

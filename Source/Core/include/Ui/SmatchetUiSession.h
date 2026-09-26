@@ -754,26 +754,25 @@ struct UiDrawSession {
     /// JqlEditorState. Its `.buf` is a display mirror of viewDraft.Jql — one write
     /// direction: buffer -> viewDraft.Jql on an edit frame (via
     /// TrackerQueryAcp_CanonicalQueryForApply), viewDraft.Jql -> buffer only on draft
-    /// load/discard (see Ui/AGENTS.md-style invariant note on LoadDraftFromView). The grid
+    /// load/discard or when a rebase adopts a query saved elsewhere (SyncViewsEditorDraft). The grid
     /// header's per-pane search box keeps its text in GridPane::gridSearchBuf instead — a
     /// plain input, so no second editor instance.
     JqlEditorState viewJqlEditor;
 
-    /// The Views editor's single editing draft (column-view-save-simplification): the full
-    /// editable copy of whatever view is open in the dashboard/mobile editor, keyed by
-    /// `viewDraftId`. Fields/Columns/SortSpecs/HideParents/StoryGroupSort/Jql/Name/HideParents
-    /// are all edited directly on this struct (Fields tab pushes/erases a ViewColumn in
-    /// viewDraft.Columns; Columns tab reorders it; Sort tab edits viewDraft.SortSpecs) — no
-    /// separate selected-field set, column-order buffer, or reconcile pass. "Dirty" is
-    /// NEVER a stored flag for this surface: it is computed each frame as
-    /// `ViewDraftDiffersFromSaved(viewDraft, *activeView, 0.5f)` against the live store
-    /// view. Save = ViewState.Update(viewDraftId, viewDraft) then reload the draft from
-    /// what actually landed; Discard = reload the draft from the store, unconditionally.
-    /// Distinct from the GRID's OWN write path (the table write-back / DrawSortByPopupBody),
-    /// which autosaves straight into the STORE's live ViewDefinition* and never touches this
-    /// draft — the two surfaces stay in sync because a CLEAN draft is reloaded from the store
-    /// whenever the view is (re)activated (LoadDraftFromView is called on every activate).
+    /// The Views editor's editing draft: a copy of the view open in the dashboard/mobile editor,
+    /// keyed by `viewDraftId`. The editor edits three things through it — Name, Jql, and the
+    /// column key sequence (Fields tab membership, Columns tab order) — and commits them with
+    /// Apply & Sync / "Save & switch" (MergeDraftEditsOntoSaved). Layout (widths, sort,
+    /// hide-parents, story-group) is written straight into the saved view by the grid and the
+    /// Sort tab and autosaved; it is never an unsaved edit. "Unsaved" is derived, never stored:
+    /// ViewDraftHasUnsavedEdits(viewDraft, *activeView). Every read goes through
+    /// SyncViewsEditorDraft first, which reloads on a view switch and otherwise rebases the
+    /// draft onto whatever the saved view became (RebaseViewDraft against viewDraftBase), so a
+    /// grid-side change can neither read as unsaved nor be reverted by a later Apply.
     ViewDefinition viewDraft;
+    /// The saved view `viewDraft` was last synced with — the common ancestor RebaseViewDraft
+    /// diffs both sides against to tell a user edit from a change made underneath the draft.
+    ViewDefinition viewDraftBase;
     /// Id of the view `viewDraft` was loaded from — empty means "no draft loaded". Distinct
     /// from `viewDraft.Id` (the SAME value once loaded) so a stale/missing draft is a single
     /// empty-string check rather than a null-view special case.
@@ -809,7 +808,7 @@ struct UiDrawSession {
     /// Jql was changed via applyQueryToPaneView (the grid search box / User-Info "add to
     /// query" path) but not yet persisted. Layout (widths/order/sort/hide-parents/story-
     /// group) autosaves and never sets this. The Views EDITOR has no dirty flag at all — its
-    /// "unsaved" state is the derived ViewDraftDiffersFromSaved(viewDraft, *activeView, …)
+    /// "unsaved" state is the derived ViewDraftHasUnsavedEdits(viewDraft, *activeView)
     /// compare, computed fresh every frame, never stored.
     bool viewsDirty = false;
     int viewsKeyboardReorderRow = -1;

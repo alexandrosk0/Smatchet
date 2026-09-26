@@ -1,5 +1,6 @@
 #include "SmatchetUI.h"
 #include "SmatchetActiveProjectGridUi_Internal.h"
+#include "SmatchetGridColumnInteraction_detail.h"
 #include "SmatchetGridPaneWindows.h" // detail::PaneViewSelfRepairAllowed (HIGH-1) + ChoosePaneColumnsSource
 #include "SmatchetGridUiSupport.h"
 #include "SmatchetViewsDashboardUi_detail.h"
@@ -468,17 +469,17 @@ static void ResetTableDisplayOrderIfColumnsChanged(ImGuiTable* table, bool colum
     ResetTableDisplayOrderToIdentity(table);
 }
 
-// Capture a user-driven column reorder (drag the header) straight into the active view's
-// Columns, preserving each column's width (ReorderViewColumns), and arm the debounced disk
-// save. Autosaved, same as width/sort (column-view-save-simplification) — a header drag is
-// exactly as reversible as a resize (drag it back), so there is no reason to gate it behind
-// a different commit model. Bumps the views revision so the pane's cached column array (and
-// its ImGui table, via ResetTableDisplayOrderToIdentity below) picks up the new order next
-// frame — TicketGridColumnsBuilder::Build's output changed, unlike a pure sort/width edit.
+// Capture a finished header drag-reorder into the active view's Columns, preserving each
+// column's width (ReorderViewColumns), and arm the debounced disk save — autosaved like
+// width/sort. Only once the drag has ENDED: committing mid-drag rebuilds columns[] in the new
+// order next frame and resets the table's display order to identity, which renumbers the held
+// column's index under ImGui and drops the drag after a single neighbour swap. Bumps the views
+// revision so the pane's cached column array (and its ImGui table, via
+// ResetTableDisplayOrderIfColumnsChanged) picks up the new order next frame.
 static void CaptureHeaderDragColumnOrder(UiDrawSession& d, Views& viewState,
                                          const std::vector<TicketGridColumn>& columns, ViewDefinition& activeView) {
     ImGuiTable* table = ImGui::GetCurrentTable();
-    if (table == nullptr || table->ColumnsCount <= 0) {
+    if (table == nullptr || table->ColumnsCount <= 0 || smatchet::ui::GridHeaderDragInProgress(table)) {
         return;
     }
     std::vector<std::string> visualOrder;
@@ -767,7 +768,13 @@ void SmatchetUI::drawActiveProjectTable(ActiveProjectDrawCtx& ctx) {
         for (const auto& col : columns) {
             currentColumnKeys.push_back(col.Key);
         }
-        ResetTableDisplayOrderIfColumnsChanged(liveTable, currentColumnKeys != ctx.pane.lastDrawnColumnKeys);
+        const bool columnKeysChanged = currentColumnKeys != ctx.pane.lastDrawnColumnKeys;
+        ResetTableDisplayOrderIfColumnsChanged(liveTable, columnKeysChanged);
+        if (columnKeysChanged) {
+            // ImGui's sort state is per column INDEX too; re-derive it from the view by key so
+            // the arrow and the row order stay on the column the user sorted, not its old index.
+            ctx.pane.forceApplySortSpecs = true;
+        }
         ctx.pane.lastDrawnColumnKeys = std::move(currentColumnKeys);
         // Scenario-driven scroll: honor the target set by ScenarioRunner::Tick so automated
         // tests can drive the grid position without human input. Scenarios address "the
@@ -829,10 +836,15 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
         colWidths[ci] = widthsArePanesOwn ? EffectiveColumnWidth(*activeViewForGrid, columns[ci].Key)
                                           : DefaultColumnWidthPx(columns[ci].Key);
     }
-    ctx.requestedColumnWidths = colWidths;
     for (size_t ci = 0; ci < columns.size(); ++ci) {
         ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
     }
+    if (widthsArePanesOwn) {
+        // Only an owned view is the width authority; a fallback-resolved pane keeps whatever the
+        // user resized it to (drawActiveProjectGridPost never captures widths for it either).
+        smatchet::ui::SyncGridTableColumnWidths(ImGui::GetCurrentTable(), colWidths);
+    }
+    ctx.requestedColumnWidths = std::move(colWidths);
     ImGui::TableSetupScrollFreeze(1, 1);
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);
     for (int hci = 0; hci < static_cast<int>(columns.size()); ++hci) {
@@ -1112,6 +1124,7 @@ void SmatchetUI::drawActiveProjectGridPost(ActiveProjectDrawCtx& ctx) {
 
     SMATCHET_UI_PERF_SCOPE("activeProject:grid.post");
     RouteVerticalWheelToHorizontalAtTableVerticalEnds(ImGui::GetCurrentTable(), d, ctx.pane);
+    smatchet::ui::DriveGridHeaderDragReorder(ImGui::GetCurrentTable());
 
     // Capture column widths + a header-drag reorder into the active view IN MEMORY so the
     // grid renders the user's drag immediately, and arm the debounced disk save
