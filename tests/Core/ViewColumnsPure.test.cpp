@@ -50,26 +50,30 @@ TEST_CASE("MigrateLegacyColumns reproduces the pre-v3 TicketGridColumnsBuilder::
     SUBCASE("empty ColumnOrder — id then fields in Fields order") {
         const auto columns = MigrateLegacyColumns({"summary", "status", "priority"}, {}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary", "field:status", "field:priority"});
     }
     SUBCASE("complete ColumnOrder — that order wins outright") {
         const auto columns = MigrateLegacyColumns({"summary", "status"}, {"id", "field:status", "field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary"});
     }
     SUBCASE("short ColumnOrder — a field added elsewhere is appended in Fields order, not dropped") {
         const auto columns = MigrateLegacyColumns({"summary", "status", "assignee"}, {"id", "field:status"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee"});
     }
     SUBCASE("ColumnOrder missing id — id is not silently invented by this pass, it is what "
             "MigrateLegacyColumns is given, and 'id' only comes from Fields' own allKeys seed") {
         const auto columns = MigrateLegacyColumns({"summary"}, {"field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         // "id" is always in allKeys (MigrateLegacyColumns seeds it unconditionally) and was not
         // consumed by columnOrder, so it lands in the tail-append.
         CHECK(keys == std::vector<std::string>{"field:summary", "id"});
@@ -77,13 +81,15 @@ TEST_CASE("MigrateLegacyColumns reproduces the pre-v3 TicketGridColumnsBuilder::
     SUBCASE("stale ColumnOrder key naming a field that no longer exists is dropped") {
         const auto columns = MigrateLegacyColumns({"summary"}, {"id", "field:gone", "field:summary"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary"});
     }
     SUBCASE("legacy comment alias folds onto comments, deduped") {
         const auto columns = MigrateLegacyColumns({"comment"}, {"id", "field:comments"}, {});
         std::vector<std::string> keys;
-        for (const auto& c : columns) keys.push_back(c.Key);
+        for (const auto& c : columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:comments"});
     }
     SUBCASE("widths carry over by key") {
@@ -161,7 +167,8 @@ TEST_CASE("ReorderViewColumns") {
         const auto ignored = ReorderViewColumns({"field:status", "id", "field:summary"}, v);
         CHECK(ignored.empty());
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"field:status", "id", "field:summary"});
     }
     SUBCASE("widths survive the reorder") {
@@ -176,7 +183,8 @@ TEST_CASE("ReorderViewColumns") {
         const auto ignored = ReorderViewColumns({"field:status"}, v);
         CHECK(ignored.empty());
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"field:status", "id", "field:summary"});
     }
     SUBCASE("an unknown key is reported in ignored, not silently dropped or invented") {
@@ -185,7 +193,8 @@ TEST_CASE("ReorderViewColumns") {
         REQUIRE(ignored.size() == 1);
         CHECK(ignored.front() == "field:typo");
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
         CHECK(keys == std::vector<std::string>{"id", "field:summary"});
     }
 }
@@ -294,7 +303,7 @@ TEST_CASE("RebaseViewDraft") {
         draft.Columns.pop_back(); // user unticked priority in the Fields tab
         ViewDefinition saved = loaded;
         ReorderViewColumns({"id", "field:status", "field:summary", "field:priority"}, saved); // grid drag
-        saved.Columns[1].Width = 250.0f;                                                       // grid resize
+        saved.Columns[1].Width = 250.0f;                                                      // grid resize
 
         RebaseViewDraft(draft, base, saved);
         CHECK(KeysOf(draft) == std::vector<std::string>{"id", "field:summary", "field:status"});
@@ -339,16 +348,17 @@ TEST_CASE("Save round-trip keeps column order") {
             "'I press Save and the columns reshuffle'") {
         ViewDefinition v;
         v.Fields = {"summary", "assignee", "priority", "status"}; // deliberately non-alphabetical
-        v.Columns = MigrateLegacyColumns(v.Fields, {"id", "field:status", "field:summary", "field:assignee",
-                                                    "field:priority"}, {});
+        v.Columns = MigrateLegacyColumns(
+            v.Fields, {"id", "field:status", "field:summary", "field:assignee", "field:priority"}, {});
         NormalizeViewDefinition(v);
         const std::vector<ViewColumn> before = v.Columns;
         // Simulate a round-trip through Save (build -> commit -> reload) by normalizing again.
         NormalizeViewDefinition(v);
         CHECK(v.Columns == before);
         std::vector<std::string> keys;
-        for (const auto& c : v.Columns) keys.push_back(c.Key);
-        CHECK(keys == std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee",
-                                               "field:priority"});
+        for (const auto& c : v.Columns)
+            keys.push_back(c.Key);
+        CHECK(keys ==
+              std::vector<std::string>{"id", "field:status", "field:summary", "field:assignee", "field:priority"});
     }
 }

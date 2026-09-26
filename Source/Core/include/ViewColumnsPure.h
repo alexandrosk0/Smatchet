@@ -75,8 +75,8 @@ inline std::vector<std::string> FieldIdsFromColumns(const std::vector<ViewColumn
 /// moves on upgrade unless it was already reshuffled by the alphabetical-Fields save bug, in
 /// which case this restores it to columnOrder's order (the last-known-good visual layout).
 inline std::vector<ViewColumn> MigrateLegacyColumns(const std::vector<std::string>& fields,
-                                                     const std::vector<std::string>& columnOrder,
-                                                     const std::unordered_map<std::string, float>& widths) {
+                                                    const std::vector<std::string>& columnOrder,
+                                                    const std::unordered_map<std::string, float>& widths) {
     std::vector<std::string> allKeys;
     allKeys.push_back("id");
     std::unordered_set<std::string> seenFieldIds;
@@ -131,8 +131,8 @@ inline void NormalizeViewDefinition(ViewDefinition& view) {
         const float width = col.Width > 0.0f ? col.Width : DefaultColumnWidthPx(key);
         normalized.push_back({key, width});
     }
-    const bool hasId = std::any_of(normalized.begin(), normalized.end(),
-                                   [](const ViewColumn& c) { return c.Key == "id"; });
+    const bool hasId =
+        std::any_of(normalized.begin(), normalized.end(), [](const ViewColumn& c) { return c.Key == "id"; });
     if (!hasId) {
         normalized.insert(normalized.begin(), ViewColumn{"id", DefaultColumnWidthPx("id")});
     }
@@ -144,9 +144,10 @@ inline void NormalizeViewDefinition(ViewDefinition& view) {
     for (const auto& col : view.Columns) {
         keySet.insert(col.Key);
     }
-    view.SortSpecs.erase(std::remove_if(view.SortSpecs.begin(), view.SortSpecs.end(),
-                                        [&](const ViewSortSpec& s) { return keySet.find(s.ColumnKey) == keySet.end(); }),
-                         view.SortSpecs.end());
+    view.SortSpecs.erase(
+        std::remove_if(view.SortSpecs.begin(), view.SortSpecs.end(),
+                       [&](const ViewSortSpec& s) { return keySet.find(s.ColumnKey) == keySet.end(); }),
+        view.SortSpecs.end());
 }
 
 /// Reorder `view.Columns` to `order` (a list of keys, canonicalized on the way in), preserving
@@ -208,7 +209,7 @@ inline bool ViewColumnKeysEqual(const std::vector<ViewColumn>& a, const std::vec
 /// `keys`' column sequence, each carrying the width `widthSource` renders it at (a key new to
 /// `widthSource` gets the kind default).
 inline std::vector<ViewColumn> ColumnKeysWithWidthsFrom(const std::vector<ViewColumn>& keys,
-                                                         const ViewDefinition& widthSource) {
+                                                        const ViewDefinition& widthSource) {
     std::vector<ViewColumn> out;
     out.reserve(keys.size());
     for (const auto& col : keys) {

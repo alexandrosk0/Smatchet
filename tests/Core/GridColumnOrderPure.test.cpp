@@ -15,24 +15,20 @@ namespace {
 // Mirrors the grid call site: displayOrder[n] is column n's visual slot, orderToIndex[o]
 // is the logical column ImGui places at slot o.
 int FirstMismatch(const std::vector<int>& displayOrder, const std::vector<int>& orderToIndex) {
-    return GridFirstDisplayOrderMismatch(static_cast<int>(displayOrder.size()),
-                                         [&displayOrder](int n) { return displayOrder[static_cast<size_t>(n)]; },
-                                         [&orderToIndex](int o) { return orderToIndex[static_cast<size_t>(o)]; });
+    return GridFirstDisplayOrderMismatch(
+        static_cast<int>(displayOrder.size()), [&displayOrder](int n) { return displayOrder[static_cast<size_t>(n)]; },
+        [&orderToIndex](int o) { return orderToIndex[static_cast<size_t>(o)]; });
 }
 
 } // namespace
 
 TEST_CASE("GridFirstDisplayOrderMismatch accepts a consistent map") {
-    SUBCASE("identity — a freshly built table") {
-        CHECK(FirstMismatch({0, 1, 2, 3}, {0, 1, 2, 3}) == -1);
-    }
+    SUBCASE("identity — a freshly built table") { CHECK(FirstMismatch({0, 1, 2, 3}, {0, 1, 2, 3}) == -1); }
     SUBCASE("a committed drag — the two arrays are mutual inverses") {
         // Column 2 dragged to the front: orders are {1,2,0,3}, so slot 0 holds column 2.
         CHECK(FirstMismatch({1, 2, 0, 3}, {2, 0, 1, 3}) == -1);
     }
-    SUBCASE("a zero-column table is trivially consistent") {
-        CHECK(FirstMismatch({}, {}) == -1);
-    }
+    SUBCASE("a zero-column table is trivially consistent") { CHECK(FirstMismatch({}, {}) == -1); }
 }
 
 TEST_CASE("GridFirstDisplayOrderMismatch rejects the column-count-change desync") {
@@ -133,15 +129,19 @@ TEST_CASE("GridHeaderDragAutoScrollSpeed") {
         CHECK(GridHeaderDragAutoScrollSpeed(kMax - kZone, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
     }
     SUBCASE("ramps inside the band, full speed at the edge, left is negative") {
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin + 20.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-250.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin + 20.0f, kGrab, kMin, kMax, kZone, kSpeed) ==
+              doctest::Approx(-250.0f));
         CHECK(GridHeaderDragAutoScrollSpeed(kMin, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-500.0f));
         CHECK(GridHeaderDragAutoScrollSpeed(kMax - 20.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(250.0f));
         CHECK(GridHeaderDragAutoScrollSpeed(kMax, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(500.0f));
     }
     SUBCASE("keeps speeding up past the edge, capped at four times the edge speed") {
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 40.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(1000.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(2000.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin - 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-2000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 40.0f, kGrab, kMin, kMax, kZone, kSpeed) ==
+              doctest::Approx(1000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) ==
+              doctest::Approx(2000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin - 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) ==
+              doctest::Approx(-2000.0f));
     }
     SUBCASE("a strip narrower than two bands shrinks the band instead of scrolling everywhere") {
         // 90px strip -> 30px bands; the middle 30px stays still.

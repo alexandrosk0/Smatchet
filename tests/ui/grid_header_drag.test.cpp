@@ -267,9 +267,8 @@ void RegisterGridHeaderDragAcrossScroll(ImGuiTestEngine* engine) {
         // Load the Views editor draft against the ORIGINAL order, then close the editor again so
         // the grid is on screen for the drag. The draft persists in the session while closed.
         g_ui.showViewsDashboard = true;
-        IM_CHECK_NO_RET(StepUntil(ctx, 300, [] {
-            return !g_ui.viewDraftId.empty() && g_ui.viewDraftId == g_ui.gridPanes.front().viewId;
-        }));
+        IM_CHECK_NO_RET(StepUntil(
+            ctx, 300, [] { return !g_ui.viewDraftId.empty() && g_ui.viewDraftId == g_ui.gridPanes.front().viewId; }));
         g_ui.showViewsDashboard = false;
         if (!FocusGrid(ctx)) {
             IM_CHECK_NO_RET(false);
