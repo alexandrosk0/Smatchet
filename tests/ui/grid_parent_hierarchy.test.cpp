@@ -4,19 +4,20 @@
 // Two tests in this file, each its own ImGui Test Engine group so each can be pointed at the
 // fixture it actually needs (SMATCHET_TEST_JIRA_BACKEND_FIXTURE) without the other breaking:
 //
-// GridParentHierarchy / SortByToggles_ProjectionAndDirty (basic-grid.json, no parent links)
+// GridParentHierarchy / SortByToggles_ProjectionAndAutosave (basic-grid.json, no parent links)
 // drives the "Sort By" popup's two per-view checkboxes and asserts the observable session
 // effects:
-//   1. story-group ON  — the view flips dirty (persist path) and the pane's projection
-//                        caches a depth entry per active ticket.
-//   2. hide-parents ON — the view flips dirty again; no parents in this fixture, so the row
+//   1. story-group ON  — the layout autosave is armed (no unsaved-query flag: hierarchy
+//                        toggles are layout) and the pane's projection caches a depth entry
+//                        per active ticket.
+//   2. hide-parents ON — the autosave is armed again; no parents in this fixture, so the row
 //                        projection keeps every ticket. (This assertion is specific to a
 //                        parent-free fixture — a fixture with real parent links would have
 //                        hide-parents drop the parent rows, which is exactly what
 //                        DeepChain_DepthsAndOrderMatchAncestry below exercises instead. Do
 //                        not point this test at parent-hierarchy-grid.json.)
 //   3. both OFF        — the depth cache is cleared (the common path stays branch-free).
-// This test pins the UI seam only (toggle -> dirty -> cache populated/cleared).
+// This test pins the UI seam only (toggle -> autosave armed -> cache populated/cleared).
 //
 // GridParentHierarchyDeepChain / DeepChain_DepthsAndOrderMatchAncestry
 // (parent-hierarchy-grid.json, an epic -> story -> task -> subtask chain landing in one
@@ -47,6 +48,7 @@
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <chrono>
 #include <cstddef>
 #include <cstdlib>
 #include <string>
@@ -142,10 +144,10 @@ bool ClickSortByCheckbox(ImGuiTestContext* ctx, const char* checkboxRef) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// GridParentHierarchy / SortByToggles_ProjectionAndDirty
+// GridParentHierarchy / SortByToggles_ProjectionAndAutosave
 // ---------------------------------------------------------------------------
 static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
-    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridParentHierarchy", "SortByToggles_ProjectionAndDirty");
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "GridParentHierarchy", "SortByToggles_ProjectionAndAutosave");
     t->TestFunc = [](ImGuiTestContext* ctx) {
         AppController* app = BootSyncPrimaryLive(ctx);
         if (app == nullptr) {
@@ -159,43 +161,46 @@ static void RegisterSortByTogglesProjectionAndDirty(ImGuiTestEngine* engine) {
         IM_CHECK_NO_RET(baselineProjected);
         IM_CHECK_NO_RET(g_ui.gridPanes.front().cachedDepths.empty());
 
-        // 1. STORY GROUP ON — view flips dirty; the projection caches one depth per ticket.
+        // 1. STORY GROUP ON — layout autosave armed; the projection caches one depth per ticket.
         g_ui.viewsDirty = false;
+        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
         const bool storyGroupClicked = ClickSortByCheckbox(ctx, kStoryGroupRef);
         IM_CHECK_NO_RET(storyGroupClicked);
         if (!storyGroupClicked) {
             return;
         }
-        const bool storyGroupDirty = YieldUntil(ctx, [&] { return g_ui.viewsDirty; });
-        IM_CHECK_NO_RET(storyGroupDirty);
+        IM_CHECK_NO_RET(g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max());
+        IM_CHECK_NO_RET(!g_ui.viewsDirty); // layout never raises the unsaved-query strip
         const bool depthsCached =
             YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.size() == ticketCount; });
         IM_CHECK_NO_RET(depthsCached);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
 
-        // 2. HIDE PARENTS ON (with Story group still on) — view flips dirty; no parents in the
+        // 2. HIDE PARENTS ON (with Story group still on) — autosave armed; no parents in the
         //    fixture → every row survives, but hide-parents flattens the tree decorations: the
         //    depth cache is cleared even though story-group order is kept (SmatchetActiveProjectGridTable.cpp).
         g_ui.viewsDirty = false;
+        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
         const bool hideParentsClicked = ClickSortByCheckbox(ctx, kHideParentsRef);
         IM_CHECK_NO_RET(hideParentsClicked);
         if (!hideParentsClicked) {
             return;
         }
-        const bool hideParentsDirty = YieldUntil(ctx, [&] { return g_ui.viewsDirty; });
-        IM_CHECK_NO_RET(hideParentsDirty);
+        IM_CHECK_NO_RET(g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max());
+        IM_CHECK_NO_RET(!g_ui.viewsDirty);
         const bool depthsCleared = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
         IM_CHECK_NO_RET(depthsCleared);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
 
-        // 3. BOTH OFF — depth cache drains; projection still covers every row.
+        // 3. BOTH OFF — autosave armed; depth cache drains; projection still covers every row.
         g_ui.viewsDirty = false;
+        g_ui.viewLayoutSaveAt = std::chrono::steady_clock::time_point::max();
         const bool storyGroupOff = ClickSortByCheckbox(ctx, kStoryGroupRef);
         IM_CHECK_NO_RET(storyGroupOff);
         const bool hideParentsOff = ClickSortByCheckbox(ctx, kHideParentsRef);
         IM_CHECK_NO_RET(hideParentsOff);
-        const bool offDirty = YieldUntil(ctx, [&] { return g_ui.viewsDirty; });
-        IM_CHECK_NO_RET(offDirty);
+        IM_CHECK_NO_RET(g_ui.viewLayoutSaveAt != std::chrono::steady_clock::time_point::max());
+        IM_CHECK_NO_RET(!g_ui.viewsDirty);
         const bool depthsClearedAgain = YieldUntil(ctx, [&] { return g_ui.gridPanes.front().cachedDepths.empty(); });
         IM_CHECK_NO_RET(depthsClearedAgain);
         IM_CHECK_EQ_NO_RET(g_ui.gridPanes.front().filteredIndices.size(), ticketCount);
@@ -224,7 +229,7 @@ static void RegisterDeepChainDepthsAndOrderMatchAncestry(ImGuiTestEngine* engine
         const std::vector<CachedTicket> tickets = app->GetActiveTickets();
         // This test needs the deep-chain fixture specifically (parent-hierarchy-grid.json);
         // skip cleanly if the run was pointed at a different fixture (e.g. basic-grid.json,
-        // shared by SortByToggles_ProjectionAndDirty above under the same test filter).
+        // shared by SortByToggles_ProjectionAndAutosave above under the same test filter).
         auto findIndex = [&](const char* key) -> int {
             for (size_t i = 0; i < tickets.size(); ++i) {
                 if (tickets[i].id == key) {

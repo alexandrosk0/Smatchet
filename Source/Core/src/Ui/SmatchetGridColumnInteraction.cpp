@@ -18,17 +18,15 @@ namespace {
 constexpr float kAutoScrollEdgeZoneEm = 2.5f;
 constexpr float kAutoScrollSpeedAtEdgeEmPerSec = 30.0f;
 
-// The part of the table that scrolls horizontally: right of any frozen columns, up to the
-// visible inner edge.
-void ScrollableStrip(const ImGuiTable& table, float& minX, float& maxX) {
+} // namespace
+
+void GridScrollableStrip(const ImGuiTable& table, float& minX, float& maxX) {
     minX = table.InnerClipRect.Min.x;
     maxX = table.InnerClipRect.Max.x;
     for (int order = 0; order < table.FreezeColumnsRequest && order < table.ColumnsCount; ++order) {
         minX = ImMax(minX, table.Columns[table.DisplayOrderToIndex[order]].MaxX);
     }
 }
-
-} // namespace
 
 // ImGui's own header drag moves the held column one neighbour per frame, only while the mouse
 // is moving, and never scrolls the table (imgui_tables.cpp: "FIXME-TABLE: Scroll request while
@@ -58,14 +56,15 @@ void DriveGridHeaderDragReorder(ImGuiTable* table) {
 
     float stripMinX = 0.0f;
     float stripMaxX = 0.0f;
-    ScrollableStrip(*table, stripMinX, stripMaxX);
+    GridScrollableStrip(*table, stripMinX, stripMaxX);
     const float mouseX = g->IO.MousePos.x;
 
     ImGuiWindow* inner = table->InnerWindow;
     if (inner != nullptr && (table->Flags & ImGuiTableFlags_ScrollX) != 0 && inner->ScrollMax.x > 0.0f) {
         const float fontSize = ImGui::GetFontSize();
-        const float speed = GridHeaderDragAutoScrollSpeed(mouseX, stripMinX, stripMaxX, fontSize * kAutoScrollEdgeZoneEm,
-                                                          fontSize * kAutoScrollSpeedAtEdgeEmPerSec);
+        const float speed =
+            GridHeaderDragAutoScrollSpeed(mouseX, g->IO.MouseClickedPos[ImGuiMouseButton_Left].x, stripMinX, stripMaxX,
+                                          fontSize * kAutoScrollEdgeZoneEm, fontSize * kAutoScrollSpeedAtEdgeEmPerSec);
         if (speed != 0.0f) {
             const float target = ImClamp(inner->Scroll.x + speed * g->IO.DeltaTime, 0.0f, inner->ScrollMax.x);
             if (target != inner->Scroll.x) {

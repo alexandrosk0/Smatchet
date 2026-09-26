@@ -105,7 +105,9 @@ void SyncViewsEditorDraft(UiDrawSession& d, const ViewDefinition& active) {
         return;
     }
     const ViewDraftRebaseResult rebased = RebaseViewDraft(d.viewDraft, d.viewDraftBase, active);
-    if (rebased.NameAdopted) {
+    // The inline title editor commits to the draft only on Enter/deactivate, so mid-rename the
+    // draft still equals its base; leave the buffer the user is typing into alone.
+    if (rebased.NameAdopted && !d.viewsTitleEditing) {
         SmatchetViewsDashboardUiDetail::CopyStringToBuffer(d.viewNameBuf, d.viewDraft.Name);
     }
     if (rebased.JqlAdopted) {
@@ -1156,8 +1158,11 @@ void SmatchetUI::viewsApplyAndSync(AppController& app, UiDrawSession& d, const V
     const ViewDefinition merged = MergeDraftEditsOntoSaved(d.viewDraft, *activeView);
     if (ViewState.UpdateActive(merged)) {
         // UpdateActive persisted the whole view, including a query the grid search box applied
-        // (the draft adopted it on sync), so the grid's "not saved" strip no longer applies.
+        // (the draft adopted it on sync), so the grid's "not saved" strip no longer applies —
+        // and its pre-edit snapshot must go too, or a later strip Discard restores that stale
+        // query over the one just saved.
         d.viewsDirty = false;
+        d.viewsHasOriginalSnapshot = false;
         const ViewDefinition* saved = ViewState.GetActiveView();
         if (saved) {
             d.cfg.JqlQuery = saved->Jql;

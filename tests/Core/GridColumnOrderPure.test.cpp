@@ -125,31 +125,40 @@ TEST_CASE("GridHeaderDragAutoScrollSpeed") {
     const float kMax = 900.0f;
     const float kZone = 40.0f;
     const float kSpeed = 500.0f;
+    const float kGrab = 500.0f; // header grabbed mid-strip; every probe below moved away from it
 
     SUBCASE("no scroll away from the edges") {
-        CHECK(GridHeaderDragAutoScrollSpeed(500.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin + kZone, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax - kZone, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(500.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin + kZone, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax - kZone, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
     }
     SUBCASE("ramps inside the band, full speed at the edge, left is negative") {
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin + 20.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(-250.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin, kMin, kMax, kZone, kSpeed) == doctest::Approx(-500.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax - 20.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(250.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax, kMin, kMax, kZone, kSpeed) == doctest::Approx(500.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin + 20.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-250.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-500.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax - 20.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(250.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(500.0f));
     }
     SUBCASE("keeps speeding up past the edge, capped at four times the edge speed") {
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 40.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(1000.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 5000.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(2000.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(kMin - 5000.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(-2000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 40.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(1000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMax + 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(2000.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(kMin - 5000.0f, kGrab, kMin, kMax, kZone, kSpeed) == doctest::Approx(-2000.0f));
     }
     SUBCASE("a strip narrower than two bands shrinks the band instead of scrolling everywhere") {
         // 90px strip -> 30px bands; the middle 30px stays still.
-        CHECK(GridHeaderDragAutoScrollSpeed(145.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(0.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(100.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(-500.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(145.0f, 150.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(100.0f, 150.0f, 100.0f, 190.0f, kZone, kSpeed) == doctest::Approx(-500.0f));
+    }
+    SUBCASE("only scrolls toward the side the drag moved to from the grab point") {
+        // A header grabbed inside the right band and nudged LEFT must not scroll right (it
+        // would slide the grid under the mouse and carry the column the wrong way).
+        CHECK(GridHeaderDragAutoScrollSpeed(880.0f, 890.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(895.0f, 890.0f, kMin, kMax, kZone, kSpeed) > 0.0f);
+        CHECK(GridHeaderDragAutoScrollSpeed(120.0f, 110.0f, kMin, kMax, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(105.0f, 110.0f, kMin, kMax, kZone, kSpeed) < 0.0f);
     }
     SUBCASE("degenerate inputs never scroll") {
-        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, 100.0f, 100.0f, kZone, kSpeed) == doctest::Approx(0.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kMin, kMax, 0.0f, kSpeed) == doctest::Approx(0.0f));
-        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kMin, kMax, kZone, 0.0f) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kGrab, 100.0f, 100.0f, kZone, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kGrab, kMin, kMax, 0.0f, kSpeed) == doctest::Approx(0.0f));
+        CHECK(GridHeaderDragAutoScrollSpeed(0.0f, kGrab, kMin, kMax, kZone, 0.0f) == doctest::Approx(0.0f));
     }
 }

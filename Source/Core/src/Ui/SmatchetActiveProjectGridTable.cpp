@@ -839,7 +839,11 @@ void SmatchetUI::drawActiveProjectGridSetup(ActiveProjectDrawCtx& ctx) {
     for (size_t ci = 0; ci < columns.size(); ++ci) {
         ImGui::TableSetupColumn(columns[ci].Label.c_str(), ImGuiTableColumnFlags_WidthFixed, colWidths[ci]);
     }
-    smatchet::ui::SyncGridTableColumnWidths(ImGui::GetCurrentTable(), colWidths);
+    if (widthsArePanesOwn) {
+        // Only an owned view is the width authority; a fallback-resolved pane keeps whatever the
+        // user resized it to (drawActiveProjectGridPost never captures widths for it either).
+        smatchet::ui::SyncGridTableColumnWidths(ImGui::GetCurrentTable(), colWidths);
+    }
     ctx.requestedColumnWidths = std::move(colWidths);
     ImGui::TableSetupScrollFreeze(1, 1);
     ImGui::TableNextRow(ImGuiTableRowFlags_Headers);

@@ -77,9 +77,11 @@ inline int GridHeaderDragTargetOrder(const std::vector<float>& centersByDisplayO
 /// Zero away from the edges; inside an edge band @p edgeZonePx wide it ramps up linearly to
 /// @p speedAtEdgePxPerSec at the edge itself, and keeps ramping past the edge up to four times
 /// that, so pulling the mouse further out scrolls faster. The band shrinks to a third of the
-/// strip when the strip is too narrow to hold two full bands.
-inline float GridHeaderDragAutoScrollSpeed(float mouseX, float stripMinX, float stripMaxX, float edgeZonePx,
-                                           float speedAtEdgePxPerSec) {
+/// strip when the strip is too narrow to hold two full bands. Scrolls only toward the side the
+/// drag has moved to from @p dragStartX (where the header was grabbed): grabbing a column that
+/// already sits in an edge band and nudging it the other way must not scroll the grid away.
+inline float GridHeaderDragAutoScrollSpeed(float mouseX, float dragStartX, float stripMinX, float stripMaxX,
+                                           float edgeZonePx, float speedAtEdgePxPerSec) {
     const float stripWidth = stripMaxX - stripMinX;
     if (stripWidth <= 0.0f || edgeZonePx <= 0.0f || speedAtEdgePxPerSec <= 0.0f) {
         return 0.0f;
@@ -87,11 +89,11 @@ inline float GridHeaderDragAutoScrollSpeed(float mouseX, float stripMinX, float 
     const float zone = std::min(edgeZonePx, stripWidth / 3.0f);
     const float kMaxMultiple = 4.0f;
     const float leftDepth = (stripMinX + zone) - mouseX;
-    if (leftDepth > 0.0f) {
+    if (leftDepth > 0.0f && mouseX < dragStartX) {
         return -speedAtEdgePxPerSec * std::min(leftDepth / zone, kMaxMultiple);
     }
     const float rightDepth = mouseX - (stripMaxX - zone);
-    if (rightDepth > 0.0f) {
+    if (rightDepth > 0.0f && mouseX > dragStartX) {
         return speedAtEdgePxPerSec * std::min(rightDepth / zone, kMaxMultiple);
     }
     return 0.0f;
