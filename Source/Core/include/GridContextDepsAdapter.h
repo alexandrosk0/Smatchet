@@ -137,8 +137,10 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
 
     // ---- IEditMetaDeps ----------------------------------------------------------------
     // LaunchBackgroundTask is shared with IOfflineQueueDeps (same signature) — the override above
-    // satisfies this interface's method too.
+    // satisfies this interface's method too, and so does the CacheBackendKey() override declared in
+    // the IOfflineQueueDeps block.
     std::shared_ptr<ITrackerBackend> BackendShared() const override;
+    std::shared_ptr<ILookupCache> LookupCacheShared() override;
     bool IsShuttingDown() const override;
     std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override;
     /// Every live pane's roster, for the process-wide editmeta prune (see IEditMetaDeps).

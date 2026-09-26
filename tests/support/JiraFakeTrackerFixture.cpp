@@ -291,13 +291,16 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
         client.SetFieldCatalogResult(catalogResult);
     }
 
-    // Apply transitions if present
+    // Scripted transitions also turn on the SupportsIssueTransitions capability, as JiraClient reports
+    // it; without it IssueTransitionsCacheService skips the fetch entirely.
+    if (!issueTransitionsByIssueId_.empty()) {
+        client.SetSupportsIssueTransitions(true);
+    }
     for (const auto& entry : issueTransitionsByIssueId_) {
         client.SetIssueTransitions(entry.first, entry.second);
     }
 
-    // Comments live on ITrackerCollaboration, so scripting them turns that role on. Transitions are
-    // ITrackerFieldCatalog (always exposed) and need no switch.
+    // Comments live on ITrackerCollaboration, so scripting them turns that role on.
     if (!issueCommentsByIssueKey_.empty()) {
         client.EnableCollaboration(true);
         for (const auto& entry : issueCommentsByIssueKey_) {

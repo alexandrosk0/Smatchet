@@ -3,6 +3,7 @@
 
 #include "AppController.h"
 #include "IssueTransitionsCacheService.h"
+#include "StatusComboOptionsPure.h"
 #include "TrackerDateTimeFieldEditor.h"
 #include "TrackerGridFieldDisplay.h"
 #include "TrackerLabelsEditor.h"
@@ -800,6 +801,22 @@ void RenderSingleSelectComboBody(const CachedTicket& ticket, const TrackerField&
     }
 }
 
+// First combo row when the status list is not the live transition set (Pillar 6 freshness cue).
+void DrawStatusComboCue(smatchet::statuscombo::StatusOptionsSource from, smatchet::offline::DataFreshness freshness) {
+    const char* text = nullptr;
+    if (freshness == smatchet::offline::DataFreshness::Refreshing ||
+        freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
+        text = SmatchetLocalization::T("status.cue.checking", "Checking valid transitions\xE2\x80\xA6");
+    } else if (from == smatchet::statuscombo::StatusOptionsSource::Learned) {
+        text = SmatchetLocalization::T("status.cue.cached_workflow", "Saved workflow (last seen online)");
+    } else {
+        text = SmatchetLocalization::T("status.cue.all_statuses_offline",
+                                       "All statuses shown \xE2\x80\x94 an invalid move is rejected when it syncs");
+    }
+    ImGui::TextDisabled("%s", text);
+    ImGui::Separator();
+}
+
 void RenderSingleSelectEditor(const AppController& app, const CachedTicket& ticket, const TrackerField& field,
                               const std::string& currentValue, SpreadsheetState& state,
                               std::vector<PendingFieldEdit>& pendingEdits, bool tooltipsEnabled,
@@ -852,45 +869,38 @@ void RenderSingleSelectEditor(const AppController& app, const CachedTicket& tick
     const ImVec2 comboMin = ImGui::GetItemRectMin();
     const ImVec2 comboMax = ImGui::GetItemRectMax();
     if (comboOpened) {
-        // For status field on Jira, filter to valid transitions + current status.
         const std::vector<TrackerFieldOption>* opts = &field.AllowedValueOptions;
-        std::vector<TrackerFieldOption> allowedTransitions;
-        bool transitionsLoaded = true;
+        std::vector<TrackerFieldOption> statusOptions;
         if (field.Id == "status") {
-            auto lookup = app.GetAvailableTransitionsForIssue(ticket.id);
-            if (!lookup.loaded) {
-                // Trigger fetch on first open; this is the first state for all issues.
-                transitionsLoaded = false;
-                app.EnsureIssueTransitionsLoaded(ticket.id);
-            } else if (lookup.applicable) {
-                // Loaded and applicable: use the filtered transitions.
-                allowedTransitions = lookup.options;
-                // Prepend current status if missing (transitions are outgoing only).
-                const std::string currentId = ResolveOptionId(field, currentValue);
-                if (!currentId.empty()) {
-                    const auto it = std::find_if(allowedTransitions.begin(), allowedTransitions.end(),
-                                                 [&](const TrackerFieldOption& opt) { return opt.Id == currentId; });
-                    if (it == allowedTransitions.end()) {
-                        TrackerFieldOption current;
-                        current.Id = currentId;
-                        current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
-                        if (current.Value.empty()) {
-                            current.Value = currentId;
-                        }
-                        allowedTransitions.insert(allowedTransitions.begin(), std::move(current));
-                    }
+            // Pillar 6: never block on the live transitions fetch. Live transitions, else the workflow
+            // remembered from earlier online use, else every status; the current status always shows.
+            const std::string currentId = ResolveOptionId(field, currentValue);
+            TransitionsQuery query;
+            query.IssueId = ticket.id;
+            query.ProjectKey = smatchet::ExtractIssueKeyPrefix(ticket.id);
+            query.IssueTypeKey = ToLowerAsciiCopy(TrimCopy(ticket.GetFieldValue("issuetype")));
+            query.FromStatusKey = currentId;
+            app.EnsureIssueTransitionsLoaded(query);
+            const TransitionsLookup lookup = app.GetAvailableTransitionsForIssue(query);
+            if (lookup.applicable) {
+                TrackerFieldOption current;
+                current.Id = currentId;
+                current.Value = app.ResolveDisplayValue(field.Id, &field, currentValue);
+                if (current.Value.empty()) {
+                    current.Value = currentId;
                 }
-                opts = &allowedTransitions;
+                const bool live = lookup.freshness == smatchet::offline::DataFreshness::Fresh;
+                smatchet::statuscombo::StatusComboPick pick = smatchet::statuscombo::PickStatusComboOptions(
+                    lookup.options, live, field.AllowedValueOptions, current);
+                statusOptions = std::move(pick.Options);
+                opts = &statusOptions;
+                if (pick.From != smatchet::statuscombo::StatusOptionsSource::Live) {
+                    DrawStatusComboCue(pick.From, lookup.freshness);
+                }
             }
-            // If loaded && !applicable, fall through to use AllowedValueOptions (non-Jira backend).
         }
-
-        if (field.Id == "status" && !transitionsLoaded) {
-            ImGui::TextDisabled("Loading transitions\xE2\x80\xA6");
-        } else {
-            RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
-                                        opts->empty() && app.FieldCatalogLacksProjectScope(), opts);
-        }
+        RenderSingleSelectComboBody(ticket, field, currentValue, state, pendingEdits, editorKey,
+                                    opts->empty() && app.FieldCatalogLacksProjectScope(), opts);
         ImGui::EndCombo();
     }
 

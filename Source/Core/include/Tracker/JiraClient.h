@@ -103,6 +103,8 @@ class JiraClient : public ITrackerBackend,
     Result<std::vector<TrackerFieldOption>, TrackerError>
     FetchIssueTransitions(const TrackerConfig& cfg, const std::string& issueKeyOrId) override;
 
+    bool SupportsIssueTransitions() const override { return true; }
+
     /** GET /rest/api/3/issue/{issueKey}/watchers — Ok = watcher display names / account ids. */
     Result<std::vector<TrackerUser>, TrackerError> FetchIssueWatchers(const TrackerConfig& cfg,
                                                                       const std::string& issueKey) override;

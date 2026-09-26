@@ -143,6 +143,7 @@ class LuaAutomationHost;
 struct TrackerActivityEntry;
 struct TrackerActivityProgress;
 struct TransitionsLookup;
+struct TransitionsQuery;
 
 namespace smatchet {
 namespace cmd {
@@ -1017,8 +1018,8 @@ class AppController : public IAppThreading,
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
 
     /// Issue-transitions delegators — forward to `transitions_` (IssueTransitionsCacheService).
-    struct TransitionsLookup GetAvailableTransitionsForIssue(const std::string& issueId) const;
-    void EnsureIssueTransitionsLoaded(const std::string& issueId) const;
+    struct TransitionsLookup GetAvailableTransitionsForIssue(const TransitionsQuery& query) const;
+    void EnsureIssueTransitionsLoaded(const TransitionsQuery& query) const;
     void InvalidateIssueTransitions(const std::string& issueId);
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
