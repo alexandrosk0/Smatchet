@@ -109,6 +109,7 @@ class AiAssistantController;
 #include "Types/ConnectivityTypes.h"
 #include "Types/AttachmentTypes.h"
 #include "Types/HostCallbacks.h"
+#include "Types/TransitionsTypes.h"
 
 // Fan-in Phase 5 (docs/plans/appcontroller-fan-in-phase5-facets.md): narrow interface
 // facets AppController implements so includer-clusters can depend on them instead of the
