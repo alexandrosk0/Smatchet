@@ -1,9 +1,10 @@
 #pragma once
 
-// Private header for TicketFieldEditor split TUs. Not installed — included only
-// by TicketFieldEditor.cpp and TicketFieldEditor_Modal.cpp.
+// Private header for TicketFieldEditor split TUs. Not installed — included only by
+// TicketFieldEditor.cpp, TicketFieldEditor_Modal.cpp and TicketFieldEditor_Worklog.cpp.
 
 #include "TrackerFieldSchema.h"
+#include "imgui.h" // ImGuiInputTextFlags / ImGuiInputTextCallback
 #include <string>
 #include <vector>
 
@@ -11,6 +12,13 @@ class IAppThreading; // fan-in Phase 6 T4: the long-text modal only launches a s
 struct CachedTicket;
 struct SpreadsheetState;
 struct PendingFieldEdit;
+
+// Defined in TicketFieldEditor.cpp: the duration input with its suggestions popup (inline grid cells
+// and the worklog dialog, TicketFieldEditor_Worklog.cpp).
+bool DrawDurationFieldWithSuggestions(const char* label, char* buf, size_t bufSize, ImGuiInputTextFlags flags = 0,
+                                      ImGuiInputTextCallback callback = nullptr, void* callbackUserData = nullptr,
+                                      bool* outManuallyEdited = nullptr, bool forceOpenPopup = false,
+                                      bool* outExplicitSubmit = nullptr, bool typeToEditFocus = false);
 
 // Defined in TicketFieldEditor_Modal.cpp with external linkage.
 void OpenLongTextEditor(IAppThreading& app, const std::string& issueId, const TrackerField& field,
