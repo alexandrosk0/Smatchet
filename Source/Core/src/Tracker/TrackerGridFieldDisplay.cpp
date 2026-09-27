@@ -18,6 +18,7 @@
 #include <cfloat>
 #include <exception>
 #include <future>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -166,6 +167,19 @@ void TrackerGridFieldDisplay::RenderAttachmentsField(AppController& app, const s
     }
 }
 
+namespace {
+
+// True while a watch of `issueKey` is still in the offline queue: its snapshot is an in-memory read.
+bool WatchStillQueued(const AppController& app, const std::string& issueKey) {
+    const std::shared_ptr<const PendingActionsSnapshot> snap = app.GetPendingActionsSnapshot();
+    const std::string wire = PendingActionKindWire(PendingActionKind::WatchAdd);
+    return std::any_of(snap->Pending.begin(), snap->Pending.end(), [&wire, &issueKey](const PendingActionRecord& row) {
+        return row.Kind == wire && row.IssueKey == issueKey;
+    });
+}
+
+} // namespace
+
 void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std::string& issueKey,
                                                   const std::string& currentValue, float availWidth,
                                                   bool tooltipsEnabled, TrackerGridFieldAsyncState& async) {
@@ -216,6 +230,17 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
     }
 
     const bool alreadyWatchedThisSession = (async.watchSelfSucceededIssueKeys.count(issueKey) > 0);
+    if (model.parsed && !model.isWatching && async.watchSelfQueuedIssueKeys.count(issueKey) > 0) {
+        if (WatchStillQueued(app, issueKey)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(watch queued)");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Queued \xE2\x80\x94 will apply when the tracker is reachable");
+            }
+        } else {
+            async.watchSelfQueuedIssueKeys.erase(issueKey); // replayed (or moved to the failed list)
+        }
+    }
     if (model.parsed && !model.isWatching && !alreadyWatchedThisSession) {
         ImGui::SameLine();
         const std::string watchBtn = "Watch##wself_" + issueKey;
@@ -228,10 +253,9 @@ void TrackerGridFieldDisplay::RenderWatchersField(AppController& app, const std:
             async.watchSelfPendingIssueKey = issueKey;
             async.watchSelfInProgress = true;
             async.watchSelfError.clear();
-            async.watchSelfFuture = std::async(std::launch::async, [&app, issueKey]() {
-                const VoidResult r = app.AddIssueWatcher(issueKey);
-                return r.has_value() ? std::string() : r.error();
-            });
+            // Offline the watch is saved and applied on reconnect (pending-action queue, Pillar 6).
+            async.watchSelfFuture =
+                std::async(std::launch::async, [&app, issueKey]() { return app.SubmitOrQueueWatch(issueKey); });
         }
         if (watchBusy) {
             ImGui::EndDisabled();
@@ -352,13 +376,16 @@ void TrackerGridFieldDisplay::DrawWatchersListWindow(TrackerGridFieldAsyncState&
     if (d.watchSelfFuture.valid()) {
         if (d.watchSelfFuture.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
             try {
-                std::string err = d.watchSelfFuture.get();
+                const PendingActionSubmitResult result = d.watchSelfFuture.get();
                 d.watchSelfInProgress = false;
-                if (err.empty()) {
+                if (result.K != PendingActionSubmitResult::Kind::Failed) {
                     d.watchSelfSucceededIssueKeys.insert(d.watchSelfPendingIssueKey);
+                    if (result.K == PendingActionSubmitResult::Kind::Queued) {
+                        d.watchSelfQueuedIssueKeys.insert(d.watchSelfPendingIssueKey);
+                    }
                     d.watchSelfError.clear();
                 } else {
-                    d.watchSelfError = std::move(err);
+                    d.watchSelfError = result.Error.empty() ? std::string("Watch failed.") : result.Error;
                     LOG_ERROR("TrackerGridFieldDisplay: watch self failed issue=%s err=%s",
                               d.watchSelfPendingIssueKey.c_str(), d.watchSelfError.c_str());
                 }

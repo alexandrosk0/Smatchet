@@ -32,6 +32,8 @@
 #include "imgui_te_engine.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
@@ -433,12 +435,87 @@ static void RegisterOfflineFirstCommentsPostedOfflineReplays(ImGuiTestEngine* en
     };
 }
 
+// OfflineFirst/Worklog_OfflineQueues: a worklog and a watch made while the tracker is unreachable are
+// saved to the pending-action queue with no request, and each reaches the tracker exactly once after
+// reconnecting.
+static void RegisterOfflineFirstWorklogOfflineQueues(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Worklog_OfflineQueues");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope; // the queue write must land: a rejected write would pass vacuously
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        IM_CHECK_NO_RET(fake != nullptr);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.empty());
+        if (!fake) {
+            return;
+        }
+
+        // Offline: both are saved and nothing is sent.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        const std::size_t worklogsBefore = fake->AddWorklogCalls().size();
+        const std::size_t watchesBefore = fake->AddWatcherCalls().size();
+        const PendingActionSubmitResult worklog =
+            app->SubmitOrQueueWorklog("OFF-1", "30m", "", "auto", "offline work", "2026-09-27T10:00:00.000+0000");
+        IM_CHECK_NO_RET(worklog.K == PendingActionSubmitResult::Kind::Queued);
+        const PendingActionSubmitResult watch = app->SubmitOrQueueWatch("OFF-1");
+        IM_CHECK_NO_RET(watch.K == PendingActionSubmitResult::Kind::Queued);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.size() == 2);
+        IM_CHECK_NO_RET(fake->AddWorklogCalls().size() == worklogsBefore);
+        IM_CHECK_NO_RET(fake->AddWatcherCalls().size() == watchesBefore);
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // Back online: the queue drains and each reaches the tracker exactly once.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        app->RetryOfflineQueuesNow();
+        const bool drained =
+            YieldUntil(ctx, 600, [app]() { return app->GetPendingActionsSnapshot()->Pending.empty(); });
+        if (!drained) {
+            const auto snap = app->GetPendingActionsSnapshot();
+            for (const PendingActionRecord& row : snap->Pending) {
+                ctx->LogError("queued %s did not replay: state='%s' attempts=%d last_error='%s'", row.Kind.c_str(),
+                              row.State.c_str(), row.Attempts, row.LastError.c_str());
+            }
+            std::vector<std::int64_t> ids;
+            for (const PendingActionRecord& row : snap->Pending) {
+                ids.push_back(row.Id);
+            }
+            app->DiscardPendingActions(ids); // never leak the rows into a retry or a later test
+        }
+        IM_CHECK_NO_RET(drained);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
+        IM_CHECK_NO_RET(fake->AddWorklogCalls().size() == worklogsBefore + 1);
+        if (fake->AddWorklogCalls().size() > worklogsBefore) {
+            IM_CHECK_NO_RET(fake->AddWorklogCalls().back().IssueKey == "OFF-1");
+            IM_CHECK_NO_RET(fake->AddWorklogCalls().back().TimeSpent == "30m");
+            IM_CHECK_NO_RET(fake->AddWorklogCalls().back().Description == "offline work");
+        }
+        IM_CHECK_NO_RET(fake->AddWatcherCalls().size() == watchesBefore + 1);
+        if (fake->AddWatcherCalls().size() > watchesBefore) {
+            IM_CHECK_NO_RET(fake->AddWatcherCalls().back() == "OFF-1");
+        }
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
     RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(engine);
     RegisterOfflineFirstCommentsOfflineShowsCachedThread(engine);
     RegisterOfflineFirstCommentsPostedOfflineReplays(engine);
+    RegisterOfflineFirstWorklogOfflineQueues(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

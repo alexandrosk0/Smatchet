@@ -5,13 +5,14 @@
 #include <nlohmann/json.hpp>
 
 #include <cstddef>
+#include <utility>
 
 namespace smatchet {
 namespace pendingaction {
 
 namespace {
 
-// A comment payload is one short object; anything larger was not written by this queue.
+// A payload is one short object; anything larger was not written by this queue.
 constexpr std::size_t kMaxPayloadBytes = 1024u * 1024u;
 
 bool IsAsciiAlnum(unsigned char c) {
@@ -34,6 +35,36 @@ std::string TrimmedLf(const std::string& text) {
     }
     return lf.substr(first, lf.find_last_not_of(" \t\n") - first + 1);
 }
+
+// Payloads carry user-typed text: replace invalid UTF-8 instead of throwing.
+std::string DumpPayload(const nlohmann::json& payload) {
+    return payload.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+}
+
+// The bounded parse every payload shares: true only for one JSON object.
+bool ParsePayloadObject(const std::string& json, nlohmann::json& out) {
+    std::string err;
+    out = smatchet::json_safe::ParseBounded(json, err, kMaxPayloadBytes);
+    return err.empty() && out.is_object();
+}
+
+std::string StringField(const nlohmann::json& object, const char* key) {
+    const auto it = object.find(key);
+    return it != object.end() && it->is_string() ? it->get<std::string>() : std::string();
+}
+
+// The WorklogAdd payload keys and the fields they carry: the one mapping both directions use.
+struct WorklogField {
+    const char* Key;
+    std::string WorklogActionPayload::*Member;
+};
+const WorklogField kWorklogFields[] = {
+    {"timeSpent", &WorklogActionPayload::TimeSpent},
+    {"timeRemaining", &WorklogActionPayload::TimeRemaining},
+    {"adjustEstimate", &WorklogActionPayload::AdjustEstimate},
+    {"description", &WorklogActionPayload::Description},
+    {"started", &WorklogActionPayload::Started},
+};
 
 } // namespace
 
@@ -83,23 +114,45 @@ std::string BuildCommentActionPayload(const std::string& body, std::int64_t crea
     nlohmann::json payload = nlohmann::json::object();
     payload["body"] = body;
     payload["created"] = createdAtSec;
-    // User-typed text; replace invalid UTF-8 instead of throwing.
-    return payload.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+    return DumpPayload(payload);
 }
 
 bool ParseCommentActionPayload(const std::string& json, std::string& outBody, std::int64_t& outCreatedAtSec) {
-    std::string err;
-    const nlohmann::json parsed = smatchet::json_safe::ParseBounded(json, err, kMaxPayloadBytes);
-    if (!err.empty() || !parsed.is_object()) {
+    nlohmann::json parsed;
+    if (!ParsePayloadObject(json, parsed)) {
         return false;
     }
-    const auto body = parsed.find("body");
-    if (body == parsed.end() || !body->is_string() || body->get_ref<const std::string&>().empty()) {
+    std::string body = StringField(parsed, "body");
+    if (body.empty()) {
         return false;
     }
     const auto created = parsed.find("created");
-    outBody = body->get<std::string>();
+    outBody = std::move(body);
     outCreatedAtSec = created != parsed.end() && created->is_number_integer() ? created->get<std::int64_t>() : 0;
+    return true;
+}
+
+std::string BuildWorklogActionPayload(const WorklogActionPayload& worklog) {
+    nlohmann::json payload = nlohmann::json::object();
+    for (const WorklogField& field : kWorklogFields) {
+        payload[field.Key] = worklog.*(field.Member);
+    }
+    return DumpPayload(payload);
+}
+
+bool ParseWorklogActionPayload(const std::string& json, WorklogActionPayload& out) {
+    nlohmann::json parsed;
+    if (!ParsePayloadObject(json, parsed)) {
+        return false;
+    }
+    WorklogActionPayload worklog;
+    for (const WorklogField& field : kWorklogFields) {
+        worklog.*(field.Member) = StringField(parsed, field.Key);
+    }
+    if (worklog.TimeSpent.empty()) {
+        return false;
+    }
+    out = std::move(worklog);
     return true;
 }
 

@@ -557,7 +557,7 @@ TEST_CASE("FetchIssuesForKeys returns Ok tickets on success and a detail-carryin
 // Slice 7 of the tracker Result<T> migration flipped the ITrackerCollaboration virtuals: the reads
 // (FetchIssueWatchers / FetchIssueVotes / SearchUsersByQuery / FetchIssueComments — FetchUserGroupNames
 // has since moved to ITrackerActivity) to Result<payload, TrackerError>, and the writes (AddIssueWatcher /
-// AddIssueCommentPlain / AddWorklog / AddIssueCommentAnnotateContext) to a bare TrackerError. FetchIssueVotes' four
+// AddIssueCommentPlain / AddWorklog) to a bare TrackerError. FetchIssueVotes' four
 // out-params (voters + int* + bool* + bool*) collapsed into the TrackerIssueVotes Ok payload. These cases pin both the
 // new interface defaults (unsupported → Err) and the migrated value shapes via a minimal stub override.
 namespace {

@@ -1,6 +1,7 @@
 // backend-impl-coverage-recovery (debt.md, 2026-06-07) — HTTP-fixture coverage for the
-// JiraClient comment/worklog write shell (JiraIssueMutation.cpp): AddIssueCommentPlain,
-// AddWorklog, AddIssueCommentAnnotateContext. These cfg-explicit write paths (no
+// JiraClient comment/worklog write shell (JiraIssueMutation.cpp): AddIssueCommentPlain and
+// AddWorklog (the Annotate-context comment is Markdown through AddIssueCommentPlain —
+// AnnotateContextCommentPure.test.cpp). These cfg-explicit write paths (no
 // ConfigManager::Load) drive a real JiraClient at the in-process httplib loopback
 // (JiraCatalogHttpFixture) over real cpr HTTP, exercising the ADF body build, the
 // BackendAuditTrail begin/result wiring on both success and failure, and the
@@ -106,35 +107,4 @@ TEST_CASE("JiraClient::AddWorklog — a 500 classifies as ServerError (retryable
     CHECK_FALSE(err.IsOk());
     CHECK(err.Kind == TrackerErrorKind::ServerError);
     CHECK(err.IsRetryable());
-}
-
-TEST_CASE("JiraClient::AddIssueCommentAnnotateContext — 201 is Ok (ADF codeBlock body built + posted)") {
-    JiraCatalogHttpFixture fx;
-    fx.ScriptStatus(kCommentPath, 201, "POST");
-    JiraClient client;
-    const TrackerError err = client.AddIssueCommentAnnotateContext(fx.Config(), "SMT-1", "p4user", "MyFunction",
-                                                                   "src/foo.cpp", 42, "12345", "2026-06-01",
-                                                                   /*approximated=*/true, "int foo() { return 0; }");
-    CHECK(err.IsOk());
-    CHECK(fx.RequestCount(kCommentPath) == 1);
-}
-
-TEST_CASE("JiraClient::AddIssueCommentAnnotateContext — empty issue key is InvalidRequest, no HTTP") {
-    JiraCatalogHttpFixture fx;
-    JiraClient client;
-    const TrackerError err = client.AddIssueCommentAnnotateContext(fx.Config(), "", "p4user", "fn", "f.cpp", 1, "1",
-                                                                   "2026-06-01", false, "code");
-    CHECK_FALSE(err.IsOk());
-    CHECK(err.Kind == TrackerErrorKind::InvalidRequest);
-    CHECK(fx.RequestCount(kCommentPath) == 0);
-}
-
-TEST_CASE("JiraClient::AddIssueCommentAnnotateContext — a 400 classifies as InvalidRequest") {
-    JiraCatalogHttpFixture fx;
-    fx.ScriptStatus(kCommentPath, 400, "POST");
-    JiraClient client;
-    const TrackerError err = client.AddIssueCommentAnnotateContext(fx.Config(), "SMT-1", "p4user", "fn", "f.cpp", 1,
-                                                                   "1", "2026-06-01", false, "code");
-    CHECK_FALSE(err.IsOk());
-    CHECK(err.Kind == TrackerErrorKind::InvalidRequest);
 }

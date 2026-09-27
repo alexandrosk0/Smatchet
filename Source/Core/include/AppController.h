@@ -895,10 +895,18 @@ class AppController : public IAppThreading,
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
     void TickOfflineFieldEdits() override;
 
-    // Pending-action queue (comments; Quality Pillar 6) — PendingActionQueueService delegators.
+    // Pending-action queue (comments, worklogs, watches; Quality Pillar 6) — PendingActionQueueService
+    // delegators. Every tracker comment, worklog and watch goes through them: sent now, or saved and
+    // replayed on reconnect. They block on the network while online — call them from a worker.
     /** Replay queued actions (rate-limited; called from UI tick next to TickOfflineFieldEdits). */
     void TickPendingActions();
     PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) override;
+    PendingActionSubmitResult SubmitOrQueueWorklog(const std::string& issueId, const std::string& timeSpent,
+                                                   const std::string& timeRemaining, const std::string& adjustEstimate,
+                                                   const std::string& workDescription,
+                                                   const std::string& startedDate) override;
+    /// Add the current user as a watcher of `issueKey`.
+    PendingActionSubmitResult SubmitOrQueueWatch(const std::string& issueKey);
     std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const override;
     void DiscardPendingActions(const std::vector<std::int64_t>& ids) override;
     void RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) override;
@@ -1022,17 +1030,10 @@ class AppController : public IAppThreading,
 
     Result<std::vector<TrackerUser>> FetchIssueWatchers(const std::string& issueKey) const override;
 
-    // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
-    // method — no IApp* interface mirror. Guard ordering + strings are pinned by the pure seam in
-    // Tracker/CollaborationPreconditionPure.h (CollaborationPreconditionPure.test.cpp).
-    VoidResult AddIssueWatcher(const std::string& issueKey);
-
     Result<TrackerIssueVotes> FetchIssueVotes(const std::string& issueKey) const override;
 
     Result<std::vector<TrackerUser>> SearchUsersByQuery(const std::string& query) const override;
     Result<std::vector<TrackerUser>> FetchUsersByAccountIds(const std::vector<std::string>& accountIds) const override;
-
-    VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) override;
 
     /// issue-comments PR-A — off-UI read wrapper around
     /// `ITrackerCollaboration::FetchIssueComments`. Latches the focused backend,
@@ -1054,18 +1055,6 @@ class AppController : public IAppThreading,
     /// frame. UI-thread only (mirrors the optimistic-update path). No-op when both values
     /// are unchanged.
     void UpdateCachedCommentsFromThread(const std::string& issueId, const std::vector<TrackerIssueComment>& comments);
-
-    VoidResult SubmitWorklog(const std::string& issueId, const std::string& timeSpent, const std::string& timeRemaining,
-                             const std::string& adjustEstimate, const std::string& workDescription,
-                             const std::string& startedDate) override;
-
-    // Returns VoidResult (has_value() on success; error() carries the user-facing message). Plain
-    // method — no IApp* interface mirror. Preflight ordering + strings are the pure seam in
-    // Tracker/CollaborationPreconditionPure.h (CollaborationPreconditionPure.test.cpp).
-    VoidResult AddIssueCommentAnnotateContext(const std::string& issueKey, const std::string& p4User,
-                                              const std::string& functionName, const std::string& filePath,
-                                              int lineNumber, const std::string& changelist, const std::string& date,
-                                              bool approximated, const std::string& codeSnippet);
 
     /// Group names for `accountId` via the focused backend's ITrackerActivity. `error()` carries the
     /// user-facing message on no backend / no activity support / backend error. Off-UI (blocks on HTTP).
@@ -1122,6 +1111,11 @@ class AppController : public IAppThreading,
     /// (no .detach). Mutation-path twin of the search-path cancel plumbing (#1529). Allocated once in
     /// the ctor; a single shared_ptr<atomic<bool>> shared across backend swaps.
     std::shared_ptr<std::atomic<bool>> automationShutdownCancel_;
+
+    /// The one path into PendingActionQueueService::SubmitOrQueue. A send that was queued after failing
+    /// on the network also schedules a connectivity probe (posted: the probe schedule is UI-thread state).
+    PendingActionSubmitResult SubmitPendingAction(PendingActionKind kind, const std::string& issueKey,
+                                                  const std::string& payloadJson);
 
   public:
     /// Retire a swapped-out backend into the defer-free graveyard (see `retiredBackends_`).

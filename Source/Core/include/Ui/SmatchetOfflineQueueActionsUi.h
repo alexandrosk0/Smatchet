@@ -1,7 +1,7 @@
 #pragma once
 
-// The Offline Queue panel's "Other queued changes" table (Quality Pillar 6): queued and failed comments
-// (later worklogs and watch), read from the IAppPendingActions snapshot, never SQLite. UI thread only.
+// The Offline Queue panel's "Other queued changes" table (Quality Pillar 6): queued and failed comments,
+// worklogs and watches, read from the IAppPendingActions snapshot, never SQLite. UI thread only.
 
 class IAppPendingActions;
 

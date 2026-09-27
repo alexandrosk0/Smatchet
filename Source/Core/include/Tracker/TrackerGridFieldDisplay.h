@@ -1,5 +1,6 @@
 #pragma once
 
+#include "PendingActionTypes.h"
 #include "TrackerFieldSchema.h"
 
 #include <cstdint>
@@ -36,10 +37,11 @@ struct TrackerGridFieldAsyncState {
     std::string watchersLoadedError;
 
     bool watchSelfInProgress = false;
-    std::future<std::string> watchSelfFuture;
+    std::future<PendingActionSubmitResult> watchSelfFuture;
     std::string watchSelfError;
     std::string watchSelfPendingIssueKey;
-    std::set<std::string> watchSelfSucceededIssueKeys;
+    std::set<std::string> watchSelfSucceededIssueKeys; ///< sent or queued: the Watch button hides
+    std::set<std::string> watchSelfQueuedIssueKeys;    ///< saved offline, applied on reconnect (Pillar 6)
 
     bool votesPanelOpen = false;
     std::string votesPopupIssueKey;

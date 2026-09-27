@@ -995,6 +995,25 @@ _resolve_py() {
     [[ "$output" == *"Source/Core/src/Ui/Q.cpp"* ]]
 }
 
+@test "offline-write-bypasses-queue is absolute-0: the real tree has no direct tracker write" {
+    run bash -c "cd '$REPO_ROOT' && source agents/scripts/project/lint-rules.d/00-common.sh && source agents/scripts/project/lint-rules.d/72-offline-exact.sh && compute_offline_write_violations"
+    [ "$status" -eq 0 ]
+    [ -z "$output" ]
+}
+
+@test "the absolute offline-write sweep flags an existing write too, and keeps Sync/ exempt" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui" "$tmp/Source/Core/src/Sync"
+    printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Old.cpp"
+    printf 'void Q(B& b) {\n    b.Collaboration()->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Sync/Q.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base && git branch develop ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && compute_offline_write_violations"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"offline-write-bypasses-queue"*"Source/Core/src/Ui/Old.cpp"* ]]
+    [[ "$output" != *"Sync/Q.cpp"* ]]
+}
+
 # ---------- lint-rules.d module loading (monolith split) ----------
 # The scanner sources its per-rule-family modules from lint-rules.d/ next to the
 # entry point. Loading must FAIL CLOSED: a missing module means a silently

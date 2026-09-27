@@ -16,11 +16,14 @@
 #include "TrackerFieldSchema.h"
 #include "Ui/P4ClPreview.h"
 #include "Ui/P4vLaunch.h"
+#include "Ui/PendingActionSubmitAsync.h"
+#include "Tracker/AnnotateContextCommentPure.h"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <future>
 #include <mutex>
 #include <string>
@@ -129,9 +132,9 @@ void DrawCallstackViewToggle(AnnotateDrawCtx& ctx, bool streamlinedHide) {
     ImGui::Text("Callstack Frames: %zu", ctx.NRow);
     const ImGuiStyle& stBtn = ImGui::GetStyle();
     const float padH = stBtn.FramePadding.x * 2.f;
-    const float callstackViewBtnW = (std::max)(ImGui::CalcTextSize("Show Raw Text").x + padH,
-                                               (std::max)(ImGui::CalcTextSize("Show Table").x + padH,
-                                                          ImGui::CalcTextSize("Show raw callstack…").x + padH));
+    const float callstackViewBtnW = (std::max)(
+        ImGui::CalcTextSize("Show Raw Text").x + padH,
+        (std::max)(ImGui::CalcTextSize("Show Table").x + padH, ImGui::CalcTextSize("Show raw callstack…").x + padH));
     if (!streamlinedHide) {
         ImGui::SameLine();
         PushAnnotateLinkButtonColors(theme);
@@ -808,6 +811,52 @@ void DrawAnnotateEntryTab(AnnotateDrawCtx& ctx, size_t ti) {
 
 namespace {
 
+// The Annotate-context comment for `row`, as Markdown (the shared Tracker/ builder).
+std::string AnnotateContextCommentFor(const AnnotateRow& row) {
+    smatchet::tracker::AnnotateContextFields fields;
+    fields.P4User = row.Annotate.User;
+    fields.FunctionName = row.Parsed.Function;
+    fields.FilePath = row.PathForP4;
+    fields.LineNumber = row.Parsed.LineNumber;
+    fields.Changelist = row.Annotate.Changelist;
+    fields.Date = row.Annotate.Date;
+    fields.Approximated = row.Annotate.Approximate;
+    fields.CodeSnippet = row.Annotate.LineSnippet;
+    return smatchet::tracker::BuildAnnotateContextCommentMarkdown(fields);
+}
+
+// Runs an Annotate comment write off the UI thread (Pillar 2) — sent now, or saved offline and posted
+// on reconnect (Quality Pillar 6) — and reports what actually happened in the status line.
+template <typename SubmitFn>
+void RunAnnotateCommentWrite(AppController& app, SubmitFn submit, const std::string& postedText,
+                             const std::string& queuedText, const std::string& failedFallback) {
+    State().assignCommitInFlight = true;
+    State().lastUiStatus = "Posting...";
+    try {
+        smatchet::ui::SubmitPendingActionAsync(
+            app, submit, [postedText, queuedText, failedFallback](const PendingActionSubmitResult& result) {
+                if (!HasLiveStateInstance()) {
+                    return;
+                }
+                State().assignCommitInFlight = false;
+                if (result.K == PendingActionSubmitResult::Kind::Sent) {
+                    State().lastUiStatus = postedText;
+                } else if (result.K == PendingActionSubmitResult::Kind::Queued) {
+                    State().lastUiStatus = queuedText;
+                } else {
+                    State().lastUiStatus = "Error: " + (result.Error.empty() ? failedFallback : result.Error);
+                    LOG_ERROR("Annotate UI: %s", State().lastUiStatus.c_str());
+                }
+            });
+    } catch (const std::exception& ex) {
+        LOG_WARN("Annotate UI: could not start posting the comment: %s", ex.what());
+        State().assignCommitInFlight = false;
+        State().lastUiStatus = "Error: could not start posting the comment. Try again.";
+    }
+}
+
+const char* const kCommentQueuedStatus = "Saved offline; the comment will post when the tracker is reachable.";
+
 // "Assign issue to user" action row (off-UI SubmitFieldEdit dispatch).
 void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitInFlight, bool hasJiraAccount) {
     AppController& app = ctx.App;
@@ -855,44 +904,23 @@ void DrawAssignIssueAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitI
     ImGui::EndDisabled();
 }
 
-// "Add Annotate context comment" action row (off-UI AddIssueCommentAnnotateContext).
+// "Add Annotate context comment" action row (the comment goes through the pending-action queue).
 void DrawAssignContextCommentAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool commitInFlight) {
     AppController& app = ctx.App;
-    const std::string& selectedJiraIssueKey = ctx.SelectedJiraIssueKey;
     ImGui::BeginDisabled(readOnlyMode || commitInFlight);
     if (ImGui::Selectable("Add Annotate context comment", false)) {
-        // Pillar 2 — finding #7: AddIssueCommentAnnotateContext (cpr::Post) → worker.
-        State().assignCommitInFlight = true;
-        State().lastUiStatus = "Posting...";
-        const std::string capturedIssueKey = selectedJiraIssueKey;
-        const AnnotateRow capturedRow = State().assignRow;
-        app.LaunchBackgroundTask([&app, capturedIssueKey, capturedRow]() {
-            const VoidResult r = app.AddIssueCommentAnnotateContext(
-                capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
-                capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
-                capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet);
-            const bool ok = r.has_value();
-            const std::string err = ok ? std::string() : r.error();
-            app.PostToMainThread([ok, err, capturedIssueKey]() {
-                if (!HasLiveStateInstance()) {
-                    return;
-                }
-                State().assignCommitInFlight = false;
-                if (ok) {
-                    LOG_INFO("Annotate UI: posted annotate context comment for %s.", capturedIssueKey.c_str());
-                    State().lastUiStatus = "Annotate context comment posted.";
-                } else {
-                    LOG_ERROR("Annotate UI: comment failed: %s", err.c_str());
-                    State().lastUiStatus = "Error: " + (err.empty() ? std::string("the comment failed to post.") : err);
-                }
-            });
-        });
+        AppController* appPtr = &app;
+        const std::string capturedIssueKey = ctx.SelectedJiraIssueKey;
+        const std::string body = AnnotateContextCommentFor(State().assignRow);
+        RunAnnotateCommentWrite(
+            app, [appPtr, capturedIssueKey, body]() { return appPtr->SubmitOrQueueComment(capturedIssueKey, body); },
+            "Annotate context comment posted.", kCommentQueuedStatus, "the comment failed to post.");
         ImGui::CloseCurrentPopup();
     }
     ImGui::EndDisabled();
 }
 
-// "Quick comment templates" selectable list (off-UI AddIssueCommentPlain per template).
+// "Quick comment templates" selectable list (each comment goes through the pending-action queue).
 void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& jiraCfg, bool readOnlyMode,
                                      bool commitInFlight) {
     AppController& app = ctx.App;
@@ -909,30 +937,16 @@ void DrawAssignQuickCommentTemplates(AnnotateDrawCtx& ctx, const TrackerConfig& 
                 ImGui::PushID(annotateTplIndex);
             }
             if (ImGui::SelectableRaw(t.Title.c_str(), false)) {
-                // Pillar 2 — finding #7: AddIssueCommentPlain (cpr::Post) → worker.
-                State().assignCommitInFlight = true;
-                State().lastUiStatus = "Posting...";
+                AppController* appPtr = &app;
                 const std::string capturedIssueKey = selectedJiraIssueKey;
-                const std::string capturedTitle = t.Title;
                 const std::string commentBody = BuildAnnotateQuickCommentTemplate(
                     selectedJiraIssueKey, t.Id, State().assignRow, jiraCfg.AnnotateCommentTemplates);
-                app.LaunchBackgroundTask([&app, capturedIssueKey, capturedTitle, commentBody]() {
-                    const VoidResult r = app.AddIssueCommentPlain(capturedIssueKey, commentBody);
-                    const bool ok = r.has_value();
-                    const std::string err = ok ? std::string() : r.error();
-                    app.PostToMainThread([ok, err, capturedTitle]() {
-                        if (!HasLiveStateInstance()) {
-                            return;
-                        }
-                        State().assignCommitInFlight = false;
-                        if (ok) {
-                            State().lastUiStatus = "Posted '" + capturedTitle + "' comment.";
-                        } else {
-                            State().lastUiStatus =
-                                "Error: " + (err.empty() ? std::string("failed to post the Jira comment.") : err);
-                        }
-                    });
-                });
+                RunAnnotateCommentWrite(
+                    app,
+                    [appPtr, capturedIssueKey, commentBody]() {
+                        return appPtr->SubmitOrQueueComment(capturedIssueKey, commentBody);
+                    },
+                    "Posted '" + t.Title + "' comment.", kCommentQueuedStatus, "failed to post the comment.");
                 ImGui::CloseCurrentPopup();
             }
             ImGui::PopID();
@@ -960,49 +974,27 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
             State().lastUiStatus = "Error: the assignee field isn't in the loaded field catalog - refresh the catalog "
                                    "(Preferences > Tracker > Save & Sync) and retry.";
         } else {
-            // Pillar 2 — finding #7: chain SubmitFieldEdit + AddIssueCommentAnnotateContext
-            // on a single worker so the user clicks once and both HTTP calls run off-UI.
-            State().assignCommitInFlight = true;
-            State().lastUiStatus = "Posting...";
+            // One worker runs the assign and then the comment (Pillar 2), so the user clicks once. The
+            // comment is queued offline like any other (Quality Pillar 6); the assign is still sent now.
+            AppController* appPtr = &app;
             const std::string capturedIssueKey = selectedJiraIssueKey;
             const std::string capturedAccountId = State().assignAccountId;
             const TrackerField fieldCopy = *f;
-            const AnnotateRow capturedRow = State().assignRow;
-            app.LaunchBackgroundTask([&app, capturedIssueKey, capturedAccountId, fieldCopy, capturedRow]() {
-                std::string err;
-                const VoidResult assignResult = app.SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
-                const bool assigned = assignResult.has_value();
-                if (!assigned) {
-                    err = assignResult.error();
-                }
-                bool commented = false;
-                if (assigned) {
-                    const VoidResult cr = app.AddIssueCommentAnnotateContext(
-                        capturedIssueKey, capturedRow.Annotate.User, capturedRow.Parsed.Function, capturedRow.PathForP4,
-                        capturedRow.Parsed.LineNumber, capturedRow.Annotate.Changelist, capturedRow.Annotate.Date,
-                        capturedRow.Annotate.Approximate, capturedRow.Annotate.LineSnippet);
-                    commented = cr.has_value();
-                    if (!commented) {
-                        err = cr.error();
+            const std::string body = AnnotateContextCommentFor(State().assignRow);
+            RunAnnotateCommentWrite(
+                app,
+                [appPtr, capturedIssueKey, capturedAccountId, fieldCopy, body]() {
+                    const VoidResult assigned =
+                        appPtr->SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
+                    if (!assigned.has_value()) {
+                        PendingActionSubmitResult failed;
+                        failed.Error = assigned.error();
+                        return failed;
                     }
-                }
-                const bool ok = assigned && commented;
-                app.PostToMainThread([ok, err, capturedIssueKey]() {
-                    if (!HasLiveStateInstance()) {
-                        return;
-                    }
-                    State().assignCommitInFlight = false;
-                    if (ok) {
-                        LOG_INFO("Annotate UI: assigned %s and posted annotate context comment.",
-                                 capturedIssueKey.c_str());
-                        State().lastUiStatus = "Assigned and commented.";
-                    } else {
-                        LOG_ERROR("Annotate UI: assign/comment failed: %s", err.c_str());
-                        State().lastUiStatus =
-                            "Error: " + (err.empty() ? std::string("the assign-and-comment failed.") : err);
-                    }
-                });
-            });
+                    return appPtr->SubmitOrQueueComment(capturedIssueKey, body);
+                },
+                "Assigned and commented.", "Assigned; the comment will post when the tracker is reachable.",
+                "the assign-and-comment failed.");
             ImGui::CloseCurrentPopup();
         }
     }

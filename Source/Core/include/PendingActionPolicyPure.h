@@ -2,7 +2,7 @@
 
 // PendingActionPolicyPure — the decisions behind the pending-action queue (Quality Pillar 6) that
 // keep an offline action exactly-once: which state a failed send leaves it in, whether an
-// interrupted comment already reached the tracker, and the comment payload shape. Pure: no I/O,
+// interrupted comment already reached the tracker, and each kind's payload shape. Pure: no I/O,
 // no Logger.h, no SQLite (the doctest rig links it bare).
 
 #include "ITrackerCollaboration.h" // TrackerIssueComment
@@ -42,6 +42,24 @@ std::string BuildCommentActionPayload(const std::string& body, std::int64_t crea
 
 /// Inverse of BuildCommentActionPayload (bounded parse). False when malformed or the body is empty.
 bool ParseCommentActionPayload(const std::string& json, std::string& outBody, std::int64_t& outCreatedAtSec);
+
+/// The WorklogAdd payload: the ITrackerCollaboration::AddWorklog arguments.
+struct WorklogActionPayload {
+    std::string TimeSpent; ///< e.g. "2h 30m"; required
+    std::string TimeRemaining;
+    std::string AdjustEstimate; ///< "auto", "new", …; "" leaves the estimate alone
+    std::string Description;
+    std::string Started; ///< Jira date-time, e.g. "2026-09-27T10:00:00.000+0200"
+};
+
+/// {"timeSpent", "timeRemaining", "adjustEstimate", "description", "started"}.
+std::string BuildWorklogActionPayload(const WorklogActionPayload& worklog);
+
+/// Inverse of BuildWorklogActionPayload (bounded parse). False when malformed or timeSpent is empty.
+bool ParseWorklogActionPayload(const std::string& json, WorklogActionPayload& out);
+
+/// The WatchAdd payload: watching takes no arguments.
+constexpr const char* kWatchActionPayload = "{}";
 
 } // namespace pendingaction
 } // namespace smatchet

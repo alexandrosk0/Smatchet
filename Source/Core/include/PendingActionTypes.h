@@ -1,7 +1,7 @@
 #pragma once
 
 // PendingActionTypes — tracker actions saved while offline other than issue creates and field
-// edits (Quality Pillar 6): comments today, worklogs and watch next. One generic queue keyed by
+// edits (Quality Pillar 6): comments, worklogs and watching an issue. One generic queue keyed by
 // kind (DRY) in the pending_actions / pending_actions_dead tables. Plain data and wire names only
 // (no SQLite), rank 0 so the cache seam (ISyncCache), the Sync service and the UI facet can all
 // include it — the same placement as the create / field-edit queue rows in CachedTicketTypes.h.

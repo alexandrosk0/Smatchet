@@ -49,13 +49,19 @@ TrackerError Dispatch(ITrackerCollaboration& collab, const TrackerConfig& cfg, P
         }
         return collab.AddIssueCommentPlain(cfg, issueKey, body);
     }
-    case PendingActionKind::WorklogAdd:
-    case PendingActionKind::WatchAdd:
-        break;
+    case PendingActionKind::WorklogAdd: {
+        pendingaction::WorklogActionPayload worklog;
+        if (!pendingaction::ParseWorklogActionPayload(payloadJson, worklog)) {
+            return TrackerErrorInvalidRequest("The saved worklog could not be read.");
+        }
+        return collab.AddWorklog(cfg, issueKey, worklog.TimeSpent, worklog.TimeRemaining, worklog.AdjustEstimate,
+                                 worklog.Description, worklog.Started);
     }
-    // A row written by a newer build: archived (restorable), never dropped.
-    return TrackerErrorInvalidRequest(std::string("This version of Smatchet cannot send '") +
-                                      PendingActionKindWire(kind) + "' actions.");
+    case PendingActionKind::WatchAdd:
+        return collab.AddIssueWatcher(cfg, issueKey);
+    }
+    // Every kind returns above; this only satisfies compilers that cannot prove the switch exhaustive.
+    return TrackerErrorInvalidRequest("Unknown action kind.");
 }
 
 } // namespace

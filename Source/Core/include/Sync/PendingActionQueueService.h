@@ -1,7 +1,7 @@
 #pragma once
 
 // PendingActionQueueService — the offline queue for tracker actions other than issue creates and
-// field edits (Quality Pillar 6): comments today, worklogs and watch next. One generic queue keyed by
+// field edits (Quality Pillar 6): comments, worklogs and watching an issue. One generic queue keyed by
 // kind (PendingActionTypes.h) in the pending_actions tables, next to OfflineQueueService's create /
 // field-edit queues and driven the same way: a write made while the tracker is unreachable is saved
 // at once and replayed on reconnect; online, a failed send that the tracker may still accept is saved

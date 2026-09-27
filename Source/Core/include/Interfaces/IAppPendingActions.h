@@ -1,7 +1,7 @@
 #ifndef SMATCHET_INTERFACES_IAPP_PENDING_ACTIONS_H
 #define SMATCHET_INTERFACES_IAPP_PENDING_ACTIONS_H
 
-// Narrow facet for the pending-action queue (Quality Pillar 6): comments (later worklogs and watch)
+// Narrow facet for the pending-action queue (Quality Pillar 6): comments, worklogs and watches
 // sent now or saved while the tracker is unreachable, and the queue-panel actions over them.
 // AppController implements it; the queue panel TU (Ui/SmatchetOfflineQueueUi_Actions.cpp) depends on
 // this instead of the full AppController.h. Rank-0 leaf (Interfaces/): the row and result types come

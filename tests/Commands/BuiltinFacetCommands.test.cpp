@@ -230,8 +230,8 @@ struct FakeAttachments : IAppAttachments {
 struct FakeMutations : IAppTicketMutations {
     TrackerField StatusField;
     bool SubmitOk = true;
-    bool CommentOk = true;
-    bool WorklogOk = true;
+    PendingActionSubmitResult::Kind CommentOutcome = PendingActionSubmitResult::Kind::Sent;
+    PendingActionSubmitResult::Kind WorklogOutcome = PendingActionSubmitResult::Kind::Sent;
     std::int64_t QueuedId = 77;
     bool CreateOk = true;
     std::string LastEditIssue;
@@ -252,13 +252,21 @@ struct FakeMutations : IAppTicketMutations {
         LastEditValues = rawValues;
         return SubmitOk ? VoidOk() : VoidResult::Err("edit rejected");
     }
-    VoidResult AddIssueCommentPlain(const std::string&, const std::string&) override {
-        return CommentOk ? VoidOk() : VoidResult::Err("comment rejected");
+    static PendingActionSubmitResult Outcome(PendingActionSubmitResult::Kind kind, const char* rejection) {
+        PendingActionSubmitResult r;
+        r.K = kind;
+        r.QueueId = kind == PendingActionSubmitResult::Kind::Queued ? 42 : 0;
+        r.Error = kind == PendingActionSubmitResult::Kind::Failed ? rejection : "";
+        return r;
     }
-    VoidResult SubmitWorklog(const std::string&, const std::string& timeSpent, const std::string&, const std::string&,
-                             const std::string&, const std::string&) override {
+    PendingActionSubmitResult SubmitOrQueueComment(const std::string&, const std::string&) override {
+        return Outcome(CommentOutcome, "comment rejected");
+    }
+    PendingActionSubmitResult SubmitOrQueueWorklog(const std::string&, const std::string& timeSpent, const std::string&,
+                                                   const std::string&, const std::string&,
+                                                   const std::string&) override {
         LastWorklogTimeSpent = timeSpent;
-        return WorklogOk ? VoidOk() : VoidResult::Err("worklog rejected");
+        return Outcome(WorklogOutcome, "worklog rejected");
     }
     std::int64_t QueueCreateOffline(const IssueDraft&) override { return QueuedId; }
     std::future<IssueCreateResult> CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken) override {
@@ -651,9 +659,36 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
     {
         const CommandResult r = reg.Dispatch("ticket.add_comment", {{"id", "PROJ-1"}, {"body", "hi"}}, yes);
         REQUIRE(r.Ok);
-        mut.CommentOk = false;
+        CHECK((*r.Data)["ok"] == true);
+        CHECK_FALSE(r.Data->contains("queued"));
+        mut.CommentOutcome = PendingActionSubmitResult::Kind::Failed;
         const CommandResult fail = reg.Dispatch("ticket.add_comment", {{"id", "PROJ-1"}, {"body", "hi"}}, yes);
+        REQUIRE_FALSE(fail.Ok);
         CHECK(fail.Error.Code == ErrorCode::BackendError);
+        CHECK(fail.Error.Message.find("comment rejected") != std::string::npos);
+        mut.CommentOutcome = PendingActionSubmitResult::Kind::Sent;
+    }
+    {
+        // Tracker unreachable: the write is saved to the pending-action queue and posts on reconnect.
+        // Still a success, and the envelope says it was queued and which queue row holds it.
+        mut.CommentOutcome = PendingActionSubmitResult::Kind::Queued;
+        const CommandResult c = reg.Dispatch("ticket.add_comment", {{"id", "PROJ-1"}, {"body", "hi"}}, yes);
+        REQUIRE(c.Ok);
+        CHECK((*c.Data)["ok"] == true);
+        CHECK((*c.Data)["queued"] == true);
+        CHECK((*c.Data)["offlineId"] == 42);
+        mut.WorklogOutcome = PendingActionSubmitResult::Kind::Queued;
+        const CommandResult w = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 60}}, yes);
+        REQUIRE(w.Ok);
+        CHECK((*w.Data)["queued"] == true);
+        CHECK((*w.Data)["offlineId"] == 42);
+        CHECK((*w.Data)["timeSpent"] == "1m");
+        mut.WorklogOutcome = PendingActionSubmitResult::Kind::Failed;
+        const CommandResult wf = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 60}}, yes);
+        REQUIRE_FALSE(wf.Ok);
+        CHECK(wf.Error.Code == ErrorCode::BackendError);
+        mut.CommentOutcome = PendingActionSubmitResult::Kind::Sent;
+        mut.WorklogOutcome = PendingActionSubmitResult::Kind::Sent;
     }
     {
         // 5400 s -> "1h 30m"; 2700 s -> "45m".
@@ -674,7 +709,7 @@ TEST_CASE("ticket.* mutations — catalog lookup, dry-run diff, worklog formatti
 
         // #2054: zero / negative are rejected as an argument error instead of being submitted as
         // timeSpent="0s" / "-30s" and coming back as an opaque backend rejection. The fake records
-        // the last timeSpent it saw, so an unchanged value proves SubmitWorklog was never reached.
+        // the last timeSpent it saw, so an unchanged value proves SubmitOrQueueWorklog was never reached.
         mut.LastWorklogTimeSpent = "sentinel";
         const CommandResult zero = reg.Dispatch("ticket.add_worklog", {{"id", "PROJ-1"}, {"seconds", 0}}, yes);
         REQUIRE_FALSE(zero.Ok);

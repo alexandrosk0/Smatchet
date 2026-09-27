@@ -300,18 +300,51 @@ void AppController::TickPendingActions() {
     }
 }
 
-PendingActionSubmitResult AppController::SubmitOrQueueComment(const std::string& issueKey, const std::string& body) {
+PendingActionSubmitResult AppController::SubmitPendingAction(PendingActionKind kind, const std::string& issueKey,
+                                                             const std::string& payloadJson) {
     if (!pendingActions_) {
         PendingActionSubmitResult notReady;
         notReady.Error = "Smatchet is still starting; try again in a moment.";
         return notReady;
     }
+    PendingActionSubmitResult result =
+        pendingActions_->SubmitOrQueue(kind, issueKey, payloadJson, GetLastTrackerConnectivityState());
+    if (result.QueuedAfterNetworkFailure) {
+        // The live send just failed on the network: probe now rather than after the probe interval.
+        PostToMainThread([this]() { RequestTrackerProbeNow(); });
+    }
+    return result;
+}
+
+PendingActionSubmitResult AppController::SubmitOrQueueComment(const std::string& issueKey, const std::string& body) {
     // The queued time anchors the dedupe check if a send is interrupted (PendingActionPolicyPure.h).
     const std::int64_t nowSec =
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    return pendingActions_->SubmitOrQueue(PendingActionKind::CommentAdd, issueKey,
-                                          smatchet::pendingaction::BuildCommentActionPayload(body, nowSec),
-                                          GetLastTrackerConnectivityState());
+    return SubmitPendingAction(PendingActionKind::CommentAdd, issueKey,
+                               smatchet::pendingaction::BuildCommentActionPayload(body, nowSec));
+}
+
+PendingActionSubmitResult AppController::SubmitOrQueueWorklog(const std::string& issueId, const std::string& timeSpent,
+                                                              const std::string& timeRemaining,
+                                                              const std::string& adjustEstimate,
+                                                              const std::string& workDescription,
+                                                              const std::string& startedDate) {
+    smatchet::pendingaction::WorklogActionPayload worklog;
+    worklog.TimeSpent = timeSpent;
+    worklog.TimeRemaining = timeRemaining;
+    worklog.AdjustEstimate = adjustEstimate;
+    worklog.Description = workDescription;
+    worklog.Started = startedDate;
+    const PendingActionSubmitResult result = SubmitPendingAction(
+        PendingActionKind::WorklogAdd, issueId, smatchet::pendingaction::BuildWorklogActionPayload(worklog));
+    if (result.K == PendingActionSubmitResult::Kind::Sent) {
+        PrefetchIssueTicketsForKeys({issueId}, true); // refresh the time-tracking fields the worklog changed
+    }
+    return result;
+}
+
+PendingActionSubmitResult AppController::SubmitOrQueueWatch(const std::string& issueKey) {
+    return SubmitPendingAction(PendingActionKind::WatchAdd, issueKey, smatchet::pendingaction::kWatchActionPayload);
 }
 
 std::shared_ptr<const PendingActionsSnapshot> AppController::GetPendingActionsSnapshot() const {

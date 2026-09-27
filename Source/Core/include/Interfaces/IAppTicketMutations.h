@@ -2,7 +2,8 @@
 #define SMATCHET_INTERFACES_IAPP_TICKET_MUTATIONS_H
 
 // Narrow facet for single-ticket mutations (set field(s) / comment / worklog / transition /
-// create) — AppController fan-in Phase 5. AppController implements it; the ticket.* mutation
+// create) — AppController fan-in Phase 5. Comments and worklogs go through the pending-action
+// queue, so they report Sent / Queued / Failed. AppController implements it; the ticket.* mutation
 // command TU depends on this instead of the full AppController.h.
 //
 // Rank-0 leaf. The rank-3 Tracker payload types (TrackerField, IssueDraft, IssueCreateResult)
@@ -15,9 +16,10 @@
 // reads it, so it is mirrored here to keep this TU on a single facet. A single AppController
 // override is the final overrider for both interfaces — no diamond, the two facets are unrelated.
 
-#include "CachedTicketTypes.h" // CachedTicket (rank-0) — snapshot element
-#include "CancelToken.h"       // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
-#include "SmatchetResult.h"    // VoidResult (SubmitFieldEdit — outError → Result flip)
+#include "CachedTicketTypes.h"  // CachedTicket (rank-0) — snapshot element
+#include "CancelToken.h"        // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
+#include "PendingActionTypes.h" // PendingActionSubmitResult (rank-0) — comment / worklog outcome
+#include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — outError → Result flip)
 
 #include <cstdint>
 #include <future>
@@ -36,12 +38,16 @@ class IAppTicketMutations {
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
     virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                        const std::vector<std::string>& rawValues) = 0;
-    // Returns VoidResult: has_value() on success; error() carries the user-facing message.
-    virtual VoidResult AddIssueCommentPlain(const std::string& issueKey, const std::string& plainText) = 0;
-    // Returns VoidResult: has_value() on success; error() carries the user-facing message.
-    virtual VoidResult SubmitWorklog(const std::string& issueId, const std::string& timeSpent,
-                                     const std::string& timeRemaining, const std::string& adjustEstimate,
-                                     const std::string& workDescription, const std::string& startedDate) = 0;
+    /// Comment on `issueKey`: sent now, or saved and replayed on reconnect when the tracker is unreachable
+    /// (Quality Pillar 6). Blocks on the network while online — call it from a worker. Also declared on
+    /// IAppPendingActions; AppController's one override serves both.
+    virtual PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) = 0;
+    /// Worklog on `issueId`, sent now or queued the same way.
+    virtual PendingActionSubmitResult SubmitOrQueueWorklog(const std::string& issueId, const std::string& timeSpent,
+                                                           const std::string& timeRemaining,
+                                                           const std::string& adjustEstimate,
+                                                           const std::string& workDescription,
+                                                           const std::string& startedDate) = 0;
     virtual std::int64_t QueueCreateOffline(const IssueDraft& draft) = 0;
     // CancelToken default mirrored on the AppController override too: concrete-typed callers
     // (AppController_LuaBindings, SmatchetNewIssueDraftUi) use the 1-arg form via static binding.

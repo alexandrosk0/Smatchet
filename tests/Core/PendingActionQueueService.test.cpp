@@ -2,8 +2,9 @@
 // in-memory fakes: FakeOfflineQueueDeps (FakeSyncCache + FakeTrackerClient, tasks run inline).
 // Routing (offline queues with no request; online sends; a failure the tracker may still accept is
 // queued), replay (sent once, the `sending` marker persisted first, a pass stops at a transport
-// failure), the exactly-once checks for an interrupted comment, archiving, and the queue-panel
-// actions. A per-case OfflineQueueTestEnvGuard sets read_only_mode=false in a temp config.
+// failure), the exactly-once checks for an interrupted comment, worklogs held for review instead of
+// resent, watches retried freely, archiving, and the queue-panel actions. A per-case OfflineQueueTestEnvGuard sets
+// read_only_mode=false in a temp config.
 
 #include "../support/FakeOfflineQueueDeps.h"
 #include "../support/FakeTrackerClient.h"
@@ -317,6 +318,97 @@ TEST_CASE("PendingActionQueueService::SendAgain leaves a row that does not need 
     rig.ReplayNow();
     CHECK(rig.Tracker().AddCommentCalls().empty());
     CHECK(rig.Tracker().FetchIssueCommentsCalls() == 1);
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
+smatchet::pendingaction::WorklogActionPayload SampleWorklog() {
+    smatchet::pendingaction::WorklogActionPayload w;
+    w.TimeSpent = "1h 30m";
+    w.TimeRemaining = "2h";
+    w.AdjustEstimate = "new";
+    w.Description = "Pairing on the \"offline\" fix";
+    w.Started = "2026-09-27T10:00:00.000+0200";
+    return w;
+}
+
+TEST_CASE("PendingActionQueueService::SubmitOrQueue sends a worklog online with every field") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
+        TrackerConnectivityState::AuthenticatedReachable);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Sent);
+    REQUIRE(rig.Tracker().AddWorklogCalls().size() == 1);
+    const smatchet_tests::FakeTrackerClient::AddWorklogCall& call = rig.Tracker().AddWorklogCalls()[0];
+    CHECK(call.IssueKey == "ABC-1");
+    CHECK(call.TimeSpent == "1h 30m");
+    CHECK(call.TimeRemaining == "2h");
+    CHECK(call.AdjustEstimate == "new");
+    CHECK(call.Description == "Pairing on the \"offline\" fix");
+    CHECK(call.Started == "2026-09-27T10:00:00.000+0200");
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
+TEST_CASE("PendingActionQueueService a worklog queued offline is logged once on replay") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
+        TrackerConnectivityState::TransportDown);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
+    CHECK(rig.Tracker().AddWorklogCalls().empty());
+    rig.ReplayNow();
+    REQUIRE(rig.Tracker().AddWorklogCalls().size() == 1);
+    CHECK(rig.Tracker().AddWorklogCalls()[0].TimeSpent == "1h 30m");
+    CHECK(rig.Cache().LoadPendingActions().empty());
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddWorklogCalls().size() == 1);
+}
+
+TEST_CASE("PendingActionQueueService a worklog send that may have landed is held for review, never resent") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.Tracker().EnqueueAddWorklogResult(TrackerErrorTransport("operation timed out"));
+    const PendingActionSubmitResult r = rig.svc.SubmitOrQueue(
+        PendingActionKind::WorklogAdd, "ABC-1", smatchet::pendingaction::BuildWorklogActionPayload(SampleWorklog()),
+        TrackerConnectivityState::AuthenticatedReachable);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
+    REQUIRE(rig.Cache().LoadPendingActions().size() == 1);
+    CHECK(rig.Cache().LoadPendingActions()[0].State == PendingActionState::kAmbiguous);
+    rig.ReplayNow();
+    rig.ReplayNow();
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].State == PendingActionState::kNeedsReview);
+    CHECK(rig.Tracker().AddWorklogCalls().size() == 1); // only the original attempt
+}
+
+TEST_CASE("PendingActionQueueService a watch queued offline is applied on replay") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
+                              TrackerConnectivityState::TransportDown);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
+    CHECK(rig.Tracker().AddWatcherCalls().empty());
+    rig.ReplayNow();
+    REQUIRE(rig.Tracker().AddWatcherCalls().size() == 1);
+    CHECK(rig.Tracker().AddWatcherCalls()[0] == "ABC-1");
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
+TEST_CASE("PendingActionQueueService a failed watch is retried as pending — watching twice is harmless") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.Tracker().EnqueueAddWatcherResult(TrackerErrorTransport("operation timed out"));
+    const PendingActionSubmitResult r =
+        rig.svc.SubmitOrQueue(PendingActionKind::WatchAdd, "ABC-1", smatchet::pendingaction::kWatchActionPayload,
+                              TrackerConnectivityState::AuthenticatedReachable);
+    CHECK(r.K == PendingActionSubmitResult::Kind::Queued);
+    REQUIRE(rig.Cache().LoadPendingActions().size() == 1);
+    CHECK(rig.Cache().LoadPendingActions()[0].State == PendingActionState::kPending);
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddWatcherCalls().size() == 2); // resent without a check
     CHECK(rig.Cache().LoadPendingActions().empty());
 }
 

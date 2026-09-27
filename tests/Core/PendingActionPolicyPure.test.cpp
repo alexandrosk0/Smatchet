@@ -10,11 +10,14 @@
 #include <vector>
 
 using smatchet::pendingaction::BuildCommentActionPayload;
+using smatchet::pendingaction::BuildWorklogActionPayload;
 using smatchet::pendingaction::CommentAlreadyPosted;
 using smatchet::pendingaction::kCommentDedupeWindowSec;
 using smatchet::pendingaction::NormalizeCommentForDedupe;
 using smatchet::pendingaction::ParseCommentActionPayload;
+using smatchet::pendingaction::ParseWorklogActionPayload;
 using smatchet::pendingaction::StateAfterFailedSend;
+using smatchet::pendingaction::WorklogActionPayload;
 
 namespace {
 
@@ -100,4 +103,28 @@ TEST_CASE("Comment action payload — round trip, and malformed input is rejecte
     CHECK_FALSE(ParseCommentActionPayload("{\"body\":\"\"}", body, created));
     REQUIRE(ParseCommentActionPayload("{\"body\":\"no time\"}", body, created));
     CHECK(created == 0);
+}
+
+TEST_CASE("Worklog action payload — round trip, and a missing time spent is rejected") {
+    WorklogActionPayload in;
+    in.TimeSpent = "2h 15m";
+    in.TimeRemaining = "";
+    in.AdjustEstimate = "auto";
+    in.Description = "line 1\n\"quoted\" \xc3\xa9";
+    in.Started = "2026-09-27T09:00:00.000+0000";
+    WorklogActionPayload out;
+    REQUIRE(ParseWorklogActionPayload(BuildWorklogActionPayload(in), out));
+    CHECK(out.TimeSpent == in.TimeSpent);
+    CHECK(out.TimeRemaining.empty());
+    CHECK(out.AdjustEstimate == "auto");
+    CHECK(out.Description == in.Description);
+    CHECK(out.Started == in.Started);
+
+    CHECK_FALSE(ParseWorklogActionPayload("not json", out));
+    CHECK_FALSE(ParseWorklogActionPayload("[1]", out));
+    CHECK_FALSE(ParseWorklogActionPayload("{\"description\":\"no time\"}", out));
+    CHECK_FALSE(ParseWorklogActionPayload("{\"timeSpent\":5}", out)); // wrong type
+    REQUIRE(ParseWorklogActionPayload("{\"timeSpent\":\"1h\"}", out));
+    CHECK(out.TimeSpent == "1h");
+    CHECK(out.Description.empty());
 }

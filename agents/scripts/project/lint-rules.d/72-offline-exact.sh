@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # 72-offline-exact.sh — Quality Pillar 6 (offline-first) EXACT rules (sourced by test-lint-rules.sh, not
-# run directly). BLOCKING, delta-gated per changed file: a file fails only when it has MORE hits of a
-# rule than its merge-base copy, so existing hits are grandfathered. ADR-0026.
+# run directly). Both BLOCKING (ADR-0026): offline-write-bypasses-queue is ABSOLUTE-0 over the whole
+# first-party tree (compute_offline_write_violations); tracker-error-kind-collapsed is delta-gated per
+# changed file (a file fails only when it has MORE hits than its merge-base copy; existing hits are
+# grandfathered).
 #
 # offline-write-bypasses-queue — a tracker write (comment, worklog, watcher, field update, create,
 # attach, sprint) called straight on the backend outside the queue seam. Offline, that write is lost;
@@ -23,7 +25,9 @@
 # Escape: a comment-only line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker on a line that also holds code never hides that code.
 
-OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*(AddIssueCommentPlain|AddIssueCommentAnnotateContext|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint)[[:space:]]*\('
+# The tracker write methods, shared by the rule regex and the whole-tree prefilter.
+OFFLINE_WRITE_METHODS='AddIssueCommentPlain|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint'
+OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
 # `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`).
@@ -168,6 +172,17 @@ scan_offline_exact_file() {
 compute_offline_exact_violations() {
     local f
     while IFS= read -r f; do [ -n "$f" ] && scan_offline_exact_file "$f"; done < <(list_first_party_cpp_files)
+}
+
+compute_offline_write_violations() {
+    # Whole-tree offline-write-bypasses-queue hits (the absolute-0 gate). Only files that name a tracker
+    # write method at all are lexed, which keeps the sweep to a couple of seconds.
+    local f
+    while IFS= read -r f; do
+        [ -n "$f" ] || continue
+        grep -qE "(${OFFLINE_WRITE_METHODS})[[:space:]]*\(" "$f" 2>/dev/null || continue
+        scan_offline_exact_file "$f"
+    done < <(list_first_party_cpp_files) | grep -F $'offline-write-bypasses-queue\t' || true
 }
 
 offline_delta_hits() {
