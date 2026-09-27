@@ -2924,6 +2924,16 @@ This plan touches `Source/Core/`.
   - `ITrackerFieldCatalog::SupportsIssueTransitions()`, true for Jira only: other backends make no request and log nothing.
 - Tests: `LearnedWorkflowPure`, `StatusComboOptionsPure`, `IssueTransitionsCacheService` (fakes; both lists), `LocalCacheManagerLookup` (in-memory; both lists) and `LocalCacheManagerLookupPersist` (file-backed; `SmatchetTests`). Also a `JiraFakeTrackerFixture` capability case and the bucket-E test `OfflineFirst/StatusCombo_OfflineShowsOptions`.
 
+### S6 — [#2253](https://github.com/alexandrosk0/Smatchet/pull/2253)
+- Shipped:
+  - `FieldEditPipelineService::CommitOrQueue` is the one worker-side commit-or-queue seam. While the last probe says the tracker is unreachable, a queueable edit goes straight to the offline queue with no network request; otherwise it tries the network and queues after a retryable failure. The SQLite enqueue runs on the worker through `IFieldEditDeps::EnqueueOfflineFieldEdit`.
+  - Status edits are offline-queueable. Preparing a queued edit never touches the network.
+  - The grid commit worker always posts a result back, and a failed launch releases the in-flight gate.
+  - Editmeta makes no request while offline and backs off 30 s after a failure; its warm-up marker clears on every path.
+  - Linear update failures keep their HTTP kind.
+  - `JiraFakeTrackerFixture` answers keyed fetches.
+- Tests: `FieldEditPipelineService` (`CommitOrQueue` matrix), `EditMetaCacheService` (offline, backoff, failed launch), `LinearIssueMutationHttp` (Transport / 503 / 401), `JiraFakeTrackerFixture` (keyed fetch), and the bucket-E test `OfflineFirst/StatusEdit_OfflineQueuesThenReplays`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
