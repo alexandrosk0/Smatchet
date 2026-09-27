@@ -148,6 +148,13 @@ void KickCommentsTooltipFetch(AppController& app, UiDrawSession& d, const std::s
     });
 }
 
+// The first-hover lazy fetch runs only for a blob not yet fetched, from the focused pane, and never
+// while the tracker is offline (Pillar 6): it would only spend the retry window, and with no kick
+// recorded the first hover after reconnecting fetches.
+bool ShouldLazyFetchCommentsTooltip(const AppController& app, const GridPane& pane, const std::string& commentBlob) {
+    return commentBlob.empty() && pane.focused && !app.IsTrackerOffline();
+}
+
 // Hover tooltip for the comments cell. `commentBlob` is the precomputed Markdown thread
 // (empty → not yet fetched / no comments) — this function only references it. It renders
 // through the shared description-tooltip path (RenderMarkdownTooltip), which caps a long
@@ -336,7 +343,7 @@ void SmatchetUI::drawActiveProjectGridValueCell(ActiveProjectDrawCtx& ctx, const
             // Kick only from the FOCUSED pane: the fetch resolves the focused backend and the
             // post-back writes the focused snapshot, so an unfocused pane's hover keeps the
             // static hint until the pane is focused (see KickCommentsTooltipFetch).
-            if (commentBlob.empty() && pane.focused) {
+            if (ShouldLazyFetchCommentsTooltip(app, pane, commentBlob)) {
                 // New snapshot for this pane (re-sync / backend swap / project switch) → allow
                 // one fresh kick per issue: the rebuilt cache may have wiped a lazily-fetched
                 // blob. Keyed on the (backendKey, revision) PAIR: per-context revision counters

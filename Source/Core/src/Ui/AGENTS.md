@@ -26,6 +26,7 @@ Flag any of these when reachable from `SmatchetUI::Draw` or any ImGui render pat
 - **Never render a loading-only state while cached data exists.** A network-backed view (combo, modal, panel, cell) draws its cached value and a `DataFreshnessCue` (`Source/Core/include/DataFreshnessCue.h`); "Loading…" alone is only for `DataFreshness::LoadingNoCache`. Offline, a tracker request spends up to ~90 s in its retry window, so a loading-only branch looks frozen and hides data the user already has (the PR #2234 status combo and the comments modal both did this).
 - **Keyed lookups go through `KeyedLookupCache` + `RunKeyedFetch`** (`Source/Core/include/KeyedLookupCache.h`): no fetch while `IsOfflineState`, a failure backs off and is never remembered as loaded, and the in-flight flag clears on every path including a throw.
 - **A tracker error banner never discards the user's edits.** Only the Read-only preference may drop not-yet-sent grid edits; a banner-driven read-only state holds them until the tracker is usable.
+- **Toasts say what happened.** "Queued" only after a real enqueue, "Posting…" while a request is in flight; never "Queued" for a direct post.
 
 ## Steady-state perf (Pillar 1)
 

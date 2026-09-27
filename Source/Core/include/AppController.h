@@ -1027,6 +1027,11 @@ class AppController : public IAppThreading,
     /// collaboration support / backend error.
     Result<std::vector<TrackerIssueComment>> FetchIssueComments(const std::string& issueKey);
 
+    /// FetchIssueComments with the backend's TrackerError kept (Quality Pillar 6): the comments
+    /// modal tells a Transport failure (keep the saved thread, probe connectivity) from a
+    /// permanent one. A missing backend / collaboration support is InvalidRequest. Worker-safe.
+    Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueCommentsTyped(const std::string& issueKey);
+
     /// issue-comments fix (#1291, extended) — push a freshly-fetched comment thread into the
     /// cached ticket: the numeric `comments` count AND the flattened `comment` tooltip blob
     /// (FormatCommentBlob), so the grid Comments cell and its hover tooltip update after a

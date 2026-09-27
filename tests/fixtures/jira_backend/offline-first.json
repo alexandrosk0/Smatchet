@@ -41,7 +41,18 @@
                 "status": {"name": "To Do", "id": "1"},
                 "priority": {"name": "High", "id": "2"},
                 "assignee": {"displayName": "Alice Offline"},
-                "issuetype": {"name": "Bug"}
+                "issuetype": {"name": "Bug"},
+                "comment": {
+                  "comments": [
+                    {
+                      "id": "c1",
+                      "author": {"displayName": "Ana Offline"},
+                      "body": "cached comment body",
+                      "created": "2023-11-14T22:13:20.000+0000"
+                    }
+                  ],
+                  "total": 1
+                }
               }
             },
             {

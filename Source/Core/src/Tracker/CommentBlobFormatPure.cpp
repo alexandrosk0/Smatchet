@@ -1,13 +1,24 @@
 #include "Tracker/CommentBlobFormatPure.h"
 
+#include "Json/BoundedJsonParse.h"
+#include "Tracker/TrackerFieldValueParser.h" // JsonIdToString, JsonGetStringIfString
+
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cctype>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <exception>
+#include <limits>
+#include <utility>
 
 // See header. This TU is deliberately Logger.h-free / I/O-free so the doctest
-// rig links it bare (the GitHubIssueSearchMapping purity precedent).
+// rig links it bare (the GitHubIssueSearchMapping purity precedent); the thread
+// parser reuses the shared JSON field readers of TrackerFieldValueParser.cpp,
+// which every target linking this TU already links.
 
 namespace smatchet {
 namespace tracker {
@@ -103,6 +114,235 @@ bool SplitActivityHeaderLine(const std::string& line, std::string& outAuthor, st
     outAuthor = line.substr(1, close - 1);
     outDate = date;
     return true;
+}
+
+// SerializeCommentThread output cap, and the larger parse cap: a stored thread is our own output,
+// so anything far past the write cap is not one and is rejected before it is parsed.
+constexpr size_t kMaxThreadBytes = 64u * 1024u;
+constexpr size_t kMaxThreadParseBytes = 1024u * 1024u;
+
+// Days since 1970-01-01 for a proleptic Gregorian date (Howard Hinnant's days_from_civil), so
+// the parse needs no timegm/_mkgmtime and is exact for every year.
+std::int64_t DaysFromCivil(std::int64_t year, int month, int day) {
+    year -= month <= 2 ? 1 : 0;
+    const std::int64_t era = (year >= 0 ? year : year - 399) / 400;
+    const std::int64_t yearOfEra = year - era * 400;
+    const std::int64_t shiftedMonth = month > 2 ? month - 3 : month + 9;
+    const std::int64_t dayOfYear = (153 * shiftedMonth + 2) / 5 + day - 1;
+    const std::int64_t dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    return era * 146097 + dayOfEra - 719468;
+}
+
+// "YYYY-MM-DD" → epoch seconds at midnight UTC; 0 when empty or not a plausible calendar date.
+std::int64_t UtcDateToEpochSec(const std::string& date) {
+    if (!IsIsoCalendarDate(date)) {
+        return 0;
+    }
+    const int year = std::atoi(date.substr(0, 4).c_str());
+    const int month = std::atoi(date.substr(5, 2).c_str());
+    const int day = std::atoi(date.substr(8, 2).c_str());
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+        return 0;
+    }
+    return DaysFromCivil(year, month, day) * 86400;
+}
+
+// An ActivityEntryHeader line: "**" + name with backslash escapes + "**", then nothing or
+// " YYYY-MM-DD". Reports the unescaped name and the date.
+bool SplitMarkdownEntryHeader(const std::string& line, std::string& outAuthor, std::string& outDate) {
+    if (line.size() < 5 || line.compare(0, 2, "**") != 0) {
+        return false;
+    }
+    std::string name;
+    size_t i = 2;
+    while (i < line.size()) {
+        if (line[i] == '\\' && i + 1 < line.size()) {
+            name.push_back(line[i + 1]);
+            i += 2;
+        } else if (line.compare(i, 2, "**") == 0) {
+            break;
+        } else {
+            name.push_back(line[i]);
+            ++i;
+        }
+    }
+    if (i >= line.size() || name.empty()) {
+        return false;
+    }
+    const std::string rest = line.substr(i + 2);
+    if (rest.empty()) {
+        outDate.clear();
+    } else if (rest.size() == 11 && rest[0] == ' ' && IsIsoCalendarDate(rest.substr(1))) {
+        outDate = rest.substr(1);
+    } else {
+        return false;
+    }
+    outAuthor = name;
+    return true;
+}
+
+std::vector<std::string> SplitLines(const std::string& text) {
+    std::vector<std::string> lines;
+    size_t start = 0;
+    while (start <= text.size()) {
+        size_t end = text.find('\n', start);
+        if (end == std::string::npos) {
+            end = text.size();
+        }
+        lines.push_back(text.substr(start, end - start));
+        start = end + 1;
+    }
+    return lines;
+}
+
+bool IsBlankLine(const std::string& line) { return line.find_first_not_of(" \t\r") == std::string::npos; }
+
+// Inverse of PreserveLineBreaks: drop the two hard-break spaces it appended. It runs the same
+// fence tracking and test on the transformed text, which is unchanged by those trailing spaces
+// (they never land on a fence or a blank line), so exactly the added pairs come off.
+std::string UndoPreservedLineBreaks(const std::vector<std::string>& lines, size_t from, size_t to) {
+    std::string out;
+    char fenceChar = '\0';
+    size_t fenceLen = 0;
+    for (size_t i = from; i < to; ++i) {
+        std::string line = lines[i];
+        size_t indent = 0;
+        char c = '\0';
+        size_t len = 0;
+        bool bareRun = false;
+        const bool isFence = ParseFenceLine(line, indent, c, len, bareRun);
+        if (fenceLen == 0 && isFence) {
+            fenceChar = c;
+            fenceLen = len;
+        } else if (fenceLen != 0 && isFence && c == fenceChar && len >= fenceLen && bareRun) {
+            fenceLen = 0;
+        }
+        const bool hasNext = i + 1 < to;
+        if (hasNext && fenceLen == 0 && !isFence && !IsBlankLine(line) && !IsBlankLine(lines[i + 1]) &&
+            line.size() >= 2 && line.compare(line.size() - 2, 2, "  ") == 0) {
+            line.resize(line.size() - 2);
+        }
+        out += line;
+        if (hasNext) {
+            out.push_back('\n');
+        }
+    }
+    return out;
+}
+
+TrackerIssueComment MakeParsedComment(const std::string& author, const std::string& date, const std::string& body) {
+    TrackerIssueComment c;
+    c.Author = author;
+    c.CreatedAtSec = UtcDateToEpochSec(date);
+    c.UpdatedAtSec = c.CreatedAtSec;
+    c.Body = body;
+    return c;
+}
+
+// Body line range [from, to) with trailing blank lines trimmed.
+size_t TrimTrailingBlankLines(const std::vector<std::string>& lines, size_t from, size_t to) {
+    while (to > from && IsBlankLine(lines[to - 1])) {
+        --to;
+    }
+    return to;
+}
+
+// Current blob shape: header, blank line, body, then "\n---\n\n" before the next header, so a
+// later header sits right after a blank / "---" / blank run. Newest first.
+std::vector<TrackerIssueComment> ParseMarkdownCommentBlob(const std::vector<std::string>& lines) {
+    std::vector<TrackerIssueComment> newestFirst;
+    std::string author;
+    std::string date;
+    if (lines.empty() || !SplitMarkdownEntryHeader(lines[0], author, date)) {
+        return newestFirst;
+    }
+    size_t bodyFrom = lines.size() > 1 && IsBlankLine(lines[1]) ? 2 : 1;
+    for (size_t i = 1; i <= lines.size(); ++i) {
+        std::string nextAuthor;
+        std::string nextDate;
+        const bool atEnd = i == lines.size();
+        const bool nextEntry = !atEnd && i >= 3 && lines[i - 1].empty() && lines[i - 2] == "---" &&
+                               lines[i - 3].empty() && SplitMarkdownEntryHeader(lines[i], nextAuthor, nextDate);
+        if (!atEnd && !nextEntry) {
+            continue;
+        }
+        const size_t bodyTo = TrimTrailingBlankLines(lines, bodyFrom, atEnd ? i : i - 3);
+        newestFirst.push_back(MakeParsedComment(author, date, UndoPreservedLineBreaks(lines, bodyFrom, bodyTo)));
+        if (nextEntry) {
+            author = nextAuthor;
+            date = nextDate;
+            bodyFrom = i + 1 < lines.size() && IsBlankLine(lines[i + 1]) ? i + 2 : i + 1;
+        }
+    }
+    return newestFirst;
+}
+
+// Older plain shape: "[Author] YYYY-MM-DD", the body on the following lines, entries separated
+// by one blank line. Newest first.
+std::vector<TrackerIssueComment> ParsePlainCommentBlob(const std::vector<std::string>& lines) {
+    std::vector<TrackerIssueComment> newestFirst;
+    std::string author;
+    std::string date;
+    if (lines.empty() || !SplitActivityHeaderLine(lines[0], author, date)) {
+        return newestFirst;
+    }
+    size_t bodyFrom = 1;
+    for (size_t i = 1; i <= lines.size(); ++i) {
+        std::string nextAuthor;
+        std::string nextDate;
+        const bool atEnd = i == lines.size();
+        const bool nextEntry =
+            !atEnd && IsBlankLine(lines[i - 1]) && SplitActivityHeaderLine(lines[i], nextAuthor, nextDate);
+        if (!atEnd && !nextEntry) {
+            continue;
+        }
+        const size_t bodyTo = TrimTrailingBlankLines(lines, bodyFrom, i);
+        std::string body;
+        for (size_t j = bodyFrom; j < bodyTo; ++j) {
+            body += lines[j];
+            if (j + 1 < bodyTo) {
+                body.push_back('\n');
+            }
+        }
+        newestFirst.push_back(MakeParsedComment(author, date, body));
+        if (nextEntry) {
+            author = nextAuthor;
+            date = nextDate;
+            bodyFrom = i + 1;
+        }
+    }
+    return newestFirst;
+}
+
+std::int64_t JsonEpochSec(const nlohmann::json& entry, const char* key) {
+    const auto it = entry.find(key);
+    if (it == entry.end()) {
+        return 0;
+    }
+    if (it->is_number_integer()) {
+        return it->get<std::int64_t>();
+    }
+    if (it->is_number_unsigned()) {
+        const unsigned long long v = it->get<unsigned long long>();
+        return v > static_cast<unsigned long long>((std::numeric_limits<std::int64_t>::max)())
+                   ? 0
+                   : static_cast<std::int64_t>(v);
+    }
+    return 0;
+}
+
+// One SerializeCommentThread entry; a missing or wrong-typed field keeps its default.
+TrackerIssueComment CommentFromThreadEntry(const nlohmann::json& entry) {
+    TrackerIssueComment c;
+    const auto id = entry.find("id");
+    if (id != entry.end()) {
+        c.Id = JsonIdToString(*id);
+    }
+    c.Author = JsonGetStringIfString(entry, "author");
+    c.Body = JsonGetStringIfString(entry, "body");
+    c.CreatedAtSec = JsonEpochSec(entry, "created");
+    c.UpdatedAtSec = JsonEpochSec(entry, "updated");
+    return c;
 }
 
 } // namespace
@@ -345,6 +585,95 @@ std::string FormatCommentBlob(const std::vector<TrackerIssueComment>& comments) 
         commentCount++;
     }
     return result;
+}
+
+std::string SerializeCommentThread(const std::vector<TrackerIssueComment>& comments) {
+    const size_t kMaxThreadComments = 50;
+    if (comments.empty()) {
+        return std::string();
+    }
+    try {
+        std::vector<const TrackerIssueComment*> ordered;
+        ordered.reserve(comments.size());
+        for (const TrackerIssueComment& c : comments) {
+            ordered.push_back(&c);
+        }
+        std::stable_sort(ordered.begin(), ordered.end(),
+                         [](const TrackerIssueComment* a, const TrackerIssueComment* b) {
+                             return a->CreatedAtSec < b->CreatedAtSec;
+                         });
+        const size_t first = ordered.size() > kMaxThreadComments ? ordered.size() - kMaxThreadComments : 0;
+        // Each element dumps on its own, so the array ("[" + elements joined by "," + "]") is sized
+        // before it is built and the byte cap needs no re-dump per dropped comment.
+        std::vector<std::string> entries;
+        entries.reserve(ordered.size() - first);
+        for (size_t i = first; i < ordered.size(); ++i) {
+            const TrackerIssueComment& c = *ordered[i];
+            nlohmann::json entry = nlohmann::json::object();
+            entry["id"] = c.Id;
+            entry["author"] = c.Author;
+            entry["body"] = c.Body;
+            entry["created"] = c.CreatedAtSec;
+            entry["updated"] = c.UpdatedAtSec;
+            // Comment text is tracker-supplied; replace invalid UTF-8 instead of throwing.
+            entries.push_back(entry.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace));
+        }
+        size_t total = 2;
+        size_t keepFrom = entries.size();
+        while (keepFrom > 0) {
+            const size_t add = entries[keepFrom - 1].size() + (keepFrom == entries.size() ? 0 : 1);
+            if (total + add > kMaxThreadBytes) {
+                break;
+            }
+            total += add;
+            --keepFrom;
+        }
+        if (keepFrom == entries.size()) {
+            return std::string();
+        }
+        std::string out;
+        out.reserve(total);
+        out.push_back('[');
+        for (size_t i = keepFrom; i < entries.size(); ++i) {
+            if (i > keepFrom) {
+                out.push_back(',');
+            }
+            out += entries[i];
+        }
+        out.push_back(']');
+        return out;
+    } catch (const std::exception&) {
+        // Pure TU (no Logger.h): an empty thread makes readers fall back to the display blob.
+        return std::string();
+    }
+}
+
+bool ParseCommentThread(const std::string& json, std::vector<TrackerIssueComment>& out) {
+    out.clear();
+    std::string err;
+    const nlohmann::json parsed = smatchet::json_safe::ParseBounded(json, err, kMaxThreadParseBytes);
+    if (!err.empty() || !parsed.is_array()) {
+        return false;
+    }
+    out.reserve(parsed.size());
+    for (const nlohmann::json& entry : parsed) {
+        if (entry.is_object()) {
+            out.push_back(CommentFromThreadEntry(entry));
+        }
+    }
+    return true;
+}
+
+std::vector<TrackerIssueComment> ParseCommentBlob(const std::string& blob) {
+    if (blob.empty()) {
+        return std::vector<TrackerIssueComment>();
+    }
+    const std::vector<std::string> lines = SplitLines(blob);
+    // Same shape test as the tooltip renderer: a blob saved before the Markdown format starts "[".
+    std::vector<TrackerIssueComment> comments =
+        blob[0] == '[' ? ParsePlainCommentBlob(lines) : ParseMarkdownCommentBlob(lines);
+    std::reverse(comments.begin(), comments.end()); // the blob is newest first; threads are oldest first
+    return comments;
 }
 
 } // namespace tracker

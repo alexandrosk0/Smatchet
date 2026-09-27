@@ -5,9 +5,11 @@
 #include "JiraIssueMappingPure.h"
 
 #include "ConfigManager.h"
+#include "JiraCommentMappingPure.h"
 #include "Logger.h"
 #include "StringUtil.h"
 #include "TrackerFieldValueParser.h"
+#include "Tracker/CommentBlobFormatPure.h"
 #include "Tracker/TrackerFieldSchema.h"
 
 #include <algorithm>
@@ -211,25 +213,25 @@ bool IsJiraAttachmentFieldKey(const std::string& fieldKey) {
     return fieldKey == "attachment" || fieldKey == "attachments";
 }
 
-// Resolve the `comment` field, optionally fetching the full comment list when the
+// Resolve the `comment` field's thread, optionally fetching the full comment list when the
 // search payload only carried a total count.
-std::string
-ResolveJiraCommentField(const nlohmann::json& rawValue, const std::string& ticketId,
-                        const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments) {
+std::vector<TrackerIssueComment>
+ResolveJiraCommentThread(const nlohmann::json& rawValue, const std::string& ticketId,
+                         const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments) {
     const auto& commentObj = rawValue;
     const auto& commentsArray = commentObj["comments"];
     const int totalComments = commentObj.value("total", static_cast<int>(commentsArray.size()));
     if (commentsArray.is_array() && !commentsArray.empty()) {
-        return ParseComments(commentsArray);
+        return MapJiraIssueComments(commentsArray);
     }
     if (totalComments > 0) {
         nlohmann::json fetchedComments = nlohmann::json::array();
         if (fetchIssueComments(ticketId, fetchedComments) && fetchedComments.is_array()) {
-            return ParseComments(fetchedComments);
+            return MapJiraIssueComments(fetchedComments);
         }
-        return ParseComments(commentsArray);
+        return MapJiraIssueComments(commentsArray);
     }
-    return std::string();
+    return std::vector<TrackerIssueComment>();
 }
 
 std::string ResolveJiraDurationSecondsField(const nlohmann::json& rawValue) {
@@ -248,7 +250,15 @@ void MapJiraPresentField(const std::string& fieldKey, const nlohmann::json& rawV
                          const std::function<bool(const std::string&, nlohmann::json&)>& fetchIssueComments,
                          CachedTicket& ticket) {
     if (fieldKey == "comment" && rawValue.is_object() && rawValue.contains("comments")) {
-        ticket.fieldValues[fieldKey] = ResolveJiraCommentField(rawValue, ticketId, fetchIssueComments);
+        // One mapped thread feeds both the tooltip blob (the same FormatCommentBlob ParseComments
+        // wraps) and the structured copy the comments modal shows offline (Pillar 6).
+        const std::vector<TrackerIssueComment> thread =
+            ResolveJiraCommentThread(rawValue, ticketId, fetchIssueComments);
+        ticket.fieldValues[fieldKey] = smatchet::tracker::FormatCommentBlob(thread);
+        const std::string threadJson = smatchet::tracker::SerializeCommentThread(thread);
+        if (!threadJson.empty()) {
+            ticket.fieldRichValues[kCommentThreadRichKey] = threadJson;
+        }
         // issue-comments PR-B — populate the unified numeric `comments` column (plural, distinct
         // from the `comment` display blob above) so the shared comments cell renders a count.
         const auto& commentsArray = rawValue["comments"];

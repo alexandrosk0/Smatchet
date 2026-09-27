@@ -875,21 +875,27 @@ VoidResult AppController::AddIssueCommentPlain(const std::string& issueKey, cons
 }
 
 Result<std::vector<TrackerIssueComment>> AppController::FetchIssueComments(const std::string& issueKey) {
-    using CommentsResult = Result<std::vector<TrackerIssueComment>>;
+    return smatchet::collab::CollaborationResultToResult<std::vector<TrackerIssueComment>>(
+        FetchIssueCommentsTyped(issueKey));
+}
+
+Result<std::vector<TrackerIssueComment>, TrackerError>
+AppController::FetchIssueCommentsTyped(const std::string& issueKey) {
+    using CommentsResult = Result<std::vector<TrackerIssueComment>, TrackerError>;
     std::shared_ptr<ITrackerBackend> backend = std::atomic_load(
         &focusedContext()
              .Backend); // latch: live tracker swap (SetBackend) must not free the backend mid-call (ADR 0012)
     if (!backend) {
-        return CommentsResult::Err("Jira backend is not initialized.");
+        return CommentsResult::Err(TrackerErrorInvalidRequest("Jira backend is not initialized."));
     }
     if (!backend->Collaboration()) {
-        return CommentsResult::Err("Tracker backend does not support collaboration features.");
+        return CommentsResult::Err(
+            TrackerErrorInvalidRequest("Tracker backend does not support collaboration features."));
     }
-    CommentsResult outcome = smatchet::collab::CollaborationResultToResult<std::vector<TrackerIssueComment>>(
-        backend->Collaboration()->FetchIssueComments(issueKey));
+    CommentsResult outcome = backend->Collaboration()->FetchIssueComments(issueKey);
     if (!outcome.has_value()) {
-        LOG_ERROR("AppController::FetchIssueComments failed issue=%s err=%s", issueKey.c_str(),
-                  outcome.error().c_str());
+        LOG_ERROR("AppController::FetchIssueComments failed issue=%s kind=%s err=%s", issueKey.c_str(),
+                  ToString(outcome.error().Kind), outcome.error().Detail.c_str());
         return outcome;
     }
     requestDeferredLiveTrackerBackendSuccessNotify_();
@@ -912,16 +918,28 @@ void AppController::UpdateCachedCommentsFromThread(const std::string& issueId,
     }
     const std::string newCount = std::to_string(comments.size());
     const std::string newBlob = smatchet::tracker::FormatCommentBlob(comments);
+    // The structured thread is what the comments modal shows offline (Pillar 6); the blob alone
+    // is capped display text.
+    const std::string newThread = smatchet::tracker::SerializeCommentThread(comments);
     for (const CachedTicket& ticket : *snapshot) {
         if (ticket.id != issueId) {
             continue;
         }
-        if (ticket.GetFieldValueRef("comments") == newCount && ticket.GetFieldValueRef("comment") == newBlob) {
+        const auto threadIt = ticket.fieldRichValues.find(kCommentThreadRichKey);
+        const bool threadSame =
+            threadIt == ticket.fieldRichValues.end() ? newThread.empty() : threadIt->second == newThread;
+        if (ticket.GetFieldValueRef("comments") == newCount && ticket.GetFieldValueRef("comment") == newBlob &&
+            threadSame) {
             return; // no change (avoid a needless grid refresh)
         }
         CachedTicket updated = ticket;
         updated.fieldValues["comments"] = newCount;
         updated.fieldValues["comment"] = newBlob;
+        if (newThread.empty()) {
+            updated.fieldRichValues.erase(kCommentThreadRichKey);
+        } else {
+            updated.fieldRichValues[kCommentThreadRichKey] = newThread;
+        }
         UpdateTicket(updated);
         return;
     }

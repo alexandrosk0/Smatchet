@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -325,6 +326,78 @@ TEST_CASE("TicketSyncService::ApplyIssueFetchPack inserts brand-new row when id 
 
     std::vector<std::string> ids = deps.CacheImpl->GetAllTicketIds("Jira");
     CHECK(ids.size() == 2);
+}
+
+// A comment thread / tooltip blob this session holds (a lazy fetch, or a sync of a backend whose
+// search payload carries bodies) must survive a sync row that brings none, while the comment count
+// is unchanged — the comments modal shows it offline (Quality Pillar 6).
+namespace {
+
+CachedTicket WithComments(CachedTicket t, const std::string& count, const std::string& blob,
+                          const std::string& thread) {
+    t.fieldValues["comments"] = count;
+    if (!blob.empty()) {
+        t.fieldValues["comment"] = blob;
+    }
+    if (!thread.empty()) {
+        t.fieldRichValues[kCommentThreadRichKey] = thread;
+    }
+    return t;
+}
+
+} // namespace
+
+TEST_CASE("TicketSyncService::ApplyIssueFetchPack carries the saved comment thread over an unchanged count") {
+    FakeTicketSyncDeps deps;
+    deps.ActiveTicketsImpl.push_back(WithComments(MakeTicket("ABC-1"), "2", "blob-1", "[\"thread-1\"]"));
+    deps.ActiveTicketsImpl.push_back(WithComments(MakeTicket("ABC-2"), "1", "blob-2", "[\"thread-2\"]"));
+    TicketSyncService svc(deps);
+
+    TrackerIssueFetchPack pack;
+    pack.Tickets.push_back(WithComments(MakeTicket("ABC-1", "renamed"), "2", "", ""));
+    pack.Tickets.push_back(WithComments(MakeTicket("ABC-2"), "2", "", "")); // a new comment arrived
+    pack.FullSyncCompleted = false;
+    svc.ApplyIssueFetchPack(pack);
+
+    CachedTicket got;
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-1", got));
+    CHECK(got.fieldValues["summary"] == "renamed");
+    CHECK(got.GetFieldRichValue(kCommentThreadRichKey) == "[\"thread-1\"]");
+    CHECK(got.GetFieldValue("comment") == "blob-1");
+    REQUIRE(deps.CacheImpl->TryGetTicket("Jira", "ABC-2", got));
+    CHECK(got.fieldRichValues.count(kCommentThreadRichKey) == 0);
+    CHECK(got.GetFieldValue("comment").empty());
+}
+
+TEST_CASE("TicketSyncService streaming apply carries the saved comment thread into cache and memory") {
+    FakeTicketSyncDeps deps;
+    deps.ActiveTicketsImpl.push_back(WithComments(MakeTicket("STREAM-1"), "1", "blob-1", "[\"thread-1\"]"));
+    auto* fake = static_cast<FakeTrackerClient*>(deps.BackendImpl.get());
+    std::vector<CachedTicket> scripted;
+    scripted.push_back(WithComments(MakeTicket("STREAM-1", "alpha"), "1", "", ""));
+    fake->SetFetchIssuesResult(scripted, /*fullSyncCompleted=*/true);
+
+    TicketSyncService svc(deps);
+    TrackerConfig cfg;
+    cfg.TrackerType = "fake";
+    ViewsStore views;
+    svc.SyncWithBackend(&cfg, &views);
+    CachedTicket got;
+    const bool drained = SpinUntil(svc, [&]() {
+        return !svc.IsActive() && deps.CacheImpl->TryGetTicket("Jira", "STREAM-1", got) &&
+               got.fieldValues["summary"] == "alpha";
+    });
+    REQUIRE(drained);
+    CHECK(got.GetFieldRichValue(kCommentThreadRichKey) == "[\"thread-1\"]");
+    CHECK(got.GetFieldValue("comment") == "blob-1");
+    {
+        std::lock_guard<std::mutex> lock(deps.ActiveTicketsMutexImpl);
+        const auto it = std::find_if(deps.ActiveTicketsImpl.begin(), deps.ActiveTicketsImpl.end(),
+                                     [](const CachedTicket& t) { return t.id == "STREAM-1"; });
+        REQUIRE(it != deps.ActiveTicketsImpl.end());
+        CHECK(it->GetFieldRichValue(kCommentThreadRichKey) == "[\"thread-1\"]");
+    }
+    svc.CancelAndJoinActiveStreamingSync();
 }
 
 TEST_CASE("TicketSyncService::TickStreamingApply with no active session is a side-effect-free no-op") {

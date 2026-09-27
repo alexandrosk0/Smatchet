@@ -9,8 +9,9 @@
 #include "ITrackerIssueReader.h" // FetchIssuesForKeys + TrackerIssueFetchSummary (parent top-up)
 #include "Logger.h"
 #include "StringUtil.h"
-#include "Sync/TicketRosterFilterPure.h" // shared keep-set roster filter (also used by the local-data refresh)
-#include "Tracker/ParentHierarchyPure.h" // ParentKeyOf — the one parent-field contract
+#include "Sync/LazyEnrichmentCarryForwardPure.h" // keeps a lazily fetched comment thread across syncs
+#include "Sync/TicketRosterFilterPure.h"         // shared keep-set roster filter (also used by the local-data refresh)
+#include "Tracker/ParentHierarchyPure.h"         // ParentKeyOf — the one parent-field contract
 #include "Views.h"
 
 #include <algorithm>
@@ -20,9 +21,48 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+namespace {
+
+// Quality Pillar 6: a synced row replaces the cached one wholesale, rich values included. Keep the
+// comment thread and tooltip blob this session already holds when the row brings none and the
+// comment count is unchanged (LazyEnrichmentCarryForwardPure.h), so the comments modal still has
+// the thread offline. Only the matching rows' comment fields are copied, under the lock; the
+// caller's save runs after it is released.
+void CarryForwardLazyComments(ITicketSyncDeps& deps, std::vector<CachedTicket>& incoming) {
+    std::unordered_set<std::string> ids;
+    for (const CachedTicket& t : incoming) {
+        if (!t.id.empty() && (t.GetFieldValueRef("comment").empty() ||
+                              t.fieldRichValues.find(kCommentThreadRichKey) == t.fieldRichValues.end())) {
+            ids.insert(t.id);
+        }
+    }
+    if (ids.empty()) {
+        return;
+    }
+    std::unordered_map<std::string, smatchet::sync::LazyCommentFields> previous;
+    {
+        std::lock_guard<std::mutex> lock(deps.ActiveTicketsMutex());
+        for (const CachedTicket& t : deps.ActiveTickets()) {
+            smatchet::sync::LazyCommentFields fields;
+            if (ids.find(t.id) != ids.end() && smatchet::sync::SnapshotLazyCommentFields(t, fields)) {
+                previous.emplace(t.id, std::move(fields));
+            }
+        }
+    }
+    for (CachedTicket& t : incoming) {
+        const auto it = previous.find(t.id);
+        if (it != previous.end()) {
+            smatchet::sync::CarryForwardLazyCommentFields(it->second, t);
+        }
+    }
+}
+
+} // namespace
 
 TicketSyncService::TicketSyncService(ITicketSyncDeps& deps) : deps_(deps) {}
 
@@ -141,6 +181,7 @@ void TicketSyncService::ApplyIssueFetchPack(TrackerIssueFetchPack pack) {
     // Latch the namespace once per apply — the key only changes on a backend swap, which
     // happens on this (UI) thread between sessions (multi-grid Slice 1b).
     const std::string backendKey = deps_.CacheBackendKey();
+    CarryForwardLazyComments(deps_, pack.Tickets);
     size_t saved = 0;
     for (const auto& t : freshTickets) {
         deps_.Cache()->SaveTicket(backendKey, t);
@@ -390,6 +431,7 @@ void TicketSyncService::DrainPendingStreamingBatches() {
         // Phase 3(a): persist the whole slice in ONE transaction instead of one-per-ticket
         // (docs/plans/shipped/memory-budget-and-lifetime-hardening.md § Phase 3a). KeepIds + the
         // per-frame counter stay a separate cheap loop.
+        CarryForwardLazyComments(deps_, batchToProcess);
         if (deps_.Cache()) {
             deps_.Cache()->SaveTickets(deps_.CacheBackendKey(), batchToProcess);
         }
@@ -779,7 +821,7 @@ void TicketSyncService::RunStreamingWorkerBody(std::uint64_t reqId, const Tracke
                                                const ViewsStore& viewsCopy) {
     try {
         std::unordered_set<std::string> workerKeepIds;
-        std::vector<std::string> workerParentRefs; // parent keys referenced by streamed rows (may repeat)
+        std::vector<std::string> workerParentRefs;  // parent keys referenced by streamed rows (may repeat)
         std::vector<std::string> workerStreamedIds; // ids the view's own JQL/filter actually matched
         auto onBatch = [this, reqId, &workerKeepIds, &workerParentRefs,
                         &workerStreamedIds](std::vector<CachedTicket>&& batch) {
@@ -915,8 +957,8 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
             return;
         }
 
-        LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu",
-                 missing.size(), hop, static_cast<unsigned long long>(reqId));
+        LOG_INFO("TicketSyncService: Fetching %zu missing parent issue(s) (hop %d) for request ID=%llu", missing.size(),
+                 hop, static_cast<unsigned long long>(reqId));
         Result<std::vector<CachedTicket>, TrackerError> fetched =
             deps_.Backend()->FetchIssuesForKeys(cfgCopy, missing, viewsCopy);
         if (!fetched.has_value()) {
@@ -958,8 +1000,7 @@ void TicketSyncService::FetchMissingParentsIntoQueue(std::uint64_t reqId, const 
 }
 
 void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const TrackerConfig& cfgCopy,
-                                               const ViewsStore& viewsCopy,
-                                               const std::vector<std::string>& streamedIds,
+                                               const ViewsStore& viewsCopy, const std::vector<std::string>& streamedIds,
                                                std::unordered_set<std::string>& workerKeepIds,
                                                TrackerIssueFetchSummary& summary) {
     if (streamedIds.empty()) {
@@ -994,14 +1035,13 @@ void TicketSyncService::FetchChildrenIntoQueue(std::uint64_t reqId, const Tracke
             return;
         }
 
-        LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(),
-                 hop, static_cast<unsigned long long>(reqId));
+        LOG_INFO("TicketSyncService: Fetching children of %zu ticket(s) (hop %d) for request ID=%llu", keys.size(), hop,
+                 static_cast<unsigned long long>(reqId));
         Result<std::vector<CachedTicket>, TrackerError> fetched =
             deps_.Backend()->FetchChildrenOfKeys(cfgCopy, keys, viewsCopy);
         if (!fetched.has_value()) {
-            const std::string childWarning =
-                "children of " + std::to_string(keys.size()) + " issue(s) could not be loaded: " +
-                fetched.error().Detail;
+            const std::string childWarning = "children of " + std::to_string(keys.size()) +
+                                             " issue(s) could not be loaded: " + fetched.error().Detail;
             // Append rather than overwrite: an earlier hop (or the ancestor fetch above it) may
             // already carry its own warning — losing it here would silently hide a real
             // result-set problem behind this hop's failure.

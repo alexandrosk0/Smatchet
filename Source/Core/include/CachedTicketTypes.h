@@ -10,6 +10,11 @@
 // skip the SQLiteCpp link. `LocalCacheManager.h` re-includes this file so existing
 // users see no API change.
 
+/// `CachedTicket::fieldRichValues` key of the structured comment thread: a JSON array written by
+/// smatchet::tracker::SerializeCommentThread (Tracker/CommentBlobFormatPure.h). The comments modal
+/// shows it while the tracker is unreachable (Quality Pillar 6).
+constexpr const char* kCommentThreadRichKey = "comment_thread";
+
 struct CachedTicket {
     std::string id;
     std::unordered_map<std::string, std::string> fieldValues;

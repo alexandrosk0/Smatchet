@@ -19,8 +19,9 @@
 #include "Config/ConfigManager.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
-#include "SmatchetGridUiSupport.h" // ProcessGridFieldEdits — the real grid commit pipeline
-#include "SmatchetUiSession.h"     // g_ui, PendingFieldEdit
+#include "SmatchetCommentsModalUi.h" // OpenCommentsModal + GetCommentsModalSnapshotForTests
+#include "SmatchetGridUiSupport.h"   // ProcessGridFieldEdits — the real grid commit pipeline
+#include "SmatchetUiSession.h"       // g_ui, PendingFieldEdit
 #include "Types/ConnectivityTypes.h"
 #include "Types/TransitionsTypes.h"
 #include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
@@ -82,6 +83,34 @@ const PendingFieldEditRecord* FindQueuedEdit(const std::vector<PendingFieldEditR
         return r.IssueKey == issueKey && r.FieldId == fieldId;
     });
     return it == rows.end() ? nullptr : &*it;
+}
+
+// The structured comment thread saved with the in-memory ticket, or "" when there is none.
+std::string SavedCommentThread(const AppController& app, const char* issueId) {
+    const auto tickets = app.GetActiveTicketsSnapshot();
+    if (!tickets) {
+        return std::string();
+    }
+    const auto it = std::find_if(tickets->begin(), tickets->end(),
+                                 [issueId](const CachedTicket& ticket) { return ticket.id == issueId; });
+    return it == tickets->end() ? std::string() : it->GetFieldRichValue(kCommentThreadRichKey);
+}
+
+// Wait until the comments modal's load has ended (FetchInFlight released).
+bool WaitForCommentsLoad(ImGuiTestContext* ctx) {
+    return YieldUntil(ctx, 300, []() {
+        const CommentsModalSnapshot snap = GetCommentsModalSnapshotForTests();
+        return snap.Active && !snap.FetchInFlight;
+    });
+}
+
+// Close the comments modal the way a user does (Esc with an empty draft). Not asserted: the modal
+// only renders from a focused grid pane, and the next OpenCommentsModal resets its state anyway.
+void CloseCommentsModalWithEscape(ImGuiTestContext* ctx) {
+    ctx->KeyPress(ImGuiKey_Escape);
+    if (!YieldUntil(ctx, 30, []() { return !GetCommentsModalSnapshotForTests().Active; })) {
+        ctx->LogWarning("comments modal still open after Esc (grid pane not focused?)");
+    }
 }
 
 TransitionsQuery MakeTransitionsQuery(const char* issueId, const char* issueType) {
@@ -278,10 +307,68 @@ static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngi
     };
 }
 
+// OfflineFirst/Comments_OfflineShowsCachedThread: the thread a sync or an online modal fetch saved
+// with the ticket is what the comments modal shows offline — at once, marked as saved data, with no
+// request made (it used to sit on "Loading comments..." and then say "No comments yet.").
+static void RegisterOfflineFirstCommentsOfflineShowsCachedThread(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_OfflineShowsCachedThread");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        IM_CHECK_NO_RET(fake != nullptr);
+        if (!fake) {
+            return;
+        }
+
+        // Online: the modal loads the live thread, which is saved with the ticket.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        OpenCommentsModal(*app, "OFF-1");
+        IM_CHECK_NO_RET(WaitForCommentsLoad(ctx));
+        const CommentsModalSnapshot online = GetCommentsModalSnapshotForTests();
+        IM_CHECK_NO_RET(!online.FetchFailed);
+        IM_CHECK_NO_RET(!online.Seeded);
+        IM_CHECK_NO_RET(online.CommentCount == 1);
+        IM_CHECK_NO_RET(online.FirstAuthor == "Ana Offline");
+        IM_CHECK_NO_RET(SavedCommentThread(*app, "OFF-1").find("Ana Offline") != std::string::npos);
+        CloseCommentsModalWithEscape(ctx);
+
+        // Offline: the saved thread shows straight away and nothing goes to the network.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        const std::size_t fetchesBefore = fake->FetchIssueCommentsCalls();
+        OpenCommentsModal(*app, "OFF-1");
+        IM_CHECK_NO_RET(WaitForCommentsLoad(ctx));
+        const CommentsModalSnapshot offline = GetCommentsModalSnapshotForTests();
+        IM_CHECK_NO_RET(offline.Active);
+        IM_CHECK_NO_RET(offline.Seeded);
+        IM_CHECK_NO_RET(!offline.SeedPartial); // the structured thread, not the tooltip summary
+        IM_CHECK_NO_RET(offline.FetchFailed);  // the load skipped the network
+        IM_CHECK_NO_RET(offline.CommentCount == 1);
+        IM_CHECK_NO_RET(offline.FirstAuthor == "Ana Offline");
+        IM_CHECK_NO_RET(fake->FetchIssueCommentsCalls() == fetchesBefore);
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+        CloseCommentsModalWithEscape(ctx);
+
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
     RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(engine);
+    RegisterOfflineFirstCommentsOfflineShowsCachedThread(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS
