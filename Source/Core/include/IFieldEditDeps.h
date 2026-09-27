@@ -10,9 +10,9 @@
 // Deliberately narrow (AppController god-object decomposition Phase 2): mutations are reached via
 // BackendShared then Mutations so there is no MutationsShared here; the field is always supplied by
 // the caller as a const TrackerField reference so there is no FindFieldById; and the offline-queue
-// DB write is grid-layer (SmatchetGridFieldEditPipeline calls AppController QueueFieldEditOffline
-// after the worker returns QueuedOffline), so this service only builds the payload via
-// TryPrepareOfflineFieldEdit and exposes no QueueFieldEditOffline. Edit-metadata operations
+// DB write is reached through EnqueueOfflineFieldEdit, which CommitOrQueue calls on the field-edit
+// worker (Quality Pillar 6 queue-first), so the service never names OfflineQueueService or SQLite.
+// Edit-metadata operations
 // (EnsureIssueEditMetaLoaded, CanEditFieldForIssue, RefreshIssueEditMeta) are reached through the
 // EditMetaCacheService reference the service holds directly (ctor-injected), not through this
 // interface.
@@ -23,7 +23,9 @@
 // Test fixtures implement this interface directly (see tests/support/FakeFieldEditDeps.h) so unit
 // tests can exercise FieldEditPipelineService without constructing an AppController.
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include "CachedTicketTypes.h" // for CachedTicket (in the shared_ptr<vector<CachedTicket>> return + UpdateTicket arg)
@@ -67,4 +69,11 @@ class IFieldEditDeps {
 
     /// Last connectivity probe result (Pillar 6 offline gating). Safe on any thread.
     virtual TrackerConnectivityState TrackerConnectivity() const = 0;
+
+    /// Worker-safe: persists to the offline queue (SQLite) off the UI thread. Returns the queue row
+    /// id, or 0 with `outError` set when the edit could not be queued (read-only, no cache, DB error).
+    virtual std::int64_t EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
+                                                 const std::string& fieldsPayloadJson,
+                                                 const std::string& originalRichValue, const std::string& originalValue,
+                                                 bool hasOriginalValue, std::string& outError) = 0;
 };

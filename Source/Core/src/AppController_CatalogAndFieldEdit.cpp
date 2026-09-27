@@ -550,13 +550,10 @@ void AppController::EraseCatalogLegacyCommentField(GridContextFieldCatalog& cat)
 
 // FieldEditSupportsOfflineQueue + the field-edit network pipeline (TryBuildFieldEditPayloadForNetwork,
 // SubmitFieldEdit[Sprint/Timetracking/Regular], SubmitFieldEdit, SubmitFieldEditNetworkOnly + its
-// helpers, TryPrepareOfflineFieldEdit, ApplyFieldEditResult) now live in FieldEditPipelineService
-// (god-object decomposition Phase 2). Only thin public delegators remain here; see the delegator
-// block below. The editmeta cache methods moved earlier (Phase 1, EditMetaCacheService).
-
-bool AppController::FieldEditSupportsOfflineQueue(const TrackerField& field) {
-    return FieldEditPipelineService::FieldEditSupportsOfflineQueue(field);
-}
+// helpers, TryPrepareOfflineFieldEdit, CommitOrQueue, ApplyFieldEditResult) now live in
+// FieldEditPipelineService (god-object decomposition Phase 2). Only thin public delegators remain
+// here; see the delegator block below. The editmeta cache methods moved earlier (Phase 1,
+// EditMetaCacheService).
 
 std::vector<TrackerFieldOption> AppController::GetComponentOptionsForProject(const std::string& projectKey) const {
     const GridContextFieldCatalog& cat =
@@ -726,24 +723,8 @@ VoidResult AppController::SubmitFieldEdit(const std::string& issueId, const Trac
     return fieldEdit_->SubmitFieldEdit(issueId, field, rawValues);
 }
 
-FieldEditResult AppController::SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                                          const std::vector<std::string>& rawValues,
-                                                          const std::string& originalEstimateSnapshot,
-                                                          const std::string& remainingEstimateSnapshot,
-                                                          const std::string& issueTypeKeySnapshot) {
-    return fieldEdit_->SubmitFieldEditNetworkOnly(issueId, field, rawValues, originalEstimateSnapshot,
-                                                  remainingEstimateSnapshot, issueTypeKeySnapshot);
-}
-
-bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
-                                               const std::vector<std::string>& rawValues,
-                                               const std::string& originalEstimateSnapshot,
-                                               const std::string& remainingEstimateSnapshot,
-                                               const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
-                                               std::string& outFieldsPayloadJson, std::string& outError) {
-    return fieldEdit_->TryPrepareOfflineFieldEdit(issueId, field, rawValues, originalEstimateSnapshot,
-                                                  remainingEstimateSnapshot, issueTypeKeySnapshot, outResult,
-                                                  outFieldsPayloadJson, outError);
+FieldEditCommitOutcome AppController::CommitOrQueueFieldEdit(const FieldEditCommitRequest& req) {
+    return fieldEdit_->CommitOrQueue(req);
 }
 
 VoidResult AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {

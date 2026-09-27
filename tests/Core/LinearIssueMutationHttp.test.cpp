@@ -133,6 +133,42 @@ TEST_CASE("Linear update — resolve hop + issueUpdate wire shape and error taxo
     }
 }
 
+TEST_CASE("Linear update — a failure keeps its HTTP kind so an offline edit can be queued") {
+    // Quality Pillar 6 (offline-first S6): UpdateIssueFields used to report every failure as
+    // InvalidRequest, so an edit made while Linear was unreachable was never retryable and never
+    // reached the offline queue. issueUpdate is a set-replace, so replaying it is safe.
+    JiraCatalogHttpFixture fx;
+    smatchet_tests::TestEnvGuard env;
+
+    SUBCASE("unreachable host is Transport (retryable)") {
+        TrackerConfig cfg = ConfigManager::Load();
+        cfg.TrackerType = "Linear";
+        cfg.LinearBaseUrl = "http://127.0.0.1:1/graphql";
+        cfg.LinearApiKey = "fixture-key";
+        ConfigManager::Save(cfg);
+        LinearClient client(cfg.LinearBaseUrl, cfg.LinearApiKey);
+        const TrackerError err = client.UpdateIssueFields("ENG-123", nlohmann::json{{"title", "x"}});
+        CHECK(err.Kind == TrackerErrorKind::Transport);
+        CHECK(err.IsRetryable());
+    }
+    SUBCASE("HTTP 503 on the resolve hop is ServerError (retryable); the mutation never fires") {
+        SaveLoopbackLinearConfig(fx);
+        fx.ScriptStatus(kGraphQlPath, 503, "POST");
+        LinearClient client(LoopbackGraphQlUrl(fx), "fixture-key");
+        const TrackerError err = client.UpdateIssueFields("ENG-123", nlohmann::json{{"title", "x"}});
+        CHECK(err.Kind == TrackerErrorKind::ServerError);
+        CHECK(err.IsRetryable());
+    }
+    SUBCASE("HTTP 401 stays a non-retryable Auth error") {
+        SaveLoopbackLinearConfig(fx);
+        fx.ScriptStatus(kGraphQlPath, 401, "POST");
+        LinearClient client(LoopbackGraphQlUrl(fx), "fixture-key");
+        const TrackerError err = client.UpdateIssueFields("ENG-123", nlohmann::json{{"title", "x"}});
+        CHECK(err.Kind == TrackerErrorKind::Auth);
+        CHECK_FALSE(err.IsRetryable());
+    }
+}
+
 TEST_CASE("Linear create — payload guard, identifier extraction, created-key-unknown") {
     JiraCatalogHttpFixture fx;
     smatchet_tests::TestEnvGuard env;

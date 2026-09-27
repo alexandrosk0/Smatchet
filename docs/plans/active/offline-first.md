@@ -2924,6 +2924,16 @@ This plan touches `Source/Core/`.
   - `ITrackerFieldCatalog::SupportsIssueTransitions()`, true for Jira only: other backends make no request and log nothing.
 - Tests: `LearnedWorkflowPure`, `StatusComboOptionsPure`, `IssueTransitionsCacheService` (fakes; both lists), `LocalCacheManagerLookup` (in-memory; both lists) and `LocalCacheManagerLookupPersist` (file-backed; `SmatchetTests`). Also a `JiraFakeTrackerFixture` capability case and the bucket-E test `OfflineFirst/StatusCombo_OfflineShowsOptions`.
 
+### S6 — [#2253](https://github.com/alexandrosk0/Smatchet/pull/2253)
+- Shipped:
+  - `FieldEditPipelineService::CommitOrQueue` is the one worker-side commit-or-queue seam. While the last probe says the tracker is unreachable, a queueable edit goes straight to the offline queue with no network request; otherwise it tries the network and queues after a retryable failure. The SQLite enqueue runs on the worker through `IFieldEditDeps::EnqueueOfflineFieldEdit`.
+  - Status edits are offline-queueable. Preparing a queued edit never touches the network.
+  - The grid commit worker always posts a result back, and a failed launch releases the in-flight gate.
+  - Editmeta makes no request while offline and backs off 30 s after a failure; its warm-up marker clears on every path.
+  - Linear update failures keep their HTTP kind.
+  - `JiraFakeTrackerFixture` answers keyed fetches.
+- Tests: `FieldEditPipelineService` (`CommitOrQueue` matrix), `EditMetaCacheService` (offline, backoff, failed launch), `LinearIssueMutationHttp` (Transport / 503 / 401), `JiraFakeTrackerFixture` (keyed fetch), and the bucket-E test `OfflineFirst/StatusEdit_OfflineQueuesThenReplays`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -2946,6 +2956,17 @@ This plan touches `Source/Core/`.
   - `TicketFieldEditor.cpp` does not include `DataFreshnessCue.h`. The status cue is its own static line (Step 11's `DrawStatusComboCue`), so the header would be unused.
   - The plan's `LookupCacheSqlite.test.cpp` is split along the repo's cache-test convention (CodeRabbit review on #2249). The in-memory cases are in `LocalCacheManagerLookup.test.cpp`, registered in both lists; `SmatchetTsanTests` already links SQLite. The two file-backed cases (restart persistence, an old file gaining the table) are in `LocalCacheManagerLookupPersist.test.cpp`, which states why it needs a file and, like the other file-backed `LocalCacheManager*` suites, runs only in `SmatchetTests`. The three `status.cue.*` strings sit after the `freshness.*` group, which itself follows `comments.fetch_failed`.
   - The bucket-E test waits for the probe to report each connectivity state (`RequestTrackerProbeNow` each frame, up to 600 frames) and for the live fetch (up to 300 frames) instead of fixed yields, and leaves the app online at the end.
+
+- **S6:**
+  - Step 2 adds no `allowNetworkLookups` parameter. Instead, the editmeta fetch moved out of the shared `TryBuildFieldEditPayloadForNetwork` into `SubmitFieldEditNetworkOnly`, the one caller that talks to the tracker. `TryPrepareOfflineFieldEdit` therefore never touches the network, which its name already promised. The parameter would have extended four declaration/definition signature mirrors past the DRY gate's clone threshold, and every caller of the prepare path wants it `false` anyway.
+  - The grid commit worker contains every exception from the commit and always posts a result back, and a failed worker launch releases the in-flight gate on the spot. Before, either left `hasInFlightEdit` set, and every later grid edit then waited behind it forever (Pillar 6 invariant 2). A launch failure is reported on the cell rather than re-queued, since an automatic retry would spin every frame while threads are scarce.
+  - `EditMetaCacheService::WarmIssueEditMetaAsync` also clears its per-issue in-flight marker on every path (a `ScopeExit` in the worker plus a catch around the launch). Before, a throw or a failed launch stopped that issue from ever warming again.
+  - `tests/support/JiraFakeTrackerFixture.cpp` and `tests/Core/JiraFakeTrackerFixture.test.cpp` are outside the S6 file list. A keyed fetch (`FetchIssuesForKeys`) now answers from the fixture's steady-state issue set, as a real tracker does. Without it, the replay's conflict re-check could never read the server value, and a queued edit with a captured base would stay parked as "unverified", so the bucket-E replay test could not pass.
+  - The `AppController` delegators `FieldEditSupportsOfflineQueue`, `SubmitFieldEditNetworkOnly` and `TryPrepareOfflineFieldEdit` are removed. The grid was their only caller and now commits through `CommitOrQueueFieldEdit`, so they were dead surface on the god-object. The steps they exposed are internal to `FieldEditPipelineService`.
+  - `QueuePreparedEdit` reports an enqueue failure with the existing `toast.offline_queue_failed` string; `toast.offline_error` is now unused and stays in the table.
+  - The bucket-E test `StatusEdit_OfflineQueuesThenReplays` holds a `BucketE::UiTestWriteScope`, because the fresh test profile defaults to read-only and would reject the queue write. It reaches the fixture's `FakeTrackerClient` through `AppController::BackendShared()` to count the replayed update, waits on app state with `YieldUntil` / `WaitForConnectivity` instead of fixed yields, and asserts `CallsWhileDown() == 0` across the queueing window.
+  - `tests/ui/_helpers/UiTestWriteScope.h` (outside the S6 file list) now flips `ReadOnlyMode` in the UI session's own config copy (`g_ui.cfg`) as well as on disk, and restores both. The first CI run of `StatusEdit_OfflineQueuesThenReplays` showed why: on reconnect the UI queues a save of `g_ui.cfg`, which still held the fresh profile's `ReadOnlyMode=true`. That save turned read-only back on mid-test, so `TickOfflineFieldEdits` returned early and the queued edit never replayed. The test also deletes its queued row when replay fails, so the lane's retry starts clean, and it asserts that the replayed payload carries the edited value (CodeRabbit nit).
+  - `LinearIssueMutationHttp` covers the new classification on the identifier-resolve hop (unreachable host, 503, 401). The loopback fixture serves one status per path, so the `issueUpdate` hop, which shares the same `/graphql` path, gets the same `ClassifyRejectedHttpStatus` code but no separate case.
 
 ## Verification (actual)
 

@@ -13,10 +13,13 @@
 #include "CachedTicketTypes.h"
 
 #include "Logger.h"
+#include "OfflineFirstPure.h" // IsOfflineState, kLookupRetryAfterSeconds (Pillar 6 gate + backoff)
+#include "ScopeExit.h"
 #include "StringUtil.h"
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -259,6 +262,9 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& is
         }
     }
 
+    if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
+        return VoidResult::Err("Tracker is offline; edit permissions were not refreshed.");
+    }
     const TrackerConfig cfg = configSnapshot ? *configSnapshot : ConfigManager::Load();
     std::unordered_map<std::string, bool> meta;
     std::string fetchError;
@@ -279,6 +285,9 @@ VoidResult EditMetaCacheService::EnsureIssueEditMetaLoaded(const std::string& is
     cache.loaded = ok;
     if (ok) {
         cache.fieldCanEdit = std::move(meta);
+    } else {
+        cache.retryAfter =
+            std::chrono::steady_clock::now() + std::chrono::seconds(smatchet::offline::kLookupRetryAfterSeconds);
     }
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
@@ -368,11 +377,17 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
     if (!backend || issueId.empty()) {
         return;
     }
+    if (smatchet::offline::IsOfflineState(deps_.TrackerConnectivity())) {
+        return; // Pillar 6: no fetch while offline; the issue stays optimistic
+    }
     {
         std::lock_guard<std::mutex> lock(editMetaMutex_);
         const auto it = issueEditMeta_.find(issueId);
         if (it != issueEditMeta_.end() && it->second.loaded) {
             return;
+        }
+        if (it != issueEditMeta_.end() && std::chrono::steady_clock::now() < it->second.retryAfter) {
+            return; // failed recently — back off instead of refetching every frame
         }
         if (issueEditMetaWarmupInFlight_.find(issueId) != issueEditMetaWarmupInFlight_.end()) {
             return;
@@ -381,12 +396,19 @@ void EditMetaCacheService::WarmIssueEditMetaAsync(const std::string& issueId) {
     }
 
     const TrackerConfig warmupTrackerCfg = ConfigManager::Load();
-    deps_.LaunchBackgroundTask([this, issueId, warmupTrackerCfg]() {
-        // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
-        EnsureIssueEditMetaLoaded(issueId, nullptr, &warmupTrackerCfg);
-        {
-            std::lock_guard<std::mutex> lock(editMetaMutex_);
-            issueEditMetaWarmupInFlight_.erase(issueId);
-        }
-    });
+    try {
+        deps_.LaunchBackgroundTask([this, issueId, warmupTrackerCfg]() {
+            // Clear the in-flight marker on every exit, a throw included, so a later frame can retry.
+            smatchet::ScopeExit clearInFlight([this, &issueId]() {
+                std::lock_guard<std::mutex> lock(editMetaMutex_);
+                issueEditMetaWarmupInFlight_.erase(issueId);
+            });
+            // Best-effort async warmup: ignore fetch failure (issue stays optimistic) — discard VoidResult.
+            EnsureIssueEditMetaLoaded(issueId, nullptr, &warmupTrackerCfg);
+        });
+    } catch (const std::exception& ex) {
+        LOG_WARN("EditMetaCacheService: editmeta warmup for %s did not start: %s", issueId.c_str(), ex.what());
+        std::lock_guard<std::mutex> lock(editMetaMutex_);
+        issueEditMetaWarmupInFlight_.erase(issueId);
+    }
 }

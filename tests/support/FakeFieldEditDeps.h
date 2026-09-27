@@ -20,7 +20,9 @@
 #include "IFieldEditDeps.h"
 #include "ITrackerBackend.h"
 
+#include <cstdint>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace smatchet_tests {
@@ -47,6 +49,19 @@ class FakeFieldEditDeps : public IFieldEditDeps {
     int RefreshLocalDataCalls = 0;            ///< RefreshLocalData() call count
     mutable int DeferredNotifyCalls = 0;      ///< RequestDeferredLiveTrackerBackendSuccessNotify() count
 
+    /// One EnqueueOfflineFieldEdit() call, as persisted.
+    struct EnqueuedEdit {
+        std::string IssueKey;
+        std::string FieldId;
+        std::string FieldsPayloadJson;
+        std::string OriginalRichValue;
+        std::string OriginalValue;
+        bool HasOriginalValue = false;
+    };
+    std::vector<EnqueuedEdit> Enqueued; ///< every successful EnqueueOfflineFieldEdit(), in order
+    /// Non-empty → EnqueueOfflineFieldEdit() fails with this error and returns 0 (nothing recorded).
+    std::string EnqueueFailImpl;
+
     /// Convenience accessor for the concrete fake backend (mutation/editmeta scripting).
     FakeTrackerClient* Fake() { return static_cast<FakeTrackerClient*>(BackendImpl.get()); }
 
@@ -67,6 +82,26 @@ class FakeFieldEditDeps : public IFieldEditDeps {
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
 
     TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
+
+    std::int64_t EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
+                                         const std::string& fieldsPayloadJson, const std::string& originalRichValue,
+                                         const std::string& originalValue, bool hasOriginalValue,
+                                         std::string& outError) override {
+        outError.clear();
+        if (!EnqueueFailImpl.empty()) {
+            outError = EnqueueFailImpl;
+            return 0;
+        }
+        EnqueuedEdit e;
+        e.IssueKey = issueKey;
+        e.FieldId = fieldId;
+        e.FieldsPayloadJson = fieldsPayloadJson;
+        e.OriginalRichValue = originalRichValue;
+        e.OriginalValue = originalValue;
+        e.HasOriginalValue = hasOriginalValue;
+        Enqueued.push_back(e);
+        return static_cast<std::int64_t>(Enqueued.size());
+    }
 };
 
 } // namespace smatchet_tests
