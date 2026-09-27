@@ -340,3 +340,22 @@ TEST_CASE("JiraFakeTrackerFixture::Offline — a new client never resets an outa
     TrackerConfig cfg;
     CHECK(client->ProbeReachability(cfg).Kind == TrackerReachabilityProbeKind::TransportDown);
 }
+
+TEST_CASE("JiraFakeTrackerFixture — a keyed fetch returns the scripted issue for each requested key") {
+    // The offline replay re-fetches an issue by key to check for a server-side change before it sends
+    // a queued edit; the fixture answers from its steady-state issue set, like a real tracker.
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const auto client = JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient();
+    TrackerConfig cfg;
+    const ViewsStore views;
+
+    const auto one = client->FetchIssuesForKeys(cfg, {"SMAT-2"}, views);
+    REQUIRE(static_cast<bool>(one));
+    REQUIRE(one.value().size() == 1);
+    CHECK(one.value()[0].id == "SMAT-2");
+    CHECK(one.value()[0].GetFieldValue("status") == "Done");
+
+    const auto unknown = client->FetchIssuesForKeys(cfg, {"SMAT-404"}, views);
+    REQUIRE(static_cast<bool>(unknown));
+    CHECK(unknown.value().empty());
+}

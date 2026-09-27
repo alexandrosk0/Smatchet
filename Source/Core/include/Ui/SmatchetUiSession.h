@@ -138,8 +138,9 @@ struct FieldEditCommitResult {
     bool Ok = false;
     std::string Error;
     FieldEditResult ApplyResult;
-    /** When CommitKind == QueuedOffline: JSON object map for `UpdateIssueFields`. */
-    std::string QueuedFieldsPayloadJson;
+    /// QueuedOffline only: a live request failed with a retryable error first (the tracker just
+    /// dropped), so the UI asks for a connectivity probe now.
+    bool QueuedAfterTransportFailure = false;
 };
 
 struct FieldCatalogFetchResult {

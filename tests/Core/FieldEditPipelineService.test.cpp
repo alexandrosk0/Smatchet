@@ -68,6 +68,31 @@ TrackerField MakeSprintField() {
     return f;
 }
 
+TrackerField MakeStatusField() {
+    TrackerField f;
+    f.Id = "status";
+    f.Name = "Status";
+    f.Family = TrackerFieldFamily::Status;
+    TrackerFieldOption inProgress;
+    inProgress.Id = "2";
+    inProgress.Value = "In Progress";
+    f.AllowedValueOptions.push_back(inProgress);
+    return f;
+}
+
+// A status edit on ABC-1 (base "To Do"), kicked while the tracker was in `connectivity`.
+FieldEditCommitRequest MakeStatusCommit(TrackerConnectivityState connectivity) {
+    FieldEditCommitRequest req;
+    req.IssueId = "ABC-1";
+    req.Field = MakeStatusField();
+    req.Values = {"2"};
+    req.OriginalValue = "To Do";
+    req.HasOriginalValue = true;
+    req.IssueTypeKeySnapshot = "story";
+    req.ConnectivityAtKick = connectivity;
+    return req;
+}
+
 TrackerField MakeTimetrackingField() {
     TrackerField f;
     f.Id = "timeoriginalestimate";
@@ -355,4 +380,143 @@ TEST_CASE("FieldEditPipelineService::ApplyFieldEditResult fails when no cache is
     CHECK_FALSE(r.has_value());
     CHECK(r.error().find("Local cache is unavailable") != std::string::npos);
     CHECK(rig.fieldDeps.UpdatedTickets.empty());
+}
+
+// ---------------------------------------------------------------------------
+// (9) CommitOrQueue — the Quality Pillar 6 commit-or-queue seam (offline-first S6).
+// ---------------------------------------------------------------------------
+TEST_CASE("FieldEditPipelineService::FieldEditSupportsOfflineQueue accepts status edits") {
+    CHECK(FieldEditPipelineService::FieldEditSupportsOfflineQueue(MakeStatusField()));
+    CHECK(FieldEditPipelineService::FieldEditSupportsOfflineQueue(MakeTextField("summary")));
+    // Still excluded: sprint (AddIssueToSprint, not a field PUT) and editable estimates.
+    CHECK_FALSE(FieldEditPipelineService::FieldEditSupportsOfflineQueue(MakeSprintField()));
+    CHECK_FALSE(FieldEditPipelineService::FieldEditSupportsOfflineQueue(MakeTimetrackingField()));
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue queues an offline edit with no network request" *
+          doctest::test_suite("[high-risk]")) {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"status", true}});
+    TrackerConnectivityState offline = TrackerConnectivityState::TransportDown;
+    SUBCASE("transport down") { offline = TrackerConnectivityState::TransportDown; }
+    SUBCASE("service unavailable") { offline = TrackerConnectivityState::ServiceUnavailable; }
+
+    const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(MakeStatusCommit(offline));
+
+    CHECK(o.Kind == FieldEditCommitKind::QueuedOffline);
+    CHECK(o.Error.empty());
+    CHECK(o.QueueId == 1);
+    CHECK_FALSE(o.QueuedAfterTransportFailure);
+    // No update and no editmeta fetch: the edit never waits on the network while offline.
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
+    CHECK(rig.editMetaDeps.Fake()->FetchIssueEditMetaCallCount() == 0);
+    REQUIRE(rig.fieldDeps.Enqueued.size() == 1);
+    const FakeFieldEditDeps::EnqueuedEdit& queued = rig.fieldDeps.Enqueued.front();
+    CHECK(queued.IssueKey == "ABC-1");
+    CHECK(queued.FieldId == "status");
+    CHECK_FALSE(queued.FieldsPayloadJson.empty());
+    // The conflict base travels with the row so replay can detect a server-side move (ADR-0016).
+    CHECK(queued.OriginalValue == "To Do");
+    CHECK(queued.HasOriginalValue);
+    // The optimistic local apply carries the new status straight away (the fake backend resolves
+    // display values verbatim; JiraClient maps "2" to its option label).
+    CHECK(o.Apply.Ok);
+    REQUIRE(o.Apply.UpdatedDisplayValues.count("status") == 1);
+    CHECK(o.Apply.UpdatedDisplayValues.at("status") == "2");
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue queues after a retryable failure online") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.editMetaDeps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
+    rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(TrackerErrorTransport("connection refused"));
+    FieldEditCommitRequest req = MakeStatusCommit(TrackerConnectivityState::AuthenticatedReachable);
+    req.Field = MakeTextField("summary");
+    req.Values = {"new summary"};
+
+    const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(req);
+
+    CHECK(o.Kind == FieldEditCommitKind::QueuedOffline);
+    CHECK(o.QueuedAfterTransportFailure);
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 1);
+    // Only the network attempt fetched editmeta; preparing the queued edit fetched nothing more.
+    CHECK(rig.editMetaDeps.Fake()->FetchIssueEditMetaCallCount() == 1);
+    REQUIRE(rig.fieldDeps.Enqueued.size() == 1);
+    CHECK(rig.fieldDeps.Enqueued.front().FieldId == "summary");
+    CHECK(o.Apply.Ok);
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue reports a rejected edit and never queues it") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.fieldDeps.Fake()->EnqueueUpdateIssueFieldsError(TrackerErrorInvalidRequest("status transition not allowed"));
+
+    const FieldEditCommitOutcome o =
+        rig.svc.CommitOrQueue(MakeStatusCommit(TrackerConnectivityState::AuthenticatedReachable));
+
+    CHECK(o.Kind == FieldEditCommitKind::Failed);
+    CHECK(o.Error == "status transition not allowed");
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 1);
+    CHECK(rig.fieldDeps.Enqueued.empty());
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue reports why an offline edit could not be queued") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.fieldDeps.EnqueueFailImpl = "Local cache is unavailable, so this edit cannot be queued offline.";
+
+    const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(MakeStatusCommit(TrackerConnectivityState::TransportDown));
+
+    CHECK(o.Kind == FieldEditCommitKind::Failed);
+    CHECK(o.Error == "Local cache is unavailable, so this edit cannot be queued offline.");
+    CHECK(o.QueueId == 0);
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
+    CHECK(rig.fieldDeps.Enqueued.empty());
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue goes network-first when not known offline") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+    rig.fieldDeps.Fake()->SetDefaultUpdateIssueFieldsResult(true);
+
+    SUBCASE("unknown (before the first probe) saves online") {
+        const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(MakeStatusCommit(TrackerConnectivityState::Unknown));
+        CHECK(o.Kind == FieldEditCommitKind::SavedOnline);
+        CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 1);
+    }
+    SUBCASE("an offline edit the queue cannot hold (sprint) still goes to the network") {
+        rig.fieldDeps.Fake()->SetDefaultAddIssueToSprintResult(true);
+        FieldEditCommitRequest req = MakeStatusCommit(TrackerConnectivityState::TransportDown);
+        req.Field = MakeSprintField();
+        req.Values = {"42"};
+        const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(req);
+        CHECK(o.Kind == FieldEditCommitKind::SavedOnline);
+        CHECK(rig.fieldDeps.Fake()->AddIssueToSprintCallCount() == 1);
+    }
+    CHECK(rig.fieldDeps.Enqueued.empty());
+}
+
+TEST_CASE("FieldEditPipelineService::CommitOrQueue rejects every edit in read-only mode") {
+    OfflineQueueTestEnvGuard env;
+    {
+        const std::string cfgPath = ConfigManager::GetUserDataDirectory() + "smatchet_config.json";
+        std::ofstream f(cfgPath, std::ios::binary | std::ios::trunc);
+        f << "{\"read_only_mode\":true}";
+    }
+    ConfigManager::InvalidateCache();
+    Rig rig;
+    rig.fieldDeps.ActiveTicketsImpl.push_back(MakeTicket("ABC-1"));
+
+    const FieldEditCommitOutcome o = rig.svc.CommitOrQueue(MakeStatusCommit(TrackerConnectivityState::TransportDown));
+
+    CHECK(o.Kind == FieldEditCommitKind::Failed);
+    CHECK(o.Error.find("Read-only") != std::string::npos);
+    CHECK(rig.fieldDeps.Enqueued.empty());
+    CHECK(rig.fieldDeps.Fake()->UpdateIssueFieldsCallCount() == 0);
 }

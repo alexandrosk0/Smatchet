@@ -14,19 +14,27 @@
 #if defined(SMATCHET_BUILD_UI_TESTS)
 
 #include "AppController.h"
+#include "CachedTicketTypes.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "Config/ConfigManager.h"
 #include "FakeNetworkSwitch.h"
+#include "FakeTrackerClient.h"
+#include "SmatchetGridUiSupport.h" // ProcessGridFieldEdits — the real grid commit pipeline
+#include "SmatchetUiSession.h"     // g_ui, PendingFieldEdit
 #include "Types/ConnectivityTypes.h"
 #include "Types/TransitionsTypes.h"
+#include "UiTestWriteScope.h" // BucketE::UiTestWriteScope — the fresh profile defaults to read-only
 
 #include "imgui.h"
 #include "imgui_te_context.h"
 #include "imgui_te_engine.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -65,6 +73,15 @@ bool WaitForConnectivity(ImGuiTestContext* ctx, AppController& app, TrackerConne
         app.RequestTrackerProbeNow();
         return false;
     });
+}
+
+// The queued offline edit for (issueKey, fieldId), or null when none is queued.
+const PendingFieldEditRecord* FindQueuedEdit(const std::vector<PendingFieldEditRecord>& rows, const char* issueKey,
+                                             const char* fieldId) {
+    const auto it = std::find_if(rows.begin(), rows.end(), [issueKey, fieldId](const PendingFieldEditRecord& r) {
+        return r.IssueKey == issueKey && r.FieldId == fieldId;
+    });
+    return it == rows.end() ? nullptr : &*it;
 }
 
 TransitionsQuery MakeTransitionsQuery(const char* issueId, const char* issueType) {
@@ -173,9 +190,88 @@ static void RegisterOfflineFirstStatusComboOfflineShowsOptions(ImGuiTestEngine* 
     };
 }
 
+// OfflineFirst/StatusEdit_OfflineQueuesThenReplays: a status change made through the real grid commit
+// pipeline while the tracker is unreachable is saved to the offline queue at once, with no network
+// request, and is sent exactly once after the connection returns. Drives ProcessGridFieldEdits (as
+// the debug.grid.edit-burst command does), so no ImGui cell ids are needed.
+static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "StatusEdit_OfflineQueuesThenReplays");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope; // the queue write must land: a rejected write would pass vacuously
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        const TrackerField* statusField = app->FindFieldById("status");
+        const auto tickets = app->GetActiveTicketsSnapshot();
+        IM_CHECK_NO_RET(fake != nullptr);
+        IM_CHECK_NO_RET(statusField != nullptr);
+        IM_CHECK_NO_RET(tickets != nullptr);
+        if (!fake || !statusField || !tickets) {
+            return;
+        }
+        const auto ticketIt = std::find_if(tickets->begin(), tickets->end(),
+                                           [](const CachedTicket& ticket) { return ticket.id == "OFF-1"; });
+        IM_CHECK_NO_RET(ticketIt != tickets->end());
+        IM_CHECK_NO_RET(FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") == nullptr);
+        if (ticketIt == tickets->end()) {
+            return;
+        }
+
+        // Offline, and the app knows it.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        const std::size_t updatesBefore = fake->UpdateIssueFieldsCallCount();
+
+        // "To Do" -> "In Progress" (option id "2"), with the scalar base the grid captures.
+        PendingFieldEdit edit;
+        edit.IssueId = "OFF-1";
+        edit.Field = *statusField;
+        edit.Values = {"2"};
+        edit.OriginalValue = ticketIt->GetFieldValue("status");
+        edit.HasOriginalValue = true;
+        ProcessGridFieldEdits(*app, g_ui, *tickets, {edit}, false);
+
+        // Queued straight away, without trying the network first.
+        IM_CHECK_NO_RET(YieldUntil(
+            ctx, 120, [app]() { return FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") != nullptr; }));
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // Back online: the recovery restarts the replay timers and the queued edit is sent once.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        const bool drained = YieldUntil(
+            ctx, 900, [app]() { return FindQueuedEdit(app->GetPendingFieldEdits(), "OFF-1", "status") == nullptr; });
+        if (!drained) {
+            const std::vector<PendingFieldEditRecord> rows = app->GetPendingFieldEdits();
+            const PendingFieldEditRecord* row = FindQueuedEdit(rows, "OFF-1", "status");
+            ctx->LogError("queued status edit did not replay: connectivity=%d attempts=%d conflict=%d last_error='%s'",
+                          static_cast<int>(app->GetLastTrackerConnectivityState()), row ? row->Attempts : -1,
+                          row && row->HasMergeConflict ? 1 : 0, row ? row->LastError.c_str() : "");
+        }
+        IM_CHECK_NO_RET(drained);
+        IM_CHECK_NO_RET(app->GetDeadPendingFieldEdits().empty());
+        // The row is deleted only after UpdateIssueFields returned, so this read sees the call.
+        IM_CHECK_NO_RET(fake->UpdateIssueFieldsCallCount() == updatesBefore + 1);
+        if (fake->UpdateIssueFieldsCallCount() > updatesBefore) {
+            IM_CHECK_NO_RET(fake->UpdateIssueFieldsCalls().back().IssueId == "OFF-1");
+        }
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
+    RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

@@ -136,6 +136,8 @@ class OfflineQueueService;
 class TicketSyncService;
 class EditMetaCacheService;
 class FieldEditPipelineService;
+struct FieldEditCommitRequest;
+struct FieldEditCommitOutcome;
 class ConnectivityMonitorService;
 class AttachmentAppUpdateService;
 class IssueTransitionsCacheService;
@@ -988,8 +990,8 @@ class AppController : public IAppThreading,
                                                const std::string& issueTypeKeySnapshot);
 
     /**
-     * Build the Jira fields payload + optimistic display map without calling the network.
-     * Used when a network save failed with a transport error and the edit should be queued offline.
+     * Build the fields payload + optimistic display map for an offline-queued edit without any
+     * network request (no update, no editmeta fetch).
      */
     bool TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
                                     const std::vector<std::string>& rawValues,
@@ -997,6 +999,10 @@ class AppController : public IAppThreading,
                                     const std::string& remainingEstimateSnapshot,
                                     const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
                                     std::string& outFieldsPayloadJson, std::string& outError);
+    /// Worker-safe commit-or-queue seam (FieldEditPipelineService::CommitOrQueue, Quality Pillar 6):
+    /// queue-first while the tracker is offline, else network-first with a queue fallback. The types
+    /// are only forward-declared here; callers include FieldEditPipelineService.h.
+    FieldEditCommitOutcome CommitOrQueueFieldEdit(const FieldEditCommitRequest& req);
     VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);

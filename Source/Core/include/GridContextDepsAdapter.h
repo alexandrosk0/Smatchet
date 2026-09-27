@@ -159,9 +159,13 @@ class GridContextDepsAdapter : public IOfflineQueueDeps,
     // BackendShared() / GetActiveTicketsSnapshot() (IEditMetaDeps), RefreshLocalData()
     // (IOfflineQueueDeps), and the CONST RequestDeferredLiveTrackerBackendSuccessNotify()
     // (IEditMetaDeps) are all already declared above — the single override of each satisfies
-    // IFieldEditDeps too (do NOT redeclare them). Only these two are genuinely new:
+    // IFieldEditDeps too (do NOT redeclare them). Only these three are genuinely new:
     bool HasCache() const override;
     void UpdateTicket(const CachedTicket& ticket) override;
+    std::int64_t EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
+                                         const std::string& fieldsPayloadJson, const std::string& originalRichValue,
+                                         const std::string& originalValue, bool hasOriginalValue,
+                                         std::string& outError) override;
 
     // ---- IConnectivityDeps ------------------------------------------------------------
     // IsShuttingDown() is shared with IEditMetaDeps (same signature) — the override above

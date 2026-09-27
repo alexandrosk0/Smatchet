@@ -24,6 +24,7 @@
 #include "FieldEditAuditSource.h"
 
 #include "Logger.h"
+#include "OfflineFirstPure.h" // RouteWrite (CommitOrQueue)
 #include "SmatchetLocalization.h"
 #include "StringUtil.h" // TruncateForLog
 #include "TrackerFieldSchema.h"
@@ -71,6 +72,7 @@ bool FieldEditPipelineService::FieldEditSupportsOfflineQueue(const TrackerField&
     case TrackerFieldFamily::SelectMulti:
     case TrackerFieldFamily::UserSingle:
     case TrackerFieldFamily::UserMulti:
+    case TrackerFieldFamily::Status:
     case TrackerFieldFamily::CascadingSelect:
         return true;
     default:
@@ -108,10 +110,9 @@ bool FieldEditPipelineService::TryBuildFieldEditPayloadForNetwork(
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
                  [](const std::string& value) { return !value.empty(); });
 
+    // No editmeta fetch here: SubmitFieldEditNetworkOnly loads it first, while a queued edit never
+    // waits on the network (Pillar 6), so this check uses whatever is loaded and is optimistic otherwise.
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
-    if (!TrackerFieldPayloadPure::IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id)) {
-        editMeta_.EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOpt);
-    }
     if (!TrackerFieldPayloadPure::IsSprintField(field) && !IsEditableTimetrackingEstimateFieldId(field.Id) &&
         !editMeta_.CanEditFieldForIssue(issueId, field.Id, &field, issueTypeKeyOpt)) {
         outError = "Field cannot be edited for this issue (Jira edit metadata).";
@@ -523,6 +524,8 @@ FieldEditResult FieldEditPipelineService::SubmitFieldEditNetworkOnly(const std::
     }
 
     const std::string* issueTypeKeyOpt = issueTypeKeySnapshot.empty() ? nullptr : &issueTypeKeySnapshot;
+    // Sprint and timetracking returned above; this field is permission-checked against editmeta.
+    editMeta_.EnsureIssueEditMetaLoaded(issueId, issueTypeKeyOpt);
 
     nlohmann::json fieldsPayload;
     std::unordered_map<std::string, std::string> displayValues;
@@ -693,6 +696,72 @@ bool FieldEditPipelineService::TryPrepareOfflineFieldEdit(const std::string& iss
     outResult.Ok = true;
     outResult.UpdatedDisplayValues = std::move(displayValues);
     return true;
+}
+
+FieldEditCommitOutcome FieldEditPipelineService::CommitOrQueue(const FieldEditCommitRequest& req) {
+    using smatchet::offline::WriteRoute;
+    const bool queueable = FieldEditSupportsOfflineQueue(req.Field);
+    const WriteRoute route =
+        smatchet::offline::RouteWrite(req.ConnectivityAtKick, queueable, ConfigManager::Load().ReadOnlyMode);
+    if (route == WriteRoute::Reject) {
+        FieldEditCommitOutcome rejected;
+        rejected.Error = "Read-only mode is enabled in Preferences.";
+        return rejected;
+    }
+    if (route == WriteRoute::QueueImmediately) {
+        LOG_DEBUG("FieldEditPipelineService::CommitOrQueue tracker offline; queueing issue=%s field=%s",
+                  req.IssueId.c_str(), req.Field.Id.c_str());
+        return QueuePreparedEdit(req, false);
+    }
+
+    FieldEditCommitOutcome out;
+    out.Apply = SubmitFieldEditNetworkOnly(req.IssueId, req.Field, req.Values, req.OriginalEstimateSnapshot,
+                                           req.RemainingEstimateSnapshot, req.IssueTypeKeySnapshot);
+    if (out.Apply.Ok) {
+        out.Kind = FieldEditCommitKind::SavedOnline;
+        return out;
+    }
+    out.Error = out.Apply.Error;
+    // Only a retryable failure (transport / 5xx / rate limit) falls back to the queue; a rejection
+    // the user must act on (auth, validation) is reported, never queued to fail again on replay.
+    if (!out.Apply.ErrorTransient || !queueable) {
+        return out;
+    }
+    FieldEditCommitOutcome queued = QueuePreparedEdit(req, true);
+    if (queued.Kind == FieldEditCommitKind::QueuedOffline) {
+        return queued;
+    }
+    if (!queued.Error.empty()) {
+        out.Error = queued.Error; // the edit is lost unless the user retries: say why it was not queued
+    }
+    return out;
+}
+
+FieldEditCommitOutcome FieldEditPipelineService::QueuePreparedEdit(const FieldEditCommitRequest& req,
+                                                                   bool afterTransportFailure) {
+    FieldEditCommitOutcome out;
+    FieldEditResult prepared;
+    std::string payloadJson;
+    if (!TryPrepareOfflineFieldEdit(req.IssueId, req.Field, req.Values, req.OriginalEstimateSnapshot,
+                                    req.RemainingEstimateSnapshot, req.IssueTypeKeySnapshot, prepared, payloadJson,
+                                    out.Error)) {
+        return out;
+    }
+    const std::int64_t queueId =
+        deps_.EnqueueOfflineFieldEdit(req.IssueId, req.Field.Id, payloadJson, req.OriginalRichValue, req.OriginalValue,
+                                      req.HasOriginalValue, out.Error);
+    if (queueId <= 0) {
+        if (out.Error.empty()) {
+            out.Error = SmatchetLocalization::T("toast.offline_queue_failed", "Failed to queue offline field edit.");
+        }
+        return out;
+    }
+    out.Kind = FieldEditCommitKind::QueuedOffline;
+    out.Apply = std::move(prepared);
+    out.QueueId = queueId;
+    out.QueuedAfterTransportFailure = afterTransportFailure;
+    out.Error.clear();
+    return out;
 }
 
 VoidResult FieldEditPipelineService::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {

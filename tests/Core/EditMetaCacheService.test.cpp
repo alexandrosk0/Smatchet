@@ -22,8 +22,11 @@
 
 #include <doctest/doctest.h>
 
+#include <functional>
+#include <stdexcept>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 using smatchet_tests::FakeEditMetaDeps;
@@ -38,6 +41,21 @@ CachedTicket MakeTicket(const std::string& id, const std::string& issueType = "s
     t.fieldValues["issuetype"] = issueType;
     return t;
 }
+
+// The first launch throws, as std::thread creation does under resource exhaustion; later launches
+// run inline like the base fixture.
+class FirstLaunchThrowsEditMetaDeps : public FakeEditMetaDeps {
+  public:
+    bool FailNextLaunch = true;
+    void LaunchBackgroundTask(std::function<void()> task) override {
+        if (FailNextLaunch) {
+            FailNextLaunch = false;
+            ++LaunchBackgroundTaskCalls;
+            throw std::runtime_error("thread creation failed");
+        }
+        FakeEditMetaDeps::LaunchBackgroundTask(std::move(task));
+    }
+};
 
 } // namespace
 
@@ -278,4 +296,62 @@ TEST_CASE(
 
     // Both per-project component fetches happened exactly once.
     CHECK(deps.Fake()->FetchProjectComponentsCallCount() == 2u);
+}
+
+// ---------------------------------------------------------------------------
+// Quality Pillar 6 (offline-first S6): no editmeta request while offline; back off after a failure.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("EditMetaCacheService makes no editmeta request while the tracker is offline") {
+    FakeEditMetaDeps deps;
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}, {"labels", false}});
+    EditMetaCacheService svc(deps);
+    deps.ConnectivityImpl = TrackerConnectivityState::TransportDown;
+
+    const VoidResult r = svc.EnsureIssueEditMetaLoaded("ABC-1");
+    CHECK_FALSE(r.has_value());
+    svc.WarmIssueEditMetaAsync("ABC-1");
+
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+    CHECK(deps.LaunchBackgroundTaskCalls == 0);
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels")); // nothing loaded: stays optimistic
+
+    // Skipping offline records no backoff: the first warmup after reconnect fetches.
+    deps.ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+    CHECK_FALSE(svc.CanEditFieldForIssue("ABC-1", "labels"));
+}
+
+TEST_CASE("EditMetaCacheService::WarmIssueEditMetaAsync backs off after a failed fetch") {
+    FakeEditMetaDeps deps;
+    deps.Fake()->SetIssueEditMetaFailure("ABC-1", "HTTP 503: backend unreachable");
+    EditMetaCacheService svc(deps);
+
+    // The grid calls this every frame for the active row; after one failure it must not refetch.
+    for (int frame = 0; frame < 5; ++frame) {
+        svc.WarmIssueEditMetaAsync("ABC-1");
+    }
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
+    CHECK(deps.LaunchBackgroundTaskCalls == 1);
+    CHECK(svc.CanEditFieldForIssue("ABC-1", "labels")); // the failure leaves the issue optimistic
+
+    // An explicit load (a user's commit) is not throttled by the warmup backoff.
+    deps.Fake()->SetIssueEditMetaSuccess("ABC-1", {{"summary", true}});
+    CHECK(svc.EnsureIssueEditMetaLoaded("ABC-1").has_value());
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 2u);
+}
+
+TEST_CASE("EditMetaCacheService::WarmIssueEditMetaAsync retries after a warmup that failed to start") {
+    FirstLaunchThrowsEditMetaDeps deps;
+    deps.Fake()->SetDefaultIssueEditMetaSuccess({{"summary", true}});
+    EditMetaCacheService svc(deps);
+
+    CHECK_NOTHROW(svc.WarmIssueEditMetaAsync("ABC-1"));
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 0u);
+
+    // The in-flight marker was released, so the next frame starts the warmup.
+    svc.WarmIssueEditMetaAsync("ABC-1");
+    CHECK(deps.LaunchBackgroundTaskCalls == 2);
+    CHECK(deps.Fake()->FetchIssueEditMetaCallCount() == 1u);
 }

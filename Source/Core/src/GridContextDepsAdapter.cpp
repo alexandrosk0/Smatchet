@@ -283,13 +283,23 @@ TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
 
 // ---- IFieldEditDeps -------------------------------------------------------------------
 // BackendShared / GetActiveTicketsSnapshot / RefreshLocalData / const-RequestDeferred are reused
-// from the IEditMetaDeps + IOfflineQueueDeps overrides above. Only these two are genuinely new.
+// from the IEditMetaDeps + IOfflineQueueDeps overrides above. Only these three are genuinely new.
 
 // HasCache() is a PREDICATE, not the raw Cache* — keeps FieldEditPipelineService SQLite-free
 // (ADR-0020 sync-cache purity). Global state, so reads app_ (matches Cache() above).
 bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
 
 void GridContextDepsAdapter::UpdateTicket(const CachedTicket& ticket) { app_.UpdateTicket(ticket); }
+
+// Called on the field-edit worker (CommitOrQueue); QueueFieldEditOffline latches the cache once.
+std::int64_t GridContextDepsAdapter::EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
+                                                             const std::string& fieldsPayloadJson,
+                                                             const std::string& originalRichValue,
+                                                             const std::string& originalValue, bool hasOriginalValue,
+                                                             std::string& outError) {
+    return app_.QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue, originalValue,
+                                      hasOriginalValue);
+}
 
 // ---- IConnectivityDeps ----------------------------------------------------------------
 // DISTINCT from the ctx()-routed BackendShared() / catalog accessors above (Phase 3 R1): the

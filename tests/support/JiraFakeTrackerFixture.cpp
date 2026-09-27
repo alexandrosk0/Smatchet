@@ -266,6 +266,10 @@ void JiraFakeTrackerFixture::Configure(FakeTrackerClient& client) const {
     if (!fetches_.empty()) {
         const JiraFixtureFetch& last = fetches_.back();
         client.SetFetchIssuesResult(last.Tickets, last.FullSyncCompleted, last.FetchError, last.Warning);
+        // A keyed fetch (the offline-replay conflict re-check, the parent top-up) answers from the same
+        // steady-state issue set, filtered to the requested keys, as a real tracker does. Without it a
+        // replayed edit could never read the server value and would stay parked as "unverified".
+        client.SetFetchIssuesForKeysResult(true, last.Tickets);
     }
 
     for (const auto& reply : updateIssueFieldsReplies_) {

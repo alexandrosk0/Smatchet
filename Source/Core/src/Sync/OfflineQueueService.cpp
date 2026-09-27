@@ -545,7 +545,10 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
                  issueKey.c_str(), fieldId.c_str());
         return 0;
     }
-    if (!deps_.Cache()) {
+    // Runs on the field-edit worker (Pillar 6 queue-first) — latch the cache once. Same DR6
+    // reasoning as QueueCreateOffline: the UI thread may swap the cache mid-enqueue.
+    std::shared_ptr<ISyncCache> cache = deps_.CacheShared();
+    if (!cache) {
         outError = SmatchetLocalization::T("offline.cache_unavailable",
                                            "Local cache is unavailable, so this edit cannot be queued offline. "
                                            "Restart Smatchet or check Settings -> Preferences -> Local data.");
@@ -560,8 +563,8 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — see
         // QueueCreateOffline.
         const std::int64_t id =
-            deps_.Cache()->EnqueuePendingFieldEdit(deps_.CacheBackendKey(), issueKey, fieldId, fieldsPayloadJson,
-                                                   originalRichValue, originalValue, hasOriginalValue);
+            cache->EnqueuePendingFieldEdit(deps_.CacheBackendKey(), issueKey, fieldId, fieldsPayloadJson,
+                                           originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,

@@ -2,6 +2,7 @@
 
 #include "AppController.h"
 #include "ConfigManager.h"
+#include "FieldEditPipelineService.h" // FieldEditCommitRequest / FieldEditCommitOutcome (CommitOrQueueFieldEdit)
 #include "Logger.h"
 #include "MainThreadDispatcher.h"
 #include "SmatchetLocalization.h"
@@ -13,6 +14,7 @@
 
 #include "imgui.h"
 #include <algorithm>
+#include <exception>
 #include <string>
 #include <utility>
 #include <vector>
@@ -45,23 +47,9 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
     std::string applyError;
 
     if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
-        std::string qerr;
-        const std::int64_t qid =
-            app.QueueFieldEditOffline(edit.IssueId, edit.Field.Id, result.QueuedFieldsPayloadJson, qerr,
-                                      edit.OriginalRichValue, edit.OriginalValue, edit.HasOriginalValue);
-        if (qid <= 0) {
-            SmatchetToastManager::Instance().Push(
-                SmatchetLocalization::T("toast.offline_error", "Offline Error"),
-                qerr.empty() ? std::string(SmatchetLocalization::T("toast.offline_queue_failed",
-                                                                   "Failed to queue offline field edit."))
-                             : qerr,
-                ToastType::Error);
-            CellWriteFeedback feedback;
-            feedback.State = CellWriteState::Error;
-            feedback.Message = qerr;
-            feedback.FramesRemaining = 0;
-            d.cellFeedbackByKey[editKey] = feedback;
-        } else if (!ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError)) {
+        // The worker already persisted the edit to the offline queue (CommitOrQueue); only the
+        // optimistic local apply is left.
+        if (!ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError)) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.apply_error", "Apply Error"),
                 applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
@@ -84,6 +72,11 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             feedback.Message = "Queued";
             feedback.FramesRemaining = 240;
             d.cellFeedbackByKey[editKey] = feedback;
+        }
+        if (result.QueuedAfterTransportFailure) {
+            // The tracker just failed a live request: probe now so the next edit queues first
+            // instead of waiting out another retry window before the regular probe notices.
+            app.RequestTrackerProbeNow();
         }
     } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
         const bool applied = ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError);
@@ -128,45 +121,69 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
     d.hasInFlightEdit = false;
 }
 
-// Worker body — runs OFF the UI thread. Performs the HTTP commit and, on
-// transport failure, prepares an offline-queue fallback. Posts a single
-// completion lambda back via MainThreadDispatcher::PostToMainThread.
+// Worker half of the commit: CommitOrQueue decides queue-first (tracker offline at kick time) or
+// network-first with a queue fallback, and persists a queued edit here, off the UI thread. A throw is
+// reported as a failed commit so the caller still posts a result back.
+FieldEditCommitResult CommitOnWorker(AppController& app, TrackerConnectivityState connectivityAtKick,
+                                     const PendingFieldEdit& edit, std::string originalEstimateSnapshot,
+                                     std::string remainingEstimateSnapshot, std::string issueTypeKeyForNetwork) {
+    FieldEditCommitResult result;
+    result.CommitKind = FieldEditCommitResult::Kind::Failed;
+    try {
+        FieldEditCommitRequest req;
+        req.IssueId = edit.IssueId;
+        req.Field = edit.Field;
+        req.Values = edit.Values;
+        req.OriginalRichValue = edit.OriginalRichValue;
+        req.OriginalValue = edit.OriginalValue;
+        req.HasOriginalValue = edit.HasOriginalValue;
+        req.OriginalEstimateSnapshot = std::move(originalEstimateSnapshot);
+        req.RemainingEstimateSnapshot = std::move(remainingEstimateSnapshot);
+        req.IssueTypeKeySnapshot = std::move(issueTypeKeyForNetwork);
+        req.ConnectivityAtKick = connectivityAtKick;
+        FieldEditCommitOutcome o = app.CommitOrQueueFieldEdit(req);
+        switch (o.Kind) {
+        case FieldEditCommitKind::SavedOnline:
+            result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
+            break;
+        case FieldEditCommitKind::QueuedOffline:
+            result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
+            break;
+        case FieldEditCommitKind::Failed:
+            result.CommitKind = FieldEditCommitResult::Kind::Failed;
+            break;
+        }
+        result.Ok = o.Kind != FieldEditCommitKind::Failed;
+        result.Error = std::move(o.Error);
+        result.ApplyResult = std::move(o.Apply);
+        result.QueuedAfterTransportFailure = o.QueuedAfterTransportFailure;
+    } catch (const std::exception& ex) {
+        LOG_ERROR("GridFieldEdit: commit worker threw issue=%s field=%s: %s", edit.IssueId.c_str(),
+                  edit.Field.Id.c_str(), ex.what());
+        result = FieldEditCommitResult();
+        result.Error = "Saving this edit failed unexpectedly. If the cell still shows the old value, edit it again.";
+    } catch (...) {
+        LOG_ERROR("GridFieldEdit: commit worker threw a non-std exception issue=%s field=%s", edit.IssueId.c_str(),
+                  edit.Field.Id.c_str());
+        result = FieldEditCommitResult();
+        result.Error = "Saving this edit failed unexpectedly. If the cell still shows the old value, edit it again.";
+    }
+    return result;
+}
+
+// Worker body — runs OFF the UI thread and posts exactly one completion lambda back via
+// MainThreadDispatcher::PostToMainThread. CommitOnWorker contains any exception from the commit, so
+// the post (and with it the UI-thread in-flight gate release) is reached on every path.
 //
 // Captures own value copies of all fields needed; AppController& is the
 // only reference and remains valid for the lifetime of the app (workers
 // are joined before destruction via JoinBackgroundTasks).
-void RunCommitWorker(AppController& app, UiDrawSession& d, PendingFieldEdit edit, std::string originalEstimateSnapshot,
-                     std::string remainingEstimateSnapshot, std::string issueTypeKeyForNetwork) {
-    FieldEditCommitResult result;
-    result.CommitKind = FieldEditCommitResult::Kind::Failed;
-
-    result.ApplyResult = app.SubmitFieldEditNetworkOnly(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
-                                                        remainingEstimateSnapshot, issueTypeKeyForNetwork);
-    if (result.ApplyResult.Ok) {
-        result.Ok = true;
-        result.CommitKind = FieldEditCommitResult::Kind::SavedOnline;
-        result.Error.clear();
-    } else {
-        result.Error = result.ApplyResult.Error;
-        // N12 item 13b: the pipeline classified the mutation's TrackerError into ErrorTransient —
-        // the offline-queue fallback no longer sniffs the flattened text.
-        if (result.ApplyResult.ErrorTransient && AppController::FieldEditSupportsOfflineQueue(edit.Field)) {
-            AppController::FieldEditResult prepared;
-            std::string payloadJson;
-            std::string prepErr;
-            if (app.TryPrepareOfflineFieldEdit(edit.IssueId, edit.Field, edit.Values, originalEstimateSnapshot,
-                                               remainingEstimateSnapshot, issueTypeKeyForNetwork, prepared, payloadJson,
-                                               prepErr)) {
-                result.ApplyResult = std::move(prepared);
-                result.QueuedFieldsPayloadJson = std::move(payloadJson);
-                result.CommitKind = FieldEditCommitResult::Kind::QueuedOffline;
-                result.Ok = true;
-                result.Error.clear();
-            } else if (!prepErr.empty()) {
-                result.Error = prepErr;
-            }
-        }
-    }
+void RunCommitWorker(AppController& app, UiDrawSession& d, TrackerConnectivityState connectivityAtKick,
+                     PendingFieldEdit edit, std::string originalEstimateSnapshot, std::string remainingEstimateSnapshot,
+                     std::string issueTypeKeyForNetwork) {
+    FieldEditCommitResult result =
+        CommitOnWorker(app, connectivityAtKick, edit, std::move(originalEstimateSnapshot),
+                       std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
 
     // Hand the result back to the UI thread. The dispatcher's bounded queue
     // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
@@ -277,14 +294,33 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<
         LOG_TRACE("ProcessGridFieldEdits: dispatching worker for issue=%s field=%s", edit.IssueId.c_str(),
                   edit.Field.Id.c_str());
 
-        // Worker runs SubmitFieldEditNetworkOnly (HTTP) and posts the result
+        // Pillar 6: the worker queues first when the last probe says the tracker is unreachable,
+        // instead of spending the HTTP retry window before the edit is saved anywhere.
+        const TrackerConnectivityState connectivityAtKick = app.GetLastTrackerConnectivityState();
+        // Worker runs CommitOrQueue (HTTP or SQLite enqueue) and posts the result
         // back to the UI thread. Lifetime: AppController owns the worker
         // thread; JoinBackgroundTasks is called before destruction.
-        app.LaunchBackgroundTask(
-            [&app, &d, edit, originalEstimateSnapshot, remainingEstimateSnapshot, issueTypeKeyForNetwork]() mutable {
-                RunCommitWorker(app, d, std::move(edit), std::move(originalEstimateSnapshot),
+        try {
+            app.LaunchBackgroundTask([&app, &d, connectivityAtKick, edit, originalEstimateSnapshot,
+                                      remainingEstimateSnapshot, issueTypeKeyForNetwork]() mutable {
+                RunCommitWorker(app, d, connectivityAtKick, std::move(edit), std::move(originalEstimateSnapshot),
                                 std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
             });
+        } catch (const std::exception& ex) {
+            // Thread creation failed: no worker will post back, so release the in-flight gate here
+            // (otherwise every later edit waits behind it forever). The edit is reported, not
+            // silently re-queued: an automatic retry would spin every frame while threads are scarce.
+            LOG_ERROR("GridFieldEdit: could not start the commit worker issue=%s field=%s: %s", edit.IssueId.c_str(),
+                      edit.Field.Id.c_str(), ex.what());
+            d.hasInFlightEdit = false;
+            d.gridEditSuccess.clear();
+            d.gridEditError = "Could not start saving this edit; it was not saved. Edit the cell again to retry.";
+            CellWriteFeedback failed;
+            failed.State = CellWriteState::Error;
+            failed.Message = d.gridEditError;
+            failed.FramesRemaining = 0;
+            d.cellFeedbackByKey[BuildCellKey(edit.IssueId, edit.Field.Id)] = failed;
+        }
     }
 
     // Decrement frame counters on success chips so they fade after their

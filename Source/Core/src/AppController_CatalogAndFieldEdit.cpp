@@ -746,6 +746,10 @@ bool AppController::TryPrepareOfflineFieldEdit(const std::string& issueId, const
                                                   outFieldsPayloadJson, outError);
 }
 
+FieldEditCommitOutcome AppController::CommitOrQueueFieldEdit(const FieldEditCommitRequest& req) {
+    return fieldEdit_->CommitOrQueue(req);
+}
+
 VoidResult AppController::ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result) {
     return fieldEdit_->ApplyFieldEditResult(issueId, result);
 }

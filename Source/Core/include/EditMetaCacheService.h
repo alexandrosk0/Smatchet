@@ -15,6 +15,7 @@
 // component-option maps under that catalog's OWN `availableFieldsMutex_` — a different mutex than
 // `editMetaMutex_`. It never re-resolves the catalog at write time.
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -55,7 +56,8 @@ class EditMetaCacheService {
 
     /**
      * VoidResult: Ok on success (or optimistic no-op — no backend / empty issueId / cache hit);
-     * Err(reason) when the editmeta fetch fails (the issue stays optimistic regardless — see impl).
+     * Err(reason) when the editmeta fetch fails or is skipped because the tracker is offline (the
+     * issue stays optimistic regardless — see impl).
      * @param issueTypeKeyOverride if non-null and non-empty, used instead of scanning `ActiveTickets`
      *        for issuetype (safe for background threads that captured the key on the UI thread).
      * @param configSnapshot if non-null, used instead of ConfigManager::Load() (e.g. snapshot from main thread
@@ -69,7 +71,9 @@ class EditMetaCacheService {
     /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
      * worker). */
     void WarmIssueTypeEditMetaAtStartAsync(TrackerConfig trackerCfgForWorker);
-    /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
+    /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. Called
+     * every frame for the active row, so it does nothing while the tracker is offline and backs off
+     * after a failed fetch (Quality Pillar 6). */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
   private:
@@ -77,6 +81,8 @@ class EditMetaCacheService {
         bool loaded = false;
         /** Field id -> backend allows an update operation (set/add/remove). */
         std::unordered_map<std::string, bool> fieldCanEdit;
+        /** After a failed fetch: the per-frame warmup waits until this time before trying again. */
+        std::chrono::steady_clock::time_point retryAfter{};
     };
 
     /// Background-task body of WarmIssueTypeEditMetaAtStartAsync: load editmeta for the

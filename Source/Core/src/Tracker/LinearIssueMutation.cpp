@@ -37,26 +37,29 @@ using smatchet::linear::BuildLinearHeaders;
 
 namespace {
 
-const char* const kApiKeyMissingError =
-    "Linear API key not configured (set Preferences > Tracker > Linear API key)";
+const char* const kApiKeyMissingError = "Linear API key not configured (set Preferences > Tracker > Linear API key)";
 
 // POST one GraphQL document + variables and return the parsed body. On any
 // transport / HTTP / GraphQL-errors[] / success==false failure, `outError` is set
 // (best-effort human message) and the call returns false. `outIssue` receives the
 // mutation payload's nested `issue` object on success (empty for commentCreate).
+// `outStatus` (optional) receives the HTTP status (0 = no response) so a caller can keep the
+// failure's kind instead of reporting every failure as a rejected request.
 // Pillar-2: only reachable from the create/update/offline-replay worker paths.
 bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, const std::string& document,
                        const nlohmann::json& variables, const char* mutationName, nlohmann::json& outIssue,
-                       std::string& outError) {
+                       std::string& outError, long* outStatus = nullptr) {
     const std::string body = smatchet::linear::BuildGraphQLBody(document, variables);
     /* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
+    if (outStatus) {
+        *outStatus = resp.status_code;
+    }
 
     // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
     nlohmann::json parsed = smatchet::json_safe::ParseBoundedOrDiscarded(resp.text);
     std::string errorMessage;
-    const bool hasErrors =
-        !parsed.is_discarded() && smatchet::linear::LinearResponseHasErrors(parsed, errorMessage);
+    const bool hasErrors = !parsed.is_discarded() && smatchet::linear::LinearResponseHasErrors(parsed, errorMessage);
     if (resp.status_code != 200 || parsed.is_discarded() || hasErrors) {
         outError = !errorMessage.empty()
                        ? errorMessage
@@ -73,13 +76,18 @@ bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, con
 // Resolve the issue UUID from a Linear identifier ("ENG-123") via the lightweight
 // `issue(id)` query. Returns empty + sets `outError` on any failure. The mutation
 // surface needs the UUID; the grid only carries the identifier (CachedTicket.id).
+// `outStatus` (optional) receives the HTTP status, as in RunLinearMutation.
 std::string ResolveIssueUuid(const std::string& apiUrl, const std::string& apiKey, const std::string& identifier,
-                             std::string& outError) {
+                             std::string& outError, long* outStatus = nullptr) {
     nlohmann::json variables = nlohmann::json::object();
     variables["id"] = identifier;
-    const std::string body = smatchet::linear::BuildGraphQLBody(smatchet::linear::ResolveIssueQueryDocument(), variables);
+    const std::string body =
+        smatchet::linear::BuildGraphQLBody(smatchet::linear::ResolveIssueQueryDocument(), variables);
     /* PILLAR2_WORKER_ONLY */ // est-latency: 15000ms
     const cpr::Response resp = TrackerPostLogged("LinearClient", apiUrl, BuildLinearHeaders(apiKey), body);
+    if (outStatus) {
+        *outStatus = resp.status_code;
+    }
 
     // Bounded parse of the untrusted HTTP body (discarded on failure) — audit: unbounded-recursion-DoS.
     // SMATCHET_DEVIATION(rule=duplication): the build-body → TrackerPostLogged → bounded-parse →
@@ -116,11 +124,16 @@ TrackerError LinearClient::UpdateIssueFields(const std::string& issueId, const n
         return TrackerErrorInvalidRequest("LinearClient::UpdateIssueFields: empty IssueUpdateInput");
     }
 
+    // A failure keeps its HTTP kind (Quality Pillar 6): an unreachable host (status 0) is Transport,
+    // so the edit is retryable and reaches the offline queue. issueUpdate is a set-replace, so a
+    // replay after a lost response is safe. A 200 carrying GraphQL errors stays InvalidRequest.
     std::string resolveError;
-    const std::string uuid = ResolveIssueUuid(auth.ApiUrl, auth.ApiKey, issueId, resolveError);
+    long resolveStatus = 200;
+    const std::string uuid = ResolveIssueUuid(auth.ApiUrl, auth.ApiKey, issueId, resolveError, &resolveStatus);
     if (uuid.empty()) {
         LOG_ERROR("LinearClient::UpdateIssueFields: resolve %s failed — %s", issueId.c_str(), resolveError.c_str());
-        return TrackerErrorInvalidRequest(resolveError);
+        return resolveStatus != 200 ? ClassifyRejectedHttpStatus(resolveStatus, resolveError)
+                                    : TrackerErrorInvalidRequest(resolveError);
     }
 
     nlohmann::json variables = nlohmann::json::object();
@@ -128,10 +141,12 @@ TrackerError LinearClient::UpdateIssueFields(const std::string& issueId, const n
     variables["input"] = fields;
     nlohmann::json updatedIssue;
     std::string outError;
+    long mutationStatus = 200;
     if (!RunLinearMutation(auth.ApiUrl, auth.ApiKey, smatchet::linear::IssueUpdateMutationDocument(), variables,
-                           "issueUpdate", updatedIssue, outError)) {
+                           "issueUpdate", updatedIssue, outError, &mutationStatus)) {
         LOG_ERROR("LinearClient::UpdateIssueFields: issueUpdate %s failed — %s", issueId.c_str(), outError.c_str());
-        return TrackerErrorInvalidRequest(outError);
+        return mutationStatus != 200 ? ClassifyRejectedHttpStatus(mutationStatus, outError)
+                                     : TrackerErrorInvalidRequest(outError);
     }
     LOG_INFO("LinearClient::UpdateIssueFields: updated %s (uuid=%s)", issueId.c_str(), uuid.c_str());
     return TrackerError::Ok();
@@ -181,7 +196,8 @@ Result<std::string, TrackerError> LinearClient::CreateIssue(const nlohmann::json
         return CreateResult::Err(TrackerErrorAuth(kApiKeyMissingError));
     }
     if (!fields.is_object() || !fields.contains("teamId") || !fields.contains("title")) {
-        const std::string msg = "LinearClient::CreateIssue: payload missing teamId/title (call BuildCreatePayload first)";
+        const std::string msg =
+            "LinearClient::CreateIssue: payload missing teamId/title (call BuildCreatePayload first)";
         BackendAuditTrail::AppendResult("issue_create", "linear_client", std::string(), auditOp, false, msg);
         return CreateResult::Err(TrackerErrorInvalidRequest(msg));
     }
@@ -227,8 +243,7 @@ TrackerError LinearClient::AddIssueCommentPlain(const TrackerConfig& cfg, const 
     std::string resolveError;
     const std::string uuid = ResolveIssueUuid(auth.ApiUrl, auth.ApiKey, issueKey, resolveError);
     if (uuid.empty()) {
-        LOG_ERROR("LinearClient::AddIssueCommentPlain: resolve %s failed — %s", issueKey.c_str(),
-                  resolveError.c_str());
+        LOG_ERROR("LinearClient::AddIssueCommentPlain: resolve %s failed — %s", issueKey.c_str(), resolveError.c_str());
         return TrackerErrorInvalidRequest(resolveError);
     }
 
