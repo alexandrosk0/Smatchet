@@ -364,6 +364,35 @@ TEST_CASE("AdfToMarkdown: table header + rich body row (BACKLOG B5)") {
     CHECK(Adf2Md(AdfDoc(json::array({table}))) == "| Name | Detail |\n| --- | --- |\n| l1<br>l2 | - x |");
 }
 
+TEST_CASE("AdfToMarkdown: a table-cell block a GFM cell cannot hold is reported as dropped (BACKLOG B5)") {
+    json code;
+    code["type"] = "codeBlock";
+    code["content"] = json::array({AdfText("int x = 1;")});
+    json cell = AdfCell("tableCell", json::array({AdfPara(json::array({AdfText("see:")})), code}));
+    const json table = AdfTable(json::array({AdfRow(json::array({cell}))}));
+    std::vector<std::string> dropped;
+    const std::string md = MarkdownConvert::AdfToMarkdown(AdfDoc(json::array({table})), &dropped);
+    CHECK(md == "| see: |\n| --- |");
+    REQUIRE(dropped.size() == 1);
+    CHECK(dropped[0] == "codeBlock");
+}
+
+TEST_CASE("AdfToMarkdown: a non-paragraph block inside a table-cell list item is reported as dropped") {
+    json code;
+    code["type"] = "codeBlock";
+    code["content"] = json::array({AdfText("x")});
+    json li = AdfListItemPara("item");
+    li["content"].push_back(code);
+    json list;
+    list["type"] = "bulletList";
+    list["content"] = json::array({li});
+    const json table = AdfTable(json::array({AdfRow(json::array({AdfCell("tableCell", json::array({list}))}))}));
+    std::vector<std::string> dropped;
+    CHECK(MarkdownConvert::AdfToMarkdown(AdfDoc(json::array({table})), &dropped) == "| - item |\n| --- |");
+    REQUIRE(dropped.size() == 1);
+    CHECK(dropped[0] == "codeBlock");
+}
+
 TEST_CASE("AdfToMarkdown: listItem text node without a string 'text' does not throw (DR33)") {
     // A malformed node with type "text" but no string "text" member used to make
     // MatchStoredTaskPrefix call .at("text"), throwing nlohmann::type_error out

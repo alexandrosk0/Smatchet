@@ -21,7 +21,7 @@ struct TrackerConfig;
 struct TrackerIssueComment {
     std::string Id;                // backend-stable comment id
     std::string Author;            // username / handle (GitHub user.login, Jira author.displayName)
-    std::string Body;              // raw comment body (markdown for GitHub; plain-text for Jira/Plane)
+    std::string Body;              // comment body as Markdown (GitHub native; Jira ADF / Plane HTML converted)
     std::int64_t CreatedAtSec = 0; // unix epoch seconds
     std::int64_t UpdatedAtSec = 0; // unix epoch seconds (== CreatedAtSec if never edited)
 };

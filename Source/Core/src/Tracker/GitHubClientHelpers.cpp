@@ -380,5 +380,13 @@ GitHubRequestAuth ResolveGitHubRequestAuth(const std::string& cfgBaseUrl, const 
     return out;
 }
 
+void ParseIso8601CreatedUpdated(const std::string& createdIso, const std::string& updatedIso,
+                                std::int64_t& outCreatedSec, std::int64_t& outUpdatedSec) {
+    const Result<std::int64_t, std::string> created = ParseIso8601ToUnixSec(createdIso);
+    outCreatedSec = created ? created.value() : 0;
+    const Result<std::int64_t, std::string> updated = ParseIso8601ToUnixSec(updatedIso);
+    outUpdatedSec = updated ? updated.value() : outCreatedSec;
+}
+
 } // namespace github
 } // namespace smatchet

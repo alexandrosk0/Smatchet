@@ -13,6 +13,17 @@ void RenderClippedFieldText(const std::string& rawValue, float availWidth, bool 
                             const std::string* rawForTooltip = nullptr, bool renderMarkdown = false,
                             const std::string* fieldId = nullptr);
 
+/** The one Markdown hover-tooltip path, shared by the description, comments and History
+ *  tooltips: `MarkdownPreviewRender` in Tooltip mode at a fixed wrap width, inside a child
+ *  that auto-fits the content and scrolls once taller than half the display. Opens and
+ *  closes the tooltip itself; empty `markdown` opens nothing. UI thread only.
+ *  (History reaches it through `RenderClippedFieldText`, keyed on the field id.) */
+void RenderMarkdownTooltip(const std::string& markdown);
+
+/** Same tooltip for a plain "[Author] date" activity blob (History, or a Comments blob cached
+ *  before comments were stored as Markdown), converted by `PlainActivityBlobToMarkdown`. */
+void RenderPlainActivityTooltip(const std::string& blob);
+
 /** Tell the renderer which tracker field id holds C/C++ callstack source so it
  *  can paint the grid cell + overflow tooltip with `DrawColoredCppText`. */
 void SetCallstackFieldIdHint(const std::string& fieldId);

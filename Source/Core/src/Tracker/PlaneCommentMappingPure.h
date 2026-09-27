@@ -20,8 +20,10 @@ namespace plane {
 /// backend-agnostic `TrackerIssueComment` shape. Pure — no I/O, unit-testable.
 /// Per element: `Id` = `id` (string, "" if missing or non-string), `Author` =
 /// `actor_detail.display_name` (falling back to `created_by` when the nested
-/// actor object is absent), `Body` = `comment_stripped` (plain text — never the
-/// rich `comment_html`, per the UI plain-text contract; "" if absent),
+/// actor object is absent), `Body` = `comment_html` converted to Markdown (via
+/// MarkdownConvert::HtmlSubsetToMarkdown — the Body contract is Markdown), falling
+/// back to the plain `comment_stripped` when the HTML is absent, outside the
+/// converter's tag allowlist, or converts to nothing ("" if both are absent),
 /// `CreatedAtSec` / `UpdatedAtSec` = epoch seconds parsed from the ISO-8601
 /// `created_at` / `updated_at` strings (via ParseIso8601ToUnixSec).
 /// `UpdatedAtSec` defaults to `CreatedAtSec` when `updated_at` is absent or
