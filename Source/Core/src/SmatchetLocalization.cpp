@@ -820,6 +820,13 @@ const TranslationEntry kEntries[] = {
     {"comments.posted_body", "Comment added.", u8"Commentaire ajouté."},
     {"comments.post_button", "Post Comment", u8"Publier le commentaire"},
     {"comments.unknown_author", "(unknown)", u8"(inconnu)"},
+    {"comments.posting_title", "Posting comment", u8"Publication du commentaire"},
+    {"comments.cached_partial", "Showing a saved summary (latest 20 comments)",
+     u8"Résumé enregistré affiché (20 derniers commentaires)"},
+    {"comments.unavailable_offline", "Comments are not available offline yet.",
+     u8"Commentaires pas encore disponibles hors ligne."},
+    {"comments.post_offline_hint", "Offline \xE2\x80\x94 your comment stays here until the tracker is reachable.",
+     u8"Hors ligne — votre commentaire reste ici jusqu'à la reconnexion."},
 
     {"field.clear", "<clear>", u8"<effacer>"},
     {"field.clear_all", "<clear all>", u8"<tout effacer>"},

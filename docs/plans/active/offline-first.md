@@ -2934,6 +2934,14 @@ This plan touches `Source/Core/`.
   - `JiraFakeTrackerFixture` answers keyed fetches.
 - Tests: `FieldEditPipelineService` (`CommitOrQueue` matrix), `EditMetaCacheService` (offline, backoff, failed launch), `LinearIssueMutationHttp` (Transport / 503 / 401), `JiraFakeTrackerFixture` (keyed fetch), and the bucket-E test `OfflineFirst/StatusEdit_OfflineQueuesThenReplays`.
 
+### S7 — [#2255](https://github.com/alexandrosk0/Smatchet/pull/2255)
+- Shipped:
+  - The comments modal opens on the thread saved with the ticket and marks it with a `DataFreshnessCue`. It skips the network while offline and offers Retry after a failed load; "Loading comments..." shows only when nothing is saved.
+  - A structured thread (`SerializeCommentThread`, newest 50, 64 KiB cap) is stored in `fieldRichValues["comment_thread"]` by the Jira mapper and by `UpdateCachedCommentsFromThread`. `ParseCommentBlob` turns an older row's tooltip blob into a fallback summary.
+  - `TicketSyncService` keeps the saved thread and blob over a sync row that brings none while the comment count is unchanged (`LazyEnrichmentCarryForwardPure.h`).
+  - The load and post in-flight latches clear on every path. Posting toasts "Posting comment"; offline, Post is disabled and the draft is kept. The tooltip does not fetch while offline.
+- Tests: `CommentBlobFormatPure` (thread codec, caps, blob inverse), `LazyEnrichmentCarryForwardPure`, `SmatchetCommentsModalSeedPure` (both lists), `TicketSyncService` (carry-forward on both save paths), and the bucket-E test `OfflineFirst/Comments_OfflineShowsCachedThread`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -2967,6 +2975,20 @@ This plan touches `Source/Core/`.
   - The bucket-E test `StatusEdit_OfflineQueuesThenReplays` holds a `BucketE::UiTestWriteScope`, because the fresh test profile defaults to read-only and would reject the queue write. It reaches the fixture's `FakeTrackerClient` through `AppController::BackendShared()` to count the replayed update, waits on app state with `YieldUntil` / `WaitForConnectivity` instead of fixed yields, and asserts `CallsWhileDown() == 0` across the queueing window.
   - `tests/ui/_helpers/UiTestWriteScope.h` (outside the S6 file list) now flips `ReadOnlyMode` in the UI session's own config copy (`g_ui.cfg`) as well as on disk, and restores both. The first CI run of `StatusEdit_OfflineQueuesThenReplays` showed why: on reconnect the UI queues a save of `g_ui.cfg`, which still held the fresh profile's `ReadOnlyMode=true`. That save turned read-only back on mid-test, so `TickOfflineFieldEdits` returned early and the queued edit never replayed. The test also deletes its queued row when replay fails, so the lane's retry starts clean, and it asserts that the replayed payload carries the edited value (CodeRabbit nit).
   - `LinearIssueMutationHttp` covers the new classification on the identifier-resolve hop (unreachable host, 503, 401). The loopback fixture serves one status per path, so the `issueUpdate` hop, which shares the same `/graphql` path, gets the same `ClassifyRejectedHttpStatus` code but no separate case.
+
+- **S7:**
+  - `kCommentThreadRichKey` is defined in `CachedTicketTypes.h`, next to the `fieldRichValues` map it keys, not in `CommentBlobFormatPure.h`. The `Sync/` carry-forward header needs the key, and a `Sync/` header may not include a `Tracker/` header (the include-cycle gate ranks Sync 2 below Tracker 3).
+  - `LazyEnrichmentCarryForwardPure.h` works on a `LazyCommentFields` snapshot (count, blob, thread) rather than a whole previous `CachedTicket`. Only those strings are copied out while `ActiveTicketsMutex` is held, and the save runs after the lock is released. It also carries the tooltip blob, which a list sync of GitHub / Plane drops the same way.
+  - The Jira mapper builds the blob and the thread from one mapped list (`ResolveJiraCommentThread`), so the thread also covers the follow-up full comment fetch, not only a non-empty search array.
+  - `ParseCommentBlob` reads the Markdown blob shape that #2248 introduced (`**Author** date` entries separated by thematic breaks) as well as the older plain `[Author] date` shape. It undoes the `PreserveLineBreaks` hard breaks, so bodies round-trip exactly.
+  - `SerializeCommentThread` keeps a contiguous run of the newest comments: if the newest comment alone is over 64 KiB, it stores no thread and the modal falls back to the blob. `ParseCommentThread` rejects input over 1 MiB before parsing. It reuses `JsonIdToString` / `JsonGetStringIfString` from `TrackerFieldValueParser.cpp` (DRY gate).
+  - The modal load is one worker: it posts the saved copy, then the live result, or skips the network while offline. A saved comment count of `0` counts as a known-empty thread. Retry is offered next to the cue after any failed load, probes connectivity and makes one network attempt even while offline. A no-cache failure that is not a transport failure shows its error inline.
+  - The post path had the same unguarded latch as the load. `PostInFlight` is now set only after the launch returns, and the worker always posts a result, even when it throws. The result is matched against the open's own generation (`OpenGen`), so a Retry during a post cannot orphan it. Offline, only the Post button is disabled; the box stays editable. The "Posting comment" toast body is the issue key.
+  - The tooltip condition moved into `ShouldLazyFetchCommentsTooltip`, which keeps `drawActiveProjectGridValueCell` within the 30-branch cap.
+  - `FetchIssueCommentsTyped` now logs a backend failure, with its kind; `FetchIssueComments` only converts the error.
+  - `tests/fixtures/jira_backend/offline-first.json` is outside the S7 file list. Its OFF-1 search row now carries a Jira `comment` field, as real Jira search rows always do. Without it, a resync would save OFF-1 with no comment count, the saved thread would not carry over, and the bucket-E test would depend on sync timing.
+  - `TicketSyncService.test.cpp` gains a case for each save path: `ApplyIssueFetchPack`, and the streaming drain into both the cache and memory.
+  - The bucket-E test opens the modal online first, so the live fetch saves the thread, and then offline. It closes the modal with Esc; the close is logged, not asserted, because the modal renders only from a focused grid pane.
 
 ## Verification (actual)
 

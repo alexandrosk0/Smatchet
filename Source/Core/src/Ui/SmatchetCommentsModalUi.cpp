@@ -1,12 +1,19 @@
 #include "SmatchetCommentsModalUi.h"
 
+// SMATCHET_DEVIATION(rule=duplication; reason=include overlap with sibling UI TU; owner=ui; revisit=dup-scoping)
 #include "AiChatTimestamp.h"
 #include "AppController.h"
+#include "CachedTicketTypes.h"
+#include "DataFreshnessCue.h"
 #include "ITrackerCollaboration.h"
+#include "Logger.h"
 #include "MarkdownPreviewRender.h"
+#include "OfflineFirstPure.h"
+#include "ScopeExit.h"
 #include "SmatchetLocalization.h"
 #include "Tracker/CommentBlobFormatPure.h"
 #include "Ui/SmatchetCommentsModalGenPure.h"
+#include "Ui/SmatchetCommentsModalSeedPure.h"
 #include "Ui/SmatchetToast.h"
 
 #include "imgui.h"
@@ -16,7 +23,10 @@
 
 #include <algorithm>
 #include <cstring>
+#include <exception>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -40,6 +50,14 @@ struct CommentsModalState {
     float BodyHeightsWidth = 0.0f;
     bool FetchInFlight = false;
     bool PostInFlight = false;
+    /// `Comments` came from the copy saved with the ticket, not from a live fetch in this open.
+    bool Seeded = false;
+    /// The saved copy is the tooltip summary (latest 20 comments, dates to the day).
+    bool SeedPartial = false;
+    /// The last load failed, or skipped the network because the tracker is offline.
+    bool FetchFailed = false;
+    TrackerErrorKind FetchErrorKind = TrackerErrorKind::None;
+    /// Detail of the last failed load, shown as the freshness cue's tooltip.
     std::string Error;
     bool Active = false;
     bool JustOpened = false;
@@ -48,6 +66,9 @@ struct CommentsModalState {
     /// the file-static `s_genCounter` (NOT reset with this struct) so it is genuinely monotonic
     /// across opens — see SmatchetCommentsModalGenPure.h (#1713).
     int Gen = 0;
+    /// Generation of this open, fixed until the modal closes. A post is guarded by it rather than by
+    /// Gen: a reload (Retry) bumps Gen, and must not orphan a post that is still in flight.
+    int OpenGen = 0;
 
     static constexpr size_t kPostBufferSize = 16 * 1024;
     std::vector<char> PostBuf;
@@ -64,42 +85,155 @@ constexpr const char* kCommentsModalPopupId = "IssueCommentsModal";
 
 void CloseCommentsModal() { s_CommentsState = CommentsModalState{}; }
 
-/// Pillar 2 — fetch the comment list on a worker thread, then post the result back to the UI thread.
-/// Mirrors the SmatchetGridUiSupport.cpp worker pattern (capture by value; AppController& outlives
-/// the app; results hop back via MainThreadDispatcher). Discards the post-back if the user opened a
-/// different issue's modal in the meantime (Gen mismatch).
-void KickCommentsFetch(AppController& app, const std::string& issueId, int gen) {
-    AppController* appPtr = &app;
-    const std::string capturedIssueId = issueId;
-    app.LaunchBackgroundTask([appPtr, capturedIssueId, gen]() {
-        std::vector<TrackerIssueComment> comments;
-        std::string err;
-        bool ok = false;
-        UnpackResult(appPtr->FetchIssueComments(capturedIssueId), ok, comments, err);
-        appPtr->PostToMainThread([appPtr, gen, capturedIssueId, ok, comments = std::move(comments), err]() mutable {
-            if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
-                                                          s_CommentsState.IssueId, capturedIssueId)) {
-                return;
-            }
-            s_CommentsState.FetchInFlight = false;
-            if (ok) {
-                s_CommentsState.Comments = std::move(comments);
-                s_CommentsState.BodyPlans.clear();
-                s_CommentsState.BodyHeights.clear();
-                s_CommentsState.Error.clear();
-                // issue-comments fix (#1291, extended) — runs on every fetch: modal-open AND the
-                // post-success re-fetch. Pushes the observed thread into the cached ticket (count +
-                // flattened tooltip blob) so the grid Comments cell AND its hover tooltip reflect a
-                // just-posted comment without a full re-sync. UI thread (post-back).
-                appPtr->UpdateCachedCommentsFromThread(capturedIssueId, s_CommentsState.Comments);
-            } else {
-                s_CommentsState.Error =
-                    err.empty()
-                        ? std::string(SmatchetLocalization::T("comments.fetch_failed", "Failed to load comments."))
-                        : err;
-            }
-        });
+/// Where one comments load starts: the copies saved with the ticket (parsed on the worker) and
+/// whether to ask the tracker even while the last probe says it is unreachable (an explicit Retry).
+struct CommentsLoadRequest {
+    std::string IssueId;
+    int Gen = 0;
+    std::string SeedThread;
+    std::string SeedBlob;
+    bool ForceNetwork = false;
+};
+
+/// One post-back from the load worker. `Seed` shows the saved copy while the load continues;
+/// `Loaded` and `Failed` end the load and release FetchInFlight.
+struct CommentsLoadUpdate {
+    enum class Kind : unsigned char { Seed, Loaded, Failed };
+    Kind What = Kind::Failed;
+    std::vector<TrackerIssueComment> Comments;
+    bool SeedPartial = false;
+    /// Failed: a request actually went out (false when it was skipped offline).
+    bool Attempted = false;
+    TrackerErrorKind ErrorKind = TrackerErrorKind::None;
+    std::string Error;
+};
+
+void ResetCommentBodyLayout() {
+    s_CommentsState.BodyPlans.clear();
+    s_CommentsState.BodyHeights.clear();
+}
+
+void ApplyCommentsLoadUpdate(AppController& app, const std::string& issueId, CommentsLoadUpdate& update) {
+    CommentsModalState& st = s_CommentsState;
+    switch (update.What) {
+    case CommentsLoadUpdate::Kind::Seed:
+        // A saved copy never replaces comments a live fetch already delivered.
+        if (st.Seeded || st.Comments.empty()) {
+            st.Comments = std::move(update.Comments);
+            st.Seeded = true;
+            st.SeedPartial = update.SeedPartial;
+            ResetCommentBodyLayout();
+        }
+        return;
+    case CommentsLoadUpdate::Kind::Loaded:
+        st.FetchInFlight = false;
+        st.Comments = std::move(update.Comments);
+        st.Seeded = false;
+        st.SeedPartial = false;
+        st.FetchFailed = false;
+        st.FetchErrorKind = TrackerErrorKind::None;
+        st.Error.clear();
+        ResetCommentBodyLayout();
+        // issue-comments fix (#1291, extended) — runs on every fetch: modal-open AND the
+        // post-success re-fetch. Pushes the observed thread into the cached ticket (count, tooltip
+        // blob and the structured thread shown offline) so the grid Comments cell and its tooltip
+        // reflect a just-posted comment without a full re-sync. UI thread (post-back).
+        app.UpdateCachedCommentsFromThread(issueId, st.Comments);
+        return;
+    case CommentsLoadUpdate::Kind::Failed:
+        st.FetchInFlight = false;
+        st.FetchFailed = true;
+        st.FetchErrorKind = update.ErrorKind;
+        st.Error = update.Error;
+        // A live request failing at the transport level means connectivity just changed: probe now
+        // rather than waiting out the interval (the probe schedule is UI-thread state).
+        if (update.Attempted && update.ErrorKind == TrackerErrorKind::Transport) {
+            app.RequestTrackerProbeNow();
+        }
+        return;
+    }
+}
+
+void PostCommentsLoadUpdate(AppController* appPtr, int gen, const std::string& issueId, CommentsLoadUpdate update) {
+    appPtr->PostToMainThread([appPtr, gen, issueId, update = std::move(update)]() mutable {
+        if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
+                                                      s_CommentsState.IssueId, issueId)) {
+            return;
+        }
+        ApplyCommentsLoadUpdate(*appPtr, issueId, update);
     });
+}
+
+/// Worker body. Pillar 2: the saved copy is parsed here, never on the UI thread. Pillar 6: the saved
+/// copy is posted first; offline the network is skipped (a request would only spend the retry
+/// window), otherwise the live list replaces it. Every exit path, a throw included, posts the final
+/// update so the modal can never stay on "Loading".
+void RunCommentsLoad(AppController* appPtr, const CommentsLoadRequest& req) {
+    bool finalPosted = false;
+    smatchet::ScopeExit endLoad([appPtr, &req, &finalPosted]() {
+        if (finalPosted) {
+            return;
+        }
+        try {
+            CommentsLoadUpdate failed;
+            failed.ErrorKind = TrackerErrorKind::Unknown;
+            PostCommentsLoadUpdate(appPtr, req.Gen, req.IssueId, std::move(failed));
+        } catch (const std::exception& ex) {
+            LOG_ERROR("CommentsModal: could not end the comments load for %s: %s", req.IssueId.c_str(), ex.what());
+        }
+    });
+    CommentsLoadUpdate seed;
+    if (SmatchetCommentsModalSeed::PickCommentsSeed(req.SeedThread, req.SeedBlob, seed.Comments, seed.SeedPartial)) {
+        seed.What = CommentsLoadUpdate::Kind::Seed;
+        PostCommentsLoadUpdate(appPtr, req.Gen, req.IssueId, std::move(seed));
+    }
+    CommentsLoadUpdate result;
+    if (!req.ForceNetwork && appPtr->IsTrackerOffline()) {
+        result.ErrorKind = TrackerErrorKind::Transport;
+    } else {
+        Result<std::vector<TrackerIssueComment>, TrackerError> fetched = appPtr->FetchIssueCommentsTyped(req.IssueId);
+        if (fetched.has_value()) {
+            result.What = CommentsLoadUpdate::Kind::Loaded;
+            result.Comments = std::move(fetched.value());
+        } else {
+            result.Attempted = true;
+            result.ErrorKind = fetched.error().Kind;
+            result.Error = fetched.error().Detail;
+        }
+    }
+    PostCommentsLoadUpdate(appPtr, req.Gen, req.IssueId, std::move(result));
+    finalPosted = true;
+}
+
+/// Start a load for the current open (req.Gen). The in-flight latch is published only after the
+/// launch returned: a launch that throws (no thread available) leaves a failed, retryable state.
+void KickCommentsLoad(AppController& app, const CommentsLoadRequest& req) {
+    AppController* appPtr = &app;
+    try {
+        app.LaunchBackgroundTask([appPtr, req]() { RunCommentsLoad(appPtr, req); });
+        s_CommentsState.FetchInFlight = true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("CommentsModal: could not start loading comments for %s: %s", req.IssueId.c_str(), ex.what());
+        s_CommentsState.FetchInFlight = false;
+        s_CommentsState.FetchFailed = true;
+        s_CommentsState.FetchErrorKind = TrackerErrorKind::Unknown;
+        s_CommentsState.Error = ex.what();
+    }
+}
+
+/// Reload the open issue's thread under a fresh generation, so a slower earlier load that lands
+/// afterwards is discarded (#1713). The comments on screen stay until the new list arrives.
+void ReloadComments(AppController& app, bool forceNetwork) {
+    CommentsModalState& st = s_CommentsState;
+    st.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
+    st.FetchFailed = false;
+    st.FetchErrorKind = TrackerErrorKind::None;
+    st.Error.clear();
+    CommentsLoadRequest req;
+    req.IssueId = st.IssueId;
+    req.Gen = st.Gen;
+    req.ForceNetwork = forceNetwork;
+    KickCommentsLoad(app, req);
 }
 
 void EnsureCommentBodyPlans(float fontSize, float width) {
@@ -144,6 +278,8 @@ void DrawCommentHeader(const TrackerIssueComment& c, std::int64_t nowMs) {
 /// smatchet::ai::FormatRelativeTime / FormatAbsoluteTime (both take unix-epoch milliseconds;
 /// TrackerIssueComment times are seconds → ×1000).
 void DrawCommentsThread() {
+    // Only reached with data to show (ShouldRenderContent): an empty list is then known to be empty —
+    // a fetch returned none or the saved comment count is 0.
     if (s_CommentsState.Comments.empty()) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.none", "No comments yet."));
         return;
@@ -173,11 +309,142 @@ void DrawCommentsThread() {
     }
 }
 
-/// Draws the post box + Post button. Disabled (with hint) while read-only/offline or a post is
-/// in flight. Post → fetch-worker-style call to AddIssueCommentPlain; on success re-fetch the
-/// thread + success toast + clear the box; on failure error toast.
+/// Pillar 6 freshness of what the thread pane shows.
+smatchet::offline::DataFreshness CurrentCommentsFreshness(const AppController& app) {
+    const CommentsModalState& st = s_CommentsState;
+    smatchet::offline::FreshnessInputs in;
+    // An empty list is data only when it is known: the saved count is 0 (Seeded) or a load
+    // finished without failing.
+    in.HasCache = !st.Comments.empty() || st.Seeded || (!st.FetchInFlight && !st.FetchFailed);
+    in.Live = !st.Seeded && !st.FetchFailed;
+    in.InFlight = st.FetchInFlight;
+    in.LastAttemptFailed = st.FetchFailed;
+    in.Connectivity = app.GetLastTrackerConnectivityState();
+    return smatchet::offline::ClassifyFreshness(in);
+}
+
+/// Above the thread: the freshness cue (last error on hover), Retry after a failed load, and the
+/// summary hint when the saved copy is the tooltip blob.
+void DrawCommentsStatusLine(AppController& app, smatchet::offline::DataFreshness freshness) {
+    const CommentsModalState& st = s_CommentsState;
+    if (!smatchet::offline::ShouldRenderContent(freshness)) {
+        return; // the thread pane explains the no-data states itself
+    }
+    const bool hasCue = freshness != smatchet::offline::DataFreshness::Fresh;
+    DataFreshnessCue::Draw(freshness, st.Error.empty() ? nullptr : st.Error.c_str());
+    if (st.FetchFailed && !st.FetchInFlight) {
+        if (hasCue) {
+            ImGui::SameLine();
+        }
+        if (ImGui::SmallButton("Retry")) {
+            app.RequestTrackerProbeNow();
+            ReloadComments(app, /*forceNetwork=*/true);
+        }
+    }
+    if (st.SeedPartial) {
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("comments.cached_partial", "Showing a saved summary (latest 20 comments)"));
+    }
+}
+
+/// Thread pane body: the comments (saved or live), else why there are none yet.
+void DrawCommentsThreadPane(AppController& app, smatchet::offline::DataFreshness freshness) {
+    CommentsModalState& st = s_CommentsState;
+    if (smatchet::offline::ShouldRenderContent(freshness)) {
+        DrawCommentsThread();
+        return;
+    }
+    if (freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
+        // Nothing saved for this issue: loading-only is the honest state (Pillar 6 LoadingNoCache).
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.loading", "Loading comments..."));
+        return;
+    }
+    if (st.FetchErrorKind == TrackerErrorKind::Transport) {
+        ImGui::TextDisabled(
+            "%s", SmatchetLocalization::T("comments.unavailable_offline", "Comments are not available offline yet."));
+    } else {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.fetch_failed", "Failed to load comments."));
+        if (!st.Error.empty()) {
+            ImGui::TextWrapped("%s", st.Error.c_str());
+        }
+    }
+    if (!st.FetchInFlight && ImGui::SmallButton("Retry")) {
+        app.RequestTrackerProbeNow();
+        ReloadComments(app, /*forceNetwork=*/true);
+    }
+}
+
+/// UI-thread end of a post: toast the real outcome and, on success, clear the box and reload the
+/// thread so the new comment shows. Only the same open of this issue's modal is touched (OpenGen).
+void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen, bool ok,
+                            const std::string& err) {
+    if (ok) {
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
+                                              SmatchetLocalization::T("comments.posted_body", "Comment added."),
+                                              ToastType::Success);
+    } else {
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
+            err.empty() ? std::string(SmatchetLocalization::T("comments.post_failed", "Failed to post comment.")) : err,
+            ToastType::Error);
+    }
+    if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.OpenGen, openGen,
+                                                  s_CommentsState.IssueId, issueId)) {
+        return;
+    }
+    s_CommentsState.PostInFlight = false;
+    if (ok) {
+        s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+        ReloadComments(app, /*forceNetwork=*/false);
+    }
+}
+
+/// Post on a worker (Pillar 2). As with the load, PostInFlight is published only after the launch
+/// returned and the worker always posts a result, a throw included, so Post can never stay disabled.
+void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
+    AppController* appPtr = &app;
+    try {
+        app.LaunchBackgroundTask([appPtr, issueId, body, openGen]() {
+            bool posted = false;
+            smatchet::ScopeExit reportThrow([appPtr, &issueId, openGen, &posted]() {
+                if (posted) {
+                    return;
+                }
+                try {
+                    appPtr->PostToMainThread([appPtr, issueId, openGen]() {
+                        ApplyCommentPostResult(*appPtr, issueId, openGen, false, std::string());
+                    });
+                } catch (const std::exception& ex) {
+                    LOG_ERROR("CommentsModal: could not report the comment post for %s: %s", issueId.c_str(),
+                              ex.what());
+                }
+            });
+            const VoidResult r = appPtr->AddIssueCommentPlain(issueId, body);
+            const bool ok = r.has_value();
+            const std::string err = ok ? std::string() : r.error();
+            appPtr->PostToMainThread(
+                [appPtr, issueId, openGen, ok, err]() { ApplyCommentPostResult(*appPtr, issueId, openGen, ok, err); });
+            posted = true;
+        });
+        s_CommentsState.PostInFlight = true;
+    } catch (const std::exception& ex) {
+        LOG_WARN("CommentsModal: could not start posting a comment on %s: %s", issueId.c_str(), ex.what());
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
+            SmatchetLocalization::T("comments.post_failed", "Failed to post comment."), ToastType::Error);
+        return;
+    }
+    // Truthful state (Pillar 6): the request is being sent now; nothing is queued.
+    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("comments.posting_title", "Posting comment"),
+                                          issueId.c_str(), ToastType::Info);
+}
+
+/// Draws the post box + Post button. The box is disabled while read-only or a post is in flight;
+/// offline only the button is, so the draft can still be written and is kept until the tracker is
+/// reachable. Post → AddIssueCommentPlain on a worker; on success the thread reloads.
 void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     const bool disabled = readOnlyMode || s_CommentsState.PostInFlight;
+    const bool offline = app.IsTrackerOffline();
 
     ImGui::Separator();
     if (readOnlyMode) {
@@ -185,6 +452,10 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
             "%s", SmatchetLocalization::T("comments.disabled_readonly", "(disabled while offline/read-only)"));
     } else if (s_CommentsState.PostInFlight) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.posting", "Posting comment..."));
+    } else if (offline) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T(
+                                      "comments.post_offline_hint",
+                                      "Offline \xE2\x80\x94 your comment stays here until the tracker is reachable."));
     }
 
     if (disabled) {
@@ -197,57 +468,22 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
         ImGui::TextDisabled(
             "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     }
+    const bool buttonDisabled = offline && !disabled;
+    if (buttonDisabled) {
+        ImGui::BeginDisabled();
+    }
     const bool post =
         ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0)) && hasText;
+    if (buttonDisabled) {
+        ImGui::EndDisabled();
+    }
     if (disabled) {
         ImGui::EndDisabled();
     }
 
-    if (post) {
-        const std::string body(s_CommentsState.PostBuf.data());
-        const std::string capturedIssueId = s_CommentsState.IssueId;
-        const int gen = s_CommentsState.Gen;
-        s_CommentsState.PostInFlight = true;
-        AppController* appPtr = &app;
-        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("comments.queued_title", "Comment Queued"),
-                                              SmatchetLocalization::T("comments.posting", "Posting comment..."),
-                                              ToastType::Info);
-        app.LaunchBackgroundTask([appPtr, capturedIssueId, body, gen]() {
-            const VoidResult r = appPtr->AddIssueCommentPlain(capturedIssueId, body);
-            const bool ok = r.has_value();
-            const std::string err = ok ? std::string() : r.error();
-            appPtr->PostToMainThread([appPtr, capturedIssueId, gen, ok, err]() {
-                if (ok) {
-                    SmatchetToastManager::Instance().Push(
-                        SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
-                        SmatchetLocalization::T("comments.posted_body", "Comment added."), ToastType::Success);
-                } else {
-                    SmatchetToastManager::Instance().Push(
-                        SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
-                        err.empty()
-                            ? std::string(SmatchetLocalization::T("comments.post_failed", "Failed to post comment."))
-                            : err,
-                        ToastType::Error);
-                }
-                // Only act on the still-open modal for this issue (Gen guards against a re-open).
-                if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.Gen, gen,
-                                                              s_CommentsState.IssueId, capturedIssueId)) {
-                    return;
-                }
-                s_CommentsState.PostInFlight = false;
-                if (ok) {
-                    // Clear the post box and re-fetch the thread so the new comment shows. Take a FRESH
-                    // generation for the re-fetch so the original-open fetch (older Gen), if it is still
-                    // in flight and lands afterward, is discarded instead of overwriting this fresher
-                    // list and momentarily dropping the just-posted comment (#1713).
-                    s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
-                    s_CommentsState.Comments.clear();
-                    s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
-                    s_CommentsState.FetchInFlight = true;
-                    KickCommentsFetch(*appPtr, capturedIssueId, s_CommentsState.Gen);
-                }
-            });
-        });
+    if (post && !offline) {
+        KickCommentPost(app, s_CommentsState.IssueId, std::string(s_CommentsState.PostBuf.data()),
+                        s_CommentsState.OpenGen);
     }
 }
 
@@ -258,16 +494,33 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
     s_CommentsState.IssueId = issueId;
     s_CommentsState.Active = true;
     s_CommentsState.JustOpened = true;
-    s_CommentsState.FetchInFlight = true;
     // Take the next monotonic token from the file-static counter (survives the reset above) so this
     // open is distinguishable from a prior open's still-in-flight fetch (#1713).
     s_CommentsState.Gen = SmatchetCommentsModalGen::AllocGen(s_genCounter);
+    s_CommentsState.OpenGen = s_CommentsState.Gen;
     s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
     if (!prefillBody.empty()) {
         const std::size_t copyLen = (std::min)(prefillBody.size(), CommentsModalState::kPostBufferSize - 1);
         std::memcpy(s_CommentsState.PostBuf.data(), prefillBody.data(), copyLen);
     }
-    KickCommentsFetch(app, issueId, s_CommentsState.Gen);
+    CommentsLoadRequest req;
+    req.IssueId = issueId;
+    req.Gen = s_CommentsState.Gen;
+    // Pillar 6: start from the copies saved with the ticket (in-memory snapshot, no SQLite); the
+    // worker parses them.
+    const std::shared_ptr<const std::vector<CachedTicket>> tickets = app.GetActiveTicketsSnapshot();
+    if (tickets) {
+        const auto it = std::find_if(tickets->begin(), tickets->end(),
+                                     [&issueId](const CachedTicket& t) { return t.id == issueId; });
+        if (it != tickets->end()) {
+            req.SeedThread = it->GetFieldRichValue(kCommentThreadRichKey);
+            req.SeedBlob = it->GetFieldValue("comment");
+            // A saved count of 0 already proves the thread is empty, online or not.
+            s_CommentsState.Seeded =
+                req.SeedThread.empty() && req.SeedBlob.empty() && it->GetFieldValueRef("comments") == "0";
+        }
+    }
+    KickCommentsLoad(app, req);
 }
 
 void RenderCommentsModal(AppController& app, bool readOnlyMode) {
@@ -294,22 +547,15 @@ void RenderCommentsModal(AppController& app, bool readOnlyMode) {
         ImGui::Text("%s — %s", SmatchetLocalization::T("comments.title", "Comments"), s_CommentsState.IssueId.c_str());
         ImGui::Separator();
 
-        if (!s_CommentsState.Error.empty()) {
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.5f, 0.5f, 1.0f));
-            ImGui::TextWrapped("%s", s_CommentsState.Error.c_str());
-            ImGui::PopStyleColor();
-        }
+        const smatchet::offline::DataFreshness freshness = CurrentCommentsFreshness(app);
+        DrawCommentsStatusLine(app, freshness);
 
         // Reserve room for the footer (post box + button + status line).
         const float footerH = 80.0f + ImGui::GetFrameHeightWithSpacing() + ImGui::GetTextLineHeightWithSpacing() +
                               ImGui::GetStyle().ItemSpacing.y * 3.0f;
         const float threadH = ImGui::GetContentRegionAvail().y - footerH;
         ImGui::BeginChild("##CommentsThread", ImVec2(-FLT_MIN, threadH > 0.0f ? threadH : 0.0f), true);
-        if (s_CommentsState.FetchInFlight) {
-            ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.loading", "Loading comments..."));
-        } else {
-            DrawCommentsThread();
-        }
+        DrawCommentsThreadPane(app, freshness);
         ImGui::EndChild();
 
         DrawCommentsPostBox(app, readOnlyMode);
@@ -358,4 +604,18 @@ void RenderCommentsModal(AppController& app, bool readOnlyMode) {
         // Modal dismissed without our intervention (title-bar X) — stay self-consistent.
         CloseCommentsModal();
     }
+}
+
+CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
+    CommentsModalSnapshot snap;
+    snap.Active = s_CommentsState.Active;
+    snap.FetchInFlight = s_CommentsState.FetchInFlight;
+    snap.Seeded = s_CommentsState.Seeded;
+    snap.SeedPartial = s_CommentsState.SeedPartial;
+    snap.FetchFailed = s_CommentsState.FetchFailed;
+    snap.CommentCount = s_CommentsState.Comments.size();
+    if (!s_CommentsState.Comments.empty()) {
+        snap.FirstAuthor = s_CommentsState.Comments.front().Author;
+    }
+    return snap;
 }

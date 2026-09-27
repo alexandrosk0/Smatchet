@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 
 class AppController;
@@ -9,20 +10,37 @@ class AppController;
 /// originating cell scrolling out of view: the cell calls `OpenCommentsModal` (which kicks an
 /// off-UI fetch worker), then the once-per-frame top-level `RenderCommentsModal` owns the lifecycle.
 /// Pillar 2 — NO network/file-IO on the UI thread: the comment list is fetched only on modal open
-/// via `AppController::FetchIssueComments` on a worker; posting routes through
+/// via `AppController::FetchIssueCommentsTyped` on a worker; posting routes through
 /// `AppController::AddIssueCommentPlain` on a worker. The cell render path itself does zero network
 /// (the comment count is read from the cached `fieldValues["comments"]`).
+/// Pillar 6 (offline-first) — the modal first shows the thread saved with the ticket (the structured
+/// `kCommentThreadRichKey` copy, else the tooltip blob summary), skips the network while the tracker
+/// is offline, and marks saved data with a DataFreshnessCue; a live fetch replaces it.
 
-/// Captures `issueId`, resets modal state, marks it active + just-opened, and kicks the fetch
-/// worker (sets the in-flight flag). Safe to call from inside a table cell — the actual
-/// `OpenPopup`/`BeginPopupModal` happens at top-level depth in `RenderCommentsModal`.
+/// Captures `issueId`, resets modal state, marks it active + just-opened, and kicks the load
+/// worker with the ticket's saved thread (sets the in-flight flag once the worker is launched). Safe to call from
+/// inside a table cell — the actual `OpenPopup`/`BeginPopupModal` happens at top-level depth in `RenderCommentsModal`.
 /// `prefillBody` (optional) seeds the post box — quick comment templates open here for
 /// review/editing instead of posting to the tracker sight-unseen (P2-M2).
 void OpenCommentsModal(AppController& app, const std::string& issueId, const std::string& prefillBody = std::string());
 
 /// Renders the comments modal once per frame from a stable top-level location. On just-opened runs
-/// `OpenPopup`. Body: in-flight spinner while fetching, then a scrollable read-only thread (each
-/// comment: author • formatted time • PLAIN-TEXT body — never markdown), a separator, a post box,
-/// and a Post button. Post box + button are disabled when `readOnlyMode` (offline / read-only) or a
-/// post is already in flight. Drains its own state on close.
+/// `OpenPopup`. Body: a freshness cue (with Retry after a failed load), then a scrollable read-only
+/// thread (each comment: author • formatted time • Markdown body), "Loading comments..." only while
+/// nothing is saved, a separator, a post box and a Post button. The post box is disabled when
+/// `readOnlyMode` or a post is already in flight; while the tracker is offline only the button is,
+/// so the draft is kept. Drains its own state on close.
 void RenderCommentsModal(AppController& app, bool readOnlyMode);
+
+/// Test hook: a copy of the modal's load state. UI thread only (reads the file-static state the
+/// render loop and post-backs mutate).
+struct CommentsModalSnapshot {
+    bool Active = false;
+    bool FetchInFlight = false;
+    bool Seeded = false;
+    bool SeedPartial = false;
+    bool FetchFailed = false;
+    std::size_t CommentCount = 0;
+    std::string FirstAuthor;
+};
+CommentsModalSnapshot GetCommentsModalSnapshotForTests();

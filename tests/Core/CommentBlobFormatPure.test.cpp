@@ -14,8 +14,11 @@ using smatchet::tracker::CleanCommentOutputAscii;
 using smatchet::tracker::CloseOpenCodeFence;
 using smatchet::tracker::EscapeMarkdownText;
 using smatchet::tracker::FormatCommentBlob;
+using smatchet::tracker::ParseCommentBlob;
+using smatchet::tracker::ParseCommentThread;
 using smatchet::tracker::PlainActivityBlobToMarkdown;
 using smatchet::tracker::PreserveLineBreaks;
+using smatchet::tracker::SerializeCommentThread;
 
 namespace {
 
@@ -248,4 +251,162 @@ TEST_CASE("PlainActivityBlobToMarkdown — empty date, author with brackets, CRL
     CHECK(PlainActivityBlobToMarkdown("") == "");
     CHECK(PlainActivityBlobToMarkdown("[bot[x]] \r\nlabels: a -> b\r\n") == "**bot\\[x\\]**\n\nlabels\\: a \\-\\> b\n");
     CHECK(PlainActivityBlobToMarkdown("\n\n[... truncated ...]\n") == "\\[\\.\\.\\. truncated \\.\\.\\.\\]\n");
+}
+
+TEST_CASE("SerializeCommentThread — round trips every field, oldest first") {
+    std::vector<TrackerIssueComment> comments;
+    TrackerIssueComment newer =
+        MakeComment("Bob \"B\" O'Neil", "line one\nline \xc3\xa9 two\n```\ncode\n```", kJan15 + 90);
+    newer.Id = "10042";
+    newer.UpdatedAtSec = kJan15 + 500;
+    TrackerIssueComment older = MakeComment("Ana", "first", kJan15);
+    older.Id = "c1";
+    comments.push_back(newer);
+    comments.push_back(older);
+
+    const std::string json = SerializeCommentThread(comments);
+    REQUIRE_FALSE(json.empty());
+    std::vector<TrackerIssueComment> parsed;
+    REQUIRE(ParseCommentThread(json, parsed));
+    REQUIRE(parsed.size() == 2);
+    CHECK(parsed[0].Id == "c1");
+    CHECK(parsed[0].Author == "Ana");
+    CHECK(parsed[0].Body == "first");
+    CHECK(parsed[0].CreatedAtSec == kJan15);
+    CHECK(parsed[0].UpdatedAtSec == kJan15);
+    CHECK(parsed[1].Id == "10042");
+    CHECK(parsed[1].Author == newer.Author);
+    CHECK(parsed[1].Body == newer.Body);
+    CHECK(parsed[1].CreatedAtSec == kJan15 + 90);
+    CHECK(parsed[1].UpdatedAtSec == kJan15 + 500);
+}
+
+TEST_CASE("SerializeCommentThread — empty input yields empty string") {
+    CHECK(SerializeCommentThread(std::vector<TrackerIssueComment>()).empty());
+}
+
+TEST_CASE("SerializeCommentThread — keeps the newest 50 comments") {
+    std::vector<TrackerIssueComment> comments;
+    for (int i = 0; i < 60; ++i) {
+        comments.push_back(MakeComment("U" + std::to_string(i), "msg", kJan15 + i));
+    }
+    std::vector<TrackerIssueComment> parsed;
+    REQUIRE(ParseCommentThread(SerializeCommentThread(comments), parsed));
+    REQUIRE(parsed.size() == 50);
+    CHECK(parsed.front().Author == "U10");
+    CHECK(parsed.back().Author == "U59");
+}
+
+TEST_CASE("SerializeCommentThread — stays within 64 KiB by dropping the oldest") {
+    std::vector<TrackerIssueComment> comments;
+    const std::string body(10 * 1024, 'x');
+    for (int i = 0; i < 10; ++i) {
+        comments.push_back(MakeComment("U" + std::to_string(i), body, kJan15 + i));
+    }
+    const std::string json = SerializeCommentThread(comments);
+    CHECK(json.size() <= 64u * 1024u);
+    std::vector<TrackerIssueComment> parsed;
+    REQUIRE(ParseCommentThread(json, parsed));
+    REQUIRE(parsed.size() == 6);
+    // A contiguous run of the newest comments survives.
+    CHECK(parsed.front().Author == "U4");
+    CHECK(parsed.back().Author == "U9");
+}
+
+TEST_CASE("SerializeCommentThread — a newest comment over the cap on its own leaves nothing") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Small", "fits", kJan15));
+    comments.push_back(MakeComment("Huge", std::string(70 * 1024, 'y'), kJan15 + 1));
+    CHECK(SerializeCommentThread(comments).empty());
+}
+
+TEST_CASE("SerializeCommentThread — invalid UTF-8 is replaced, never thrown") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Ana", std::string("bad \xff\xfe byte"), kJan15));
+    std::string json;
+    CHECK_NOTHROW(json = SerializeCommentThread(comments));
+    std::vector<TrackerIssueComment> parsed;
+    REQUIRE(ParseCommentThread(json, parsed));
+    REQUIRE(parsed.size() == 1);
+    CHECK(parsed[0].Body.find("bad ") == 0);
+}
+
+TEST_CASE("ParseCommentThread — rejects malformed input and tolerates odd entries") {
+    std::vector<TrackerIssueComment> out(1);
+    CHECK_FALSE(ParseCommentThread("not json", out));
+    CHECK(out.empty());
+    CHECK_FALSE(ParseCommentThread("{\"id\":1}", out));
+    CHECK_FALSE(ParseCommentThread("", out));
+    REQUIRE(ParseCommentThread("[1, \"x\", {\"id\": 7, \"author\": 3, \"created\": \"soon\"}, {}]", out));
+    REQUIRE(out.size() == 2);
+    CHECK(out[0].Id == "7");
+    CHECK(out[0].Author.empty());
+    CHECK(out[0].CreatedAtSec == 0);
+    CHECK(out[1].Id.empty());
+}
+
+TEST_CASE("ParseCommentBlob — inverts FormatCommentBlob: author, day, body and order") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Ana", "first line\nsecond line", kJan15 + 5 * 3600));
+    comments.push_back(MakeComment(" Jane_Doe [bot] ", "```\ncode\nmore\n```\nafter\ntext", kJan15 + 2 * 86400));
+    comments.push_back(MakeComment("Carl", "kept  \nbreak\n\nnew paragraph", kJan15 + 3 * 86400));
+    comments.push_back(MakeComment("", "no author", kJan15 + 4 * 86400));
+
+    const std::vector<TrackerIssueComment> parsed = ParseCommentBlob(FormatCommentBlob(comments));
+    REQUIRE(parsed.size() == 4);
+    CHECK(parsed[0].Author == "Ana");
+    CHECK(parsed[0].CreatedAtSec == kJan15); // the blob keeps the day only
+    CHECK(parsed[0].Body == "first line\nsecond line");
+    CHECK(parsed[1].Author == "Jane_Doe [bot]");
+    CHECK(parsed[1].CreatedAtSec == kJan15 + 2 * 86400);
+    CHECK(parsed[1].Body == "```\ncode\nmore\n```\nafter\ntext");
+    CHECK(parsed[2].Author == "Carl");
+    CHECK(parsed[2].Body == "kept  \nbreak\n\nnew paragraph");
+    CHECK(parsed[3].Author == "Unknown");
+    CHECK(parsed[3].Body == "no author");
+}
+
+TEST_CASE("ParseCommentBlob — a thematic break inside a body does not split the entry") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Ana", "above\n\n---\n\nbelow", kJan15));
+    const std::vector<TrackerIssueComment> parsed = ParseCommentBlob(FormatCommentBlob(comments));
+    REQUIRE(parsed.size() == 1);
+    CHECK(parsed[0].Body == "above\n\n---\n\nbelow");
+}
+
+TEST_CASE("ParseCommentBlob — an undated entry parses with no timestamp") {
+    std::vector<TrackerIssueComment> comments;
+    comments.push_back(MakeComment("Ana", "undated", 0));
+    const std::vector<TrackerIssueComment> parsed = ParseCommentBlob(FormatCommentBlob(comments));
+    REQUIRE(parsed.size() == 1);
+    CHECK(parsed[0].CreatedAtSec == 0);
+    CHECK(parsed[0].Body == "undated");
+}
+
+TEST_CASE("ParseCommentBlob — calendar days convert exactly, leap days and pre-1970 included") {
+    const char* dates[] = {"2000-02-29", "2024-02-29", "2100-03-01", "1969-12-31"};
+    const std::int64_t want[] = {951782400, 1709164800, 4107542400LL, -86400};
+    for (int i = 0; i < 4; ++i) {
+        const std::vector<TrackerIssueComment> parsed =
+            ParseCommentBlob(std::string("**Ana** ") + dates[i] + "\n\nbody\n");
+        REQUIRE(parsed.size() == 1);
+        CHECK(parsed[0].CreatedAtSec == want[i]);
+    }
+}
+
+TEST_CASE("ParseCommentBlob — reads the older plain [Author] YYYY-MM-DD shape") {
+    const std::vector<TrackerIssueComment> parsed =
+        ParseCommentBlob("[New] 2024-01-16\nnew body\nsecond line\n\n[Old] 2024-01-15\nold body\n");
+    REQUIRE(parsed.size() == 2);
+    CHECK(parsed[0].Author == "Old");
+    CHECK(parsed[0].CreatedAtSec == kJan15);
+    CHECK(parsed[0].Body == "old body");
+    CHECK(parsed[1].Author == "New");
+    CHECK(parsed[1].Body == "new body\nsecond line");
+}
+
+TEST_CASE("ParseCommentBlob — an unrecognised or empty blob yields no entries") {
+    CHECK(ParseCommentBlob("").empty());
+    CHECK(ParseCommentBlob("just some text\n").empty());
+    CHECK(ParseCommentBlob("**unterminated header\n\nbody").empty());
 }

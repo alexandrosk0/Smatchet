@@ -9,6 +9,8 @@
 // The blob is Markdown: the tooltip renders it through the same
 // MarkdownPreviewRender path as the description tooltip. The History tooltip
 // reuses the entry header + separator via PlainActivityBlobToMarkdown.
+// The blob is display text capped at 20 comments; the structured thread (SerializeCommentThread)
+// is what the comments modal restores offline, with ParseCommentBlob as the fallback.
 // Pure — no I/O, no Logger.h (doctest purity, mirrors GitHubIssueSearchMapping).
 
 #include "ITrackerCollaboration.h"
@@ -75,6 +77,23 @@ std::string PlainActivityBlobToMarkdown(const std::string& blob);
 /// skipped. Caps: at most 20 comments and 12000 chars total, truncating at an
 /// entry boundary. Empty/no-usable-input yields an empty string. Never throws.
 std::string FormatCommentBlob(const std::vector<TrackerIssueComment>& comments);
+
+/// The structured thread stored under kCommentThreadRichKey (CachedTicketTypes.h), next to the
+/// display blob: a JSON array of {id, author, body, created, updated}, oldest first (stable by
+/// CreatedAtSec). Keeps the newest 50 comments, then drops the oldest until the text is at most
+/// 64 KiB; a comment too large to fit on its own is dropped. Invalid UTF-8 is replaced. Returns ""
+/// for an empty input, when nothing fits, or on any failure. Never throws.
+std::string SerializeCommentThread(const std::vector<TrackerIssueComment>& comments);
+
+/// Inverse of SerializeCommentThread (bounded parse). False on malformed JSON or a non-array, with
+/// `out` cleared; entries that are not objects are skipped and missing fields default. Never throws.
+bool ParseCommentThread(const std::string& json, std::vector<TrackerIssueComment>& out);
+
+/// Best-effort inverse of FormatCommentBlob, for rows saved before the structured thread existed:
+/// entries come back oldest first, the author unescaped, the date as midnight UTC of the stored day
+/// (0 when the header has none) and the body with the display line breaks undone. A blob in the
+/// older plain "[Author] YYYY-MM-DD" shape parses too. An unrecognised blob yields no entries.
+std::vector<TrackerIssueComment> ParseCommentBlob(const std::string& blob);
 
 } // namespace tracker
 } // namespace smatchet
