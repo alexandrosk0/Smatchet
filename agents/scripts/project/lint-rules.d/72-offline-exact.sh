@@ -25,9 +25,16 @@
 # Escape: a comment-only line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker on a line that also holds code never hides that code.
 
-# The tracker write methods, shared by the rule regex and the whole-tree prefilter.
+# The tracker write methods, shared by the rule regexes and the whole-tree prefilter.
 OFFLINE_WRITE_METHODS='AddIssueCommentPlain|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint'
-OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
+# A backend handle a write is called on, and the `->Method(` / `.Method(` call itself.
+OFFLINE_WRITE_RECV_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)'
+OFFLINE_WRITE_CALL_RE='(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
+OFFLINE_WRITE_RE="${OFFLINE_WRITE_RECV_RE}[[:space:]]*${OFFLINE_WRITE_CALL_RE}"
+# A call wrapped before its `->` / `.` (clang-format's chained-call break): this code line starts with the call
+# and the previous code line ends with the handle.
+OFFLINE_WRITE_WRAPPED_CALL_RE="^[[:space:]]*${OFFLINE_WRITE_CALL_RE}"
+OFFLINE_WRITE_WRAPPED_RECV_RE="${OFFLINE_WRITE_RECV_RE}[[:space:]]*\$"
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
 # `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`).
@@ -153,7 +160,8 @@ scan_offline_exact_file() {
             continue
         fi
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
-            && [[ "$code" =~ $OFFLINE_WRITE_RE ]]; then
+            && { [[ "$code" =~ $OFFLINE_WRITE_RE ]] \
+                || { [[ "$code" =~ $OFFLINE_WRITE_WRAPPED_CALL_RE ]] && [[ "$prev1" =~ $OFFLINE_WRITE_WRAPPED_RECV_RE ]]; }; }; then
             printf 'offline-write-bypasses-queue\t%s:%s\n' "$logical" "$lineno"
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \
@@ -176,11 +184,13 @@ compute_offline_exact_violations() {
 
 compute_offline_write_violations() {
     # Whole-tree offline-write-bypasses-queue hits (the absolute-0 gate). Only files that name a tracker
-    # write method at all are lexed, which keeps the sweep to a couple of seconds.
+    # write method at all are lexed, which keeps the sweep to a couple of seconds. The prefilter matches the
+    # bare method name (a whole word), never its `(`: a comment or a line break may sit between the two, and
+    # only the lexer can tell code from comments.
     local f
     while IFS= read -r f; do
         [ -n "$f" ] || continue
-        grep -qE "(${OFFLINE_WRITE_METHODS})[[:space:]]*\(" "$f" 2>/dev/null || continue
+        grep -qwE "${OFFLINE_WRITE_METHODS}" "$f" 2>/dev/null || continue
         scan_offline_exact_file "$f"
     done < <(list_first_party_cpp_files) | grep -F $'offline-write-bypasses-queue\t' || true
 }

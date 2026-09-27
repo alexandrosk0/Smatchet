@@ -1014,6 +1014,21 @@ _resolve_py() {
     [[ "$output" != *"Sync/Q.cpp"* ]]
 }
 
+@test "the absolute offline-write sweep sees a call split by a comment or wrapped before its ->" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/src/Ui"
+    printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog /* note */ (c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Split.cpp"
+    printf 'void W(B& b) {\n    auto r = b.Collaboration()\n                 ->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Ui/Wrapped.cpp"
+    printf 'void R(B& b) {\n    auto r = b.Collaboration()\n                 ->FetchIssueComments(k);\n    // ->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Ui/Read.cpp"
+    ( cd "$tmp" && git add -A && git commit -qm base ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && compute_offline_write_violations"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Source/Core/src/Ui/Split.cpp:2"* ]]
+    [[ "$output" == *"Source/Core/src/Ui/Wrapped.cpp:3"* ]]
+    [[ "$output" != *"Read.cpp"* ]]
+}
+
 # ---------- lint-rules.d module loading (monolith split) ----------
 # The scanner sources its per-rule-family modules from lint-rules.d/ next to the
 # entry point. Loading must FAIL CLOSED: a missing module means a silently
