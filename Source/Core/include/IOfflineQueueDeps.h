@@ -25,6 +25,7 @@
 #include "TrackerFieldSchema.h" // for TrackerField
 
 class ISyncCache;
+class ITrackerCollaboration;
 class ITrackerIssueReader;
 class ITrackerIssueMutations;
 
@@ -54,6 +55,11 @@ class IOfflineQueueDeps {
     /// LATCHED narrow mutation accessor — same lifetime contract as ReaderShared(). Null
     /// when there is no backend or the backend's Mutations() is unsupported.
     virtual std::shared_ptr<ITrackerIssueMutations> MutationsShared() const = 0;
+
+    /// LATCHED collaboration accessor (comments, worklogs, watchers) — same lifetime contract as
+    /// ReaderShared(). Null when there is no backend or it has no collaboration support. Used by
+    /// PendingActionQueueService for live sends and replay.
+    virtual std::shared_ptr<ITrackerCollaboration> CollaborationShared() const = 0;
 
     /// Backend-key namespace for LocalCacheManager ticket reads/writes done by replay
     /// (`IssueCreatePipeline::Run` seeds the cache after a successful create). Returns a copy —

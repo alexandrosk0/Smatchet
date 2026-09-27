@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "PendingActionTypes.h"
 
 /** ISyncCache — the sync/replay-facing surface of the local cache (ADR-0020).
  *
@@ -18,7 +19,8 @@
  *
  * `LocalCacheManager` implements this in production; `tests/support/FakeSyncCache.h` is an
  * in-memory implementation so the service tests run without SQLite. SQLite-free by construction
- * (includes only `CachedTicketTypes.h`); compiles in both the GL/standalone and DX12 targets.
+ * (includes only the rank-0 row headers `CachedTicketTypes.h` / `PendingActionTypes.h`); compiles in both
+ * the GL/standalone and DX12 targets.
  */
 class ISyncCache {
   public:
@@ -68,4 +70,25 @@ class ISyncCache {
     // --- cache_meta flags (idempotent, set-once) ---
     virtual bool HasCacheMetaFlag(const std::string& key) = 0;
     virtual void SetCacheMetaFlag(const std::string& key) = 0;
+
+    // --- Pending actions (comments / worklogs / watch; Quality Pillar 6) ------------------
+    // One queue keyed by `kind` (PendingActionTypes.h), FIFO by id, rows namespaced by backend
+    // key like the other queues. Failures throw (callers wrap), matching the field-edit methods.
+    virtual std::int64_t EnqueuePendingAction(const std::string& backendKey, const std::string& kind,
+                                              const std::string& issueKey, const std::string& payloadJson,
+                                              const std::string& state) = 0;
+    virtual std::vector<PendingActionRecord> LoadPendingActions() = 0;
+    virtual void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
+                                     const std::string& lastError) = 0;
+    virtual void DeletePendingAction(std::int64_t id) = 0;
+    /// Move the row to the dead-letter table, keeping its state; `terminalError` (when non-empty)
+    /// replaces its last error.
+    virtual void ArchivePendingAction(std::int64_t id, const std::string& terminalReason,
+                                      const std::string& terminalError) = 0;
+    /// Newest first (archived_at DESC, dead_id DESC).
+    virtual std::vector<DeadPendingAction> LoadDeadPendingActions() = 0;
+    /// Re-queue the newest dead row of `originalId` under its original backend key and state
+    /// (attempts reset to 0). False when there is none.
+    virtual bool RestoreDeadPendingAction(std::int64_t originalId) = 0;
+    virtual void DeleteDeadPendingAction(std::int64_t deadId) = 0;
 };

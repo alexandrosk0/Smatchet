@@ -11,8 +11,9 @@ class AppController;
 /// off-UI fetch worker), then the once-per-frame top-level `RenderCommentsModal` owns the lifecycle.
 /// Pillar 2 — NO network/file-IO on the UI thread: the comment list is fetched only on modal open
 /// via `AppController::FetchIssueCommentsTyped` on a worker; posting routes through
-/// `AppController::AddIssueCommentPlain` on a worker. The cell render path itself does zero network
-/// (the comment count is read from the cached `fieldValues["comments"]`).
+/// `AppController::SubmitOrQueueComment` on a worker (sent now, or saved while offline and replayed on
+/// reconnect). The cell render path itself does zero network (the comment count is read from the
+/// cached `fieldValues["comments"]`).
 /// Pillar 6 (offline-first) — the modal first shows the thread saved with the ticket (the structured
 /// `kCommentThreadRichKey` copy, else the tooltip blob summary), skips the network while the tracker
 /// is offline, and marks saved data with a DataFreshnessCue; a live fetch replaces it.
@@ -27,9 +28,9 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
 /// Renders the comments modal once per frame from a stable top-level location. On just-opened runs
 /// `OpenPopup`. Body: a freshness cue (with Retry after a failed load), then a scrollable read-only
 /// thread (each comment: author • formatted time • Markdown body), "Loading comments..." only while
-/// nothing is saved, a separator, a post box and a Post button. The post box is disabled when
-/// `readOnlyMode` or a post is already in flight; while the tracker is offline only the button is,
-/// so the draft is kept. Drains its own state on close.
+/// nothing is saved, this issue's queued comments, a separator, a post box and a Post button. The post
+/// box is disabled when `readOnlyMode` or a post is already in flight; offline a post is saved to the
+/// pending-action queue. Drains its own state on close.
 void RenderCommentsModal(AppController& app, bool readOnlyMode);
 
 /// Test hook: a copy of the modal's load state. UI thread only (reads the file-static state the
@@ -41,6 +42,8 @@ struct CommentsModalSnapshot {
     bool SeedPartial = false;
     bool FetchFailed = false;
     std::size_t CommentCount = 0;
+    /// This issue's comments in the pending-action queue (waiting or failed), as the modal lists them.
+    std::size_t PendingCommentCount = 0;
     std::string FirstAuthor;
 };
 CommentsModalSnapshot GetCommentsModalSnapshotForTests();

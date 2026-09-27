@@ -9,6 +9,8 @@
 #include "Logger.h"
 #include "MarkdownPreviewRender.h"
 #include "OfflineFirstPure.h"
+#include "PendingActionPolicyPure.h"
+#include "PendingActionTypes.h"
 #include "ScopeExit.h"
 #include "SmatchetLocalization.h"
 #include "Tracker/CommentBlobFormatPure.h"
@@ -30,6 +32,14 @@
 #include <vector>
 
 namespace {
+
+/// A comment on this issue that sits in the pending-action queue instead of on the tracker.
+struct PendingCommentView {
+    std::int64_t QueueId = 0;
+    std::string Body;
+    bool Failed = false; ///< in the failed list: it will not be retried automatically
+    MarkdownPreviewRender::PreviewPlanPtr Plan;
+};
 
 /// Singleton state for the comments read/post modal. Decoupled from the grid cell so the modal
 /// survives the originating cell scrolling out of view: the cell triggers `JustOpened`, then the
@@ -69,6 +79,12 @@ struct CommentsModalState {
     /// Generation of this open, fixed until the modal closes. A post is guarded by it rather than by
     /// Gen: a reload (Retry) bumps Gen, and must not orphan a post that is still in flight.
     int OpenGen = 0;
+
+    /// This issue's queued comments (Pillar 6), rebuilt only when the published queue snapshot
+    /// changes (a pointer compare per frame); their Markdown plans are built for PendingPlansFontSize.
+    std::shared_ptr<const PendingActionsSnapshot> PendingSource;
+    std::vector<PendingCommentView> PendingComments;
+    float PendingPlansFontSize = 0.0f;
 
     static constexpr size_t kPostBufferSize = 16 * 1024;
     std::vector<char> PostBuf;
@@ -273,6 +289,89 @@ void DrawCommentHeader(const TrackerIssueComment& c, std::int64_t nowMs) {
     }
 }
 
+/// How every comment body renders, whether posted or still queued.
+MarkdownPreviewRender::Options CommentBodyRenderOptions() {
+    MarkdownPreviewRender::Options bodyOpts;
+    bodyOpts.mode = MarkdownPreviewRender::Mode::Full;
+    // Comment bodies are other people's text: MarkdownPreviewRender opens a clicked href with no
+    // scheme check, so links here are shown, not followed.
+    bodyOpts.clickableLinks = false;
+    return bodyOpts;
+}
+
+/// Rebuild this issue's queued comments when the published queue changed. A queued comment that left
+/// the queue without moving to the failed list was sent by replay (or discarded), so the thread
+/// reloads to show the tracker's copy.
+void SyncPendingComments(AppController& app) {
+    CommentsModalState& st = s_CommentsState;
+    const std::shared_ptr<const PendingActionsSnapshot> snap = app.GetPendingActionsSnapshot();
+    if (snap == st.PendingSource) {
+        return;
+    }
+    const bool firstSync = !st.PendingSource;
+    const std::string commentKind = PendingActionKindWire(PendingActionKind::CommentAdd);
+    std::vector<PendingCommentView> views;
+    const auto addIfThisIssue = [&](const PendingActionRecord& row, bool failed) {
+        PendingCommentView view;
+        std::int64_t queuedAt = 0;
+        if (row.Kind == commentKind && row.IssueKey == st.IssueId &&
+            smatchet::pendingaction::ParseCommentActionPayload(row.PayloadJson, view.Body, queuedAt)) {
+            view.QueueId = row.Id;
+            view.Failed = failed;
+            views.push_back(std::move(view));
+        }
+    };
+    for (const PendingActionRecord& row : snap->Pending) {
+        addIfThisIssue(row, false);
+    }
+    for (const DeadPendingAction& dead : snap->Dead) {
+        addIfThisIssue(dead.Row, true);
+    }
+    bool sentByReplay = false;
+    for (const PendingCommentView& before : st.PendingComments) {
+        const bool stillListed = std::any_of(
+            views.begin(), views.end(), [&before](const PendingCommentView& v) { return v.QueueId == before.QueueId; });
+        sentByReplay = sentByReplay || (!before.Failed && !stillListed);
+    }
+    st.PendingComments = std::move(views);
+    st.PendingSource = snap;
+    st.PendingPlansFontSize = 0.0f;
+    if (!firstSync && sentByReplay) {
+        ReloadComments(app, /*forceNetwork=*/false);
+    }
+}
+
+/// This issue's queued comments, after the thread: body plus a "waiting to sync" or "failed" badge.
+void DrawPendingComments() {
+    CommentsModalState& st = s_CommentsState;
+    if (st.PendingComments.empty()) {
+        return;
+    }
+    const float fontSize = ImGui::GetFontSize();
+    if (st.PendingPlansFontSize != fontSize) {
+        for (PendingCommentView& view : st.PendingComments) {
+            view.Plan = MarkdownPreviewRender::MakePlan();
+            MarkdownPreviewRender::BuildPlan(smatchet::tracker::CommentBodyDisplayMarkdown(view.Body), *view.Plan);
+        }
+        st.PendingPlansFontSize = fontSize;
+    }
+    const MarkdownPreviewRender::Options bodyOpts = CommentBodyRenderOptions();
+    for (const PendingCommentView& view : st.PendingComments) {
+        ImGui::PushID(static_cast<int>(view.QueueId));
+        if (view.Failed) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.45f, 1.0f));
+            ImGui::TextUnformatted(
+                SmatchetLocalization::T("comments.failed_badge", "(failed \xE2\x80\x94 see Offline Queue)"));
+            ImGui::PopStyleColor();
+        } else {
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.pending_badge", "(waiting to sync)"));
+        }
+        MarkdownPreviewRender::RenderPlan(*view.Plan, bodyOpts);
+        ImGui::Separator();
+        ImGui::PopID();
+    }
+}
+
 /// Draws the scrollable read-only comment thread. Each comment: author • formatted time • Markdown
 /// body (same renderer as the description preview, Full mode). Time formatting reuses
 /// smatchet::ai::FormatRelativeTime / FormatAbsoluteTime (both take unix-epoch milliseconds;
@@ -281,16 +380,15 @@ void DrawCommentsThread() {
     // Only reached with data to show (ShouldRenderContent): an empty list is then known to be empty —
     // a fetch returned none or the saved comment count is 0.
     if (s_CommentsState.Comments.empty()) {
-        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.none", "No comments yet."));
+        if (s_CommentsState.PendingComments.empty()) {
+            ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.none", "No comments yet."));
+        }
+        DrawPendingComments();
         return;
     }
     const float width = ImGui::GetContentRegionAvail().x;
     EnsureCommentBodyPlans(ImGui::GetFontSize(), width);
-    MarkdownPreviewRender::Options bodyOpts;
-    bodyOpts.mode = MarkdownPreviewRender::Mode::Full;
-    // Comment bodies are other people's text: MarkdownPreviewRender opens a clicked href with no
-    // scheme check, so links here are shown, not followed.
-    bodyOpts.clickableLinks = false;
+    const MarkdownPreviewRender::Options bodyOpts = CommentBodyRenderOptions();
     const float itemSpacingY = ImGui::GetStyle().ItemSpacing.y;
     const std::int64_t nowMs = smatchet::ai::NowUnixMs();
     for (size_t i = 0; i < s_CommentsState.Comments.size(); ++i) {
@@ -307,6 +405,7 @@ void DrawCommentsThread() {
         ImGui::PopID();
         height = ImGui::GetCursorPosY() - startY;
     }
+    DrawPendingComments();
 }
 
 /// Pillar 6 freshness of what the thread pane shows.
@@ -357,9 +456,7 @@ void DrawCommentsThreadPane(AppController& app, smatchet::offline::DataFreshness
     if (freshness == smatchet::offline::DataFreshness::LoadingNoCache) {
         // Nothing saved for this issue: loading-only is the honest state (Pillar 6 LoadingNoCache).
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.loading", "Loading comments..."));
-        return;
-    }
-    if (st.FetchErrorKind == TrackerErrorKind::Transport) {
+    } else if (st.FetchErrorKind == TrackerErrorKind::Transport) {
         ImGui::TextDisabled(
             "%s", SmatchetLocalization::T("comments.unavailable_offline", "Comments are not available offline yet."));
     } else {
@@ -368,39 +465,59 @@ void DrawCommentsThreadPane(AppController& app, smatchet::offline::DataFreshness
             ImGui::TextWrapped("%s", st.Error.c_str());
         }
     }
-    if (!st.FetchInFlight && ImGui::SmallButton("Retry")) {
+    if (!st.FetchInFlight && ImGui::SmallButton("Retry")) { // never while LoadingNoCache: a load is running
         app.RequestTrackerProbeNow();
         ReloadComments(app, /*forceNetwork=*/true);
     }
+    DrawPendingComments(); // the user's own queued comments show whatever the tracker's thread state
 }
 
-/// UI-thread end of a post: toast the real outcome and, on success, clear the box and reload the
-/// thread so the new comment shows. Only the same open of this issue's modal is touched (OpenGen).
-void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen, bool ok,
-                            const std::string& err) {
-    if (ok) {
+/// UI-thread end of a post: toast what actually happened (posted, saved offline, or failed). A posted
+/// or queued comment clears the box — a queued one shows in the thread from the queue snapshot — and a
+/// posted one reloads the thread. Only the same open of this issue's modal is touched (OpenGen).
+void ApplyCommentPostResult(AppController& app, const std::string& issueId, int openGen,
+                            const PendingActionSubmitResult& result) {
+    switch (result.K) {
+    case PendingActionSubmitResult::Kind::Sent:
         SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.comment_posted", "Comment Posted"),
                                               SmatchetLocalization::T("comments.posted_body", "Comment added."),
                                               ToastType::Success);
-    } else {
+        break;
+    case PendingActionSubmitResult::Kind::Queued:
+        SmatchetToastManager::Instance().Push(
+            SmatchetLocalization::T("comments.queued_title", "Comment Queued"),
+            SmatchetLocalization::T("comments.queued_body", "Saved offline; it will be posted when the tracker is "
+                                                            "reachable."),
+            ToastType::Info);
+        if (result.QueuedAfterNetworkFailure) {
+            app.RequestTrackerProbeNow(); // the send just failed on the network: re-check connectivity now
+        }
+        break;
+    case PendingActionSubmitResult::Kind::Failed:
         SmatchetToastManager::Instance().Push(
             SmatchetLocalization::T("toast.comment_failed", "Comment Failed"),
-            err.empty() ? std::string(SmatchetLocalization::T("comments.post_failed", "Failed to post comment.")) : err,
+            result.Error.empty()
+                ? std::string(SmatchetLocalization::T("comments.post_failed", "Failed to post comment."))
+                : result.Error,
             ToastType::Error);
+        break;
     }
     if (SmatchetCommentsModalGen::CallbackIsStale(s_CommentsState.Active, s_CommentsState.OpenGen, openGen,
                                                   s_CommentsState.IssueId, issueId)) {
         return;
     }
     s_CommentsState.PostInFlight = false;
-    if (ok) {
+    if (result.K != PendingActionSubmitResult::Kind::Failed) {
         s_CommentsState.PostBuf.assign(CommentsModalState::kPostBufferSize, '\0');
+    }
+    if (result.K == PendingActionSubmitResult::Kind::Sent) {
         ReloadComments(app, /*forceNetwork=*/false);
     }
 }
 
-/// Post on a worker (Pillar 2). As with the load, PostInFlight is published only after the launch
-/// returned and the worker always posts a result, a throw included, so Post can never stay disabled.
+/// Post on a worker (Pillar 2): sent now, or saved to the pending-action queue when the tracker is
+/// unreachable (Pillar 6). As with the load, PostInFlight is published only after the launch returned
+/// and the worker always posts a result, a throw included, so Post can never stay disabled.
 void KickCommentPost(AppController& app, const std::string& issueId, const std::string& body, int openGen) {
     AppController* appPtr = &app;
     try {
@@ -412,18 +529,16 @@ void KickCommentPost(AppController& app, const std::string& issueId, const std::
                 }
                 try {
                     appPtr->PostToMainThread([appPtr, issueId, openGen]() {
-                        ApplyCommentPostResult(*appPtr, issueId, openGen, false, std::string());
+                        ApplyCommentPostResult(*appPtr, issueId, openGen, PendingActionSubmitResult());
                     });
                 } catch (const std::exception& ex) {
                     LOG_ERROR("CommentsModal: could not report the comment post for %s: %s", issueId.c_str(),
                               ex.what());
                 }
             });
-            const VoidResult r = appPtr->AddIssueCommentPlain(issueId, body);
-            const bool ok = r.has_value();
-            const std::string err = ok ? std::string() : r.error();
+            const PendingActionSubmitResult result = appPtr->SubmitOrQueueComment(issueId, body);
             appPtr->PostToMainThread(
-                [appPtr, issueId, openGen, ok, err]() { ApplyCommentPostResult(*appPtr, issueId, openGen, ok, err); });
+                [appPtr, issueId, openGen, result]() { ApplyCommentPostResult(*appPtr, issueId, openGen, result); });
             posted = true;
         });
         s_CommentsState.PostInFlight = true;
@@ -434,17 +549,18 @@ void KickCommentPost(AppController& app, const std::string& issueId, const std::
             SmatchetLocalization::T("comments.post_failed", "Failed to post comment."), ToastType::Error);
         return;
     }
-    // Truthful state (Pillar 6): the request is being sent now; nothing is queued.
-    SmatchetToastManager::Instance().Push(SmatchetLocalization::T("comments.posting_title", "Posting comment"),
-                                          issueId.c_str(), ToastType::Info);
+    // Truthful state (Pillar 6): online the request is being sent now; offline the result toast says
+    // "Comment Queued" as soon as the comment is saved, with no request.
+    if (!app.IsTrackerOffline()) {
+        SmatchetToastManager::Instance().Push(SmatchetLocalization::T("comments.posting_title", "Posting comment"),
+                                              issueId.c_str(), ToastType::Info);
+    }
 }
 
-/// Draws the post box + Post button. The box is disabled while read-only or a post is in flight;
-/// offline only the button is, so the draft can still be written and is kept until the tracker is
-/// reachable. Post → AddIssueCommentPlain on a worker; on success the thread reloads.
+/// Draws the post box + Post button, disabled while read-only or a post is in flight. Offline a post
+/// is saved to the pending-action queue and sent on reconnect; the hint says so.
 void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
     const bool disabled = readOnlyMode || s_CommentsState.PostInFlight;
-    const bool offline = app.IsTrackerOffline();
 
     ImGui::Separator();
     if (readOnlyMode) {
@@ -452,10 +568,10 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
             "%s", SmatchetLocalization::T("comments.disabled_readonly", "(disabled while offline/read-only)"));
     } else if (s_CommentsState.PostInFlight) {
         ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.posting", "Posting comment..."));
-    } else if (offline) {
-        ImGui::TextDisabled("%s", SmatchetLocalization::T(
-                                      "comments.post_offline_hint",
-                                      "Offline \xE2\x80\x94 your comment stays here until the tracker is reachable."));
+    } else if (app.IsTrackerOffline()) {
+        ImGui::TextDisabled("%s", SmatchetLocalization::T("comments.post_offline_hint",
+                                                          "Offline \xE2\x80\x94 your comment will be saved and "
+                                                          "posted when the tracker is reachable."));
     }
 
     if (disabled) {
@@ -468,20 +584,13 @@ void DrawCommentsPostBox(AppController& app, bool readOnlyMode) {
         ImGui::TextDisabled(
             "%s", SmatchetLocalization::T("comments.post_placeholder", "Write a comment (Markdown supported)..."));
     }
-    const bool buttonDisabled = offline && !disabled;
-    if (buttonDisabled) {
-        ImGui::BeginDisabled();
-    }
     const bool post =
         ImGui::Button(SmatchetLocalization::T("comments.post_button", "Post Comment"), ImVec2(140, 0)) && hasText;
-    if (buttonDisabled) {
-        ImGui::EndDisabled();
-    }
     if (disabled) {
         ImGui::EndDisabled();
     }
 
-    if (post && !offline) {
+    if (post) {
         KickCommentPost(app, s_CommentsState.IssueId, std::string(s_CommentsState.PostBuf.data()),
                         s_CommentsState.OpenGen);
     }
@@ -521,6 +630,7 @@ void OpenCommentsModal(AppController& app, const std::string& issueId, const std
         }
     }
     KickCommentsLoad(app, req);
+    SyncPendingComments(app); // this issue's queued comments show from the first frame
 }
 
 void RenderCommentsModal(AppController& app, bool readOnlyMode) {
@@ -547,6 +657,7 @@ void RenderCommentsModal(AppController& app, bool readOnlyMode) {
         ImGui::Text("%s — %s", SmatchetLocalization::T("comments.title", "Comments"), s_CommentsState.IssueId.c_str());
         ImGui::Separator();
 
+        SyncPendingComments(app);
         const smatchet::offline::DataFreshness freshness = CurrentCommentsFreshness(app);
         DrawCommentsStatusLine(app, freshness);
 
@@ -614,6 +725,7 @@ CommentsModalSnapshot GetCommentsModalSnapshotForTests() {
     snap.SeedPartial = s_CommentsState.SeedPartial;
     snap.FetchFailed = s_CommentsState.FetchFailed;
     snap.CommentCount = s_CommentsState.Comments.size();
+    snap.PendingCommentCount = s_CommentsState.PendingComments.size();
     if (!s_CommentsState.Comments.empty()) {
         snap.FirstAuthor = s_CommentsState.Comments.front().Author;
     }

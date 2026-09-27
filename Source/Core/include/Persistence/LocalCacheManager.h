@@ -89,6 +89,20 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     /** Generic `cache_meta` flag helpers used by one-shot migration sweeps. */
     bool HasCacheMetaFlag(const std::string& key) override;
     void SetCacheMetaFlag(const std::string& key) override;
+
+    // Pending actions (comments / worklogs / watch) — LocalCacheManager_PendingActions.cpp.
+    std::int64_t EnqueuePendingAction(const std::string& backendKey, const std::string& kind,
+                                      const std::string& issueKey, const std::string& payloadJson,
+                                      const std::string& state) override;
+    std::vector<PendingActionRecord> LoadPendingActions() override;
+    void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
+                             const std::string& lastError) override;
+    void DeletePendingAction(std::int64_t id) override;
+    void ArchivePendingAction(std::int64_t id, const std::string& terminalReason,
+                              const std::string& terminalError) override;
+    std::vector<DeadPendingAction> LoadDeadPendingActions() override;
+    bool RestoreDeadPendingAction(std::int64_t originalId) override;
+    void DeleteDeadPendingAction(std::int64_t deadId) override;
     std::vector<DeadPendingCreate> LoadDeadPendingCreates() override;
     size_t GetDeadPendingCreateCount() override;
 
@@ -174,6 +188,9 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     void InitSchema();
     /// Create the lookup_cache table (Pillar 6 offline reads); called from InitSchema.
     void InitLookupCacheSchema_();
+    /// Create the pending_actions tables (Pillar 6 offline writes) and turn rows left in `sending`
+    /// by an interrupted run into `ambiguous`; called from InitSchema.
+    void InitPendingActionsSchema_();
     /// Recover from a genuinely-corrupt cache file (ctor caught SQLITE_NOTADB / SQLITE_CORRUPT
     /// from InitSchema): release the handle, quarantine the bad file + its WAL sidecars to
     /// `<db>.corrupt-<ts>`, reopen a fresh DB on the same path, and re-init. A throw here is an

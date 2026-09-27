@@ -114,6 +114,7 @@ class AiAssistantController;
 // facets AppController implements so includer-clusters can depend on them instead of the
 // full class. Rank-0 leaf headers (Interfaces/); see each header for its facet scope.
 #include "Interfaces/IAppOfflineQueue.h"
+#include "Interfaces/IAppPendingActions.h"
 #include "Interfaces/IAppMeta.h"
 #include "Interfaces/IAppAttachments.h"
 #include "Interfaces/IAppScenarios.h"
@@ -133,6 +134,7 @@ class LocalCacheManager; // fan-in Phase 1: fwd-decl (was a direct heavy include
                          // TUs include LocalCacheManager.h directly.
 class GridContextDepsAdapter;
 class OfflineQueueService;
+class PendingActionQueueService;
 class TicketSyncService;
 class EditMetaCacheService;
 class FieldEditPipelineService;
@@ -171,7 +173,8 @@ class AppController : public IAppThreading,
                       public IAppCommands,
                       public IAppScenarioHost,
                       public IAppSync,
-                      public IAppFields {
+                      public IAppFields,
+                      public IAppPendingActions {
     /// `GridContextDepsAdapter` implements `IOfflineQueueDeps` + `ITicketSyncDeps` against
     /// this AppController + one `GridLiveContext` and forwards every method either to the
     /// per-context state (`Backend`, `ActiveTickets*`) or to AppController-shared state
@@ -892,6 +895,17 @@ class AppController : public IAppThreading,
     /** Replay queued offline field edits (rate-limited; called from UI tick). */
     void TickOfflineFieldEdits() override;
 
+    // Pending-action queue (comments; Quality Pillar 6) — PendingActionQueueService delegators.
+    /** Replay queued actions (rate-limited; called from UI tick next to TickOfflineFieldEdits). */
+    void TickPendingActions();
+    PendingActionSubmitResult SubmitOrQueueComment(const std::string& issueKey, const std::string& body) override;
+    std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const override;
+    void DiscardPendingActions(const std::vector<std::int64_t>& ids) override;
+    void RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) override;
+    void DeleteDeadPendingActions(const std::vector<std::int64_t>& deadIds) override;
+    void SendPendingActionAgain(std::int64_t id) override;
+    void RetryOfflineQueuesNow() override;
+
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const override;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const override;
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
@@ -1127,6 +1141,9 @@ class AppController : public IAppThreading,
     /// `GetPendingCreates`, etc.) are thin delegators that forward to this service. See
     /// BACKLOG_CODE_REVIEW.md §1.7 / §7 item 12.
     std::unique_ptr<OfflineQueueService> offlineQueue_;
+    /// Owns the pending-action queue (comments, later worklogs and watch) saved while the tracker is
+    /// unreachable. Constructed next to `offlineQueue_` in `Initialize`, on the same deps adapter.
+    std::unique_ptr<PendingActionQueueService> pendingActions_;
     /// Owns the per-issue + per-issue-type editmeta cache (`editMetaMutex_` + its three
     /// containers) and the load/refresh/invalidate/prune/warm methods. Constructed eagerly in
     /// `Initialize` after `depsAdapter_`. Public AppController methods (`CanEditFieldForIssue`,

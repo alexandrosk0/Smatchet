@@ -3,7 +3,7 @@
 // Authored against the REAL LocalCacheManager(":memory:") first (it passes by definition — it IS
 // the contract). `FakeSyncCache` is appended as a second TEST_CASE_TEMPLATE type so the identical
 // assertions run against both impls; the fake is then built until this suite is green, which is
-// the per-method fake-fidelity gate. Every one of the 28 ISyncCache methods is touched here.
+// the per-method fake-fidelity gate. Every one of the 36 ISyncCache methods is touched here.
 //
 // This TU is SQLite-by-design (real-LCM half) — on the construction/direct-include purity gate's
 // named-exemption allow-list.
@@ -282,4 +282,80 @@ TEST_CASE_TEMPLATE("ISyncCache: ResolveFieldEditConflict clears flag, context, a
     CHECK(rows[0].OriginalRichValue.empty());
     CHECK(rows[0].OriginalValue.empty());
     CHECK(rows[0].FieldsPayloadJson == "{\"summary\":\"r\"}");
+}
+
+// --- Pending actions (comments / worklogs / watch; Quality Pillar 6) ---------------------------
+TEST_CASE_TEMPLATE("ISyncCache: pending actions are FIFO, keep backend key and state, and update in place", M,
+                   RealCacheMaker, FakeCacheMaker) {
+    auto c = M::Make();
+    const std::int64_t a = c->EnqueuePendingAction("Jira", "comment_add", "PROJ-1", "{\"body\":\"a\"}", "pending");
+    const std::int64_t b = c->EnqueuePendingAction("Plane", "comment_add", "P-2", "{\"body\":\"b\"}", "ambiguous");
+    CHECK(b > a);
+    std::vector<PendingActionRecord> rows = c->LoadPendingActions();
+    REQUIRE(rows.size() == 2u);
+    CHECK(rows[0].Id == a);
+    CHECK(rows[0].BackendKey == "Jira");
+    CHECK(rows[0].Kind == "comment_add");
+    CHECK(rows[0].IssueKey == "PROJ-1");
+    CHECK(rows[0].PayloadJson == "{\"body\":\"a\"}");
+    CHECK(rows[0].State == "pending");
+    CHECK(rows[0].Attempts == 0);
+    CHECK(rows[0].CreatedAtEpochSec > 0);
+    CHECK(rows[1].BackendKey == "Plane");
+    CHECK(rows[1].State == "ambiguous");
+
+    c->UpdatePendingAction(a, "sending", 2, "timeout");
+    rows = c->LoadPendingActions();
+    CHECK(rows[0].State == "sending");
+    CHECK(rows[0].Attempts == 2);
+    CHECK(rows[0].LastError == "timeout");
+
+    c->DeletePendingAction(a);
+    rows = c->LoadPendingActions();
+    REQUIRE(rows.size() == 1u);
+    CHECK(rows[0].Id == b);
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: a dead pending action keeps its state and key; restore resumes from it", M,
+                   RealCacheMaker, FakeCacheMaker) {
+    auto c = M::Make();
+    const std::int64_t first = c->EnqueuePendingAction("Jira", "comment_add", "PROJ-1", "{\"body\":\"1\"}", "pending");
+    const std::int64_t second =
+        c->EnqueuePendingAction("GitHub", "comment_add", "o/r#3", "{\"body\":\"2\"}", "pending");
+    c->UpdatePendingAction(first, "ambiguous", 4, "response lost");
+    c->ArchivePendingAction(first, "max_attempts", std::string()); // keeps the row's last error
+    c->ArchivePendingAction(second, "replay_rejected", "Issue is closed");
+    CHECK(c->LoadPendingActions().empty());
+
+    const std::vector<DeadPendingAction> dead = c->LoadDeadPendingActions();
+    REQUIRE(dead.size() == 2u);
+    CHECK(dead[0].Row.Id == second); // newest first
+    CHECK(dead[0].TerminalReason == "replay_rejected");
+    CHECK(dead[0].Row.LastError == "Issue is closed");
+    CHECK(dead[0].Row.BackendKey == "GitHub");
+    CHECK(dead[1].Row.Id == first);
+    CHECK(dead[1].Row.State == "ambiguous");
+    CHECK(dead[1].Row.Attempts == 4);
+    CHECK(dead[1].Row.LastError == "response lost");
+    CHECK(dead[1].Row.PayloadJson == "{\"body\":\"1\"}");
+    CHECK(dead[1].ArchivedAtEpochSec > 0);
+
+    CHECK(c->RestoreDeadPendingAction(first));
+    CHECK_FALSE(c->RestoreDeadPendingAction(first)); // already restored
+    const std::vector<PendingActionRecord> rows = c->LoadPendingActions();
+    REQUIRE(rows.size() == 1u);
+    CHECK(rows[0].Id > second); // a new id, like AUTOINCREMENT
+    CHECK(rows[0].BackendKey == "Jira");
+    CHECK(rows[0].State == "ambiguous");
+    CHECK(rows[0].Attempts == 0);
+    CHECK(rows[0].IssueKey == "PROJ-1");
+
+    c->DeleteDeadPendingAction(dead[0].DeadId);
+    CHECK(c->LoadDeadPendingActions().empty());
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: archiving a missing pending action throws", M, RealCacheMaker, FakeCacheMaker) {
+    auto c = M::Make();
+    CHECK_THROWS(c->ArchivePendingAction(12345, "replay_rejected", "x"));
+    CHECK(c->LoadDeadPendingActions().empty());
 }

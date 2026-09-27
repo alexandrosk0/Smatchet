@@ -4,8 +4,10 @@
 #include "ConnectivityMonitorService.h"
 #include "GridLiveContext.h"
 #include "Sync/OfflineQueueService.h"
+#include "Sync/PendingActionQueueService.h"
 #include "ITrackerBackendFactory.h"
 #include "ITrackerBackend.h"
+#include "ITrackerCollaboration.h"
 #include "ITrackerConnectivity.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
@@ -62,6 +64,14 @@ std::shared_ptr<ITrackerIssueMutations> GridContextDepsAdapter::MutationsShared(
         return nullptr;
     }
     return std::shared_ptr<ITrackerIssueMutations>(b, b->Mutations());
+}
+
+std::shared_ptr<ITrackerCollaboration> GridContextDepsAdapter::CollaborationShared() const {
+    std::shared_ptr<ITrackerBackend> b = std::atomic_load(&ctx().Backend);
+    if (!b || b->Collaboration() == nullptr) {
+        return nullptr;
+    }
+    return std::shared_ptr<ITrackerCollaboration>(b, b->Collaboration());
 }
 
 ITrackerConnectivity* GridContextDepsAdapter::BackendConnectivity() {
@@ -336,11 +346,17 @@ void GridContextDepsAdapter::PushReplayTimers(std::chrono::steady_clock::time_po
     if (app_.offlineQueue_) {
         app_.offlineQueue_->PushReplayTimersForward(pushTo);
     }
+    if (app_.pendingActions_) {
+        app_.pendingActions_->PushReplayTimersForward(pushTo);
+    }
 }
 
 void GridContextDepsAdapter::RestartReplayTimers(std::chrono::steady_clock::time_point now) {
     if (app_.offlineQueue_) {
         app_.offlineQueue_->RestartReplayTimersNow(now);
+    }
+    if (app_.pendingActions_) {
+        app_.pendingActions_->RestartReplayTimersNow(now);
     }
 }
 

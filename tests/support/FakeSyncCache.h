@@ -33,6 +33,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -351,6 +352,117 @@ class FakeSyncCache : public ISyncCache {
         }
     }
 
+    // --- Pending actions (comments / worklogs / watch) ----------------------------------
+    // Same contract as LocalCacheManager_PendingActions.cpp: FIFO by id; archive keeps the row's
+    // state and replaces last_error only with a non-empty terminal error; dead rows load newest
+    // first; restore re-queues the newest dead row of an original id with its key and state and
+    // attempts 0, under a new (higher) id.
+    std::int64_t EnqueuePendingAction(const std::string& backendKey, const std::string& kind,
+                                      const std::string& issueKey, const std::string& payloadJson,
+                                      const std::string& state) override {
+        std::lock_guard<std::mutex> lk(m_);
+        if (EnqueuePendingActionThrows) {
+            throw std::runtime_error("scripted pending_actions insert failure");
+        }
+        PendingActionRecord row;
+        row.Id = nextActionId_++;
+        row.BackendKey = backendKey;
+        row.Kind = kind;
+        row.IssueKey = issueKey;
+        row.PayloadJson = payloadJson;
+        row.State = state;
+        row.CreatedAtEpochSec = NowEpochSec();
+        actions_.push_back(row);
+        return row.Id;
+    }
+    std::vector<PendingActionRecord> LoadPendingActions() override {
+        std::lock_guard<std::mutex> lk(m_);
+        return actions_;
+    }
+    void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
+                             const std::string& lastError) override {
+        std::lock_guard<std::mutex> lk(m_);
+        PendingActionRecord* row = FindAction(id);
+        if (row) {
+            row->State = state;
+            row->Attempts = attempts;
+            row->LastError = lastError;
+        }
+        stateHistory_.push_back(std::make_pair(id, state));
+    }
+    void DeletePendingAction(std::int64_t id) override {
+        std::lock_guard<std::mutex> lk(m_);
+        EraseById(actions_, id);
+    }
+    void ArchivePendingAction(std::int64_t id, const std::string& terminalReason,
+                              const std::string& terminalError) override {
+        std::lock_guard<std::mutex> lk(m_);
+        PendingActionRecord* row = FindAction(id);
+        if (!row) {
+            throw std::runtime_error("pending_actions row not found");
+        }
+        DeadPendingAction dead;
+        dead.DeadId = nextDeadActionId_++;
+        dead.ArchivedAtEpochSec = NowEpochSec();
+        dead.TerminalReason = terminalReason;
+        dead.Row = *row;
+        if (!terminalError.empty()) {
+            dead.Row.LastError = terminalError;
+        }
+        deadActions_.push_back(dead);
+        EraseById(actions_, id);
+    }
+    std::vector<DeadPendingAction> LoadDeadPendingActions() override {
+        std::lock_guard<std::mutex> lk(m_);
+        std::vector<DeadPendingAction> out = deadActions_;
+        std::sort(out.begin(), out.end(), [](const DeadPendingAction& a, const DeadPendingAction& b) {
+            if (a.ArchivedAtEpochSec != b.ArchivedAtEpochSec) {
+                return a.ArchivedAtEpochSec > b.ArchivedAtEpochSec;
+            }
+            return a.DeadId > b.DeadId;
+        });
+        return out;
+    }
+    bool RestoreDeadPendingAction(std::int64_t originalId) override {
+        std::lock_guard<std::mutex> lk(m_);
+        int idx = -1;
+        for (size_t i = 0; i < deadActions_.size(); ++i) {
+            if (deadActions_[i].Row.Id == originalId &&
+                (idx < 0 || deadActions_[i].DeadId > deadActions_[static_cast<size_t>(idx)].DeadId)) {
+                idx = static_cast<int>(i);
+            }
+        }
+        if (idx < 0) {
+            return false;
+        }
+        PendingActionRecord row = deadActions_[static_cast<size_t>(idx)].Row; // key, kind, payload, state
+        row.Id = nextActionId_++;
+        row.Attempts = 0;
+        row.LastError.clear();
+        row.CreatedAtEpochSec = NowEpochSec();
+        actions_.push_back(row);
+        deadActions_.erase(deadActions_.begin() + idx);
+        return true;
+    }
+    void DeleteDeadPendingAction(std::int64_t deadId) override {
+        std::lock_guard<std::mutex> lk(m_);
+        for (size_t i = 0; i < deadActions_.size(); ++i) {
+            if (deadActions_[i].DeadId == deadId) {
+                deadActions_.erase(deadActions_.begin() + i);
+                return;
+            }
+        }
+    }
+
+    /// Test knob: every EnqueuePendingAction throws (a failing local database).
+    bool EnqueuePendingActionThrows = false;
+    /// Every (id, state) UpdatePendingAction wrote, in order — tests assert the `sending` marker
+    /// was persisted before a send.
+    std::vector<std::pair<std::int64_t, std::string>> PendingActionStateHistory() const {
+        std::lock_guard<std::mutex> lk(m_);
+        return stateHistory_;
+    }
+
     // --- Meta flags -------------------------------------------------------------------
     bool HasCacheMetaFlag(const std::string& key) override {
         std::lock_guard<std::mutex> lk(m_);
@@ -376,6 +488,14 @@ class FakeSyncCache : public ISyncCache {
         for (size_t i = 0; i < creates_.size(); ++i) {
             if (creates_[i].Id == id) {
                 return &creates_[i];
+            }
+        }
+        return nullptr;
+    }
+    PendingActionRecord* FindAction(std::int64_t id) {
+        for (size_t i = 0; i < actions_.size(); ++i) {
+            if (actions_[i].Id == id) {
+                return &actions_[i];
             }
         }
         return nullptr;
@@ -409,6 +529,11 @@ class FakeSyncCache : public ISyncCache {
     std::int64_t nextEditId_ = 1;
     std::int64_t nextDeadCreateId_ = 1;
     std::int64_t nextDeadEditId_ = 1;
+    std::vector<PendingActionRecord> actions_;
+    std::vector<DeadPendingAction> deadActions_;
+    std::vector<std::pair<std::int64_t, std::string>> stateHistory_;
+    std::int64_t nextActionId_ = 1;
+    std::int64_t nextDeadActionId_ = 1;
 };
 
 } // namespace smatchet_tests

@@ -33,6 +33,7 @@ Evidence:
 - **Gate infra**: `lint-rules.d/72-offline-exact.sh` (blocking rules) and `74-offline-heuristic.sh` (WARN heuristics), loader + `--scan-offline` in `test-lint-rules.sh`, bats coverage, enforcement-contract row in `AGENTS.md`, and `docs/agent-rules/cpp-rules.md` section.
 - **Shared primitives**: `Source/Core/include/OfflineFirstPure.h` (pure connectivity, freshness and write-route decisions), `KeyedLookupCache.h` (offline-gated keyed fetch with backoff, reset on reconnect), `DataFreshnessCue.h` (the one localized cue).
 - **Additive schema**: SQLite `lookup_cache` (S5) and `pending_actions` (S8) tables for offline reads and writes.
+- **Comments queue offline** (S8): a comment posted while the tracker is unreachable is saved to `pending_actions` through `PendingActionQueueService` and sent on reconnect, exactly once — a send whose response was lost is checked against the tracker before it is resent. The `docs/plans/shipped/issue-comments.md` risk "Comments bypass offline-queue" is resolved.
 - **Graduation, per WARN rule, independent of the others:**
   - Whole-tree `--scan-offline` hits burned to 0 (fixed or deviation-marked).
   - Fewer than 10% false positives over ~20 PRs touching offline scope, tallied by `code-review` in `docs/high-integrity/offline-calibration.md` (created by the first PR that records a tally).

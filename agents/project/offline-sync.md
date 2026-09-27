@@ -1,6 +1,6 @@
 ---
 name: offline-sync
-description: SQLite cache, offline-queue replay, audit trail AND offline-first reads (Quality Pillar 6) — LocalCacheManager, OfflineQueueService, SmatchetOfflineQueueUi, TicketSyncService, BackendAuditTrail, FieldEditAuditSource, KeyedLookupCache, lookup_cache, DataFreshnessCue. Use for cache schema additions, queue replay, dead-letter handling, sync diff resolution, audit entries, and any feature that must keep working with the tracker unreachable.
+description: SQLite cache, offline-queue replay, audit trail AND offline-first reads (Quality Pillar 6) — LocalCacheManager, OfflineQueueService, PendingActionQueueService, SmatchetOfflineQueueUi, TicketSyncService, BackendAuditTrail, FieldEditAuditSource, KeyedLookupCache, lookup_cache, DataFreshnessCue. Use for cache schema additions, queue replay, dead-letter handling, sync diff resolution, audit entries, and any feature that must keep working with the tracker unreachable.
 complexity: low
 model: sonnet
 read-only: false
