@@ -1,6 +1,7 @@
 // LocalCacheManager's ILookupCache half, file-backed cases: rows survive closing and reopening the
-// cache (the "remembered workflow survives a restart" guarantee, Quality Pillar 6) and a cache file
-// created before `lookup_cache` existed gains the table on open (additive-only schema).
+// cache (the "remembered workflow survives a restart" guarantee, Quality Pillar 6), a cache file
+// created before `lookup_cache` existed gains the table on open (additive-only schema), and a read
+// failure throws rather than returning a partial list.
 //
 // File-backed by necessity: both cases need a second connection to see the first one's bytes, and
 // ":memory:" is per-connection (SqliteMemFixture owns the in-memory cases in
@@ -63,6 +64,18 @@ TEST_SUITE("LocalCacheManagerLookupPersist") {
         }
         SQLite::Database raw(tmp.Path(), SQLite::OPEN_READONLY);
         CHECK(TableExists(raw, "lookup_cache"));
+    }
+
+    TEST_CASE("a read failure throws instead of returning a partial list") {
+        TempDbFile tmp;
+        LocalCacheManager mgr(tmp.Path());
+        REQUIRE(mgr.UpsertLookup("Jira", kKind, "PROJ|bug|1", "[]"));
+        {
+            // Break the table under the open manager so its next read fails.
+            SQLite::Database raw(tmp.Path(), SQLite::OPEN_READWRITE);
+            raw.exec("DROP TABLE lookup_cache");
+        }
+        CHECK_THROWS(mgr.LoadLookups("Jira", kKind));
     }
 
 } // TEST_SUITE

@@ -78,7 +78,10 @@ std::vector<LookupCacheRow> LocalCacheManager::LoadLookups(const std::string& ba
             result.push_back(std::move(row));
         }
     } catch (const std::exception& ex) {
+        // Never hand back a partial list as if it were complete: the caller would record the load as
+        // done and never retry. Rethrow so it can un-latch and retry (ILookupCache contract).
         LOG_WARN("LocalCacheManager::LoadLookups failed: %s", ex.what());
+        throw;
     }
     return result;
 }

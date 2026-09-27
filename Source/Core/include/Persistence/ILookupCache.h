@@ -24,7 +24,8 @@ class ILookupCache {
     /// True and `out` filled when the row exists.
     virtual bool TryGetLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey,
                               LookupCacheRow& out) = 0;
-    /// Every row of one kind for one backend; empty on a read failure.
+    /// Every row of one kind for one backend. Throws on a read failure (never a partial list), so the
+    /// caller can tell "nothing stored" from "could not read" and retry.
     virtual std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) = 0;
     /// Remove one row. True when the statement ran (whether or not a row existed).
     virtual bool DeleteLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey) = 0;
