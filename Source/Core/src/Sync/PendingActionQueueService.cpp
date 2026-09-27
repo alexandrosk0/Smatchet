@@ -299,14 +299,22 @@ void PendingActionQueueService::ReplayOne(ISyncCache& cache, ITrackerCollaborati
     if (maybeSent && kind == PendingActionKind::CommentAdd && ResolveAmbiguousComment(cache, collab, row, tally)) {
         return;
     }
-    // Persist the in-flight marker first: if the process dies mid-send, the next start turns the row
-    // ambiguous and checks the tracker instead of sending it twice.
+    // Claim the stored row before sending. The compare-and-set skips a row discarded or changed since
+    // this pass loaded its copy, and persists the in-flight marker: if the process dies mid-send, the
+    // next start turns the row ambiguous and checks the tracker instead of sending it twice.
+    bool claimed = false;
     try {
-        cache.UpdatePendingAction(row.Id, PendingActionState::kSending, row.Attempts, row.LastError);
+        claimed =
+            cache.TransitionPendingAction(row.Id, row.State, PendingActionState::kSending, row.Attempts, row.LastError);
     } catch (const std::exception& ex) {
         LOG_ERROR("PendingActionQueueService: marking id=%lld as sending failed: %s", static_cast<long long>(row.Id),
                   ex.what());
         ++tally.Failures;
+        return;
+    }
+    if (!claimed) {
+        LOG_INFO("PendingActionQueueService: id=%lld was discarded or changed during the pass; not sent",
+                 static_cast<long long>(row.Id));
         return;
     }
     const TrackerError err = Dispatch(collab, cfg, kind, row.IssueKey, row.PayloadJson);
@@ -460,7 +468,13 @@ void PendingActionQueueService::DeleteDead(const std::vector<std::int64_t>& dead
 
 void PendingActionQueueService::SendAgain(std::int64_t id) {
     RunCacheActionAsync("SendAgain", [id](ISyncCache& cache) {
-        cache.UpdatePendingAction(id, PendingActionState::kPending, 0, std::string());
+        // Only a row that needs review: any other state keeps its own replay path (an ambiguous comment
+        // is still looked up on the tracker before it is sent again).
+        if (!cache.TransitionPendingAction(id, PendingActionState::kNeedsReview, PendingActionState::kPending, 0,
+                                           std::string())) {
+            LOG_INFO("PendingActionQueueService: send-again id=%lld skipped; it no longer needs review",
+                     static_cast<long long>(id));
+        }
     });
     RestartReplayTimersNow(std::chrono::steady_clock::now());
 }

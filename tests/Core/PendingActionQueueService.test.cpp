@@ -282,6 +282,44 @@ TEST_CASE("PendingActionQueueService replay never resends an interrupted worklog
     CHECK(rows[0].Attempts == 0);
 }
 
+TEST_CASE("PendingActionQueueService replay never sends a comment discarded after the pass loaded it") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    rig.QueueComment("keep", PendingActionState::kPending);
+    const std::int64_t drop = rig.QueueComment("drop", PendingActionState::kPending);
+    // Load the snapshot with replay held back, so the next load is the replay pass's own.
+    rig.svc.PushReplayTimersForward(std::chrono::steady_clock::now() + std::chrono::hours(1));
+    rig.svc.RequestSnapshotRefresh();
+    rig.svc.Tick();
+    REQUIRE(rig.Tracker().AddCommentCalls().empty());
+    // The user discards `drop` after the pass copied the rows and before it reaches that row.
+    rig.Cache().RunAfterNextLoadPendingActions([&rig, drop]() { rig.svc.Discard({drop}); });
+    rig.svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
+    rig.svc.Tick();
+    REQUIRE(rig.Tracker().AddCommentCalls().size() == 1);
+    CHECK(rig.Tracker().AddCommentCalls()[0].Body == "keep");
+    CHECK(rig.Cache().LoadPendingActions().empty());
+    CHECK(rig.svc.Snapshot()->Pending.empty());
+}
+
+TEST_CASE("PendingActionQueueService::SendAgain leaves a row that does not need review on its own path") {
+    OfflineQueueTestEnvGuard env;
+    Rig rig;
+    const std::int64_t id = rig.QueueComment("maybe landed", PendingActionState::kAmbiguous);
+    rig.Cache().UpdatePendingAction(id, PendingActionState::kAmbiguous, 2, "response lost");
+    rig.svc.SendAgain(id);
+    const std::vector<PendingActionRecord> rows = rig.Cache().LoadPendingActions();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].State == PendingActionState::kAmbiguous);
+    CHECK(rows[0].Attempts == 2);
+    // Replay still checks the tracker first, so a comment that did land is not posted twice.
+    rig.Tracker().SetIssueComments("ABC-1", {ServerComment("maybe landed", kQueuedAt + 1)});
+    rig.ReplayNow();
+    CHECK(rig.Tracker().AddCommentCalls().empty());
+    CHECK(rig.Tracker().FetchIssueCommentsCalls() == 1);
+    CHECK(rig.Cache().LoadPendingActions().empty());
+}
+
 TEST_CASE("PendingActionQueueService replay leaves another backend's rows queued") {
     OfflineQueueTestEnvGuard env;
     Rig rig;

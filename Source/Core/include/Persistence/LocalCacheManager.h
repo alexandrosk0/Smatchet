@@ -97,6 +97,8 @@ class LocalCacheManager : public ISyncCache, public ILookupCache {
     std::vector<PendingActionRecord> LoadPendingActions() override;
     void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                              const std::string& lastError) override;
+    bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
+                                 int attempts, const std::string& lastError) override;
     void DeletePendingAction(std::int64_t id) override;
     void ArchivePendingAction(std::int64_t id, const std::string& terminalReason,
                               const std::string& terminalError) override;

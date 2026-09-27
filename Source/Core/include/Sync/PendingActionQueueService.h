@@ -63,7 +63,8 @@ class PendingActionQueueService {
     void Discard(const std::vector<std::int64_t>& ids);
     void RestoreDead(const std::vector<std::int64_t>& originalIds);
     void DeleteDead(const std::vector<std::int64_t>& deadIds);
-    /// A `needs_review` action the user confirmed did not land: back to `pending`, attempts reset.
+    /// A `needs_review` action the user confirmed did not land: back to `pending`, attempts reset. A
+    /// row in any other state is left alone.
     void SendAgain(std::int64_t id);
     /// Reload the snapshot (e.g. after the local cache was recreated).
     void RequestSnapshotRefresh();

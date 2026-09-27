@@ -80,6 +80,11 @@ class ISyncCache {
     virtual std::vector<PendingActionRecord> LoadPendingActions() = 0;
     virtual void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                                      const std::string& lastError) = 0;
+    /// Compare-and-set: updates the row only while its state is still `fromState`. False when the row
+    /// is gone (discarded) or has moved to another state, so a caller acting on an older copy of the
+    /// row never overrides what happened to it since.
+    virtual bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
+                                         int attempts, const std::string& lastError) = 0;
     virtual void DeletePendingAction(std::int64_t id) = 0;
     /// Move the row to the dead-letter table, keeping its state; `terminalError` (when non-empty)
     /// replaces its last error.

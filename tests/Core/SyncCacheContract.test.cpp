@@ -3,7 +3,7 @@
 // Authored against the REAL LocalCacheManager(":memory:") first (it passes by definition — it IS
 // the contract). `FakeSyncCache` is appended as a second TEST_CASE_TEMPLATE type so the identical
 // assertions run against both impls; the fake is then built until this suite is green, which is
-// the per-method fake-fidelity gate. Every one of the 36 ISyncCache methods is touched here.
+// the per-method fake-fidelity gate. Every one of the 37 ISyncCache methods is touched here.
 //
 // This TU is SQLite-by-design (real-LCM half) — on the construction/direct-include purity gate's
 // named-exemption allow-list.
@@ -352,6 +352,26 @@ TEST_CASE_TEMPLATE("ISyncCache: a dead pending action keeps its state and key; r
 
     c->DeleteDeadPendingAction(dead[0].DeadId);
     CHECK(c->LoadDeadPendingActions().empty());
+}
+
+TEST_CASE_TEMPLATE("ISyncCache: a pending-action transition applies only from the expected state", M, RealCacheMaker,
+                   FakeCacheMaker) {
+    auto c = M::Make();
+    const std::int64_t id = c->EnqueuePendingAction("Jira", "comment_add", "PROJ-1", "{\"body\":\"1\"}", "pending");
+    CHECK_FALSE(c->TransitionPendingAction(id, "needs_review", "pending", 0, std::string())); // wrong state
+    std::vector<PendingActionRecord> rows = c->LoadPendingActions();
+    REQUIRE(rows.size() == 1u);
+    CHECK(rows[0].State == "pending");
+
+    CHECK(c->TransitionPendingAction(id, "pending", "sending", 2, "retrying"));
+    rows = c->LoadPendingActions();
+    CHECK(rows[0].State == "sending");
+    CHECK(rows[0].Attempts == 2);
+    CHECK(rows[0].LastError == "retrying");
+
+    c->DeletePendingAction(id);
+    CHECK_FALSE(c->TransitionPendingAction(id, "sending", "pending", 0, std::string())); // discarded
+    CHECK(c->LoadPendingActions().empty());
 }
 
 TEST_CASE_TEMPLATE("ISyncCache: archiving a missing pending action throws", M, RealCacheMaker, FakeCacheMaker) {

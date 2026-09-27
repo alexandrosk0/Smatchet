@@ -3010,6 +3010,7 @@ This plan touches `Source/Core/`.
   - `SyncCacheContract.test.cpp` joins the `SmatchetTsanTests` list, so the queue contract runs on Linux against the real cache. The file-backed cases are `LocalCacheManagerPendingActionsPersist.test.cpp` (the repo's `*Persist` convention) rather than `PendingActionsSqlite.test.cpp`.
   - The comments modal shows queued comments in every thread state, including while a load with nothing saved is running. When a queued comment leaves the queue without failing, the thread reloads to show the tracker's copy.
   - A snapshot read from a cache that was replaced meanwhile (`RecreateLocalCacheDatabase`) is never published.
+  - `ISyncCache::TransitionPendingAction` is a compare-and-set on the stored row (CodeRabbit review on #2257). Replay claims each row with it (its loaded state → `sending`), so a comment discarded after a pass loaded its copy is never sent. "Send again" moves only a `needs_review` row back to `pending`, so an `ambiguous` comment is always looked up on the tracker before it is resent. No mutex is held across a pass: the check and the write are one SQL statement, and a request already in flight cannot be recalled anyway.
 
 ## Verification (actual)
 

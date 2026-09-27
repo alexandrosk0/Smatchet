@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <set>
@@ -376,8 +377,17 @@ class FakeSyncCache : public ISyncCache {
         return row.Id;
     }
     std::vector<PendingActionRecord> LoadPendingActions() override {
-        std::lock_guard<std::mutex> lk(m_);
-        return actions_;
+        std::vector<PendingActionRecord> rows;
+        std::function<void()> hook;
+        {
+            std::lock_guard<std::mutex> lk(m_);
+            rows = actions_;
+            hook.swap(afterNextLoadPendingActions_);
+        }
+        if (hook) {
+            hook(); // outside the lock: the hook may call back into the cache
+        }
+        return rows;
     }
     void UpdatePendingAction(std::int64_t id, const std::string& state, int attempts,
                              const std::string& lastError) override {
@@ -389,6 +399,19 @@ class FakeSyncCache : public ISyncCache {
             row->LastError = lastError;
         }
         stateHistory_.push_back(std::make_pair(id, state));
+    }
+    bool TransitionPendingAction(std::int64_t id, const std::string& fromState, const std::string& toState,
+                                 int attempts, const std::string& lastError) override {
+        std::lock_guard<std::mutex> lk(m_);
+        PendingActionRecord* row = FindAction(id);
+        if (!row || row->State != fromState) {
+            return false;
+        }
+        row->State = toState;
+        row->Attempts = attempts;
+        row->LastError = lastError;
+        stateHistory_.push_back(std::make_pair(id, toState));
+        return true;
     }
     void DeletePendingAction(std::int64_t id) override {
         std::lock_guard<std::mutex> lk(m_);
@@ -456,8 +479,14 @@ class FakeSyncCache : public ISyncCache {
 
     /// Test knob: every EnqueuePendingAction throws (a failing local database).
     bool EnqueuePendingActionThrows = false;
-    /// Every (id, state) UpdatePendingAction wrote, in order — tests assert the `sending` marker
-    /// was persisted before a send.
+    /// Test knob: run `fn` once, right after the next LoadPendingActions has copied the rows — e.g.
+    /// a discard landing between a replay pass's load and its sends.
+    void RunAfterNextLoadPendingActions(std::function<void()> fn) {
+        std::lock_guard<std::mutex> lk(m_);
+        afterNextLoadPendingActions_ = std::move(fn);
+    }
+    /// Every (id, state) UpdatePendingAction / TransitionPendingAction wrote, in order — tests assert the `sending`
+    /// marker was persisted before a send.
     std::vector<std::pair<std::int64_t, std::string>> PendingActionStateHistory() const {
         std::lock_guard<std::mutex> lk(m_);
         return stateHistory_;
@@ -532,6 +561,7 @@ class FakeSyncCache : public ISyncCache {
     std::vector<PendingActionRecord> actions_;
     std::vector<DeadPendingAction> deadActions_;
     std::vector<std::pair<std::int64_t, std::string>> stateHistory_;
+    std::function<void()> afterNextLoadPendingActions_;
     std::int64_t nextActionId_ = 1;
     std::int64_t nextDeadActionId_ = 1;
 };

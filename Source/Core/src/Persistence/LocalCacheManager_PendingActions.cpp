@@ -128,6 +128,17 @@ void LocalCacheManager::UpdatePendingAction(std::int64_t id, const std::string& 
     });
 }
 
+bool LocalCacheManager::TransitionPendingAction(std::int64_t id, const std::string& fromState,
+                                                const std::string& toState, int attempts,
+                                                const std::string& lastError) {
+    return LoggedQueueOp("TransitionPendingAction", id, [&]() {
+        // One statement, so the state check and the write are atomic against a concurrent discard.
+        return ExecBound(
+                   db, "UPDATE pending_actions SET state = ?, attempts = ?, last_error = ? WHERE id = ? AND state = ?",
+                   toState, attempts, lastError, id, fromState) == 1;
+    });
+}
+
 void LocalCacheManager::DeletePendingAction(std::int64_t id) {
     LoggedQueueOp("DeletePendingAction", id, [&]() { ExecBound(db, "DELETE FROM pending_actions WHERE id = ?", id); });
 }
