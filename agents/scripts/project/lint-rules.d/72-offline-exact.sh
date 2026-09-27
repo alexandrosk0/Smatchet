@@ -7,8 +7,9 @@
 #
 # offline-write-bypasses-queue — a tracker write (comment, worklog, watcher, field update, create,
 # attach, sprint) called straight on the backend outside the queue seam. Offline, that write is lost;
-# route it through the offline queue so it replays on reconnect. Exempt: Source/Core/src/Tracker/ (the
-# clients), Source/Core/src/Sync/ (queue + replay), FieldEditPipelineService.cpp (commit-or-queue seam).
+# route it through the offline queue so it replays on reconnect. Headers are scanned too. Exempt: Tracker/
+# (the clients) and Sync/ (queue + replay), under both src/ and include/, and FieldEditPipelineService
+# (commit-or-queue seam). A call wrapped across two code lines still counts.
 #
 # tracker-error-kind-collapsed — TrackerErrorUnknown(<one variable>) in tracker code. It throws away the
 # Transport kind, so an offline failure reads as permanent and callers wipe cached data (the #21b
@@ -25,16 +26,9 @@
 # Escape: a comment-only line // SMATCHET_DEVIATION(rule=<id>; reason=...; owner=...; revisit=...) on the
 # nearest non-blank line above the hit. A marker on a line that also holds code never hides that code.
 
-# The tracker write methods, shared by the rule regexes and the whole-tree prefilter.
+# The tracker write methods, shared by the rule regex and the whole-tree prefilter.
 OFFLINE_WRITE_METHODS='AddIssueCommentPlain|AddWorklog|AddIssueWatcher|UpdateIssueFields|UpdateField|CreateIssue|AttachFilesToIssue|AddIssueToSprint'
-# A backend handle a write is called on, and the `->Method(` / `.Method(` call itself.
-OFFLINE_WRITE_RECV_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)'
-OFFLINE_WRITE_CALL_RE='(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
-OFFLINE_WRITE_RE="${OFFLINE_WRITE_RECV_RE}[[:space:]]*${OFFLINE_WRITE_CALL_RE}"
-# A call wrapped before its `->` / `.` (clang-format's chained-call break): this code line starts with the call
-# and the previous code line ends with the handle.
-OFFLINE_WRITE_WRAPPED_CALL_RE="^[[:space:]]*${OFFLINE_WRITE_CALL_RE}"
-OFFLINE_WRITE_WRAPPED_RECV_RE="${OFFLINE_WRITE_RECV_RE}[[:space:]]*\$"
+OFFLINE_WRITE_RE='(Collaboration\(\)|Mutations\(\)|[A-Za-z_]*[Mm]utations[A-Za-z0-9_]*|[A-Za-z_]*[Cc]ollab[A-Za-z0-9_]*)[[:space:]]*(->|\.)[[:space:]]*('"$OFFLINE_WRITE_METHODS"')[[:space:]]*\('
 OFFLINE_KIND_COLLAPSE_RE='TrackerErrorUnknown\([[:space:]]*(std::move\([[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\)|[A-Za-z_][A-Za-z0-9_]*)[[:space:]]*\)'
 
 # `<receiver>.IsOk()` where the receiver is an identifier chain (`a.b`, `a->b`, `a.b()`).
@@ -130,10 +124,11 @@ scan_offline_exact_file() {
     [ -f "$f" ] || return 0
     case "$logical" in Source/*.cpp|Source/*.h|Source/*.hpp) ;; *) return 0 ;; esac
     case "$logical" in */ThirdParty/*) return 0 ;; esac
-    local write_scope=0 kind_scope=0
-    case "$logical" in *.cpp) write_scope=1 ;; esac
+    # Headers count too: an inline call in a header is as much a write as one in a .cpp.
+    local write_scope=1 kind_scope=0
     case "$logical" in
-        Source/Core/src/Tracker/*|Source/Core/src/Sync/*|*/FieldEditPipelineService.cpp) write_scope=0 ;;
+        Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/src/Sync/*|Source/Core/include/Sync/*) write_scope=0 ;;
+        */FieldEditPipelineService.cpp|*/FieldEditPipelineService.h) write_scope=0 ;;
     esac
     case "$logical" in
         Source/Core/src/Tracker/*|Source/Core/include/Tracker/*|Source/Core/include/ITracker*.h) kind_scope=1 ;;
@@ -161,7 +156,10 @@ scan_offline_exact_file() {
         fi
         if [ "$write_scope" -eq 1 ] && [ "$suppress" != "offline-write-bypasses-queue" ] \
             && { [[ "$code" =~ $OFFLINE_WRITE_RE ]] \
-                || { [[ "$code" =~ $OFFLINE_WRITE_WRAPPED_CALL_RE ]] && [[ "$prev1" =~ $OFFLINE_WRITE_WRAPPED_RECV_RE ]]; }; }; then
+                || { ! [[ "$prev1" =~ $OFFLINE_WRITE_RE ]] && [[ "$prev1 $code" =~ $OFFLINE_WRITE_RE ]]; }; }; then
+            # The second test joins the previous code line: a match there spans the line break, i.e. a call that
+            # clang-format wrapped before or after its `->` / `.`, or before its `(` (the previous line on its
+            # own matched nothing, and this line on its own matched nothing).
             printf 'offline-write-bypasses-queue\t%s:%s\n' "$logical" "$lineno"
         fi
         if [ "$kind_scope" -eq 1 ] && [ "$suppress" != "tracker-error-kind-collapsed" ] \

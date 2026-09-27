@@ -1021,12 +1021,29 @@ _resolve_py() {
     printf 'void A(B& b) {\n    b.Collaboration()->AddWorklog /* note */ (c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/src/Ui/Split.cpp"
     printf 'void W(B& b) {\n    auto r = b.Collaboration()\n                 ->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Ui/Wrapped.cpp"
     printf 'void R(B& b) {\n    auto r = b.Collaboration()\n                 ->FetchIssueComments(k);\n    // ->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Ui/Read.cpp"
+    printf 'void F(B& b) {\n    auto r = b.Collaboration()->\n             AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/src/Ui/After.cpp"
     ( cd "$tmp" && git add -A && git commit -qm base ) >/dev/null
     run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && compute_offline_write_violations"
     [ "$status" -eq 0 ]
     [[ "$output" == *"Source/Core/src/Ui/Split.cpp:2"* ]]
     [[ "$output" == *"Source/Core/src/Ui/Wrapped.cpp:3"* ]]
+    [[ "$output" == *"Source/Core/src/Ui/After.cpp:3"* ]]
     [[ "$output" != *"Read.cpp"* ]]
+}
+
+@test "the absolute offline-write sweep scans headers, and keeps Tracker/ and Sync/ headers exempt" {
+    tmp="$(mktemp -d)"
+    ( cd "$tmp" && git init -q && git config user.email t@t && git config user.name t ) >/dev/null
+    mkdir -p "$tmp/Source/Core/include/Ui" "$tmp/Source/Core/include/Tracker" "$tmp/Source/Core/include/Sync"
+    printf 'inline void H(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/include/Ui/Inline.h"
+    printf 'inline void T(B& b) {\n    b.Collaboration()->AddWorklog(c, k, a, b2, c2, d, e);\n}\n' > "$tmp/Source/Core/include/Tracker/Client.h"
+    printf 'inline void S(B& b) {\n    b.Collaboration()->AddIssueWatcher(c, k);\n}\n' > "$tmp/Source/Core/include/Sync/Queue.h"
+    ( cd "$tmp" && git add -A && git commit -qm base ) >/dev/null
+    run bash -c "cd '$tmp' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/00-common.sh' && source '$REPO_ROOT/agents/scripts/project/lint-rules.d/72-offline-exact.sh' && compute_offline_write_violations"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"Source/Core/include/Ui/Inline.h:2"* ]]
+    [[ "$output" != *"Tracker/Client.h"* ]]
+    [[ "$output" != *"Sync/Queue.h"* ]]
 }
 
 # ---------- lint-rules.d module loading (monolith split) ----------
