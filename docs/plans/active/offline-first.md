@@ -2942,7 +2942,7 @@ This plan touches `Source/Core/`.
   - The load and post in-flight latches clear on every path. Posting toasts "Posting comment"; offline, Post is disabled and the draft is kept. The tooltip does not fetch while offline.
 - Tests: `CommentBlobFormatPure` (thread codec, caps, blob inverse), `LazyEnrichmentCarryForwardPure`, `SmatchetCommentsModalSeedPure` (both lists), `TicketSyncService` (carry-forward on both save paths), and the bucket-E test `OfflineFirst/Comments_OfflineShowsCachedThread`.
 
-### S8 — (PR link added after creation)
+### S8 — [#2257](https://github.com/alexandrosk0/Smatchet/pull/2257)
 - Shipped:
   - `PendingActionQueueService` is one generic offline queue for tracker actions other than creates and field edits (comments now; worklogs and watch in S9). Rows are stored in the additive `pending_actions` / `pending_actions_dead` tables (`LocalCacheManager_PendingActions.cpp`).
   - A comment posted while the tracker is unreachable is saved with no request. Online, it is sent; a failure the tracker may still have applied is saved as `ambiguous`. Replay looks up an interrupted comment on the tracker before sending it again (`PendingActionPolicyPure.h`), so it is posted at most once.
