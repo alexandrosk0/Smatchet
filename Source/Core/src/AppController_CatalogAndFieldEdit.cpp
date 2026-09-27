@@ -704,12 +704,12 @@ void AppController::WarmIssueEditMetaAsync(const std::string& issueId) { editMet
 // The service owns the per-issue transitions cache and load/invalidate methods.
 // `transitions_` is constructed eagerly in Initialize, so it is non-null for every call after startup.
 
-struct TransitionsLookup AppController::GetAvailableTransitionsForIssue(const std::string& issueId) const {
-    return transitions_->GetAvailableTransitions(issueId);
+struct TransitionsLookup AppController::GetAvailableTransitionsForIssue(const TransitionsQuery& query) const {
+    return transitions_->GetAvailableTransitions(query);
 }
 
-void AppController::EnsureIssueTransitionsLoaded(const std::string& issueId) const {
-    transitions_->EnsureIssueTransitionsLoaded(issueId);
+void AppController::EnsureIssueTransitionsLoaded(const TransitionsQuery& query) const {
+    transitions_->EnsureIssueTransitionsLoaded(query);
 }
 
 void AppController::InvalidateIssueTransitions(const std::string& issueId) {

@@ -264,6 +264,15 @@ TEST_CASE("JiraFakeTrackerFixture::Offline — transitions round-trip per issue"
     CHECK_FALSE(static_cast<bool>(client->FetchIssueTransitions(cfg, "OFF-2"))); // unscripted
 }
 
+TEST_CASE("JiraFakeTrackerFixture::Offline — scripted transitions turn on SupportsIssueTransitions") {
+    smatchet_tests::ScopedFakeNetworkReset reset;
+    const std::string json =
+        std::string(R"({"transitions": {"OFF-1": [{"id": "2", "name": "In Progress"}]}, )") + kEmptyFetch + "}";
+    CHECK(JiraFakeTrackerFixture::LoadFromString(json).CreateClient()->SupportsIssueTransitions());
+    // No "transitions" key keeps the ITrackerFieldCatalog default (not supported).
+    CHECK_FALSE(JiraFakeTrackerFixture::LoadFromString(kBasicFixture).CreateClient()->SupportsIssueTransitions());
+}
+
 TEST_CASE("JiraFakeTrackerFixture::Offline — catalog.fields builds a Status field with its options") {
     smatchet_tests::ScopedFakeNetworkReset reset;
     const std::string json = std::string(R"({"catalog": {"fields": [

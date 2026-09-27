@@ -2911,10 +2911,18 @@ This plan touches `Source/Core/`.
 ### S4 — [#2247](https://github.com/alexandrosk0/Smatchet/pull/2247)
 - Shipped:
   - ADR-0026: offline-first is UX Quality Pillar 6.
-  - Gates: `lint-rules.d/72-offline-exact.sh` blocks `offline-write-bypasses-queue` and `tracker-error-kind-collapsed`, delta-gated per changed file. `74-offline-heuristic.sh` warns on the five heuristics. `test-lint-rules.sh` gains the `--scan-offline` sweep, selftest cases and the `--diff` blocks, and `lint_rules.bats` gains 8 tests.
+  - Gates: `lint-rules.d/72-offline-exact.sh` blocks `offline-write-bypasses-queue` and `tracker-error-kind-collapsed`, delta-gated per changed file. `74-offline-heuristic.sh` warns on the five heuristics. `test-lint-rules.sh` gains the `--scan-offline` sweep, selftest cases and the `--diff` blocks, and `lint_rules.bats` gains 10 tests.
   - Rules: the Pillar 6 rows in `AGENTS.md`, § 6 of `quality-pillars.md`, the `cpp-rules.md` paragraph, the code-review Offline-first block, `offline-sync` v3, and the Ui/Tracker leaf invariants.
   - Records: the PR #2234 postmortem, the recurring-classes batch and three debt entries.
 - Calibration baseline (`--scan-offline`, develop aed95ea): inflight-latch 23, loading-only-render 18, network-read-ungated 7, write-bypasses-queue 4 (all in `AppController_CatalogAndFieldEdit.cpp`, S9's target), kind-collapsed 3, failure-cached-as-loaded 3, cache-cleared 2.
+
+### S5 — [#2249](https://github.com/alexandrosk0/Smatchet/pull/2249)
+- Shipped:
+  - The status combo never waits on the network. It lists the live transitions, else the workflow remembered from earlier online use, else every catalog status, and always the current status (`StatusComboOptionsPure.h`). A one-line cue says which list it is.
+  - `IssueTransitionsCacheService` now runs on `KeyedLookupCache`: no fetch while offline, a 30 s backoff after a failure, the backoff cleared on reconnect (`AppController::ConsumeTrackerConnectivityRecovery`), and no in-flight latch left behind by a throw or a failed launch.
+  - Every successful fetch is remembered per (project, issue type, from status), in memory and in the new SQLite `lookup_cache` table (`ILookupCache`, `LocalCacheManager_Lookup.cpp`). The stored rows load on a worker once per backend.
+  - `ITrackerFieldCatalog::SupportsIssueTransitions()`, true for Jira only: other backends make no request and log nothing.
+- Tests: `LearnedWorkflowPure`, `StatusComboOptionsPure`, `IssueTransitionsCacheService` (fakes; both lists), `LocalCacheManagerLookup` (in-memory; both lists) and `LocalCacheManagerLookupPersist` (file-backed; `SmatchetTests`). Also a `JiraFakeTrackerFixture` capability case and the bucket-E test `OfflineFirst/StatusCombo_OfflineShowsOptions`.
 
 ## Deviations from plan
 
@@ -2929,6 +2937,15 @@ This plan touches `Source/Core/`.
     - Both exact rules read only code: a small awk lexer (`offline_code_lines`) strips `//` and `/* */` comments and blanks string, char and raw-string literal contents, tracking blocks and raw strings across lines. A `*`-dereference line, code after `/* … */` or a closing `*/`, and code after a `//` inside a string are scanned; a mention inside a comment or string is not. The lexer also emits each line's comment text, and a deviation is read only from that text, so marker-like text inside a multi-line raw string never escapes a hit.
     - `offline_delta_hits` reads `git diff --name-status -M` and scans a renamed file's merge-base copy under its source path, so a rename no longer un-grandfathers its hits, and a write moved out of an exempt seam still fails.
     - `tracker-error-kind-collapsed` exempts a collapse on the hit line only when it is the true branch of a ternary whose whole condition is one unnegated `<receiver>.IsOk()`: the code before it (the two code lines above joined with this line) must end in an expression boundary, the receiver, `.IsOk()` and `?`. A negated or compound condition (`!c.IsOk()`, `a.IsOk() || c.IsOk()`), an unrelated `IsOk()` check, ternary, comment text (including a multi-line `/* … */` block) or a valid fallback on a previous line never exempts a collapse.
+
+- **S5:**
+  - The first implementation pass did not compile: it used C++20 designated initializers and a `KeyedLookupCache` API that does not exist. It was reworked against the real API before review.
+  - `PickStatusComboOptions` treats an empty live set as authoritative, so the combo lists only the current status. The Step 7 text would fall back to every catalog status, which would offer moves the tracker just said are invalid.
+  - `EnsureIssueTransitionsLoaded` catches an exception from the launch (e.g. `std::thread` resource exhaustion) and records a failure, so the entry backs off instead of staying in flight. With the test fake's inline runner, the scripted throwing fetch is caught there too, so that case asserts `CHECK_NOTHROW` plus a recorded failure instead of `CHECK_THROWS`.
+  - `tests/support/JiraFakeTrackerFixture.cpp` is outside the S5 file table. Its scripted `transitions` now also turn on `SupportsIssueTransitions()`, as `JiraClient` does; otherwise the bucket-E test could never reach the service.
+  - `TicketFieldEditor.cpp` does not include `DataFreshnessCue.h`. The status cue is its own static line (Step 11's `DrawStatusComboCue`), so the header would be unused.
+  - The plan's `LookupCacheSqlite.test.cpp` is split along the repo's cache-test convention (CodeRabbit review on #2249). The in-memory cases are in `LocalCacheManagerLookup.test.cpp`, registered in both lists; `SmatchetTsanTests` already links SQLite. The two file-backed cases (restart persistence, an old file gaining the table) are in `LocalCacheManagerLookupPersist.test.cpp`, which states why it needs a file and, like the other file-backed `LocalCacheManager*` suites, runs only in `SmatchetTests`. The three `status.cue.*` strings sit after the `freshness.*` group, which itself follows `comments.fetch_failed`.
+  - The bucket-E test waits for the probe to report each connectivity state (`RequestTrackerProbeNow` each frame, up to 600 frames) and for the live fetch (up to 300 frames) instead of fixed yields, and leaves the app online at the end.
 
 ## Verification (actual)
 

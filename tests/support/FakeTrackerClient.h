@@ -445,6 +445,8 @@ class FakeTrackerClient : public ITrackerBackend,
             TrackerErrorInvalidRequest("FetchIssueTransitions not scripted"));
     }
 
+    bool SupportsIssueTransitions() const override { return supportsIssueTransitions_; }
+
     Result<std::vector<TrackerIssueComment>, TrackerError> FetchIssueComments(const std::string& issueKey) override {
         if (NetworkDown()) {
             return Result<std::vector<TrackerIssueComment>, TrackerError>::Err(network_->MakeError());
@@ -768,6 +770,7 @@ class FakeTrackerClient : public ITrackerBackend,
     }
     void SetIssueTransitionsError(TrackerError error) { issueTransitionsError_ = std::move(error); }
     void SetIssueTransitionsThrows(bool throws) { issueTransitionsThrows_ = throws; }
+    void SetSupportsIssueTransitions(bool on) { supportsIssueTransitions_ = on; }
 
     std::size_t FetchIssueCommentsCalls() const { return fetchIssueCommentsCalls_; }
     void SetIssueComments(const std::string& issueKey, std::vector<TrackerIssueComment> comments) {
@@ -921,6 +924,7 @@ class FakeTrackerClient : public ITrackerBackend,
     std::unordered_map<std::string, std::vector<TrackerFieldOption>> issueTransitionsByIssueId_;
     TrackerError issueTransitionsError_;
     bool issueTransitionsThrows_ = false;
+    bool supportsIssueTransitions_ = false;
     std::size_t fetchIssueTransitionsCalls_ = 0;
 
     // FetchIssueComments (Pillar 6)

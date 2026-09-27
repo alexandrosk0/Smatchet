@@ -45,4 +45,7 @@ class ITrackerFieldCatalog {
         return Result<std::vector<TrackerFieldOption>, TrackerError>::Err(
             TrackerErrorInvalidRequest("FetchIssueTransitions is not supported by this backend."));
     }
+
+    /// True when FetchIssueTransitions is implemented; callers skip the request (and its log) otherwise.
+    virtual bool SupportsIssueTransitions() const { return false; }
 };

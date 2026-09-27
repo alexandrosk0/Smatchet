@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "CachedTicketTypes.h"
+#include "ILookupCache.h"
 #include "ISyncCache.h"
 #include "OfflineQueueReplayPolicy.h"
 
@@ -29,7 +30,7 @@ namespace OfflineFieldEditQueue {
 constexpr int kMaxReplayAttempts = OfflineQueueReplayPolicy::kMaxReplayAttempts;
 }
 
-class LocalCacheManager : public ISyncCache {
+class LocalCacheManager : public ISyncCache, public ILookupCache {
   public:
     explicit LocalCacheManager(const std::string& dbPath);
 
@@ -131,6 +132,14 @@ class LocalCacheManager : public ISyncCache {
     std::vector<DeadPendingFieldEdit> LoadDeadPendingFieldEdits() override;
     void DeleteDeadPendingFieldEdit(std::int64_t deadId) override;
 
+    // ILookupCache (LocalCacheManager_Lookup.cpp): offline read-side lookups, worker threads only.
+    bool UpsertLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey,
+                      const std::string& payloadJson) override;
+    bool TryGetLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey,
+                      LookupCacheRow& out) override;
+    std::vector<LookupCacheRow> LoadLookups(const std::string& backendKey, const std::string& kind) override;
+    bool DeleteLookup(const std::string& backendKey, const std::string& kind, const std::string& cacheKey) override;
+
 #if defined(SMATCHET_WITH_AI)
     // ---------------- AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity) ----------------
     // All writes routed through `smatchet::ai::chat_persist` worker so the UI thread
@@ -163,6 +172,8 @@ class LocalCacheManager : public ISyncCache {
     /// Create/upgrade every cache table (additive-only schema). Re-runnable on a fresh
     /// file — the ctor calls it after quarantining + reopening an unreadable cache.
     void InitSchema();
+    /// Create the lookup_cache table (Pillar 6 offline reads); called from InitSchema.
+    void InitLookupCacheSchema_();
     /// Recover from a genuinely-corrupt cache file (ctor caught SQLITE_NOTADB / SQLITE_CORRUPT
     /// from InitSchema): release the handle, quarantine the bad file + its WAL sidecars to
     /// `<db>.corrupt-<ts>`, reopen a fresh DB on the same path, and re-init. A throw here is an
