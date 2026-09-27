@@ -3,6 +3,8 @@
 
 #include "MarkdownConvert.h"
 #include "OfflineQueueService.h"
+#include "PendingActionPolicyPure.h"
+#include "Sync/PendingActionQueueService.h"
 #include "TextMerge.h"
 #include "TrackerFieldPayload.h"
 
@@ -13,6 +15,7 @@
 #include <cstring>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -289,4 +292,68 @@ void AppController::TickOfflineFieldEdits() {
     if (offlineQueue_) {
         offlineQueue_->TickOfflineFieldEdits();
     }
+}
+
+void AppController::TickPendingActions() {
+    if (pendingActions_) {
+        pendingActions_->Tick();
+    }
+}
+
+PendingActionSubmitResult AppController::SubmitOrQueueComment(const std::string& issueKey, const std::string& body) {
+    if (!pendingActions_) {
+        PendingActionSubmitResult notReady;
+        notReady.Error = "Smatchet is still starting; try again in a moment.";
+        return notReady;
+    }
+    // The queued time anchors the dedupe check if a send is interrupted (PendingActionPolicyPure.h).
+    const std::int64_t nowSec =
+        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return pendingActions_->SubmitOrQueue(PendingActionKind::CommentAdd, issueKey,
+                                          smatchet::pendingaction::BuildCommentActionPayload(body, nowSec),
+                                          GetLastTrackerConnectivityState());
+}
+
+std::shared_ptr<const PendingActionsSnapshot> AppController::GetPendingActionsSnapshot() const {
+    static const std::shared_ptr<const PendingActionsSnapshot> kEmpty = std::make_shared<PendingActionsSnapshot>();
+    return pendingActions_ ? pendingActions_->Snapshot() : kEmpty;
+}
+
+void AppController::DiscardPendingActions(const std::vector<std::int64_t>& ids) {
+    if (pendingActions_) {
+        pendingActions_->Discard(ids);
+    }
+}
+
+void AppController::RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) {
+    if (pendingActions_) {
+        pendingActions_->RestoreDead(originalIds);
+        pendingActions_->RestartReplayTimersNow(std::chrono::steady_clock::now());
+    }
+}
+
+void AppController::DeleteDeadPendingActions(const std::vector<std::int64_t>& deadIds) {
+    if (pendingActions_) {
+        pendingActions_->DeleteDead(deadIds);
+    }
+}
+
+void AppController::SendPendingActionAgain(std::int64_t id) {
+    if (pendingActions_) {
+        pendingActions_->SendAgain(id);
+    }
+}
+
+void AppController::RetryOfflineQueuesNow() {
+    // An explicit retry must not wait out a timer pushed forward during an outage.
+    const auto now = std::chrono::steady_clock::now();
+    if (offlineQueue_) {
+        offlineQueue_->RestartReplayTimersNow(now);
+    }
+    if (pendingActions_) {
+        pendingActions_->RestartReplayTimersNow(now);
+    }
+    TickOfflineCreates();
+    TickOfflineFieldEdits();
+    TickPendingActions();
 }

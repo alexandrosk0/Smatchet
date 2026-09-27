@@ -886,6 +886,7 @@ void SmatchetImGuiHost::TickApplicationWork() {
     DrainCommandQueue(kMaxCommandsPerHostTick);
     ImplData->App.TickOfflineCreates();
     ImplData->App.TickOfflineFieldEdits();
+    ImplData->App.TickPendingActions();
     ImplData->App.TickAllContexts(); // all live pane contexts (multi-grid Slice 3)
 }
 

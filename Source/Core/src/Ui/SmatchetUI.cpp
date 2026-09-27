@@ -558,6 +558,7 @@ void SmatchetUI::drawPerFrameTicksAndHandlers(AppController& app, UiDrawSession&
     // Drain the offline create queue opportunistically (rate-limited internally).
     app.TickOfflineCreates();
     app.TickOfflineFieldEdits();
+    app.TickPendingActions();
     d.cachedPendingFieldEditCount = static_cast<int>(app.GetPendingFieldEdits().size());
     app.TickAllContexts(); // all live pane contexts under one shared deadline (multi-grid Slice 3)
     if (!g_ui.attachmentPreviewCallbackRegistered) {

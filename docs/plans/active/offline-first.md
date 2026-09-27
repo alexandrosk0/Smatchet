@@ -2942,6 +2942,14 @@ This plan touches `Source/Core/`.
   - The load and post in-flight latches clear on every path. Posting toasts "Posting comment"; offline, Post is disabled and the draft is kept. The tooltip does not fetch while offline.
 - Tests: `CommentBlobFormatPure` (thread codec, caps, blob inverse), `LazyEnrichmentCarryForwardPure`, `SmatchetCommentsModalSeedPure` (both lists), `TicketSyncService` (carry-forward on both save paths), and the bucket-E test `OfflineFirst/Comments_OfflineShowsCachedThread`.
 
+### S8 — [#2257](https://github.com/alexandrosk0/Smatchet/pull/2257)
+- Shipped:
+  - `PendingActionQueueService` is one generic offline queue for tracker actions other than creates and field edits (comments now; worklogs and watch in S9). Rows are stored in the additive `pending_actions` / `pending_actions_dead` tables (`LocalCacheManager_PendingActions.cpp`).
+  - A comment posted while the tracker is unreachable is saved with no request. Online, it is sent; a failure the tracker may still have applied is saved as `ambiguous`. Replay looks up an interrupted comment on the tracker before sending it again (`PendingActionPolicyPure.h`), so it is posted at most once.
+  - Replay follows the field-edit queue's pattern: the same timers, backend-key filter and attempt cap, and an in-flight latch cleared on every path. A pass stops at the first transport failure.
+  - The UI reads only an in-memory snapshot published by workers, never SQLite. The comments modal lists this issue's queued and failed comments. The Offline Queue panel gets an "Other queued changes" table (discard, send again, retry, delete), and its "Retry now" restarts every queue's timers. The status bar counts queued comments.
+- Tests: `PendingActionPolicyPure`, `PendingActionQueueService` (fakes), `SyncCacheContract` (the queue API against the real cache and `FakeSyncCache`), `LocalCacheManagerPendingActionsPersist` (file-backed: restart, `sending` → `ambiguous`, old file gains the tables), and the bucket-E test `OfflineFirst/Comments_PostedOfflineReplays`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
@@ -2989,6 +2997,20 @@ This plan touches `Source/Core/`.
   - `tests/fixtures/jira_backend/offline-first.json` is outside the S7 file list. Its OFF-1 search row now carries a Jira `comment` field, as real Jira search rows always do. Without it, a resync would save OFF-1 with no comment count, the saved thread would not carry over, and the bucket-E test would depend on sync timing.
   - `TicketSyncService.test.cpp` gains a case for each save path: `ApplyIssueFetchPack`, and the streaming drain into both the cache and memory.
   - The bucket-E test opens the modal online first, so the live fetch saves the thread, and then offline. It closes the modal with Esc; the close is logged, not asserted, because the modal renders only from a focused grid pane.
+
+- **S8:**
+  - `PendingActionTypes.h` and `PendingActionPolicyPure.h` sit in `Source/Core/include/` (rank 0), not `Sync/`. The cache seam `ISyncCache` (Persistence, rank 2), the Sync service and the UI facet all include the types, and a Persistence header may not include a Sync header. The same placement as the create and field-edit queue rows in `CachedTicketTypes.h`.
+  - `EnqueuePendingAction` takes the initial `state`, so a send that may have landed is saved as `ambiguous` in one write. It reads the new id with `INSERT … RETURNING id`, not `last_insert_rowid()`, which another thread's insert on the shared connection could change.
+  - The dead table also keeps `state`, and `DeadPendingAction` holds the archived row as a whole `PendingActionRecord` (`Row`). A restore resumes from that state, so an interrupted comment is still checked on the tracker before it is resent; only the attempts start over. Archiving a missing row throws.
+  - Failure states come from `StateAfterFailedSend`: a rejection is final (archived), a rate limit stays `pending`, and any other retryable failure of a comment or worklog becomes `ambiguous`. A transport error cannot say whether the request was sent, so there is no separate "operation timeout" case; checking an ambiguous comment costs one comment fetch. Worklog and watch rows are archived as "cannot send" until S9 implements their dispatch.
+  - A replay pass stops at the first transport failure instead of spending an attempt on every row. Transport failures count toward the attempt cap, as they do for field edits.
+  - The UI goes through a new facet, `Interfaces/IAppPendingActions.h`. The snapshot accessor is `GetPendingActionsSnapshot()`, returning the queued and failed rows as one shared snapshot rather than a `PendingSnapshot()` vector.
+  - The panel toolbar button is renamed "Retry now" (it retries every queue). A failed row's restore button is "Retry".
+  - `comments.post_offline_hint` is kept and reworded ("your comment will be saved and posted when the tracker is reachable") instead of removed: offline, the box now says where a post goes.
+  - `SyncCacheContract.test.cpp` joins the `SmatchetTsanTests` list, so the queue contract runs on Linux against the real cache. The file-backed cases are `LocalCacheManagerPendingActionsPersist.test.cpp` (the repo's `*Persist` convention) rather than `PendingActionsSqlite.test.cpp`.
+  - The comments modal shows queued comments in every thread state, including while a load with nothing saved is running. When a queued comment leaves the queue without failing, the thread reloads to show the tracker's copy.
+  - A snapshot read from a cache that was replaced meanwhile (`RecreateLocalCacheDatabase`) is never published.
+  - `ISyncCache::TransitionPendingAction` is a compare-and-set on the stored row (CodeRabbit review on #2257). Replay claims each row with it (its loaded state → `sending`), so a comment discarded after a pass loaded its copy is never sent. "Send again" moves only a `needs_review` row back to `pending`, so an `ambiguous` comment is always looked up on the tracker before it is resent. No mutex is held across a pass: the check and the write are one SQL statement, and a request already in flight cannot be recalled anyway.
 
 ## Verification (actual)
 

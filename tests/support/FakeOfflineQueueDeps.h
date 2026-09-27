@@ -14,6 +14,7 @@
 
 #include "FakeTrackerClient.h"
 #include "IOfflineQueueDeps.h"
+#include "ITrackerCollaboration.h"
 #include "ITrackerIssueMutations.h"
 #include "ITrackerIssueReader.h"
 #include "IssueDraft.h"
@@ -80,6 +81,12 @@ class FakeOfflineQueueDeps : public IOfflineQueueDeps {
     /// `BackendImpl` mid-replay — the handle a worker captured must keep the old fake alive.
     std::shared_ptr<ITrackerIssueReader> ReaderShared() const override { return BackendImpl; }
     std::shared_ptr<ITrackerIssueMutations> MutationsShared() const override { return BackendImpl; }
+    /// Aliasing handle onto BackendImpl's collaboration role; null unless the fake enables it
+    /// (`EnableCollaboration(true)`), like a backend without comment support.
+    std::shared_ptr<ITrackerCollaboration> CollaborationShared() const override {
+        ITrackerCollaboration* collab = BackendImpl ? BackendImpl->Collaboration() : nullptr;
+        return collab ? std::shared_ptr<ITrackerCollaboration>(BackendImpl, collab) : nullptr;
+    }
     std::string CacheBackendKey() const override { return CacheBackendKeyImpl; }
     std::uint64_t BackendGeneration() const override { return BackendGenerationImpl; }
     const std::vector<TrackerField>& AvailableFields() const override { return Fields; }

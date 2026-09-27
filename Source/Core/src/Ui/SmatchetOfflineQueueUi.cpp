@@ -13,6 +13,7 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetUiSession.h"
 #include "SmatchetToast.h"
+#include "Ui/SmatchetOfflineQueueActionsUi.h"
 #include "StringUtil.h"
 
 #include "imgui.h"
@@ -765,11 +766,11 @@ static void DrawOfflineQueueToolbar(OfflineDrawCtx& ctx) {
         OnDiscardSelected(ctx);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Retry creates now##unifiedoff")) {
-        ctx.d.offlineQueuePanelStatus = "Triggering manual retry scan of pending Creates...";
+    if (ImGui::Button("Retry now##unifiedoff")) {
+        ctx.d.offlineQueuePanelStatus = "Retrying queued changes now...";
         ctx.d.offlineQueuePanelStatusHasClearDeadline = false;
-        ctx.app.TickOfflineCreates();
-        ctx.app.TickOfflineFieldEdits();
+        // Restarts every queue's replay timer first, so a retry works while an outage pushed them out.
+        ctx.app.RetryOfflineQueuesNow();
     }
     ImGui::SameLine();
     if (ImGui::Button("Clear failed rows##unifiedoff")) {
@@ -1439,7 +1440,7 @@ static void DrawOfflineDiscardConfirmModal(OfflineDrawCtx& ctx) {
 
 bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     const OfflineQueueData data = FetchOfflineQueueData(app);
-    if (data.total == 0) {
+    if (data.total == 0 && !SmatchetOfflineQueueActionsUi::HasRows(app)) {
         return false;
     }
 
@@ -1453,7 +1454,10 @@ bool DrawUnifiedOfflineQueuesPanel(AppController& app, UiDrawSession& d) {
     ImGui::PushID("unifiedOfflineQueues");
     DrawOfflineQueueHeader(ctx);
     DrawOfflineQueueToolbar(ctx);
-    DrawOfflineQueueTable(ctx);
+    if (!rows.empty()) {
+        DrawOfflineQueueTable(ctx);
+    }
+    SmatchetOfflineQueueActionsUi::Draw(app); // comments and other queued actions (pending_actions)
     HandleOfflineCopyShortcut(ctx);
     ImGui::PopID();
 

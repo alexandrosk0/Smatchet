@@ -340,6 +340,7 @@ void LocalCacheManager::InitSchema() {
             "value TEXT NOT NULL)");
     InitFieldEditQueueSchema(db);
     InitLookupCacheSchema_();
+    InitPendingActionsSchema_();
 #if defined(SMATCHET_WITH_AI)
     // AI chat persistence (Phase 3 of ai-chat-claude-desktop-parity). Additive
     // table — old DBs auto-upgrade on first open. `pinned` flag is part of the

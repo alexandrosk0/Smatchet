@@ -17,6 +17,7 @@
 #include "CachedTicketTypes.h"
 #include "Commands/Scenarios/UiTestScenario.h"
 #include "Config/ConfigManager.h"
+#include "PendingActionTypes.h"
 #include "FakeNetworkSwitch.h"
 #include "FakeTrackerClient.h"
 #include "SmatchetCommentsModalUi.h" // OpenCommentsModal + GetCommentsModalSnapshotForTests
@@ -364,11 +365,80 @@ static void RegisterOfflineFirstCommentsOfflineShowsCachedThread(ImGuiTestEngine
     };
 }
 
+// OfflineFirst/Comments_PostedOfflineReplays: a comment posted while the tracker is unreachable is
+// saved to the pending-action queue with no request, listed in the comments modal as waiting to sync,
+// and posted exactly once after reconnecting.
+static void RegisterOfflineFirstCommentsPostedOfflineReplays(ImGuiTestEngine* engine) {
+    ImGuiTest* t = IM_REGISTER_TEST(engine, "OfflineFirst", "Comments_PostedOfflineReplays");
+    t->TestFunc = [](ImGuiTestContext* ctx) {
+        if (!OfflineFirstFixtureActive(ctx)) {
+            return;
+        }
+        smatchet_tests::ScopedFakeNetworkReset reset;
+        BucketE::UiTestWriteScope writeScope; // the queue write must land: a rejected write would pass vacuously
+        AppController* app = SmatchetActiveUiTestAppController();
+        if (!app) {
+            IM_CHECK_NO_RET(app != nullptr);
+            return;
+        }
+        const std::shared_ptr<ITrackerBackend> backend = app->BackendShared();
+        auto* fake = dynamic_cast<smatchet_tests::FakeTrackerClient*>(backend.get());
+        IM_CHECK_NO_RET(fake != nullptr);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.empty());
+        if (!fake) {
+            return;
+        }
+
+        // Offline: posting saves the comment and sends nothing.
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::TransportDown);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::TransportDown));
+        smatchet_tests::GlobalFakeNetwork().ResetCounters();
+        const std::size_t postsBefore = fake->AddCommentCalls().size();
+        const PendingActionSubmitResult queued = app->SubmitOrQueueComment("OFF-1", "offline hello");
+        IM_CHECK_NO_RET(queued.K == PendingActionSubmitResult::Kind::Queued);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.size() == 1);
+        IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore);
+        IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
+
+        // The comments modal lists it as waiting to sync.
+        OpenCommentsModal(*app, "OFF-1");
+        IM_CHECK_NO_RET(GetCommentsModalSnapshotForTests().PendingCommentCount == 1);
+        IM_CHECK_NO_RET(WaitForCommentsLoad(ctx));
+
+        // Back online: the queue drains and the comment is posted exactly once.
+        smatchet_tests::GlobalFakeNetwork().Set(smatchet_tests::FakeNetworkMode::Up);
+        IM_CHECK_NO_RET(WaitForConnectivity(ctx, *app, TrackerConnectivityState::AuthenticatedReachable));
+        app->RetryOfflineQueuesNow();
+        const bool drained =
+            YieldUntil(ctx, 600, [app]() { return app->GetPendingActionsSnapshot()->Pending.empty(); });
+        if (!drained) {
+            const auto snap = app->GetPendingActionsSnapshot();
+            const PendingActionRecord* row = snap->Pending.empty() ? nullptr : &snap->Pending.front();
+            ctx->LogError("queued comment did not replay: connectivity=%d state='%s' attempts=%d last_error='%s'",
+                          static_cast<int>(app->GetLastTrackerConnectivityState()), row ? row->State.c_str() : "",
+                          row ? row->Attempts : -1, row ? row->LastError.c_str() : "");
+            if (row) {
+                app->DiscardPendingActions({row->Id}); // never leak the row into a retry or a later test
+            }
+        }
+        IM_CHECK_NO_RET(drained);
+        IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
+        IM_CHECK_NO_RET(fake->AddCommentCalls().size() == postsBefore + 1);
+        if (fake->AddCommentCalls().size() > postsBefore) {
+            IM_CHECK_NO_RET(fake->AddCommentCalls().back().IssueKey == "OFF-1");
+            IM_CHECK_NO_RET(fake->AddCommentCalls().back().Body == "offline hello");
+        }
+        CloseCommentsModalWithEscape(ctx);
+    };
+}
+
 extern "C" void SmatchetRegisterOfflineFirstTests(ImGuiTestEngine* engine) {
     RegisterOfflineFirstCatalogSurvivesTransportDown(engine);
     RegisterOfflineFirstStatusComboOfflineShowsOptions(engine);
     RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(engine);
     RegisterOfflineFirstCommentsOfflineShowsCachedThread(engine);
+    RegisterOfflineFirstCommentsPostedOfflineReplays(engine);
 }
 
 #endif // SMATCHET_BUILD_UI_TESTS

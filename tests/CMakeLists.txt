@@ -172,8 +172,12 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         # lookup_cache (Pillar 6 offline lookups), in-memory cases — LocalCacheManager_Lookup.cpp
         # linked below.
         Core/LocalCacheManagerLookup.test.cpp
+        # ISyncCache dual-impl contract (real LocalCacheManager + FakeSyncCache), incl. the pending-action
+        # queue — runs here too so the Linux lane covers the real SQLite half.
+        Core/SyncCacheContract.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/IssueDraft.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
         # Logger.cpp now routes the file sink through RedactLogLine (audit
@@ -319,9 +323,14 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     Both are real ThreadSanitizer surfaces. All TUs cpr/ImGui/GL-free; the only new
         #     ThirdParty link is md4c (pure stateless C Markdown parser — no threads).
         Core/OfflineQueueServiceRuntime.test.cpp
+        Core/PendingActionQueueService.test.cpp
+        Core/PendingActionPolicyPure.test.cpp
         Core/OfflineQueueBackendSwap.test.cpp
         Core/ConfigSaveConcurrency.test.cpp
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
+        # Pending-action queue (Pillar 6 offline comments): service + its pure policy.
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/PendingActionQueueService.cpp"
+        "${CMAKE_SOURCE_DIR}/Source/Core/src/PendingActionPolicyPure.cpp"
         # OfflineQueueService link closure: the audit pair (BackendAuditTrail +
         # FieldEditAuditSource), 3-way rich-text merge (TextMerge), markdown<->ADF/HTML for
         # field-edit replay (MarkdownConvert -> md4c), and create-replay through the live
@@ -736,6 +745,7 @@ add_executable(SmatchetTests
     Core/LocalCacheTicketsV2Migration.test.cpp
     Core/LocalCacheManagerLookup.test.cpp
     Core/LocalCacheManagerLookupPersist.test.cpp
+    Core/LocalCacheManagerPendingActionsPersist.test.cpp
     # Slice G Phase 1 (testing-surface.md §6 Gap 6, plan slice-g-db-corruption.md) —
     # characterizes today's corrupt/truncated cache-file-on-open behaviour: the ctor's
     # schema-init runs OUTSIDE the WAL-pragma try/catch, so a non-SQLite/truncated file throws
@@ -904,6 +914,8 @@ add_executable(SmatchetTests
     # production .cpp beyond what TicketSyncService.test.cpp already links.
     Core/TrackerBackendFactoryConfig.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
+    Core/PendingActionQueueService.test.cpp
+    Core/PendingActionPolicyPure.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
     # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only
     # policy (OfflineFieldConflictPolicy.h), zero banned includes; no extra .cpp link.
@@ -1376,6 +1388,7 @@ add_executable(SmatchetTests
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Ui/AdfToMarkdown.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_Lookup.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/LocalCacheManager_PendingActions.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/BackendAuditTrail.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Persistence/FieldEditAuditSource.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Logger.cpp"
@@ -1447,6 +1460,8 @@ add_executable(SmatchetTests
     Core/TrackerRedirectNoFollow.test.cpp
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/NetworkUsageTracker.cpp"
     "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/OfflineQueueService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/Sync/PendingActionQueueService.cpp"
+    "${CMAKE_SOURCE_DIR}/Source/Core/src/PendingActionPolicyPure.cpp"
     # ticket-change-monitor S1a (docs/plans/ticket-change-monitor.md) — three
     # backend-agnostic pure helpers behind the per-pane change monitor, each unit-tested
     # bucket-A with no backend / pane / toast manager. CachedTicketTypes.h-only (no
@@ -2010,6 +2025,7 @@ endif()
 set(_smatchet_pure_sync_test_files
     Core/BackendSwitchRace1081.test.cpp
     Core/OfflineQueueServiceRuntime.test.cpp
+    Core/PendingActionQueueService.test.cpp
     Core/OfflineQueueTwoBackendReplay.test.cpp
     Core/OfflineQueueBackendSwap.test.cpp
     Core/OfflineQueueBackendKey.test.cpp

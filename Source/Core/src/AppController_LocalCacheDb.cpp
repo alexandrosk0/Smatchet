@@ -18,6 +18,7 @@
 // member unique_ptrs that AppController.h only forward-declares, so the pointees must be complete
 // here for the destructor and method calls.
 #include "OfflineQueueService.h"
+#include "Sync/PendingActionQueueService.h"
 #include "TicketSyncService.h"
 
 #include <ghc/filesystem.hpp>
@@ -152,6 +153,9 @@ VoidResult AppController::RecreateLocalCacheDatabase() {
     ClearLastTrackerTicketSyncWarning();
     if (offlineQueue_) {
         offlineQueue_->legacyPendingStartupBanner_.clear();
+    }
+    if (pendingActions_) {
+        pendingActions_->RequestSnapshotRefresh(); // the queue view must come from the new file
     }
     RefreshLocalData();
     return VoidOk();

@@ -61,6 +61,7 @@
 
 #include "LuaAutomationHost.h"
 #include "OfflineQueueService.h"
+#include "Sync/PendingActionQueueService.h"
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
 #include "IssueTransitionsCacheService.h"
@@ -210,6 +211,11 @@ void AppController::WireCoreServices() {
     // `offlineQueue_->legacyPendingStartupBanner_` (item 12 extraction).
     if (!offlineQueue_) {
         offlineQueue_ = std::make_unique<OfflineQueueService>(*depsAdapter_);
+    }
+    // PendingActionQueueService — comments (later worklogs and watch) saved while offline; ticked
+    // next to the offline queue and driven by the same replay-timer calls (GridContextDepsAdapter).
+    if (!pendingActions_) {
+        pendingActions_ = std::make_unique<PendingActionQueueService>(*depsAdapter_);
     }
     // IssueTransitionsCacheService — caches per-issue available transitions for the status field combo.
     // Constructed before FieldEditPipelineService (which holds a reference to it and calls

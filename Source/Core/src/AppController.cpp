@@ -88,6 +88,7 @@
 #include "LuaAutomationHost.h"
 
 #include "OfflineQueueService.h"
+#include "Sync/PendingActionQueueService.h"
 
 #include "EditMetaCacheService.h"
 #include "FieldEditPipelineService.h"
