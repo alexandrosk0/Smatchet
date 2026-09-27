@@ -325,6 +325,7 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         Core/OfflineQueueServiceRuntime.test.cpp
         Core/PendingActionQueueService.test.cpp
         Core/PendingActionPolicyPure.test.cpp
+        Core/PendingActionSubmitAsync.test.cpp
         Core/AnnotateContextCommentPure.test.cpp
         Core/OfflineQueueBackendSwap.test.cpp
         Core/ConfigSaveConcurrency.test.cpp
@@ -918,6 +919,7 @@ add_executable(SmatchetTests
     Core/OfflineQueueServiceRuntime.test.cpp
     Core/PendingActionQueueService.test.cpp
     Core/PendingActionPolicyPure.test.cpp
+    Core/PendingActionSubmitAsync.test.cpp
     Core/AnnotateContextCommentPure.test.cpp
     Core/OfflineFieldEditMerge.test.cpp
     # ADR-0016 — pure scalar offline-conflict classifier (ServerMovedFromBase). Header-only

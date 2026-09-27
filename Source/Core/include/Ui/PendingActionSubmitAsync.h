@@ -22,13 +22,17 @@ template <typename SubmitFn, typename ApplyFn>
 void SubmitPendingActionAsync(IAppThreading& threading, SubmitFn submit, ApplyFn apply) {
     IAppThreading* threadingPtr = &threading;
     threading.LaunchBackgroundTask([threadingPtr, submit, apply]() {
+        // A pointer, not a nested reference capture of `apply`: MSVC mistypes a reference capture of a
+        // by-copy capture inside a const call operator (C2440) where Clang and GCC accept it.
+        const ApplyFn* const applyPtr = &apply;
         bool posted = false;
-        ScopeExit reportThrow([threadingPtr, &apply, &posted]() {
+        ScopeExit reportThrow([threadingPtr, applyPtr, &posted]() {
             if (posted) {
                 return;
             }
             try {
-                threadingPtr->PostToMainThread([apply]() { apply(PendingActionSubmitResult()); });
+                threadingPtr->PostToMainThread(
+                    [applyFailed = *applyPtr]() { applyFailed(PendingActionSubmitResult()); });
             } catch (const std::exception& ex) {
                 LOG_ERROR("SubmitPendingActionAsync: could not report a failed submit: %s", ex.what());
             } catch (...) {
