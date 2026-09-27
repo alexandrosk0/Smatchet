@@ -2934,6 +2934,14 @@ This plan touches `Source/Core/`.
   - `JiraFakeTrackerFixture` answers keyed fetches.
 - Tests: `FieldEditPipelineService` (`CommitOrQueue` matrix), `EditMetaCacheService` (offline, backoff, failed launch), `LinearIssueMutationHttp` (Transport / 503 / 401), `JiraFakeTrackerFixture` (keyed fetch), and the bucket-E test `OfflineFirst/StatusEdit_OfflineQueuesThenReplays`.
 
+### S7 — [#2255](https://github.com/alexandrosk0/Smatchet/pull/2255)
+- Shipped:
+  - The comments modal opens on the thread saved with the ticket and marks it with a `DataFreshnessCue`. It skips the network while offline and offers Retry after a failed load; "Loading comments..." shows only when nothing is saved.
+  - A structured thread (`SerializeCommentThread`, newest 50, 64 KiB cap) is stored in `fieldRichValues["comment_thread"]` by the Jira mapper and by `UpdateCachedCommentsFromThread`. `ParseCommentBlob` turns an older row's tooltip blob into a fallback summary.
+  - `TicketSyncService` keeps the saved thread and blob over a sync row that brings none while the comment count is unchanged (`LazyEnrichmentCarryForwardPure.h`).
+  - The load and post in-flight latches clear on every path. Posting toasts "Posting comment"; offline, Post is disabled and the draft is kept. The tooltip does not fetch while offline.
+- Tests: `CommentBlobFormatPure` (thread codec, caps, blob inverse), `LazyEnrichmentCarryForwardPure`, `SmatchetCommentsModalSeedPure` (both lists), `TicketSyncService` (carry-forward on both save paths), and the bucket-E test `OfflineFirst/Comments_OfflineShowsCachedThread`.
+
 ## Deviations from plan
 
 - **S2 (CodeRabbit review on #2240):** these override the S2 code blocks above; S5+ read the headers, not the plan.
