@@ -880,9 +880,6 @@ class AppController : public IAppThreading,
     /** Permanently remove active offline-queue rows by `pending_creates.id`. */
     PendingQueueDeleteSummary DeletePendingCreates(const std::vector<std::int64_t>& pendingIds);
 
-    /** Safe field families for offline-queued field edits (transport failures only). */
-    static bool FieldEditSupportsOfflineQueue(const TrackerField& field);
-
     /**
      * Persist a tracker field payload for later replay when connectivity returns.
      * @param fieldsPayloadJson JSON object map (field id -> backend-specific value).
@@ -974,31 +971,12 @@ class AppController : public IAppThreading,
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
     // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
-    // decomposition Phase 2). Signatures preserved verbatim from the pre-extraction surface
-    // (SubmitFieldEdit's especially — the Lua forwarder + BuiltinCommands depend on it).
-    // ApplyFieldUpdateWithEditMetaRetry + SubmitSprint/TimetrackingFieldEditNetworkOnly had no
-    // external callers and are now service-private (not re-exposed here).
+    // decomposition Phase 2). SubmitFieldEdit's signature is preserved verbatim from the
+    // pre-extraction surface (the Lua forwarder + BuiltinCommands depend on it). The grid commits
+    // through CommitOrQueueFieldEdit; the network-only / offline-prepare / queueability steps it
+    // composes are service-internal (not re-exposed here).
     VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
                                const std::vector<std::string>& rawValues) override;
-    // clang-format off
-    // SMATCHET_DEVIATION(rule=duplication; reason=these field-edit delegator declarations are BY DESIGN a verbatim signature mirror of FieldEditPipelineService's SubmitFieldEdit/SubmitFieldEditNetworkOnly (the god-object decomposition Phase 2 forwarders — "Signature preserved verbatim" on both sides); the pre-existing structural clone only crossed the delta-scanner threshold because adding `override` to SubmitFieldEdit (fan-in Phase 5) re-hashed the token window; owner=orchestrator; revisit=if the delegators are ever removed or the service signatures diverge)
-    // clang-format on
-    FieldEditResult SubmitFieldEditNetworkOnly(const std::string& issueId, const TrackerField& field,
-                                               const std::vector<std::string>& rawValues,
-                                               const std::string& originalEstimateSnapshot,
-                                               const std::string& remainingEstimateSnapshot,
-                                               const std::string& issueTypeKeySnapshot);
-
-    /**
-     * Build the fields payload + optimistic display map for an offline-queued edit without any
-     * network request (no update, no editmeta fetch).
-     */
-    bool TryPrepareOfflineFieldEdit(const std::string& issueId, const TrackerField& field,
-                                    const std::vector<std::string>& rawValues,
-                                    const std::string& originalEstimateSnapshot,
-                                    const std::string& remainingEstimateSnapshot,
-                                    const std::string& issueTypeKeySnapshot, FieldEditResult& outResult,
-                                    std::string& outFieldsPayloadJson, std::string& outError);
     /// Worker-safe commit-or-queue seam (FieldEditPipelineService::CommitOrQueue, Quality Pillar 6):
     /// queue-first while the tracker is offline, else network-first with a queue fallback. The types
     /// are only forward-declared here; callers include FieldEditPipelineService.h.
