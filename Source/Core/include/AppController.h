@@ -908,6 +908,9 @@ class AppController : public IAppThreading,
     /// Add the current user as a watcher of `issueKey`.
     PendingActionSubmitResult SubmitOrQueueWatch(const std::string& issueKey);
     std::shared_ptr<const PendingActionsSnapshot> GetPendingActionsSnapshot() const override;
+    /// True while an action of `kind` for `issueKey` on the focused backend waits in the offline queue,
+    /// including one saved in an earlier session. Reads the in-memory snapshot only (UI thread, per frame).
+    bool IsPendingActionQueued(PendingActionKind kind, const std::string& issueKey) const;
     void DiscardPendingActions(const std::vector<std::int64_t>& ids) override;
     void RestoreDeadPendingActions(const std::vector<std::int64_t>& originalIds) override;
     void DeleteDeadPendingActions(const std::vector<std::int64_t>& deadIds) override;

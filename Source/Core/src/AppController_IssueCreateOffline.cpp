@@ -352,6 +352,18 @@ std::shared_ptr<const PendingActionsSnapshot> AppController::GetPendingActionsSn
     return pendingActions_ ? pendingActions_->Snapshot() : kEmpty;
 }
 
+bool AppController::IsPendingActionQueued(PendingActionKind kind, const std::string& issueKey) const {
+    const std::shared_ptr<const PendingActionsSnapshot> snap = GetPendingActionsSnapshot();
+    if (snap->Pending.empty()) {
+        return false; // the common case: no backend-key copy per frame
+    }
+    const std::string backendKey = focusedContext().CacheBackendKeyCopy();
+    const std::string wire = PendingActionKindWire(kind);
+    return std::any_of(snap->Pending.begin(), snap->Pending.end(), [&](const PendingActionRecord& row) {
+        return row.BackendKey == backendKey && row.Kind == wire && row.IssueKey == issueKey;
+    });
+}
+
 void AppController::DiscardPendingActions(const std::vector<std::int64_t>& ids) {
     if (pendingActions_) {
         pendingActions_->Discard(ids);

@@ -186,13 +186,15 @@ QueuedWatchState ClassifyQueuedWatch(const AppController& app, std::int64_t queu
     return QueuedWatchState::Gone;
 }
 
-// True while this issue's watch is still waiting in the offline queue. Once it leaves the queue the
-// entry is dropped so the Watch button can show again: a failed watch can be retried, and after any
-// other exit the issue is re-read so its watchers field says whether the watch was applied.
+// True while this issue's watch is still waiting in the offline queue. Once this session's watch leaves
+// the queue its entry is dropped so the Watch button can show again: a failed watch can be retried, and
+// after any other exit the issue is re-read so its watchers field says whether the watch was applied.
+// A watch queued in an earlier session (or restored from the failed list) counts too, so a restart never
+// lets the same watch be queued twice.
 bool WatchQueuedForIssue(AppController& app, const std::string& issueKey, TrackerGridFieldAsyncState& async) {
     const auto queued = async.watchSelfQueuedIds.find(issueKey);
     if (queued == async.watchSelfQueuedIds.end()) {
-        return false;
+        return app.IsPendingActionQueued(PendingActionKind::WatchAdd, issueKey);
     }
     const QueuedWatchState state = ClassifyQueuedWatch(app, queued->second);
     if (state == QueuedWatchState::Queued) {

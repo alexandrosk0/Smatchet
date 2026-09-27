@@ -472,6 +472,9 @@ static void RegisterOfflineFirstWorklogOfflineQueues(ImGuiTestEngine* engine) {
         const PendingActionSubmitResult watch = app->SubmitOrQueueWatch("OFF-1");
         IM_CHECK_NO_RET(watch.K == PendingActionSubmitResult::Kind::Queued);
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Pending.size() == 2);
+        // The grid's Watch button reads this: it hides while the queued watch waits, whichever session queued it.
+        IM_CHECK_NO_RET(app->IsPendingActionQueued(PendingActionKind::WatchAdd, "OFF-1"));
+        IM_CHECK_NO_RET(!app->IsPendingActionQueued(PendingActionKind::WatchAdd, "OFF-2"));
         IM_CHECK_NO_RET(fake->AddWorklogCalls().size() == worklogsBefore);
         IM_CHECK_NO_RET(fake->AddWatcherCalls().size() == watchesBefore);
         IM_CHECK_NO_RET(smatchet_tests::GlobalFakeNetwork().CallsWhileDown() == 0);
@@ -496,6 +499,7 @@ static void RegisterOfflineFirstWorklogOfflineQueues(ImGuiTestEngine* engine) {
         }
         IM_CHECK_NO_RET(drained);
         IM_CHECK_NO_RET(app->GetPendingActionsSnapshot()->Dead.empty());
+        IM_CHECK_NO_RET(!app->IsPendingActionQueued(PendingActionKind::WatchAdd, "OFF-1"));
         IM_CHECK_NO_RET(fake->AddWorklogCalls().size() == worklogsBefore + 1);
         if (fake->AddWorklogCalls().size() > worklogsBefore) {
             IM_CHECK_NO_RET(fake->AddWorklogCalls().back().IssueKey == "OFF-1");
