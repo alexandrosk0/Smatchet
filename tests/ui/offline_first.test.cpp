@@ -254,16 +254,26 @@ static void RegisterOfflineFirstStatusEditOfflineQueuesThenReplays(ImGuiTestEngi
         if (!drained) {
             const std::vector<PendingFieldEditRecord> rows = app->GetPendingFieldEdits();
             const PendingFieldEditRecord* row = FindQueuedEdit(rows, "OFF-1", "status");
-            ctx->LogError("queued status edit did not replay: connectivity=%d attempts=%d conflict=%d last_error='%s'",
-                          static_cast<int>(app->GetLastTrackerConnectivityState()), row ? row->Attempts : -1,
-                          row && row->HasMergeConflict ? 1 : 0, row ? row->LastError.c_str() : "");
+            ctx->LogError("queued status edit did not replay: connectivity=%d read_only=%d backend_key='%s' "
+                          "attempts=%d conflict=%d last_error='%s'",
+                          static_cast<int>(app->GetLastTrackerConnectivityState()),
+                          ConfigManager::Load().ReadOnlyMode ? 1 : 0, row ? row->BackendKey.c_str() : "",
+                          row ? row->Attempts : -1, row && row->HasMergeConflict ? 1 : 0,
+                          row ? row->LastError.c_str() : "");
+            if (row) {
+                app->DeletePendingFieldEdits({row->Id}); // never leak the row into a retry or a later test
+            }
         }
         IM_CHECK_NO_RET(drained);
         IM_CHECK_NO_RET(app->GetDeadPendingFieldEdits().empty());
         // The row is deleted only after UpdateIssueFields returned, so this read sees the call.
         IM_CHECK_NO_RET(fake->UpdateIssueFieldsCallCount() == updatesBefore + 1);
         if (fake->UpdateIssueFieldsCallCount() > updatesBefore) {
-            IM_CHECK_NO_RET(fake->UpdateIssueFieldsCalls().back().IssueId == "OFF-1");
+            // The fake's BuildFieldPayload encodes the edit as {"values": [...]}: the replay must send "2".
+            const smatchet_tests::UpdateIssueFieldsCall& call = fake->UpdateIssueFieldsCalls().back();
+            IM_CHECK_NO_RET(call.IssueId == "OFF-1");
+            IM_CHECK_NO_RET(call.Fields.is_object() && call.Fields.contains("values"));
+            IM_CHECK_NO_RET(call.Fields.value("values", nlohmann::json::array()) == nlohmann::json::array({"2"}));
         }
     };
 }
