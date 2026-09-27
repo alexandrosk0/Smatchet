@@ -2950,7 +2950,7 @@ This plan touches `Source/Core/`.
   - The UI reads only an in-memory snapshot published by workers, never SQLite. The comments modal lists this issue's queued and failed comments. The Offline Queue panel gets an "Other queued changes" table (discard, send again, retry, delete), and its "Retry now" restarts every queue's timers. The status bar counts queued comments.
 - Tests: `PendingActionPolicyPure`, `PendingActionQueueService` (fakes), `SyncCacheContract` (the queue API against the real cache and `FakeSyncCache`), `LocalCacheManagerPendingActionsPersist` (file-backed: restart, `sending` → `ambiguous`, old file gains the tables), and the bucket-E test `OfflineFirst/Comments_PostedOfflineReplays`.
 
-### S9 — (PR link added after creation)
+### S9 — [#2259](https://github.com/alexandrosk0/Smatchet/pull/2259)
 - Shipped:
   - Every tracker comment, worklog and watch now goes through `PendingActionQueueService`: sent now, or saved and replayed on reconnect. The four direct `Collaboration()->Add*` writes left `AppController`, whose `SubmitOrQueueComment` / `SubmitOrQueueWorklog` / `SubmitOrQueueWatch` report Sent / Queued / Failed.
   - The worklog dialog moved to `TicketFieldEditor_Worklog.cpp` (a verbatim move in its own commit). Save queues offline with a "Worklog queued offline" toast. A queued worklog whose send may have landed waits for review and is never resent blind.
