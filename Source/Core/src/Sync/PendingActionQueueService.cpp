@@ -4,6 +4,7 @@
 #include "ConfigManager.h"
 #include "IOfflineQueueDeps.h"
 #include "ISyncCache.h"
+#include "ITrackerBackend.h"
 #include "ITrackerCollaboration.h"
 #include "Logger.h"
 #include "OfflineFirstPure.h"
@@ -90,15 +91,16 @@ PendingActionQueueService::SubmitOutcome PendingActionQueueService::SubmitOrQueu
         return out;
     }
     // Checked before queueing too: replay needs the same interface, so a row queued for a backend without it
-    // would wait forever.
-    if (!target.Collab) {
+    // would wait forever. `target.Backend` keeps the interface alive for the whole call.
+    ITrackerCollaboration* const collab = target.Backend ? target.Backend->Collaboration() : nullptr;
+    if (collab == nullptr) {
         out.Error = "Tracker backend does not support collaboration features.";
         return out;
     }
     if (route == smatchet::offline::WriteRoute::QueueImmediately) {
         return Enqueue(kind, target.BackendKey, issueKey, payloadJson, PendingActionState::kPending);
     }
-    const TrackerError err = Dispatch(*target.Collab, cfg, kind, issueKey, payloadJson);
+    const TrackerError err = Dispatch(*collab, cfg, kind, issueKey, payloadJson);
     if (err.IsOk()) {
         out.K = SubmitOutcome::Kind::Sent;
         deps_.RequestDeferredLiveTrackerBackendSuccessNotify();

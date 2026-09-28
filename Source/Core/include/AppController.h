@@ -1556,9 +1556,15 @@ class AppController : public IAppThreading,
     /// configured, keeping resolution and enumeration fail-closed.
     std::string LuaScriptsRootDirectory() const;
 
-    /// Background-task body of PrefetchIssueTicketsForKeys: fetch the keys off the UI thread, clear
-    /// their in-flight markers, persist results to cache, and refresh local data. Runs off-thread.
-    void FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch);
+    /// Prefetch `issueKeys` from one latched backend into its cache namespace (not the focused pane's):
+    /// e.g. a re-read after a write sent to a PendingActionTarget. Skips keys already in flight.
+    void PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend, const std::string& cacheBackendKey,
+                                  const std::vector<std::string>& issueKeys);
+    /// Background-task body of PrefetchIssueTicketsFrom: fetch the keys off the UI thread, clear
+    /// their in-flight markers, persist results under `cacheBackendKey`, and refresh local data.
+    void FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch,
+                                        const std::shared_ptr<ITrackerBackend>& backend,
+                                        const std::string& cacheBackendKey);
 
     /// Memoised result of `ResolveFieldIconAssetPath` keyed on the raw path-or-url input.
     /// Resolution does 2-3 `fs::weakly_canonical` syscalls on identical inputs hot-path-per-frame

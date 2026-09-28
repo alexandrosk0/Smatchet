@@ -990,6 +990,13 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
             RunAnnotateCommentWrite(
                 app,
                 [appPtr, target, capturedIssueKey, capturedAccountId, fieldCopy, body]() {
+                    // The field-edit pipeline still follows the focused pane, so send nothing if focus moved
+                    // to another tracker since the click: the assign and the comment must reach the same one.
+                    if (appPtr->FocusedCacheBackendKey() != target.BackendKey) {
+                        PendingActionSubmitResult moved;
+                        moved.Error = "the focused tracker changed after the click, so nothing was sent. Try again.";
+                        return moved;
+                    }
                     const VoidResult assigned =
                         appPtr->SubmitFieldEdit(capturedIssueKey, fieldCopy, {capturedAccountId});
                     if (!assigned.has_value()) {
@@ -1018,13 +1025,14 @@ void DrawAssignAndContextAction(AnnotateDrawCtx& ctx, bool readOnlyMode, bool co
     }
 }
 
-// The assign-modal body shown once a Jira issue is selected (all action rows).
-void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool readOnlyMode) {
+// The assign-modal body shown once a Jira issue is selected (all action rows). Assigns need the tracker
+// now; comment-only rows stay usable offline (they are queued), so only the Read-only preference blocks them.
+void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool assignReadOnly, bool commentReadOnly) {
     const AnnotateUiThemeColors& theme = ctx.Theme;
     const bool hasJiraAccount = State().assignHasJiraAccount && !State().assignAccountId.empty();
     const bool commitInFlight = State().assignCommitInFlight;
     PushAnnotateLinkTextOnly(theme);
-    DrawAssignIssueAction(ctx, readOnlyMode, commitInFlight, hasJiraAccount);
+    DrawAssignIssueAction(ctx, assignReadOnly, commitInFlight, hasJiraAccount);
     PopAnnotateLinkTextOnly();
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::SetTooltip(
@@ -1032,9 +1040,9 @@ void DrawAssignModalBody(AnnotateDrawCtx& ctx, const TrackerConfig& cfg, bool re
             "the Annotate row you used (callstack table or Entry tab row menu).\n"
             "Requires a matching Jira account; otherwise an error is shown.");
     }
-    DrawAssignContextCommentAction(ctx, readOnlyMode, commitInFlight);
-    DrawAssignQuickCommentTemplates(ctx, cfg, readOnlyMode, commitInFlight);
-    DrawAssignAndContextAction(ctx, readOnlyMode, commitInFlight, hasJiraAccount);
+    DrawAssignContextCommentAction(ctx, commentReadOnly, commitInFlight);
+    DrawAssignQuickCommentTemplates(ctx, cfg, commentReadOnly, commitInFlight);
+    DrawAssignAndContextAction(ctx, assignReadOnly, commitInFlight, hasJiraAccount);
 }
 
 } // namespace
@@ -1051,7 +1059,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     }
     const TrackerConnectivityBannerForUi jiraBanner = app.GetTrackerConnectivityBannerForUi(nullptr);
     const TrackerConfig cfg = ConfigManager::Load();
-    const bool readOnlyMode = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
+    const bool assignReadOnly = cfg.ReadOnlyMode || (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
     ImGui::TextUnformatted(State().assignTitle.c_str());
     ImGui::Separator();
     if (cfg.ReadOnlyMode) {
@@ -1065,7 +1073,9 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
         ImGui::TextWrapped("%s", jiraBanner.Message.c_str());
         ImGui::PopStyleColor();
-        ImGui::TextDisabled("Assign and comment actions stay disabled until Jira is reachable.");
+        ImGui::TextDisabled(
+            "Assign actions stay disabled until Jira is reachable. Comments still work: offline they are saved "
+            "and sent on reconnect.");
         ImGui::Separator();
     } else if (jiraBanner.Kind == TrackerConnectivityBannerForUi::Level::Warning) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.92f, 0.35f, 1.0f));
@@ -1076,7 +1086,7 @@ void DrawAnnotateAssignModal(AnnotateDrawCtx& ctx) {
     if (ctx.SelectedJiraIssueKey.empty()) {
         ImGui::TextDisabled("Select a Jira issue in the grid.");
     } else {
-        DrawAssignModalBody(ctx, cfg, readOnlyMode);
+        DrawAssignModalBody(ctx, cfg, assignReadOnly, cfg.ReadOnlyMode);
     }
     PushAnnotateLinkButtonColors(theme);
     if (ImGui::Button("Close")) {

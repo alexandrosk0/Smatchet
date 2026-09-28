@@ -13,7 +13,7 @@
 #include <string>
 #include <vector>
 
-class ITrackerCollaboration;
+class ITrackerBackend;
 
 enum class PendingActionKind : unsigned char { CommentAdd, WorklogAdd, WatchAdd };
 
@@ -92,8 +92,8 @@ struct PendingActionsSnapshot {
 /// queues it uses this, never the focused pane: focus may have moved to another backend by then, and
 /// the action must not be sent to (or queued for) that one.
 struct PendingActionTarget {
-    std::shared_ptr<ITrackerCollaboration> Collab; ///< null when the backend has no collaboration interface
-    std::string BackendKey;                        ///< the queue namespace: that pane's cache backend key
+    std::shared_ptr<ITrackerBackend> Backend; ///< that pane's backend (sends, and re-reads after a send); may be null
+    std::string BackendKey;                   ///< the queue namespace: that pane's cache backend key
     TrackerConnectivityState Connectivity = TrackerConnectivityState::Unknown; ///< last probe when latched
 };
 

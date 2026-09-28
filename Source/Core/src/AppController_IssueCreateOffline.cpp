@@ -304,11 +304,7 @@ PendingActionTarget AppController::LatchPendingActionTarget() const {
     // One pane lookup, so the interface and the queue namespace always name the same backend.
     const GridLiveContext& pane = focusedContext();
     PendingActionTarget target;
-    const std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&pane.Backend);
-    if (backend && backend->Collaboration() != nullptr) {
-        // Aliasing handle: it keeps the whole backend alive while the action is in flight.
-        target.Collab = std::shared_ptr<ITrackerCollaboration>(backend, backend->Collaboration());
-    }
+    target.Backend = std::atomic_load(&pane.Backend); // a strong handle: alive while the action is in flight
     target.BackendKey = pane.CacheBackendKeyCopy();
     target.Connectivity = GetLastTrackerConnectivityState();
     return target;
@@ -354,7 +350,8 @@ PendingActionSubmitResult AppController::SubmitOrQueueWorklog(const PendingActio
     const PendingActionSubmitResult result = SubmitPendingAction(
         PendingActionKind::WorklogAdd, target, issueId, smatchet::pendingaction::BuildWorklogActionPayload(worklog));
     if (result.K == PendingActionSubmitResult::Kind::Sent) {
-        PrefetchIssueTicketsForKeys({issueId}, true); // refresh the time-tracking fields the worklog changed
+        // Re-read the time-tracking fields the worklog changed, from the tracker that received it.
+        PrefetchIssueTicketsFrom(target.Backend, target.BackendKey, {issueId});
     }
     return result;
 }

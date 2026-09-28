@@ -24,61 +24,62 @@
 #include <vector>
 
 void AppController::PrefetchIssueTicketsForKeys(const std::vector<std::string>& issueKeys, bool includeAlreadyActive) {
-
-    if (!Cache) {
-
-        return;
-    }
-
-    std::vector<std::string> toFetch;
-
-    {
-
+    // Latch the focused pane once, here: the worker fetches from this pane's backend and saves into its
+    // cache namespace even if focus moves before it runs, so one tracker's tickets never land under
+    // another's key. Nothing is held across the fetch; the old pane may be retired meanwhile (ADR-0012).
+    const GridLiveContext& pane = focusedContext();
+    std::vector<std::string> keys;
+    if (includeAlreadyActive) {
+        keys = issueKeys;
+    } else {
         const auto snap = GetActiveTicketsSnapshot();
-
         std::unordered_set<std::string> have;
-
         if (snap) {
-
             for (const auto& t : *snap) {
-
                 have.insert(t.id);
             }
         }
-
-        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
-
         for (const auto& k : issueKeys) {
+            if (have.count(k) == 0) {
+                keys.push_back(k);
+            }
+        }
+    }
+    PrefetchIssueTicketsFrom(std::atomic_load(&pane.Backend), pane.CacheBackendKeyCopy(), keys);
+}
 
-            if (k.empty() || (!includeAlreadyActive && have.count(k) > 0)) {
-
+void AppController::PrefetchIssueTicketsFrom(const std::shared_ptr<ITrackerBackend>& backend,
+                                             const std::string& cacheBackendKey,
+                                             const std::vector<std::string>& issueKeys) {
+    if (!Cache || !backend) {
+        return;
+    }
+    std::vector<std::string> toFetch;
+    {
+        std::lock_guard<std::mutex> lock(bulkImportPrefetchKeysMutex_);
+        for (const auto& k : issueKeys) {
+            if (k.empty() || bulkImportPrefetchKeysInFlight_.count(k) > 0) {
                 continue;
             }
-
-            if (bulkImportPrefetchKeysInFlight_.count(k) > 0) {
-
-                continue;
-            }
-
             bulkImportPrefetchKeysInFlight_.insert(k);
-
             toFetch.push_back(k);
         }
     }
-
     if (toFetch.empty()) {
-
         return;
     }
-
-    LaunchBackgroundTask([this, toFetch]() { FetchAndCachePrefetchedTickets(toFetch); });
+    LaunchBackgroundTask([this, toFetch, backend, cacheBackendKey]() {
+        FetchAndCachePrefetchedTickets(toFetch, backend, cacheBackendKey);
+    });
 }
 
-void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch) {
-    // Safety net for the in-flight keys that PrefetchIssueTicketsForKeys inserted: a key left in
+void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string>& toFetch,
+                                                   const std::shared_ptr<ITrackerBackend>& backend,
+                                                   const std::string& cacheBackendKey) {
+    // Safety net for the in-flight keys that PrefetchIssueTicketsFrom inserted: a key left in
     // the set blocks every future prefetch for it until restart, so it must be cleared on every
     // exit. The success path clears the keys inline below and disarms this guard; the guard exists
-    // only to cover the early-return and exception paths that would otherwise leak.
+    // only to cover the exception path that would otherwise leak.
     struct InFlightClearGuard {
         AppController* self;
         const std::vector<std::string>& keys;
@@ -93,26 +94,6 @@ void AppController::FetchAndCachePrefetchedTickets(const std::vector<std::string
             }
         }
     } inFlightClearGuard{this, toFetch};
-
-    // Latch the focused context ONCE, up front: focusedContext() is re-pointed when the user
-    // switches panes, so reading it again after the blocking FetchIssuesForKeys() below could
-    // pair this pane's fetched tickets with a *different* pane's cache key (cross-pane data
-    // corruption). Bind the context here and read both the backend handle and the cache key from
-    // it before the fetch. The atomic_load latches a strong Backend handle: this worker reads
-    // Backend off the UI thread, which would race a live SetBackend swap on a plain .get(), and
-    // the shared_ptr also keeps the backend alive for the FetchIssuesForKeys call (ADR 0012).
-    GridLiveContext& ctx = focusedContext();
-    std::shared_ptr<ITrackerBackend> backend = std::atomic_load(&ctx.Backend);
-
-    if (!backend) {
-
-        return;
-    }
-
-    // Capture the cache key from the SAME latched context, by value, so it survives the fetch
-    // without holding `ctx` across it — the old context may be retired (ADR-0012 graveyard) on a
-    // focus switch, which would dangle a held reference. `ctx` is not touched again after this.
-    const std::string cacheBackendKey = ctx.CacheBackendKeyCopy();
 
     TrackerConfig cfg = ConfigManager::Load();
 

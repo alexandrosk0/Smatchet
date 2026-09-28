@@ -2663,6 +2663,11 @@ and estimate edits cannot be queued; bulk import loses rows offline."
     and, on SavedOnline/QueuedOffline, applies `ApplyFieldEditResult` via `RunOnUiThread`.
   - `SubmitFieldEdit` keeps its signature and becomes a wrapper returning
     `VoidOk()` for Saved/Queued, else `Err`.
+  - Bind each edit to the pane the user acted on, as S9 did for comments/worklogs/watches
+    (`PendingActionTarget`): the request carries the latched backend and cache key, and the commit
+    uses them instead of re-reading the focused pane on the worker. Today every field-edit caller
+    re-resolves focus there; the Annotate "Assign and add context" action refuses to send when focus
+    moved since the click, and can drop that check once this lands.
 - **Callers:**
   - `BuiltinCommands_TicketMutations.cpp` (`ticket.set_field`, `ticket.transition`, `ticket.set_fields`):
     call `SubmitFieldEditOrQueue` and add `"queued":true` to the success envelope when queued.
@@ -3031,6 +3036,8 @@ This plan touches `Source/Core/`.
   - The queued command envelope keeps `"ok": true` next to `"queued"` and `"offlineId"`, so existing callers still see success. The envelope cases are in `BuiltinFacetCommands.test.cpp`, where the `ticket.*` commands are tested.
   - The absolute-0 sweep is `compute_offline_write_violations`, which lexes only files that name a tracker write method (about 2 s), not `compute_offline_exact_violations | grep` (about 17 s over the whole tree); the result is the same.
   - `OfflineFirst/Worklog_OfflineQueues` also covers the watch. `FakeTrackerClient` records worklog and watcher calls with scriptable replies. The queue panel previews a worklog as "<time spent> — <description>".
+  - Each action is bound to the tracker the user acted on: `PendingActionTarget` (backend, cache key, last probe) is latched in one pane lookup where the user acts and passed through `SubmitOrQueue` and `Enqueue`, so a focus change before the worker runs cannot send or queue it elsewhere. The re-read after a sent worklog uses the same backend (`PrefetchIssueTicketsFrom`); `PrefetchIssueTicketsForKeys` now latches its pane on the calling thread instead of on its worker. The field-edit pipeline still follows focus (S10 binds it); the Annotate assign-and-comment action refuses to send if focus moved since the click.
+  - Annotate's comment-only actions stay enabled under a tracker error banner (only the Read-only preference blocks them), since comments queue offline; assign actions still need the tracker.
 
 ## Verification (actual)
 

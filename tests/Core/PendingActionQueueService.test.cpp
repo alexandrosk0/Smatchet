@@ -41,10 +41,10 @@ struct Rig {
     smatchet_tests::FakeSyncCache& Cache() { return *deps.CacheImpl; }
     smatchet_tests::FakeTrackerClient& Tracker() { return *deps.BackendImpl; }
 
-    // The target a UI click latches: the fake pane's collaboration interface and backend key.
+    // The target a UI click latches: the fake pane's backend and its key.
     PendingActionTarget Target(TrackerConnectivityState connectivity) const {
         PendingActionTarget target;
-        target.Collab = deps.CollaborationShared();
+        target.Backend = deps.BackendImpl;
         target.BackendKey = deps.CacheBackendKey();
         target.Connectivity = connectivity;
         return target;
@@ -169,7 +169,7 @@ TEST_CASE("PendingActionQueueService::SubmitOrQueue uses the latched target, not
         std::make_shared<smatchet_tests::FakeTrackerClient>();
     other->EnableCollaboration(true);
     PendingActionTarget target;
-    target.Collab = std::shared_ptr<ITrackerCollaboration>(other, other->Collaboration());
+    target.Backend = other;
     target.BackendKey = "Plane";
     target.Connectivity = TrackerConnectivityState::AuthenticatedReachable;
     const PendingActionSubmitResult sent =
