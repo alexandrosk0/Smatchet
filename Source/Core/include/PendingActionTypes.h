@@ -88,16 +88,21 @@ struct PendingActionsSnapshot {
     std::vector<DeadPendingAction> Dead;
 };
 
-/// The tracker an action is for, latched on the thread where the user acted. The worker that sends or
-/// queues it uses this, never the focused pane: focus may have moved to another backend by then, and
-/// the action must not be sent to (or queued for) that one.
+/// The pane a tracker write is for — a comment, worklog, watch or field edit — latched on the thread where
+/// the user acted. The worker that sends or queues the write uses this, never the focused pane: focus may
+/// have moved to another backend by then, and the write must not be sent to (or queued for) that one.
 struct PendingActionTarget {
     std::shared_ptr<ITrackerBackend> Backend; ///< that pane's backend (sends, and re-reads after a send); may be null
     std::string BackendKey;                   ///< the queue namespace: that pane's cache backend key
     TrackerConnectivityState Connectivity = TrackerConnectivityState::Unknown; ///< last probe when latched
+    std::string PaneId; ///< that pane; empty when not latched from a pane (the write then binds to the focused one)
+    /// That pane's backend generation when latched. A local update applies only while it still matches, so a
+    /// pane that was retired or switched tracker since never receives another tracker's rows (#1081).
+    std::uint64_t BackendGeneration = 0;
 };
 
-/// Outcome of submitting an action (PendingActionQueueService::SubmitOrQueue).
+/// Outcome of submitting a tracker write: an action (PendingActionQueueService::SubmitOrQueue) or a field
+/// edit (AppController::SubmitFieldEditOrQueue).
 struct PendingActionSubmitResult {
     enum class Kind : unsigned char { Sent, Queued, Failed };
     Kind K = Kind::Failed;

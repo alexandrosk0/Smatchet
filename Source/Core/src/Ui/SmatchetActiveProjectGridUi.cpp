@@ -288,10 +288,16 @@ void SmatchetUI::drawActiveProjectWindow(AppController& app, UiDrawSession& d, G
         RenderCommentsModal(app, readOnlyMode);
     }
 
-    // Enqueue only — the pane-window host runs the dispatch pump + chip decay ONCE
-    // per frame against the focused pane's live snapshot (review MEDIUM-1: a per-pane
-    // pump faded chips N× faster and could snapshot estimate bases from a non-focused
-    // pane's frozen snapshot).
+    // Enqueue only — the pane-window host runs the dispatch pump + chip decay ONCE per
+    // frame (review MEDIUM-1: a per-pane pump faded chips N× faster). Each edit keeps
+    // THIS pane, so it is sent to, queued for and applied in it even if focus moves
+    // before the pump reaches it (#2260).
+    if (!pendingEdits.empty()) {
+        const PendingActionTarget paneTarget = app.LatchPendingActionTargetForPane(pane.id);
+        for (PendingFieldEdit& edit : pendingEdits) {
+            edit.Target = paneTarget;
+        }
+    }
     EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
     if (pane.focused) {
         MaybeToastGridBannerFromSession(d);

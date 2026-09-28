@@ -7,6 +7,7 @@
 #include "Types/AppUpdateTypes.h"  // AppUpdateInfo (by-value member + std::future<AppUpdateInfo>)
 #include "Types/AttachmentTypes.h" // AttachmentDescriptor
 #include "Types/FieldEditTypes.h"  // FieldEditResult
+#include "PendingActionTypes.h"    // PendingActionTarget (the pane a grid edit was made in)
 #include "Sync/SyncTypes.h"        // TrackerIssueFetchPack, TrackerConnectivityBannerForUi (::Level member init)
 #include "ConfigManager.h"
 #include "GridPane.h"
@@ -130,6 +131,9 @@ struct PendingFieldEdit {
     /// empty captured base from "no base captured" so replay still conflict-checks it. Set at the
     /// QueueEdit choke point for scalar edits; stays false for rich edits. See ADR-0016.
     bool HasOriginalValue = false;
+    /// The pane the edit was made in, latched when its pane enqueues it (#2260): the edit is sent to,
+    /// queued for and applied in that pane even if focus moves first. Empty = the focused pane at dispatch.
+    PendingActionTarget Target;
 };
 
 struct FieldEditCommitResult {
@@ -329,6 +333,7 @@ struct UiDrawSession {
     std::string conflictContextJson;      ///< JSON blob: {base,mine,theirs,richKind}
     /// Editor buffer for the "resolved" pane in the conflict modal (~64 KB, lazy-allocated).
     std::vector<char> conflictResolveBuf;
+    std::string conflictResolveError; ///< Re-queue failure displayed without discarding the edited value.
 
     /// Inline Command Palette input field rendered in the main menu-bar strip.
     /// Mirrors VS Code Quick Input — typing pre-fills the existing palette modal.

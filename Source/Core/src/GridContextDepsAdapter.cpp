@@ -292,23 +292,39 @@ TrackerConnectivityState GridContextDepsAdapter::TrackerConnectivity() const {
 }
 
 // ---- IFieldEditDeps -------------------------------------------------------------------
-// BackendShared / GetActiveTicketsSnapshot / RefreshLocalData / const-RequestDeferred are reused
-// from the IEditMetaDeps + IOfflineQueueDeps overrides above. Only these three are genuinely new.
+// const-RequestDeferred is reused from the IEditMetaDeps override above.
+// The pane-scoped methods resolve the edit's LATCHED pane (#2260), not ctx(): an edit keeps its pane
+// even when focus moves before its worker or post-back runs.
 
 // HasCache() is a PREDICATE, not the raw Cache* — keeps FieldEditPipelineService SQLite-free
 // (ADR-0020 sync-cache purity). Global state, so reads app_ (matches Cache() above).
 bool GridContextDepsAdapter::HasCache() const { return app_.Cache != nullptr; }
 
-void GridContextDepsAdapter::UpdateTicket(const CachedTicket& ticket) { app_.UpdateTicket(ticket); }
+PendingActionTarget GridContextDepsAdapter::LatchFocusedPaneTarget() const { return app_.LatchPendingActionTarget(); }
 
-// Called on the field-edit worker (CommitOrQueue); QueueFieldEditOffline latches the cache once.
-std::int64_t GridContextDepsAdapter::EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
+std::shared_ptr<const std::vector<CachedTicket>>
+GridContextDepsAdapter::TicketsSnapshotFor(const PendingActionTarget& target) const {
+    return app_.TicketsSnapshotForTarget_(target);
+}
+
+void GridContextDepsAdapter::UpdateTicketFor(const PendingActionTarget& target, const CachedTicket& ticket) {
+    app_.UpdateTicketForTarget_(target, ticket);
+}
+
+// Called on the field-edit worker (CommitOrQueue); QueueFieldEditOffline latches the cache once. The
+// row is stamped with the edit's latched namespace, so it goes straight to the queue service.
+std::int64_t GridContextDepsAdapter::EnqueueOfflineFieldEdit(const std::string& backendKey, const std::string& issueKey,
+                                                             const std::string& fieldId,
                                                              const std::string& fieldsPayloadJson,
                                                              const std::string& originalRichValue,
                                                              const std::string& originalValue, bool hasOriginalValue,
                                                              std::string& outError) {
-    return app_.QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue, originalValue,
-                                      hasOriginalValue);
+    if (!app_.offlineQueue_) {
+        outError = "Offline queue not initialized.";
+        return 0;
+    }
+    return app_.offlineQueue_->QueueFieldEditOffline(issueKey, fieldId, fieldsPayloadJson, outError, originalRichValue,
+                                                     originalValue, hasOriginalValue, backendKey);
 }
 
 // ---- IConnectivityDeps ----------------------------------------------------------------

@@ -18,6 +18,7 @@
 #include "OfflineQueueReplayPolicy.h"
 #include "ScopeExit.h"
 #include "TextMerge.h"
+#include "TrackerFieldPayloadPure.h" // sprint_add + timetracking queued payloads
 #include "Views.h"
 
 #include <algorithm>
@@ -359,7 +360,7 @@ void OfflineQueueService::SweepOneLegacyPendingCreate(const PendingCreate& pc, c
 
 // --- Phase 1B: write methods + remaining field-edit read accessors ----------------------
 
-std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
+std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey) {
     if (ConfigManager::Load().ReadOnlyMode) {
         LOG_WARN("OfflineQueueService::QueueCreateOffline blocked by read-only mode.");
         return 0;
@@ -382,7 +383,8 @@ std::int64_t OfflineQueueService::QueueCreateOffline(const IssueDraft& draft) {
     try {
         // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — replay
         // strictly matches this key, so a create queued under Jira never replays against Plane.
-        const std::int64_t id = cache->EnqueuePendingCreate(deps_.CacheBackendKey(), payload);
+        const std::int64_t id =
+            cache->EnqueuePendingCreate(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, payload);
         LOG_INFO("OfflineQueueService: queued offline create id=%lld", static_cast<long long>(id));
         BackendAuditTrail::AppendResult("offline_queue_create", "ui", std::string(), std::to_string(id), true,
                                         std::string(),
@@ -537,7 +539,8 @@ OfflineQueueService::DeletePendingCreates(const std::vector<std::int64_t>& pendi
 std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                                         const std::string& fieldsPayloadJson, std::string& outError,
                                                         const std::string& originalRichValue,
-                                                        const std::string& originalValue, bool hasOriginalValue) {
+                                                        const std::string& originalValue, bool hasOriginalValue,
+                                                        const std::string& backendKey) {
     outError.clear();
     if (ConfigManager::Load().ReadOnlyMode) {
         outError = "Read-only mode is enabled in Preferences.";
@@ -560,11 +563,11 @@ std::int64_t OfflineQueueService::QueueFieldEditOffline(const std::string& issue
         return 0;
     }
     try {
-        // Stamp the enqueuing context's backend namespace (multi-grid Slice 1c) — see
+        // Stamp the backend namespace of the pane the edit was made in (multi-grid Slice 1c) — see
         // QueueCreateOffline.
         const std::int64_t id =
-            cache->EnqueuePendingFieldEdit(deps_.CacheBackendKey(), issueKey, fieldId, fieldsPayloadJson,
-                                           originalRichValue, originalValue, hasOriginalValue);
+            cache->EnqueuePendingFieldEdit(backendKey.empty() ? deps_.CacheBackendKey() : backendKey, issueKey, fieldId,
+                                           fieldsPayloadJson, originalRichValue, originalValue, hasOriginalValue);
         LOG_INFO("OfflineQueueService: queued offline field edit id=%lld issue=%s field=%s", static_cast<long long>(id),
                  issueKey.c_str(), fieldId.c_str());
         BackendAuditTrail::AppendResult("offline_queue_field_edit", "ui", issueKey, std::to_string(id), true,
@@ -622,15 +625,47 @@ const TrackerField* OfflineQueueService::FindCatalogField(const std::string& fie
     return &(*it);
 }
 
-void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
+bool OfflineQueueService::RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json& payload,
+                                                         const std::string& payloadKey,
+                                                         const std::string& resolvedValue) const {
+    // Scalar (#854): rebuild the payload through the SAME production builder the live edit path uses
+    // (`BuildFieldPayload` -> `BuildValue`), so a structured field (single/multi-select, status,
+    // priority, issuetype, user, component, cascading, labels) keeps its `{"id":...}` / array shape
+    // instead of being clobbered with the bare display string (which Jira rejects with HTTP 400 ->
+    // retry -> dead-letter -> silent data loss). `mine`/`theirs` are display labels and `BuildValue`
+    // resolves them (by id OR label) exactly as on a normal edit. Genuinely string-valued fields
+    // (summary, free text) naturally come back as a bare string, so no special-casing is needed. The
+    // legacy verbatim write is the degraded fallback only when the field schema or the mutations
+    // builder is unavailable (so resolution still completes rather than no-ops). A value the builder
+    // REJECTS is never written verbatim: for a structured field that shape would dead-letter on replay.
+    const TrackerField* field = FindCatalogField(row.FieldId);
+    const std::shared_ptr<ITrackerIssueMutations> mutations = field ? deps_.MutationsShared() : nullptr;
+    if (mutations) {
+        Result<nlohmann::json, TrackerError> built =
+            mutations->BuildFieldPayload(*field, std::vector<std::string>{resolvedValue});
+        if (!built) {
+            LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — BuildFieldPayload rejected "
+                     "the chosen value (%s); the edit stays suspended",
+                     static_cast<long long>(row.Id), row.FieldId.c_str(), built.error().Detail.c_str());
+            return false;
+        }
+        payload = std::move(built.value());
+        return true;
+    }
+    payload[payloadKey] = resolvedValue;
+    return true;
+}
+
+bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
                                                    const std::string& richKind, const std::string& kind) {
     if (!deps_.Cache())
-        return;
+        return false;
     // ADR-0016 resolution shapes. A rich `text` resolution reconverts the resolved Markdown to
     // ADF/HTML via `richKind` and writes it into the payload key. A `scalar` resolution rebuilds
     // the payload through the production `BuildFieldPayload` builder so structured fields keep
     // their `{"id":...}` / array shape (#854 — a bare display string dead-letters with HTTP 400).
-    // An `unverified` resolution ("Force Mine") keeps the original queued payload unchanged.
+    // An `unverified` resolution ("Force Mine") keeps the original queued payload unchanged. A
+    // queued sprint / estimate edit is rebuilt in its own shape (sprint id / `timetracking` object).
     const bool isRichText = (kind != "scalar" && kind != "unverified");
     const bool isUnverified = (kind == "unverified");
     try {
@@ -644,7 +679,7 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                     // Force Mine: replay the original backend-format payload untouched; only the
                     // conflict flag + bases are cleared by ResolveFieldEditConflict.
                     deps_.Cache()->ResolveFieldEditConflict(id, row.FieldsPayloadJson);
-                    return;
+                    return true;
                 }
                 nlohmann::json newPayload;
                 {
@@ -661,49 +696,31 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                     if (newPayload.contains(altKey))
                         payloadKey = altKey;
                 }
-                if (isRichText) {
+                nlohmann::json specialPayload;
+                const TrackerFieldPayloadPure::SpecialPayloadRebuild special =
+                    isRichText ? TrackerFieldPayloadPure::SpecialPayloadRebuild::NotSpecial
+                               : TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(row.FieldId, newPayload,
+                                                                                      FindCatalogField(row.FieldId),
+                                                                                      resolvedValue, specialPayload);
+                if (special == TrackerFieldPayloadPure::SpecialPayloadRebuild::Unresolvable) {
+                    LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — the chosen value is "
+                             "not a known sprint or a non-empty estimate; the edit stays suspended",
+                             static_cast<long long>(id), row.FieldId.c_str());
+                    return false;
+                }
+                if (special == TrackerFieldPayloadPure::SpecialPayloadRebuild::Rebuilt) {
+                    newPayload = std::move(specialPayload);
+                } else if (isRichText) {
                     if (richKind == "adf") {
                         newPayload[payloadKey] = MarkdownConvert::MarkdownToAdf(resolvedValue);
                     } else {
                         newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedValue);
                     }
-                } else {
-                    // Scalar (#854): rebuild the payload through the SAME production builder the
-                    // live edit path uses (`BuildFieldPayload` -> `BuildValue`), so a structured
-                    // field (single/multi-select, status, priority, issuetype, user, component,
-                    // cascading, labels) keeps its `{"id":...}` / array shape instead of being
-                    // clobbered with the bare display string (which Jira rejects with HTTP 400 ->
-                    // retry -> dead-letter -> silent data loss). `mine`/`theirs` are display labels
-                    // and `BuildValue` resolves them (by id OR label) exactly as on a normal edit.
-                    // Genuinely string-valued fields (summary, free text) naturally come back as a
-                    // bare string, so no special-casing is needed. The legacy verbatim write is the
-                    // degraded fallback only when the field schema or the mutations builder is
-                    // unavailable (so resolution still completes rather than no-ops).
-                    bool rebuilt = false;
-                    const TrackerField* field = FindCatalogField(row.FieldId);
-                    if (field) {
-                        const std::shared_ptr<ITrackerIssueMutations> mutations = deps_.MutationsShared();
-                        if (mutations) {
-                            std::vector<std::string> rawValues;
-                            rawValues.push_back(resolvedValue);
-                            const Result<nlohmann::json, TrackerError> built =
-                                mutations->BuildFieldPayload(*field, rawValues);
-                            if (built) {
-                                newPayload = built.value();
-                                rebuilt = true;
-                            } else {
-                                LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — "
-                                         "BuildFieldPayload failed (%s); falling back to verbatim string",
-                                         static_cast<long long>(id), row.FieldId.c_str(), built.error().Detail.c_str());
-                            }
-                        }
-                    }
-                    if (!rebuilt) {
-                        newPayload[payloadKey] = resolvedValue;
-                    }
+                } else if (!RebuildScalarResolutionPayload(row, newPayload, payloadKey, resolvedValue)) {
+                    return false;
                 }
                 deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
-                return;
+                return true;
             }
         } catch (...) { // catch-all-ok: load/find failure → log-and-skip below (never fabricate a payload)
         }
@@ -717,6 +734,7 @@ void OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
         LOG_ERROR("OfflineQueueService::ResolveFieldEditConflict id=%lld err=%s", static_cast<long long>(id),
                   ex.what());
     }
+    return false;
 }
 
 AppController::PendingFieldEditDeleteSummary
@@ -997,20 +1015,9 @@ OfflineQueueService::FieldEditConflictOutcome
 OfflineQueueService::RecordUnverifiedFieldEditConflict(const PendingFieldEditRecord& row,
                                                        const nlohmann::json& fieldsPayload, ISyncCache* cache,
                                                        FieldEditReplayTally& tally) {
-    // Best-effort "mine" display for the modal: the payload value under the field key, stringified.
+    // Best-effort "mine" display for the modal: the queued value for the field, stringified.
     std::string mine;
-    if (fieldsPayload.is_object()) {
-        std::string payloadKey = row.FieldId;
-        if (!fieldsPayload.contains(payloadKey)) {
-            const std::string altKey = row.FieldId + "_html";
-            if (fieldsPayload.contains(altKey))
-                payloadKey = altKey;
-        }
-        if (fieldsPayload.contains(payloadKey)) {
-            const nlohmann::json& v = fieldsPayload[payloadKey];
-            mine = v.is_string() ? v.get<std::string>() : v.dump();
-        }
-    }
+    TrackerFieldPayloadPure::TryDescribeQueuedFieldValue(row.FieldId, fieldsPayload, true, mine);
     nlohmann::json ctx;
     ctx["kind"] = "unverified";
     ctx["mine"] = mine;
@@ -1038,21 +1045,12 @@ OfflineQueueService::ResolveFieldEditScalarConflict(const PendingFieldEditRecord
     if (!OfflineFieldConflictPolicy::ServerMovedFromCapturedBase(row.HasOriginalValue, row.OriginalValue, theirs)) {
         return FieldEditConflictOutcome::Proceed; // server unchanged → replay the queued value.
     }
-    // The locally-applied display value is the user's intent ("mine"); the queued payload is
-    // backend format and not shown. We surface the field's current cached display as mine.
+    // The locally-applied display value is the user's intent ("mine"); a structured queued payload
+    // is backend format and not shown, so the field's pre-edit display stands in for it.
     std::string mine = row.OriginalValue;
-    if (fieldsPayload.is_object()) {
-        std::string payloadKey = fid;
-        if (!fieldsPayload.contains(payloadKey)) {
-            const std::string altKey = fid + "_html";
-            if (fieldsPayload.contains(altKey))
-                payloadKey = altKey;
-        }
-        if (fieldsPayload.contains(payloadKey)) {
-            const nlohmann::json& v = fieldsPayload[payloadKey];
-            if (v.is_string())
-                mine = v.get<std::string>();
-        }
+    std::string queuedValue;
+    if (TrackerFieldPayloadPure::TryDescribeQueuedFieldValue(fid, fieldsPayload, false, queuedValue)) {
+        mine = std::move(queuedValue);
     }
     LOG_WARN("TickOfflineFieldEdits: scalar conflict issue=%s field=%s — suspending replay pending user resolution",
              row.IssueKey.c_str(), fid.c_str());
@@ -1199,7 +1197,11 @@ void OfflineQueueService::ReplayOneFieldEdit(const PendingFieldEditRecord& row, 
         return;
     }
 
-    const TrackerError updateErr = mutations->UpdateIssueFields(row.IssueKey, fieldsPayload);
+    // A sprint edit is queued as {"sprint_add": id} and replays through the agile API, like the live edit.
+    std::string sprintId;
+    const TrackerError updateErr = TrackerFieldPayloadPure::TryParseSprintAddPayload(fieldsPayload, sprintId)
+                                       ? mutations->AddIssueToSprint(row.IssueKey, sprintId)
+                                       : mutations->UpdateIssueFields(row.IssueKey, fieldsPayload);
     if (!updateErr.IsOk()) {
         HandleFieldEditUpdateFailure(row, cache, updateErr, tally);
         return;
@@ -1343,7 +1345,11 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
         return;
     }
     const int nextAttempts = pc.Attempts + 1;
-    if (OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+    // A create that may have been applied (its response lost) is never resent blind: it goes to the
+    // failed list for the user to check against the tracker and restore if it was not created.
+    const bool ambiguousCreate = IsAmbiguousCreateFailure(result);
+    if (ambiguousCreate || OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
+        const char* reason = ambiguousCreate ? kAmbiguousCreateReason : "max_attempts";
         std::string trackerPart =
             result.Error.empty() ? std::string("Create pipeline returned failure with empty error on final attempt.")
                                  : std::string("Create pipeline error: ") + result.Error;
@@ -1351,19 +1357,20 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
         std::snprintf(headBuf, sizeof(headBuf), "Offline replay attempts went from %d to %d (cap=%d). ", pc.Attempts,
                       nextAttempts, kMaxReplayAttempts);
         const std::string terminalError = FormatOfflineQueueTerminalLine(
-            "offline_replay", "issue_create", "max_attempts", std::string(headBuf) + trackerPart);
+            "offline_replay", "issue_create", reason,
+            (ambiguousCreate ? std::string(kAmbiguousCreateHint) + " " : std::string(headBuf)) + trackerPart);
         const bool archivedOk = RunCreateCacheMutation(
             "archive_pending_create", pc.Id,
             [&]() {
                 cache->UpdatePendingCreate(pc.Id, nextAttempts, terminalError);
-                cache->ArchivePendingCreate(pc.Id, "max_attempts", terminalError);
+                cache->ArchivePendingCreate(pc.Id, reason, terminalError);
             },
             tally);
         if (archivedOk) {
             ++tally.Archived;
             BackendAuditTrail::AppendResult(
                 "offline_dead_letter", "offline_replay", std::string(), std::to_string(pc.Id), true, std::string(),
-                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", "max_attempts"}, {"error", result.Error}});
+                nlohmann::json{{"pending_create_id", pc.Id}, {"reason", reason}, {"error", result.Error}});
         } else {
             ++tally.Failures;
         }

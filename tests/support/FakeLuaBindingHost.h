@@ -61,10 +61,11 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     };
     std::vector<McpRegistration> McpRegistrations;
 
-    /// Every `SubmitFieldEdit` call records {IssueId, FieldId, Values} so
+    /// Every `SubmitFieldEditOrQueue` call records {IssueId, FieldId, Values} so
     /// tests can assert "Ticket:set_field forwarded `priority=High` exactly
     /// once".
     struct FieldEditCall {
+        PendingActionTarget Target;
         std::string IssueId;
         std::string FieldId;
         std::vector<std::string> Values;
@@ -84,12 +85,12 @@ class FakeLuaBindingHost : public ILuaBindingHost {
     /// `LuaGetActiveTicketsBind` returns this verbatim.
     std::vector<CachedTicket> ActiveTickets;
 
-    /// `FindFieldById` resolves via this map. Missing -> nullptr.
+    /// `FindFieldById` resolves via this map. Missing -> false.
     std::unordered_map<std::string, TrackerField> FieldsById;
 
-    /// `SubmitFieldEdit` returns `VoidOk()` when true, `VoidResult::Err(SubmitFieldEditError)` when false.
-    bool SubmitFieldEditReturn = true;
-    /// The `Err` reason `SubmitFieldEdit` carries when `SubmitFieldEditReturn` is false. Default empty.
+    /// What `SubmitFieldEditOrQueue` reports: sent (default), queued offline, or failed.
+    PendingActionSubmitResult::Kind SubmitFieldEditKind = PendingActionSubmitResult::Kind::Sent;
+    /// The reason a Failed `SubmitFieldEditOrQueue` carries. Default empty.
     std::string SubmitFieldEditError;
 
     /// `LuaCreateIssueBind` populates the returned sol::object with this table
@@ -143,19 +144,33 @@ class FakeLuaBindingHost : public ILuaBindingHost {
         return std::make_tuple(obj, std::string());
     }
 
-    const TrackerField* FindFieldById(const std::string& fieldId) const override {
-        auto it = FieldsById.find(fieldId);
-        return (it != FieldsById.end()) ? &it->second : nullptr;
+    bool FindFieldById(const PendingActionTarget& /*target*/, const std::string& fieldId,
+                       TrackerField& out) const override {
+        const auto it = FieldsById.find(fieldId);
+        if (it == FieldsById.end()) {
+            return false;
+        }
+        out = it->second;
+        return true;
     }
 
-    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                               const std::vector<std::string>& rawValues) override {
+    PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target, const std::string& issueId,
+                                                     const TrackerField& field,
+                                                     const std::vector<std::string>& values) override {
         FieldEditCall rec;
+        rec.Target = target;
         rec.IssueId = issueId;
         rec.FieldId = field.Id;
-        rec.Values = rawValues;
+        rec.Values = values;
         SubmitFieldEditCalls.push_back(std::move(rec));
-        return SubmitFieldEditReturn ? VoidOk() : VoidResult::Err(SubmitFieldEditError);
+        PendingActionSubmitResult result;
+        result.K = SubmitFieldEditKind;
+        if (SubmitFieldEditKind == PendingActionSubmitResult::Kind::Queued) {
+            result.QueueId = 1;
+        } else if (SubmitFieldEditKind == PendingActionSubmitResult::Kind::Failed) {
+            result.Error = SubmitFieldEditError;
+        }
+        return result;
     }
 
     std::tuple<sol::object, std::string> LuaCreateIssueBind(sol::state_view sv, sol::table spec) override {

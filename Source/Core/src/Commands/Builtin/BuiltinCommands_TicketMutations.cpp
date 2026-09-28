@@ -29,9 +29,9 @@ using builtin_detail::PString;
 
 namespace {
 
-// Success data of a comment / worklog write: {"ok": true}, plus "queued": true and the queue row id as
-// "offlineId" when the tracker was unreachable and the write was saved to post on reconnect
-// (pending-action queue, Quality Pillar 6).
+// Success data of a field edit, comment or worklog: {"ok": true}, plus "queued": true and the queue row
+// id as "offlineId" when the tracker was unreachable and the write was saved to send on reconnect
+// (offline queues, Quality Pillar 6).
 nlohmann::json PendingActionSuccessData(const PendingActionSubmitResult& result) {
     nlohmann::json data = {{"ok", true}};
     if (result.K == PendingActionSubmitResult::Kind::Queued) {
@@ -73,12 +73,13 @@ static void RegisterSetFieldCommand(CommandRegistry& reg, IAppTicketMutations& a
                 return CommandResult::Failure(ErrorCode::NotFound, "Field '" + field + "' not found in catalog.",
                                               "Run fields.refresh_catalog first.");
             }
-            const VoidResult r = app.SubmitFieldEdit(id, *fieldMeta, {value});
-            if (!r.has_value()) {
-                return CommandResult::Failure(ErrorCode::BackendError, "Field edit failed: " + r.error(),
+            const PendingActionTarget target = app.LatchPendingActionTarget();
+            const PendingActionSubmitResult r = app.SubmitFieldEditOrQueue(target, id, *fieldMeta, {value});
+            if (r.K == PendingActionSubmitResult::Kind::Failed) {
+                return CommandResult::Failure(ErrorCode::BackendError, "Field edit failed: " + PendingActionError(r),
                                               "Check tracker connectivity.");
             }
-            return CommandResult::Success({{"ok", true}});
+            return CommandResult::Success(PendingActionSuccessData(r));
         });
     c.Destructive = true;
     c.Idempotent = false;
@@ -169,25 +170,26 @@ static void RegisterAddWorklogCommand(CommandRegistry& reg, IAppTicketMutations&
 }
 
 static void RegisterTransitionCommand(CommandRegistry& reg, IAppTicketMutations& app) {
-    Command c =
-        MakeCommand("ticket.transition", "Transition a ticket to a new status.",
-                    [&app](const nlohmann::json& args, const CommandContext& ctx) {
-                        const std::string id = args.value("id", std::string());
-                        const std::string toStatus = args.value("toStatus", std::string());
-                        if (ctx.DryRun) {
-                            return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"toStatus", toStatus}}}});
-                        }
-                        const TrackerField* statusField = app.FindFieldById("status");
-                        if (!statusField) {
-                            return CommandResult::Failure(ErrorCode::NotFound, "Status field not found in catalog.",
-                                                          "Run fields.refresh_catalog first.");
-                        }
-                        const VoidResult r = app.SubmitFieldEdit(id, *statusField, {toStatus});
-                        if (!r.has_value()) {
-                            return CommandResult::Failure(ErrorCode::BackendError, "Transition failed: " + r.error());
-                        }
-                        return CommandResult::Success({{"ok", true}});
-                    });
+    Command c = MakeCommand(
+        "ticket.transition", "Transition a ticket to a new status.",
+        [&app](const nlohmann::json& args, const CommandContext& ctx) {
+            const std::string id = args.value("id", std::string());
+            const std::string toStatus = args.value("toStatus", std::string());
+            if (ctx.DryRun) {
+                return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"toStatus", toStatus}}}});
+            }
+            const TrackerField* statusField = app.FindFieldById("status");
+            if (!statusField) {
+                return CommandResult::Failure(ErrorCode::NotFound, "Status field not found in catalog.",
+                                              "Run fields.refresh_catalog first.");
+            }
+            const PendingActionTarget target = app.LatchPendingActionTarget();
+            const PendingActionSubmitResult r = app.SubmitFieldEditOrQueue(target, id, *statusField, {toStatus});
+            if (r.K == PendingActionSubmitResult::Kind::Failed) {
+                return CommandResult::Failure(ErrorCode::BackendError, "Transition failed: " + PendingActionError(r));
+            }
+            return CommandResult::Success(PendingActionSuccessData(r));
+        });
     c.Destructive = true;
     c.Idempotent = false;
     c.DryRunSupported = true;
@@ -212,6 +214,8 @@ static void RegisterSetFieldsCommand(CommandRegistry& reg, IAppTicketMutations& 
                             return CommandResult::Success({{"wouldDo", {{"ticket", id}, {"fields", fieldsMap}}}});
                         }
                         nlohmann::json results = nlohmann::json::object();
+                        // One latch for the whole call: every field goes to the same pane's tracker.
+                        const PendingActionTarget target = app.LatchPendingActionTarget();
                         for (const auto& kv : fieldsMap.items()) {
                             const TrackerField* f = app.FindFieldById(kv.key());
                             if (!f) {
@@ -221,9 +225,11 @@ static void RegisterSetFieldsCommand(CommandRegistry& reg, IAppTicketMutations& 
                             }
                             std::string val =
                                 kv.value().is_string() ? kv.value().get<std::string>() : kv.value().dump();
-                            const VoidResult r = app.SubmitFieldEdit(id, *f, {val});
-                            results[kv.key()]["ok"] = r.has_value();
-                            results[kv.key()]["error"] = r.has_value() ? std::string() : r.error();
+                            const PendingActionSubmitResult r = app.SubmitFieldEditOrQueue(target, id, *f, {val});
+                            const bool failed = r.K == PendingActionSubmitResult::Kind::Failed;
+                            nlohmann::json entry = failed ? nlohmann::json{{"ok", false}} : PendingActionSuccessData(r);
+                            entry["error"] = failed ? PendingActionError(r) : std::string();
+                            results[kv.key()] = std::move(entry);
                         }
                         return CommandResult::Success({{"results", results}});
                     });

@@ -18,6 +18,7 @@
 #include "Sync/JqlChangedSincePure.h"
 #include "TrackerFieldPayloadPure.h"
 #include "TrackerFieldSchema.h"
+#include "TrackerHttpClient.h"
 #include "TrackerHttpUtils.h"
 
 #include <cpr/cpr.h>
@@ -1089,13 +1090,7 @@ Result<std::string, TrackerError> GitHubClient::CreateIssue(const nlohmann::json
         outError = smatchet::github::ExtractGitHubErrorMessage(static_cast<int>(resp.status_code), resp.text);
         LOG_ERROR("GitHubClient::CreateIssue: HTTP %ld — %s", resp.status_code, outError.c_str());
         BackendAuditTrail::AppendResult("issue_create", "github_client", std::string(), auditOp, false, outError);
-        // 2xx-but-not-200/201 reaches this failure branch; guard before FromHttpStatus (FIX-1 / Slice-2).
-        if (resp.status_code >= 200 && resp.status_code < 300) {
-            return Result<std::string, TrackerError>::Err(
-                TrackerErrorUnknown(outError, static_cast<int>(resp.status_code)));
-        }
-        return Result<std::string, TrackerError>::Err(
-            TrackerErrorFromHttpStatus(static_cast<int>(resp.status_code), outError));
+        return Result<std::string, TrackerError>::Err(ClassifyRejectedTrackerResponse(resp, outError));
     }
 
     try {

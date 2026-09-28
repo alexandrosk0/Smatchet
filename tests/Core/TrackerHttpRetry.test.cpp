@@ -80,6 +80,20 @@ TEST_CASE("ClassifyTrackerResponse — 403 + Retry-After is a throttle, not an a
     SUBCASE("401 with Retry-After stays Auth — only 403 wears the throttle disguise") {
         CHECK(ResultFromStatusWithRetryAfter(401, "30").Error.Kind == TrackerErrorKind::Auth);
     }
+    SUBCASE("a rejected create (ClassifyRejectedTrackerResponse) applies the same rule") {
+        // A GitHub create refused by a secondary rate limit is a throttle the tracker did not act on:
+        // retryable and safe to queue, not an auth failure.
+        cpr::Response resp;
+        resp.status_code = 403;
+        resp.header["Retry-After"] = "30";
+        const TrackerError throttled =
+            ClassifyRejectedTrackerResponse(resp, "You have exceeded a secondary rate limit");
+        CHECK(throttled.Kind == TrackerErrorKind::RateLimited);
+        CHECK(throttled.Detail == "You have exceeded a secondary rate limit");
+        CHECK(throttled.ProvablyNotApplied());
+        resp.header.clear();
+        CHECK(ClassifyRejectedTrackerResponse(resp, "Forbidden").Kind == TrackerErrorKind::Auth);
+    }
 }
 
 TEST_CASE("ParseRetryAfterSeconds — delta-seconds form only") {
@@ -306,4 +320,34 @@ TEST_CASE("shared_ptr<atomic<bool>> shutdown token raised mid-loop aborts the mu
         3, cancelled);
     CHECK(calls == 1); // first attempt ran; the token poll before attempt 2 short-circuits.
     CHECK(r.Error.Kind == TrackerErrorKind::Cancelled);
+}
+
+TEST_CASE("Create failures preserve transmission certainty from the HTTP response") {
+    cpr::Response response;
+    response.status_code = 0;
+    bool notSent = false;
+    SUBCASE("host DNS failure") {
+        response.error.code = cpr::ErrorCode::HOST_RESOLUTION_FAILURE;
+        notSent = true;
+    }
+    SUBCASE("proxy DNS failure") {
+        response.error.code = cpr::ErrorCode::PROXY_RESOLUTION_FAILURE;
+        notSent = true;
+    }
+    SUBCASE("connection failure") {
+        response.error.code = cpr::ErrorCode::CONNECTION_FAILURE;
+        notSent = true;
+    }
+    SUBCASE("operation timeout") { response.error.code = cpr::ErrorCode::OPERATION_TIMEDOUT; }
+    SUBCASE("empty response") { response.error.code = cpr::ErrorCode::EMPTY_RESPONSE; }
+    SUBCASE("send failure") { response.error.code = cpr::ErrorCode::NETWORK_SEND_FAILURE; }
+    SUBCASE("receive failure") { response.error.code = cpr::ErrorCode::NETWORK_RECEIVE_ERROR; }
+    SUBCASE("unknown transport failure") { response.error.code = cpr::ErrorCode::UNKNOWN_ERROR; }
+    const TrackerError rejected = ClassifyRejectedTrackerResponse(response, "create failed");
+    CHECK(rejected.IsTransport());
+    CHECK(rejected.Detail == "create failed");
+    CHECK(rejected.RequestNotSent == notSent);
+    const TrackerError classified = ClassifyTrackerResponse(response).Error;
+    CHECK(classified.RequestNotSent == notSent);
+    CHECK(TrackerShouldRetryPost(classified.Kind, classified.RequestNotSent) == notSent);
 }

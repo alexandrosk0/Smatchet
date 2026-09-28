@@ -45,6 +45,9 @@ class IssueTransitionsCacheService {
     /// Drop the live entry for one issue; called after a successful status transition so the next
     /// combo open re-fetches the now-current set of valid next statuses.
     void InvalidateIssueTransitions(const std::string& issueId);
+    /// Same, for the issue in `backendKey`'s namespace: a status edit bound to a pane that may no longer
+    /// have focus (#2260).
+    void InvalidateIssueTransitions(const std::string& backendKey, const std::string& issueId);
 
     /// Connectivity came back: clear every failure backoff so the next combo open retries.
     void OnConnectivityRecovered();

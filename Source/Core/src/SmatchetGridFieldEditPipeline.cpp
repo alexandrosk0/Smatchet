@@ -8,13 +8,13 @@
 #include "SmatchetLocalization.h"
 #include "SmatchetToast.h"
 #include "SmatchetUiSession.h"
-#include "StringUtil.h"
 #include "TrackerHttpUtils.h"
 #include "UiPerfMonitor.h"
 
 #include "imgui.h"
 #include <algorithm>
 #include <exception>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -24,10 +24,10 @@ namespace {
 // Transitional shim: AppController::ApplyFieldEditResult flipped to VoidResult (#21 AppController
 // public-API flip). This grid pipeline still branches on bool + an error string for its toast /
 // cell-feedback, so adapt the VoidResult back here. Converting these two call sites to consume
-// VoidResult directly is a follow-up.
-bool ApplyFieldEditResultBool(AppController& app, const std::string& issueId, const FieldEditResult& result,
+// VoidResult directly is a follow-up. The result lands in the pane the edit was made in.
+bool ApplyFieldEditResultBool(AppController& app, const PendingFieldEdit& edit, const FieldEditResult& result,
                               std::string& outError) {
-    const VoidResult r = app.ApplyFieldEditResult(issueId, result);
+    const VoidResult r = app.ApplyFieldEditResult(edit.Target, edit.IssueId, result);
     if (!r.has_value()) {
         outError = r.error();
     }
@@ -49,7 +49,7 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
     if (result.CommitKind == FieldEditCommitResult::Kind::QueuedOffline) {
         // The worker already persisted the edit to the offline queue (CommitOrQueue); only the
         // optimistic local apply is left.
-        if (!ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError)) {
+        if (!ApplyFieldEditResultBool(app, edit, result.ApplyResult, applyError)) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.apply_error", "Apply Error"),
                 applyError.empty() ? std::string(SmatchetLocalization::T("toast.apply_queued_failed",
@@ -79,7 +79,7 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
             app.RequestTrackerProbeNow();
         }
     } else if (result.CommitKind == FieldEditCommitResult::Kind::SavedOnline) {
-        const bool applied = ApplyFieldEditResultBool(app, edit.IssueId, result.ApplyResult, applyError);
+        const bool applied = ApplyFieldEditResultBool(app, edit, result.ApplyResult, applyError);
         if (!applied) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.save_error", "Save Error"),
@@ -121,26 +121,14 @@ void ApplyCommitResultOnUiThread(AppController& app, UiDrawSession& d, const Pen
     d.hasInFlightEdit = false;
 }
 
-// Worker half of the commit: CommitOrQueue decides queue-first (tracker offline at kick time) or
+// Worker half of the commit: CommitOrQueue decides queue-first (tracker offline at dispatch) or
 // network-first with a queue fallback, and persists a queued edit here, off the UI thread. A throw is
 // reported as a failed commit so the caller still posts a result back.
-FieldEditCommitResult CommitOnWorker(AppController& app, TrackerConnectivityState connectivityAtKick,
-                                     const PendingFieldEdit& edit, std::string originalEstimateSnapshot,
-                                     std::string remainingEstimateSnapshot, std::string issueTypeKeyForNetwork) {
+FieldEditCommitResult CommitOnWorker(AppController& app, const PendingFieldEdit& edit,
+                                     const FieldEditCommitRequest& req) {
     FieldEditCommitResult result;
     result.CommitKind = FieldEditCommitResult::Kind::Failed;
     try {
-        FieldEditCommitRequest req;
-        req.IssueId = edit.IssueId;
-        req.Field = edit.Field;
-        req.Values = edit.Values;
-        req.OriginalRichValue = edit.OriginalRichValue;
-        req.OriginalValue = edit.OriginalValue;
-        req.HasOriginalValue = edit.HasOriginalValue;
-        req.OriginalEstimateSnapshot = std::move(originalEstimateSnapshot);
-        req.RemainingEstimateSnapshot = std::move(remainingEstimateSnapshot);
-        req.IssueTypeKeySnapshot = std::move(issueTypeKeyForNetwork);
-        req.ConnectivityAtKick = connectivityAtKick;
         FieldEditCommitOutcome o = app.CommitOrQueueFieldEdit(req);
         switch (o.Kind) {
         case FieldEditCommitKind::SavedOnline:
@@ -178,12 +166,9 @@ FieldEditCommitResult CommitOnWorker(AppController& app, TrackerConnectivityStat
 // Captures own value copies of all fields needed; AppController& is the
 // only reference and remains valid for the lifetime of the app (workers
 // are joined before destruction via JoinBackgroundTasks).
-void RunCommitWorker(AppController& app, UiDrawSession& d, TrackerConnectivityState connectivityAtKick,
-                     PendingFieldEdit edit, std::string originalEstimateSnapshot, std::string remainingEstimateSnapshot,
-                     std::string issueTypeKeyForNetwork) {
-    FieldEditCommitResult result =
-        CommitOnWorker(app, connectivityAtKick, edit, std::move(originalEstimateSnapshot),
-                       std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
+void RunCommitWorker(AppController& app, UiDrawSession& d, const PendingFieldEdit& edit,
+                     const FieldEditCommitRequest& req) {
+    FieldEditCommitResult result = CommitOnWorker(app, edit, req);
 
     // Hand the result back to the UI thread. The dispatcher's bounded queue
     // and BeginShutdown-aware Post are safe even if the app is mid-teardown.
@@ -198,12 +183,14 @@ void RunCommitWorker(AppController& app, UiDrawSession& d, TrackerConnectivitySt
 // no chip decay — those run ONCE per frame in PumpGridFieldEdits (host-driven).
 void EnqueueGridFieldEdits(UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
     {
-        // Keep queued edits latest-per-cell (drop older queued item for same cell).
+        // Keep queued edits latest-per-cell (drop older queued item for same cell). A cell is scoped
+        // by its tracker too: two panes may show the same issue key on different trackers.
         if (!readOnlyMode) {
             for (const auto& edit : pendingEdits) {
                 const std::string editKey = BuildCellKey(edit.IssueId, edit.Field.Id);
                 for (auto it = d.queuedFieldEdits.begin(); it != d.queuedFieldEdits.end();) {
-                    if (BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
+                    if (it->Target.BackendKey == edit.Target.BackendKey &&
+                        BuildCellKey(it->IssueId, it->Field.Id) == editKey) {
                         it = d.queuedFieldEdits.erase(it);
                     } else {
                         ++it;
@@ -249,12 +236,11 @@ void DiscardQueuedGridFieldEditsOnBackendSwitch(UiDrawSession& d) {
     d.gridEditError = "Unsent edits discarded: the tracker backend changed before they could be sent.";
 }
 
-// Pump half (called ONCE per frame by the pane-window host with the FOCUSED pane's
-// live snapshot — review MEDIUM-1): dispatches the next queued edit to a worker and
-// decays success chips. Running this per visible pane faded chips N× faster and
-// could snapshot estimate bases from a non-focused pane's frozen ticket snapshot.
-void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
-                        bool readOnlyMode) {
+// Pump half (called ONCE per frame by the pane-window host — review MEDIUM-1):
+// dispatches the next queued edit to a worker and decays success chips. Running this
+// per visible pane faded chips N× faster. The edit's estimate bases come from the pane
+// it was made in, which need not be the focused one (#2260).
+void PumpGridFieldEdits(AppController& app, UiDrawSession& d, bool readOnlyMode) {
     SMATCHET_UI_PERF_SCOPE("grid.cell_commit_pump");
 
     // Dispatch the next queued edit to a worker thread. Only one in flight
@@ -263,16 +249,30 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<
     if (!readOnlyMode && !d.hasInFlightEdit && !d.queuedFieldEdits.empty()) {
         PendingFieldEdit edit = d.queuedFieldEdits.front();
         d.queuedFieldEdits.pop_front();
+        if (edit.Target.PaneId.empty()) {
+            edit.Target = app.LatchPendingActionTarget(); // queued by a tool, not a pane: the focused pane
+        }
+        // Pillar 6: the worker queues first when the last probe says the tracker is unreachable, instead
+        // of spending the HTTP retry window before the edit is saved anywhere. Read now, not at enqueue:
+        // an edit can wait behind another in flight.
+        edit.Target.Connectivity = app.GetLastTrackerConnectivityState();
 
-        std::string originalEstimateSnapshot;
-        std::string remainingEstimateSnapshot;
-        std::string issueTypeKeyForNetwork;
-        const auto snapshotIt = std::find_if(tickets.begin(), tickets.end(),
-                                             [&](const CachedTicket& ticket) { return ticket.id == edit.IssueId; });
-        if (snapshotIt != tickets.end()) {
-            originalEstimateSnapshot = snapshotIt->GetFieldValue("timeoriginalestimate");
-            remainingEstimateSnapshot = snapshotIt->GetFieldValue("timeestimate");
-            issueTypeKeyForNetwork = ToLowerAsciiCopy(TrimCopy(snapshotIt->GetFieldValue("issuetype")));
+        FieldEditCommitRequest req;
+        req.IssueId = edit.IssueId;
+        req.Field = edit.Field;
+        req.Values = edit.Values;
+        req.OriginalRichValue = edit.OriginalRichValue;
+        req.OriginalValue = edit.OriginalValue;
+        req.HasOriginalValue = edit.HasOriginalValue;
+        req.Target = edit.Target;
+        const std::shared_ptr<const std::vector<CachedTicket>> paneTickets = app.TicketsSnapshotForTarget(edit.Target);
+        if (paneTickets) {
+            const auto snapshotIt =
+                std::find_if(paneTickets->begin(), paneTickets->end(),
+                             [&edit](const CachedTicket& ticket) { return ticket.id == edit.IssueId; });
+            if (snapshotIt != paneTickets->end()) {
+                FieldEditPipelineService::CaptureTicketSnapshots(*snapshotIt, false, req);
+            }
         }
 
         d.hasInFlightEdit = true;
@@ -280,9 +280,9 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<
         // identification). The worker carries its own copies so these are
         // diagnostic-only after dispatch.
         d.inFlightEdit = edit;
-        d.inFlightOriginalEstimateSnapshot = originalEstimateSnapshot;
-        d.inFlightRemainingEstimateSnapshot = remainingEstimateSnapshot;
-        d.inFlightIssueTypeKeySnapshot = issueTypeKeyForNetwork;
+        d.inFlightOriginalEstimateSnapshot = req.OriginalEstimateSnapshot;
+        d.inFlightRemainingEstimateSnapshot = req.RemainingEstimateSnapshot;
+        d.inFlightIssueTypeKeySnapshot = req.IssueTypeKeySnapshot;
         d.inFlightDelayFrames = 0;
 
         CellWriteFeedback feedback;
@@ -294,18 +294,11 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<
         LOG_TRACE("ProcessGridFieldEdits: dispatching worker for issue=%s field=%s", edit.IssueId.c_str(),
                   edit.Field.Id.c_str());
 
-        // Pillar 6: the worker queues first when the last probe says the tracker is unreachable,
-        // instead of spending the HTTP retry window before the edit is saved anywhere.
-        const TrackerConnectivityState connectivityAtKick = app.GetLastTrackerConnectivityState();
         // Worker runs CommitOrQueue (HTTP or SQLite enqueue) and posts the result
         // back to the UI thread. Lifetime: AppController owns the worker
         // thread; JoinBackgroundTasks is called before destruction.
         try {
-            app.LaunchBackgroundTask([&app, &d, connectivityAtKick, edit, originalEstimateSnapshot,
-                                      remainingEstimateSnapshot, issueTypeKeyForNetwork]() mutable {
-                RunCommitWorker(app, d, connectivityAtKick, std::move(edit), std::move(originalEstimateSnapshot),
-                                std::move(remainingEstimateSnapshot), std::move(issueTypeKeyForNetwork));
-            });
+            app.LaunchBackgroundTask([&app, &d, edit, req]() { RunCommitWorker(app, d, edit, req); });
         } catch (const std::exception& ex) {
             // Thread creation failed: no worker will post back, so release the in-flight gate here
             // (otherwise every later edit waits behind it forever). The edit is reported, not
@@ -342,8 +335,8 @@ void PumpGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<
 
 // Composed enqueue+pump kept for single-shot callers outside the pane-window loop
 // (the perf.grid_edit_pump command in BuiltinCommands_Perf.cpp).
-void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<CachedTicket>& tickets,
-                           const std::vector<PendingFieldEdit>& pendingEdits, bool readOnlyMode) {
+void ProcessGridFieldEdits(AppController& app, UiDrawSession& d, const std::vector<PendingFieldEdit>& pendingEdits,
+                           bool readOnlyMode) {
     EnqueueGridFieldEdits(d, pendingEdits, readOnlyMode);
-    PumpGridFieldEdits(app, d, tickets, readOnlyMode);
+    PumpGridFieldEdits(app, d, readOnlyMode);
 }

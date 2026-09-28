@@ -7,7 +7,8 @@
 //     prove byte-clean).
 //   - Lua-side errors propagate as the production-shape tuple `(nil, err)`.
 //   - `Ticket:set_field` + `Ticket:transition` forward through to
-//     `ILuaBindingHost::SubmitFieldEdit` with the right values.
+//     `ILuaBindingHost::SubmitFieldEditOrQueue` with the right values, and report an
+//     edit saved to the offline queue as (true, "queued").
 //   - `mcp.register_tool` records the registration callback.
 //   - `commands.invoke` returns the `{ok, data, error}` table shape and routes
 //     through the host's `CommandRegistry`.
@@ -278,12 +279,53 @@ TEST_CASE("Lua bindings · smatchet.create_issue marshals its result on the call
 // Ticket:set_field + Ticket:transition
 // =============================================================================
 
+TEST_CASE("Lua bindings · retained Ticket edits keep their original tracker target" *
+          doctest::test_suite("[high-risk]")) {
+    CoreFixture fx;
+    CachedTicket ticket;
+    ticket.id = "ABC-5";
+    ticket.EditTarget.PaneId = "pane-a";
+    ticket.EditTarget.BackendKey = "tracker-a";
+    ticket.EditTarget.BackendGeneration = 7;
+    fx.host.TicketsById[ticket.id] = ticket;
+    fx.host.ActiveTickets = {ticket};
+    TrackerField field;
+    field.Id = "priority";
+    fx.host.FieldsById[field.Id] = field;
+    field.Id = "status";
+    fx.host.FieldsById[field.Id] = field;
+
+    Run(fx.state(), R"(
+        retained = smatchet.get_ticket("ABC-5")
+        retained_active = smatchet.get_active_tickets()[1]
+    )");
+    // Later reads reflect a different focused tracker, even with the same issue id.
+    ticket.EditTarget.PaneId = "pane-b";
+    ticket.EditTarget.BackendKey = "tracker-b";
+    ticket.EditTarget.BackendGeneration = 9;
+    fx.host.TicketsById[ticket.id] = ticket;
+    fx.host.ActiveTickets = {ticket};
+    auto result = Run(fx.state(), R"(
+        local edited = retained:set_field("priority", "High")
+        local transitioned = retained_active:transition("Done")
+        return edited and transitioned
+    )");
+    CHECK(result.get<bool>());
+    REQUIRE_EQ(fx.host.SubmitFieldEditCalls.size(), 2u);
+    for (const auto& call : fx.host.SubmitFieldEditCalls) {
+        CHECK_EQ(call.Target.PaneId, "pane-a");
+        CHECK_EQ(call.Target.BackendKey, "tracker-a");
+        CHECK_EQ(call.Target.BackendGeneration, 7u);
+        CHECK_EQ(call.IssueId, "ABC-5");
+    }
+}
+
 // * doctest::test_suite("[high-risk]") -- forces
 // `AppController_LuaBindingsCore.cpp::TicketSetFieldGlue` (~line 145) ->
-// `host->FindFieldById` + `host->SubmitFieldEdit`. If the glue stopped pushing
+// `host->FindFieldById` + `host->SubmitFieldEditOrQueue`. If the glue stopped pushing
 // the single-element vector (e.g. dropped `vals.push_back(val)`), the
 // recorded `Values[0] == "High"` assertion would fail.
-TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEdit" * doctest::test_suite("[high-risk]")) {
+TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEditOrQueue" * doctest::test_suite("[high-risk]")) {
     CoreFixture fx;
 
     CachedTicket t;
@@ -295,7 +337,7 @@ TEST_CASE("Lua bindings · Ticket:set_field forwards to SubmitFieldEdit" * docte
     prio.Name = "Priority";
     fx.host.FieldsById["priority"] = prio;
 
-    fx.host.SubmitFieldEditReturn = true;
+    fx.host.SubmitFieldEditKind = PendingActionSubmitResult::Kind::Sent;
 
     sol::protected_function_result r = Run(fx.state(), R"(
         local tk = smatchet.get_ticket("ABC-5")
@@ -323,7 +365,7 @@ TEST_CASE("Lua bindings · Ticket:set_field surfaces failure path") {
     prio.Name = "Priority";
     fx.host.FieldsById["priority"] = prio;
 
-    fx.host.SubmitFieldEditReturn = false;
+    fx.host.SubmitFieldEditKind = PendingActionSubmitResult::Kind::Failed;
     fx.host.SubmitFieldEditError = "tracker rejected value";
 
     sol::protected_function_result r = Run(fx.state(), R"(
@@ -350,8 +392,38 @@ TEST_CASE("Lua bindings · Ticket:set_field unknown field returns error") {
     )");
     CHECK_EQ(r.get<bool>(0), false);
     CHECK(r.get<std::string>(1).find("does_not_exist") != std::string::npos);
-    // SubmitFieldEdit was NOT called -- glue bails on the FindFieldById null.
+    // SubmitFieldEditOrQueue was NOT called -- glue bails on the FindFieldById null.
     CHECK_EQ(fx.host.SubmitFieldEditCalls.size(), 0u);
+}
+
+// Quality Pillar 6: offline, the edit is saved to the queue — a success the script can tell apart.
+TEST_CASE("Lua bindings · Ticket:set_field and Ticket:transition report a queued edit") {
+    CoreFixture fx;
+
+    CachedTicket t;
+    t.id = "ABC-13";
+    fx.host.TicketsById["ABC-13"] = t;
+    TrackerField prio;
+    prio.Id = "priority";
+    prio.Name = "Priority";
+    fx.host.FieldsById["priority"] = prio;
+    TrackerField status;
+    status.Id = "status";
+    status.Name = "Status";
+    fx.host.FieldsById["status"] = status;
+    fx.host.SubmitFieldEditKind = PendingActionSubmitResult::Kind::Queued;
+
+    sol::protected_function_result r = Run(fx.state(), R"(
+        local tk = smatchet.get_ticket("ABC-13")
+        local ok1, err1 = tk:set_field("priority", "High")
+        local ok2, err2 = tk:transition("Done")
+        return ok1, err1, ok2, err2
+    )");
+    CHECK_EQ(r.get<bool>(0), true);
+    CHECK_EQ(r.get<std::string>(1), std::string("queued"));
+    CHECK_EQ(r.get<bool>(2), true);
+    CHECK_EQ(r.get<std::string>(3), std::string("queued"));
+    CHECK_EQ(fx.host.SubmitFieldEditCalls.size(), 2u);
 }
 
 TEST_CASE("Lua bindings · Ticket:transition uses status field") {

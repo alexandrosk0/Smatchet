@@ -58,6 +58,19 @@ void PrepareNewIssueDraftForSubmit(UiDrawSession& d) {
     }
 }
 
+// The draft is in the offline queue: close it and say so.
+void FinishQueuedNewIssueDraft(UiDrawSession& d, const std::string& okMessage) {
+    d.gridEditError.clear();
+    d.gridEditSuccess = okMessage.empty() ? "Queued offline." : okMessage;
+    d.newIssueDraftActive = false;
+    d.newIssueDraft = IssueDraft{};
+    d.newIssueDraftEditBufs.clear();
+    d.newIssueMissingFieldIds.clear();
+    d.newIssueQueueFallbackVisible = false;
+    d.newIssueQueueFallbackError.clear();
+}
+
+// The "Queue offline" button: the user chose to queue after a failed create.
 bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::string& okMessage) {
     PrepareNewIssueDraftForSubmit(d);
     const std::int64_t qid = app.QueueCreateOffline(d.newIssueDraft);
@@ -68,20 +81,9 @@ bool QueueNewIssueDraftOffline(AppController& app, UiDrawSession& d, const std::
         d.newIssueQueueFallbackError.clear();
         return false;
     }
-    d.gridEditError.clear();
-    d.gridEditSuccess = okMessage.empty() ? "Queued offline." : okMessage;
-    d.newIssueDraftActive = false;
-    d.newIssueDraft = IssueDraft{};
-    d.newIssueDraftEditBufs.clear();
-    d.newIssueMissingFieldIds.clear();
-    d.newIssueQueueFallbackVisible = false;
-    d.newIssueQueueFallbackError.clear();
+    FinishQueuedNewIssueDraft(d, okMessage);
     return true;
 }
-
-// N12 item 13b: the create pipeline classifies transport-ness into IssueCreateResult — the
-// offline-queue fallback branches on that flag, never on the flattened text.
-bool IsLikelyOfflineCreateError(const IssueCreateResult& r) { return r.ErrorTransient; }
 
 /** Shared submit path used by both the Create button and the Enter-on-Summary shortcut.
  *  Mirrors the legacy inline body so behaviour stays identical regardless of which
@@ -101,7 +103,8 @@ void TrySubmitNewIssueDraft(AppController& app, UiDrawSession& d) {
             IssueDraftHelpers::MapFieldIdsToNames(d.newIssueMissingFieldIds, app.GetAvailableFields());
         d.gridEditError = "Missing required fields: " + JoinStrings(names, ", ");
     } else {
-        d.newIssueCreateFuture = app.CreateIssueAsync(d.newIssueDraft);
+        // Unreachable tracker: the create worker saves the draft to the offline queue (Quality Pillar 6).
+        d.newIssueCreateFuture = app.CreateOrQueueIssueAsync(d.newIssueDraft);
         d.newIssueCreateInFlight = true;
     }
 }
@@ -151,7 +154,7 @@ bool TryAppendStagedFromAbsPath(IssueDraft& draft, const std::string& absUtf8) {
 }
 
 // Poll the async create future (if ready) and fold its result into the draft/banner state.
-void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
+void PollNewIssueCreateResult(UiDrawSession& d) {
     if (d.newIssueCreateInFlight && d.newIssueCreateFuture.valid() &&
         d.newIssueCreateFuture.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
         IssueCreateResult r = d.newIssueCreateFuture.get();
@@ -167,17 +170,16 @@ void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
             d.newIssueQueueFallbackError.clear();
             d.gridEditError.clear();
             d.gridEditSuccess = "Created " + r.IssueKey + ".";
+        } else if (r.QueuedOfflineId > 0) {
+            FinishQueuedNewIssueDraft(d, "Offline detected; queued offline.");
         } else {
             d.newIssueMissingFieldIds = r.MissingFieldIds;
-            if (IsLikelyOfflineCreateError(r)) {
-                d.newIssueQueueFallbackVisible = false;
-                d.newIssueQueueFallbackError.clear();
-                if (!QueueNewIssueDraftOffline(app, d, "Offline detected; queued offline.")) {
-                    d.gridEditSuccess.clear();
-                    d.gridEditError = "Create failed (" + r.Error + ") and queue offline failed.";
-                    d.newIssueQueueFallbackVisible = true;
-                    d.newIssueQueueFallbackError = r.Error;
-                }
+            if (IsOfflineQueueableFailure(r)) {
+                // The tracker was unreachable and the automatic queue write failed: offer it again.
+                d.gridEditSuccess.clear();
+                d.gridEditError = "Create failed (" + r.Error + ") and queue offline failed.";
+                d.newIssueQueueFallbackVisible = true;
+                d.newIssueQueueFallbackError = r.Error;
             } else {
                 d.newIssueQueueFallbackVisible = false;
                 d.newIssueQueueFallbackError.clear();
@@ -186,6 +188,9 @@ void PollNewIssueCreateResult(AppController& app, UiDrawSession& d) {
                 const std::string lower = ToLowerAsciiCopy(banner);
                 if (lower.find("create issue failed") == std::string::npos) {
                     banner.insert(0, "Create issue failed: ");
+                }
+                if (IsAmbiguousCreateFailure(r)) {
+                    banner.append(" ").append(kAmbiguousCreateHint);
                 }
                 d.gridEditError = std::move(banner);
             }
@@ -649,7 +654,7 @@ void RenderNewIssueDraftRow(AppController& app, UiDrawSession& d, const std::vec
                             const TrackerConfig& cfg, const CachedTicket* lastVisibleTicket) {
     const auto& catalog = app.GetAvailableFields();
 
-    PollNewIssueCreateResult(app, d);
+    PollNewIssueCreateResult(d);
 
     // Match one line of text + table cell Y padding.
     const float kNewIssueRowH = ImGui::GetTextLineHeight() + ImGui::GetStyle().CellPadding.y * 2.0f;

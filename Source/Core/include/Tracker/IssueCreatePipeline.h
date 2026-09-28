@@ -10,6 +10,7 @@
 // the full-json door is closed here; the .cpp that defines BuildFieldsPayload includes json.hpp.
 #include <nlohmann/json_fwd.hpp>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -21,18 +22,45 @@ class ISyncCache;
  */
 struct IssueCreateResult {
     bool Ok = false;
-    std::string IssueKey;                                                // populated on success
-    std::string Error;                                                   // single-line summary
-    /// Transport-shaped Error (retryable per TrackerError::IsRetryable), classified where the
-    /// pipeline flattens the backend's TrackerError (N12 item 13b). Validation/payload-build
-    /// failures keep the default false — never offline-queueable. Deliberately NOT set for the
-    /// "created, key unknown" shape (the create succeeded server-side; queueing would duplicate).
+    std::string IssueKey; // populated on success
+    std::string Error;    // single-line summary
+    /// The backend's error kind was retryable (TrackerError::IsRetryable: transport, rate limit, 5xx),
+    /// classified where the pipeline flattens it (N12 item 13b). Validation / payload-build failures
+    /// and the "created, key unknown" shape keep false.
     bool ErrorTransient = false;
+    /// Sending the draft again could create the issue twice: the create request went out and the tracker
+    /// may have applied it — a timeout or 5xx, a success status whose body could not be used, or "created,
+    /// key unknown" (TrackerError::ProvablyNotApplied is false). False for a failure before the send, an
+    /// explicit rejection, and an update (which replays as a set-replace).
+    bool ReplayMayDuplicate = false;
     std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
     CachedTicket SeededTicket;
+    /// > 0 when the tracker could not be reached and the draft was saved to the offline queue instead
+    /// (AppController::CreateOrQueueIssueAsync, Quality Pillar 6): the queue row that creates it on reconnect.
+    std::int64_t QueuedOfflineId = 0;
 };
+
+/// True when a failed create / update may go to the offline queue: the failure is retryable and sending
+/// the draft again cannot duplicate the issue. A rejection the user must fix is reported instead.
+inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) {
+    return !result.Ok && result.ErrorTransient && !result.ReplayMayDuplicate;
+}
+
+/// True when a failed create may nonetheless have created the issue (ReplayMayDuplicate), transient or not.
+/// It is neither queued nor resent automatically: the user checks the tracker first.
+inline bool IsAmbiguousCreateFailure(const IssueCreateResult& result) {
+    return !result.Ok && result.ReplayMayDuplicate;
+}
+
+/// Shown with an ambiguous create failure (IsAmbiguousCreateFailure).
+constexpr const char* kAmbiguousCreateHint =
+    "The issue may have been created; check the tracker before sending it again.";
+
+/// The failed-creates reason of a replayed create that may have landed. The Offline Queue panel's
+/// ordinary retry skips such rows; only an explicit "not on the tracker" action sends them again.
+constexpr const char* kAmbiguousCreateReason = "ambiguous_create";
 
 /**
  * Reusable create/update flow: validate draft -> build Jira payload -> POST (create) or PUT

@@ -359,6 +359,8 @@ IssueCreateResult Run(ITrackerIssueMutations& client, ISyncCache* cache, const s
         // "Created, key unknown" (Ok(empty)) stays non-transient: the issue exists server-side,
         // so an offline-queue retry would duplicate it (N12 item 13b).
         result.ErrorTransient = createResult ? false : createResult.error().IsRetryable();
+        // Created-without-key, or a failure the tracker may have applied: never resent blind.
+        result.ReplayMayDuplicate = createResult || !createResult.error().ProvablyNotApplied();
         LOG_ERROR("IssueCreatePipeline: CreateIssue failed: %s", result.Error.c_str());
         return result;
     }

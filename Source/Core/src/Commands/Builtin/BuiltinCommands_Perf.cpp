@@ -10,7 +10,6 @@
 
 #include "AppController.h"
 #include <nlohmann/json.hpp> // fan-in Phase 2: AppController.h closed the transitive json door (json_fwd); this TU uses nlohmann::json directly.
-#include "CachedTicketTypes.h"
 #include "ConfigManager.h"
 #include "MemoryTelemetry.h"
 #include "SmatchetGridUiSupport.h"
@@ -124,60 +123,58 @@ void RegisterPerfFrameCountCommand(CommandRegistry& reg) {
 }
 
 void RegisterPerfDumpCommand(CommandRegistry& reg) {
-    Command c =
-        MakeCommand("perf.dump", "Write perf snapshot to a JSON file and return {file, count}.",
-                    [](const nlohmann::json& args, const CommandContext&) {
-                        const std::string& userDataDir = ConfigManager::GetUserDataDirectory();
-                        std::string outPath = args.value("outPath", std::string());
-                        if (outPath.empty()) {
-                            std::time_t t = std::time(nullptr);
-                            char ts[64] = {};
-                            if (const std::tm* lt = std::localtime(&t))
-                                std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
-                            outPath = (fs::path(userDataDir) / "perf" / (std::string("perf-snapshot-") + ts + ".json"))
-                                          .string();
-                        } else {
-                            // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine it
-                            // under a dedicated <userData>/perf/ subdir — not the user-data root, which
-                            // holds smatchet_config.json and other state — so perf.dump cannot write or
-                            // clobber an arbitrary file.
-                            std::string resolved, confineErr;
-                            if (!smatchet::cmd::ConfinePathUnderSubdir(userDataDir, "perf", outPath, resolved,
-                                                                       confineErr)) {
-                                return CommandResult::Failure(ErrorCode::ValidationError,
-                                                              "perf.dump outPath rejected: " + confineErr);
-                            }
-                            outPath = resolved;
-                        }
-                        std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
-                        nlohmann::json doc = nlohmann::json::array();
-                        std::transform(rows.begin(), rows.end(), std::back_inserter(doc), [](const UiPerfRow& r) {
-                            return nlohmann::json{{"name", r.name},
-                                                  {"lastTotalMs", r.lastTotalMs},
-                                                  {"avgPerCallMs", r.avgPerCallMs},
-                                                  {"maxMs", r.maxMs},
-                                                  {"calls", r.calls},
-                                                  {"emaAvgMs", r.emaAvgMs},
-                                                  {"p99Ms", r.p99Ms}};
-                        });
-                        // Serialise before opening the file so a throw (bad_alloc, JSON error)
-                        // cannot leak an open FILE* handle.
-                        const std::string s = doc.dump(2);
-                        std::error_code ec;
-                        fs::path outFs(outPath);
-                        fs::create_directories(outFs.parent_path(), ec);
-                        std::FILE* f = std::fopen(outPath.c_str(), "wb");
-                        if (!f) {
-                            return CommandResult::Failure(ErrorCode::HandlerError,
-                                                          "Could not write perf dump to '" + outPath + "'.");
-                        }
-                        std::fwrite(s.data(), 1, s.size(), f);
-                        std::fclose(f);
-                        nlohmann::json out;
-                        out["file"] = outPath;
-                        out["count"] = static_cast<int>(rows.size());
-                        return CommandResult::Success(std::move(out));
-                    });
+    Command c = MakeCommand(
+        "perf.dump", "Write perf snapshot to a JSON file and return {file, count}.",
+        [](const nlohmann::json& args, const CommandContext&) {
+            const std::string& userDataDir = ConfigManager::GetUserDataDirectory();
+            std::string outPath = args.value("outPath", std::string());
+            if (outPath.empty()) {
+                std::time_t t = std::time(nullptr);
+                char ts[64] = {};
+                if (const std::tm* lt = std::localtime(&t))
+                    std::strftime(ts, sizeof(ts), "%Y%m%d-%H%M%S", lt);
+                outPath = (fs::path(userDataDir) / "perf" / (std::string("perf-snapshot-") + ts + ".json")).string();
+            } else {
+                // SECURITY: a caller-supplied outPath is untrusted (CLI/Lua/MCP). Confine it
+                // under a dedicated <userData>/perf/ subdir — not the user-data root, which
+                // holds smatchet_config.json and other state — so perf.dump cannot write or
+                // clobber an arbitrary file.
+                std::string resolved, confineErr;
+                if (!smatchet::cmd::ConfinePathUnderSubdir(userDataDir, "perf", outPath, resolved, confineErr)) {
+                    return CommandResult::Failure(ErrorCode::ValidationError,
+                                                  "perf.dump outPath rejected: " + confineErr);
+                }
+                outPath = resolved;
+            }
+            std::vector<UiPerfRow> rows = UiPerfMonitor::Instance().GetLastFrameRows(/*includeP99=*/true);
+            nlohmann::json doc = nlohmann::json::array();
+            std::transform(rows.begin(), rows.end(), std::back_inserter(doc), [](const UiPerfRow& r) {
+                return nlohmann::json{{"name", r.name},
+                                      {"lastTotalMs", r.lastTotalMs},
+                                      {"avgPerCallMs", r.avgPerCallMs},
+                                      {"maxMs", r.maxMs},
+                                      {"calls", r.calls},
+                                      {"emaAvgMs", r.emaAvgMs},
+                                      {"p99Ms", r.p99Ms}};
+            });
+            // Serialise before opening the file so a throw (bad_alloc, JSON error)
+            // cannot leak an open FILE* handle.
+            const std::string s = doc.dump(2);
+            std::error_code ec;
+            fs::path outFs(outPath);
+            fs::create_directories(outFs.parent_path(), ec);
+            std::FILE* f = std::fopen(outPath.c_str(), "wb");
+            if (!f) {
+                return CommandResult::Failure(ErrorCode::HandlerError,
+                                              "Could not write perf dump to '" + outPath + "'.");
+            }
+            std::fwrite(s.data(), 1, s.size(), f);
+            std::fclose(f);
+            nlohmann::json out;
+            out["file"] = outPath;
+            out["count"] = static_cast<int>(rows.size());
+            return CommandResult::Success(std::move(out));
+        });
     c.Params = {
         PString("outPath", "Output file path, confined under <userData>/perf/ (default: perf-snapshot-<ts>.json).")};
     reg.Register(std::move(c));
@@ -273,10 +270,6 @@ CommandResult RunGridEditBurstOnUi(AppController& app, int count, const std::str
     oneEdit.Field = field;
     oneEdit.Values = std::vector<std::string>{newValue};
 
-    const auto ticketsSnap = app.GetActiveTicketsSnapshot();
-    static const std::vector<CachedTicket> kEmptyTickets;
-    const std::vector<CachedTicket>& tickets = ticketsSnap ? *ticketsSnap : kEmptyTickets;
-
     std::vector<double> samplesMs;
     samplesMs.reserve(static_cast<size_t>(count));
 
@@ -285,7 +278,7 @@ CommandResult RunGridEditBurstOnUi(AppController& app, int count, const std::str
         std::vector<PendingFieldEdit> pendingEdits;
         pendingEdits.push_back(oneEdit);
         const auto t0 = std::chrono::steady_clock::now();
-        ProcessGridFieldEdits(app, g_ui, tickets, pendingEdits, /*readOnlyMode=*/false);
+        ProcessGridFieldEdits(app, g_ui, pendingEdits, /*readOnlyMode=*/false);
         const auto t1 = std::chrono::steady_clock::now();
         const double ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
         samplesMs.push_back(ms);

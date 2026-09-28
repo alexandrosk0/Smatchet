@@ -154,8 +154,8 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
         ResetAndClose(d);
         return;
     }
-    if (r.ErrorTransient) {
-        // Connectivity-shaped failure — stage the draft in the offline queue instead.
+    if (IsOfflineQueueableFailure(r)) {
+        // The tracker provably did not create it — stage the draft in the offline queue instead.
         if (app.QueueCreateOffline(d.quickCreateDraft) > 0) {
             SmatchetToastManager::Instance().Push(
                 SmatchetLocalization::T("toast.quick_create", "Quick create"),
@@ -167,7 +167,8 @@ void PollCreateFuture(AppController& app, UiDrawSession& d) {
         d.quickCreateError = "Create failed (" + r.Error + ") and queue offline failed.";
         return;
     }
-    d.quickCreateError = r.Error;
+    // A create that may have landed is never queued: resending it could create the issue twice.
+    d.quickCreateError = IsAmbiguousCreateFailure(r) ? r.Error + " " + kAmbiguousCreateHint : r.Error;
     // Server-side required fields this popup doesn't render → point at the full flow.
     d.quickCreateQueueOffered = !r.MissingFieldIds.empty();
 }

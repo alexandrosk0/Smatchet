@@ -158,8 +158,10 @@ TEST_CASE("BuildValue: depth-bomb PayloadJson / scalar is rejected by the bounde
     // the not-structured fallback instead of building a deep DOM whose recursive ~json teardown
     // can overflow the stack. Same contract as the DetectFieldFamily fix.
     std::string bomb;
-    for (int i = 0; i < 300; ++i) bomb += "[";
-    for (int i = 0; i < 300; ++i) bomb += "]";
+    for (int i = 0; i < 300; ++i)
+        bomb += "[";
+    for (int i = 0; i < 300; ++i)
+        bomb += "]";
 
     SUBCASE("option family: over-deep PayloadJson falls back to {id: scalar}") {
         TrackerField f = MakeField("customfield_10010");
@@ -177,9 +179,11 @@ TEST_CASE("BuildValue: depth-bomb PayloadJson / scalar is rejected by the bounde
 
     SUBCASE("user family: over-deep pre-encoded JSON scalar degrades to raw {accountId}") {
         std::string deepObj = "{\"accountId\":\"x\",\"pad\":";
-        for (int i = 0; i < 300; ++i) deepObj += "{\"a\":";
+        for (int i = 0; i < 300; ++i)
+            deepObj += "{\"a\":";
         deepObj += "1";
-        for (int i = 0; i < 300; ++i) deepObj += "}";
+        for (int i = 0; i < 300; ++i)
+            deepObj += "}";
         deepObj += "}";
         TrackerField f = MakeField("assignee");
         f.IsUserType = true;
@@ -725,4 +729,98 @@ TEST_CASE("AdfCommentBodyFromMarkdown: empty / whitespace input yields a valid n
         REQUIRE(doc["content"].size() >= 1);
         CHECK(doc["content"][0]["type"] == "paragraph");
     }
+}
+
+// Quality Pillar 6 (offline-first S10): the sprint / estimate payload shapes shared by the live edit,
+// the offline queue, replay and conflict resolution.
+TEST_CASE("TrackerFieldPayloadPure: sprint_add payload round-trips and rejects any other shape") {
+    const json payload = TrackerFieldPayloadPure::MakeSprintAddPayload("42");
+    CHECK(payload == json{{"sprint_add", "42"}});
+    std::string sprintId;
+    CHECK(TrackerFieldPayloadPure::TryParseSprintAddPayload(payload, sprintId));
+    CHECK(sprintId == "42");
+
+    std::string untouched = "keep";
+    CHECK_FALSE(TrackerFieldPayloadPure::TryParseSprintAddPayload(json{{"sprint_add", ""}}, untouched));
+    CHECK_FALSE(TrackerFieldPayloadPure::TryParseSprintAddPayload(json{{"sprint_add", 42}}, untouched));
+    CHECK_FALSE(TrackerFieldPayloadPure::TryParseSprintAddPayload(json{{"sprint_add", "42"}, {"x", 1}}, untouched));
+    CHECK_FALSE(TrackerFieldPayloadPure::TryParseSprintAddPayload(json{{"customfield_10020", "42"}}, untouched));
+    CHECK_FALSE(TrackerFieldPayloadPure::TryParseSprintAddPayload(json::array({"42"}), untouched));
+    CHECK(untouched == "keep");
+}
+
+TEST_CASE("TrackerFieldPayloadPure: an estimate edit sends both estimates") {
+    const auto original =
+        TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timeoriginalestimate", "3d", "1d", "4h");
+    REQUIRE(original.has_value());
+    CHECK(original.value().FieldsPayload ==
+          json{{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "4h"}}}});
+    CHECK(original.value().OriginalEstimate == "3d");
+    CHECK(original.value().RemainingEstimate == "4h");
+
+    const auto remaining = TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timeestimate", "2h", "", "");
+    REQUIRE(remaining.has_value());
+    CHECK(remaining.value().FieldsPayload == json{{"timetracking", {{"remainingEstimate", "2h"}}}});
+
+    const auto cleared = TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timeestimate", "", "1d", "4h");
+    REQUIRE_FALSE(cleared.has_value());
+    CHECK(cleared.error() == "Clearing Jira timetracking estimates is not supported by this editor.");
+    CHECK_FALSE(TrackerFieldPayloadPure::BuildTimetrackingEstimateEdit("timespent", "1h", "", "").has_value());
+    CHECK(TrackerFieldPayloadPure::TimetrackingKeyForEstimateField("summary") == nullptr);
+}
+
+TEST_CASE("TrackerFieldPayloadPure: TryDescribeQueuedFieldValue names the user's queued value") {
+    std::string out;
+    CHECK(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("customfield_sprint", json{{"sprint_add", "42"}}, false,
+                                                               out));
+    CHECK(out == "42");
+    const json estimate = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    CHECK(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("timeestimate", estimate, false, out));
+    CHECK(out == "1d");
+    CHECK(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("summary", json{{"summary", ""}}, false, out));
+    CHECK(out.empty()); // a cleared text field is the user's value, not "nothing queued"
+    CHECK(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("description", json{{"description_html", "<p>x</p>"}},
+                                                               false, out));
+    CHECK(out == "<p>x</p>");
+    CHECK_FALSE(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("priority", json{{"priority", {{"id", "3"}}}},
+                                                                     false, out));
+    CHECK(
+        TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("priority", json{{"priority", {{"id", "3"}}}}, true, out));
+    CHECK(out == "{\"id\":\"3\"}");
+    CHECK_FALSE(TrackerFieldPayloadPure::TryDescribeQueuedFieldValue("status", json{{"summary", "x"}}, true, out));
+}
+
+TEST_CASE("TrackerFieldPayloadPure: RebuildSpecialQueuedPayload keeps the queued shape") {
+    TrackerField sprint;
+    sprint.Id = "customfield_sprint";
+    sprint.Family = TrackerFieldFamily::Sprint;
+    TrackerFieldOption s43;
+    s43.Id = "43";
+    s43.Value = "Sprint 43";
+    sprint.AllowedValueOptions.push_back(s43);
+    using TrackerFieldPayloadPure::SpecialPayloadRebuild;
+    json out;
+
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(sprint.Id, json{{"sprint_add", "42"}}, &sprint,
+                                                               "Sprint 43", out) == SpecialPayloadRebuild::Rebuilt);
+    CHECK(out == json{{"sprint_add", "43"}});
+    // Without a catalog row only a numeric sprint id resolves.
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(sprint.Id, json{{"sprint_add", "42"}}, nullptr, "44",
+                                                               out) == SpecialPayloadRebuild::Rebuilt);
+    CHECK(out == json{{"sprint_add", "44"}});
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload(sprint.Id, json{{"sprint_add", "42"}}, &sprint,
+                                                               "Sprint 4, Sprint 5",
+                                                               out) == SpecialPayloadRebuild::Unresolvable);
+
+    const json estimate = {{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "1d"}}}};
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload("timeestimate", estimate, nullptr, "6h", out) ==
+          SpecialPayloadRebuild::Rebuilt);
+    CHECK(out == json{{"timetracking", {{"originalEstimate", "3d"}, {"remainingEstimate", "6h"}}}});
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload("timeestimate", estimate, nullptr, "  ", out) ==
+          SpecialPayloadRebuild::Unresolvable);
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload("summary", estimate, nullptr, "6h", out) ==
+          SpecialPayloadRebuild::Unresolvable);
+
+    CHECK(TrackerFieldPayloadPure::RebuildSpecialQueuedPayload("summary", json{{"summary", "x"}}, nullptr, "y", out) ==
+          SpecialPayloadRebuild::NotSpecial);
 }

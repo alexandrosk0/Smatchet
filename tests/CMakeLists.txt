@@ -296,6 +296,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/GitHubClientHelpers.cpp"
         "${CMAKE_SOURCE_DIR}/Source/Core/src/Tracker/CommentBlobFormatPure.cpp"
         Core/CommentBlobFormatPure.test.cpp
+        Core/BulkImportStatusPure.test.cpp
+        Core/TrackerFieldPayloadPure.test.cpp
         # Quality Pillar 6 comments (offline-first S7): sync carry-forward of the saved thread and
         # the comments-modal seed pick (header-only; the thread codec is CommentBlobFormatPure).
         Core/LazyEnrichmentCarryForwardPure.test.cpp
@@ -323,6 +325,8 @@ if(UNIX AND ((DEFINED SMATCHET_SANITIZER AND SMATCHET_SANITIZER STREQUAL "tsan")
         #     Both are real ThreadSanitizer surfaces. All TUs cpr/ImGui/GL-free; the only new
         #     ThirdParty link is md4c (pure stateless C Markdown parser — no threads).
         Core/OfflineQueueServiceRuntime.test.cpp
+        Core/IssueCreatePipelineIntegration.test.cpp
+        Core/TrackerPostTimeoutClassify.test.cpp
         Core/PendingActionQueueService.test.cpp
         Core/PendingActionPolicyPure.test.cpp
         Core/PendingActionSubmitAsync.test.cpp
@@ -1208,6 +1212,7 @@ add_executable(SmatchetTests
     # (ParseComments delegation, the lazy first-hover fetch and the modal post-back all
     # converge here). Pure — no I/O, no Logger.
     Core/CommentBlobFormatPure.test.cpp
+    Core/BulkImportStatusPure.test.cpp
     Core/LazyEnrichmentCarryForwardPure.test.cpp
     Core/SmatchetCommentsModalSeedPure.test.cpp
     Core/LearnedWorkflowPure.test.cpp

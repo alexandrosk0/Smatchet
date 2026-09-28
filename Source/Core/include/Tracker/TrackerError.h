@@ -44,12 +44,33 @@ struct TrackerError {
     /// HTTP status if applicable (0 for non-HTTP errors like Parse / Cancelled). Useful for
     /// logging and for the connectivity classifier.
     int HttpStatus = 0;
+    /// True only when the request provably never left this machine: a DNS, proxy-resolution or
+    /// connect failure, or a precondition that failed before the send. An operation timeout or a
+    /// lost response keeps the default (false): the tracker may already have applied the request.
+    bool RequestNotSent = false;
 
     bool IsOk() const noexcept { return Kind == TrackerErrorKind::None; }
     bool IsTransport() const noexcept { return Kind == TrackerErrorKind::Transport; }
     bool IsRetryable() const noexcept {
         return Kind == TrackerErrorKind::Transport || Kind == TrackerErrorKind::RateLimited ||
                Kind == TrackerErrorKind::ServerError;
+    }
+    /// True when the tracker certainly did not apply the failed request: it never left this machine
+    /// (RequestNotSent, or Cancelled — the retry loop only cancels before a send), or the tracker refused
+    /// it without acting (429, 401 / 403, 404, other 4xx). Such a write can be sent again without risking a
+    /// duplicate. A timeout, a 5xx, or a success status whose body could not be used (Parse / Unknown) may
+    /// have landed.
+    bool ProvablyNotApplied() const noexcept {
+        switch (Kind) {
+        case TrackerErrorKind::RateLimited:
+        case TrackerErrorKind::Auth:
+        case TrackerErrorKind::NotFound:
+        case TrackerErrorKind::InvalidRequest:
+        case TrackerErrorKind::Cancelled:
+            return true;
+        default:
+            return RequestNotSent;
+        }
     }
 
     static TrackerError Ok() { return TrackerError{}; }
@@ -132,17 +153,10 @@ inline TrackerError ClassifyRejectedHttpStatus(long statusCode, const std::strin
     return TrackerErrorFromHttpStatus(status, detail);
 }
 
-/// Retry decision for a non-idempotent POST (finding DR16 — the hole left by BACKLOG B2).
-/// A POST may only be re-sent when the request provably never reached the server: a pre-send
-/// transport failure such as a DNS-resolution error or a refused connection. A post-send
-/// operation timeout is different — the server may already have committed the create/comment and
-/// only the response was lost, so re-sending would double-create / double-comment. cpr reports
-/// both a connect-phase and a read-phase timeout as OPERATION_TIMEDOUT with status 0, and both
-/// land in TrackerErrorKind::Transport; the two cannot be told apart after the fact, so any
-/// operation timeout is treated as potentially post-send and left single-attempt. Genuine
-/// pre-send transport failures (not an operation timeout) still retry as before.
-inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool operationTimeout) noexcept {
-    return kind == TrackerErrorKind::Transport && !operationTimeout;
+/// Retry a non-idempotent POST only with positive evidence that no request was sent.
+/// A transport kind alone cannot distinguish DNS failure from a lost response.
+inline bool TrackerShouldRetryPost(TrackerErrorKind kind, bool requestNotSent) noexcept {
+    return kind == TrackerErrorKind::Transport && requestNotSent;
 }
 
 /// Convert a kind to a stable short string for logging. Not user-facing.

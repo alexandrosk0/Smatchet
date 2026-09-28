@@ -107,6 +107,9 @@ bool IsSprintField(const TrackerField& field);
 
 std::vector<std::string> SplitCommaSeparatedValues(const std::string& input);
 
+/// `rawValues` without its empty entries (an empty entry means "no value", never a value to send).
+std::vector<std::string> NonEmptyValues(const std::vector<std::string>& rawValues);
+
 std::string ResolveSprintIdForAgile(const TrackerField& field, const std::string& rawValue);
 
 std::string ResolveDisplayValueForSubmittedSelection(const TrackerField& field, const std::string& value);
@@ -123,6 +126,57 @@ Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<s
  * Jira never receives an empty-content body it rejects.
  */
 nlohmann::json AdfCommentBodyFromMarkdown(const std::string& markdown);
+
+// Payloads for the two field edits that are not a plain `fields` entry: sprint membership (sent with
+// Jira's agile API) and the time-tracking estimates (the compound `timetracking` field). The live edit,
+// the offline queue, replay and conflict resolution all build and read them here (Quality Pillar 6).
+
+/// Key of the offline-queue payload for a sprint edit, {"sprint_add": "<sprint id>"}. Replay sends it with
+/// AddIssueToSprint, never as a `fields` update.
+constexpr const char* kSprintAddPayloadKey = "sprint_add";
+
+nlohmann::json MakeSprintAddPayload(const std::string& sprintId);
+
+/// True, with `outSprintId` set, when `payload` is exactly {"sprint_add": "<non-empty string>"}.
+bool TryParseSprintAddPayload(const nlohmann::json& payload, std::string& outSprintId);
+
+/// The `timetracking` key an editable estimate field maps to ("originalEstimate" for
+/// `timeoriginalestimate`, "remainingEstimate" for `timeestimate`), or nullptr for any other field.
+const char* TimetrackingKeyForEstimateField(const std::string& fieldId);
+
+struct TimetrackingEstimateEdit {
+    nlohmann::json FieldsPayload;  ///< {"timetracking": {"originalEstimate", "remainingEstimate"}}
+    std::string OriginalEstimate;  ///< value sent for `timeoriginalestimate` (the display to apply)
+    std::string RemainingEstimate; ///< value sent for `timeestimate`
+};
+
+/// The `fields` payload for an edit of one estimate: the edited estimate takes `editedValue` and the other
+/// keeps its current value, since Jira recalculates an estimate the request leaves out. Err when the value
+/// is empty (clearing is not supported) or `fieldId` is not an editable estimate.
+Result<TimetrackingEstimateEdit> BuildTimetrackingEstimateEdit(const std::string& fieldId,
+                                                               const std::string& editedValue,
+                                                               const std::string& originalEstimate,
+                                                               const std::string& remainingEstimate);
+
+/// The user's queued value for `fieldId` as text for the offline-conflict dialog: the sprint id of a
+/// sprint payload, the edited estimate of a `timetracking` payload, else the value under `fieldId` (or
+/// `fieldId`_html) — a string as-is, anything else as JSON only when `stringifyStructured`. False when
+/// the payload holds no such value.
+bool TryDescribeQueuedFieldValue(const std::string& fieldId, const nlohmann::json& payload, bool stringifyStructured,
+                                 std::string& out);
+
+enum class SpecialPayloadRebuild : unsigned char {
+    NotSpecial,   ///< not a sprint / estimate payload: the caller builds it the usual way
+    Rebuilt,      ///< `out` holds the payload for `resolvedValue`
+    Unresolvable, ///< a sprint / estimate payload, but `resolvedValue` cannot fill it (unknown sprint, empty)
+};
+
+/// Rebuild a queued sprint / estimate payload around the value the user chose in the conflict dialog. A
+/// sprint takes a sprint name or id (resolved against `field`, when known); an estimate replaces only the
+/// edited estimate and keeps the other one as queued.
+SpecialPayloadRebuild RebuildSpecialQueuedPayload(const std::string& fieldId, const nlohmann::json& queued,
+                                                  const TrackerField* field, const std::string& resolvedValue,
+                                                  nlohmann::json& out);
 
 } // namespace TrackerFieldPayloadPure
 

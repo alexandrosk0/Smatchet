@@ -22,7 +22,7 @@
 
 #include "CachedTicketTypes.h" // POD: no SQLite, no HTTP, no ImGui
 #include "Commands/CommandRegistry.h"
-#include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — outError → Result flip)
+#include "PendingActionTypes.h" // PendingActionSubmitResult (SubmitFieldEditOrQueue: sent / queued / failed)
 #include "TrackerFieldSchema.h" // TrackerField — POD
 
 // Narrow app facets carried by the command context (declared in
@@ -89,9 +89,12 @@ class ILuaBindingHost {
     virtual std::tuple<sol::object, std::string> LuaDecodeJsonBind(sol::state_view sv, const std::string& s) = 0;
 
     // --- Field edits (Ticket:set_field / Ticket:transition) ---
-    virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
-    virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                       const std::vector<std::string>& rawValues) = 0;
+    virtual bool FindFieldById(const PendingActionTarget& target, const std::string& fieldId,
+                               TrackerField& out) const = 0;
+    /// Set a field on the retained ticket's tracker: saved now, or queued offline and replayed on reconnect.
+    virtual PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target,
+                                                             const std::string& issueId, const TrackerField& field,
+                                                             const std::vector<std::string>& values) = 0;
 
     // --- Issue create ---
     // `sv` is the calling Lua state — see the LuaGetTicketBind note. `spec` is already

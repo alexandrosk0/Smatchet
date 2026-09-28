@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <utility>
 
 namespace TrackerFieldPayloadPure {
 
@@ -676,11 +677,16 @@ bool BuildScalarValue(const TrackerField& field, const std::string& scalarValue,
 
 } // namespace
 
-Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues) {
+std::vector<std::string> NonEmptyValues(const std::vector<std::string>& rawValues) {
     std::vector<std::string> values;
     values.reserve(rawValues.size());
     std::copy_if(rawValues.begin(), rawValues.end(), std::back_inserter(values),
                  [](const std::string& value) { return !value.empty(); });
+    return values;
+}
+
+Result<nlohmann::json> BuildValue(const TrackerField& field, const std::vector<std::string>& rawValues) {
+    const std::vector<std::string> values = NonEmptyValues(rawValues);
 
     nlohmann::json outValue;
 
@@ -717,6 +723,148 @@ nlohmann::json AdfCommentBodyFromMarkdown(const std::string& markdown) {
     // empty content, so emit a single empty paragraph — the minimal valid, non-empty body.
     return nlohmann::json{
         {"type", "doc"}, {"version", 1}, {"content", nlohmann::json::array({nlohmann::json{{"type", "paragraph"}}})}};
+}
+
+nlohmann::json MakeSprintAddPayload(const std::string& sprintId) {
+    nlohmann::json payload = nlohmann::json::object();
+    payload[kSprintAddPayloadKey] = sprintId;
+    return payload;
+}
+
+bool TryParseSprintAddPayload(const nlohmann::json& payload, std::string& outSprintId) {
+    if (!payload.is_object() || payload.size() != 1) {
+        return false;
+    }
+    const auto it = payload.find(kSprintAddPayloadKey);
+    if (it == payload.end() || !it->is_string()) {
+        return false;
+    }
+    std::string sprintId = it->get<std::string>();
+    if (sprintId.empty()) {
+        return false;
+    }
+    outSprintId = std::move(sprintId);
+    return true;
+}
+
+const char* TimetrackingKeyForEstimateField(const std::string& fieldId) {
+    if (fieldId == "timeoriginalestimate") {
+        return "originalEstimate";
+    }
+    if (fieldId == "timeestimate") {
+        return "remainingEstimate";
+    }
+    return nullptr;
+}
+
+Result<TimetrackingEstimateEdit> BuildTimetrackingEstimateEdit(const std::string& fieldId,
+                                                               const std::string& editedValue,
+                                                               const std::string& originalEstimate,
+                                                               const std::string& remainingEstimate) {
+    const char* const editedKey = TimetrackingKeyForEstimateField(fieldId);
+    if (editedKey == nullptr) {
+        return Result<TimetrackingEstimateEdit>::Err("Not an editable time-tracking estimate: " + fieldId);
+    }
+    if (editedValue.empty()) {
+        return Result<TimetrackingEstimateEdit>::Err(
+            "Clearing Jira timetracking estimates is not supported by this editor.");
+    }
+    TimetrackingEstimateEdit edit;
+    edit.OriginalEstimate = originalEstimate;
+    edit.RemainingEstimate = remainingEstimate;
+    if (fieldId == "timeoriginalestimate") {
+        edit.OriginalEstimate = editedValue;
+    } else {
+        edit.RemainingEstimate = editedValue;
+    }
+    nlohmann::json timetracking = nlohmann::json::object();
+    if (!edit.OriginalEstimate.empty()) {
+        timetracking["originalEstimate"] = edit.OriginalEstimate;
+    }
+    if (!edit.RemainingEstimate.empty()) {
+        timetracking["remainingEstimate"] = edit.RemainingEstimate;
+    }
+    edit.FieldsPayload = nlohmann::json::object();
+    edit.FieldsPayload["timetracking"] = std::move(timetracking);
+    return Result<TimetrackingEstimateEdit>::Ok(std::move(edit));
+}
+
+namespace {
+
+// The `timetracking` object of a payload that holds nothing else, or nullptr.
+const nlohmann::json* SoleTimetrackingObject(const nlohmann::json& payload) {
+    if (!payload.is_object() || payload.size() != 1) {
+        return nullptr;
+    }
+    const auto it = payload.find("timetracking");
+    return (it != payload.end() && it->is_object()) ? &(*it) : nullptr;
+}
+
+} // namespace
+
+bool TryDescribeQueuedFieldValue(const std::string& fieldId, const nlohmann::json& payload, bool stringifyStructured,
+                                 std::string& out) {
+    std::string sprintId;
+    if (TryParseSprintAddPayload(payload, sprintId)) {
+        out = std::move(sprintId);
+        return true;
+    }
+    if (const nlohmann::json* timetracking = SoleTimetrackingObject(payload)) {
+        const char* const key = TimetrackingKeyForEstimateField(fieldId);
+        const auto it = key != nullptr ? timetracking->find(key) : timetracking->end();
+        if (it == timetracking->end() || !it->is_string()) {
+            return false;
+        }
+        out = it->get<std::string>();
+        return true;
+    }
+    if (!payload.is_object()) {
+        return false;
+    }
+    auto it = payload.find(fieldId);
+    if (it == payload.end()) {
+        it = payload.find(fieldId + "_html");
+    }
+    if (it == payload.end()) {
+        return false;
+    }
+    if (it->is_string()) {
+        out = it->get<std::string>();
+        return true;
+    }
+    if (!stringifyStructured) {
+        return false;
+    }
+    out = it->dump();
+    return true;
+}
+
+SpecialPayloadRebuild RebuildSpecialQueuedPayload(const std::string& fieldId, const nlohmann::json& queued,
+                                                  const TrackerField* field, const std::string& resolvedValue,
+                                                  nlohmann::json& out) {
+    std::string queuedSprintId;
+    if (TryParseSprintAddPayload(queued, queuedSprintId)) {
+        const std::string sprintId = ResolveSprintIdForAgile(field != nullptr ? *field : TrackerField(), resolvedValue);
+        if (sprintId.empty()) {
+            return SpecialPayloadRebuild::Unresolvable;
+        }
+        out = MakeSprintAddPayload(sprintId);
+        return SpecialPayloadRebuild::Rebuilt;
+    }
+    const nlohmann::json* timetracking = SoleTimetrackingObject(queued);
+    if (timetracking == nullptr) {
+        return SpecialPayloadRebuild::NotSpecial;
+    }
+    const char* const key = TimetrackingKeyForEstimateField(fieldId);
+    const std::string value = TrimCopy(resolvedValue);
+    if (key == nullptr || value.empty()) {
+        return SpecialPayloadRebuild::Unresolvable;
+    }
+    nlohmann::json rebuilt = *timetracking;
+    rebuilt[key] = value;
+    out = nlohmann::json::object();
+    out["timetracking"] = std::move(rebuilt);
+    return SpecialPayloadRebuild::Rebuilt;
 }
 
 } // namespace TrackerFieldPayloadPure

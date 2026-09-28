@@ -12,6 +12,7 @@
 #include "SmatchetProjectPicker.h"
 #include "SmatchetUiSession.h"
 #include "Ui/BulkImportAbandon.h"
+#include "Ui/BulkImportStatusPure.h"
 #include "SmatchetWindowExpand.h"
 #include "SmatchetTheme.h"
 #include "SmatchetToast.h"
@@ -113,17 +114,6 @@ static bool BulkImportRowIsNoopUpdate(const IssueTableSerializer::ImportRow& row
     return IssueDraftHelpers::ComputeFieldChanges(row.Draft, *t).empty();
 }
 
-/** True once a row has left the dispatch pipeline (success, failure, skip, or parse error). */
-static bool BulkImportStatusIsTerminal(const std::string& status) {
-    if (status.empty()) {
-        return false;
-    }
-    if (status == "queued" || status == "waiting for cache…" || status == "submitting...") {
-        return false;
-    }
-    return true;
-}
-
 /**
  * WS-A non-blocking clear of the per-row create futures. The body lives in
  * Source/Core/include/Ui/BulkImportAbandon.h so the Pillar-2 regression guard
@@ -133,15 +123,29 @@ static bool BulkImportStatusIsTerminal(const std::string& status) {
  */
 void BulkImportAbandonFutures(UiDrawSession& d) { smatchet::ui::BulkImportAbandonFutures(d); }
 
-/** Parse the source text into preview rows + reset per-row status/future tracking. */
+/** Parse the source text, preserving completed handoffs for unchanged drafts. */
 void BulkImportRunParse(AppController& app, UiDrawSession& d, const std::string& fallbackProject) {
+    // A create may already have reached the tracker or offline queue. Keep its future until reaped.
+    if (d.bulkImportRunning) {
+        return;
+    }
+    std::vector<std::string> previousDrafts;
+    for (const auto& row : d.bulkImportPreview.Rows) {
+        previousDrafts.push_back(IssueDraftHelpers::ToJson(row.Draft));
+    }
     const std::string text(d.bulkImportTextBuf.data());
     const IssueTableSerializer::Format fmt = BulkFormatFromIndex(d.bulkImportFormatSel);
     d.bulkImportPreview = IssueTableSerializer::ParseDrafts(text, fmt, app.GetAvailableFields(), fallbackProject,
                                                             d.cfg.DefaultIssueTypeId, d.cfg.DefaultIssueTypeName);
-    d.bulkImportStatus.assign(d.bulkImportPreview.Rows.size(), std::string());
+    std::vector<std::string> drafts;
+    for (const auto& row : d.bulkImportPreview.Rows) {
+        drafts.push_back(IssueDraftHelpers::ToJson(row.Draft));
+    }
+    d.bulkImportStatus =
+        smatchet::ui::bulkimport::PreserveHandedOffStatuses(previousDrafts, d.bulkImportStatus, drafts);
     d.bulkImportError = d.bulkImportPreview.Error;
-    d.bulkImportCompleted = 0;
+    d.bulkImportCompleted = static_cast<size_t>(std::count_if(d.bulkImportStatus.begin(), d.bulkImportStatus.end(),
+                                                              smatchet::ui::bulkimport::IsStatusHandedOff));
     d.bulkImportRunning = false;
     BulkImportAbandonFutures(d);
     d.bulkImportFutures.resize(d.bulkImportPreview.Rows.size());
@@ -154,14 +158,14 @@ size_t BulkImportPickNextRow(AppController& app, UiDrawSession& d, const std::ve
         if (d.bulkImportFutures[idx].valid()) {
             continue;
         }
-        if (idx < d.bulkImportStatus.size() && BulkImportStatusIsTerminal(d.bulkImportStatus[idx])) {
+        if (idx < d.bulkImportStatus.size() && smatchet::ui::bulkimport::IsStatusTerminal(d.bulkImportStatus[idx])) {
             continue;
         }
         const auto& scanRow = d.bulkImportPreview.Rows[idx];
         if (!scanRow.Draft.ExistingIssueKey.empty() && scanRow.Error.empty() &&
             !BulkImportFindTicketInSnapshot(scanRow.Draft.ExistingIssueKey, ticketsSnap) &&
             app.IsBulkImportPrefetchInFlight(scanRow.Draft.ExistingIssueKey)) {
-            d.bulkImportStatus[idx] = "waiting for cache…";
+            d.bulkImportStatus[idx] = smatchet::ui::bulkimport::kWaitingForCacheStatus;
             continue;
         }
         return idx;
@@ -216,8 +220,10 @@ void BulkImportSubmitPending(AppController& app, UiDrawSession& d, int maxConcur
             ++d.bulkImportCompleted;
             continue;
         }
-        d.bulkImportFutures[pick] = app.CreateIssueAsync(row.Draft, d.bulkImportCancel);
-        d.bulkImportStatus[pick] = "submitting...";
+        // A row the tracker cannot be reached for is saved to the offline queue on the create worker
+        // (Quality Pillar 6) instead of failing.
+        d.bulkImportFutures[pick] = app.CreateOrQueueIssueAsync(row.Draft, d.bulkImportCancel);
+        d.bulkImportStatus[pick] = smatchet::ui::bulkimport::kSubmittingStatus;
         ++inFlight;
     }
 }
@@ -233,8 +239,17 @@ void BulkImportReapCompletions(AppController& app, UiDrawSession& d) {
         IssueCreateResult r = fut.get();
         if (r.Ok) {
             d.bulkImportStatus[i] = "ok " + r.IssueKey;
+        } else if (r.QueuedOfflineId > 0) {
+            d.bulkImportStatus[i] = smatchet::ui::bulkimport::QueuedOfflineStatus(r.QueuedOfflineId);
         } else {
-            const std::string msg = BulkImportFormatFailure(app, r);
+            // A create that may have landed is not resent by a re-run (it could duplicate the issue).
+            std::string msg = IsAmbiguousCreateFailure(r)
+                                  ? smatchet::ui::bulkimport::UnknownOutcomeStatus(r.Error) + " " +
+                                        kAmbiguousCreateHint + " Re-run skips it; edit the row to send it again."
+                                  : BulkImportFormatFailure(app, r);
+            if (IsOfflineQueueableFailure(r)) {
+                msg += " Saving it to the offline queue failed too.";
+            }
             d.bulkImportStatus[i] = msg;
             const auto& bulkRow = d.bulkImportPreview.Rows[i];
             SmatchetToastManager::Instance().Push(SmatchetLocalization::T("toast.import_error", "Import Error"),
@@ -334,6 +349,7 @@ void DrawBulkImportSourceToolbar(AppController& app, UiDrawSession& d) {
 
 /** Parse-preview button + the target-project modal it opens when the view has no project scope. */
 void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
+    ImGui::BeginDisabled(d.bulkImportRunning);
     if (ImGui::Button("Parse preview")) {
         // If the active view has no project scope, ask the user before parsing — the parser
         // needs a fallbackProjectKey for "create" rows that don't carry their own project column.
@@ -347,6 +363,7 @@ void DrawBulkImportParseControls(AppController& app, UiDrawSession& d) {
             BulkImportRunParse(app, d, scopeProj);
         }
     }
+    ImGui::EndDisabled();
 
     // Target-project modal. Opened above when the active view has no project clause; the
     // user must pick a project before parse can run.
@@ -417,20 +434,19 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
         d.bulkImportCompleted = 0;
         // P2-H2: NEVER requeue rows that already succeeded — re-running after a partial
         // failure used to reset every "ok KEY" row to "queued" and CREATE IT AGAIN in the
-        // tracker (silent duplicates). Terminal-success rows keep their status and count
-        // as completed; only failed / parse-error / never-run rows are requeued, so the
-        // same button IS the "retry failed rows" action.
+        // tracker (silent duplicates). Handed-off rows (created, skipped, or saved to the
+        // offline queue) keep their status and count as completed; only failed / parse-error /
+        // never-run rows are requeued, so the same button IS the "retry failed rows" action.
         const std::size_t nRows = d.bulkImportPreview.Rows.size();
         if (d.bulkImportStatus.size() != nRows) {
-            d.bulkImportStatus.assign(nRows, "queued");
+            d.bulkImportStatus.assign(nRows, smatchet::ui::bulkimport::kQueuedStatus);
         }
         for (std::size_t i = 0; i < nRows; ++i) {
             std::string& rowStatus = d.bulkImportStatus[i];
-            const bool succeeded = rowStatus.rfind("ok", 0) == 0 || rowStatus.rfind("skipped", 0) == 0;
-            if (succeeded) {
+            if (smatchet::ui::bulkimport::IsStatusHandedOff(rowStatus)) {
                 ++d.bulkImportCompleted;
             } else {
-                rowStatus = "queued";
+                rowStatus = smatchet::ui::bulkimport::kQueuedStatus;
             }
         }
         BulkImportAbandonFutures(d);
@@ -461,7 +477,8 @@ void DrawBulkImportRunControls(UiDrawSession& d, int maxConcurrent) {
             // lands server-side, and re-running such a row would duplicate it.
             for (std::size_t i = 0; i < d.bulkImportStatus.size(); ++i) {
                 const std::string& rowStatus = d.bulkImportStatus[i];
-                if (rowStatus == "queued" || rowStatus == "waiting for cache…") {
+                if (rowStatus == smatchet::ui::bulkimport::kQueuedStatus ||
+                    rowStatus == smatchet::ui::bulkimport::kWaitingForCacheStatus) {
                     d.bulkImportStatus[i] = "stopped";
                     ++d.bulkImportCompleted;
                 }

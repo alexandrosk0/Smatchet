@@ -82,8 +82,9 @@ class OfflineQueueService {
     std::string TakeLegacyPendingStartupBanner();
 
     // --- Phase 1B: write methods + remaining field-edit read accessors -------------------
-    /// Persist an offline create row. Returns the new SQLite row id, or 0 on read-only / failure.
-    std::int64_t QueueCreateOffline(const IssueDraft& draft);
+    /// Persist an offline create row under `backendKey` (the queue namespace replay filters on; empty means
+    /// the focused pane's). Returns the new SQLite row id, or 0 on read-only / failure.
+    std::int64_t QueueCreateOffline(const IssueDraft& draft, const std::string& backendKey = std::string());
 
     /// Move selected dead-letter rows back to the active offline queue (attempts reset to 0).
     /// Each row keeps its ORIGINAL `backend_key` (multi-grid Slice 1c) — never the focused
@@ -109,10 +110,13 @@ class OfflineQueueService {
     /// default empty; a row with neither base keeps last-write-wins. `hasOriginalValue` records
     /// whether the scalar base was CAPTURED (presence) independent of its emptiness, so a blank
     /// captured base is still conflict-checked rather than mistaken for a legacy no-base row.
+    /// `backendKey` is the queue namespace (replay filters on it): the pane the edit was made in; empty
+    /// means the focused pane's.
     std::int64_t QueueFieldEditOffline(const std::string& issueKey, const std::string& fieldId,
                                        const std::string& fieldsPayloadJson, std::string& outError,
                                        const std::string& originalRichValue,
-                                       const std::string& originalValue = std::string(), bool hasOriginalValue = false);
+                                       const std::string& originalValue = std::string(), bool hasOriginalValue = false,
+                                       const std::string& backendKey = std::string());
 
     std::vector<PendingFieldEditRecord> GetPendingFieldEdits() const;
     std::vector<DeadPendingFieldEdit> GetDeadPendingFieldEdits() const;
@@ -124,8 +128,10 @@ class OfflineQueueService {
     /// the payload via the production `BuildFieldPayload` builder so a structured field keeps its
     /// `{"id":...}` / array shape (a bare display string dead-letters with HTTP 400 — #854; string
     /// fields come back bare, verbatim write is the no-schema fallback); `unverified` ("Force
-    /// Mine") replays the queued payload unchanged and only clears the conflict state + bases.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
+    /// Mine") replays the queued payload unchanged and only clears the conflict state + bases. A queued
+    /// sprint / estimate edit is rebuilt in its own shape. Returns true when the edit was re-queued; false
+    /// when it stays suspended (row gone, cache error, or a value that names no sprint / estimate).
+    bool ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
     ::PendingFieldEditDeleteSummary DeletePendingFieldEdits(const std::vector<std::int64_t>& ids);
@@ -208,6 +214,11 @@ class OfflineQueueService {
     /// when the field is unknown (legacy/retired field or empty catalog). Used by scalar
     /// conflict-resolution (#854) to rebuild the structured payload via the production builder.
     const TrackerField* FindCatalogField(const std::string& fieldId) const;
+    /// ResolveFieldEditConflict's `scalar` rebuild: `resolvedValue` in the field's own payload shape, into
+    /// `payload`. False (payload untouched) when the field's builder rejects the value — the edit stays
+    /// suspended rather than replaying a shape the tracker would reject.
+    bool RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json& payload,
+                                        const std::string& payloadKey, const std::string& resolvedValue) const;
 
     /// Record a `kind:"unverified"` conflict (server value couldn't be read) and suspend the row.
     /// Context: `{kind:"unverified", mine, fieldId}`. Always returns Suspend.

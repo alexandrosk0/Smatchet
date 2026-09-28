@@ -882,14 +882,22 @@ static void OnContextDiscard(OfflineDrawCtx& ctx, const std::vector<UnifiedOffli
     RequestOfflineDiscard(ctx, keys);
 }
 
-static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks) {
+// A failed create whose earlier send may have created the issue (its response was lost).
+static bool IsDeadCreateMaybeLanded(const UnifiedOfflineRow& row) {
+    return row.kind == UnifiedOfflineKind::DeadCreate && row.terminalReason == kAmbiguousCreateReason;
+}
+
+// `maybeLanded` picks which failed creates to restore: the ordinary retry never resends one that may
+// already exist on the tracker; only the explicit "not on the tracker" action does.
+static void OnContextRestoreDeadCreates(OfflineDrawCtx& ctx, const std::vector<UnifiedOfflineRow>& picks,
+                                        bool maybeLanded) {
     // Key-preserving restore (CR-951-1): route through AppController::RestoreDeadPendingCreates
     // so the row keeps its ORIGINAL backend_key — re-queueing via QueueCreateOffline would
     // re-stamp the focused context's key. The fresh-create scrub (ExistingIssueKey + issuekey/
     // key field values) lives inside LocalCacheManager::RestoreDeadPendingCreate's transaction.
     std::vector<std::int64_t> originalIds;
     for (const auto& p : picks) {
-        if (p.kind != UnifiedOfflineKind::DeadCreate) {
+        if (p.kind != UnifiedOfflineKind::DeadCreate || IsDeadCreateMaybeLanded(p) != maybeLanded) {
             continue;
         }
         originalIds.push_back(p.originalId);
@@ -952,11 +960,19 @@ static void DrawOfflineRowContextMenu(OfflineDrawCtx& ctx, const UnifiedOfflineR
         OnContextDiscard(ctx, picks);
     }
 
-    const bool hasDeadCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
-        return p.kind == UnifiedOfflineKind::DeadCreate;
+    const bool hasRetryableDeadCreates = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
+        return p.kind == UnifiedOfflineKind::DeadCreate && !IsDeadCreateMaybeLanded(p);
     });
-    if (hasDeadCreates && ImGui::MenuItem("Retry failed create(s)")) {
-        OnContextRestoreDeadCreates(ctx, picks);
+    if (hasRetryableDeadCreates && ImGui::MenuItem("Retry failed create(s)")) {
+        OnContextRestoreDeadCreates(ctx, picks, false);
+    }
+    const bool hasMaybeLandedCreates = std::any_of(picks.begin(), picks.end(), IsDeadCreateMaybeLanded);
+    if (hasMaybeLandedCreates && ImGui::MenuItem("Not on the tracker: create again")) {
+        OnContextRestoreDeadCreates(ctx, picks, true);
+    }
+    if (hasMaybeLandedCreates && ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", "The response to these creates was lost, so the issue may already exist. Check the "
+                                "tracker first: sending one that was created makes a duplicate.");
     }
 
     const bool hasDeadEdits = std::any_of(picks.begin(), picks.end(), [](const UnifiedOfflineRow& p) {
@@ -1159,14 +1175,28 @@ static ConflictModalCtx ParseConflictModalCtx(const std::string& json) {
     return out;
 }
 
-// Clears modal state + closes the popup after a resolution / discard action.
+// A failed re-queue leaves the edit suspended and keeps the resolution available for retry.
+static const char* const kConflictNotRequeued =
+    "The edit could not be re-queued. Your resolution is still here; retry when ready.";
+
 static void FinishConflictModal(UiDrawSession& d, const char* statusMsg) {
+    d.conflictResolveError.clear();
     d.conflictResolveBuf.clear();
     d.conflictContextJson.clear();
     d.conflictResolveDbId = 0;
     ImGui::CloseCurrentPopup();
     if (statusMsg) {
         ArmOfflineQueuePanelStatus(d, statusMsg);
+    }
+}
+
+// Keep both the popup and its editor buffer intact until the queue accepts the resolution.
+static void HandleConflictRequeueResult(UiDrawSession& d, bool requeued, const char* successMsg,
+                                        const char* failureMsg) {
+    if (requeued) {
+        FinishConflictModal(d, successMsg);
+    } else {
+        d.conflictResolveError = failureMsg;
     }
 }
 
@@ -1213,8 +1243,9 @@ static void DrawConflictPaneText(OfflineDrawCtx& octx, const ConflictModalCtx& c
     ImGui::Spacing();
 
     auto doResolve = [&](const std::string& resolvedMd) {
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
-        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, resolvedMd, cc.RichKind, "text");
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
+                                    kConflictNotRequeued);
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1273,8 +1304,11 @@ static void DrawConflictPaneScalar(OfflineDrawCtx& octx, const ConflictModalCtx&
     ImGui::Spacing();
 
     auto doResolve = [&](const std::string& chosen) {
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
-        FinishConflictModal(d, "Conflict resolved — edit re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, chosen, std::string(), "scalar");
+        HandleConflictRequeueResult(d, requeued, "Conflict resolved — edit re-queued for replay.",
+                                    "That value cannot be used for this field, so the edit is still waiting and "
+                                    "your resolution is still here. Enter one of the field's values: for a sprint, "
+                                    "its name or id; for an estimate, a value such as 3d.");
     };
 
     if (ImGui::Button("Use Mine", ImVec2(110, 0))) {
@@ -1310,8 +1344,8 @@ static void DrawConflictPaneUnverified(OfflineDrawCtx& octx, const ConflictModal
 
     if (ImGui::Button("Force Mine", ImVec2(130, 0))) {
         // Replay the queued payload verbatim (no value change) and clear the conflict.
-        app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
-        FinishConflictModal(d, "Forcing your edit — re-queued for replay.");
+        const bool requeued = app.ResolveFieldEditConflict(d.conflictResolveDbId, cc.Mine, std::string(), "unverified");
+        HandleConflictRequeueResult(d, requeued, "Forcing your edit — re-queued for replay.", kConflictNotRequeued);
     }
     ImGui::SameLine();
     if (ImGui::Button("Discard my edit", ImVec2(150, 0))) {
@@ -1365,6 +1399,7 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
         // Open + size the popup once per trigger.
         ImGui::OpenPopup("ResolveMergeConflict");
         d.showConflictResolveModal = false;
+        d.conflictResolveError.clear();
 
         // Seed the resolved buffer from the conflict context on open. Rich `text` seeds the
         // conflict-marker template; scalar seeds the editable value with "mine".
@@ -1398,6 +1433,9 @@ static void DrawOfflineConflictModal(OfflineDrawCtx& octx) {
             DrawConflictPaneUnverified(octx, cc);
         } else {
             DrawConflictPaneText(octx, cc);
+        }
+        if (!d.conflictResolveError.empty()) {
+            ImGui::TextWrapped("%s", d.conflictResolveError.c_str());
         }
         ImGui::EndPopup();
     } else if (!d.conflictResolveBuf.empty() && d.conflictResolveDbId == 0) {

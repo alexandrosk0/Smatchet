@@ -207,32 +207,23 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
 
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                 const std::string& body, const std::function<bool()>& cancelled) {
-    // POST is non-idempotent: a request that LANDED (server applied it) then returned 429/5xx must
-    // NEVER be re-sent — that would double-create / double-comment. So the predicate retries only on
-    // Transport errors, where the request provably never reached the server (DNS / connect / pre-send
-    // failure). 429/5xx after a successful send are returned to the caller untouched.
-    //
-    // Finding DR16: a POST-SEND timeout (the server may have committed, only the response was lost)
-    // also surfaces as status 0 -> Transport, so retrying it double-fires. cpr reports it as
-    // OPERATION_TIMEDOUT; we capture the last attempt's error code and treat any operation timeout as
-    // non-retryable via TrackerShouldRetryPost, leaving genuine pre-send transport failures retryable.
-    cpr::ErrorCode lastErrorCode = cpr::ErrorCode::OK;
+    // POST is non-idempotent: a request the tracker applied must never be sent twice (a duplicate
+    // issue / comment). A 429 / 5xx is returned to the caller untouched, and a transport failure is
+    // retried only when the request provably never left this machine (DNS / proxy / connect failure,
+    // TrackerError::RequestNotSent) — never after a timeout or a lost response (finding DR16).
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();
             cpr::Response response = cpr::Post(cpr::Url{url}, headers, cpr::Body{body}, redirect,
                                                cpr::ConnectTimeout{kTrackerConnectTimeoutMs},
                                                cpr::Timeout{kTrackerOverallTimeoutMs}, MakeTrackerSslOptions());
-            lastErrorCode = response.error.code;
             NetworkUsageTracker::Instance().Record(HttpTrafficKind::Tracker, static_cast<std::uint64_t>(body.size()),
                                                    response);
             LogTrackerHttpResult(clientName, "POST", url, response);
             return ClassifyTrackerResponse(response);
         },
         kTrackerHttpDefaultMaxAttempts, cancelled,
-        [&lastErrorCode](const TrackerError& e) {
-            return TrackerShouldRetryPost(e.Kind, lastErrorCode == cpr::ErrorCode::OPERATION_TIMEDOUT);
-        });
+        [](const TrackerError& e) { return TrackerShouldRetryPost(e.Kind, e.RequestNotSent); });
     return std::move(result.Response);
 }
 

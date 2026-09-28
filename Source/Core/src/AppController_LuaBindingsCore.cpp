@@ -13,8 +13,8 @@
 // progress_bar / same_line / separator / get_content_region_avail) lives in
 // AppController_LuaBindings.cpp::InitLuaUi where it stays UI-coupled.
 //
-// Behaviour-preservation contract: every glue body is byte-identical to the
-// pre-lift version, modulo the receiver cast:
+// Behaviour-preservation contract: every glue body matches the pre-lift version,
+// modulo the receiver cast (and the field-edit glues' queued result, below):
 //   `AppController* app = lua["__smatchet_app"].get_or<AppController*>(nullptr);`
 // becomes
 //   `ILuaBindingHost* host = lua["__smatchet_app"].get_or<ILuaBindingHost*>(nullptr);`
@@ -60,8 +60,23 @@ static ILuaBindingHost* ResolveHost(sol::this_state L) {
 // scope; the unqualified call sites below reach them by outward lookup.
 
 // --- Glues with non-UI behaviour. Pre-lift home: AppController_LuaBindings.cpp
-// inside the same namespace. Each body is byte-identical except for the
-// AppController* -> ILuaBindingHost* cast site (`ResolveHost`).
+// inside the same namespace. Each body matches its pre-lift version except for the
+// AppController* -> ILuaBindingHost* cast site (`ResolveHost`) and the two field-edit
+// glues, which also report an edit saved to the offline queue.
+
+// Lua `ok, err` for a field edit: (true, "") when saved, (true, "queued") when the tracker was
+// unreachable and the edit waits in the offline queue (Quality Pillar 6), (false, reason) otherwise.
+static std::tuple<bool, std::string> FieldEditLuaResult(const PendingActionSubmitResult& r) {
+    switch (r.K) {
+    case PendingActionSubmitResult::Kind::Sent:
+        return std::make_tuple(true, std::string());
+    case PendingActionSubmitResult::Kind::Queued:
+        return std::make_tuple(true, std::string("queued"));
+    case PendingActionSubmitResult::Kind::Failed:
+        break;
+    }
+    return std::make_tuple(false, r.Error.empty() ? std::string("the tracker did not accept the edit") : r.Error);
+}
 
 std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket& t, const std::string& fieldId,
                                                  const std::string& val) {
@@ -71,16 +86,15 @@ std::tuple<bool, std::string> TicketSetFieldGlue(sol::this_state L, CachedTicket
     }
     LOG_TRACE("Lua Ticket:set_field audit_source=%s issue=%s field=%s val_len=%zu", FieldEditAuditSource::Current(),
               t.id.c_str(), fieldId.c_str(), val.size());
-    const TrackerField* fieldMeta = host->FindFieldById(fieldId);
-    if (!fieldMeta) {
+    TrackerField fieldMeta;
+    if (!host->FindFieldById(t.EditTarget, fieldId, fieldMeta)) {
         return {false, "Field not found in tracker catalog: " + fieldId};
     }
     std::vector<std::string> vals;
     if (!val.empty()) {
         vals.push_back(val);
     }
-    const VoidResult r = host->SubmitFieldEdit(t.id, *fieldMeta, vals);
-    return {r.has_value(), r.has_value() ? std::string() : r.error()};
+    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.EditTarget, t.id, fieldMeta, vals));
 }
 
 std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTicket& t, const std::string& statusName) {
@@ -90,12 +104,11 @@ std::tuple<bool, std::string> TicketTransitionGlue(sol::this_state L, CachedTick
     }
     LOG_TRACE("Lua Ticket:transition audit_source=%s issue=%s status=%s", FieldEditAuditSource::Current(), t.id.c_str(),
               statusName.c_str());
-    const TrackerField* statusField = host->FindFieldById("status");
-    if (!statusField) {
+    TrackerField statusField;
+    if (!host->FindFieldById(t.EditTarget, "status", statusField)) {
         return {false, "Tracker 'status' field meta not found"};
     }
-    const VoidResult r = host->SubmitFieldEdit(t.id, *statusField, {statusName});
-    return {r.has_value(), r.has_value() ? std::string() : r.error()};
+    return FieldEditLuaResult(host->SubmitFieldEditOrQueue(t.EditTarget, t.id, statusField, {statusName}));
 }
 
 void LuaLogInfoGlue(sol::this_state L, std::string msg) {

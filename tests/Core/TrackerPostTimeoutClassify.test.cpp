@@ -1,32 +1,35 @@
-// Finding DR16 — pure coverage of the POST retry decision (TrackerShouldRetryPost in
-// TrackerError.h). A non-idempotent POST may be re-sent only after a pre-send transport failure
-// that provably never reached the server; a post-send operation timeout (the server may already
-// have committed the create/comment) must be single-attempt or it double-fires. cpr collapses both
-// connect- and read-phase timeouts to status 0 -> TrackerErrorKind::Transport, so the operation-
-// timeout flag — not the kind alone — decides retryability. No socket, no cpr: the helper is a pure
-// boolean decision driven directly.
+// Finding DR16 — pure coverage of the POST retry decision (TrackerShouldRetryPost in TrackerError.h). A
+// non-idempotent POST is re-sent only when the request provably never left this machine (RequestNotSent:
+// a DNS / proxy / connect failure); a timeout or lost response may follow an applied create / comment, so
+// re-sending it would double-fire. Which cpr error codes prove "not sent" is covered in TrackerHttpRetry.
 
 #include "TrackerError.h"
 
 #include <doctest/doctest.h>
 
-TEST_CASE("TrackerShouldRetryPost retries a pre-send transport failure") {
-    // Genuine pre-send transport failure (DNS / refused connect), NOT an operation timeout.
-    CHECK(TrackerShouldRetryPost(TrackerErrorKind::Transport, /*operationTimeout=*/false));
-}
-
-TEST_CASE("TrackerShouldRetryPost does NOT retry a post-send operation timeout") {
-    // Status-0 Transport that came from OPERATION_TIMEDOUT: the server may already have committed,
-    // so re-sending would double-create / double-comment.
-    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::Transport, /*operationTimeout=*/true));
-}
-
-TEST_CASE("TrackerShouldRetryPost never retries a landed non-transport result") {
-    // A request that landed then returned 429 / 5xx / auth / etc. is never re-sent regardless of
-    // the timeout flag — only Transport is ever eligible.
-    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::RateLimited, false));
-    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::ServerError, false));
+TEST_CASE("TrackerShouldRetryPost requires positive evidence of a pre-send failure") {
+    CHECK(TrackerShouldRetryPost(TrackerErrorKind::Transport, true));
+    // Operation timeouts, lost responses, and unspecified transport errors are ambiguous.
+    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::Transport, false));
+    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::RateLimited, true));
     CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::ServerError, true));
-    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::Auth, false));
-    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::None, false));
+    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::Auth, true));
+    CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::None, true));
+}
+
+TEST_CASE("ProvablyNotApplied — never sent, or refused without acting") {
+    TrackerError refused = TrackerErrorTransport("connection refused");
+    CHECK_FALSE(refused.ProvablyNotApplied()); // a transport failure alone may follow an applied request
+    refused.RequestNotSent = true;
+    CHECK(refused.ProvablyNotApplied());
+    CHECK(TrackerErrorRateLimited("slow down").ProvablyNotApplied());
+    CHECK(TrackerErrorAuth("Unauthorized", 401).ProvablyNotApplied());
+    CHECK(TrackerErrorNotFound("No such project").ProvablyNotApplied());
+    CHECK(TrackerErrorInvalidRequest("Field 'x' is required", 400).ProvablyNotApplied());
+    CHECK(TrackerErrorCancelled().ProvablyNotApplied()); // the retry loop cancels only before a send
+    // May have landed: a timeout / 5xx after the send, or a success status whose body was unusable.
+    CHECK_FALSE(TrackerErrorServer("HTTP 503", 503).ProvablyNotApplied());
+    CHECK_FALSE(TrackerErrorTransport("Operation timed out").ProvablyNotApplied());
+    CHECK_FALSE(TrackerErrorParse("Created issue response had no key").ProvablyNotApplied());
+    CHECK_FALSE(TrackerErrorUnknown("HTTP 202", 202).ProvablyNotApplied());
 }

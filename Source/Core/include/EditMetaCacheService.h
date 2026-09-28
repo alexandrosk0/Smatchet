@@ -66,6 +66,16 @@ class EditMetaCacheService {
     VoidResult EnsureIssueEditMetaLoaded(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr,
                                          const TrackerConfig* configSnapshot = nullptr);
     VoidResult RefreshIssueEditMeta(const std::string& issueId, const std::string* issueTypeKeyOverride = nullptr);
+
+    // Pane-bound variants for a field edit (#2260): the edit's own backend and issue type, never the
+    // focused pane's. An empty `issueTypeKey` skips the per-issue-type fallback.
+    VoidResult EnsureIssueEditMetaLoadedFor(const std::shared_ptr<ITrackerBackend>& backend, const std::string& issueId,
+                                            const std::string& issueTypeKey,
+                                            const TrackerConfig* configSnapshot = nullptr);
+    VoidResult RefreshIssueEditMetaFor(const std::shared_ptr<ITrackerBackend>& backend, const std::string& issueId,
+                                       const std::string& issueTypeKey);
+    bool CanEditFieldForIssueWithType(const std::string& issueId, const std::string& fieldId,
+                                      const TrackerField* fieldMeta, const std::string& issueTypeKey) const;
     void InvalidateIssueEditMeta(const std::string& issueId);
     void PruneEditMetaCacheToActiveTickets();
     /** @param trackerCfgForWorker credentials/settings copy for background fetch (never ConfigManager::Load inside
@@ -94,6 +104,9 @@ class EditMetaCacheService {
                                      const std::shared_ptr<ITrackerBackend>& backend, GridContextFieldCatalog* catPtr,
                                      TrackerConfig trackerCfgForWorker);
     std::string ResolveIssueTypeKeyForIssue(const std::string& issueId) const;
+    /// CanEditFieldForIssue body. `explicitTypeKey` null → the issue type is resolved from the focused pane.
+    bool CanEditFieldImpl(const std::string& issueId, const std::string& fieldId, const TrackerField* fieldMeta,
+                          const std::string* explicitTypeKey) const;
 
     IEditMetaDeps& deps_;
 

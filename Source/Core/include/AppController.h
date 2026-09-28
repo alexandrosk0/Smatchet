@@ -848,6 +848,11 @@ class AppController : public IAppThreading,
     // 1-arg form, which static-binds this declaration's default).
     std::future<IssueCreateResult>
     CreateIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken()) override;
+    /// CreateIssueAsync, except that a create / update the tracker could not be reached for is saved to the
+    /// offline queue on the same worker (Quality Pillar 6), under the backend latched at the call; the result
+    /// then carries its QueuedOfflineId. For the New Issue draft and Bulk Import.
+    std::future<IssueCreateResult>
+    CreateOrQueueIssueAsync(const IssueDraft& draft, smatchet::ui::CancelToken cancel = smatchet::ui::CancelToken());
 
     /**
      * Persist `draft` to SQLite and return the queued row id. Useful when the
@@ -902,6 +907,10 @@ class AppController : public IAppThreading,
     /** Replay queued actions (rate-limited; called from UI tick next to TickOfflineFieldEdits). */
     void TickPendingActions();
     PendingActionTarget LatchPendingActionTarget() const override;
+    /// The pane `paneId` as a write target, for an edit made in a pane that may not hold focus (the grid).
+    /// A pane without a live context yields a target with no backend, so the write fails rather than
+    /// landing in another pane. UI thread.
+    PendingActionTarget LatchPendingActionTargetForPane(const std::string& paneId) const;
     PendingActionSubmitResult SubmitOrQueueComment(const PendingActionTarget& target, const std::string& issueKey,
                                                    const std::string& body) override;
     PendingActionSubmitResult SubmitOrQueueWorklog(const PendingActionTarget& target, const std::string& issueId,
@@ -930,11 +939,12 @@ class AppController : public IAppThreading,
     /// Replace the queued payload with a user-resolved version and clear the conflict flag.
     /// The edit will be retried on the next TickOfflineFieldEdits pass. `kind` (text|scalar|
     /// unverified, per ADR-0016) selects how the resolution is applied: `text` reconverts
-    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` writes
-    /// `resolvedValue` into the payload key verbatim (no conversion); `unverified` ("Force Mine")
+    /// `resolvedValue` Markdown→ADF/HTML via `richKind` into the payload key; `scalar` rebuilds the
+    /// payload for `resolvedValue` (the field's own shape; no Markdown conversion); `unverified` ("Force Mine")
     /// ignores `resolvedValue`, replays the existing queued payload unchanged, and only clears
-    /// the conflict state + bases.
-    void ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
+    /// the conflict state + bases. Returns true when the edit was re-queued; false when it stays
+    /// suspended (see OfflineQueueService::ResolveFieldEditConflict).
+    bool ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue, const std::string& richKind,
                                   const std::string& kind = std::string("text"));
 
     using PendingFieldEditDeleteSummary = ::PendingFieldEditDeleteSummary; // moved to Sync/OfflineQueueTypes.h
@@ -1005,17 +1015,21 @@ class AppController : public IAppThreading,
                               const std::string* issueTypeKeyOverride = nullptr) const;
 
     // Field-edit pipeline delegators — forward to `fieldEdit_` (FieldEditPipelineService, god-object
-    // decomposition Phase 2). SubmitFieldEdit's signature is preserved verbatim from the
-    // pre-extraction surface (the Lua forwarder + BuiltinCommands depend on it). The grid commits
-    // through CommitOrQueueFieldEdit; the network-only / offline-prepare / queueability steps it
-    // composes are service-internal (not re-exposed here).
-    VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                               const std::vector<std::string>& rawValues) override;
+    // decomposition Phase 2). Every field edit is bound to the pane the user acted in (#2260).
+    /// Edit one field of `issueId` in `target`'s pane: saved now, or queued and replayed on reconnect when
+    /// the tracker is unreachable (Quality Pillar 6). The conflict base comes from that pane's ticket; the
+    /// local update is applied on the UI thread. Blocks on the network while online — call it from a worker
+    /// or a command thread (commands, MCP, Lua, Annotate).
+    PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target, const std::string& issueId,
+                                                     const TrackerField& field,
+                                                     const std::vector<std::string>& values) override;
     /// Worker-safe commit-or-queue seam (FieldEditPipelineService::CommitOrQueue, Quality Pillar 6):
     /// queue-first while the tracker is offline, else network-first with a queue fallback. The types
     /// are only forward-declared here; callers include FieldEditPipelineService.h.
     FieldEditCommitOutcome CommitOrQueueFieldEdit(const FieldEditCommitRequest& req);
-    VoidResult ApplyFieldEditResult(const std::string& issueId, const FieldEditResult& result);
+    /// Apply a saved or queued edit to `target`'s pane (UI thread; see FieldEditPipelineService).
+    VoidResult ApplyFieldEditResult(const PendingActionTarget& target, const std::string& issueId,
+                                    const FieldEditResult& result);
     /** Best-effort async warmup so edit controls can reflect per-issue permissions sooner. */
     void WarmIssueEditMetaAsync(const std::string& issueId);
 
@@ -1275,6 +1289,18 @@ class AppController : public IAppThreading,
     /// though this pane's last recorded sync set predates it — the row UpdateTicket just saved.
     void RefreshLocalDataCheckedImpl_(GridLiveContext& ctx, const std::uint64_t* capturedBackendGeneration,
                                       const std::string& admitId = std::string());
+    /// CreateIssueAsync / CreateOrQueueIssueAsync body; `queueOnNetworkFailure` selects the latter.
+    std::future<IssueCreateResult> LaunchIssueCreate_(const IssueDraft& draft, smatchet::ui::CancelToken cancel,
+                                                      bool queueOnNetworkFailure);
+    /// UpdateTicket's body for `ctx`, gated on `capturedGeneration` (the #1081 capture-then-check).
+    void UpdateTicketInContext_(GridLiveContext& ctx, std::uint64_t capturedGeneration, const CachedTicket& ticket);
+    /// The live context `target` was latched from, or null when that pane was retired or switched tracker
+    /// since (its backend generation moved). Any thread: the map is read under gridContextsMutex_, and a
+    /// context is never freed while the app runs (retired ones become husks).
+    GridLiveContext* liveContextForTarget_(const PendingActionTarget& target) const;
+    /// IFieldEditDeps backing (via GridContextDepsAdapter): `target`'s pane tickets / optimistic update.
+    std::shared_ptr<const std::vector<CachedTicket>> TicketsSnapshotForTarget_(const PendingActionTarget& target) const;
+    void UpdateTicketForTarget_(const PendingActionTarget& target, const CachedTicket& ticket);
     /// Re-resolve focusedContextPtr_ from focusedPaneId_ (default-context fallback).
     void refreshFocusedContextPtr_();
     /// Atomic: workers (MCP / Lua / replay) read focusedContext() while the UI thread
@@ -1334,6 +1360,10 @@ class AppController : public IAppThreading,
     void RecordPaneSyncKick(const std::string& paneId, const std::string& jql);
     /// Any pane's live published snapshot (null when the pane has no live context yet).
     std::shared_ptr<const std::vector<CachedTicket>> GetPaneTicketsSnapshot(const std::string& paneId) const;
+    /// Snapshot only when the pane still has the target's captured backend generation.
+    std::shared_ptr<const std::vector<CachedTicket>> TicketsSnapshotForTarget(const PendingActionTarget& target) const {
+        return TicketsSnapshotForTarget_(target);
+    }
     /// Per-pane ActiveTickets revision (0 when the pane has no live context).
     std::uint64_t GetPaneTicketsRevision(const std::string& paneId) const;
     /// The pane context's OWN resolved ViewDefinition (from its backend bucket), published
@@ -1682,6 +1712,10 @@ class AppController : public IAppThreading,
         // Default false: empty selection + !processAll is a refusal (no silent mass-modify,
         // no silent no-op). See RunAutomationAutoScript and Issue #824.
         bool processAll = false;
+        // RunAutoScript: the pane the selection was made in, latched when the run is requested. The
+        // worker reads that pane's tickets and the script's edits go to its tracker, wherever focus is
+        // by the time the job runs (#2260).
+        PendingActionTarget target{};
     };
     // The automation queue + worker member STORAGE (automationJobMutex_ / automationJobCv_ /
     // automationJobs_ / automationWorker_ / automationWorkerShuttingDown_ / activeSetupScripts_)

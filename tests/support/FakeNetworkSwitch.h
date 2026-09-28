@@ -22,9 +22,11 @@ class FakeNetworkSwitch {
     bool IsDown() const { return Mode() != FakeNetworkMode::Up; }
     /// The error a real client returns for the current outage.
     TrackerError MakeError() const {
-        return Mode() == FakeNetworkMode::ServiceUnavailable
-                   ? TrackerErrorServer("fake network: HTTP 503", 503)
-                   : TrackerErrorTransport("fake network: connection refused", 0);
+        TrackerError error = Mode() == FakeNetworkMode::ServiceUnavailable
+                                 ? TrackerErrorServer("fake network: HTTP 503", 503)
+                                 : TrackerErrorTransport("fake network: connection refused", 0);
+        error.RequestNotSent = Mode() == FakeNetworkMode::TransportDown;
+        return error;
     }
     /// Count a network-shaped call made while down (tests assert "no network while offline").
     void NoteCallWhileDown() { callsWhileDown_.fetch_add(1); }

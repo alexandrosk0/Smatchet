@@ -204,16 +204,12 @@ void SmatchetUI::drawGridPaneWindows(AppController& app, UiDrawSession& d) {
 
     // Field-edit dispatch pump + chip decay ONCE per frame (review MEDIUM-1): panes
     // only ENQUEUE (EnqueueGridFieldEdits). A per-pane pump faded success chips N×
-    // faster and could dequeue an edit during a non-focused pane's call, snapshotting
-    // estimate bases from that pane's FROZEN ticket snapshot. The pump reads the
-    // focused pane's live snapshot.
+    // faster. Each edit carries the pane it was made in, so the pump reads THAT pane's
+    // live snapshot for estimate bases, whichever pane holds focus now (#2260).
     {
         const bool readOnlyMode =
             d.cfg.ReadOnlyMode || (trackerBanner.Kind == TrackerConnectivityBannerForUi::Level::Error);
-        static const std::vector<CachedTicket> kNoTickets;
-        const GridPane& focused = d.focusedPane();
-        const std::vector<CachedTicket>& pumpTickets = focused.ticketsSnapshot ? *focused.ticketsSnapshot : kNoTickets;
-        PumpGridFieldEdits(app, d, pumpTickets, readOnlyMode);
+        PumpGridFieldEdits(app, d, readOnlyMode);
     }
 
     if (SmatchetGridPaneWindows::ApplyPaneAddAndCloseRequests(app, d, ViewState.GetDiskBackends())) {

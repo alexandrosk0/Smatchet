@@ -2,11 +2,13 @@
 #define SMATCHET_TESTS_FAKE_FIELD_EDIT_DEPS_H
 
 // FakeFieldEditDeps — header-only in-memory implementation of `IFieldEditDeps` for the doctest rig.
-// Backs the backend with a `FakeTrackerClient` held by shared_ptr (so BackendShared() hands back a
-// latched strong handle, exactly as the production adapter's atomic_load does), exposes a settable
-// HasCache predicate + an in-memory active-tickets snapshot, and records UpdateTicket /
-// RefreshLocalData / the deferred-notify so tests can assert the optimistic-update + reachable-
-// backend side effects.
+// Models ONE focused pane ("main", backend key "Jira", generation 1) whose backend is a
+// `FakeTrackerClient` held by shared_ptr (LatchFocusedPaneTarget() hands back a latched strong handle,
+// exactly as the production adapter's atomic_load does), a settable HasCache predicate, and that pane's
+// in-memory tickets. A target naming any other pane or generation reads as a pane that was closed or
+// switched tracker (null snapshot, no update), so tests can pin the #2260 pane binding. Records
+// UpdateTicketFor / the deferred-notify / every enqueue so tests can assert the optimistic-update,
+// reachable-backend and offline-queue side effects.
 //
 // This fixture is the test-side counterpart of `GridContextDepsAdapter`. Any new method added to
 // `IFieldEditDeps` MUST be implemented here too — the override list mirrors the production adapter.
@@ -29,28 +31,30 @@ namespace smatchet_tests {
 
 class FakeFieldEditDeps : public IFieldEditDeps {
   public:
-    /// Latched backend handle. Held by shared_ptr so BackendShared() returns a strong copy
-    /// (matches the adapter's atomic_load(&ctx_.Backend) contract). The concrete FakeTrackerClient
-    /// is reachable via Fake() for mutation/editmeta scripting.
+    /// The focused pane's backend. Held by shared_ptr so the latched target keeps a strong copy
+    /// (matches the adapter's atomic_load(&ctx.Backend) contract). The concrete FakeTrackerClient is
+    /// reachable via Fake() for mutation/editmeta scripting.
     std::shared_ptr<ITrackerBackend> BackendImpl{std::make_shared<FakeTrackerClient>()};
+    std::string PaneIdImpl = "main";
+    std::string BackendKeyImpl = "Jira";
+    std::uint64_t GenerationImpl = 1;
 
-    /// Active-tickets snapshot returned by GetActiveTicketsSnapshot() — the pipeline scans it to
-    /// find the edited ticket for the optimistic local update + audit before/after values.
+    /// The focused pane's tickets — the pipeline finds the edited ticket here for the optimistic update.
     std::vector<CachedTicket> ActiveTicketsImpl;
 
     /// HasCache() predicate (settable). Default true — the common "cache initialized" case.
     bool HasCacheImpl = true;
 
-    /// Connectivity state (settable). Default authenticated reachable.
+    /// The last probe a latched target carries (settable). Default authenticated reachable.
     TrackerConnectivityState ConnectivityImpl = TrackerConnectivityState::AuthenticatedReachable;
 
     /// Recorded side effects.
-    std::vector<CachedTicket> UpdatedTickets; ///< every UpdateTicket() arg, in order
-    int RefreshLocalDataCalls = 0;            ///< RefreshLocalData() call count
+    std::vector<CachedTicket> UpdatedTickets; ///< every UpdateTicketFor() ticket applied to the pane, in order
     mutable int DeferredNotifyCalls = 0;      ///< RequestDeferredLiveTrackerBackendSuccessNotify() count
 
     /// One EnqueueOfflineFieldEdit() call, as persisted.
     struct EnqueuedEdit {
+        std::string BackendKey;
         std::string IssueKey;
         std::string FieldId;
         std::string FieldsPayloadJson;
@@ -65,34 +69,50 @@ class FakeFieldEditDeps : public IFieldEditDeps {
     /// Convenience accessor for the concrete fake backend (mutation/editmeta scripting).
     FakeTrackerClient* Fake() { return static_cast<FakeTrackerClient*>(BackendImpl.get()); }
 
-    // --- IFieldEditDeps overrides -------------------------------------------------------------
+    /// A target for the focused pane, latched now (what LatchFocusedPaneTarget() returns).
+    PendingActionTarget FocusedTarget() const {
+        PendingActionTarget target;
+        target.Backend = BackendImpl;
+        target.BackendKey = BackendKeyImpl;
+        target.PaneId = PaneIdImpl;
+        target.BackendGeneration = GenerationImpl;
+        target.Connectivity = ConnectivityImpl;
+        return target;
+    }
 
-    std::shared_ptr<ITrackerBackend> BackendShared() const override { return BackendImpl; }
+    // --- IFieldEditDeps overrides -------------------------------------------------------------
 
     bool HasCache() const override { return HasCacheImpl; }
 
-    std::shared_ptr<const std::vector<CachedTicket>> GetActiveTicketsSnapshot() const override {
+    PendingActionTarget LatchFocusedPaneTarget() const override { return FocusedTarget(); }
+
+    std::shared_ptr<const std::vector<CachedTicket>>
+    TicketsSnapshotFor(const PendingActionTarget& target) const override {
+        if (!IsLivePane(target)) {
+            return nullptr;
+        }
         return std::make_shared<const std::vector<CachedTicket>>(ActiveTicketsImpl);
     }
 
-    void UpdateTicket(const CachedTicket& ticket) override { UpdatedTickets.push_back(ticket); }
-
-    void RefreshLocalData() override { ++RefreshLocalDataCalls; }
+    void UpdateTicketFor(const PendingActionTarget& target, const CachedTicket& ticket) override {
+        if (IsLivePane(target)) {
+            UpdatedTickets.push_back(ticket);
+        }
+    }
 
     void RequestDeferredLiveTrackerBackendSuccessNotify() const override { ++DeferredNotifyCalls; }
 
-    TrackerConnectivityState TrackerConnectivity() const override { return ConnectivityImpl; }
-
-    std::int64_t EnqueueOfflineFieldEdit(const std::string& issueKey, const std::string& fieldId,
-                                         const std::string& fieldsPayloadJson, const std::string& originalRichValue,
-                                         const std::string& originalValue, bool hasOriginalValue,
-                                         std::string& outError) override {
+    std::int64_t EnqueueOfflineFieldEdit(const std::string& backendKey, const std::string& issueKey,
+                                         const std::string& fieldId, const std::string& fieldsPayloadJson,
+                                         const std::string& originalRichValue, const std::string& originalValue,
+                                         bool hasOriginalValue, std::string& outError) override {
         outError.clear();
         if (!EnqueueFailImpl.empty()) {
             outError = EnqueueFailImpl;
             return 0;
         }
         EnqueuedEdit e;
+        e.BackendKey = backendKey;
         e.IssueKey = issueKey;
         e.FieldId = fieldId;
         e.FieldsPayloadJson = fieldsPayloadJson;
@@ -101,6 +121,11 @@ class FakeFieldEditDeps : public IFieldEditDeps {
         e.HasOriginalValue = hasOriginalValue;
         Enqueued.push_back(e);
         return static_cast<std::int64_t>(Enqueued.size());
+    }
+
+  private:
+    bool IsLivePane(const PendingActionTarget& target) const {
+        return target.PaneId == PaneIdImpl && target.BackendGeneration == GenerationImpl;
     }
 };
 

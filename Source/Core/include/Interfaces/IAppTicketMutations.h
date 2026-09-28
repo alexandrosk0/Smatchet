@@ -2,9 +2,9 @@
 #define SMATCHET_INTERFACES_IAPP_TICKET_MUTATIONS_H
 
 // Narrow facet for single-ticket mutations (set field(s) / comment / worklog / transition /
-// create) — AppController fan-in Phase 5. Comments and worklogs go through the pending-action
-// queue, so they report Sent / Queued / Failed. AppController implements it; the ticket.* mutation
-// command TU depends on this instead of the full AppController.h.
+// create) — AppController fan-in Phase 5. Field edits, comments and worklogs are sent now or queued
+// offline and replayed on reconnect, so they report Sent / Queued / Failed. AppController implements
+// it; the ticket.* mutation command TU depends on this instead of the full AppController.h.
 //
 // Rank-0 leaf. The rank-3 Tracker payload types (TrackerField, IssueDraft, IssueCreateResult)
 // are forward-declared — pointer/const-ref params and a by-value std::future<IssueCreateResult>
@@ -18,8 +18,7 @@
 
 #include "CachedTicketTypes.h"  // CachedTicket (rank-0) — snapshot element
 #include "CancelToken.h"        // smatchet::ui::CancelToken (rank-0) — defaulted by-value on CreateIssueAsync
-#include "PendingActionTypes.h" // PendingActionTarget / PendingActionSubmitResult (rank-0) — comment / worklog
-#include "SmatchetResult.h"     // VoidResult (SubmitFieldEdit — outError → Result flip)
+#include "PendingActionTypes.h" // PendingActionTarget / PendingActionSubmitResult (rank-0) — every write
 
 #include <cstdint>
 #include <future>
@@ -36,11 +35,14 @@ class IAppTicketMutations {
     virtual ~IAppTicketMutations() = default;
 
     virtual const TrackerField* FindFieldById(const std::string& fieldId) const = 0;
-    virtual VoidResult SubmitFieldEdit(const std::string& issueId, const TrackerField& field,
-                                       const std::vector<std::string>& rawValues) = 0;
-    /// The focused pane's tracker, latched where the user acted; comments and worklogs go to it even if
-    /// focus moves before the worker submits. Also declared on IAppPendingActions, like the next one.
+    /// The focused pane's tracker, latched where the user acted; field edits, comments and worklogs go to it
+    /// even if focus moves before the worker submits. Also declared on IAppPendingActions.
     virtual PendingActionTarget LatchPendingActionTarget() const = 0;
+    /// Set `field` on `issueId` in `target`'s pane: saved now, or queued and replayed on reconnect when the
+    /// tracker is unreachable (Quality Pillar 6). Blocks on the network while online — call it from a worker.
+    virtual PendingActionSubmitResult SubmitFieldEditOrQueue(const PendingActionTarget& target,
+                                                             const std::string& issueId, const TrackerField& field,
+                                                             const std::vector<std::string>& values) = 0;
     /// Comment on `issueKey` for `target`: sent now, or saved and replayed on reconnect when the tracker is
     /// unreachable (Quality Pillar 6). Blocks on the network while online — call it from a worker. Also
     /// declared on IAppPendingActions; AppController's one override serves both.
