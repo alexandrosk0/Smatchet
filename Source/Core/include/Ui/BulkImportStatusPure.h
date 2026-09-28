@@ -2,8 +2,9 @@
 
 // BulkImportStatusPure — the Status column of Bulk Import as data (pure: no ImGui, test-linkable). A row is
 // waiting to be sent ("queued", "waiting for cache…", "submitting..."); done — created / updated ("ok KEY"),
-// skipped, or saved to the offline queue because the tracker could not be reached ("queued offline #<id>",
-// Quality Pillar 6); or failed / stopped (any other text).
+// skipped, saved to the offline queue because the tracker could not be reached ("queued offline #<id>",
+// Quality Pillar 6), or sent with its outcome unknown ("outcome unknown: …", it may have been created).
+// Any other text is a failed or stopped row.
 
 #include <cstdint>
 #include <deque>
@@ -20,6 +21,7 @@ constexpr const char* kQueuedStatus = "queued"; ///< waiting to be sent — not 
 constexpr const char* kWaitingForCacheStatus = "waiting for cache\xE2\x80\xA6";
 constexpr const char* kSubmittingStatus = "submitting...";
 constexpr const char* kQueuedOfflinePrefix = "queued offline #";
+constexpr const char* kUnknownOutcomePrefix = "outcome unknown: ";
 
 /// The status of a row saved to the offline queue as row `queueId`.
 inline std::string QueuedOfflineStatus(std::int64_t queueId) { return kQueuedOfflinePrefix + std::to_string(queueId); }
@@ -30,10 +32,15 @@ inline bool IsStatusTerminal(const std::string& status) {
            status != kSubmittingStatus;
 }
 
-/// True when a re-run must not send the row again: created / updated, skipped, or saved to the offline
-/// queue (the queue sends it on reconnect; sending it again would create the issue twice).
+/// The status of a row whose create was sent but may or may not have been applied (its response was lost).
+inline std::string UnknownOutcomeStatus(const std::string& detail) { return kUnknownOutcomePrefix + detail; }
+
+/// True when a re-run must not send the row again: created / updated, skipped, saved to the offline queue
+/// (the queue sends it on reconnect), or sent with an unknown outcome — sending either of the last two
+/// again could create the issue twice. Editing the row makes it a new draft, which is sent normally.
 inline bool IsStatusHandedOff(const std::string& status) {
-    return status.rfind("ok", 0) == 0 || status.rfind("skipped", 0) == 0 || status.rfind(kQueuedOfflinePrefix, 0) == 0;
+    return status.rfind("ok", 0) == 0 || status.rfind("skipped", 0) == 0 ||
+           status.rfind(kQueuedOfflinePrefix, 0) == 0 || status.rfind(kUnknownOutcomePrefix, 0) == 0;
 }
 
 /// Match completed handoffs by the entire serialized draft, independent of row order. Consume each

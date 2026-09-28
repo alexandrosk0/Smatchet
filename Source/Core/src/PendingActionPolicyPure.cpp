@@ -72,7 +72,7 @@ const char* StateAfterFailedSend(PendingActionKind kind, const TrackerError& err
     if (!error.IsRetryable()) {
         return "";
     }
-    if (kind == PendingActionKind::WatchAdd || error.Kind == TrackerErrorKind::RateLimited) {
+    if (kind == PendingActionKind::WatchAdd || error.ProvablyNotApplied()) {
         return PendingActionState::kPending;
     }
     return PendingActionState::kAmbiguous;

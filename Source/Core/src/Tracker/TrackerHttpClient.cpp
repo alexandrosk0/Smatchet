@@ -19,6 +19,15 @@ long RetryAfterSecondsFrom(const cpr::Response& response) {
     return TrackerHttpPure::ParseRetryAfterSeconds(it->second);
 }
 
+// True only when the request provably never left this machine: no response, and cpr failed while
+// resolving the host / proxy or establishing the connection. A timeout, a send / receive error or an
+// empty response can follow a request the tracker already applied, so they never count.
+bool ResponseProvesRequestNotSent(const cpr::Response& response) {
+    return response.status_code <= 0 && (response.error.code == cpr::ErrorCode::HOST_RESOLUTION_FAILURE ||
+                                         response.error.code == cpr::ErrorCode::PROXY_RESOLUTION_FAILURE ||
+                                         response.error.code == cpr::ErrorCode::CONNECTION_FAILURE);
+}
+
 } // namespace
 
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
@@ -51,18 +60,13 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
     }
 
     out.Error = TrackerErrorFromHttpStatus(status, std::move(detail));
-    out.Error.RequestNotSent = ClassifyRejectedTrackerResponse(response, std::string()).RequestNotSent;
+    out.Error.RequestNotSent = ResponseProvesRequestNotSent(response);
     return out;
 }
 
 TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail) {
     TrackerError error = ClassifyRejectedHttpStatus(response.status_code, detail);
-    // A timeout, send/receive error, or empty response can follow a committed POST.
-    // Only DNS and connection establishment failures prove that no request was sent.
-    error.RequestNotSent =
-        response.status_code <= 0 && (response.error.code == cpr::ErrorCode::HOST_RESOLUTION_FAILURE ||
-                                      response.error.code == cpr::ErrorCode::PROXY_RESOLUTION_FAILURE ||
-                                      response.error.code == cpr::ErrorCode::CONNECTION_FAILURE);
+    error.RequestNotSent = ResponseProvesRequestNotSent(response);
     return error;
 }
 

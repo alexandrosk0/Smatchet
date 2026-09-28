@@ -1059,12 +1059,13 @@ TEST_CASE("OfflineQueueServiceRuntime: resolving a sprint or estimate conflict k
     CHECK_FALSE(svc.ResolveFieldEditConflict(999999, "x", std::string(), "scalar"));    // no such row
 }
 
-TEST_CASE("OfflineQueueServiceRuntime: confirmed pre-send create failure stays queued") {
+TEST_CASE("OfflineQueueServiceRuntime: a create the tracker provably did not apply stays queued") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
     TrackerError error = TrackerErrorTransport("Connection refused");
-    error.RequestNotSent = true;
+    SUBCASE("never sent (connect failure)") { error.RequestNotSent = true; }
+    SUBCASE("refused unprocessed (429)") { error = TrackerErrorRateLimited("HTTP 429: slow down"); }
     deps.BackendImpl->EnqueueCreateIssueFailure(error);
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);

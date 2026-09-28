@@ -44,8 +44,9 @@ struct TrackerError {
     /// HTTP status if applicable (0 for non-HTTP errors like Parse / Cancelled). Useful for
     /// logging and for the connectivity classifier.
     int HttpStatus = 0;
-    /// True only when the failed operation is known to precede request transmission.
-    /// Unknown transport failures and operation timeouts must retain the conservative default.
+    /// True only when the request provably never left this machine: a DNS, proxy-resolution or
+    /// connect failure, or a precondition that failed before the send. An operation timeout or a
+    /// lost response keeps the default (false): the tracker may already have applied the request.
     bool RequestNotSent = false;
 
     bool IsOk() const noexcept { return Kind == TrackerErrorKind::None; }
@@ -54,6 +55,10 @@ struct TrackerError {
         return Kind == TrackerErrorKind::Transport || Kind == TrackerErrorKind::RateLimited ||
                Kind == TrackerErrorKind::ServerError;
     }
+    /// True when the tracker certainly did not apply the failed request: it was never sent, or the
+    /// tracker refused it unprocessed (429). Such a write can be sent again without risking a
+    /// duplicate; any other failure of a non-idempotent write (a create, a comment) may have landed.
+    bool ProvablyNotApplied() const noexcept { return RequestNotSent || Kind == TrackerErrorKind::RateLimited; }
 
     static TrackerError Ok() { return TrackerError{}; }
 };

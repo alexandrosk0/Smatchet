@@ -47,6 +47,17 @@ TEST_CASE("BulkImportStatusPure: reparse preserves offline handoffs and retries 
     CHECK(statuses[3].empty());
 }
 
+TEST_CASE("BulkImportStatusPure: a create with an unknown outcome is never resent by a re-run") {
+    const std::string unknown = UnknownOutcomeStatus("Operation timed out");
+    CHECK(IsStatusTerminal(unknown));
+    CHECK(IsStatusHandedOff(unknown));
+    // Kept across an unchanged reparse; an edited row is a new draft and is sent normally.
+    const auto statuses = PreserveHandedOffStatuses({"draft A"}, {unknown}, {"draft A", "draft A edited"});
+    REQUIRE(statuses.size() == 2);
+    CHECK(statuses[0] == unknown);
+    CHECK(statuses[1].empty());
+}
+
 TEST_CASE("BulkImportStatusPure: reparse consumes each completed identical draft only once") {
     const auto statuses =
         PreserveHandedOffStatuses({"same", "same"}, {QueuedOfflineStatus(12), "failed"}, {"same", "same", "same"});

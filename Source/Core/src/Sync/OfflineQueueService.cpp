@@ -1343,7 +1343,9 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
         return;
     }
     const int nextAttempts = pc.Attempts + 1;
-    const bool ambiguousCreate = result.ErrorTransient && result.ErrorMayHaveReachedServer;
+    // A create that may have been applied (its response lost) is never resent blind: it goes to the
+    // failed list for the user to check against the tracker and restore if it was not created.
+    const bool ambiguousCreate = IsAmbiguousCreateFailure(result);
     if (ambiguousCreate || OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
         const char* reason = ambiguousCreate ? "ambiguous_create" : "max_attempts";
         std::string trackerPart =
@@ -1354,9 +1356,7 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
                       nextAttempts, kMaxReplayAttempts);
         const std::string terminalError = FormatOfflineQueueTerminalLine(
             "offline_replay", "issue_create", reason,
-            (ambiguousCreate ? std::string("Create outcome unknown; check the tracker before retrying. ")
-                             : std::string(headBuf)) +
-                trackerPart);
+            (ambiguousCreate ? std::string(kAmbiguousCreateHint) + " " : std::string(headBuf)) + trackerPart);
         const bool archivedOk = RunCreateCacheMutation(
             "archive_pending_create", pc.Id,
             [&]() {

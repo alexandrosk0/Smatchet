@@ -51,6 +51,16 @@ TEST_CASE("StateAfterFailedSend — a rejection is final, a maybe-landed send is
     CHECK(StateAfterFailedSend(PendingActionKind::WatchAdd, TrackerErrorServer("503", 503)) == pending);
 }
 
+TEST_CASE("StateAfterFailedSend — a request that never left the machine stays plainly pending") {
+    // A DNS / connect failure proves the tracker never saw it: resend it, no ambiguity check or review.
+    TrackerError refused = TrackerErrorTransport("connection refused");
+    refused.RequestNotSent = true;
+    const std::string pending = PendingActionState::kPending;
+    CHECK(StateAfterFailedSend(PendingActionKind::CommentAdd, refused) == pending);
+    CHECK(StateAfterFailedSend(PendingActionKind::WorklogAdd, refused) == pending);
+    CHECK(StateAfterFailedSend(PendingActionKind::WatchAdd, refused) == pending);
+}
+
 TEST_CASE("NormalizeCommentForDedupe — keeps letters, digits and non-ASCII; drops formatting") {
     CHECK(NormalizeCommentForDedupe("**Fixed** in `v2.1`,\r\nsee [PR](http://x)!") == "fixedinv21seeprhttpx");
     CHECK(NormalizeCommentForDedupe("Caf\xc3\xa9 OK") == "caf\xc3\xa9ok");

@@ -354,8 +354,10 @@ void AppController::ClearLuaTicketContextGlue() {
 
 void AppController::RunAutoScript(const std::string& scriptPath, const std::vector<std::string>& selectedIds,
                                   bool processAll) {
+    AutomationJob job{AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, "", processAll};
+    job.target = LatchPendingActionTarget();
     std::lock_guard<std::mutex> lock(impl_->automationJobMutex_);
-    impl_->automationJobs_.push_back({AutomationJob::Type::RunAutoScript, scriptPath, selectedIds, "", processAll});
+    impl_->automationJobs_.push_back(std::move(job));
     impl_->automationJobCv_.notify_one();
 }
 
@@ -590,7 +592,11 @@ void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppCo
         return;
     }
 
-    const auto tickets = app_.LuaGetActiveTicketsBind();
+    const std::shared_ptr<const std::vector<CachedTicket>> snap = app_.TicketsSnapshotForTarget_(job.target);
+    if (!snap) {
+        logErr("[LUA auto] ", "the pane this run was started from was closed or switched tracker; nothing was run");
+        return;
+    }
     std::unordered_set<std::string> selectedSet(job.selectedIds.begin(), job.selectedIds.end());
 
     // Issue #824: an empty selection must require explicit intent. Without process_all we refuse
@@ -602,14 +608,17 @@ void AppController::Impl::RunAutomationAutoScript(sol::state& state, const AppCo
         return;
     }
 
-    for (const auto& ticket : tickets) {
+    for (const auto& ticket : *snap) {
         // processAll bypasses the selection filter and runs across every ticket in the snapshot.
         if (!job.processAll && selectedSet.find(ticket.id) == selectedSet.end()) {
             continue;
         }
 
-        // Lua owns its copy, including the original target, if the script retains the ticket.
-        sol::protected_function_result pfr = process_func(sol::make_object(state, ticket));
+        // Lua owns its copy, stamped with the run's pane, so an edit the script makes now or later (a
+        // retained Ticket) goes to that pane's tracker. Only selected tickets are copied.
+        CachedTicket ticketCopy = ticket;
+        ticketCopy.EditTarget = job.target;
+        sol::protected_function_result pfr = process_func(sol::make_object(state, std::move(ticketCopy)));
         if (!pfr.valid()) {
             sol::error err = pfr;
             logErr("[LUA auto] ", err.what());

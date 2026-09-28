@@ -242,7 +242,11 @@ void BulkImportReapCompletions(AppController& app, UiDrawSession& d) {
         } else if (r.QueuedOfflineId > 0) {
             d.bulkImportStatus[i] = smatchet::ui::bulkimport::QueuedOfflineStatus(r.QueuedOfflineId);
         } else {
-            std::string msg = BulkImportFormatFailure(app, r);
+            // A create that may have landed is not resent by a re-run (it could duplicate the issue).
+            std::string msg = IsAmbiguousCreateFailure(r)
+                                  ? smatchet::ui::bulkimport::UnknownOutcomeStatus(r.Error) + " " +
+                                        kAmbiguousCreateHint + " Re-run skips it; edit the row to send it again."
+                                  : BulkImportFormatFailure(app, r);
             if (IsOfflineQueueableFailure(r)) {
                 msg += " Saving it to the offline queue failed too.";
             }

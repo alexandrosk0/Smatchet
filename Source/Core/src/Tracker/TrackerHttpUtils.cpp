@@ -207,7 +207,10 @@ cpr::Response TrackerGetLogged(const char* clientName, const std::string& url, c
 
 cpr::Response TrackerPostLogged(const char* clientName, const std::string& url, const cpr::Header& headers,
                                 const std::string& body, const std::function<bool()>& cancelled) {
-    // A non-idempotent POST can be retried only when transmission is known not to have occurred.
+    // POST is non-idempotent: a request the tracker applied must never be sent twice (a duplicate
+    // issue / comment). A 429 / 5xx is returned to the caller untouched, and a transport failure is
+    // retried only when the request provably never left this machine (DNS / proxy / connect failure,
+    // TrackerError::RequestNotSent) — never after a timeout or a lost response (finding DR16).
     TrackerHttpResult result = TrackerHttpRequestWithRetry(
         [&]() {
             cpr::Redirect redirect = MakeTrackerRedirectPolicy();

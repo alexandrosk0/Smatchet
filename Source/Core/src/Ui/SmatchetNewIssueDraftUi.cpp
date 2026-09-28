@@ -189,6 +189,9 @@ void PollNewIssueCreateResult(UiDrawSession& d) {
                 if (lower.find("create issue failed") == std::string::npos) {
                     banner.insert(0, "Create issue failed: ");
                 }
+                if (IsAmbiguousCreateFailure(r)) {
+                    banner.append(" ").append(kAmbiguousCreateHint);
+                }
                 d.gridEditError = std::move(banner);
             }
         }

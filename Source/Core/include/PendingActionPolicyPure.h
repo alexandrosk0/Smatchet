@@ -21,9 +21,10 @@ namespace pendingaction {
 constexpr std::int64_t kCommentDedupeWindowSec = 300;
 
 /// The state a failed send leaves the action in. "" when the failure is final (the tracker
-/// rejected it). kPending when the tracker certainly did not act on it (rate limited), and for a
-/// watch in any retryable case (watching twice is harmless). kAmbiguous when it may have acted: a
-/// transport failure or 5xx after the request went out.
+/// rejected it). kPending when the tracker certainly did not act on it
+/// (TrackerError::ProvablyNotApplied: never sent, or rate limited), and for a watch in any retryable
+/// case (watching twice is harmless). kAmbiguous when it may have acted: a timeout or 5xx after the
+/// request went out.
 const char* StateAfterFailedSend(PendingActionKind kind, const TrackerError& error);
 
 /// Comment text reduced to what survives a Markdown → tracker format → Markdown round trip: ASCII

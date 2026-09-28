@@ -1712,6 +1712,10 @@ class AppController : public IAppThreading,
         // Default false: empty selection + !processAll is a refusal (no silent mass-modify,
         // no silent no-op). See RunAutomationAutoScript and Issue #824.
         bool processAll = false;
+        // RunAutoScript: the pane the selection was made in, latched when the run is requested. The
+        // worker reads that pane's tickets and the script's edits go to its tracker, wherever focus is
+        // by the time the job runs (#2260).
+        PendingActionTarget target{};
     };
     // The automation queue + worker member STORAGE (automationJobMutex_ / automationJobCv_ /
     // automationJobs_ / automationWorker_ / automationWorkerShuttingDown_ / activeSetupScripts_)

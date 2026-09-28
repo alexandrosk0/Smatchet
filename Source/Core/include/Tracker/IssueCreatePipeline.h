@@ -24,11 +24,14 @@ struct IssueCreateResult {
     bool Ok = false;
     std::string IssueKey; // populated on success
     std::string Error;    // single-line summary
-    /// Retryable kind retained for diagnostics and idempotent updates.
+    /// The backend's error kind was retryable (TrackerError::IsRetryable: transport, rate limit, 5xx),
+    /// classified where the pipeline flattens it (N12 item 13b). Validation / payload-build failures
+    /// and the "created, key unknown" shape keep false.
     bool ErrorTransient = false;
-    /// A create may have committed even when its response was lost. Defaults to ambiguous;
-    /// only a confirmed pre-transmission failure or a set-replace update clears this flag.
-    bool ErrorMayHaveReachedServer = true;
+    /// Sending the draft again could create the issue twice: the failed create may have been applied
+    /// with only its response lost. Cleared only when the tracker provably did not apply it
+    /// (TrackerError::ProvablyNotApplied) and for an update, which replays as a set-replace.
+    bool ReplayMayDuplicate = true;
     std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
@@ -38,10 +41,21 @@ struct IssueCreateResult {
     std::int64_t QueuedOfflineId = 0;
 };
 
-/// Replay requires both a retryable failure and certainty that it cannot duplicate a create.
+/// True when a failed create / update may go to the offline queue: the failure is retryable and sending
+/// the draft again cannot duplicate the issue. A rejection the user must fix is reported instead.
 inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) {
-    return !result.Ok && result.ErrorTransient && !result.ErrorMayHaveReachedServer;
+    return !result.Ok && result.ErrorTransient && !result.ReplayMayDuplicate;
 }
+
+/// True when a failed create may nonetheless have created the issue (e.g. a timeout after the request
+/// went out, or a 5xx). It is neither queued nor resent automatically: the user checks the tracker first.
+inline bool IsAmbiguousCreateFailure(const IssueCreateResult& result) {
+    return !result.Ok && result.ErrorTransient && result.ReplayMayDuplicate;
+}
+
+/// Shown with an ambiguous create failure (IsAmbiguousCreateFailure).
+constexpr const char* kAmbiguousCreateHint =
+    "The issue may have been created; check the tracker before sending it again.";
 
 /**
  * Reusable create/update flow: validate draft -> build Jira payload -> POST (create) or PUT

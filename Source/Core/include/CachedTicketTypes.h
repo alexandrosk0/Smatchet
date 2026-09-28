@@ -26,7 +26,10 @@ struct CachedTicket {
     /// docs/plans/rich-text-editing-v2-remaining.md.
     std::unordered_map<std::string, std::string> fieldRichValues;
 
-    /// Runtime-only origin for retained Lua Ticket objects; never persisted in the cache.
+    /// The pane (and tracker) a Ticket handed to Lua came from — set only on the copies Lua receives
+    /// (smatchet.get_ticket / get_active_tickets / an automation pass), so a script that keeps a Ticket
+    /// edits it on its own tracker even after focus moves. Runtime-only: empty everywhere else and never
+    /// persisted in the cache.
     PendingActionTarget EditTarget;
 
     std::string GetFieldValue(const std::string& key) const {

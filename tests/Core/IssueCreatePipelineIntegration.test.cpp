@@ -623,7 +623,7 @@ class FailedCreateClient : public FakeTrackerClient {
 };
 } // namespace
 
-TEST_CASE("IssueCreatePipeline: only confirmed pre-transmission create failures can queue") {
+TEST_CASE("IssueCreatePipeline: only a create the tracker provably did not apply can queue") {
     FailedCreateClient client;
     client.Failure = TrackerErrorTransport("network failure");
     bool queueable = false;
@@ -634,13 +634,17 @@ TEST_CASE("IssueCreatePipeline: only confirmed pre-transmission create failures 
         queueable = true;
     }
     SUBCASE("server error after possible commit") { client.Failure = TrackerErrorServer("HTTP 503", 503); }
-    SUBCASE("rate limited response") { client.Failure = TrackerErrorRateLimited("HTTP 429"); }
+    SUBCASE("rate limited response (refused unprocessed)") {
+        client.Failure = TrackerErrorRateLimited("HTTP 429");
+        queueable = true;
+    }
     const auto result =
         IssueCreatePipeline::Run(client, nullptr, "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(result.Ok);
     CHECK(result.ErrorTransient);
-    CHECK(result.ErrorMayHaveReachedServer == !queueable);
+    CHECK(result.ReplayMayDuplicate == !queueable);
     CHECK(IsOfflineQueueableFailure(result) == queueable);
+    CHECK(IsAmbiguousCreateFailure(result) == !queueable);
 }
 
 TEST_CASE("IssueCreatePipeline: a transient set-replace update can still queue") {
@@ -659,5 +663,6 @@ TEST_CASE("IssueCreatePipeline: created without a key must never queue") {
     const auto result =
         IssueCreatePipeline::Run(client, nullptr, "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
     CHECK_FALSE(IsOfflineQueueableFailure(result));
-    CHECK(result.ErrorMayHaveReachedServer);
+    CHECK_FALSE(result.ErrorTransient); // the issue exists: never "retry when reachable"
+    CHECK(result.ReplayMayDuplicate);
 }
