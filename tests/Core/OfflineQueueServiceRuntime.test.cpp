@@ -16,6 +16,7 @@
 
 #include "BackendAuditTrail.h"
 #include "ConfigManager.h"
+#include "IssueCreatePipeline.h" // kAmbiguousCreateReason
 #include "IssueDraft.h"
 #include "OfflineQueueReplayPolicy.h"
 #include "OfflineQueueService.h"
@@ -212,13 +213,20 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain 5xx archives an ambiguou
 }
 
 // ---------------------------------------------------------------------------
-// Case 4 — Enqueue create-issue → timeout may follow a committed create → archive without automatic resend.
+// Case 4 — Enqueue create-issue → a failure that may follow a committed create (a timeout, a success whose
+// body could not be read, or created without a usable key) → archive without automatic resend.
 // ---------------------------------------------------------------------------
 TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout archives without resending") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;
     PrimeCreatePipelineHappy(deps);
-    deps.BackendImpl->EnqueueCreateIssueFailure(TrackerErrorTransport("Operation timed out after 30000 ms"));
+    SUBCASE("operation timeout") {
+        deps.BackendImpl->EnqueueCreateIssueFailure(TrackerErrorTransport("Operation timed out after 30000 ms"));
+    }
+    SUBCASE("2xx whose body could not be read") {
+        deps.BackendImpl->EnqueueCreateIssueFailure(TrackerErrorParse("Created issue response had no key"));
+    }
+    SUBCASE("created without a usable key") { deps.BackendImpl->EnqueueCreateIssueSuccess(""); }
 
     OfflineQueueService svc(deps);
     REQUIRE(svc.QueueCreateOffline(MakeBasicCreateDraft()) > 0);
@@ -227,7 +235,9 @@ TEST_CASE("OfflineQueueServiceRuntime: create → drain timeout archives without
     svc.TickOfflineCreates();
 
     CHECK(svc.GetPendingCreateCount() == 0u);
-    CHECK(svc.GetDeadPendingCreateCount() == 1u);
+    REQUIRE(svc.GetDeadPendingCreateCount() == 1u);
+    // The reason the Offline Queue panel keys on: its ordinary "retry" never resends this row.
+    CHECK(svc.GetDeadPendingCreates().front().TerminalReason == kAmbiguousCreateReason);
     svc.RestartReplayTimersNow(std::chrono::steady_clock::now());
     svc.TickOfflineCreates();
     CHECK(deps.BackendImpl->CreateIssueCallCount() == 1u);
@@ -897,6 +907,29 @@ TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on structured field k
 // whose BuildFieldPayload returns `{"values":[...]}`; what matters is that resolve does NOT
 // special-case string fields away from the builder seam. We assert the value is not an object.
 // ---------------------------------------------------------------------------
+// A value the field's builder rejects (e.g. an option the field does not have) is never written as a bare
+// display string: for a structured field that shape would dead-letter on replay. The resolve reports
+// failure and the queued payload is left as it was, so the edit stays suspended for another resolution.
+TEST_CASE("OfflineQueueServiceRuntime: scalar resolve with a value the field rejects leaves the edit unchanged") {
+    OfflineQueueTestEnvGuard guard;
+    FakeOfflineQueueDeps deps;
+    deps.Fields = {MakeField("priority", TrackerFieldFamily::SelectSingle)};
+    deps.BackendImpl->SetBuildFieldPayloadResult(false, "No option named 'Urgentest'");
+
+    OfflineQueueService svc(deps);
+    std::string err;
+    const std::string payload = nlohmann::json{{"priority", {{"id", "3"}}}}.dump();
+    const auto id = svc.QueueFieldEditOffline("PROJ-857", "priority", payload, err, std::string(), "Low", true);
+    REQUIRE(err.empty());
+    REQUIRE(id > 0);
+
+    CHECK_FALSE(svc.ResolveFieldEditConflict(id, "Urgentest", std::string(), "scalar"));
+
+    REQUIRE(svc.GetPendingFieldEdits().size() == 1u);
+    CHECK(nlohmann::json::parse(svc.GetPendingFieldEdits().front().FieldsPayloadJson) ==
+          nlohmann::json::parse(payload));
+}
+
 TEST_CASE("OfflineQueueServiceRuntime: #854 scalar resolve on string field stays a bare string (no regression)") {
     OfflineQueueTestEnvGuard guard;
     FakeOfflineQueueDeps deps;

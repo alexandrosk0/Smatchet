@@ -19,6 +19,13 @@ long RetryAfterSecondsFrom(const cpr::Response& response) {
     return TrackerHttpPure::ParseRetryAfterSeconds(it->second);
 }
 
+// A 403 carrying `Retry-After` is a throttle wearing an auth status code — GitHub's secondary rate
+// limits and abuse detection respond exactly this way. It is rate-limited (retryable, and refused
+// without acting), not a hard auth failure. A plain 403 without the header stays an auth failure.
+bool IsThrottled403(const cpr::Response& response) {
+    return response.status_code == 403 && RetryAfterSecondsFrom(response) >= 0;
+}
+
 // True only when the request provably never left this machine: no response, and cpr failed while
 // resolving the host / proxy or establishing the connection. A timeout, a send / receive error or an
 // empty response can follow a request the tracker already applied, so they never count.
@@ -50,11 +57,7 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
         }
     }
 
-    // A 403 carrying `Retry-After` is a throttle wearing an auth status code — GitHub's
-    // secondary rate limits and abuse detection respond exactly this way. Classify it as
-    // rate-limited, which is retryable and an offline-queueable transient, instead of a
-    // hard auth failure. A plain 403 without the header stays an auth failure.
-    if (status == 403 && RetryAfterSecondsFrom(response) >= 0) {
+    if (IsThrottled403(response)) {
         out.Error = TrackerErrorRateLimited(std::move(detail), status);
         return out;
     }
@@ -65,7 +68,8 @@ TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response) {
 }
 
 TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail) {
-    TrackerError error = ClassifyRejectedHttpStatus(response.status_code, detail);
+    TrackerError error = IsThrottled403(response) ? TrackerErrorRateLimited(detail, 403)
+                                                  : ClassifyRejectedHttpStatus(response.status_code, detail);
     error.RequestNotSent = ResponseProvesRequestNotSent(response);
     return error;
 }

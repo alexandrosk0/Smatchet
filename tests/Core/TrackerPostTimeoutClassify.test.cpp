@@ -17,12 +17,19 @@ TEST_CASE("TrackerShouldRetryPost requires positive evidence of a pre-send failu
     CHECK_FALSE(TrackerShouldRetryPost(TrackerErrorKind::None, true));
 }
 
-TEST_CASE("ProvablyNotApplied — never sent, or refused unprocessed (429)") {
+TEST_CASE("ProvablyNotApplied — never sent, or refused without acting") {
     TrackerError refused = TrackerErrorTransport("connection refused");
     CHECK_FALSE(refused.ProvablyNotApplied()); // a transport failure alone may follow an applied request
     refused.RequestNotSent = true;
     CHECK(refused.ProvablyNotApplied());
     CHECK(TrackerErrorRateLimited("slow down").ProvablyNotApplied());
+    CHECK(TrackerErrorAuth("Unauthorized", 401).ProvablyNotApplied());
+    CHECK(TrackerErrorNotFound("No such project").ProvablyNotApplied());
+    CHECK(TrackerErrorInvalidRequest("Field 'x' is required", 400).ProvablyNotApplied());
+    CHECK(TrackerErrorCancelled().ProvablyNotApplied()); // the retry loop cancels only before a send
+    // May have landed: a timeout / 5xx after the send, or a success status whose body was unusable.
     CHECK_FALSE(TrackerErrorServer("HTTP 503", 503).ProvablyNotApplied());
     CHECK_FALSE(TrackerErrorTransport("Operation timed out").ProvablyNotApplied());
+    CHECK_FALSE(TrackerErrorParse("Created issue response had no key").ProvablyNotApplied());
+    CHECK_FALSE(TrackerErrorUnknown("HTTP 202", 202).ProvablyNotApplied());
 }

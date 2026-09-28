@@ -55,10 +55,23 @@ struct TrackerError {
         return Kind == TrackerErrorKind::Transport || Kind == TrackerErrorKind::RateLimited ||
                Kind == TrackerErrorKind::ServerError;
     }
-    /// True when the tracker certainly did not apply the failed request: it was never sent, or the
-    /// tracker refused it unprocessed (429). Such a write can be sent again without risking a
-    /// duplicate; any other failure of a non-idempotent write (a create, a comment) may have landed.
-    bool ProvablyNotApplied() const noexcept { return RequestNotSent || Kind == TrackerErrorKind::RateLimited; }
+    /// True when the tracker certainly did not apply the failed request: it never left this machine
+    /// (RequestNotSent, or Cancelled — the retry loop only cancels before a send), or the tracker refused
+    /// it without acting (429, 401 / 403, 404, other 4xx). Such a write can be sent again without risking a
+    /// duplicate. A timeout, a 5xx, or a success status whose body could not be used (Parse / Unknown) may
+    /// have landed.
+    bool ProvablyNotApplied() const noexcept {
+        switch (Kind) {
+        case TrackerErrorKind::RateLimited:
+        case TrackerErrorKind::Auth:
+        case TrackerErrorKind::NotFound:
+        case TrackerErrorKind::InvalidRequest:
+        case TrackerErrorKind::Cancelled:
+            return true;
+        default:
+            return RequestNotSent;
+        }
+    }
 
     static TrackerError Ok() { return TrackerError{}; }
 };

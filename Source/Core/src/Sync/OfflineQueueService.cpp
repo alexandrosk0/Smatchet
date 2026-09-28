@@ -625,10 +625,9 @@ const TrackerField* OfflineQueueService::FindCatalogField(const std::string& fie
     return &(*it);
 }
 
-nlohmann::json OfflineQueueService::RebuildScalarResolutionPayload(const PendingFieldEditRecord& row,
-                                                                   nlohmann::json payload,
-                                                                   const std::string& payloadKey,
-                                                                   const std::string& resolvedValue) const {
+bool OfflineQueueService::RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json& payload,
+                                                         const std::string& payloadKey,
+                                                         const std::string& resolvedValue) const {
     // Scalar (#854): rebuild the payload through the SAME production builder the live edit path uses
     // (`BuildFieldPayload` -> `BuildValue`), so a structured field (single/multi-select, status,
     // priority, issuetype, user, component, cascading, labels) keeps its `{"id":...}` / array shape
@@ -637,21 +636,24 @@ nlohmann::json OfflineQueueService::RebuildScalarResolutionPayload(const Pending
     // resolves them (by id OR label) exactly as on a normal edit. Genuinely string-valued fields
     // (summary, free text) naturally come back as a bare string, so no special-casing is needed. The
     // legacy verbatim write is the degraded fallback only when the field schema or the mutations
-    // builder is unavailable (so resolution still completes rather than no-ops).
+    // builder is unavailable (so resolution still completes rather than no-ops). A value the builder
+    // REJECTS is never written verbatim: for a structured field that shape would dead-letter on replay.
     const TrackerField* field = FindCatalogField(row.FieldId);
     const std::shared_ptr<ITrackerIssueMutations> mutations = field ? deps_.MutationsShared() : nullptr;
     if (mutations) {
-        const Result<nlohmann::json, TrackerError> built =
+        Result<nlohmann::json, TrackerError> built =
             mutations->BuildFieldPayload(*field, std::vector<std::string>{resolvedValue});
-        if (built) {
-            return built.value();
+        if (!built) {
+            LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — BuildFieldPayload rejected "
+                     "the chosen value (%s); the edit stays suspended",
+                     static_cast<long long>(row.Id), row.FieldId.c_str(), built.error().Detail.c_str());
+            return false;
         }
-        LOG_WARN("OfflineQueueService::ResolveFieldEditConflict id=%lld field=%s — BuildFieldPayload failed (%s); "
-                 "falling back to verbatim string",
-                 static_cast<long long>(row.Id), row.FieldId.c_str(), built.error().Detail.c_str());
+        payload = std::move(built.value());
+        return true;
     }
     payload[payloadKey] = resolvedValue;
-    return payload;
+    return true;
 }
 
 bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::string& resolvedValue,
@@ -714,8 +716,8 @@ bool OfflineQueueService::ResolveFieldEditConflict(std::int64_t id, const std::s
                     } else {
                         newPayload[payloadKey] = MarkdownConvert::MarkdownToHtml(resolvedValue);
                     }
-                } else {
-                    newPayload = RebuildScalarResolutionPayload(row, std::move(newPayload), payloadKey, resolvedValue);
+                } else if (!RebuildScalarResolutionPayload(row, newPayload, payloadKey, resolvedValue)) {
+                    return false;
                 }
                 deps_.Cache()->ResolveFieldEditConflict(id, newPayload.dump());
                 return true;
@@ -1347,7 +1349,7 @@ void OfflineQueueService::ReplayOneCreate(const PendingCreate& pc, ISyncCache* c
     // failed list for the user to check against the tracker and restore if it was not created.
     const bool ambiguousCreate = IsAmbiguousCreateFailure(result);
     if (ambiguousCreate || OfflineQueueReplayPolicy::ShouldArchive(nextAttempts)) {
-        const char* reason = ambiguousCreate ? "ambiguous_create" : "max_attempts";
+        const char* reason = ambiguousCreate ? kAmbiguousCreateReason : "max_attempts";
         std::string trackerPart =
             result.Error.empty() ? std::string("Create pipeline returned failure with empty error on final attempt.")
                                  : std::string("Create pipeline error: ") + result.Error;

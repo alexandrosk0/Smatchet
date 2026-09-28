@@ -28,10 +28,11 @@ struct IssueCreateResult {
     /// classified where the pipeline flattens it (N12 item 13b). Validation / payload-build failures
     /// and the "created, key unknown" shape keep false.
     bool ErrorTransient = false;
-    /// Sending the draft again could create the issue twice: the failed create may have been applied
-    /// with only its response lost. Cleared only when the tracker provably did not apply it
-    /// (TrackerError::ProvablyNotApplied) and for an update, which replays as a set-replace.
-    bool ReplayMayDuplicate = true;
+    /// Sending the draft again could create the issue twice: the create request went out and the tracker
+    /// may have applied it — a timeout or 5xx, a success status whose body could not be used, or "created,
+    /// key unknown" (TrackerError::ProvablyNotApplied is false). False for a failure before the send, an
+    /// explicit rejection, and an update (which replays as a set-replace).
+    bool ReplayMayDuplicate = false;
     std::vector<std::string> MissingFieldIds;                            // populated when validation failed
     std::vector<std::pair<std::string, std::string>> AttachmentFailures; // path -> reason
     /** On create: new row. On update: merged ticket written to SQLite when cache is non-null. */
@@ -47,15 +48,19 @@ inline bool IsOfflineQueueableFailure(const IssueCreateResult& result) {
     return !result.Ok && result.ErrorTransient && !result.ReplayMayDuplicate;
 }
 
-/// True when a failed create may nonetheless have created the issue (e.g. a timeout after the request
-/// went out, or a 5xx). It is neither queued nor resent automatically: the user checks the tracker first.
+/// True when a failed create may nonetheless have created the issue (ReplayMayDuplicate), transient or not.
+/// It is neither queued nor resent automatically: the user checks the tracker first.
 inline bool IsAmbiguousCreateFailure(const IssueCreateResult& result) {
-    return !result.Ok && result.ErrorTransient && result.ReplayMayDuplicate;
+    return !result.Ok && result.ReplayMayDuplicate;
 }
 
 /// Shown with an ambiguous create failure (IsAmbiguousCreateFailure).
 constexpr const char* kAmbiguousCreateHint =
     "The issue may have been created; check the tracker before sending it again.";
+
+/// The failed-creates reason of a replayed create that may have landed. The Offline Queue panel's
+/// ordinary retry skips such rows; only an explicit "not on the tracker" action sends them again.
+constexpr const char* kAmbiguousCreateReason = "ambiguous_create";
 
 /**
  * Reusable create/update flow: validate draft -> build Jira payload -> POST (create) or PUT

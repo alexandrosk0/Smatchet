@@ -214,10 +214,11 @@ class OfflineQueueService {
     /// when the field is unknown (legacy/retired field or empty catalog). Used by scalar
     /// conflict-resolution (#854) to rebuild the structured payload via the production builder.
     const TrackerField* FindCatalogField(const std::string& fieldId) const;
-    /// ResolveFieldEditConflict's `scalar` rebuild: `resolvedValue` in the field's own payload shape.
-    nlohmann::json RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json payload,
-                                                  const std::string& payloadKey,
-                                                  const std::string& resolvedValue) const;
+    /// ResolveFieldEditConflict's `scalar` rebuild: `resolvedValue` in the field's own payload shape, into
+    /// `payload`. False (payload untouched) when the field's builder rejects the value — the edit stays
+    /// suspended rather than replaying a shape the tracker would reject.
+    bool RebuildScalarResolutionPayload(const PendingFieldEditRecord& row, nlohmann::json& payload,
+                                        const std::string& payloadKey, const std::string& resolvedValue) const;
 
     /// Record a `kind:"unverified"` conflict (server value couldn't be read) and suspend the row.
     /// Context: `{kind:"unverified", mine, fieldId}`. Always returns Suspend.

@@ -647,6 +647,29 @@ TEST_CASE("IssueCreatePipeline: only a create the tracker provably did not apply
     CHECK(IsAmbiguousCreateFailure(result) == !queueable);
 }
 
+TEST_CASE("IssueCreatePipeline: a rejected create is final; an unusable success may have created the issue") {
+    FailedCreateClient client;
+    bool mayHaveLanded = false;
+    SUBCASE("400 rejection") { client.Failure = TrackerErrorInvalidRequest("Field 'x' is required", 400); }
+    SUBCASE("401 rejection") { client.Failure = TrackerErrorAuth("Unauthorized", 401); }
+    SUBCASE("cancelled before the send") { client.Failure = TrackerErrorCancelled("Cancelled before attempt 1"); }
+    SUBCASE("2xx whose body could not be read") {
+        client.Failure = TrackerErrorParse("Created issue response had no key");
+        mayHaveLanded = true;
+    }
+    SUBCASE("2xx the client could not use") {
+        client.Failure = TrackerErrorUnknown("HTTP 202", 202);
+        mayHaveLanded = true;
+    }
+    const auto result =
+        IssueCreatePipeline::Run(client, nullptr, "Jira", MakeBasicCreateDraft(), EmptyRequired(), BasicCatalog());
+    CHECK_FALSE(result.Ok);
+    CHECK_FALSE(result.ErrorTransient);
+    CHECK_FALSE(IsOfflineQueueableFailure(result));
+    CHECK(result.ReplayMayDuplicate == mayHaveLanded);
+    CHECK(IsAmbiguousCreateFailure(result) == mayHaveLanded);
+}
+
 TEST_CASE("IssueCreatePipeline: a transient set-replace update can still queue") {
     FailedCreateClient client;
     client.Failure = TrackerErrorTransport("Operation timed out");
@@ -665,4 +688,5 @@ TEST_CASE("IssueCreatePipeline: created without a key must never queue") {
     CHECK_FALSE(IsOfflineQueueableFailure(result));
     CHECK_FALSE(result.ErrorTransient); // the issue exists: never "retry when reachable"
     CHECK(result.ReplayMayDuplicate);
+    CHECK(IsAmbiguousCreateFailure(result)); // never resent, transient or not
 }

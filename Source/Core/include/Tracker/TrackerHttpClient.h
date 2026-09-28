@@ -48,9 +48,10 @@ struct TrackerHttpResult {
 /// body if non-empty, otherwise the cpr error message, otherwise a generic "HTTP <code>" string.
 TrackerHttpResult ClassifyTrackerResponse(const cpr::Response& response);
 
-/// A response the caller rejected (ClassifyRejectedHttpStatus: a 2xx it cannot use is never Ok), with the
-/// caller's own message as the detail and RequestNotSent set only for a provably unsent request (a DNS,
-/// proxy or connect failure) — what a non-idempotent write consults before it is resent or queued.
+/// A response the caller rejected (ClassifyRejectedHttpStatus: a 2xx it cannot use is never Ok; a 403 with
+/// `Retry-After` is RateLimited, as in ClassifyTrackerResponse), with the caller's own message as the detail
+/// and RequestNotSent set only for a provably unsent request (a DNS, proxy or connect failure) — what a
+/// non-idempotent write consults before it is resent or queued.
 TrackerError ClassifyRejectedTrackerResponse(const cpr::Response& response, const std::string& detail);
 
 /// Classify a reachability-probe response into a TrackerReachabilityProbeResult, shared by every

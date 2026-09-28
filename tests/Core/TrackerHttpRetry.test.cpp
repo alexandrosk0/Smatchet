@@ -80,6 +80,20 @@ TEST_CASE("ClassifyTrackerResponse — 403 + Retry-After is a throttle, not an a
     SUBCASE("401 with Retry-After stays Auth — only 403 wears the throttle disguise") {
         CHECK(ResultFromStatusWithRetryAfter(401, "30").Error.Kind == TrackerErrorKind::Auth);
     }
+    SUBCASE("a rejected create (ClassifyRejectedTrackerResponse) applies the same rule") {
+        // A GitHub create refused by a secondary rate limit is a throttle the tracker did not act on:
+        // retryable and safe to queue, not an auth failure.
+        cpr::Response resp;
+        resp.status_code = 403;
+        resp.header["Retry-After"] = "30";
+        const TrackerError throttled =
+            ClassifyRejectedTrackerResponse(resp, "You have exceeded a secondary rate limit");
+        CHECK(throttled.Kind == TrackerErrorKind::RateLimited);
+        CHECK(throttled.Detail == "You have exceeded a secondary rate limit");
+        CHECK(throttled.ProvablyNotApplied());
+        resp.header.clear();
+        CHECK(ClassifyRejectedTrackerResponse(resp, "Forbidden").Kind == TrackerErrorKind::Auth);
+    }
 }
 
 TEST_CASE("ParseRetryAfterSeconds — delta-seconds form only") {

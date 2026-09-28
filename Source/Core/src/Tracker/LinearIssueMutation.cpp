@@ -66,8 +66,15 @@ bool RunLinearMutation(const std::string& apiUrl, const std::string& apiKey, con
                        ? errorMessage
                        : smatchet::linear::ExtractLinearErrorMessage(static_cast<int>(resp.status_code), resp.text);
         if (outClassified) {
-            *outClassified = resp.status_code == 200 ? TrackerErrorInvalidRequest(outError)
-                                                     : ClassifyRejectedTrackerResponse(resp, outError);
+            // A 200 whose body is unreadable may still have run the mutation, so it is a Parse failure and
+            // never resent blind. GraphQL `errors` on a 200 are a rejection.
+            if (resp.status_code != 200) {
+                *outClassified = ClassifyRejectedTrackerResponse(resp, outError);
+            } else if (parsed.is_discarded()) {
+                *outClassified = TrackerErrorParse(outError);
+            } else {
+                *outClassified = TrackerErrorInvalidRequest(outError);
+            }
         }
         return false;
     }
